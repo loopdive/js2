@@ -1,10 +1,10 @@
 ---
 id: 4242
 title: "Eval engine parity measurement + default flip to QuickJS — interpreter STAYS selectable behind the flag, nothing is deleted"
-status: blocked
+status: ready
 sprint: current
 created: 2026-08-08
-updated: 2026-08-11
+updated: 2026-08-12
 priority: medium
 horizon: l
 feasibility: medium
@@ -15,7 +15,7 @@ area: runtime-eval
 language_feature: eval
 goal: runtime-eval
 related: [2928, 2929, 4013, 4229, 4236, 4238, 4245]
-blocked_by: [4238, 4245]
+blocked_by: []
 # id 4242 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-08 (gh CLI unavailable; pr_scan=degraded). Equivalent open-PR scan
 # via the GitHub MCP at reservation time: sole open PR was PR 4250 (#4238
@@ -741,3 +741,60 @@ explicit measurement/compatibility engine, and no interpreter, Acorn, IR, or
 supporting code is removed. To reopen Phase 2, fix the 20 QuickJS losses (or
 obtain an explicit accepted-residual decision), refresh a complete baseline,
 and rerun the same mechanical gate.
+
+## Parity closure checkpoint — 2026-08-12
+
+The Phase-1 blocker above is retired. The 20 QuickJS-only losses were fixed and
+the two engines were rerun from the same compiler tree, with the same complete
+1,351-file filter and freshly selected full providers. The mechanical gate now
+returns **PROCEED**.
+
+| Engine | Pass | Fail | Compile error | Timeout / skip | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QuickJS | **1,103** | 222 | 26 | 0 / 0 | 1,351 |
+| Interpreter | 1,099 | 226 | 26 | 0 / 0 | 1,351 |
+| Promoted baseline | 1,096 | 229 | 26 | 0 / 0 | 1,351 |
+
+**Net QuickJS vs interpreter: +4.** There are four QuickJS wins, zero QuickJS
+losses, zero neutral status changes, and zero missing or unexpected rows. The
+four wins are:
+
+- `Function.prototype.apply/S15.3.4.3_A3_T10.js`;
+- `Function.prototype.call/S15.3.4.4_A3_T10.js`;
+- `direct/non-definable-global-function.js`; and
+- `direct/non-definable-global-generator.js`.
+
+The repair has three parts:
+
+- published QuickJS functions carry the realm's stable `%Function%` identity,
+  so `new Function(...).constructor === Function` survives the provider seam;
+- primitive properties created on QuickJS `globalThis` are reconciled to the
+  caller realm after eval and interpreted calls, including the
+  `Function(...).apply/call(undefined)` family; and
+- caller-side activation-pool lookup/delete decodes the canonical
+  cross-module value carrier before comparing binding names and deletion
+  markers, so a QuickJS-created function declaration is visible and callable
+  from the surrounding compiled activation.
+
+The intrinsic `eval` and `Function` properties are installed non-enumerably,
+matching the native interpreter and preventing a first-class intrinsic read
+from corrupting a later direct-eval snapshot. Build-time parity canaries cover
+all three repaired families, including constructor identity followed by a
+direct eval in the same module. The compact state-pool suite also stores names,
+values, and markers exactly as a separately compiled provider does, and proves
+read plus deletion across that boundary.
+
+Persisted evidence:
+
+- `benchmarks/results/eval-parity/parity-20260812-0208-0214.json`;
+- `benchmarks/results/eval-parity/parity-20260812-0208-0214.md`;
+- QuickJS provider suite: 28/28;
+- compact direct-eval state-pool suite: 21/21; and
+- the QuickJS build verified its broad strict/sloppy canaries plus the two new
+  focused parity canary modules before publishing the adapter cache entry.
+
+This checkpoint only satisfies the parity prerequisite. It does **not** flip
+the default engine and does not remove, disable, or degrade the native bytecode
+interpreter. Phase 2 remains ready as a separately reviewable default-selection
+and CI-packaging change; `JS2WASM_EVAL_ENGINE=interpreter` remains a permanent,
+tested option.

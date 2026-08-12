@@ -19,6 +19,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addFuncType, getOrRegisterRefCellType } from "./registry/types.js";
+import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
 import { coerceType } from "./shared.js";
 
 /**
@@ -476,6 +477,15 @@ export function ensureDirectEvalStateValueCellLookup(ctx: CodegenContext, cellTy
   const lengthLocal = 5;
   const indexLocal = 6;
   const cellAnyLocal = 7;
+  const locals: { name: string; type: ValType }[] = [
+    { name: "poolAny", type: { kind: "anyref" } },
+    { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
+    { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "cellAny", type: { kind: "anyref" } },
+  ];
+  const unwrapSharedValue = buildRuntimeEvalValueUnwrap(ctx, locals, 2);
   const loopBody: Instr[] = [
     // A malformed/truncated carrier is a miss, never an array OOB trap.
     { op: "local.get", index: indexLocal },
@@ -498,6 +508,7 @@ export function ensureDirectEvalStateValueCellLookup(ctx: CodegenContext, cellTy
         { op: "local.get", index: cellAnyLocal },
         { op: "ref.cast", typeIdx: cellTypeIdx },
         { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        ...unwrapSharedValue,
         { op: "local.get", index: 1 },
         { op: "call", funcIdx: strictEqIdx },
         {
@@ -563,14 +574,7 @@ export function ensureDirectEvalStateValueCellLookup(ctx: CodegenContext, cellTy
   pushDefinedFunc(ctx, funcIdx, {
     name: RUNTIME_EVAL_FIND_STATE_VALUE_CELL,
     typeIdx,
-    locals: [
-      { name: "poolAny", type: { kind: "anyref" } },
-      { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
-      { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
-      { name: "len", type: { kind: "i32" } },
-      { name: "i", type: { kind: "i32" } },
-      { name: "cellAny", type: { kind: "anyref" } },
-    ],
+    locals,
     body,
     exported: false,
   });
@@ -598,6 +602,15 @@ export function ensureDirectEvalStateBindingDelete(ctx: CodegenContext, cellType
   const lengthLocal = 6;
   const indexLocal = 7;
   const cellAnyLocal = 8;
+  const locals: { name: string; type: ValType }[] = [
+    { name: "poolAny", type: { kind: "anyref" } },
+    { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
+    { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
+    { name: "len", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "cellAny", type: { kind: "anyref" } },
+  ];
+  const unwrapSharedValue = buildRuntimeEvalValueUnwrap(ctx, locals, 3);
   const clearCell = (offset: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "ref.as_non_null" },
@@ -639,6 +652,7 @@ export function ensureDirectEvalStateBindingDelete(ctx: CodegenContext, cellType
         { op: "local.get", index: cellAnyLocal },
         { op: "ref.cast", typeIdx: cellTypeIdx },
         { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        ...unwrapSharedValue,
         { op: "local.get", index: 1 },
         { op: "call", funcIdx: strictEqIdx },
         {
@@ -664,6 +678,7 @@ export function ensureDirectEvalStateBindingDelete(ctx: CodegenContext, cellType
                 { op: "local.get", index: cellAnyLocal },
                 { op: "ref.cast", typeIdx: cellTypeIdx },
                 { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+                ...unwrapSharedValue,
                 { op: "local.get", index: 2 },
                 { op: "call", funcIdx: strictEqIdx },
                 {
@@ -732,14 +747,7 @@ export function ensureDirectEvalStateBindingDelete(ctx: CodegenContext, cellType
   pushDefinedFunc(ctx, funcIdx, {
     name: RUNTIME_EVAL_DELETE_STATE_BINDING,
     typeIdx,
-    locals: [
-      { name: "poolAny", type: { kind: "anyref" } },
-      { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
-      { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
-      { name: "len", type: { kind: "i32" } },
-      { name: "i", type: { kind: "i32" } },
-      { name: "cellAny", type: { kind: "anyref" } },
-    ],
+    locals,
     body,
     exported: false,
   });

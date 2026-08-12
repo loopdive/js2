@@ -58,6 +58,16 @@ beforeAll(async () => {
       markerNameCell.value = deletable ? "\\0js2wasm:deletable-eval-binding" : "not-an-eval-binding";
       markerValueCell.value = undefined;
     }
+    function installWrapped(state: any, offset: number, name: string, value: any): void {
+      const nameCell = state[offset] as Cell;
+      const valueCell = state[offset + 1] as Cell;
+      const markerNameCell = state[offset + 2] as Cell;
+      const markerValueCell = state[offset + 3] as Cell;
+      nameCell.value = __runtime_eval_wrap_result(name);
+      valueCell.value = __runtime_eval_wrap_result(value);
+      markerNameCell.value = __runtime_eval_wrap_result("\0js2wasm:deletable-eval-binding");
+      markerValueCell.value = __runtime_eval_wrap_result(undefined);
+    }
     export function __runtime_direct_eval(
       source: any, globalObject: any, thisArg: any, activationState: any,
       activationSeedNames: any, activationSeedSlots: any, lexicalNames: any,
@@ -79,6 +89,13 @@ beforeAll(async () => {
       if (source === "call-made") {
         const callable = (activationState[1] as Cell).value;
         return result(true, callable(41));
+      }
+      if (source === "wrapped-state") {
+        // A separately compiled provider cannot store its private primitive
+        // boxes directly in the caller-owned pool. QuickJS therefore stores
+        // the canonical cross-module value carrier in every cell.
+        installWrapped(activationState, 0, "wrappedMade", 41);
+        return result(true, 0);
       }
       install(activationState, 0, "made", 41, true);
       install(activationState, 4, "Object", 3, true);
@@ -151,6 +168,20 @@ describe("#2928 — compact caller-owned direct-eval state pool", () => {
       }
     `),
     ).toBe(42);
+  });
+
+  it("unwraps cross-module name and marker carriers before lookup and delete", async () => {
+    expect(
+      await runWithStubProvider(`
+        ${JOIN_HELPER}
+        export function run(): number {
+          eval(join(["wrapped-", "state"]));
+          var seen = wrappedMade;
+          var deleted = delete wrappedMade;
+          return seen + (deleted ? 10 : 0) + (typeof wrappedMade === "undefined" ? 1 : 0);
+        }
+      `),
+    ).toBe(52);
   });
 
   it("finds an eval-created binding on a later loop iteration when the read was emitted first", async () => {

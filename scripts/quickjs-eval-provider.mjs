@@ -901,12 +901,28 @@ function qjsPublish(c: number, h: number): any {
   if (existing >= 0) return qjsBoxExposed[existing];
   const retained: number = qjs_dup(c, h);
   if (qjs_is_function(c, h) !== 0) {
+    // Every ordinary function object inherits its constructor identity from
+    // the realm's %Function%.  The callback carrier has an explicit field for
+    // that identity because the caller cannot inspect QuickJS's nominal
+    // function object.  Leaving it undefined is observably wrong for every
+    // new Function(...).constructor === Function check.
+    if (qjsIntrinsicFunction === undefined) {
+      // Materialize only %Function% here. Calling qjsIntrinsicEvalValue would
+      // also install eval/Function properties on the caller realm in the middle
+      // of publishing a result; a later direct-eval activation would then see
+      // those newly-enumerable seam markers as ordinary caller state.
+      qjsIntrinsicFunction = __runtime_eval_wrap_intrinsic_function_callback(
+        qjsFunctionTarget,
+        "Function",
+        1
+      );
+    }
     const carrierTarget: any = {};
     const exposed: any = __runtime_eval_wrap_interpreted_callback(
       carrierTarget,
       qjsPropString(c, h, "name"),
       qjsPropNumber(c, h, "length"),
-      undefined
+      qjsIntrinsicFunction
     );
     qjsPushBoxRow(retained, carrierTarget, exposed, 0);
     return exposed;
@@ -1603,6 +1619,55 @@ function qjsIsMirrorableTag(tag: number): boolean {
   );
 }
 
+/** Publish one own property that QuickJS created on its realm global back onto
+ *  the caller's realm carrier.  Existing globals use the ordinary push/pull
+ *  set; this helper is only for names that did not exist at entry (for example
+ *  a sloppy dynamic function assigning through its this value). */
+function qjsMirrorRealmProperty(c: number, globalObject: any, name: string): boolean {
+  if (globalObject === undefined || globalObject === null) return false;
+  if (qjsIsAdapterPrivateName(name)) return false;
+  const g: number = qjs_global_object(c);
+  const namePtr: number = qjsPushCString(name);
+  if (namePtr === 0) {
+    qjs_free_value(c, g);
+    return false;
+  }
+  const h: number = qjs_get_prop_str(c, g, namePtr);
+  qjs_free_raw(namePtr);
+  qjs_free_value(c, g);
+  if (h === 0) return false;
+  const tag: number = qjs_tag(h);
+  // New *property* reconciliation is intentionally primitive-only. Declared
+  // functions/objects use the EDI and activation-pool paths, while publishing
+  // an arbitrary new object global here would silently turn a live realm
+  // property into a seam-snapshot box.
+  const crossable: boolean = qjsIsMirrorableTag(tag);
+  let mirrored: boolean = false;
+  if (crossable) {
+    qjsPullRefusal = "";
+    const value: any = qjsToGc(c, h);
+    if (qjsPullRefusal === "") {
+      globalObject[name] = __runtime_eval_wrap_result(value);
+      mirrored = true;
+    }
+  }
+  qjs_free_value(c, h);
+  qjsPullRefusal = "";
+  return mirrored;
+}
+
+/** Diff the QuickJS realm's own names against an entry snapshot and publish
+ *  every newly-created, representable global property to the caller realm. */
+function qjsMirrorNewRealmGlobals(c: number, globalObject: any, before: string[]): void {
+  const after: string[] = [];
+  if (!qjsRealmOwnNames(c, after)) return;
+  const fresh: string[] = [];
+  qjsDiffNames(before, after, fresh);
+  for (let i = 0; i < fresh.length; i += 1) {
+    qjsMirrorRealmProperty(c, globalObject, fresh[i] as string);
+  }
+}
+
 /**
  * Mirror the caller's GLOBAL LEXICAL cells (\`let\`/\`const\` at module top
  * level) onto QuickJS \`globalThis\`. They live on a deliberately
@@ -2051,6 +2116,8 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   const script: string = inRealm
     ? ${j(QUICKJS_INDIRECT_EVAL_GLOBAL)} + "(" + ${j(QUICKJS_SOURCE_GLOBAL)} + ")"
     : source;
+  const realmNamesBefore: string[] = [];
+  qjsRealmOwnNames(c, realmNamesBefore);
   const buf: number = qjsPushUtf8(script);
   if (buf === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   const byteLen: number = qjsUtf8Len;
@@ -2068,15 +2135,21 @@ function qjsEvaluate(source: string, globalObject: any, edi: boolean): any {
   if (handle === 0) return runtimeEvalResult(false, new TypeError(${j(QUICKJS_INIT_REFUSAL)}));
   if (qjs_is_exception(handle) !== 0) {
     qjs_free_value(c, handle);
+    // Drain the pending QuickJS exception before running the name-diff helper:
+    // qjsRealmOwnNames evaluates adapter-owned code in the same context, and
+    // doing that while an exception is pending corrupts the exception channel.
+    const thrown: any = qjsThrewResult(c);
     if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
+    qjsMirrorNewRealmGlobals(c, globalObject, realmNamesBefore);
     qjsPullGlobalLexicalCells(c, globalObject);
     qjsPullGlobals(c, globalObject);
-    return qjsThrewResult(c);
+    return thrown;
   }
   qjsPullRefusal = "";
   const value: any = qjsToGc(c, handle);
   qjs_free_value(c, handle);
   if (qjsEvalDepth === 0) qjsSyncBoxes(c, false);
+  qjsMirrorNewRealmGlobals(c, globalObject, realmNamesBefore);
   qjsPullGlobalLexicalCells(c, globalObject);
   qjsPullGlobals(c, globalObject);
   if (qjsPullRefusal !== "") {
@@ -2116,8 +2189,26 @@ function qjsIntrinsicEvalValue(globalObject: any): any {
       qjsIntrinsicFunction
     );
   }
-  if (!("eval" in globalObject)) globalObject.eval = qjsIntrinsicEval;
-  if (!("Function" in globalObject)) globalObject.Function = qjsIntrinsicFunction;
+  // Match the native interpreter's realm installation. These intrinsic data
+  // properties exist for first-class reads and declaration-instantiation, but
+  // they are not enumerable caller state. Plain assignment made them visible
+  // to a later direct-eval activation snapshot and could corrupt that entry.
+  if (!("eval" in globalObject)) {
+    Object.defineProperty(globalObject, "eval", {
+      value: qjsIntrinsicEval,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (!("Function" in globalObject)) {
+    Object.defineProperty(globalObject, "Function", {
+      value: qjsIntrinsicFunction,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
   return globalObject.eval;
 }
 
@@ -3133,10 +3224,12 @@ export function __runtime_apply_interpreted(
   // evaluation would push the caller's PRE-eval values over bindings that
   // evaluation just created.
   const syncGlobals: boolean = qjsEvalDepth === 0 && qjsIntrinsicRealm !== undefined && qjsIntrinsicRealm !== null;
+  const callRealmNamesBefore: string[] = [];
   if (syncGlobals) {
     qjsEdiNames = [];
     qjsPushGlobals(c, qjsIntrinsicRealm);
     qjsPushGlobalLexicalCells(c, qjsIntrinsicRealm);
+    qjsRealmOwnNames(c, callRealmNamesBefore);
   }
   // (#4245 slice 2) Same reasoning as the globals mirror one line up: invoking a
   // QuickJS callable is a seam crossing, so the outward boxes cross with it.
@@ -3186,6 +3279,7 @@ export function __runtime_apply_interpreted(
   qjsPushRefusal = "";
   if (syncBoxes) qjsSyncBoxes(c, false);
   if (syncGlobals) {
+    qjsMirrorNewRealmGlobals(c, qjsIntrinsicRealm, callRealmNamesBefore);
     qjsPullGlobalLexicalCells(c, qjsIntrinsicRealm);
     qjsPullGlobals(c, qjsIntrinsicRealm);
   }
@@ -3427,6 +3521,69 @@ export const QUICKJS_DIRECT_CANARY_EXPECTATIONS = Object.freeze([
     why:
       "a SLOPPY caller's direct eval did not read/write its live binding cells, or an eval-created " +
       "var did not persist in the activation state pool (with-arm)",
+  },
+]);
+
+/**
+ * Focused parity guards for the three QuickJS-only losses measured by #4242.
+ * Keep these separate from the broad adapter canary: each module gets a fresh
+ * realm, matching Test262 isolation and making a failure identify one bridge
+ * rather than a later, unrelated evaluation in the omnibus source.
+ */
+export const QUICKJS_FUNCTION_PARITY_CANARY_SOURCE = `
+      function joinSource(parts: string[]): string {
+        var out = "";
+        for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+        return out;
+      }
+      var constructorIdentity = 0;
+      var appliedGlobal = 0;
+      try {
+        var made: any = new Function(joinSource(["this.quickjsParityGlobal = ", "1;"]));
+        constructorIdentity = made.constructor === Function ? 1 : 0;
+        made.apply(undefined, []);
+        appliedGlobal = (globalThis as any).quickjsParityGlobal === 1 ? 1 : 0;
+      } catch (err) {
+        constructorIdentity = -1;
+        appliedGlobal = -1;
+      }
+      export function functionParityProbe(): number {
+        return constructorIdentity * 10 + appliedGlobal;
+      }
+    `;
+
+export const QUICKJS_FUNCTION_PARITY_CANARY_EXPECTATIONS = Object.freeze([
+  {
+    probe: "functionParityProbe",
+    expected: 11,
+    why:
+      "a QuickJS-created function lost %Function% constructor identity, or a primitive global written " +
+      "through Function#apply did not reach the caller realm",
+  },
+]);
+
+export const QUICKJS_STATE_PARITY_CANARY_SOURCE = `
+      function joinSource(parts: string[]): string {
+        var out = "";
+        for (var i = 0; i < parts.length; i += 1) out = out + parts[i];
+        return out;
+      }
+      export function stateParityProbe(): number {
+        try {
+          eval(joinSource(["function quickjsParityFn(){ return ", "42; }"]));
+          var seen: any = eval(joinSource(["typeof quickjs", "ParityFn"]));
+          return (seen === "function" ? 10 : 0) + (quickjsParityFn() as number);
+        } catch (err) {
+          return -1;
+        }
+      }
+    `;
+
+export const QUICKJS_STATE_PARITY_CANARY_EXPECTATIONS = Object.freeze([
+  {
+    probe: "stateParityProbe",
+    expected: 52,
+    why: "a sloppy direct-eval function declaration did not persist in the caller activation or was not callable",
   },
 ]);
 

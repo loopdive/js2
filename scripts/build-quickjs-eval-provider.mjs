@@ -56,7 +56,11 @@ import {
   QUICKJS_BUILD_SCRIPT,
   QUICKJS_DIRECT_CANARY_EXPECTATIONS,
   QUICKJS_DIRECT_CANARY_SOURCE,
+  QUICKJS_FUNCTION_PARITY_CANARY_EXPECTATIONS,
+  QUICKJS_FUNCTION_PARITY_CANARY_SOURCE,
   QUICKJS_IMPORT_MODULE,
+  QUICKJS_STATE_PARITY_CANARY_EXPECTATIONS,
+  QUICKJS_STATE_PARITY_CANARY_SOURCE,
   quickjsAdapterCachePath,
   quickjsArtifactCacheDir,
   quickjsArtifactCacheKey,
@@ -291,6 +295,18 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
   await runCanary(QUICKJS_DIRECT_CANARY_SOURCE, "quickjs-eval-direct-canary.ts", QUICKJS_DIRECT_CANARY_EXPECTATIONS, {
     inferModuleStrictArguments: false,
   });
+  await runCanary(
+    QUICKJS_FUNCTION_PARITY_CANARY_SOURCE,
+    "quickjs-eval-function-parity-canary.ts",
+    QUICKJS_FUNCTION_PARITY_CANARY_EXPECTATIONS,
+    {},
+  );
+  await runCanary(
+    QUICKJS_STATE_PARITY_CANARY_SOURCE,
+    "quickjs-eval-state-parity-canary.ts",
+    QUICKJS_STATE_PARITY_CANARY_EXPECTATIONS,
+    { inferModuleStrictArguments: false },
+  );
 }
 
 /**
