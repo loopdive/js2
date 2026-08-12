@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-12T09:18:49.552Z",
+  "generatedAt": "2026-08-12T15:02:36.113Z",
   "correctness": {
     "definition": {
       "verified": "a differential workload ran against native Node and every operation matched",
@@ -8,38 +8,37 @@
     },
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
-      "verified": 8,
-      "divergent": 5,
-      "unverified": 11
+      "verified": 5,
+      "divergent": 3,
+      "unverified": 15
     },
     "verified": [
       "clsx",
       "cookie",
       "eslint",
-      "hono",
-      "lodash",
-      "lodash-es",
       "react",
       "redux"
     ],
     "divergent": [
       "acorn",
       "lit",
-      "moment",
-      "react-dom",
-      "uuid"
+      "react-dom"
     ],
     "unverified": [
       "axios",
+      "hono",
       "jest",
       "jsdom",
+      "lodash",
       "marked",
+      "moment",
       "prettier",
       "styled-components",
       "stylelint",
       "tailwindcss",
       "three",
       "typescript",
+      "uuid",
       "webpack"
     ]
   },
@@ -66,7 +65,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1105,
+        "durationMs": 1888,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -82,26 +81,12 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 3,
-        "total": 75,
-        "passRatePct": 4,
-        "admitted": null,
-        "executed": 75,
-        "upstreamTestsSeen": 75,
-        "harnessIncompatible": 0,
-        "quarantined": 0,
-        "sourceIssue": 3995,
-        "upstreamPin": {
-          "repo": "https://github.com/uuidjs/uuid.git",
-          "tag": "v14.0.1",
-          "commit": "70177807e9229dfacde2038dc1e722f1828f358a"
-        }
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 3,
-        "total": 75,
-        "reason": "72 of 75 operations diverged from native node"
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -115,29 +100,21 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 5091,
-        "timedOut": false,
+        "durationMs": 600215,
+        "timedOut": true,
         "timeoutMs": 600000,
-        "errorCount": 1,
+        "errorCount": 0,
         "binaryBytes": 0,
         "categories": {
-          "compiler-diagnostic": {
+          "compile-budget": {
             "count": 1,
-            "sample": "Codegen error: Maximum call stack size exceeded"
+            "sample": "compileProject exceeded the 600000ms budget"
           }
-        },
-        "errors": [
-          {
-            "message": "Codegen error: Maximum call stack size exceeded",
-            "line": 1,
-            "column": 20,
-            "severity": "error"
-          }
-        ]
+        }
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: Maximum call stack size exceeded"
+        "firstError": "compileProject exceeded the 600000ms budget"
       },
       "capabilities": {
         "nodeFs": false
@@ -163,9 +140,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 9920,
+        "durationMs": 25483,
         "errorCount": 0,
-        "binaryBytes": 618391,
+        "binaryBytes": 618358,
         "categories": {}
       },
       "validation": {
@@ -194,42 +171,42 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 1180151.1249999893,
-            "nodeUs": 4512.875000000349,
-            "wasmStdUs": 159721.44400608615,
-            "nodeStdUs": 1126.4274335766302,
-            "ratio": 0.0038239805940111188,
-            "ratioStd": 0.0010480888789021034,
+            "wasmUs": 3522268.463999993,
+            "nodeUs": 10252.773999993224,
+            "wasmStdUs": 594677.2985284064,
+            "nodeStdUs": 503.7915992610973,
+            "ratio": 0.00291084399295046,
+            "ratioStd": 0.0003615288645826312,
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1210022.1249999958,
-              1193736.3329999936,
-              1137507.5840000063,
-              1180151.1249999893,
-              1188353.6250000033,
-              1151668.6659999979,
-              1175648.291999998,
-              1178092.8330000024,
-              1681001.1250000098
+              3621684.097999998,
+              5418203.179999982,
+              3497955.886999989,
+              3504728.471000009,
+              3539550.146000023,
+              3525217.759000021,
+              3506891.2019999987,
+              3515464.7460000124,
+              3522268.463999993
             ],
             "nodeSamplesUs": [
-              4648.1669999921,
-              4293.458000000101,
-              4264.54200000444,
-              4512.875000000349,
-              8003.792000003159,
-              4382.62499999837,
-              4628.084000010858,
-              4514.416999998502,
-              4314.457999993465
+              11502.095000003465,
+              10122.560999996495,
+              10360.89200002607,
+              10128.406999981962,
+              11097.330000018701,
+              10252.773999993224,
+              9950.26099999086,
+              10331.64200000465,
+              9948.898000002373
             ],
-            "compileDurationMs": 14533.035917000001,
-            "wasmCompileMs": 0.9905419999995502,
-            "instantiateMs": 2.5557499999995343,
-            "wireMs": 0.07200000000011642,
-            "wrapMs": 0.13575000000128057,
+            "compileDurationMs": 31510.101096000006,
+            "wasmCompileMs": 1.695424000005005,
+            "instantiateMs": 5.497499999997672,
+            "wireMs": 0.19882099999813363,
+            "wrapMs": 0.31150199999683537,
             "binaryBytes": 344915,
             "moduleImportCount": 1155,
             "functionImportCount": 83,
@@ -244,41 +221,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.08613333338871598,
-            "nodeUs": 5149.805533333953,
-            "wasmStdUs": 0.024500228120670316,
-            "nodeStdUs": 249.12653491245194,
-            "ratio": 59788.76389345231,
-            "ratioStd": 14967.990492267729,
-            "iters": 15,
+            "wasmUs": 1.2620000052265823,
+            "nodeUs": 10052.945000003092,
+            "wasmStdUs": 0.29779135345544633,
+            "nodeStdUs": 1004.6956247948243,
+            "ratio": 7965.8834852367245,
+            "ratioStd": 1101.160763847469,
+            "iters": 2,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.1444666665823509,
-              0.08613333338871598,
-              0.06393333314917982,
-              0.10559999985465159,
-              0.07219999970402569,
-              0.1166666663872699,
-              0.09446666711786142,
-              0.06946666690055281,
-              0.08053333343317111
+              2.113499998813495,
+              1.3225000002421439,
+              1.2119999737478793,
+              1.2724999978672713,
+              1.6579999937675893,
+              1.2575000000651926,
+              1.0870000114664435,
+              1.2220000207889825,
+              1.2620000052265823
             ],
             "nodeSamplesUs": [
-              4643.975000000015,
-              5130.194400000619,
-              5030.644399999679,
-              5278.227799999877,
-              5251.616666666814,
-              5173.588933333909,
-              4587.0166666660225,
-              5285.166666666433,
-              5149.805533333953
+              11378.578999981983,
+              9893.787999986671,
+              10052.945000003092,
+              11066.130999999586,
+              12755.248000001302,
+              9578.9105000149,
+              9971.086999983527,
+              11298.524000012549,
+              9651.921499986202
             ],
-            "compileDurationMs": 46060.92741599999,
-            "moduleCompileDurationMs": 0.22558300000673626,
-            "instantiateDurationMs": 0.011417000001529232,
-            "firstBatchDurationMs": 0.027000000001862645,
+            "compileDurationMs": 90524.55733299998,
+            "moduleCompileDurationMs": 0.29801600001519546,
+            "instantiateDurationMs": 0.028043000027537346,
+            "firstBatchDurationMs": 0.092501999984961,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -293,8 +270,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 97.67429199999606,
-              "stageBinaryBytes": 1674571,
+              "stageDurationMs": 271.6051720000105,
+              "stageBinaryBytes": 1673915,
               "stageModuleImportCount": 0
             }
           },
@@ -303,43 +280,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 32225.29166666694,
-            "nodeUs": 4333.430666665663,
-            "wasmStdUs": 139.65594592812315,
-            "nodeStdUs": 76.99328875119454,
-            "ratio": 0.13447296960070834,
-            "ratioStd": 0.002646062281467076,
-            "iters": 6,
+            "wasmUs": 98608.5923333303,
+            "nodeUs": 10499.065333337057,
+            "wasmStdUs": 2011.49630226605,
+            "nodeStdUs": 465.93238601997814,
+            "ratio": 0.10647211449735207,
+            "ratioStd": 0.004569539436033239,
+            "iters": 3,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              31832.736000001507,
-              32310.12500000361,
-              32259.423666667622,
-              32292.291666667246,
-              32225.29166666694,
-              32144.215166665766,
-              32077.847166665983,
-              32136.347333333106,
-              32246.527833330525
+              100768.94533333446,
+              104037.1429999941,
+              101009.75099999535,
+              101579.34033333247,
+              97787.04166666527,
+              98254.07700000021,
+              98345.31733333522,
+              98089.86733331888,
+              98608.5923333303
             ],
             "nodeSamplesUs": [
-              4382.472333333378,
-              4287.63199999715,
-              4347.4721666668,
-              4284.757000001264,
-              4319.729166668064,
-              4546.159666667033,
-              4292.006833333289,
-              4384.652833333045,
-              4333.430666665663
+              11179.274333349895,
+              10372.288666665554,
+              10499.065333337057,
+              11802.854333325135,
+              10403.369999995144,
+              10375.238666679556,
+              10519.624666660093,
+              10975.168333330657,
+              10442.290333332494
             ],
-            "compileDurationMs": 44482.9715,
-            "moduleCompileDurationMs": 5.842040999996243,
-            "instantiateDurationMs": 3.6465840000018943,
-            "moduleInitDurationMs": 10.350291999988258,
-            "firstBatchDurationMs": 95.84791699997731,
-            "binaryBytes": 1675221,
+            "compileDurationMs": 89398.21958100004,
+            "moduleCompileDurationMs": 15.870350000041071,
+            "instantiateDurationMs": 19.641344999952707,
+            "moduleInitDurationMs": 22.864890000026207,
+            "firstBatchDurationMs": 372.1395960000227,
+            "binaryBytes": 1674566,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -383,36 +360,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 1180151.1249999893,
-        "nodeUs": 4512.875000000349,
-        "wasmStdUs": 159721.44400608615,
-        "nodeStdUs": 1126.4274335766302,
-        "ratio": 0.0038239805940111188,
-        "ratioStd": 0.0010480888789021034,
+        "wasmUs": 3522268.463999993,
+        "nodeUs": 10252.773999993224,
+        "wasmStdUs": 594677.2985284064,
+        "nodeStdUs": 503.7915992610973,
+        "ratio": 0.00291084399295046,
+        "ratioStd": 0.0003615288645826312,
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          1210022.1249999958,
-          1193736.3329999936,
-          1137507.5840000063,
-          1180151.1249999893,
-          1188353.6250000033,
-          1151668.6659999979,
-          1175648.291999998,
-          1178092.8330000024,
-          1681001.1250000098
+          3621684.097999998,
+          5418203.179999982,
+          3497955.886999989,
+          3504728.471000009,
+          3539550.146000023,
+          3525217.759000021,
+          3506891.2019999987,
+          3515464.7460000124,
+          3522268.463999993
         ],
         "nodeSamplesUs": [
-          4648.1669999921,
-          4293.458000000101,
-          4264.54200000444,
-          4512.875000000349,
-          8003.792000003159,
-          4382.62499999837,
-          4628.084000010858,
-          4514.416999998502,
-          4314.457999993465
+          11502.095000003465,
+          10122.560999996495,
+          10360.89200002607,
+          10128.406999981962,
+          11097.330000018701,
+          10252.773999993224,
+          9950.26099999086,
+          10331.64200000465,
+          9948.898000002373
         ]
       },
       "knownBugs": [
@@ -435,7 +412,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 124,
+        "durationMs": 376,
         "errorCount": 9,
         "binaryBytes": 19408,
         "categories": {
@@ -475,36 +452,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 173.24950809994655,
-            "nodeUs": 0.2706646073585233,
-            "wasmStdUs": 81.43219701742613,
-            "nodeStdUs": 0.004089889547739052,
-            "ratio": 0.0015622821116604766,
-            "ratioStd": 0.0008085431627735927,
-            "iters": 14568,
+            "wasmUs": 267.08477045416487,
+            "nodeUs": 0.605301196913837,
+            "wasmStdUs": 114.09400099330308,
+            "nodeStdUs": 0.006162289550576556,
+            "ratio": 0.0022663261401410168,
+            "ratioStd": 0.0010065608733467728,
+            "iters": 6099,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              126.93212294069312,
-              173.24950809994655,
-              231.34935873146728,
-              257.0508391680396,
-              75.77318149368608,
-              117.47010289676045,
-              161.9615853239984,
-              216.43407063426588,
-              361.5788714991763
+              133.45921626495664,
+              174.98372962780724,
+              193.7568078373505,
+              234.20346466633956,
+              267.08477045416487,
+              305.29215461550825,
+              332.8542728316129,
+              412.7954190851013,
+              512.6603400557431
             ],
             "nodeSamplesUs": [
-              0.2728497391533039,
-              0.2706646073585233,
-              0.26201263042153405,
-              0.26173805601281197,
-              0.26826489566086814,
-              0.272169000548932,
-              0.2648156232835605,
-              0.2711879461827103,
-              0.27079324547004746
+              0.6098399737648725,
+              0.6007984915573702,
+              0.6029012952929699,
+              0.605301196913837,
+              0.6193985899248831,
+              0.6061949499983998,
+              0.59636842104907,
+              0.6052188883418137,
+              0.6101801934772512
             ],
             "binaryBytes": 15221,
             "moduleImportCount": 138,
@@ -519,41 +496,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0006737937825180529,
-            "nodeUs": 0.26539757865616426,
-            "wasmStdUs": 0.00002829327161719755,
-            "nodeStdUs": 0.00828426230098069,
-            "ratio": 393.88546695153497,
-            "ratioStd": 9.524517636648103,
-            "iters": 1066350,
+            "wasmUs": 0.0009458627367451436,
+            "nodeUs": 0.5769060127780516,
+            "wasmStdUs": 0.000009934438444343475,
+            "nodeStdUs": 0.0010424473088659842,
+            "ratio": 609.9257221647956,
+            "ratioStd": 6.697639647629674,
+            "iters": 449210,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.000685555399285917,
-              0.0006694959441229418,
-              0.0006737937825180529,
-              0.0006694959441229418,
-              0.0007604604491913938,
-              0.0007084128100529548,
-              0.0006826248417602806,
-              0.0006708238383270976,
-              0.0006700820556116934
+              0.0009458627367451436,
+              0.0009449032746583468,
+              0.0009457069077321253,
+              0.0009652033570136496,
+              0.0009671445425303505,
+              0.0009406046169364436,
+              0.0009637764073694868,
+              0.0009596491618210593,
+              0.0009455310432641126
             ],
             "nodeSamplesUs": [
-              0.2613536043512767,
-              0.26087072724715,
-              0.2629572063581493,
-              0.2733664294087287,
-              0.288262961504211,
-              0.2684556355793195,
-              0.26539757865616426,
-              0.2701295700285851,
-              0.26119347962676537
+              0.5770905968254554,
+              0.5778673805124767,
+              0.5772734066472214,
+              0.5777042786225574,
+              0.5765124997217528,
+              0.5769060127780516,
+              0.5752710981500344,
+              0.5748400703458151,
+              0.5754502793793528
             ],
-            "compileDurationMs": 323.6014579999901,
-            "moduleCompileDurationMs": 0.3397079999849666,
-            "instantiateDurationMs": 0.019124999991618097,
-            "firstBatchDurationMs": 0.018958000000566244,
+            "compileDurationMs": 404.94107500003884,
+            "moduleCompileDurationMs": 0.23663100000703707,
+            "instantiateDurationMs": 0.02276199997868389,
+            "firstBatchDurationMs": 0.052036999957636,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -571,43 +548,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 1.2902030489684992,
-            "nodeUs": 0.37299405431224697,
-            "wasmStdUs": 0.013080476341514215,
-            "nodeStdUs": 0.005966261530197036,
-            "ratio": 0.2890971732011104,
-            "ratioStd": 0.004914383723375085,
-            "iters": 200986,
+            "wasmUs": 3.299369659970264,
+            "nodeUs": 0.8036710685830483,
+            "wasmStdUs": 0.0187460548251707,
+            "nodeStdUs": 0.00752337515295547,
+            "ratio": 0.24358321479815373,
+            "ratioStd": 0.003161463315680025,
+            "iters": 69288,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.3272288467852944,
-              1.2902030489684992,
-              1.2846141422786066,
-              1.2845407540822584,
-              1.2849676096842764,
-              1.2970383111261998,
-              1.2983454071428115,
-              1.2852530773288087,
-              1.302069756102374
+              3.337456572566942,
+              3.294137354232309,
+              3.3382126197899553,
+              3.3237881162680885,
+              3.299369659970264,
+              3.295149217758049,
+              3.3008420650041974,
+              3.291001659739026,
+              3.2889725493593183
             ],
             "nodeSamplesUs": [
-              0.37210738558906453,
-              0.38024995273300943,
-              0.3687520523817649,
-              0.3654006597474712,
-              0.3710372463753017,
-              0.37299405431224697,
-              0.37887755366047493,
-              0.378341232722684,
-              0.3853784193924054
+              0.7982470269024531,
+              0.8184586652812806,
+              0.8024252540119514,
+              0.8059417936723656,
+              0.8169035475115038,
+              0.8036710685830483,
+              0.7994311280452292,
+              0.8157295635604876,
+              0.8009195676020178
             ],
-            "compileDurationMs": 1508.408999999985,
-            "moduleCompileDurationMs": 0.4784579999977723,
-            "instantiateDurationMs": 0.10529100001440383,
-            "moduleInitDurationMs": 0.23404099998879246,
-            "firstBatchDurationMs": 0.6520420000015292,
-            "binaryBytes": 47379,
+            "compileDurationMs": 2807.9636039999896,
+            "moduleCompileDurationMs": 3.944240999990143,
+            "instantiateDurationMs": 0.25495600001886487,
+            "moduleInitDurationMs": 0.5612379999947734,
+            "firstBatchDurationMs": 1.0189719999907538,
+            "binaryBytes": 48608,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 1,
@@ -619,36 +596,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 173.24950809994655,
-        "nodeUs": 0.2706646073585233,
-        "wasmStdUs": 81.43219701742613,
-        "nodeStdUs": 0.004089889547739052,
-        "ratio": 0.0015622821116604766,
-        "ratioStd": 0.0008085431627735927,
-        "iters": 14568,
+        "wasmUs": 267.08477045416487,
+        "nodeUs": 0.605301196913837,
+        "wasmStdUs": 114.09400099330308,
+        "nodeStdUs": 0.006162289550576556,
+        "ratio": 0.0022663261401410168,
+        "ratioStd": 0.0010065608733467728,
+        "iters": 6099,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          126.93212294069312,
-          173.24950809994655,
-          231.34935873146728,
-          257.0508391680396,
-          75.77318149368608,
-          117.47010289676045,
-          161.9615853239984,
-          216.43407063426588,
-          361.5788714991763
+          133.45921626495664,
+          174.98372962780724,
+          193.7568078373505,
+          234.20346466633956,
+          267.08477045416487,
+          305.29215461550825,
+          332.8542728316129,
+          412.7954190851013,
+          512.6603400557431
         ],
         "nodeSamplesUs": [
-          0.2728497391533039,
-          0.2706646073585233,
-          0.26201263042153405,
-          0.26173805601281197,
-          0.26826489566086814,
-          0.272169000548932,
-          0.2648156232835605,
-          0.2711879461827103,
-          0.27079324547004746
+          0.6098399737648725,
+          0.6007984915573702,
+          0.6029012952929699,
+          0.605301196913837,
+          0.6193985899248831,
+          0.6061949499983998,
+          0.59636842104907,
+          0.6052188883418137,
+          0.6101801934772512
         ]
       },
       "knownBugs": [
@@ -667,11 +644,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 21465,
+        "durationMs": 43875,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 1455243,
+        "binaryBytes": 1455288,
         "categories": {}
       },
       "validation": {
@@ -683,25 +660,12 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 11,
-        "total": 11,
-        "passRatePct": 100,
-        "admitted": 11,
-        "executed": 11,
-        "upstreamTestsSeen": 1753,
-        "harnessIncompatible": 0,
-        "quarantined": 0,
-        "sourceIssue": 3995,
-        "upstreamPin": {
-          "repo": "https://github.com/lodash/lodash.git",
-          "tag": "4.18.1",
-          "commit": "cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e"
-        }
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
       },
       "correctness": {
-        "status": "verified",
-        "passed": 11,
-        "total": 11
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -715,11 +679,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1047,
+        "durationMs": 1901,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 1691,
+        "binaryBytes": 2163,
         "categories": {}
       },
       "validation": {
@@ -758,7 +722,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180032,
+        "durationMs": 180159,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -815,11 +779,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1163,
+        "durationMs": 1985,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 5833,
+        "binaryBytes": 5731,
         "categories": {}
       },
       "validation": {
@@ -859,7 +823,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 20980,
+        "durationMs": 42327,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 2,
@@ -911,7 +875,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120021,
+        "durationMs": 120142,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -951,7 +915,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 10492,
+        "durationMs": 20414,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1000,7 +964,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 81,
+        "durationMs": 374,
         "errorCount": 0,
         "binaryBytes": 8152,
         "categories": {}
@@ -1029,36 +993,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 0.15151602141703904,
-            "nodeUs": 0.016547278299237377,
-            "wasmStdUs": 0.001204021710515126,
-            "nodeStdUs": 0.00033207978686054985,
-            "ratio": 0.10921140975377089,
-            "ratioStd": 0.002348584252561044,
-            "iters": 1716390,
+            "wasmUs": 0.3028765395909112,
+            "nodeUs": 0.03564224379745845,
+            "wasmStdUs": 0.0003826877206671053,
+            "nodeStdUs": 0.0003678510793395492,
+            "ratio": 0.1176791171927666,
+            "ratioStd": 0.0012447204138377203,
+            "iters": 791444,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.15229828302425616,
-              0.1506643548377725,
-              0.15365823501651063,
-              0.15120953920729024,
-              0.151459701466442,
-              0.15234632513589597,
-              0.15465038540192239,
-              0.15151602141703904,
-              0.15144943223859392
+              0.3034617294463994,
+              0.3028765395909112,
+              0.30314328366882143,
+              0.30273868523864655,
+              0.3034151058065633,
+              0.3028180806222807,
+              0.30291860321133124,
+              0.3023152238187271,
+              0.30234969372442616
             ],
             "nodeSamplesUs": [
-              0.016309424431505223,
-              0.01669523942694973,
-              0.017016650644675568,
-              0.016862184002475744,
-              0.016332486789135386,
-              0.017312232068470178,
-              0.01631847948310089,
-              0.016462434528279866,
-              0.016547278299237377
+              0.034953075643983006,
+              0.03564282627702695,
+              0.03577474211691371,
+              0.03501672386165097,
+              0.03521898580318071,
+              0.03595281409676898,
+              0.03587268334839916,
+              0.03510285377112993,
+              0.03564224379745845
             ],
             "binaryBytes": 2093,
             "moduleImportCount": 20,
@@ -1073,41 +1037,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0006752128523616123,
-            "nodeUs": 0.011637897352213692,
-            "wasmStdUs": 0.000027975230547984125,
-            "nodeStdUs": 0.0005911600637010697,
-            "ratio": 17.235894298381897,
-            "ratioStd": 0.6392167648011698,
-            "iters": 11778939,
+            "wasmUs": 0.0009483640331289757,
+            "nodeUs": 0.02694909946440626,
+            "wasmStdUs": 0.000001138203111953207,
+            "nodeStdUs": 0.00020475344815674886,
+            "ratio": 28.416408175552597,
+            "ratioStd": 0.2254660877511416,
+            "iters": 4487163,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0007261760163628319,
-              0.0007032643602282567,
-              0.0007416450666730014,
-              0.0007208062627707198,
-              0.0006752128523616123,
-              0.0006684317662223433,
-              0.0006683574810937842,
-              0.000669008303720468,
-              0.0006685590272604915
+              0.0009476072074877816,
+              0.0009483640331289757,
+              0.0009474576697983659,
+              0.0009498108270196784,
+              0.0009491389102598282,
+              0.0009496815694035357,
+              0.0009479033857169942,
+              0.0009464387631962919,
+              0.0009497811869185745
             ],
             "nodeSamplesUs": [
-              0.012793600679993898,
-              0.013128364787356357,
-              0.012477765102611813,
-              0.011607673916981483,
-              0.011683876366114733,
-              0.011630677516879498,
-              0.011447815885625521,
-              0.011637897352213692,
-              0.011566689750241542
+              0.02665506891548531,
+              0.026696573536542437,
+              0.02714043706457524,
+              0.02694909946440626,
+              0.02661351103134595,
+              0.02671448195664323,
+              0.027017873431384815,
+              0.027062352091950435,
+              0.027145370471271777
             ],
-            "compileDurationMs": 264.8033749999886,
-            "moduleCompileDurationMs": 0.22970800002804026,
-            "instantiateDurationMs": 0.011999999987892807,
-            "firstBatchDurationMs": 0.019417000003159046,
+            "compileDurationMs": 379.92227799998363,
+            "moduleCompileDurationMs": 3.4837839999818243,
+            "instantiateDurationMs": 0.031177999975625426,
+            "firstBatchDurationMs": 0.04582499997923151,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -1125,42 +1089,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.14375086182496188,
-            "nodeUs": 0.02765279166940666,
-            "wasmStdUs": 0.0029781260196557104,
-            "nodeStdUs": 0.0003699066923477465,
-            "ratio": 0.19236609310264907,
-            "ratioStd": 0.005674806757304683,
-            "iters": 2144577,
+            "wasmUs": 0.30563877345825097,
+            "nodeUs": 0.056034313132811944,
+            "wasmStdUs": 0.010106127193276351,
+            "nodeStdUs": 0.0005158596530352823,
+            "ratio": 0.18333509357727484,
+            "ratioStd": 0.004882097176492499,
+            "iters": 942846,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.14375086182496188,
-              0.14450258349315762,
-              0.14185377023068815,
-              0.14476446497374892,
-              0.1435884367872963,
-              0.14557140312518727,
-              0.14163919784647813,
-              0.14028574539408856,
-              0.15124361773906778
+              0.3367246888675766,
+              0.30563877345825097,
+              0.30643867079035925,
+              0.3112107449149015,
+              0.3037947957566965,
+              0.3038839905987106,
+              0.30642674307362805,
+              0.30281713980861413,
+              0.30354906951928184
             ],
             "nodeSamplesUs": [
-              0.02765279166940666,
-              0.027239793208633956,
-              0.02831444149592367,
-              0.027401926813543316,
-              0.028086404918066975,
-              0.027110183033760726,
-              0.027725125281112012,
-              0.027781935551864513,
-              0.027411155206834303
+              0.05719177787254303,
+              0.05638146632641878,
+              0.05681508008728621,
+              0.055594650664031714,
+              0.05589824637321134,
+              0.05666951442757252,
+              0.05570566030928837,
+              0.05593457680256919,
+              0.056034313132811944
             ],
-            "compileDurationMs": 1054.047749999998,
-            "moduleCompileDurationMs": 0.3976670000120066,
-            "instantiateDurationMs": 0.0623749999795109,
-            "firstBatchDurationMs": 0.3140000000130385,
-            "binaryBytes": 37221,
+            "compileDurationMs": 1955.8489929999923,
+            "moduleCompileDurationMs": 7.667955000011716,
+            "instantiateDurationMs": 0.2649259999743663,
+            "firstBatchDurationMs": 0.6919340000022203,
+            "binaryBytes": 38062,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 14,
@@ -1172,36 +1136,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 0.15151602141703904,
-        "nodeUs": 0.016547278299237377,
-        "wasmStdUs": 0.001204021710515126,
-        "nodeStdUs": 0.00033207978686054985,
-        "ratio": 0.10921140975377089,
-        "ratioStd": 0.002348584252561044,
-        "iters": 1716390,
+        "wasmUs": 0.3028765395909112,
+        "nodeUs": 0.03564224379745845,
+        "wasmStdUs": 0.0003826877206671053,
+        "nodeStdUs": 0.0003678510793395492,
+        "ratio": 0.1176791171927666,
+        "ratioStd": 0.0012447204138377203,
+        "iters": 791444,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.15229828302425616,
-          0.1506643548377725,
-          0.15365823501651063,
-          0.15120953920729024,
-          0.151459701466442,
-          0.15234632513589597,
-          0.15465038540192239,
-          0.15151602141703904,
-          0.15144943223859392
+          0.3034617294463994,
+          0.3028765395909112,
+          0.30314328366882143,
+          0.30273868523864655,
+          0.3034151058065633,
+          0.3028180806222807,
+          0.30291860321133124,
+          0.3023152238187271,
+          0.30234969372442616
         ],
         "nodeSamplesUs": [
-          0.016309424431505223,
-          0.01669523942694973,
-          0.017016650644675568,
-          0.016862184002475744,
-          0.016332486789135386,
-          0.017312232068470178,
-          0.01631847948310089,
-          0.016462434528279866,
-          0.016547278299237377
+          0.034953075643983006,
+          0.03564282627702695,
+          0.03577474211691371,
+          0.03501672386165097,
+          0.03521898580318071,
+          0.03595281409676898,
+          0.03587268334839916,
+          0.03510285377112993,
+          0.03564224379745845
         ]
       },
       "knownBugs": [
@@ -1220,7 +1184,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180087,
+        "durationMs": 180151,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1274,7 +1238,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 245,
+        "durationMs": 838,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1338,7 +1302,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120083,
+        "durationMs": 120216,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1378,11 +1342,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 3373,
+        "durationMs": 6737,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 366618,
+        "binaryBytes": 366718,
         "categories": {}
       },
       "validation": {
@@ -1394,25 +1358,12 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 31,
-        "total": 31,
-        "passRatePct": 100,
-        "admitted": 31,
-        "executed": 31,
-        "upstreamTestsSeen": 2355,
-        "harnessIncompatible": 0,
-        "quarantined": 0,
-        "sourceIssue": 3995,
-        "upstreamPin": {
-          "repo": "https://github.com/honojs/hono.git",
-          "tag": "v4.12.16",
-          "commit": "90d4182aabd328e2ec6af3f25ec62ddc574ad8cb"
-        }
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
       },
       "correctness": {
-        "status": "verified",
-        "passed": 31,
-        "total": 31
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1426,7 +1377,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 5904,
+        "durationMs": 12377,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1440,10 +1391,10 @@
         "errors": [
           {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
-            "line": 1565,
+            "line": 1562,
             "column": 7,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/@jest+core@30.4.2/node_modules/@jest/core/build/index.js"
+            "file": "node_modules/.pnpm/@jest+core@30.4.2/node_modules/@jest/core/build/index.js"
           }
         ]
       },
@@ -1468,145 +1419,6 @@
       "weeklyDownloads": 46631732
     },
     {
-      "name": "lodash-es",
-      "version": "4.18.1",
-      "issue": 1031,
-      "entryFile": "lodash.js",
-      "shape": "esm-project",
-      "compile": {
-        "success": true,
-        "durationMs": 8229,
-        "timedOut": false,
-        "timeoutMs": 120000,
-        "errorCount": 12,
-        "binaryBytes": 1009780,
-        "categories": {
-          "compiler-diagnostic": {
-            "count": 12,
-            "sample": "IR path: could not resolve types for keysIn: object TypeNode TypeReference could not be lowered to IrType.object"
-          }
-        },
-        "errors": [
-          {
-            "message": "IR path: could not resolve types for keysIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for castSlice: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for cacheHas: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for conformsTo: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for functions: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for functionsIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for values: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for initial: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for omitBy: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for once: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for tail: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          },
-          {
-            "message": "IR path: could not resolve types for valuesIn: object TypeNode TypeReference could not be lowered to IrType.object",
-            "line": 640,
-            "column": 35,
-            "severity": "warning",
-            "file": "lodash.default.js"
-          }
-        ]
-      },
-      "validation": {
-        "validates": true,
-        "firstError": null
-      },
-      "capabilities": {
-        "nodeFs": false
-      },
-      "tests": {
-        "kind": "upstream-suite",
-        "passed": 11,
-        "total": 11,
-        "passRatePct": 100,
-        "admitted": 11,
-        "executed": 11,
-        "upstreamTestsSeen": 1753,
-        "harnessIncompatible": 0,
-        "quarantined": 0,
-        "sourceIssue": 3995,
-        "upstreamPin": {
-          "repo": "https://github.com/lodash/lodash.git",
-          "tag": "4.18.1",
-          "commit": "cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e"
-        }
-      },
-      "correctness": {
-        "status": "verified",
-        "passed": 11,
-        "total": 11
-      },
-      "perf": null,
-      "knownBugs": [],
-      "weeklyDownloads": 42294984
-    },
-    {
       "name": "redux",
       "version": "5.0.1",
       "issue": null,
@@ -1614,7 +1426,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1143,
+        "durationMs": 2672,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1650,42 +1462,28 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 5870,
+        "durationMs": 11864,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 421649,
+        "binaryBytes": 420910,
         "categories": {}
       },
       "validation": {
-        "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #369:\"configFromArray\" failed: global.set[0] expected type i32, found struct.new of type (ref 2) @+182580"
+        "validates": true,
+        "firstError": null
       },
       "capabilities": {
         "nodeFs": false
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 0,
-        "total": 10,
-        "passRatePct": 0,
-        "admitted": 10,
-        "executed": 10,
-        "upstreamTestsSeen": 2638,
-        "harnessIncompatible": 0,
-        "quarantined": 0,
-        "sourceIssue": 3995,
-        "upstreamPin": {
-          "repo": "https://github.com/moment/moment.git",
-          "tag": "2.30.1",
-          "commit": "485d9a7d709bd5f3869a7ad24630cf0746d072dc"
-        }
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
       },
       "correctness": {
-        "status": "divergent",
-        "passed": 0,
-        "total": 10,
-        "reason": "10 of 10 operations diverged from native node"
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1699,7 +1497,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180037,
+        "durationMs": 180162,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1739,11 +1537,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 3249,
+        "durationMs": 7454,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 272352,
+        "binaryBytes": 272297,
         "categories": {}
       },
       "validation": {
@@ -1774,7 +1572,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 27992,
+        "durationMs": 45029,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 6,
@@ -1791,42 +1589,42 @@
             "line": 97,
             "column": 3,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/@sindresorhus+merge-streams@4.0.0/node_modules/@sindresorhus/merge-streams/index.js"
+            "file": "node_modules/.pnpm/@sindresorhus+merge-streams@4.0.0/node_modules/@sindresorhus/merge-streams/index.js"
           },
           {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
             "line": 135,
             "column": 3,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/@sindresorhus+merge-streams@4.0.0/node_modules/@sindresorhus/merge-streams/index.js"
+            "file": "node_modules/.pnpm/@sindresorhus+merge-streams@4.0.0/node_modules/@sindresorhus/merge-streams/index.js"
           },
           {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
             "line": 244,
             "column": 18,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/globby@16.2.2/node_modules/globby/utilities.js"
+            "file": "node_modules/.pnpm/globby@16.2.2/node_modules/globby/utilities.js"
           },
           {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
             "line": 645,
             "column": 13,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/globby@16.2.2/node_modules/globby/ignore.js"
+            "file": "node_modules/.pnpm/globby@16.2.2/node_modules/globby/ignore.js"
           },
           {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
             "line": 700,
             "column": 51,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/globby@16.2.2/node_modules/globby/ignore.js"
+            "file": "node_modules/.pnpm/globby@16.2.2/node_modules/globby/ignore.js"
           },
           {
             "message": "Codegen error: module TDZ global noop was observed before its value global (at src/codegen/program-abi-global-planning.ts:272:11)",
             "line": 170,
             "column": 12,
             "severity": "error",
-            "file": "js2-react-infra/node_modules/.pnpm/css-tree@3.2.1/node_modules/css-tree/cjs/lexer/structure.cjs"
+            "file": "node_modules/.pnpm/css-tree@3.2.1/node_modules/css-tree/cjs/lexer/structure.cjs"
           }
         ]
       },
@@ -1858,7 +1656,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1761,
+        "durationMs": 3528,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1898,38 +1696,38 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.18609026109614474,
-            "nodeUs": 0.00405863394191653,
-            "wasmStdUs": 0.0022933394964791075,
-            "nodeStdUs": 0.00004422501683907959,
-            "ratio": 0.021810028735569403,
-            "ratioStd": 0.0003900932768825816,
-            "iters": 1375432,
+            "wasmUs": 0.537858848683048,
+            "nodeUs": 0.005292915587467751,
+            "wasmStdUs": 0.0006225081509070669,
+            "nodeStdUs": 0.00001361074437480655,
+            "ratio": 0.0098407149021114,
+            "ratioStd": 0.000030747633280999196,
+            "iters": 413457,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.18562580120283453,
-              0.18557702816281493,
-              0.18653091028851657,
-              0.1930644037655497,
-              0.18609026109614474,
-              0.18586390821213344,
-              0.18711142535583403,
-              0.1889622075101157,
-              0.18607974948963749
+              0.5381045574268666,
+              0.537858848683048,
+              0.5369081258754593,
+              0.5380386231219841,
+              0.5370239033320883,
+              0.5389299274166385,
+              0.5377430954123522,
+              0.5369813039807564,
+              0.5379768077453001
             ],
             "nodeSamplesUs": [
-              0.004055029256236617,
-              0.004038004059818097,
-              0.00412964217789159,
-              0.00405863394191653,
-              0.004126127645714631,
-              0.0040433958203759815,
-              0.004058694286545353,
-              0.004044183936392348,
-              0.004164206591156218
+              0.005291147567550106,
+              0.005290613050489909,
+              0.005288071069452558,
+              0.00531339171913371,
+              0.005293885458643263,
+              0.005289960019598502,
+              0.005292915587467751,
+              0.0053315169413926285,
+              0.005296236368050304
             ],
-            "compileDurationMs": 391.05970800004434,
+            "compileDurationMs": 470.7638639998622,
             "binaryBytes": 1319,
             "moduleImportCount": 3,
             "functionImportCount": 3,
@@ -1951,36 +1749,36 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.18609026109614474,
-        "nodeUs": 0.00405863394191653,
-        "wasmStdUs": 0.0022933394964791075,
-        "nodeStdUs": 0.00004422501683907959,
-        "ratio": 0.021810028735569403,
-        "ratioStd": 0.0003900932768825816,
-        "iters": 1375432,
+        "wasmUs": 0.537858848683048,
+        "nodeUs": 0.005292915587467751,
+        "wasmStdUs": 0.0006225081509070669,
+        "nodeStdUs": 0.00001361074437480655,
+        "ratio": 0.0098407149021114,
+        "ratioStd": 0.000030747633280999196,
+        "iters": 413457,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.18562580120283453,
-          0.18557702816281493,
-          0.18653091028851657,
-          0.1930644037655497,
-          0.18609026109614474,
-          0.18586390821213344,
-          0.18711142535583403,
-          0.1889622075101157,
-          0.18607974948963749
+          0.5381045574268666,
+          0.537858848683048,
+          0.5369081258754593,
+          0.5380386231219841,
+          0.5370239033320883,
+          0.5389299274166385,
+          0.5377430954123522,
+          0.5369813039807564,
+          0.5379768077453001
         ],
         "nodeSamplesUs": [
-          0.004055029256236617,
-          0.004038004059818097,
-          0.00412964217789159,
-          0.00405863394191653,
-          0.004126127645714631,
-          0.0040433958203759815,
-          0.004058694286545353,
-          0.004044183936392348,
-          0.004164206591156218
+          0.005291147567550106,
+          0.005290613050489909,
+          0.005288071069452558,
+          0.00531339171913371,
+          0.005293885458643263,
+          0.005289960019598502,
+          0.005292915587467751,
+          0.0053315169413926285,
+          0.005296236368050304
         ]
       },
       "knownBugs": [],
