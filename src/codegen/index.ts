@@ -148,6 +148,7 @@ import {
 import {
   collectIrClassShapeDeclarations,
   createIrClassShapeSidecar,
+  orderIrClassShapeDeclarationsForProjection,
   projectIrClassCallableTarget,
   resolveIrClassShapeFromType,
   resolveIrClassShapeFromTypeReference,
@@ -345,6 +346,7 @@ import {
   compileClassBodies,
   resolveClassMemberName,
 } from "./class-bodies.js";
+import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -1285,7 +1287,16 @@ function buildIrClassShapes(
 ): IrClassShapeSidecar {
   const out = new Map<IrClassId, IrClassShapeEntry>();
   const lookup: IrClassShapeLookup = { identityContext, byClassId: out };
-  for (const { classId, declaration: stmt } of collectIrClassShapeDeclarations(sourceFile, identityContext)) {
+  const declarationsInCollectionOrder = collectIrClassShapeDeclarations(sourceFile, identityContext);
+  const collectionPosition = new Map(
+    declarationsInCollectionOrder.map((entry, index) => [entry.classId, index] as const),
+  );
+  const declarations = orderIrClassShapeDeclarationsForProjection(
+    ctx.oracle,
+    declarationsInCollectionOrder,
+    identityContext,
+  );
+  for (const { classId, declaration: stmt } of declarations) {
     const className = ts.isClassExpression(stmt) ? ctx.anonClassExprNames.get(stmt) : stmt.name?.text;
     if (!className) continue;
     // The selector needs a provisional descriptor population in order to
@@ -1305,8 +1316,14 @@ function buildIrClassShapes(
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
     const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
     if (parentClassId !== null) {
+      const parentPosition = parentClassId === undefined ? undefined : collectionPosition.get(parentClassId);
+      const currentPosition = collectionPosition.get(classId)!;
+      // Dependency ordering may move a later type-position dependency before
+      // this class. It must not also widen the heritage policy: a parent that
+      // was not earlier in the authoritative collection remains direct.
+      if (parentPosition === undefined || parentPosition >= currentPosition) continue;
       const parentEntry = parentClassId === undefined ? undefined : out.get(parentClassId);
-      if (!parentEntry) continue; // parent isn't this exact projected class (builtin, foreign, or declared later)
+      if (!parentEntry) continue; // parent isn't this exact projected earlier class (builtin, foreign, or unsupported)
       parentShape = parentEntry.shape;
     }
     if (!ctx.classSet.has(className)) continue;
@@ -1654,7 +1671,15 @@ function buildIrClassShapes(
     };
     out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
   }
-  return createIrClassShapeSidecar(out, identityContext);
+  // Dependency construction order is an internal planning detail. Publish the
+  // registry in the authoritative collection order so type/global planning and
+  // legacy compatibility views remain byte-stable for existing programs.
+  const published = new Map<IrClassId, IrClassShapeEntry>();
+  for (const { classId } of declarationsInCollectionOrder) {
+    const entry = out.get(classId);
+    if (entry) published.set(classId, entry);
+  }
+  return createIrClassShapeSidecar(published, identityContext);
 }
 
 /**
@@ -1717,12 +1742,16 @@ function valTypeToIrField(_ctx: CodegenContext, vt: import("../ir/types.js").Val
  * versus legacy-compiled callers, and the #1370 method-signature parity guard
  * (`integration.ts`) sees identical typeIdx on both sides.
  *
- * Scope is intentionally narrow: primitives (`f64`/`i32`) and `string`. The
- * `string` arm mirrors `resolveWasmType`'s string arm + the `ref`→`ref_null`
- * field widening in `collectClassDeclaration` (native → `(ref/ref_null
- * $AnyString)`; host → `externref`), which is exactly what `resolveString()`
- * resolves an `IrType.string` to at lower time. Any other IR kind returns
- * false → the caller falls back to the ValType path.
+ * Scope is intentionally narrow: primitives (`f64`/`i32`), `string`, and an
+ * exact local `class` whose identity-projected shape resolves to the same
+ * committed struct index. The `string` arm mirrors `resolveWasmType`'s string
+ * arm + the `ref`→`ref_null` field widening in `collectClassDeclaration`
+ * (native → `(ref/ref_null $AnyString)`; host → `externref`), which is exactly
+ * what `resolveString()` resolves an `IrType.string` to at lower time. The
+ * class arm likewise accepts either nullability of the same struct index
+ * because class fields are nullable storage while source parameters/results
+ * remain non-null class references. Any other IR kind returns false → the
+ * caller falls back to the ValType path.
  */
 function irFieldTypeMatchesLegacyValType(
   ctx: CodegenContext,
@@ -1742,6 +1771,10 @@ function irFieldTypeMatchesLegacyValType(
       return (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === ctx.anyStrTypeIdx;
     }
     return vt.kind === "externref";
+  }
+  if (ir.kind === "class") {
+    const structTypeIdx = ctx.structMap.get(ir.shape.className);
+    return structTypeIdx !== undefined && (vt.kind === "ref" || vt.kind === "ref_null") && vt.typeIdx === structTypeIdx;
   }
   return false;
 }
@@ -4519,6 +4552,11 @@ export function generateModule(
     scanForArrayHoles(ctx, ast.sourceFile);
 
     collectDeclarations(ctx, ast.sourceFile);
+    // #3522 R3: callable slots with exact references to a later local class
+    // must receive their final struct ABI before prepared IR planning decides
+    // which direct bodies will never run. The direct body compiler retains its
+    // idempotent re-resolution as a temporary hybrid assertion.
+    finalizeForwardClassCallableAbis(ctx, ast.sourceFile);
     // #2847: declaration collection has now materialized the initial struct
     // field table. Brand proven boolean i32 slots before compiling bodies so
     // direct/dynamic reads preserve JS boolean identity at their use sites.

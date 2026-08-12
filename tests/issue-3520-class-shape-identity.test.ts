@@ -1,9 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
+
+import { TsCheckerOracle } from "../src/checker/oracle.js";
 import {
   collectIrClassShapeDeclarations,
   createIrClassShapeSidecar,
+  orderIrClassShapeDeclarationsForProjection,
   requireIrClassShapeClassId,
   resolveIrClassShapeFromType,
   resolveIrClassShapeFromTypeReference,
@@ -107,6 +110,32 @@ function expectPlanningError(run: () => unknown, code: IrPlanningIdentityInvaria
 }
 
 describe("#3520 exact class-shape identity", () => {
+  it("orders acyclic forward class-position dependencies by exact identity and leaves cycles stable", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+        class Holder {
+          current: Value;
+          constructor(current: Value) { this.current = current; }
+          replace(next: Value): Value { return next; }
+          get held(): Value { return this.current; }
+          set held(next: Value) { this.current = next; }
+          static keep(next: Value): Value { return next; }
+        }
+        class Value { amount: number; }
+        class Left { constructor(right: Right) {} }
+        class Right { constructor(left: Left) {} }
+      `,
+    });
+    const sourceFile = graph.byName.get("/repo/a.ts")!;
+    const collected = collectIrClassShapeDeclarations(sourceFile, graph.context);
+    expect(collected.map((entry) => entry.legacyName)).toEqual(["Holder", "Value", "Left", "Right"]);
+    expect(
+      orderIrClassShapeDeclarationsForProjection(new TsCheckerOracle(graph.checker), collected, graph.context).map(
+        (entry) => entry.legacyName,
+      ),
+    ).toEqual(["Value", "Holder", "Left", "Right"]);
+  });
+
   it("keeps same-label entries exact while omitting the ambiguous legacy projection", () => {
     const graph = fixture({
       "/repo/a.ts": `
