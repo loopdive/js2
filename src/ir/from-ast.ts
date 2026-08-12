@@ -803,6 +803,39 @@ function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boole
   return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
 }
 
+function lowerConstructorBody(
+  builder: IrFunctionBuilder,
+  statements: readonly ts.Statement[],
+  options: AstToIrOptions,
+  thisValue: IrValueId,
+  parameterValues: readonly IrValueId[],
+  cx: LowerCtx,
+  name: string,
+): void {
+  const fieldInitializers = options.constructorFieldInitializers ?? [];
+  const parentShape = options.constructorInitClassShape?.parent;
+  if (options.implicitConstructorParentShape) {
+    if (options.implicitConstructorParentShape !== parentShape) {
+      throw new Error(`ir/from-ast: implicit constructor parent shape mismatch (${name})`);
+    }
+    builder.emitClassSuperInit(options.implicitConstructorParentShape, thisValue, parameterValues);
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+  } else if (parentShape && fieldInitializers.length > 0) {
+    // Selection admits explicit derived constructors only with one leading
+    // `super(...)`. Own fields run immediately after it and before the rest
+    // of the source constructor body (ECMA-262 InitializeInstanceElements).
+    const [first, ...rest] = statements;
+    if (!first) throw new Error(`ir/from-ast: derived constructor has no leading super (${name})`);
+    lowerStmt(first, cx);
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+    for (const statement of rest) lowerStmt(statement, cx);
+  } else {
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+    for (const statement of statements) lowerStmt(statement, cx);
+  }
+  builder.terminate({ kind: "return", values: [thisValue] });
+}
+
 export function lowerFunctionAstToIr(
   fn:
     | ts.FunctionDeclaration
@@ -1129,29 +1162,7 @@ export function lowerFunctionAstToIr(
   if (isCtor) {
     // The AST-free `_new` wrapper allocates; this source-owned `_init` receives
     // the exact instance as its final parameter and owns all source writes.
-    const thisV = constructorInitSelf!;
-    const fieldInitializers = options.constructorFieldInitializers ?? [];
-    const parentShape = options.constructorInitClassShape?.parent;
-    if (options.implicitConstructorParentShape) {
-      if (options.implicitConstructorParentShape !== parentShape) {
-        throw new Error(`ir/from-ast: implicit constructor parent shape mismatch (${name})`);
-      }
-      builder.emitClassSuperInit(options.implicitConstructorParentShape, thisV, parameterValues);
-      lowerConstructorFieldInitializers(fieldInitializers, thisV, cx);
-    } else if (parentShape && fieldInitializers.length > 0) {
-      // Selection admits explicit derived constructors only with one leading
-      // `super(...)`. Own fields run immediately after it and before the rest
-      // of the source constructor body (ECMA-262 InitializeInstanceElements).
-      const [first, ...rest] = stmts;
-      if (!first) throw new Error(`ir/from-ast: derived constructor has no leading super (${name})`);
-      lowerStmt(first, cx);
-      lowerConstructorFieldInitializers(fieldInitializers, thisV, cx);
-      for (const s of rest) lowerStmt(s, cx);
-    } else {
-      lowerConstructorFieldInitializers(fieldInitializers, thisV, cx);
-      for (const s of stmts) lowerStmt(s, cx);
-    }
-    builder.terminate({ kind: "return", values: [thisV] });
+    lowerConstructorBody(builder, stmts, options, constructorInitSelf!, parameterValues, cx, name);
     return { main: builder.finish(), lifted, liftedUnitProvenance };
   }
 

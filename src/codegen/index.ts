@@ -3944,6 +3944,66 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
 
+function compileIrRoutedDeclarations(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly preparedClassMembers?: PreparedIrClassMemberBodies;
+  readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly irSkipBodies?: ReadonlySet<string>;
+  readonly irPreserveBodies?: ReadonlySet<string>;
+}): {
+  readonly actuallySkipped?: string[];
+  readonly classMemberUnitIds: readonly IrUnitId[];
+  readonly implicitConstructorUnitIds: readonly IrUnitId[];
+  readonly moduleInitNames: readonly string[];
+} {
+  const classMemberNames: string[] = [];
+  const classMemberUnitIds: IrUnitId[] = [];
+  const implicitConstructorUnitIds: IrUnitId[] = [];
+  const moduleInitNames: string[] = [];
+  const classBodyRouting =
+    input.preparedClassMembers || (input.preparedImplicitConstructorUnitIds?.size ?? 0) > 0
+      ? {
+          skipBodies: input.preparedClassMembers?.skipBodies ?? new Set<string>(),
+          preserveSkippedBodies: input.preparedClassMembers?.preserveBodies ?? new Set<string>(),
+          skippedNames: classMemberNames,
+          skipBodyUnitIds: input.preparedClassMembers?.skipBodyUnitIds ?? new Set<IrUnitId>(),
+          preserveSkippedBodyUnitIds: input.preparedClassMembers?.preserveBodyUnitIds ?? new Set<IrUnitId>(),
+          skippedUnitIds: classMemberUnitIds,
+          skipImplicitConstructorUnitIds: input.preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
+          skippedImplicitConstructorUnitIds: implicitConstructorUnitIds,
+        }
+      : undefined;
+  const moduleInitBodyRouting = input.preparedModuleInit
+    ? {
+        skipBody: input.preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
+        preserveSkippedBody: input.preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
+        skippedNames: moduleInitNames,
+      }
+    : undefined;
+  const previousClassBodyRouting = input.ctx.irClassBodyRouting;
+  try {
+    input.ctx.irClassBodyRouting = classBodyRouting;
+    return {
+      actuallySkipped: compileDeclarations(
+        input.ctx,
+        input.sourceFile,
+        input.irSkipBodies,
+        input.irPreserveBodies,
+        classBodyRouting,
+        "full",
+        moduleInitBodyRouting,
+      ),
+      classMemberUnitIds,
+      implicitConstructorUnitIds,
+      moduleInitNames,
+    };
+  } finally {
+    input.ctx.irClassBodyRouting = previousClassBodyRouting;
+  }
+}
+
 /** Compile a typed AST into a WasmModule IR */
 export function generateModule(
   ast: TypedAST,
@@ -4511,54 +4571,20 @@ export function generateModule(
     }
 
     // Third pass: compile function bodies
-    const actuallySkippedClassMembers: string[] = [];
-    const actuallySkippedClassMemberUnitIds: IrUnitId[] = [];
-    const actuallySkippedImplicitConstructorUnitIds: IrUnitId[] = [];
-    const actuallySkippedModuleInit: string[] = [];
-    const classBodyRouting =
-      preparedClassMembers || (preparedImplicitConstructorUnitIds?.size ?? 0) > 0
-        ? {
-            skipBodies: preparedClassMembers?.skipBodies ?? new Set<string>(),
-            preserveSkippedBodies: preparedClassMembers?.preserveBodies ?? new Set<string>(),
-            skippedNames: actuallySkippedClassMembers,
-            skipBodyUnitIds: preparedClassMembers?.skipBodyUnitIds ?? new Set<IrUnitId>(),
-            preserveSkippedBodyUnitIds: preparedClassMembers?.preserveBodyUnitIds ?? new Set<IrUnitId>(),
-            skippedUnitIds: actuallySkippedClassMemberUnitIds,
-            skipImplicitConstructorUnitIds: preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
-            skippedImplicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
-          }
-        : undefined;
-    const moduleInitBodyRouting = preparedModuleInit
-      ? {
-          skipBody: preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
-          preserveSkippedBody: preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
-          skippedNames: actuallySkippedModuleInit,
-        }
-      : undefined;
-    const previousClassBodyRouting = ctx.irClassBodyRouting;
-    let actuallySkipped: string[] | undefined;
-    try {
-      if (classBodyRouting) {
-        ctx.irClassBodyRouting = classBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-      actuallySkipped = compileDeclarations(
-        ctx,
-        ast.sourceFile,
-        irSkipBodies,
-        irPreserveBodies,
-        classBodyRouting,
-        "full",
-        moduleInitBodyRouting,
-      );
-    } finally {
-      if (previousClassBodyRouting) {
-        ctx.irClassBodyRouting = previousClassBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-    }
+    const {
+      actuallySkipped,
+      classMemberUnitIds: actuallySkippedClassMemberUnitIds,
+      implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
+      moduleInitNames: actuallySkippedModuleInit,
+    } = compileIrRoutedDeclarations({
+      ctx,
+      sourceFile: ast.sourceFile,
+      preparedClassMembers,
+      preparedImplicitConstructorUnitIds,
+      preparedModuleInit,
+      irSkipBodies,
+      irPreserveBodies,
+    });
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
