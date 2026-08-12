@@ -3,7 +3,7 @@ id: 1006
 title: "Support eval via JS host import"
 status: done
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-08-11
 completed: 2026-04-28
 priority: medium
 feasibility: medium
@@ -14,6 +14,18 @@ goal: spec-completeness
 sprint: 42
 required_by: [1073, 1584]
 es_edition: multi
+loc-budget-allow:
+  - src/runtime.ts
+  - src/compiler.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::buildImports
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - "src/runtime.ts::<anonymous>#89"
+  - src/codegen/expressions/runtime-eval-provider.ts::emitStandaloneDirectEvalRuntime
 ---
 # #1006 -- Support `eval` via JS host import
 
@@ -116,3 +128,17 @@ convert 107 harness-visibility regressions → pass.
 - `built-ins/eval/length-value.js`: PASS
 - `indirect/always-non-strict.js`: FAIL (harness scope gap — `count` not visible in eval'd code)
 - `built-ins/eval/name.js`: CE (type-checker false positive, not eval-related)
+
+## 2026-08-11 isolated-host follow-up
+
+The host lane now has an opt-in evaluator policy that can execute dynamic code
+outside the main process realm without moving the compiled AOT Wasm instance.
+The Node adapter uses a Worker only for `eval`/`Function`; live direct-eval
+bindings remain cells owned by the main Wasm instance and cross the boundary as
+opaque binding identifiers.
+
+The shipped slice covers live reads and writes, escaping eval-created closures,
+write-before-throw behavior, error reconstruction, timeouts, and a deny policy.
+Full `EvalDeclarationInstantiation` behavior and a browser Worker transport for
+synchronous Wasm imports remain follow-up work. A same-origin browser realm
+adapter is included for the synchronous browser case.

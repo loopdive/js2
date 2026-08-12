@@ -115,6 +115,8 @@ export interface CodegenOptions {
    *  `__unbox_string` JS-host string imports. Used so the compiled module is
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
+  /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
+  directEval?: "legacy" | "reified-host";
   /**
    * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
    * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
@@ -3183,6 +3185,10 @@ export interface CodegenContext {
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
+  /** Resolved JS-host direct-eval lowering. */
+  directEvalMode: "legacy" | "reified-host";
+  /** Private externref-array carrier used only by reified JS-host direct eval. */
+  hostRuntimeEvalVecTypeIdx?: number;
   /** (#2141 S1) Honest generic `any` boxing regime flag — see the
    *  `CodegenOptions.honestAnyBoxing` doc. Default false (legacy tag-5
    *  box-the-externref ABI, byte-identical). */

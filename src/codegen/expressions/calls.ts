@@ -6345,9 +6345,11 @@ function compileCallExpression(
         evalKind === "direct"
           ? directEvalRunsAtScriptGlobal(expr, ctx)
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
-            : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+            : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : undefined
+              : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+                ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
+                : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone
