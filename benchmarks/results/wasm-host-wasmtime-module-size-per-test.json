@@ -2,7 +2,7 @@
   {
     "name": "AOT compiled",
     "path": "fib",
-    "value": 106,
+    "value": 104,
     "label": "0.1 kB",
     "jsUs": 98
   },
@@ -16,7 +16,7 @@
   {
     "name": "Engine",
     "path": "fib",
-    "value": 14792109,
+    "value": 14792224,
     "label": "14.8 MB",
     "jsUs": 98
   },
@@ -37,7 +37,7 @@
   {
     "name": "Engine",
     "path": "fib-recursive",
-    "value": 14794810,
+    "value": 14795099,
     "label": "14.8 MB",
     "jsUs": 86
   },
@@ -58,14 +58,14 @@
   {
     "name": "Engine",
     "path": "array-sum",
-    "value": 14793918,
+    "value": 14794010,
     "label": "14.8 MB",
     "jsUs": 143
   },
   {
     "name": "AOT compiled",
     "path": "string-hash",
-    "value": 828,
+    "value": 819,
     "label": "0.8 kB",
     "jsUs": 238
   },
@@ -79,7 +79,7 @@
   {
     "name": "Engine",
     "path": "string-hash",
-    "value": 14797596,
+    "value": 14797655,
     "label": "14.8 MB",
     "jsUs": 238
   }
