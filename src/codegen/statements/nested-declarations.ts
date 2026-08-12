@@ -2316,10 +2316,10 @@ export function hoistFunctionDeclarations(
  * so compile the initializer.
  * @param paramOffset - number of prepended params (captures) before the user params
  */
-function emitDefaultParamInit(
+export function emitDefaultParamInit(
   ctx: CodegenContext,
   liftedFctx: FunctionContext,
-  stmt: ts.FunctionDeclaration,
+  stmt: ts.FunctionLikeDeclarationBase,
   paramTypes: ValType[],
   paramOffset: number,
 ): void {

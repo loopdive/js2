@@ -264,6 +264,10 @@ jobs:
 
     env:
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      # Keep the baseline producer on the same Test262 parent-fork memory
+      # contract as merge-group candidates. Compiler workers keep their
+      # independent 512 MiB cap.
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       TEST262_INCLUDE_PROPOSALS: "1"
       # #3381 — select host (gc) vs standalone lane; the runner reads these to
       # pick the compile target and name its JSONL (tests/test262-shared.ts).
@@ -341,6 +345,11 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
+          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
+          if [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
 
       - name: Upload shard artifacts
         id: upload_shard
@@ -357,6 +366,7 @@ jobs:
           name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once. Idempotent +

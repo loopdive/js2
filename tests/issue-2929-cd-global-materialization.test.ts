@@ -136,6 +136,28 @@ if (d.configurable) throw new Error('a script var stays configurable:false acros
     );
   });
 
+  it("Annex B eval functions replace and call an existing primitive script var", async () => {
+    // The provider already published both closures correctly: `typeof direct`
+    // and `typeof indirect` read "function" after pull-sync. The pre-IR
+    // primitive-callee guard nevertheless trusted the original numeric
+    // initializers and emitted unconditional TypeErrors at both call sites.
+    // These bindings are runtime-mutable, so their calls must reach the native
+    // IsCallable dispatcher instead.
+    await runScript(
+      `var direct = 123;
+eval('{ function direct() { return 41; } }');
+if (typeof direct !== 'function') throw new Error('direct binding was not updated');
+if (direct() !== 41) throw new Error('direct eval closure was not callable');
+
+var indirect = 123;
+(0,eval)('{ function indirect() { return 42; } }');
+if (typeof indirect !== 'function') throw new Error('indirect binding was not updated');
+if (indirect() !== 42) throw new Error('indirect eval closure was not callable');
+`,
+      "cd/annexb-existing-primitive-call",
+    );
+  });
+
   it("delete of an eval-created global severs the compiled read path", async () => {
     // No static storage was ever allocated for the name, so the AOT read is the
     // HasProperty-guarded dynamic global read — removing the property makes it

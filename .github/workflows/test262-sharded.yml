@@ -845,6 +845,12 @@ jobs:
       # to 3 later, change BOTH workflows together after validating the new
       # baseline rather than changing this gate in isolation.
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      # The Test262 file fork occasionally lazy-loads the full multi-source
+      # compiler for fixture tests. That process is separate from the four
+      # 512 MiB compiler workers; 512 MiB for the parent proved insufficient
+      # on standalone shards 10/17 in #4402. Match the repo's issue/equivalence
+      # gates and leave compiler-worker limits unchanged.
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv
@@ -934,6 +940,11 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
+          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
+          if [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -949,6 +960,7 @@ jobs:
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
           if-no-files-found: warn
 
       # #3404 — a single transient artifact-upload flake (e.g. `Failed to
@@ -1037,6 +1049,11 @@ jobs:
       # stays comparable — do not lower this without re-auditing the
       # baseline alongside refresh-baseline.yml.
       COMPILER_POOL_SIZE: "4"
+      # Parent Vitest fork; compiler workers retain their independent 512 MiB
+      # cap. Fixture-bearing standalone shards load the multi-source compiler
+      # in this parent and need the same 1 GiB ceiling as the required issue and
+      # equivalence gates.
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       JS2WASM_IR_FIRST: ""
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"
@@ -1102,6 +1119,11 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
+          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
+          if [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -1123,6 +1145,7 @@ jobs:
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once (see the matching

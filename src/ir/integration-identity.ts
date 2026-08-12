@@ -231,7 +231,9 @@ export function validateIrIntegrationPopulation(
       const terminal = context.terminalByUnitId.get(unitId);
       if (
         !member ||
-        (!ts.isConstructorDeclaration(member) &&
+        (!ts.isClassDeclaration(member) &&
+          !ts.isClassExpression(member) &&
+          !ts.isConstructorDeclaration(member) &&
           !ts.isMethodDeclaration(member) &&
           !ts.isGetAccessorDeclaration(member) &&
           !ts.isSetAccessorDeclaration(member)) ||
@@ -239,9 +241,20 @@ export function validateIrIntegrationPopulation(
       ) {
         integrationMismatch(`selected exact class member ${unitId} has no callable declaration`);
       }
-      const owner = member.parent;
+      const implicitConstructor = terminal.kind === "class-implicit-constructor";
+      const owner = implicitConstructor ? member : member.parent;
       if (!ts.isClassDeclaration(owner) && !ts.isClassExpression(owner)) {
         planningInvariant("class-record-mismatch", `selected exact class member ${unitId} has no class owner`);
+      }
+      let staticClassMember = false;
+      if (!implicitConstructor) {
+        if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
+          planningInvariant(
+            "terminal-record-mismatch",
+            `selected non-implicit class member ${unitId} resolves to a class declaration`,
+          );
+        }
+        staticClassMember = classElementIsStatic(member);
       }
       const classId = requireExactClass(owner, sourceFile, sourceId, context);
       const exactTerminal = requireExactTerminalDeclaration(
@@ -255,7 +268,7 @@ export function validateIrIntegrationPopulation(
       if (
         exactTerminal.id !== unitId ||
         exactTerminal.lexicalOwnerId !== classId ||
-        exactTerminal.staticClassMember !== classElementIsStatic(member)
+        exactTerminal.staticClassMember !== staticClassMember
       ) {
         planningInvariant(
           "terminal-record-mismatch",

@@ -73,7 +73,12 @@ describe("#3000-E — IR inheritance/super emission — genuine emission (both l
     const lane = nativeStrings ? "native/standalone ($AnyString)" : "host (externref)";
 
     it(`IR-emits Dog_new / Dog_speak / Dog_get_breed — ${lane}`, async () => {
-      const r = await compile(DOG, { fileName: "test.ts", experimentalIR: true, nativeStrings });
+      const r = await compile(DOG, {
+        fileName: "test.ts",
+        experimentalIR: true,
+        nativeStrings,
+        trackIrOutcomes: true,
+      });
       expect(r.success).toBe(true);
       const compiled = new Set(r.irCompiledFuncs ?? []);
       // THE acceptance criterion: the subclass member slots are ACTUALLY patched
@@ -81,6 +86,14 @@ describe("#3000-E — IR inheritance/super emission — genuine emission (both l
       // criterion #3 — classes.ts's Dog is the last IR-uncovered class.
       for (const m of DOG_MEMBERS) {
         expect(compiled.has(m), `${m} should be IR-emitted in ${lane}`).toBe(true);
+        expect(
+          r.irOutcomes?.find((outcome) => outcome.displayName === m),
+          `${m} should compile once in ${lane}`,
+        ).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
       }
       // The parent flat class stays IR too (regression guard for #3000-C/1b).
       expect(compiled.has("Animal_new")).toBe(true);

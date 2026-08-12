@@ -44,7 +44,7 @@ function wasmFunctionImportIndex(binary: Uint8Array, name: string): number {
 }
 
 describe("#3214 B2 — ambient void host callbacks", () => {
-  it("caches a nonconstructible, undefined-returning sentinel wrapper", () => {
+  it("distinguishes reusable and one-shot nonconstructible void wrappers", () => {
     const manifest: ImportDescriptor[] = [
       {
         module: "env",
@@ -67,6 +67,12 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     expect(dispatches).toBe(2);
     expect(() => Reflect.construct(callback, [])).toThrow(TypeError);
 
+    const oneShot = imports.env.__make_callback(-2, closure);
+    expect(oneShot).not.toBe(imports.env.__make_callback(-2, closure));
+    expect(oneShot()).toBeUndefined();
+    expect(dispatches).toBe(3);
+    expect(() => Reflect.construct(oneShot, [])).toThrow(TypeError);
+
     const legacyCapture = { value: 20 };
     const legacyCallback = imports.env.__make_callback(7, legacyCapture);
     imports.setExports?.({
@@ -83,7 +89,7 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
 
     const installBody = watFunctionBody(result.wat, "install");
-    expect(installBody).toContain("i32.const -1");
+    expect(installBody).toContain("i32.const -2");
     const callbackMakerIndex = wasmFunctionImportIndex(result.binary, "__make_callback");
     expect(callbackMakerIndex).toBeGreaterThanOrEqual(0);
     expect(installBody).toContain(`call ${callbackMakerIndex}`);
@@ -96,6 +102,18 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setExports?.(instance.exports as Record<string, Function>);
+
+    const bridgeExports = Object.keys(instance.exports);
+    expect(bridgeExports).toContain("__call_fn_0");
+    expect(bridgeExports).not.toEqual(
+      expect.arrayContaining([
+        "__call_fn_1",
+        "__call_fn_method_0",
+        "__closure_arity",
+        "__is_closure",
+        "__closure_has_rest",
+      ]),
+    );
 
     const listeners: Function[] = [];
     const target = {
@@ -114,6 +132,34 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     expect(listener({ type: "tick" })).toBeUndefined();
     expect(sink.textContent).toBe("42");
     expect(() => Reflect.construct(listener, [])).toThrow(TypeError);
+  });
+
+  it("restores generic closure bridges when the same wrapper has an ordinary allocation", async () => {
+    const result = await compileHostCallback(`
+      export function install(target: EventTarget, sink: HTMLElement): void {
+        target.addEventListener("tick", () => { sink.textContent = "exact"; });
+      }
+      export function getOrdinary(): any {
+        return (): void => {};
+      }
+    `);
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(result.irCompiledFuncs ?? []).toContain("install");
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const bridgeExports = Object.keys(instance.exports);
+    expect(bridgeExports).toEqual(
+      expect.arrayContaining(["__call_fn_0", "__call_fn_1", "__call_fn_method_0", "__closure_arity", "__is_closure"]),
+    );
+
+    const ordinary = (instance.exports.getOrdinary as () => unknown)();
+    expect((instance.exports.__is_closure as (value: unknown) => number)(ordinary)).toBe(1);
+    expect((instance.exports.__call_fn_0 as (value: unknown) => unknown)(ordinary)).toBeNull();
   });
 
   it("keeps multiple certified callback sites distinct in source order", async () => {

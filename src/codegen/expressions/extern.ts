@@ -21,6 +21,8 @@ import { noJsHost } from "../js-errors.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { emitStandaloneClassProtoObject } from "../class-proto-object.js"; // (#3976) standalone proto as a real $Object
+import { classMemberFuncKey } from "../class-member-keys.js";
+import { emitFuncRefAsClosure } from "../closures.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
@@ -405,6 +407,49 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     initBody.push({ op: "global.get", index: classObjectGlobalIdx });
     initBody.push({ op: "global.get", index: csvGlobalIdx });
     initBody.push({ op: "call", funcIdx: registerClassFuncIdx });
+  }
+
+  // (#4371) Install the REAL compiled closures behind declared static-method
+  // reads on a dynamically carried class object. The legacy registration above
+  // provides the own-key/descriptor allowlist but its host bridge is only a
+  // throwing placeholder. A descriptor-aware sidecar value preserves the
+  // class object's closed-struct identity (needed by dynamic `new K()`) while
+  // letting the existing host closure wrapper dispatch back into Wasm.
+  //
+  // Build this inside `initBody`: the singleton guard means each closure is
+  // created once, and sidecar reads/reassign/delete all observe that same value.
+  const registerStaticMethodIdx = ctx.funcMap.get("__register_class_static_method");
+  if (registerStaticMethodIdx !== undefined) {
+    const staticMethodNames = ctx.classStaticMethodNames.get(className) ?? [];
+    const savedBody = fctx.body;
+    fctx.body = initBody;
+    ctx.liveBodies.add(savedBody);
+    try {
+      for (const methodName of staticMethodNames) {
+        const fullName = `${className}_${methodName}`;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        if (methodIdx === undefined) continue;
+        addStringConstantGlobal(ctx, methodName);
+        const methodNameGlobalIdx = ctx.stringGlobalMap.get(methodName);
+        if (methodNameGlobalIdx === undefined) continue;
+
+        fctx.body.push({ op: "global.get", index: classObjectGlobalIdx });
+        fctx.body.push({ op: "global.get", index: methodNameGlobalIdx });
+        const closureType = emitFuncRefAsClosure(ctx, fctx, fullName, methodIdx);
+        if (closureType === null) {
+          // Leave reflection on the established placeholder path if this
+          // method cannot be represented as a closure. Do not install a wrong
+          // value or change the class-object allowlist.
+          fctx.body.splice(fctx.body.length - 2, 2);
+          continue;
+        }
+        fctx.body.push({ op: "extern.convert_any" });
+        fctx.body.push({ op: "call", funcIdx: registerStaticMethodIdx });
+      }
+    } finally {
+      fctx.body = savedBody;
+      ctx.liveBodies.delete(savedBody);
+    }
   }
 
   // Emit: if global is null, init it; then get it.

@@ -135,6 +135,11 @@ export { emitFuncRefAsClosure };
 import { spliceNullGuarded, emitDefaultReturnValue } from "./closures/param-emit-helpers.js";
 import type { ArrowClosureCapture } from "./closures/arrow-phases.js";
 import {
+  addWithEnvironmentCaptureNames,
+  planAdditionalWithEnvironmentCaptureNames,
+  rehydrateWithEnvironmentScopes,
+} from "./with-environment-capture.js";
+import {
   planClosureCaptures,
   mintClosureStructTypes,
   emitClosureParamDestructuring,
@@ -2265,7 +2270,7 @@ export function compileLiftedClosureBody(
       }
     }
   }
-
+  rehydrateWithEnvironmentScopes(fctx, liftedFctx, closureName, arrowOwnLocals(arrow));
   // #1177: For TDZ-flagged captures, also extract the boxed flag ref into a
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
@@ -2897,13 +2902,8 @@ export function compileArrowAsClosure(
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
-  const { captures, selfBindingName } = planClosureCaptures(
-    ctx,
-    fctx,
-    arrow,
-    body,
-    reachesDirectEval ? fctx.boxedCaptures?.keys() : undefined,
-  );
+  const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
+  const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
   captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
@@ -3376,7 +3376,7 @@ export function compileArrowAsCallback(
   // nested-function walk below. A transitive name is a real environment value
   // needed by that nested function even when a same-spelled user function is
   // present in the global `funcMap`.
-  const directReferencedNames = new Set(referencedNames);
+  const directReferencedNames = addWithEnvironmentCaptureNames(referencedNames, fctx);
 
   // A host callback can call a capturing nested declaration. Its callback
   // frame must carry that declaration's environment just like a lifted Wasm
@@ -3608,7 +3608,7 @@ export function compileArrowAsCallback(
       }
     }
   }
-
+  rehydrateWithEnvironmentScopes(fctx, cbFctx, cbName, ownLocals);
   // 4b. Convert ref/ref_null params from externref to their resolved types.
   //     The JS host passes all GC ref types as externref, so we need to convert
   //     them back at the start of the body.

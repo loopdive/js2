@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import type { IrHostVoidCallbackLoweringPlan } from "../ir/ast-lowering-plans.js";
+import type { IrUnitId } from "../ir/identity.js";
+import { ts } from "../ts-api.js";
+
+/**
+ * R2 may own nested executable syntax only when every nested callable is the
+ * exact zero-argument host callback already certified by the TypedAST plan.
+ * The map key is the authoritative AST identity; owner and ordinal checks keep
+ * the synthetic closure namespace complete, gap-free, and source ordered.
+ */
+export function containsUnplannedNestedExecutableSyntax(
+  declaration: ts.FunctionLikeDeclaration,
+  ownerUnitId: IrUnitId,
+  ownerName: string,
+  hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>,
+): boolean {
+  if (!declaration.body) return false;
+  const ownerPlans = [...hostVoidCallbacks.entries()].filter(([, plan]) => plan.ownerUnitId === ownerUnitId);
+  const seen = new Set<IrHostVoidCallbackLoweringPlan>();
+  const ordinals = new Set<number>();
+  let invalid = false;
+  const visit = (node: ts.Node): void => {
+    if (invalid) return;
+    if (ts.isArrowFunction(node)) {
+      const plan = hostVoidCallbacks.get(node);
+      if (
+        !plan ||
+        plan.ownerUnitId !== ownerUnitId ||
+        plan.ownerName !== ownerName ||
+        node.parameters.length !== 0 ||
+        plan.signature.params.length !== 0 ||
+        plan.signature.returnType !== null ||
+        !Number.isSafeInteger(plan.liftedOrdinal) ||
+        plan.liftedOrdinal < 0 ||
+        ordinals.has(plan.liftedOrdinal)
+      ) {
+        invalid = true;
+        return;
+      }
+      seen.add(plan);
+      ordinals.add(plan.liftedOrdinal);
+      ts.forEachChild(node.body, visit);
+      return;
+    }
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isClassStaticBlockDeclaration(node)
+    ) {
+      invalid = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(declaration.body, visit);
+  if (invalid || seen.size !== ownerPlans.length) return true;
+  for (const [, plan] of ownerPlans) {
+    if (!seen.has(plan)) return true;
+  }
+  for (let ordinal = 0; ordinal < ownerPlans.length; ordinal++) {
+    if (!ordinals.has(ordinal)) return true;
+  }
+  return false;
+}

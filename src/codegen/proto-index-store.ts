@@ -116,6 +116,7 @@ const PROTOIDX_HAS_F = "__protoidx_has_f";
 const PROTOIDX_GET_F = "__protoidx_get_f";
 /** (#4176) receiver-brand classifier + receiver-aware consult pair. */
 const PROTOIDX_BRAND_OFF = "__protoidx_brand_off";
+const PROTOIDX_FORIN_PUSH = "__protoidx_forin_push";
 const PROTOIDX_HAS_R = "__protoidx_has_r";
 const PROTOIDX_GET_R = "__protoidx_get_r";
 
@@ -216,9 +217,36 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // default ⇒ Object; a $NativeProto receiver answers its OWN brand so
   // direct proto reads see their own companion first).
   reserve(PROTOIDX_BRAND_OFF, [ext], [i32], objOff);
+  // Append enumerable keys from the receiver's implicit builtin prototype
+  // companion to an in-progress for-in snapshot. The third argument is the
+  // caller's shadow set, already populated from ordinary prototype levels.
+  reserve(PROTOIDX_FORIN_PUSH, [ext, ext, ext], [], () => []);
   // (#4176) receiver-aware consults for the non-$Object miss chokepoints.
   reserve(PROTOIDX_HAS_R, [ext, ext], [i32], zero);
   reserve(PROTOIDX_GET_R, [ext, ext], [ext], nullExt);
+}
+
+/**
+ * Append the receiver brand's enumerable prototype-companion keys to the
+ * in-progress for-in vector. `seenLocal` is the `$Object` shadow set maintained
+ * by `__object_keys_forin`; the helper also checks receiver own properties so
+ * non-`$Object` carrier bags and builtin-function own names cannot duplicate or
+ * expose a shadowed prototype key.
+ */
+export function protoIndexForInPushInstrs(
+  ctx: CodegenContext,
+  recvLocal: number,
+  vecLocal: number,
+  seenLocal: number,
+): Instr[] {
+  const pushIdx = ctx.funcMap.get(PROTOIDX_FORIN_PUSH);
+  if (pushIdx === undefined) return [];
+  return [
+    { op: "local.get", index: recvLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "local.get", index: seenLocal },
+    { op: "call", funcIdx: pushIdx },
+  ];
 }
 
 /**
@@ -301,6 +329,7 @@ export function protoIndexGetIdxMissInstrs(
 interface ProtoIndexFillDeps {
   objectTypeIdx: number;
   propEntryTypeIdx: number;
+  propMapTypeIdx: number;
   companionIdx: number;
   newPlainObjectIdx: number;
   objFindIdx: number;
@@ -337,6 +366,7 @@ function resolveFillDeps(ctx: CodegenContext): ProtoIndexFillDeps | null {
   return {
     objectTypeIdx: types.objectTypeIdx,
     propEntryTypeIdx: types.propEntryTypeIdx,
+    propMapTypeIdx: types.propMapTypeIdx,
     companionIdx,
     newPlainObjectIdx,
     objFindIdx,
@@ -372,9 +402,127 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillHasFBody(ctx, deps);
   fillGetFBody(ctx, deps);
   fillBrandOffBody(ctx);
+  fillForInPushBody(ctx, deps);
   fillRecvConsultBodies(ctx);
   spliceNativeProtoWriteArms(ctx);
   spliceNativeProtoDirectReadArms(ctx);
+}
+
+/**
+ * `__protoidx_forin_push(recv, vec, seen) -> void` — enumerate the receiver's
+ * first implicit builtin-prototype companion. The ordinary for-in helper owns
+ * the snapshot and shadow set; this adapter only exposes the companion through
+ * that same backend-neutral runtime ABI, so prepared IR and legacy emission
+ * cannot diverge.
+ */
+function fillForInPushBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
+  const fn = findFn(ctx, PROTOIDX_FORIN_PUSH);
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
+  const objOrderedIdx = ctx.funcMap.get("__obj_ordered");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (
+    !fn ||
+    brandOffIdx === undefined ||
+    objectHasOwnIdx === undefined ||
+    objOrderedIdx === undefined ||
+    objVecPushIdx === undefined
+  ) {
+    return;
+  }
+
+  const objectRefNull: ValType = { kind: "ref_null", typeIdx: deps.objectTypeIdx };
+  const propMapRef: ValType = { kind: "ref_null", typeIdx: deps.propMapTypeIdx };
+  const entryRefNull: ValType = { kind: "ref_null", typeIdx: deps.propEntryTypeIdx };
+  // params: 0=recv 1=vec 2=seen ; locals: 3=off 4=companion 5=o 6=arr
+  // 7=cap 8=i 9=entry 10=key
+  fn.locals = [
+    { name: "off", type: { kind: "i32" } },
+    { name: "companion", type: { kind: "externref" } },
+    { name: "o", type: objectRefNull },
+    { name: "arr", type: propMapRef },
+    { name: "cap", type: { kind: "i32" } },
+    { name: "i", type: { kind: "i32" } },
+    { name: "entry", type: entryRefNull },
+    { name: "key", type: { kind: "externref" } },
+  ];
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: brandOffIdx },
+    { op: "local.set", index: 3 },
+    { op: "local.get", index: 3 },
+    { op: "i32.const", value: 0 },
+    { op: "call", funcIdx: deps.companionIdx },
+    { op: "local.tee", index: 4 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "return" }],
+    },
+    { op: "local.get", index: 4 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: deps.objectTypeIdx },
+    { op: "local.tee", index: 5 },
+    { op: "call", funcIdx: objOrderedIdx },
+    { op: "local.tee", index: 6 },
+    { op: "array.len" },
+    { op: "local.set", index: 7 },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: 8 },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: 8 },
+            { op: "local.get", index: 7 },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: 6 },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: 8 },
+            { op: "array.get", typeIdx: deps.propMapTypeIdx },
+            { op: "local.tee", index: 9 },
+            { op: "ref.is_null" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: 9 },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: deps.propEntryTypeIdx, fieldIdx: 0 },
+            { op: "extern.convert_any" },
+            { op: "local.set", index: 10 },
+            // A receiver own key or a closer ordinary-prototype key shadows
+            // this inherited companion key, regardless of enumerability.
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 10 },
+            { op: "call", funcIdx: objectHasOwnIdx },
+            { op: "local.get", index: 2 },
+            { op: "local.get", index: 10 },
+            { op: "call", funcIdx: objectHasOwnIdx },
+            { op: "i32.or" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 10 },
+                { op: "call", funcIdx: objVecPushIdx },
+              ],
+            },
+            { op: "local.get", index: 8 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: 8 },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+  ];
 }
 
 /**

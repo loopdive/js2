@@ -151,10 +151,11 @@ describe("#3765 — a provably-numeric local gets an f64 slot", () => {
     // DCE compacts the current type index while debug type labels retain
     // their allocation-time name, so `$type${index}` is not a stable lookup.
     // These operations can validate only when parameter zero is the grounded
-    // f64 carrier, and they pin the no-boxing property directly.
+    // f64 carrier. The single-use upper bound should also be rematerialized
+    // instead of consuming another local, pinning the optimized no-boxing shape.
     const helperBody = readWat(wat!).body("isAscii");
     expect(helperBody).toMatch(/local\.get 0\s+f64\.const 0\s+f64\.ge/);
-    expect(helperBody).toMatch(/local\.get 0\s+local\.get 2\s+f64\.le/);
+    expect(helperBody).toMatch(/local\.get 0\s+f64\.const 127\s+f64\.le/);
     expect(helperBody).not.toMatch(/call \$__(?:box_number|to_primitive|unbox_number)/);
     const { exports } = await WebAssembly.instantiate(await WebAssembly.compile(binary!), {});
     expect((exports as { main: () => number }).main()).toBe(1);

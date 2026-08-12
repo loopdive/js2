@@ -50,6 +50,7 @@ function sameLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boolean {
 export function attachIrVecLayouts(
   fn: IrFunction,
   layoutFor: (type: Extract<IrType, { kind: "vec" }>) => IrVecLayoutRef,
+  logicalTypeForPhysical?: (type: Extract<IrType, { kind: "val" }>) => Extract<IrType, { kind: "vec" }> | null,
 ): IrVecLayoutAttachment {
   const typeMemo = new Map<IrType, IrType>();
   const objectMemo = new Map<IrObjectShape, IrObjectShape>();
@@ -125,7 +126,15 @@ export function attachIrVecLayouts(
         mapped = Object.assign(placeholder, { inner: mapType(type.inner) });
         break;
       }
-      case "val":
+      case "val": {
+        const logical = logicalTypeForPhysical?.(type);
+        if (logical) {
+          mapped = mapType(logical);
+          break;
+        }
+        mapped = type;
+        break;
+      }
       case "string":
       case "extern":
       case "dynamic":
@@ -189,12 +198,14 @@ export function attachIrVecLayouts(
     ? {
         signature: mapSignature(fn.closureSubtype.signature),
         captureFieldTypes: mapArray(fn.closureSubtype.captureFieldTypes, mapType),
+        ...(fn.closureSubtype.hostOneShot ? { hostOneShot: true } : {}),
       }
     : undefined;
   const closureSubtypeUnchanged =
     closureSubtype === undefined ||
     (closureSubtype.signature === fn.closureSubtype?.signature &&
-      closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes);
+      closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes &&
+      closureSubtype.hostOneShot === fn.closureSubtype.hostOneShot);
   const mapped =
     !usesVec ||
     (params === fn.params && resultTypes === fn.resultTypes && blocks === fn.blocks && closureSubtypeUnchanged)

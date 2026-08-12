@@ -1,0 +1,21 @@
+{
+  "name": "lodash",
+  "repo": "https://github.com/lodash/lodash.git",
+  "tag": "4.18.1",
+  "commit": "cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e",
+  "inventoryDirectory": "test",
+  "testFileCount": 1,
+  "testFilePathSha256": "ee50962e17e4245b7cdfbb897ea598a535007a5b6e4787aefc1f621705d1c569",
+  "registrationSites": 1753,
+  "testSourceSha256": "dff4bb034bc54534e9d73ba352accee0a2a49e657f984b25d4c391b2db36e294",
+  "selectedModules": [
+    "lodash.add",
+    "lodash.divide",
+    "lodash.multiply",
+    "lodash.replace",
+    "lodash.subtract",
+    "lodash.toLower",
+    "lodash.toUpper"
+  ],
+  "_note": "Lodash keeps 1,753 QUnit registration sites in one 27,234-line test/test.js file. The immutable commit and source digest pin that entire original suite. The adapter copies complete upstream QUnit.module slices for seven self-contained arithmetic/string modules and runs their unchanged callbacks against the matching published modular method files; the remaining modules stay reported as deferred."
+}
