@@ -1,5 +1,23 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
 import { assertEquivalent } from "./equivalence/helpers.js";
+
+async function runStandaloneScript(source: string): Promise<void> {
+  const result = await compile(source, {
+    allowJs: true,
+    fileName: "issue-3042-object-create.js",
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+    deferTopLevelInit: true,
+    inferModuleStrictArguments: false,
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+  expect(result.imports).toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  const init = (instance.exports as Record<string, unknown>).__module_init;
+  expect(typeof init).toBe("function");
+  (init as () => void)();
+}
 
 // #3042 — Object.defineProperty attribute round-trip fidelity.
 //
@@ -25,6 +43,24 @@ describe("#3042 defineProperty attribute round-trip (value-less default → unde
       `,
       [{ fn: "test", args: [] }],
     );
+  });
+
+  it("standalone Object.create value-less descriptor defaults [[Value]] to undefined", async () => {
+    await runStandaloneScript(`
+      var object = Object.create({}, { prop: { writable: false } });
+      var descriptor = Object.getOwnPropertyDescriptor(object, "prop");
+      if (!object.hasOwnProperty("prop")) throw new Error("missing own prop");
+      if (object.prop !== undefined) throw new Error("property value is not undefined");
+      if (descriptor.value !== undefined) throw new Error("descriptor value is not undefined");
+      if (descriptor.writable !== false) throw new Error("writable is not false");
+    `);
+  });
+
+  it("standalone Object.create empty descriptor does not expose null as an object", async () => {
+    await runStandaloneScript(`
+      var object = Object.create({}, { prop: {} });
+      if (typeof object.prop !== "undefined") throw new Error("missing value is not undefined");
+    `);
   });
 
   it("double value-less descriptor (15.2.3.6-4-79 shape): still undefined", async () => {

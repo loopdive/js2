@@ -55,7 +55,7 @@
  * returning, so `{name,length}` on a builtin never reaches the bag.
  *
  * ## LOOKUP, never ENSURE
- * `__carrier_bag_of` uses `__closure_bag_lookup` / `__vec_bag_lookup`. A
+ * `__carrier_bag_of` uses the carrier-specific LOOKUP helper. A
  * *query* must never allocate a bag: merely asking whether a receiver has a
  * property would otherwise hand a later `__integrity_bag` consumer a carrier
  * that previously had none (the `carrier-bag-hasown.ts` rule).
@@ -66,10 +66,10 @@
  * surfaces. Nothing here re-implements delete semantics.
  *
  * ## What deliberately does NOT move
- * - **Date / RegExp / Error / class instances** have no bag, so
+ * - **Date / RegExp** have no bag, so
  *   `__carrier_bag_of` answers null and every surface keeps its current answer.
- *   Their expando substrate is still greenfield (#4010's matrix rows 4-7);
- *   #4098 is the issue that needs it.
+ *   Native Error values now use their existing `$Error_struct.$props` slot;
+ *   class-instance expandos use the identity-keyed instance substrate.
  * - **Builtin internals never leak into `keys`.** #4071 measured a -5 for
  *   letting closed-struct fields into `Object.keys` and reverted it. The bag is
  *   not a struct: it only ever holds keys a user assignment put there, so
@@ -108,6 +108,9 @@ const VEC_BAG_LOOKUP = "__vec_bag_lookup";
  * consumes {@link buildBagMarkerTestInstrs}.
  */
 const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
+/** (#4098) Native `$Error_struct.$props` carrier (`error-props.ts`). */
+const IS_ERROR_PROP_CARRIER = "__is_error_prop_carrier";
+const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 
 /** Abbreviated heap type `eq` (`closure-props.ts` uses the same encoding). */
 const EQ_HEAP_TYPE = -19;
@@ -135,7 +138,9 @@ const I32: ValType = { kind: "i32" };
 export function reserveCarrierBagVisibility(ctx: CodegenContext): void {
   if (ctx.funcMap.get(CARRIER_BAG_OF) !== undefined) return;
   const hasCarrier =
-    ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER) !== undefined || ctx.funcMap.get(IS_VEC_PROP_CARRIER) !== undefined;
+    ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER) !== undefined ||
+    ctx.funcMap.get(IS_VEC_PROP_CARRIER) !== undefined ||
+    ctx.funcMap.get(IS_ERROR_PROP_CARRIER) !== undefined;
   if (!hasCarrier) return;
 
   const reserve = (name: string, params: ValType[], results: ValType[], placeholder: Instr[]): void => {
@@ -419,11 +424,15 @@ export function fillCarrierBagVisibility(ctx: CodegenContext): void {
     // header warns this arm is "inert alone" — it ships in the same change as
     // the write path (`instance-props.ts` S1/S2), never on its own.
     const instanceArm = arm(IS_INSTANCE_EXPANDO_CARRIER, CLOSURE_BAG_LOOKUP);
-    if (closureArm.length === 0 && vecArm.length === 0 && instanceArm.length === 0) return;
+    // (#4098) Error's bag is the existing `$props` slot, not the identity-keyed
+    // closure side table. Only user-created entries live there, so widening
+    // visibility cannot fabricate `$Error_struct` internals.
+    const errorArm = arm(IS_ERROR_PROP_CARRIER, ERROR_PROP_BAG_LOOKUP);
+    if (closureArm.length === 0 && vecArm.length === 0 && instanceArm.length === 0 && errorArm.length === 0) return;
     setFn(
       CARRIER_BAG_OF,
       [{ name: "bag", type: EXT }],
-      [...closureArm, ...vecArm, ...instanceArm, { op: "ref.null.extern" }],
+      [...closureArm, ...vecArm, ...instanceArm, ...errorArm, { op: "ref.null.extern" }],
     );
   }
 
