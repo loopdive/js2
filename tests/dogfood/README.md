@@ -10,7 +10,7 @@ unavailable for package entries that do not yet have that API-level proof.
 The npm-compat catalog adds another seventeen packages through one data-driven,
 bounded package-entry harness:
 
-`hono`, `lodash`, `axios`, `react`, `react-dom`, `jsdom`, `webpack`, `uuid`, `typescript`,
+`hono`, `lodash`, `lodash-es`, `axios`, `react`, `react-dom`, `jsdom`, `webpack`, `uuid`, `typescript`,
 `redux`, `jest`, `styled-components`, `moment`, `stylelint`,
 `three`, `lit`, and `tailwindcss`.
 
@@ -101,6 +101,7 @@ then compares its result with the same operation in native Node.
 | **uuid upstream suite**                 | #3995 | `dist/index.js`           | UUID's own 75 `src/test/*.test.ts` cases                                    |
 | **hono upstream suite**                 | #3995 | `dist/utils/*.js`         | pinned original Vitest callbacks; complete source inventory tracked          |
 | **lodash upstream suite**               | #3995 | modular method files      | unchanged QUnit module slices from the monolithic upstream suite              |
+| **lodash-es upstream suite**            | #3995 | modular ESM method files  | the same unchanged QUnit module slices against the ESM distribution           |
 | **moment upstream suite**               | #3995 | `moment.js`               | pinned original QUnit callbacks; complete core/locale inventory tracked       |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
@@ -125,6 +126,7 @@ the invalid `v7` callback binary and v1/validate/version runtime traps.
 ```bash
 pnpm run dogfood:hono-upstream-suite
 pnpm run dogfood:lodash-upstream-suite
+pnpm run dogfood:lodash-es-upstream-suite
 pnpm run dogfood:moment-upstream-suite
 ```
 

@@ -47,6 +47,7 @@ import {
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
+import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addImport, addStringConstantGlobal } from "../registry/imports.js";
 import { addFuncType, getOrRegisterTemplateVecType } from "../registry/types.js";
@@ -628,20 +629,10 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
 
   // ── collectParseImports ──
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-    let name = node.expression.text;
-    // Resolve aliases like `var freeParseInt = parseInt; freeParseInt(...)` (#1109)
-    if (name !== "parseInt" && name !== "parseFloat") {
-      const sym = ctx.checker.getSymbolAtLocation(node.expression);
-      const decl = sym?.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer && ts.isIdentifier(decl.initializer)) {
-        const initName = decl.initializer.text;
-        if (initName === "parseInt" || initName === "parseFloat") {
-          name = initName;
-        }
-      }
-    }
-    if (name === "parseInt" || name === "parseFloat") {
-      state.parseNeeded.add(name);
+    const globalParseBuiltin = resolveGlobalParseBuiltin(node.expression, ctx.oracle);
+    const name = globalParseBuiltin ?? node.expression.text;
+    if (globalParseBuiltin !== undefined) {
+      state.parseNeeded.add(globalParseBuiltin);
       // (#2652) In standalone / WASI the native parse helpers take a string ref;
       // a NON-string primitive arg (`parseInt(true)` / `parseInt(-1)`) must be
       // run through ToString at the call site (emitToString) BEFORE the call.
@@ -1585,7 +1576,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   {
     const parseNative = new Set<string>();
     for (const name of state.parseNeeded) {
-      if (ctx.funcMap.has(name)) continue; // already registered (e.g. lib.d.ts) (#1109)
+      if (ctx.ambientBuiltinFuncMap.has(name)) continue;
       // (#3912) The StringToNumber helper is PURE WASM, not a JS global — the
       // host runtime has no binding for it, so requesting it as an import
       // yielded a stub whose result read back as NaN. It only ever enters
@@ -1599,6 +1590,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
         parseNative.add(name);
         continue;
       }
+      const shadowed = ctx.funcMap.get(name);
       if (name === "parseInt") {
         const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
         addImport(ctx, "env", name, { kind: "func", typeIdx });
@@ -1606,9 +1598,26 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
         const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }]);
         addImport(ctx, "env", name, { kind: "func", typeIdx });
       }
+      const builtinIdx = ctx.funcMap.get(name);
+      if (builtinIdx !== undefined) ctx.ambientBuiltinFuncMap.set(name, builtinIdx);
+      if (shadowed !== undefined) ctx.funcMap.set(name, shadowed);
     }
     if (parseNative.size > 0) {
+      const shadowed = new Map<string, number>();
+      for (const name of parseNative) {
+        const existing = ctx.funcMap.get(name);
+        if (existing !== undefined) {
+          shadowed.set(name, existing);
+          ctx.funcMap.delete(name);
+        }
+      }
       emitNativeParseNumber(ctx, parseNative);
+      for (const name of parseNative) {
+        const builtinIdx = ctx.funcMap.get(name);
+        if (builtinIdx !== undefined) ctx.ambientBuiltinFuncMap.set(name, builtinIdx);
+        const previous = shadowed.get(name);
+        if (previous !== undefined) ctx.funcMap.set(name, previous);
+      }
     }
   }
 

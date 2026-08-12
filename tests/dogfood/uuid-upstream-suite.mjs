@@ -64,6 +64,7 @@ const assert = {
 
 const REGISTRATION_SHIM = String.raw`
 const __uuidTests = [];
+const __uuidErrors = [];
 function describe(_name, body) { body(); }
 function test(name, body) { __uuidTests.push({ name: String(name), body }); }
 `;
@@ -244,13 +245,18 @@ function wasmModuleSource(source, filePath, packageRoot, generatedDirectory) {
     transformed,
     `export function uuidRun(context: any): number[] {
   const statuses: number[] = [];
+  __uuidErrors.length = 0;
   for (let i = 0; i < __uuidTests.length; i++) {
-    try { __uuidTests[i].body(context); statuses.push(1); }
-    catch (_error) { statuses.push(0); }
+    try { __uuidTests[i].body(context); statuses.push(1); __uuidErrors.push(""); }
+    catch (error) {
+      statuses.push(0);
+      __uuidErrors.push(error && error.message !== undefined ? String(error.message) : String(error));
+    }
   }
   return statuses;
 }
 export function uuidCount(): number { return __uuidTests.length; }
+export function uuidErrors(): string[] { return __uuidErrors; }
 `,
   ].join("\n");
 }
@@ -398,6 +404,7 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
   }
 
   let wasmResults;
+  let wasmErrors;
   try {
     const imports = result.importObject ?? {};
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -405,6 +412,7 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
     const statuses = exports.uuidRun(makeMockContext());
     wasmResults = Array.from(statuses, (value) => value === 1);
+    wasmErrors = Array.from(exports.uuidErrors(), String);
   } catch (error) {
     const message = recordNativeError(error);
     return {
@@ -440,7 +448,7 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
       ...test,
       status: test.passed && wasmResults[index] ? "passed" : test.passed ? "failed" : "harness-incompatible",
       wasmPassed: wasmResults[index],
-      wasmError: test.passed && !wasmResults[index] ? "upstream assertion failed in Wasm" : null,
+      wasmError: test.passed && !wasmResults[index] ? wasmErrors[index] || "upstream assertion failed in Wasm" : null,
     })),
   };
 }

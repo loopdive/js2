@@ -14,11 +14,13 @@
 
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { writeFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analyzeSource } from "../src/checker/index.js";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import { runTest262File } from "./test262-runner.js";
 
 function messageOf(d: { messageText: string | { messageText: string } }): string {
@@ -34,6 +36,7 @@ function nameNotFound(
 }
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+const test262It = existsSync(join(process.cwd(), "test262/harness/assert.js")) ? it : it.skip;
 
 describe("#2528 — --platform scopes the ambient global surface (DOM vs node)", () => {
   const winSrc = `export function test(): number { (window as any).stop(); return 1; }`;
@@ -112,6 +115,31 @@ describe("#2645 — --platform node composes with the node capability gate (impl
 });
 
 describe("#2528/#2645 — end-to-end compile() wiring", () => {
+  it("--platform node lowers the unshadowed `global` alias to globalThis", async () => {
+    const result = await compile(
+      `export function test() {
+        return typeof global == "object" && global && global.Object === Object ? 1 : 0;
+      }`,
+      { fileName: "node-global.js", allowJs: true, platform: "node" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    expect((instance.exports.test as () => number)()).toBe(1);
+  });
+
+  it("a lexical binding named `global` still shadows the Node alias", async () => {
+    const result = await compile(`export function test(global) { return global; }`, {
+      fileName: "node-global-shadow.js",
+      allowJs: true,
+      platform: "node",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    expect((instance.exports.test as (value: number) => number)(7)).toBe(7);
+  });
+
   it("--platform node suppresses the `process` TS2580 warning (emulation implied)", async () => {
     const result = await compile(`export function test(): number { process.exit(0); return 1; }`, {
       target: "wasi",
@@ -161,7 +189,7 @@ describe("#2528/#2645 — test262 byte-neutrality (per #1968)", () => {
     }
   }
 
-  it("an ES-only test262 program runs green and is byte-neutral under --platform node", async () => {
+  test262It("an ES-only test262 program runs green and is byte-neutral under --platform node", async () => {
     const source = `// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /*---
 description: ES-only arithmetic — no DOM, no node surface

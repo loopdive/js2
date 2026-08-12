@@ -49,6 +49,10 @@ import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upst
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
 import { setupLitImplementation } from "../tests/dogfood/setup-lit-upstream-suite.mjs";
 import { runHarness as runReactDomUpstreamSuite } from "../tests/dogfood/react-dom-upstream-suite.mjs";
+import { runHarness as runHonoUpstreamSuite } from "../tests/dogfood/hono-upstream-suite.mjs";
+import { runHarness as runLodashUpstreamSuite } from "../tests/dogfood/lodash-upstream-suite.mjs";
+import { runHarness as runUuidUpstreamSuite } from "../tests/dogfood/uuid-upstream-suite.mjs";
+import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -101,6 +105,7 @@ const NPM_DOWNLOADS_SNAPSHOT = {
     uuid: 275_892_096,
     typescript: 250_686_863,
     lodash: 164_859_858,
+    "lodash-es": 42_294_984,
     "react-dom": 139_740_993,
   },
 };
@@ -1784,6 +1789,19 @@ for (const entry of NPM_COMPAT_CATALOG) {
       ? await workloadRunner({ quiet: true })
       : null;
   const hasApiWorkload = workloadRunner !== null;
+  const catalogUpstreamRunner =
+    entry.name === "hono"
+      ? runHonoUpstreamSuite
+      : entry.name === "lodash"
+        ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash" })
+        : entry.name === "lodash-es"
+          ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })
+          : entry.name === "uuid"
+            ? runUuidUpstreamSuite
+            : entry.name === "moment"
+              ? runMomentUpstreamSuite
+              : null;
+  const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
     ? {
@@ -1811,6 +1829,32 @@ for (const entry of NPM_COMPAT_CATALOG) {
     : null;
   const tests =
     workload?.tests ??
+    (catalogUpstreamReport
+      ? {
+          kind: "upstream-suite",
+          passed: catalogUpstreamReport.results?.passed ?? null,
+          total: catalogUpstreamReport.results?.scored ?? null,
+          passRatePct:
+            catalogUpstreamReport.results?.scored > 0
+              ? Number(((catalogUpstreamReport.results.passed / catalogUpstreamReport.results.scored) * 100).toFixed(1))
+              : null,
+          admitted: catalogUpstreamReport.extraction?.testsRegistered ?? null,
+          executed: catalogUpstreamReport.results?.scored ?? null,
+          upstreamTestsSeen:
+            catalogUpstreamReport.upstreamSuite?.registrationSites ??
+            catalogUpstreamReport.extraction?.upstreamTestsSeen ??
+            catalogUpstreamReport.results?.scored ??
+            null,
+          harnessIncompatible: 0,
+          quarantined: 0,
+          sourceIssue: 3995,
+          upstreamPin: {
+            repo: catalogUpstreamReport.upstreamSuite?.repo ?? null,
+            tag: catalogUpstreamReport.upstreamSuite?.tag ?? null,
+            commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
+          },
+        }
+      : null) ??
     upstreamTests ??
     (hasApiWorkload
       ? {

@@ -71,6 +71,7 @@ export function createCodegenContext(
     usageInference: new UsageInference(checker),
     useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
     funcMap: new Map(),
+    ambientBuiltinFuncMap: new Map(),
     irUnitFuncMap: new Map(),
     structMap: new Map(),
     typeIdxToStructName: new Map(),
@@ -321,6 +322,7 @@ export function createCodegenContext(
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
     wasi: options?.wasi ?? false,
+    nodeGlobals: options?.nodeGlobals ?? false,
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
     // #2625/#2783 — the linkable js2wasm:node-<mod> std-IO path only applies under
