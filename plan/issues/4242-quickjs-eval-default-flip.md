@@ -793,6 +793,33 @@ Persisted evidence:
 - the QuickJS build verified its broad strict/sloppy canaries plus the two new
   focused parity canary modules before publishing the adapter cache entry.
 
+### Post-merge parity revalidation — 2026-08-12
+
+After merging `origin/main` at `1d61405370467f` into the parity branch, both
+engines were rebuilt and rerun from merge head `d649fda75db515` against a
+freshly downloaded promoted standalone baseline. The exact 1,351-file set,
+worker counts, target, and official-scope filter were identical in both arms.
+
+| Engine | Pass | Fail | Compile error | Timeout / skip | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| QuickJS | **1,112** | 213 | 26 | 0 / 0 | 1,351 |
+| Interpreter | 1,108 | 217 | 26 | 0 / 0 | 1,351 |
+| Promoted baseline | 1,105 | 220 | 26 | 0 / 0 | 1,351 |
+
+The mechanical gate again returns **PROCEED**: QuickJS has the same four
+genuine wins, zero losses, zero neutral changes, and no missing or unexpected
+rows. The interpreter differs from the freshly promoted baseline on only three
+files, within the gate's sanity tolerance. The exact run hashes are:
+
+- QuickJS JSONL: `1de3b5558869eabd51186895d8ebc567f297dbe11e2fbbedb39e3fd570e66f16`;
+- interpreter JSONL: `2e922fcdc24497e54bc52cc3c05eb59a7dd2a04bf1f04587f1d6ec933a2eb5f5`;
+- promoted baseline JSONL: `a0c28f73430d14250feb852217cf641e103b841945998d0d700db07f1fd314d2`.
+
+The persisted decision artifacts are
+`benchmarks/results/eval-parity/parity-20260812-0230-0237.json` and its sibling
+Markdown report. Post-merge typecheck and production build pass, as do 163/163
+focused provider, membrane, state-pool, parity-gate, and CI-routing tests.
+
 This checkpoint only satisfies the parity prerequisite. It does **not** flip
 the default engine and does not remove, disable, or degrade the native bytecode
 interpreter. Phase 2 remains ready as a separately reviewable default-selection
