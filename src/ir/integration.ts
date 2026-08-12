@@ -59,6 +59,10 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import {
+  ensureFunctionPrototypeCallHelper,
+  FUNCTION_PROTOTYPE_CALL_HELPER,
+} from "../codegen/function-prototype-callable.js";
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
 import {
@@ -4010,6 +4014,12 @@ function makeFromAstResolver(
     objectDefinePropertyTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
       return irImportFuncRef("env", "__defineProperty_desc");
+    },
+    functionPrototypeCallTarget() {
+      if (!ctx.standalone || ctx.wasi) return null;
+      return ensureFunctionPrototypeCallHelper(ctx) === undefined
+        ? null
+        : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
     },
     resolveDynamic() {
       return resolveIrDynamicCarrierType(ctx);
