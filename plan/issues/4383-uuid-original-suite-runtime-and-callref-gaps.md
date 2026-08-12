@@ -64,6 +64,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/statements/variables.ts::compileVariableStatement
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+coercion-sites-allow:
+  - src/codegen/closure-exports.ts
 ---
 
 # UUID original suite exposes vector, crypto, exception, and callback ABI gaps
