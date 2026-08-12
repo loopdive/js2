@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-12",
   "threshold": 1500,
-  "totalCeiling": 600135,
+  "totalCeiling": 600522,
   "files": {
     "src/codegen-linear/index.ts": 5574,
     "src/codegen-linear/runtime.ts": 4292,
@@ -12,7 +12,7 @@
     "src/codegen/async-frame.ts": 3262,
     "src/codegen/async-scheduler.ts": 4448,
     "src/codegen/binary-ops-typed-dispatch.ts": 1512,
-    "src/codegen/binary-ops.ts": 3350,
+    "src/codegen/binary-ops.ts": 3329,
     "src/codegen/class-bodies.ts": 3411,
     "src/codegen/closed-method-dispatch.ts": 1743,
     "src/codegen/closure-exports.ts": 1670,
@@ -77,15 +77,15 @@
     "src/interp/emitter.ts": 2139,
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 1862,
-    "src/ir/from-ast.ts": 11254,
+    "src/ir/from-ast.ts": 11251,
     "src/ir/integration.ts": 6944,
     "src/ir/lower.ts": 4296,
     "src/ir/module-bindings.ts": 2299,
-    "src/ir/nodes.ts": 3395,
+    "src/ir/nodes.ts": 3403,
     "src/ir/prepared-component-dependencies.ts": 1716,
     "src/ir/propagate.ts": 1599,
     "src/ir/select.ts": 7906,
-    "src/ir/verify.ts": 1789,
-    "src/runtime.ts": 16905
+    "src/ir/verify.ts": 1798,
+    "src/runtime.ts": 16907
   }
 }
