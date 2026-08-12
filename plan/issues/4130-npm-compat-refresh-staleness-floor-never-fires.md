@@ -4,7 +4,7 @@ title: "npm-compat refresh reports SUCCESS and commits nothing — the staleness
 status: done
 sprint: current
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-12
 completed: 2026-08-03
 priority: high
 horizon: s
@@ -116,3 +116,32 @@ the regeneration, and feed the gate from that.
   show `cancelled` despite `cancel-in-progress: false`; that is consistent with
   GitHub keeping at most one *pending* run per group (which the workflow's
   comment already anticipates), but it was not verified here.
+
+## 2026-08-12 follow-up — promotion PR CI fast path
+
+The PR-based redesign fixed publication starvation, but its generated-data PR
+was still treated like an ordinary compiler change. The refresh
+[run](https://github.com/loopdive/js2wasm/actions/runs/31608062362) spent about
+48 minutes generating and validating the npm-compat artifacts. Promotion PR
+[#4413](https://github.com/loopdive/js2wasm/pull/4413) then launched another
+`Refresh Benchmarks / measure-and-gate` job (about 14 minutes), the full
+required `quality` job (about 7 minutes), and the merge-group `changes` job
+selected all compile-and-run suites because `merge_group` was hard-coded to
+`code=true`.
+
+That work cannot add confidence to an exact six-file generated diff. The new
+fast path:
+
+- recognizes only the complete canonical/public npm-compat artifact set;
+- requires each public artifact to be byte-identical to its canonical twin;
+- validates report, performance, history, timestamp, and source-revision
+  structure before the required `quality` context succeeds;
+- skips compiler quality, linear, and equivalence work for that exact diff on
+  PR, merge-group, and post-merge push events;
+- runs `Refresh Benchmarks` only after accepted code lands on `main`, never when
+  a PR is opened or updated, and path-filters the artifact-only landing push;
+- falls back to normal CI if one artifact is missing, an extra file changes, or
+  validation fails.
+
+The workflow-shape and validator regressions are pinned in
+`tests/issue-4130-npm-compat-promotion-fast-path.test.ts`.
