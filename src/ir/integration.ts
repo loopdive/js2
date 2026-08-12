@@ -59,6 +59,10 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import {
+  ensureStandaloneWrapperInstanceOfHelper,
+  type StandaloneWrapperConstructorName,
+} from "../codegen/standalone-wrapper-instanceof.js";
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
 import {
@@ -3975,6 +3979,24 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    standaloneWrapperInstanceOfPlan(ctorName: string) {
+      if (
+        !supportsBackendCapability("standalone-wrapper-instanceof") ||
+        (ctorName !== "Number" && ctorName !== "String" && ctorName !== "Boolean")
+      ) {
+        return null;
+      }
+      const funcIdx = ensureStandaloneWrapperInstanceOfHelper(ctx, ctorName as StandaloneWrapperConstructorName);
+      const func = definedFuncAt(ctx, funcIdx);
+      if (!func) {
+        throw new IrInvariantError(
+          "unknown-function-ref",
+          "build",
+          `standalone wrapper instanceof helper ${ctorName} has no allocator-owned function`,
+        );
+      }
+      return { funcName: func.name };
+    },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
         !supportsBackendCapability("standalone-native-regexp-test-carrier") ||

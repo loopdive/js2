@@ -20,8 +20,20 @@ related: [2916, 3962, 1896, 2175, 4120, 1472]
 # safety argument, the reverted-arm record) lives in the NEW subsystem module
 # `src/codegen/native-object-family-instanceof.ts`. Choosing which lowering a
 # builtin RHS takes is by definition a dispatch-site decision.
+# The 2026-08-12 wrapper follow-up likewise keeps its semantic predicate in the
+# NEW `standalone-wrapper-instanceof.ts` subsystem. The additional allowances
+# below are the narrow selector, lowering, and allocator-owned resolver seams
+# required to make the operation genuinely IR-emitted rather than legacy-only.
 loc-budget-allow:
   - src/codegen/expressions/identifiers.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/select.ts
+func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExpr
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #4276 — host-free `instanceof Object` / `instanceof Function` in standalone
@@ -163,6 +175,55 @@ it, so the emitted predicate is pointwise **≥** the one it replaces.
    (#4262's filed defect). Left alone: it is the `Function(…)`-valued and
    `this`-valued RHS shapes that `native-user-instanceof.ts` explicitly declines,
    a different mechanism (runtime `.prototype` read) from this one.
+
+## 2026-08-12 follow-up — wrapper accessor subcluster (+6)
+
+Fresh standalone-baseline clustering put Object/property semantics first at
+188 ≤ES5 failures. The largest unowned repeated subcluster inside it was the
+eight accessor files that assert `this instanceof Function|String|Number|Boolean`
+while `Object.create` / `Object.defineProperties` reads a descriptor.
+
+The old note above blamed strict `.call` for blocking wrapper registration.
+That diagnosis was incomplete. Current runtime evidence shows:
+
+- `new Number` / `new String` / `new Boolean` allocate an ordinary `$Object`
+  with a FLAG_INTERNAL `[[PrimitiveValue]]` slot;
+- strict primitive `this` is carried through externref by the native primitive
+  box structs;
+- the obsolete `$Wrapper*` structs are structurally equivalent to those
+  one-field primitive carriers, so force-registering them makes
+  `false instanceof Boolean` spuriously true while still missing real wrapper
+  objects.
+
+The follow-up replaces wrapper membership with one demand-gated native
+predicate per constructor. It requires the real `$Object`, requires the genuine
+internal-slot flag, then classifies the stored native primitive value. It also
+normalizes both tag-6 and legacy-overloaded tag-5 fast `$AnyValue` object
+carriers, so wrapper identity survives an `any` call boundary. No phantom
+wrapper type is registered.
+
+This semantic operation is also routed through IR: the selector admits only
+fast standalone and an exact unshadowed ambient `Number` / `String` / `Boolean`
+RHS; from-ast tag-tests and unwraps the dynamic Object partition and calls the
+same runtime predicate. Focused compile telemetry records `kind=emitted` with
+zero post-claim errors for all three constructors. Other backends, non-fast
+standalone, and source-shadowed constructors remain unclaimed.
+
+Focused A/B result on the measured main base (`d5ccbf2723633f`):
+
+| file family | before | after | delta |
+| --- | ---: | ---: | ---: |
+| String/Number/Boolean accessor files | 0/6 | 6/6 | **+6** |
+| strict `Function.prototype.call` regression | pass | pass | 0 |
+
+The two Function-receiver files remain separate. With the pinned QuickJS
+runtime-eval provider present, both still fail: closure own properties live in
+an auxiliary `$Object` bag, and the bag read currently binds an accessor's
+`this` to that bag instead of to the original function. A direct probe observes
+the getter running with `this instanceof Object`, but not `this === props`,
+`typeof this === "function"`, or `this instanceof Function`. Repairing that
+receiver-preserving bag read is a separate carrier-MOP change; it is not claimed
+by this wrapper-brand slice.
 
 ## Measurement
 
