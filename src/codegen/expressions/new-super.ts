@@ -1384,6 +1384,7 @@ function compileNewFunctionDeclaration(
 ): ValType | null {
   const body = funcDecl.body;
   if (!body) return null;
+  const fnctorKey = resolveFnctorSymbol(ctx.checker, expr.expression)?.name ?? funcName;
 
   // (#2660 S3a) Reconstruct an APPROVED, EMPTY-BODY `new F()` as a native
   // `$Object` (standalone) so its inherited-prototype reads route through the
@@ -1412,6 +1413,11 @@ function compileNewFunctionDeclaration(
   //        receiver. Reading the REAL local type (not the TS annotation) is the
   //        load-bearing safety check — returning externref into a struct-ref
   //        local would `ref.cast`-trap (that retype ripple is S3b).
+  //   (G5) the one proven live `F.prototype` value is not an Array carrier
+  //        (#4387). `__object_create` can seed only its `$Object` `$proto`
+  //        slot, so reconstructing an Array-valued prototype discards the
+  //        chain. Keep that exact shape on the raw fnctor representation,
+  //        whose shared closed-method runtime recognizes the live Array.
   //
   // Cache-order note: this gate sits at the cache-MISS entry. If a NON-approved
   // sibling `new F()` of the same fnctor compiled first, it populated
@@ -1423,11 +1429,11 @@ function compileNewFunctionDeclaration(
   if (
     ctx.standalone &&
     ctx.fnctorEscapeGate?.approved.has(expr) &&
+    !ctx.fnctorEscapeGate.stableArrayPrototypeNames.has(fnctorKey) &&
     body.statements.length === 0 &&
     (expr.arguments?.length ?? 0) === 0 &&
     fnctorNewResultConsumedAsExternref(ctx, fctx, expr)
   ) {
-    const fnctorKey = resolveFnctorSymbol(ctx.checker, expr.expression)?.name ?? funcName;
     const reconstructed = compileFnctorNewAsObject(ctx, fctx, fnctorKey);
     if (reconstructed) return reconstructed;
     // Helper declined (e.g. `__object_create` unavailable) → fall through to the

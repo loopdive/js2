@@ -157,3 +157,34 @@ describe("#2660 S1 — fnctor escape/dynamic-use gate (inert analysis)", () => {
     expect(result.approved.size).toBe(1); // only `a`
   });
 });
+
+describe("#4387 — stable Array-valued fnctor prototype proof", () => {
+  it("recognizes one direct top-level intrinsic Array literal assignment", () => {
+    const { sf, checker } = checkerFor(`
+      F.prototype = [1, 2, 3];
+      function F() {}
+      var value: any = new F();
+    `);
+    expect(analyzeFnctorEscapeGate(checker, [sf]).stableArrayPrototypeNames).toEqual(new Set(["F"]));
+  });
+
+  it("declines multiple or computed prototype writes", () => {
+    const { sf, checker } = checkerFor(`
+      F.prototype = [1, 2, 3];
+      F["prototype"] = [4, 5, 6];
+      function F() {}
+      var value: any = new F();
+    `);
+    expect(analyzeFnctorEscapeGate(checker, [sf]).stableArrayPrototypeNames).toEqual(new Set());
+  });
+
+  it("declines constructor aliases outside the closed proof", () => {
+    const { sf, checker } = checkerFor(`
+      F.prototype = [1, 2, 3];
+      function F() {}
+      var Alias = F;
+      var value: any = new Alias();
+    `);
+    expect(analyzeFnctorEscapeGate(checker, [sf]).stableArrayPrototypeNames).toEqual(new Set());
+  });
+});
