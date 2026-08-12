@@ -1,14 +1,24 @@
 name: Refresh Benchmarks
 
 on:
-  pull_request:
-    branches: [main]
+  # Benchmark results are reporting, not a PR gate. Measure accepted code once
+  # it lands on main; opening or updating a PR must not allocate a benchmark
+  # runner or delay auto-enqueue while a non-required check is pending.
   push:
     branches: [main]
+    # The merge of that data-only PR must not immediately launch another
+    # benchmark refresh either. A mixed/source push still runs normally.
+    paths-ignore:
+      - "benchmarks/results/npm-compat.json"
+      - "benchmarks/results/npm-compat-perf.json"
+      - "benchmarks/results/npm-compat-history.json"
+      - "website/public/benchmarks/results/npm-compat.json"
+      - "website/public/benchmarks/results/npm-compat-perf.json"
+      - "website/public/benchmarks/results/npm-compat-history.json"
   workflow_dispatch:
 
-# PR code is measured with read-only repository access. The deploy key and
-# write permissions exist only in promote-benchmarks, which never runs for PRs.
+# Measurement runs on accepted main revisions. The deploy key and write
+# permissions exist only in promote-benchmarks.
 permissions:
   contents: read
 

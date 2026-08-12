@@ -28,15 +28,29 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.detect.outputs.code }}
+      npm_compat_only: ${{ steps.npm_compat.outputs.only }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Classify and validate an npm-compat artifact-only change
+        id: npm_compat
+        run: node scripts/check-npm-compat-promotion.mjs --base HEAD^ --github-output "$GITHUB_OUTPUT"
       - id: detect
         env:
           EVENT: ${{ github.event_name }}
+          NPM_COMPAT_ONLY: ${{ steps.npm_compat.outputs.only }}
         run: |
           set -uo pipefail
+          # The six npm-compat JSON files were already generated, mirrored and
+          # structurally validated by npm-compat-refresh.yml. The classifier
+          # above repeats the cheap validation on the exact tree that would
+          # merge. Any missing/extra file selects the normal conservative path.
+          if [ "$NPM_COMPAT_ONLY" = "true" ]; then
+            echo "npm-compat artifact-only diff -> skip compile-and-run suites"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Only path-gate pull_request. push (to main) and merge_group always
           # run the heavy suites — they validate the integrated state.
           if [ "$EVENT" != "pull_request" ]; then
@@ -76,8 +90,12 @@ jobs:
           # committed-baseline involvement and no origin/main fetch race.
           fetch-depth: 2
 
+      - name: Classify and validate an npm-compat artifact-only change
+        id: npm_compat
+        run: node scripts/check-npm-compat-promotion.mjs --base HEAD^ --github-output "$GITHUB_OUTPUT"
+
       - name: Skip explicit base-ancestry check (handled by simulated merge / queue)
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: steps.npm_compat.outputs.only != 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: |
           # GitHub Actions checks out refs/pull/N/merge (a simulated merge of
           # the PR's HEAD into the PR's BASE) for pull_request, and the queue
@@ -90,11 +108,14 @@ jobs:
           echo "✓ ${{ github.event_name }} ref already includes base by construction"
 
       - name: Setup Node and pnpm (cached)
+        if: steps.npm_compat.outputs.only != 'true'
         uses: ./.github/actions/setup-node-pnpm
 
-      - run: pnpm install --frozen-lockfile
+      - if: steps.npm_compat.outputs.only != 'true'
+        run: pnpm install --frozen-lockfile
 
       - name: Lint, format, and typecheck (parallel)
+        if: steps.npm_compat.outputs.only != 'true'
         run: |
           # These checks are independent and read-only. Running them as three
           # lanes keeps the required `quality` context intact while bounding
@@ -125,15 +146,18 @@ jobs:
           fi
 
       - name: IR fallback gate (#1376)
+        if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
 
       - name: IR-only readiness instrumentation (#3519)
+        if: steps.npm_compat.outputs.only != 'true'
         # Hybrid policy is the bounded migration ratchet: Unsupported rows are
         # measured, while any invariant, missing unit, or compile failure is
         # fatal. R9 promotes the strict IR-only policy once blockers reach zero.
         run: pnpm run check:ir-only -- --policy=hybrid
 
       - name: Dead-export gate (#3090 Phase 2)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails when a NEW unreferenced top-level function appears in
         # src/codegen/ vs scripts/dead-export-baseline.json (call-graph
         # reachability; disappearing entries are deletion progress). Refresh
@@ -145,6 +169,7 @@ jobs:
         run: pnpm run check:dead-exports
 
       - name: Oracle ratchet (#1930/#3273)
+        if: steps.npm_compat.outputs.only != 'true'
         # CHANGE-SCOPED (#3273, same rework as check:loc-budget /
         # check:coercion-sites): fails only when THIS change-set grows its NET
         # (per-field, summed over the changed files) direct-checker count under
@@ -164,6 +189,7 @@ jobs:
           pnpm run check:oracle-ratchet
 
       - name: BackendEmitter pushRaw ratchet (#2953)
+        if: steps.npm_compat.outputs.only != 'true'
         # Change-scoped: every pushRaw call added by this change-set must carry
         # `// pushraw-ok(#issue)` on the same or preceding line. Tagged growth
         # is explicit reviewed debt; untagged additions fail even when another
@@ -173,6 +199,7 @@ jobs:
         run: pnpm run check:pushraw
 
       - name: LOC-regrowth ratchet (#3102/#3131)
+        if: steps.npm_compat.outputs.only != 'true'
         # CHANGE-SCOPED AND SELF-CONTAINED: fails only when THIS change-set
         # grows a src file that was already over the 1,500 LOC threshold at
         # its own base (HEAD^1 of the synthetic merge commit — see the
@@ -194,6 +221,7 @@ jobs:
           pnpm run check:loc-budget
 
       - name: Per-function LOC-ceiling ratchet (#3400 / R-FUNC)
+        if: steps.npm_compat.outputs.only != 'true'
         # Function-granularity twin of check:loc-budget (#3102 slice 2): the same
         # change-scoped, shrink-only ratchet, but keyed on FUNCTIONS over 300 LOC
         # (measured via the TS AST). FAILS when this change-set grows a function
@@ -210,6 +238,7 @@ jobs:
           pnpm run check:func-budget
 
       - name: test262 harness compile-time budget gate (#3437)
+        if: steps.npm_compat.outputs.only != 'true'
         # DETERMINISTIC, load-independent pre-merge budget for source-scan compile
         # WORK: compiles a FIXED representative harness-shaped assembly and counts
         # shared-forEachChild traversals (src/ts-api.ts). The oracle-v8 harness
@@ -223,12 +252,14 @@ jobs:
         run: pnpm run check:harness-compile-budget
 
       - name: IR adoption table freshness (#2145)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails when plan/log/ir-adoption.md drifts from its generator data or
         # from the IrFallbackReason union in src/ir/select.ts. Regenerate with
         # `pnpm run gen:ir-adoption`.
         run: pnpm run check:ir-adoption
 
       - name: Stack-balance fixup ratchet (#1918)
+        if: steps.npm_compat.outputs.only != 'true'
         # Each stack-balance fixup repairs an emitter bug. Fails when any fixup
         # bucket grows vs. scripts/stack-balance-baseline.json — a new fixup
         # means new wrong codegen reached the safety net (some arms are lossy:
@@ -238,12 +269,15 @@ jobs:
         run: pnpm run check:stack-balance
 
       - name: Codegen silent-fallback gate (#2089)
+        if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:codegen-fallbacks
 
       - name: AnyValue box-site gate (#2104)
+        if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:any-box-sites
 
       - name: Speculative-rollback gate (#1919)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails when a raw `fctx.body.length = <savedLen>` rollback appears under
         # src/codegen/ outside the transactional helper
         # (src/codegen/context/speculative.ts). A bare body truncation restores
@@ -253,6 +287,7 @@ jobs:
         run: pnpm run check:speculative-rollback
 
       - name: Coercion-site drift gate (#2108/#3131/#3279)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails when the JS-semantic coercion vocabulary (ToString/ToNumber/
         # ToPrimitive/equality/ToBoolean) is hand-rolled at a NEW site outside
         # the coercion engine (see plan/log/analysis-2026-06/03-coercion-engine
@@ -272,11 +307,13 @@ jobs:
           pnpm run check:coercion-sites
 
       - name: Issue integrity + link gate (#1616)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails on duplicate IDs, filename/frontmatter ID mismatch, dangling
         # depends_on, or broken plan/issues/<id>-<slug>.md links in tracked *.md.
         run: pnpm run check:issues
 
       - name: Issue-ID fresh-claim gate (#2531)
+        if: steps.npm_compat.outputs.only != 'true'
         # Rejects a PR that introduces a plan/issues/<id>-*.md whose id already
         # exists on origin/main under a different filename — the merge-queue-wedge
         # collision (#2530/#2531). Allocation must go through
@@ -302,7 +339,7 @@ jobs:
         # GitHub blip; the merge_group duplicate-id gate stays the hard
         # backstop. pull_request only: in the merge_group the head already
         # contains main and the dup gate above re-validates the merged tree.
-        if: github.event_name == 'pull_request'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           CLAIM_PR_REPO: ${{ github.repository }}
@@ -322,7 +359,7 @@ jobs:
         # collision fails the PR's OWN checks before it can reach the queue.
         # Skips cleanly on push/merge_group (the head already contains main) and
         # whenever origin/main can't be resolved.
-        if: github.event_name == 'pull_request'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         run: |
           # Deepen so the real merge base between origin/main and the PR head is
           # present and merge-tree can do a true 3-way merge. The script falls
@@ -332,6 +369,7 @@ jobs:
           node scripts/check-merged-issue-integrity.mjs origin/main HEAD
 
       - name: Issue→probe coverage gate (#2093)
+        if: steps.npm_compat.outputs.only != 'true'
         # A bugfix issue (created on/after the cutoff) cannot flip to
         # `status: done` without a permanent probe/test reference — either a
         # tests/issue-<id>.test.ts file or a cited tests/…test… / test262/… path.
@@ -344,6 +382,7 @@ jobs:
           ISSUE_COVERAGE_BASE=origin/main pnpm run check:issue-spec-coverage
 
       - name: Done-status integrity gate (#3474)
+        if: steps.npm_compat.outputs.only != 'true'
         # Sibling to #2093. CHANGE-SCOPED: for each plan/issues/*.md this PR
         # touches that is `status: done` and not `done_cited_ok: true`, counts
         # the LIVE test262 failures citing its #NNNN across both baseline lanes
@@ -358,6 +397,7 @@ jobs:
           pnpm run check:done-status-integrity
 
       - name: Verdict-logic must bump oracle_version (#3003)
+        if: steps.npm_compat.outputs.only != 'true'
         # A test262 VERDICT-LOGIC change (how a per-test result is SCORED:
         # test262-worker.mjs / test262-shared.ts / negative-verdict.mjs / the
         # runners) diffs new-policy-vs-old-policy as a mass pass→fail cluster.
@@ -374,6 +414,7 @@ jobs:
           VERDICT_ORACLE_BASE=origin/main pnpm run check:verdict-oracle
 
       - name: Host-import allowlist + strict-mode gate (#1524)
+        if: steps.npm_compat.outputs.only != 'true'
         env:
           # PRs that intentionally grow the allowlist must include
           # `[allowlist-grow]` in the PR description. We forward the flag to
@@ -387,6 +428,7 @@ jobs:
           pnpm exec vitest run tests/host-import-allowlist-budget.test.ts tests/host-import-allowlist-gate.test.ts
 
       - name: test262 regression-gate excusal tests (#3004, #3303)
+        if: steps.npm_compat.outputs.only != 'true'
         # The diff-test262 regression-gate logic (net/ratio/bucket + the #2879
         # leaky and #2940 vacuity excusals) is load-bearing for the merge queue
         # but sat outside CI — exactly the "gate logic runs nowhere" gap called
@@ -400,12 +442,14 @@ jobs:
         run: pnpm exec vitest run tests/issue-3004.test.ts tests/issue-3303.test.ts
 
       - name: IR alloc-provenance checker (#1586)
+        if: steps.npm_compat.outputs.only != 'true'
         # Runs the AllocSiteRegistry + provenance tests with the debug-mode
         # invariant checker enabled, so a pass that loses allocation-site
         # provenance fails CI here.
         run: pnpm run test:ir:alloc
 
       - name: Benchmark staleness gate (#1580)
+        if: steps.npm_compat.outputs.only != 'true'
         # Fails if the committed Wasmtime hot-runtime benchmark JSON regresses
         # to Interpreter-class string-hash numbers — the silent-staleness mode
         # that let the pre-#1580 63.7 ms warm value sit on the landing page for
@@ -416,7 +460,7 @@ jobs:
         run: pnpm exec vitest run tests/issue-1580.test.ts
 
       - name: Prepare Test262 harness inputs for changed root tests
-        if: github.event_name == 'pull_request'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         run: |
           # The root-test gate below executes Test262 integration tests when a
           # PR changes them. Keep the regular checkout lightweight, but prepare
@@ -441,7 +485,7 @@ jobs:
         # own gate (#1659) and linear-*/c-abi/simd* run in `linear-tests`.
         # Mass edits (>20 files, e.g. a repo-wide reformat) skip with a
         # warning — the post-merge detector covers them.
-        if: github.event_name == 'pull_request'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'pull_request'
         env:
           # Keep this broad, toolchain-light gate on the native engine. The
           # dedicated QuickJS artifact workflow exercises the default engine;
@@ -452,6 +496,7 @@ jobs:
           pnpm run test:changed-root
 
       - name: Required guard suite (#3552)
+        if: steps.npm_compat.outputs.only != 'true'
         # Untouched root test files do NOT run at PR time — the #3008
         # two-layer design runs only PR-touched tests/*.test.ts per PR and
         # defers the full ~2,100-file suite (~9 CPU-hours) to the post-merge
@@ -466,9 +511,11 @@ jobs:
         run: node scripts/run-guard-suite.mjs
 
       - name: Conformance numbers in sync (#1522)
+        if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run sync:conformance:check
 
       - name: Feature-support badges in sync with test262
+        if: steps.npm_compat.outputs.only != 'true'
         # Landing-page feature badges (#2665) must match the committed
         # website/public/feature-examples.json per-feature pass rates. The bake
         # and this check read the SAME committed file, so they are consistent by
@@ -477,7 +524,7 @@ jobs:
         run: pnpm run generate:feature-badges:check
 
       - name: Fetch runs/index.json from baselines repo
-        if: github.event_name == 'push'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'push'
         continue-on-error: true
         run: |
           # runs/index.json moved from LFS to js2wasm-baselines to avoid bandwidth exhaustion
@@ -498,7 +545,7 @@ jobs:
             cp /tmp/js2wasm-baselines/runs/standalone-index.json benchmarks/results/runs/standalone-index.json
 
       - name: Regenerate planning artifacts
-        if: github.event_name == 'push'
+        if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'push'
         run: |
           if [ -d plan ] || [ -d dashboard ]; then
             pnpm run build:planning-artifacts

@@ -45,14 +45,6 @@ on:
   # (`cheap gate` + `merge shard reports`, and `quality`). With grace 0 (#2786)
   # this run enqueues every just-green PR; it is the primary enqueue path.
   #
-  # "Refresh Benchmarks" is here for a NON-required check (#3889). `auto-enqueue`
-  # only accepts CLEAN/HAS_HOOKS, but `mergeStateStatus` is driven by ALL checks,
-  # required or not — so while `measure-and-gate` (Refresh Benchmarks) is still
-  # running the PR is UNSTABLE and is correctly skipped. If that workflow is the
-  # LAST to finish, the PR flips UNSTABLE -> CLEAN with no trigger in this list,
-  # and sits green-but-unqueued until the ~30-min cron. The symptom is
-  # indistinguishable from a broken enqueue path, which is the real cost.
-  #
   # NOTE — this allowlist is a maintenance trap by construction: it must be kept
   # in lockstep with the set of workflows whose checks influence
   # `mergeStateStatus`, and it breaks SILENTLY when a new one is added. The
@@ -61,7 +53,7 @@ on:
   # grounds only (an any-completion trigger invokes this workflow once per
   # workflow per push); revisit once quota is healthy. See #3889.
   workflow_run:
-    workflows: ["Test262 Sharded", "CI", "Refresh Benchmarks"]
+    workflows: ["Test262 Sharded", "CI"]
     types: [completed]
   # Backstop: catch PRs the merge queue dropped when main advanced under them.
   # Lowered to ~30 min (#1758) — the workflow_run trigger is the responsive path;
