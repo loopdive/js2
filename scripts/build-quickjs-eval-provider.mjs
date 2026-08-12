@@ -16,7 +16,7 @@
 // Acquisition order:
 //   1. JS2WASM_QUICKJS_ARTIFACT_DIR — a prebuilt dir, verified then copied into
 //      the keyed cache dir.
-//   2. keyed cache hit — exit fast.
+//   2. keyed cache hit — instantiate/verify the linked pair, then exit fast.
 //   3. build on demand: `bash scripts/quickjs-artifact/build.sh` (~3 min cold;
 //      needs clang-18/cmake/git/curl + network). On failure: HARD ERROR naming
 //      the prerequisite and the env override — never a silent degrade, because
@@ -28,6 +28,10 @@
 //   node scripts/build-quickjs-eval-provider.mjs                (after the
 //                                                                compiler bundle
 //                                                                is built)
+//   node scripts/build-quickjs-eval-provider.mjs --require-cache
+//                                                               (CI consumer:
+//                                                                verify only,
+//                                                                never build)
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -52,7 +56,11 @@ import {
   QUICKJS_BUILD_SCRIPT,
   QUICKJS_DIRECT_CANARY_EXPECTATIONS,
   QUICKJS_DIRECT_CANARY_SOURCE,
+  QUICKJS_FUNCTION_PARITY_CANARY_EXPECTATIONS,
+  QUICKJS_FUNCTION_PARITY_CANARY_SOURCE,
   QUICKJS_IMPORT_MODULE,
+  QUICKJS_STATE_PARITY_CANARY_EXPECTATIONS,
+  QUICKJS_STATE_PARITY_CANARY_SOURCE,
   quickjsAdapterCachePath,
   quickjsArtifactCacheDir,
   quickjsArtifactCacheKey,
@@ -189,7 +197,7 @@ function acquireArtifact(cacheDir) {
  * this check deliberately does NOT touch it. The adapter's imports must be
  * exactly `js2wasm:qjs`, and the artifact's exactly `wasi_snapshot_preview1`.
  */
-async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
+function verifyQuickjsPair(adapterBinary, artifact) {
   const adapterModule = new WebAssembly.Module(adapterBinary);
   const allowed = new Set([...QUICKJS_ADAPTER_EXTERNS, "memory"]);
   for (const imp of WebAssembly.Module.imports(adapterModule)) {
@@ -207,6 +215,32 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
   // A cached artifact that predates the current qjs_shim.c would otherwise fail
   // as a bare LinkError inside the canary, with nothing pointing at the shim.
   assertQuickjsArtifactExports(quickjsModule);
+
+  // Instantiate the linked pair even on a cache hit. Structural inspection
+  // alone cannot see an ABI mismatch between the adapter and libquickjs.wasm,
+  // and a CI shard must reject a stale/corrupt download before it starts
+  // producing engine-labelled test262 results.
+  const namespace = instantiateRuntimeEvalNamespace({
+    engine: "quickjs",
+    adapterModule,
+    quickjsModule,
+  });
+  for (const name of [
+    "__runtime_new_function",
+    "__runtime_indirect_eval",
+    "__runtime_direct_eval",
+    "__runtime_apply_interpreted",
+  ]) {
+    if (typeof namespace[name] !== "function") {
+      throw new Error(`quickjs linked pair exposes no ${name}`);
+    }
+  }
+
+  return { adapterModule, quickjsModule };
+}
+
+async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
+  const { adapterModule, quickjsModule } = verifyQuickjsPair(adapterBinary, artifact);
 
   // Two canary compiles. The second one only differs by
   // `inferModuleStrictArguments: false`, and that difference is the whole point:
@@ -261,21 +295,90 @@ async function verifyQuickjsProvider(compile, adapterBinary, artifact) {
   await runCanary(QUICKJS_DIRECT_CANARY_SOURCE, "quickjs-eval-direct-canary.ts", QUICKJS_DIRECT_CANARY_EXPECTATIONS, {
     inferModuleStrictArguments: false,
   });
+  await runCanary(
+    QUICKJS_FUNCTION_PARITY_CANARY_SOURCE,
+    "quickjs-eval-function-parity-canary.ts",
+    QUICKJS_FUNCTION_PARITY_CANARY_EXPECTATIONS,
+    {},
+  );
+  await runCanary(
+    QUICKJS_STATE_PARITY_CANARY_SOURCE,
+    "quickjs-eval-state-parity-canary.ts",
+    QUICKJS_STATE_PARITY_CANARY_EXPECTATIONS,
+    { inferModuleStrictArguments: false },
+  );
 }
 
-async function main() {
+/**
+ * CI consumer-side verification. This path is intentionally read-only: it
+ * proves that the artifact and compiler-keyed adapter downloaded by a shard
+ * are the exact pair the selector will load, and refuses a miss instead of
+ * rebuilding (or silently measuring another engine).
+ */
+function requireQuickjsCache(cacheDir, bundleHash) {
+  const akey = quickjsArtifactCacheKey();
+  const artifactDir = process.env.JS2WASM_QUICKJS_ARTIFACT_DIR
+    ? resolve(process.env.JS2WASM_QUICKJS_ARTIFACT_DIR)
+    : quickjsArtifactCacheDir(cacheDir, akey);
+  const artifact = readQuickjsArtifact(artifactDir);
+  if (!artifact) {
+    throw new Error(
+      `required quickjs artifact cache entry is missing for key ${akey} at ${artifactDir}; ` +
+        `the shared CI artifact is absent or was built with different QuickJS inputs`,
+    );
+  }
+
+  const adapterSource = buildQuickjsAdapterSource(artifact.abi);
+  const key = runtimeEvalProviderCacheKey(adapterSource, bundleHash);
+  const adapterPath = quickjsAdapterCachePath(cacheDir, key);
+  if (!existsSync(adapterPath)) {
+    throw new Error(
+      `required quickjs adapter cache entry is missing for key ${key} (bundle ${bundleHash}) at ${adapterPath}; ` +
+        `the shared CI artifact is absent or was built from a different compiler bundle`,
+    );
+  }
+
+  const adapterBinary = readFileSync(adapterPath);
+  verifyQuickjsPair(adapterBinary, artifact);
+  console.log(
+    `[quickjs-eval-provider] required cache HIT + linked-pair verification — artifact key ${akey}, ` +
+      `adapter key ${key} (bundle ${bundleHash}), ${artifact.binary.length} + ${adapterBinary.length} bytes`,
+  );
+}
+
+async function main(args = process.argv.slice(2)) {
+  const known = new Set(["--require-cache", "--help", "-h"]);
+  const unknown = args.filter((arg) => !known.has(arg));
+  if (unknown.length > 0) {
+    throw new Error(`unknown argument(s): ${unknown.join(", ")} (expected --require-cache or --help)`);
+  }
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(
+      "Usage: node scripts/build-quickjs-eval-provider.mjs [--require-cache]\n" +
+        "  --require-cache  verify the selected artifact + compiler-keyed adapter without building",
+    );
+    return;
+  }
+
   const cacheDir = defaultRuntimeEvalProviderCacheDir();
-  mkdirSync(cacheDir, { recursive: true });
   const bundleHash = computeCompilerBundleHash();
+  if (args.includes("--require-cache")) {
+    requireQuickjsCache(cacheDir, bundleHash);
+    return;
+  }
+
+  mkdirSync(cacheDir, { recursive: true });
 
   const artifact = acquireArtifact(cacheDir);
   const adapterSource = buildQuickjsAdapterSource(artifact.abi);
   const key = runtimeEvalProviderCacheKey(adapterSource, bundleHash);
   const adapterPath = quickjsAdapterCachePath(cacheDir, key);
   if (existsSync(adapterPath)) {
+    const adapterBinary = readFileSync(adapterPath);
+    verifyQuickjsPair(adapterBinary, artifact);
     console.log(
-      `[quickjs-eval-provider] adapter cache HIT — key ${key} (bundle ${bundleHash}), ` +
-        `${readFileSync(adapterPath).length} bytes at ${adapterPath}`,
+      `[quickjs-eval-provider] adapter cache HIT + linked-pair verification — key ${key} (bundle ${bundleHash}), ` +
+        `${adapterBinary.length} bytes at ${adapterPath}`,
     );
     return;
   }

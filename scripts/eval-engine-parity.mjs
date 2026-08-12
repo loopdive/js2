@@ -45,6 +45,7 @@
 //     --quickjs      benchmarks/results/eval-parity/quickjs-scoped.jsonl \
 //     --interpreter  benchmarks/results/eval-parity/interpreter-scoped.jsonl \
 //     --baseline     .test262-cache/test262-standalone-current.jsonl \
+//     --expected-files benchmarks/results/eval-parity/scoped-files.txt \
 //     --quickjs-log  /tmp/test262-vitest-quickjs.log \
 //     --interpreter-log /tmp/test262-vitest-interpreter.log \
 //     --gate --json-out benchmarks/results/eval-parity/parity.json \
@@ -57,6 +58,11 @@
 //   --quickjs <jsonl>          quickjs-engine run results          (required in diff mode)
 //   --interpreter <jsonl>      interpreter-engine run results      (required in diff mode)
 //   --baseline <jsonl>         promoted STANDALONE baseline        (required with --gate)
+//   --expected-files <path>    exact requested measurement set (JSON
+//                              {files:[]} / array / newline list); required by
+//                              --gate unless --expected-count is supplied
+//   --expected-count <n>       explicit requested row count; weaker count-only
+//                              alternative to --expected-files
 //   --quickjs-tier <str>       the run's announced tier, verbatim
 //   --interpreter-tier <str>   ditto
 //   --quickjs-log <path>       extract the tier line from a run log instead
@@ -490,6 +496,8 @@ export function buildParityArtifact(opts) {
     tiers,
     mode = "scoped",
     manifest = null,
+    expectedFiles = null,
+    expectedCount = null,
     rules = DEFAULT_RULES,
   } = opts;
 
@@ -498,6 +506,23 @@ export function buildParityArtifact(opts) {
   const measured = [...qFiles].filter((f) => iFiles.has(f)).sort();
   const onlyQuickjs = [...qFiles].filter((f) => !iFiles.has(f)).sort();
   const onlyInterpreter = [...iFiles].filter((f) => !qFiles.has(f)).sort();
+
+  const expectedKind = expectedFiles ? "files" : Number.isInteger(expectedCount) ? "count" : null;
+  const expectedFileSet = expectedFiles ? new Set(expectedFiles) : null;
+  const expectedSize = expectedFileSet?.size ?? (Number.isInteger(expectedCount) ? expectedCount : null);
+  const missingQuickjs = expectedFileSet ? [...expectedFileSet].filter((f) => !qFiles.has(f)).sort() : [];
+  const missingInterpreter = expectedFileSet ? [...expectedFileSet].filter((f) => !iFiles.has(f)).sort() : [];
+  const unexpectedQuickjs = expectedFileSet ? [...qFiles].filter((f) => !expectedFileSet.has(f)).sort() : [];
+  const unexpectedInterpreter = expectedFileSet ? [...iFiles].filter((f) => !expectedFileSet.has(f)).sort() : [];
+  const expectedComplete =
+    expectedKind === "files"
+      ? missingQuickjs.length === 0 &&
+        missingInterpreter.length === 0 &&
+        unexpectedQuickjs.length === 0 &&
+        unexpectedInterpreter.length === 0
+      : expectedKind === "count"
+        ? qFiles.size === expectedSize && iFiles.size === expectedSize
+        : false;
 
   const inside = manifest ? measured.filter((f) => manifest.has(f)) : measured;
   const outside = manifest ? measured.filter((f) => !manifest.has(f)) : [];
@@ -582,6 +607,19 @@ export function buildParityArtifact(opts) {
       only_quickjs: onlyQuickjs,
       only_interpreter: onlyInterpreter,
     },
+    expected_set: {
+      kind: expectedKind,
+      source: opts.expectedFilesPath ?? null,
+      count: expectedSize,
+      files: expectedFileSet ? [...expectedFileSet].sort() : null,
+      quickjs_count: qFiles.size,
+      interpreter_count: iFiles.size,
+      complete: expectedComplete,
+      missing_quickjs: missingQuickjs,
+      missing_interpreter: missingInterpreter,
+      unexpected_quickjs: unexpectedQuickjs,
+      unexpected_interpreter: unexpectedInterpreter,
+    },
     summary,
     sanity: baseline
       ? {
@@ -589,9 +627,15 @@ export function buildParityArtifact(opts) {
           interpreter_vs_baseline_flips: inside.filter(
             (f) => baseline.map.has(f) && isPass(baseline.map.get(f)) !== isPass(interpreter.map.get(f)),
           ).length,
-          baseline_missing_files: inside.filter((f) => !baseline.map.has(f)).length,
+          baseline_missing_files: measured.filter((f) => !baseline.map.has(f)).length,
+          baseline_missing_file_paths: measured.filter((f) => !baseline.map.has(f)).sort(),
         }
-      : { baseline_provided: false, interpreter_vs_baseline_flips: null, baseline_missing_files: null },
+      : {
+          baseline_provided: false,
+          interpreter_vs_baseline_flips: null,
+          baseline_missing_files: null,
+          baseline_missing_file_paths: null,
+        },
     neutral_status_changes: { count: neutral.length, files: neutral.sort() },
     flips,
     buckets,
@@ -667,13 +711,16 @@ export function parseAcceptedResiduals(issueText) {
  * verdict line):
  *   G1 tier pinning — quickjs run announced QUICKJS, interpreter run announced
  *      INTERPRETER (and NOT REFUSAL). Absent/unparseable ⇒ BLOCKED.
- *   G2 set integrity — identical measured sets, non-empty.
+ *   G2 set integrity — identical measured sets, non-empty, and exactly equal
+ *      to the explicitly recorded requested file set/count. Two identically
+ *      truncated runs are incomplete, not like-for-like evidence.
  *   G3 net ≥ 0, OR every net-negative bucket has an accepted-residuals entry
  *      whose count_ceiling covers its losses.
  *   G4 harness-infra and unattributed LOSSES are zero. Never excusable.
  *   G5 full mode — outside-set delta is exactly zero.
- *   G6 sanity — a baseline was supplied and interpreter-vs-baseline drift is
- *      within tolerance (otherwise the interpreter reference is untrustworthy).
+ *   G6 sanity — a baseline covers every measured file and interpreter-vs-
+ *      baseline drift is within tolerance (otherwise the interpreter reference
+ *      is untrustworthy).
  *
  * @param {object} artifact
  * @param {{ entries: object[], present: boolean }} accepted
@@ -711,6 +758,30 @@ export function evaluateGate(artifact, accepted = { entries: [], present: false 
     );
   }
   if (!artifact.set?.files) reasons.push("set integrity: the measured set is empty — nothing was compared");
+  const expectedKind = artifact.expected_set?.kind;
+  const expectedCount = artifact.expected_set?.count;
+  const recordedFiles = artifact.expected_set?.files;
+  if (
+    !["files", "count"].includes(expectedKind) ||
+    !Number.isInteger(expectedCount) ||
+    expectedCount <= 0 ||
+    (expectedKind === "files" &&
+      (!Array.isArray(recordedFiles) ||
+        recordedFiles.length !== expectedCount ||
+        new Set(recordedFiles).size !== expectedCount))
+  ) {
+    reasons.push(
+      "set integrity: no valid expected measurement set/count was recorded — identically truncated runs cannot be detected",
+    );
+  } else if (!artifact.expected_set.complete) {
+    const expected = artifact.expected_set;
+    const details =
+      expected.kind === "files"
+        ? `${expected.missing_quickjs.length} missing + ${expected.unexpected_quickjs.length} unexpected quickjs; ` +
+          `${expected.missing_interpreter.length} missing + ${expected.unexpected_interpreter.length} unexpected interpreter`
+        : `expected ${expected.count}, got quickjs ${expected.quickjs_count} and interpreter ${expected.interpreter_count}`;
+    reasons.push(`set integrity: measured runs do not match the requested ${expected.kind} set (${details})`);
+  }
 
   // G4 — never-acceptable buckets (checked before G3 so its verdict wins on ties
   // with an otherwise net-positive result).
@@ -761,6 +832,11 @@ export function evaluateGate(artifact, accepted = { entries: [], present: false 
   // G6 — baseline cross-check.
   if (!artifact.sanity?.baseline_provided) {
     reasons.push("sanity: no standalone baseline supplied — the interpreter run has no cross-check");
+  } else if ((artifact.sanity.baseline_missing_files ?? 0) > 0) {
+    reasons.push(
+      `sanity: standalone baseline is missing ${artifact.sanity.baseline_missing_files} measured file(s) — ` +
+        `the interpreter run has no complete cross-check`,
+    );
   } else if (artifact.sanity.interpreter_vs_baseline_flips > driftTolerance) {
     reasons.push(
       `sanity: interpreter run differs from the promoted baseline on ` +
@@ -797,6 +873,9 @@ export function renderMarkdown(artifact) {
   lines.push(`| interpreter results | \`${artifact.inputs.interpreter.path ?? "—"}\` |`);
   lines.push(`| interpreter tier | ${codeOrDash(artifact.inputs.interpreter.tier_announcement)} |`);
   lines.push(`| baseline | \`${artifact.inputs.baseline?.path ?? "—"}\` |`);
+  lines.push(
+    `| expected set | ${artifact.expected_set?.kind ? `${artifact.expected_set.kind} (${artifact.expected_set.count})` : "**absent**"} |`,
+  );
   lines.push(`| measured files | ${artifact.set.files} |`, "");
   lines.push(`| engine | pass | fail | compile_error | skip | total |`, `| --- | --- | --- | --- | --- | --- |`);
   for (const name of ["quickjs", "interpreter", "baseline"]) {
@@ -845,8 +924,19 @@ export function renderReport(artifact) {
     lines.push(`  ${name.padEnd(18)} wins ${b.wins}  losses ${b.losses}  net ${signed(b.net)}`);
   }
   if (artifact.set_mismatch.count > 0) lines.push(`  set mismatch: ${artifact.set_mismatch.count} file(s)`);
+  if (artifact.expected_set?.kind) {
+    lines.push(
+      `  expected set: ${artifact.expected_set.kind} ${artifact.expected_set.count} ` +
+        `(${artifact.expected_set.complete ? "complete" : "INCOMPLETE"})`,
+    );
+  } else {
+    lines.push("  expected set: ABSENT");
+  }
   if (artifact.sanity.baseline_provided) {
     lines.push(`  interpreter vs baseline flips: ${artifact.sanity.interpreter_vs_baseline_flips}`);
+    if (artifact.sanity.baseline_missing_files > 0) {
+      lines.push(`  baseline missing measured files: ${artifact.sanity.baseline_missing_files}`);
+    }
   }
   return lines.join("\n");
 }
@@ -860,6 +950,8 @@ const USAGE = `eval-engine-parity — #4242 three-way eval-engine parity diff + 
   --quickjs <jsonl>         quickjs-engine run results        (diff mode, required)
   --interpreter <jsonl>     interpreter-engine run results    (diff mode, required)
   --baseline <jsonl>        promoted STANDALONE baseline      (required with --gate)
+  --expected-files <path>   exact requested file set          (preferred with --gate)
+  --expected-count <n>      requested row count               (count-only alternative)
   --quickjs-tier <str> | --quickjs-log <path>           tier provenance (required)
   --interpreter-tier <str> | --interpreter-log <path>   tier provenance (required)
   --manifest <path>         eval-dependent manifest (required by --full)
@@ -883,6 +975,8 @@ function parseArgs(argv) {
     "--quickjs",
     "--interpreter",
     "--baseline",
+    "--expected-files",
+    "--expected-count",
     "--quickjs-tier",
     "--interpreter-tier",
     "--quickjs-log",
@@ -903,10 +997,13 @@ function parseArgs(argv) {
     if (valued.has(arg)) {
       const value = argv[++idx];
       if (value === undefined || value.startsWith("--")) throw new Refused(`${arg} needs a value`);
-      if (arg === "--drift-tolerance" && !/^\d+$/.test(value)) {
+      if (arg === "--drift-tolerance" && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))) {
         // A NaN tolerance would make every `flips > tolerance` comparison false,
         // i.e. silently disable invariant G6. Refuse instead.
         throw new Refused(`--drift-tolerance must be a non-negative integer, got ${JSON.stringify(value)}`);
+      }
+      if (arg === "--expected-count" && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
+        throw new Refused(`--expected-count must be a positive integer, got ${JSON.stringify(value)}`);
       }
       opts[arg.slice(2)] = value;
     } else {
@@ -954,6 +1051,13 @@ function loadManifest(path) {
   return new Set(files.map((f) => String(f).trim()));
 }
 
+function loadExpectedFiles(path) {
+  const files = loadManifest(path);
+  if (files.has("")) throw new Refused(`expected-files ${path} contains an empty file name`);
+  if (files.size === 0) throw new Refused(`expected-files ${path} is empty — a zero-row gate is vacuous`);
+  return files;
+}
+
 function writeOut(path, text) {
   mkdirSync(dirname(resolve(path)), { recursive: true });
   writeFileSync(path, text.endsWith("\n") ? text : `${text}\n`);
@@ -968,6 +1072,15 @@ function buildFromInputs(opts) {
   if (gate && !opts.baseline) {
     throw new Refused("--gate requires --baseline <standalone jsonl> (the interpreter run's cross-check)");
   }
+  if (opts["expected-files"] && opts["expected-count"]) {
+    throw new Refused("pass only one of --expected-files / --expected-count");
+  }
+  if (gate && !opts["expected-files"] && !opts["expected-count"]) {
+    throw new Refused(
+      "--gate requires --expected-files <requested-set> or --expected-count <n>; " +
+        "otherwise identically truncated runs can pass",
+    );
+  }
   if (full && !opts.manifest) throw new Refused("--full requires --manifest <path> to partition inside/outside set");
 
   const load = (path) => ({ ...readResultsFile(path), path });
@@ -979,6 +1092,9 @@ function buildFromInputs(opts) {
     mode: full ? "full" : "scoped",
     manifest: opts.manifest ? loadManifest(opts.manifest) : null,
     manifestPath: opts.manifest ?? null,
+    expectedFiles: opts["expected-files"] ? loadExpectedFiles(opts["expected-files"]) : null,
+    expectedFilesPath: opts["expected-files"] ?? null,
+    expectedCount: opts["expected-count"] ? Number(opts["expected-count"]) : null,
     rules: opts.rules ? composeRules(validateRules(JSON.parse(readFileSync(opts.rules, "utf8")))) : DEFAULT_RULES,
     now: opts.now,
   });

@@ -1,18 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #4238 — the QuickJS eval ENGINE behind the frozen `js2wasm:runtime-eval` seam.
+ * #4238 / #4242 — the default QuickJS eval engine behind the frozen
+ * `js2wasm:runtime-eval` seam.
  *
- * SELF-GATING. Default CI has no clang-toolchain guarantee and this lane must
- * NEVER build implicitly, so the suite runs only when a built provider is
- * already reachable:
- *   `JS2WASM_EVAL_ENGINE=quickjs` was requested, OR the keyed artifact
- *   (or `JS2WASM_QUICKJS_ARTIFACT_DIR`) plus the compiled adapter are present
- *   in `.test262-cache`.
- * Otherwise the whole file skips with a message naming the prebuild command.
- *
- * The default-path cases (1–3) are the ones that matter most: they assert that
- * with the flag unset the selector behaves exactly as it did before #4238, and
- * that a bad flag value fails LOUDLY instead of degrading into the NONE tier.
+ * Selection plumbing always runs. End-to-end engine tests self-gate on an
+ * already-built artifact because ordinary unit-test CI does not build the
+ * clang/WASI dependency implicitly. The default path must either select a
+ * complete QuickJS pair or fail loudly; it must never fall back to the native
+ * bytecode interpreter. That interpreter remains explicitly selectable and
+ * tested through `JS2WASM_EVAL_ENGINE=interpreter`.
  *
  * Slice 2 adds cases 5–10: the full MVP value bridge in both directions,
  * `new Function`, apply-through-the-seam, error mapping, and the globals mirror.
@@ -471,19 +467,33 @@ const PARITY_SOURCE = `
 `;
 
 const availableArtifactDir = quickjsProviderAvailable();
-const engineRequested = process.env[ENGINE_ENV] === "quickjs";
-const enabled = engineRequested || availableArtifactDir !== null;
 
-describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
-  describe("flag plumbing (default path is untouched)", () => {
-    it("case 1 — with no flag the selection is the pre-existing interpreter/refusal tier", () => {
-      const selection = withEnv({ [ENGINE_ENV]: undefined }, () => selectCachedRuntimeEvalProvider());
+describe("#4238 / #4242 — quickjs eval engine (default)", () => {
+  describe("engine selection plumbing", () => {
+    it("case 1 — with no flag the selection is QuickJS or its documented hard error", () => {
+      if (availableArtifactDir) {
+        const selection = withEnv({ [ENGINE_ENV]: undefined, JS2WASM_QUICKJS_ARTIFACT_DIR: availableArtifactDir }, () =>
+          selectCachedRuntimeEvalProvider(),
+        );
+        expect(selection.engine).toBe("quickjs");
+        expect(selection.message).toMatch(/^QUICKJS .*— DEFAULT engine \(#4242\)/);
+        return;
+      }
+
+      const empty = mkdtempSync(join(tmpdir(), "js2wasm-qjs-default-empty-"));
+      expect(() =>
+        withEnv({ [ENGINE_ENV]: undefined, JS2WASM_QUICKJS_ARTIFACT_DIR: empty }, () =>
+          selectCachedRuntimeEvalProvider(),
+        ),
+      ).toThrow(/node scripts\/build-quickjs-eval-provider\.mjs/);
+    });
+
+    it("keeps the native bytecode interpreter as an explicit first-class engine", () => {
+      const selection = withEnv({ [ENGINE_ENV]: "interpreter" }, () => selectCachedRuntimeEvalProvider());
       expect(selection.engine).not.toBe("quickjs");
       expect(["interpreter", "refusal", "none"]).toContain(selection.engine);
-      expect(selection.message).not.toMatch(/QUICKJS/);
-      expect(selection.message).toMatch(/^(INTERPRETER|REFUSAL|NONE)/);
-      // The quickjs bundle descriptor is absent, so every existing consumer
-      // (which destructures only `module`/`message`) is unaffected.
+      expect(selection.message).toMatch(/selected via JS2WASM_EVAL_ENGINE=interpreter/);
+      expect(selection.message).toMatch(/kept native bytecode engine, #4242/);
       expect((selection as { bundle?: unknown }).bundle).toBeUndefined();
     });
 
@@ -516,7 +526,7 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
     });
   });
 
-  describe("end-to-end through the frozen js2wasm:runtime-eval seam", () => {
+  describe.skipIf(availableArtifactDir === null)("end-to-end through the frozen js2wasm:runtime-eval seam", () => {
     let probe: Record<string, () => number>;
     let parity: Record<string, () => number>;
     let sloppy: Record<string, () => number>;
@@ -562,7 +572,7 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
     it("case 9 — engine selection is observable (selection.engine + message)", () => {
       expect(selection.engine).toBe("quickjs");
       expect(selection.message).toMatch(/^QUICKJS \(artifact [0-9a-f]{12}, adapter key [0-9a-f]{16}\)/);
-      expect(selection.message).toMatch(/NOT CI-comparable/);
+      expect(selection.message).toMatch(/DEFAULT engine \(#4242\)/);
     });
 
     it("case 4 — indirect eval runs inside QuickJS (slice-1 done-signal)", () => {
@@ -720,12 +730,3 @@ describe.skipIf(!enabled)("#4238 — quickjs eval engine (flag-gated)", () => {
     });
   });
 });
-
-if (!enabled) {
-  // eslint-disable-next-line no-console
-  console.error(
-    "[#4238] quickjs eval-engine lane SKIPPED — no built provider. Run: " +
-      "node scripts/build-quickjs-eval-provider.mjs (needs clang-18/cmake/git/curl + network), " +
-      "or set JS2WASM_QUICKJS_ARTIFACT_DIR to a prebuilt artifact dir.",
-  );
-}

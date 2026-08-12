@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "generatedAt": "2026-08-12T00:18:16.098Z",
+  "generated_by": "scripts/eval-engine-parity.mjs",
+  "inputs": {
+    "quickjs": {
+      "path": "benchmarks/results/quickjs-parity-4242-final-results-20260812-0208.jsonl",
+      "tier": "QUICKJS",
+      "tier_announcement": "QUICKJS (same-tree final run)"
+    },
+    "interpreter": {
+      "path": "benchmarks/results/interpreter-parity-4242-final-results-20260812-0214.jsonl",
+      "tier": "INTERPRETER",
+      "tier_announcement": "INTERPRETER (same-tree final run, TEST262_FULL_RUNTIME_EVAL=1)"
+    },
+    "baseline": {
+      "path": ".test262-cache/test262-standalone-current.jsonl"
+    }
+  },
+  "admissible": true,
+  "set": {
+    "mode": "scoped",
+    "manifest": null,
+    "files": 1351,
+    "outside_files": 0
+  },
+  "set_mismatch": {
+    "count": 0,
+    "only_quickjs": [],
+    "only_interpreter": []
+  },
+  "expected_set": {
+    "kind": "count",
+    "source": null,
+    "count": 1351,
+    "files": null,
+    "quickjs_count": 1351,
+    "interpreter_count": 1351,
+    "complete": true,
+    "missing_quickjs": [],
+    "missing_interpreter": [],
+    "unexpected_quickjs": [],
+    "unexpected_interpreter": []
+  },
+  "summary": {
+    "quickjs": {
+      "pass": 1103,
+      "fail": 222,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1351
+    },
+    "interpreter": {
+      "pass": 1099,
+      "fail": 226,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1351
+    },
+    "baseline": {
+      "pass": 1096,
+      "fail": 229,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1351
+    },
+    "net_vs_interpreter": 4
+  },
+  "sanity": {
+    "baseline_provided": true,
+    "interpreter_vs_baseline_flips": 3,
+    "baseline_missing_files": 0,
+    "baseline_missing_file_paths": []
+  },
+  "neutral_status_changes": {
+    "count": 0,
+    "files": []
+  },
+  "flips": [
+    {
+      "file": "test/built-ins/Function/prototype/apply/S15.3.4.3_A3_T10.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "TypeError: undefined is not a function",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/built-ins/Function/prototype/apply"
+    },
+    {
+      "file": "test/built-ins/Function/prototype/call/S15.3.4.4_A3_T10.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "TypeError: undefined is not a function",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/built-ins/Function/prototype/call"
+    },
+    {
+      "file": "test/language/eval-code/direct/non-definable-global-function.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "Test262Error: Expected true but got false",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/language/eval-code/direct/non-definable-global-function.js"
+    },
+    {
+      "file": "test/language/eval-code/direct/non-definable-global-generator.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "Test262Error: Expected true but got false",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/language/eval-code/direct/non-definable-global-generator.js"
+    }
+  ],
+  "buckets": {
+    "genuine-win": {
+      "wins": 4,
+      "losses": 0,
+      "net": 4,
+      "files": [
+        "test/built-ins/Function/prototype/apply/S15.3.4.3_A3_T10.js",
+        "test/built-ins/Function/prototype/call/S15.3.4.4_A3_T10.js",
+        "test/language/eval-code/direct/non-definable-global-function.js",
+        "test/language/eval-code/direct/non-definable-global-generator.js"
+      ]
+    },
+    "scope-fidelity": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "membrane-residual": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "engine-difference": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "harness-infra": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "unattributed": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    }
+  },
+  "outside_set_delta": {
+    "count": 0,
+    "files": []
+  },
+  "gate": {
+    "verdict": "PROCEED",
+    "reason": "net +4 on 1351 measured files",
+    "reasons": [],
+    "unaccepted_negative_buckets": [],
+    "accepted_residuals": {
+      "source": "plan/issues/4242-quickjs-eval-default-flip.md",
+      "present": false,
+      "entries": []
+    }
+  }
+}
