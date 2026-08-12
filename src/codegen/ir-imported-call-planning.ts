@@ -2,6 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import type { IrImportedCallLoweringPlan, IrImportedOptionalParamPlan } from "../ir/ast-lowering-plans.js";
+import { collectIrClassInstanceInitializers } from "../ir/class-instance-initializers.js";
 import { irArgcGlobalRef, irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { irImportFuncRef, irSupportFuncRef } from "../ir/callable-bindings.js";
 import type { IrAmbientClassCallResolver } from "../ir/host-extern.js";
@@ -334,14 +335,20 @@ function appendAmbientClassCalls(
     const ownerName = owner.legacyMatchName;
     if (!retainedClassMembers.has(ownerName)) continue;
     const declaration = identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
-    if (
-      !declaration ||
-      (!ts.isMethodDeclaration(declaration) &&
-        !ts.isGetAccessorDeclaration(declaration) &&
-        !ts.isSetAccessorDeclaration(declaration) &&
-        !ts.isConstructorDeclaration(declaration)) ||
-      !declaration.body
-    ) {
+    const implicitConstructor =
+      identityPlan.identityContext.terminalByUnitId.get(ownerUnitId)?.kind === "class-implicit-constructor";
+    const executableRoots =
+      implicitConstructor && declaration && (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration))
+        ? collectIrClassInstanceInitializers(declaration)?.map(({ expression }) => expression)
+        : declaration &&
+            (ts.isMethodDeclaration(declaration) ||
+              ts.isGetAccessorDeclaration(declaration) ||
+              ts.isSetAccessorDeclaration(declaration) ||
+              ts.isConstructorDeclaration(declaration)) &&
+            declaration.body
+          ? [declaration.body]
+          : undefined;
+    if (!executableRoots) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
@@ -390,7 +397,7 @@ function appendAmbientClassCalls(
       }
       ts.forEachChild(node, visit);
     };
-    visit(declaration.body);
+    for (const root of executableRoots) visit(root);
     if (planningFailure) {
       recordIrOverlayPreparationFailure(state, ownerName, planningFailure);
       retainedClassMembers.delete(ownerName);

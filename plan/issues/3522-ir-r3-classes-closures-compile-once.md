@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-12
 priority: critical
 horizon: xl
 complexity: XL
@@ -23,7 +23,10 @@ required_by: [3523, 3525, 3527]
 related: [1370, 1983, 2857, 2951, 3000, 3045, 3144, 3518]
 origin: "#3518 R3 — extend PreparedIrProgram from free functions to every single-source executable class/closure unit"
 files:
+  - .github/workflows/test262-sharded.yml
+  - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
   - src/ir/program.ts
@@ -32,6 +35,8 @@ files:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/integration-identity.ts
+  - src/ir/select-identity.ts
   - src/ir/passes/constant-fold.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/prepared-component-sealing.ts
@@ -40,6 +45,9 @@ files:
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
+  - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-imported-call-planning.ts
+  - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/program-abi-class-callable-planning.ts
@@ -50,18 +58,23 @@ files:
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3522-test262-shard-completion.test.ts
+  - tests/test262-shared.ts
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/index.ts
+  - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
@@ -628,6 +641,340 @@ The resumable production branch is `codex/3522-builtins-retirement` in
 `/private/tmp/ts2wasm-3522-builtins-retirement`. The dirty root checkout is
 outside it and remains untouched. Publish this branch as one ready PR, freeze
 it once queued, and run full Test262 only through the merge queue.
+
+### Class-to-free cross-owner checkpoint (2026-08-12)
+
+The next serial R3 slice is implemented locally on
+`codex/3522-general-classes-retirement` in
+`/private/tmp/ts2wasm-3522-general-classes-retirement`, stacked on the ready
+Calendar retirement PR #4395. Do not publish or rebase this branch until #4395
+lands; it remains the only active IR production PR.
+
+The old selector deliberately rejected every class member that called a
+top-level free function even when both bodies had exact Program ABI identities
+and were otherwise preparation-safe. R2 also closed only the free-function
+candidate set, so the free callee was withdrawn because its class caller was
+outside that set. The slice removes that obsolete family barrier and runs one
+bidirectional call-ownership fixed point over the free-function and eligible
+class-member candidates together. If either endpoint is unprepared, both still
+withdraw before body emission; otherwise the existing combined dependency
+sealer and exact AST-site call plans own the edge.
+
+An exact `Counter.next -> increment` fixture measures the improvement. Before
+the slice, `increment`, `Counter_next`, and `run` emitted legacy bodies while
+`Counter_new` was already compile-once (**3 -> 0 legacy bodies across four
+terminals**). After the slice, all four terminals report `direct=0, IR=1` on
+both WasmGC and standalone. A direct-class-body poison on `Counter_next`
+remains green, proving the old method emitter is not entered.
+
+Optimization parity is explicit: the final IR still applies inline-small to
+`increment`, so `Counter_next` contains the direct `f64.const 1; f64.add`
+shape with no direct call, `call_ref`, or `call_indirect`. Because the final
+post-pass IR has no callee edge after inlining, the independently complete
+callee may seal separately while the constructor, method, and exported caller
+share their class-layout component. The existing selector-rejected default-
+parameter constructor remains a typed direct negative control. The same test
+file now records the already-landed Algorithms component as zero legacy bodies
+instead of preserving its obsolete pre-#3523 six-body snapshot.
+
+The exact pre/post artifact comparison strengthens that parity claim. For the
+same fixture, target, source name, and unoptimized compiler options, the
+`Counter_next` WAT body hash is unchanged in both backends:
+
+| Target | Before | After | Delta | `Counter_next` WAT |
+| --- | ---: | ---: | ---: | --- |
+| WasmGC | 1,068 bytes | 972 bytes | -96 bytes (-9.0%) | identical SHA-256 `6935d4c2...33446` |
+| standalone | 46,283 bytes | 21,286 bytes | -24,997 bytes (-54.0%) | identical SHA-256 `08c8a32e...2b2d` |
+
+The size decrease is the removed legacy-body/provider closure, not a weakened
+hot path: both final method bodies retain the same typed struct read and direct
+`f64.const 1; f64.add; return` sequence. The full focused R2/R3 matrix passes
+**96/96**, alongside typecheck, formatting, IR-only, fallback, optimization-
+retirement, issue-integrity, LOC-budget, and function-budget gates.
+
+The removed cross-owner exclusion is itself obsolete production policy and is
+deleted in this slice. General direct free-function and class body emitters
+still have unsupported consumers (unsafe/conditional super, externref-backed
+classes, forward class ABIs, nested executable owners, and dynamic member
+families), so deleting those shared implementations here would be premature.
+Those families remain the next R3 retirement work before generic R4/R5 can be
+claimed complete.
+
+### Plain implicit-constructor checkpoint (2026-08-12)
+
+This checkpoint retires the top-level class family with no explicit
+constructor, no instance initializer, and no heritage. Its implicit
+`<Class>_new` / `<Class>_init` pair already has exact structural
+`class-implicit-constructor` identity and Program ABI handles. Preparation now
+installs the exact empty `_init(self) -> self` body and existing AST-free
+allocation-plus-init `_new()` wrapper before dependency sealing. The Program
+ABI treats this exact non-terminal callable as immutable prepared support only
+after checking its inventory kind, terminal-owner absence, allocator identity,
+signature, locals, and single `local.get 0` body. The direct class pass then
+skips the same support UnitId and correlates that skip after emission.
+The narrow `program-abi-session.ts` LOC allowance covers that central seal-time
+provenance guard; family discovery and body installation live in the bounded
+`ir-plain-implicit-constructors.ts` subsystem module instead of growing the
+prepared-body driver.
+
+The exact inventory fixture is:
+
+```ts
+function increment(value: number): number {
+  return value + 1;
+}
+class Box {
+  value(): number {
+    return increment(41);
+  }
+}
+export function run(): number {
+  return new Box().value();
+}
+```
+
+Before this slice, `increment` and `Box_value` were compile-once while `run`
+reported `legacyBodyEmitted:true, irBodyEmitted:true`. After it, all three
+terminals report `direct=0, IR=1` in GC and standalone, so the measurable
+terminal improvement is **1 -> 0**. A `Box_new` direct-body poison and
+`increment,run` direct-function poison stay green, proving neither support nor
+terminal source bodies enter the old emitters. Both backends validate and
+execute `run() === 42` with zero legacy outcomes.
+
+Optimization and binary parity are exact for the inventory fixture. The
+generated sizes and SHA-256 hashes match the pre-slice direct artifacts:
+
+| Target | Bytes before/after | `Box_new` | `Box_init` | `Box_value` | `run` |
+| --- | ---: | --- | --- | --- | --- |
+| WasmGC | 661 / 661 | `09aa9869...26724` | `0054a90e...249f` | `12c24a74...f5b` | `72a05351...e023` |
+| standalone | 21,122 / 21,122 | `cbf64de4...dc64` | `061c5143...208c` | `a9ef6662...977f` | `d6eef269...6c9c` |
+
+The final bodies retain typed struct allocation, direct `_init` and method
+calls, and the folded `f64.const 42`, with no ambient `this`, boxing,
+`call_ref`, or `call_indirect`. Explicit GC/standalone negative controls prove
+that implicit derived forwarding and instance field initialization still use
+the direct class path and trip their direct-body poisons. Externref-backed and
+nested/dynamic classes remain excluded by the same fail-closed boundary.
+Because those consumers still exist, the shared implicit-derived and field-
+initializer implementation is not deleted in this checkpoint.
+
+The focused preparation, class, dependency, and Program ABI suites pass
+**113/113**. Typecheck, formatting, oracle, ordinary and shape-diagnostic
+fallback, issue/optimization-retirement, LOC, and function-budget gates are
+green. The
+IR-only shadow corpus is **37/37 IR-emitted, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. This branch remains local and stacked on queued PR #4395;
+rebase, publication, and merge-queue entry wait until that immutable parent
+lands.
+
+### Implicit derived-forwarding checkpoint (2026-08-12)
+
+This checkpoint extends the prepared implicit-constructor family through exact
+local-user inheritance chains. A synthesized derived constructor now inherits
+its parent's proven constructor parameter ABI, and preparation installs an
+exact `_init(args..., self)` body that forwards those arguments and the same
+receiver to the parent's `_init`, drops the parent result, and returns the
+original receiver. Dependency discovery records the complete parent-init chain
+recursively. Preparation is component-atomic: every implicit parent must be
+staged in the same transaction, while an explicit parent constructor must be a
+terminal owner in the prepared component. If either condition fails, the whole
+constructing caller stays direct rather than mixing prepared and legacy bodies.
+
+The Program ABI session records the forwarding contract before sealing and
+accepts the non-terminal support body only when its signature, locals, ordered
+argument loads, exact parent call, dropped parent result, and returned self all
+match. Plain implicit constructors may now also contain declared-but-
+uninitialized instance fields; their existing allocation wrapper supplies the
+typed zero values before calling the exact empty `_init`. Initialized instance
+fields remain a tested direct negative control because their ordered side
+effects are not represented by this support-only slice.
+
+The exact positive fixture is a three-level `Base -> Mid -> Leaf` chain where
+`Base(number)` stores its argument and `run()` reads `new Leaf(7).value`. In GC
+and standalone, `Base_new` and `run` are IR-only, all terminal outcomes contain
+zero legacy bodies, and the implicit `Mid`/`Leaf` support pairs exactly match
+the direct backend's canonical WAT. The terminal census improves **1 -> 0** for
+the constructing caller. The prepared caller is strictly leaner than direct:
+it calls `Leaf_new` and reads the field without the direct null-check/throw
+scaffolding, ambient `this`, boxing, `call_ref`, or `call_indirect`.
+
+The paired unoptimized artifacts are smaller while every implicit support body
+remains shape-identical:
+
+| Target | Direct | Prepared IR | Delta |
+| --- | ---: | ---: | ---: |
+| WasmGC | 1,428 bytes | 1,212 bytes | -216 bytes (-15.1%) |
+| standalone | 46,767 bytes | 21,512 bytes | -25,255 bytes (-54.0%) |
+
+An additional GC/standalone fixture proves a declared numeric field is
+zero-initialized and reaches IR-only execution. A separate initialized-field
+base plus implicit child proves atomic withdrawal, preserves `run() === 7`,
+and trips the direct-body poison when the legacy constructor is disabled.
+
+The full focused preparation, class, dependency, and Program ABI matrix passes
+**121/121**. Typecheck, formatting, oracle, fallback, shape diagnostics, issue
+integrity, optimization-retirement, LOC, and function-budget gates are green.
+The IR-only shadow remains **37/37 IR-emitted, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. No shared legacy helper is deleted yet: initialized fields,
+default/rest and forward ABIs, unsafe or conditional `super`, externref/builtin
+construction, and nested/class-expression owners still consume those paths.
+Each remaining family must delete its obsolete implementation in the same PR
+that proves its complete IR replacement.
+
+### Initialized instance-field checkpoint (2026-08-12)
+
+This checkpoint moves fixed-name instance property initializers into the same
+source-owned constructor `_init` IR as explicit constructor statements. One
+immutable source-order plan records each public/private/literal-computed field
+and expression. An implicit base constructor runs its own plan before return;
+an implicit derived constructor calls the exact parent `_init` on the same
+receiver and then runs its own plan; an explicit derived constructor runs its
+plan immediately after the one selector-proven leading `super(...)`. Dynamic
+computed field names refuse the complete constructor atomically instead of
+partially initializing an object.
+
+Initialized implicit constructors are now ordinary terminal class-member
+owners, not a special direct-only exception. Their exact class declaration is
+carried through identity validation, ambient/import call planning, combined
+free/class dependency closure, Program ABI layout sealing, IR build/lower, and
+the direct-body skip audit. The inventory's hard-coded
+`implicit-class-initializer` failure was deleted. Explicit and implicit
+constructors share `lowerConstructorFieldInitializers`; no legacy expression
+compiler is called from the IR route.
+
+The GC/standalone matrix proves a three-level `Base -> Mid -> Leaf` initialized
+field chain returns `11323`, every `_new` terminal records `direct=0, IR=1`,
+and each `_init` has exactly one typed `struct.set` after its exact parent call.
+A second matrix proves base fields precede the explicit base body and child
+fields run after `super` but before the explicit child body (`124645`). A third
+matrix proves `inline-small` still removes both calls to a numeric helper from
+field initializers. A fourth matrix proves private and literal-computed
+instance fields use the same typed writes while a static initializer remains
+outside the constructor plan. Direct class/function poison is active in all
+four matrices, both Wasm targets validate, and no prepared terminal reports a
+legacy body. A separate dynamic-computed-name fixture records a typed selector
+`Unsupported`, emits exactly one legacy constructor body under hybrid policy,
+and trips the direct-body poison; the prepared route therefore cannot claim a
+partial initializer plan.
+
+The paired unoptimized inheritance artifact is smaller on the prepared route:
+
+| Target | Direct | Prepared IR | Delta |
+| --- | ---: | ---: | ---: |
+| WasmGC | 1,846 bytes | 1,682 bytes | -164 bytes (-8.9%) |
+| standalone | 47,869 bytes | 21,868 bytes | -26,001 bytes (-54.3%) |
+
+The base initializer's value-producing WAT is identical apart from IR's final
+explicit `return`. Derived IR bodies are strictly shorter because the typed
+receiver removes the direct nullable/nominal receiver guards before inherited
+field reads; no `ref.test`, ambient `this`, boxing, `call_ref`, or
+`call_indirect` remains. Optimization decision
+`IR-OPT-TYPED-INSTANCE-FIELD-INITIALIZATION` is therefore retirement-ready.
+
+The expanded adjacency matrix also exposed and closes a preparation-order
+regression: when one caller in a provisional component had a hard foreign-unit
+failure, the sealer treated a sibling's already-observed native string-concat
+provider as non-retryable and withdrew `Animal_speak` / `Dog_speak` with the
+caller. Mixed-failure peeling now removes only the hard owner, rederives the
+component, and plans the remaining callable provider. Exact outcome assertions
+prove those methods compile once with zero legacy bodies in host-string and
+native-string lanes. The focused R2/R3 matrix passes **133/133**; hybrid and
+strict single-host shadows both pass at **37/37 IR, 0 legacy bodies, 0
+Unsupported, and 0 Invariants**. Typecheck, lint, formatting, ordinary and
+shape-diagnostic fallback, issue/optimization-retirement, LOC/function budget,
+oracle/adoption, equivalence, and the **29/29** cross-backend differential gate
+are green.
+
+The shared direct initializer loop is not yet dead: dynamic computed fields,
+externref/builtin classes, nested/class-expression owners, and constructor
+families withdrawn by default/rest/forward ABI or unsafe `super` policy still
+consume it. Deleting that loop in this checkpoint would remove supported
+fallback behavior. Those consumers remain the next exact family slices; the
+loop is deleted with the last one, after a fresh reachability proof.
+
+The resumable checkpoint is published as ready PR #4402 from
+`codex/3522-general-classes-retirement` in
+`/private/tmp/ts2wasm-3522-general-classes-retirement`. It was rebased and
+fully requalified after parent PR #4395 landed. Once #4402 enters the merge
+queue, do not modify its branch; resume the next exact constructor family only
+after this overlapping production checkpoint lands.
+
+### Merge-queue field-call closure repair (2026-08-12)
+
+The first #4402 merge-group Test262 comparison found three genuine
+pass-to-compile-error regressions in public instance-field abrupt-completion
+coverage:
+
+- `fielddefinition-initializer-abrupt-completion.js`;
+- `init-err-evaluation.js`; and
+- `super-fielddefinition-initializer-abrupt-completion.js`.
+
+The identity call-edge inventory already attributed each `x = f()` call to
+the exact explicit or implicit constructor terminal. The fault was later in
+routing: the combined free/class fixed point correctly removed a constructor
+when `f` was not IR-preparable, but the post-direct overlay retried that
+rejected class member after emitting its legacy body. Its projected direct-call
+targets intentionally excluded `f`, so the retry became an invariant instead
+of the typed atomic withdrawal the fixed point had decided.
+
+The routing boundary now removes only those considered class-member UnitIds
+that did not survive the prepared owner closure, records
+`late-preparation-unsupported`, and leaves their legacy bodies untouched. It
+does not weaken the positive initialized-field path: the existing inline-small
+matrix still prepares `bump`, the constructor, and its caller together. A new
+GC/standalone negative matrix executes the abrupt completion, proves the
+constructor and callee remain direct, activates the class-body poison seam,
+and requires the hybrid binary and WAT to be byte-for-byte identical to the
+direct compilation. A maintained path-filtered Test262 run restores all three
+merge-group regressions to pass (and the matching class-expression variant),
+with zero compile errors. The two wider substring matches remain their known
+baseline runtime failures rather than changing category. The ready PR remains
+held outside the queue until the complete branch gates are requalified.
+
+### Merge-queue shard-completion repair (2026-08-12)
+
+The next #4402 merge-group run contained no standalone verdict changes in the
+rows it completed, but standalone shards 10 and 17 terminated their single
+Vitest file process at its 512 MiB heap limit. They uploaded only 305 and 188
+rows respectively instead of their complete roughly 1,350-row partitions.
+Vitest uses exit code 1 both for ordinary Test262 assertion failures and for
+this parent-process failure, and the shard workflow intentionally accepted 1;
+the partial JSONLs therefore reached the merge job and appeared as a false
+standalone high-water regression. Every one of the 493 completed rows has the
+same status as the exact main baseline. The four compiler workers did not OOM
+and retain their independent 512 MiB limits.
+
+The Test262 file process now receives the same 1 GiB heap ceiling already used
+by the repository's issue and equivalence gates. Both the ordinary sharded
+baseline path and the consolidated merge-group path use that ceiling, and the
+independent refresh-baseline workflow mirrors it. This is runner capacity, not
+a compiler-policy or oracle change.
+
+More importantly, shard completion is now fail-closed. `test262-shared.ts`
+writes a source-specific completion marker only from `afterAll`, after all
+registered tests settle and the JSONL descriptor closes. Every shard-producing
+workflow requires that marker before accepting Vitest's otherwise-ambiguous
+exit code 1, and publishes it beside the JSONL for audit. An OOM, signal, or
+other early parent death can no longer masquerade as complete conformance
+evidence even if it leaves a non-empty partial file.
+
+The one JS-host pass-to-fail row from the same merge group was replayed first as
+an exact single path and then inside its complete 66-way shard with the pinned
+Test262 revision and pool size four; both replays passed. It is therefore kept
+classified as a queue flake rather than patched into production semantics.
+Re-enqueue still requires the parent-heap/completion-marker workflow contracts,
+the exact affected standalone shard replay, and the complete branch gates to
+pass.
+
+Local qualification with the pinned `b363f29d` Test262 tree, pool size four,
+the exact full runtime-eval provider, and the new parent ceiling completed both
+formerly truncated 36-way partitions: shard 10 and shard 17 each recorded and
+marked **1,357/1,357** rows. Shard 10 is status-identical to the current main
+baseline across all 1,357 rows. Shard 17 has three local RegExp Unicode-property
+failures whose baseline rows are passes, but an isolated worktree at the exact
+`4227031433a964` baseline commit reproduces the same three failures with identical
+error signatures on this host; they are platform-control differences, not
+#4402 changes. The merge queue remains the authoritative Linux comparison.
 
 ## Exhaustive source-unit census
 

@@ -604,35 +604,57 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).run!(41)).toBe(42);
   });
 
-  it.each([
-    [
-      "module-init",
+  it("keeps a free function called by a direct module initializer in the direct component", async () => {
+    const result = await compile(
       `
       function increment(value: number): number { return value + 1; }
       let seeded = increment(41);
       export function run(): number { return seeded; }
       `,
-    ],
-    [
-      "class-member",
-      `
-      function increment(value: number): number { return value + 1; }
-      class Box { value(): number { return increment(41); } }
-      export function run(): number { return new Box().value(); }
-      `,
-    ],
-  ] as const)("keeps a free function called by a direct %s in the direct component", async (owner, source) => {
-    const result = await compile(source, {
-      fileName: `prepared-${owner}-call-boundary.ts`,
-      experimentalIR: true,
-      trackIrOutcomes: true,
-    });
+      {
+        fileName: "prepared-module-init-call-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irFirstSkipped ?? []).not.toContain("increment");
     expect(outcome(result, "increment")).toMatchObject({
       legacyBodyEmitted: true,
       irBodyEmitted: true,
+    });
+    expect((await instantiate(result)).run!()).toBe(42);
+  });
+
+  it("prepares a free function called by a prepared class member", async () => {
+    const result = await compile(
+      `
+      function increment(value: number): number { return value + 1; }
+      class Box { value(): number { return increment(41); } }
+      export function run(): number { return new Box().value(); }
+      `,
+      {
+        fileName: "prepared-class-member-call-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    for (const observed of [outcome(result, "increment"), classMemberOutcome(result, "Box_value")]) {
+      expect(observed).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+    expect(outcome(result, "run")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).run!()).toBe(42);
   });
