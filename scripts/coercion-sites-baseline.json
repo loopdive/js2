@@ -31,7 +31,7 @@
   "codegen/expressions/new-super.ts": 2,
   "codegen/expressions/operator-assignment.ts": 12,
   "codegen/expressions/runtime-eval-provider.ts": 2,
-  "codegen/expressions/unary-updates.ts": 3,
+  "codegen/expressions/unary-updates.ts": 2,
   "codegen/expressions.ts": 1,
   "codegen/fixups.ts": 1,
   "codegen/function-body.ts": 1,

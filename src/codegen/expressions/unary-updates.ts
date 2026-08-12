@@ -17,6 +17,7 @@ import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileWithUpdateExpression } from "../with-rmw.js";
+import { emitToNumber } from "../coercion-engine.js";
 import {
   addStringConstantGlobal,
   addUnionImports,
@@ -98,9 +99,12 @@ function unwrapParens(node: ts.Expression): ts.Expression {
  * Expects one externref on the stack; leaves one f64.
  */
 function emitToNumericForUpdate(ctx: CodegenContext, fctx: FunctionContext): void {
-  addUnionImports(ctx);
-  const unboxIdx = ctx.funcMap.get("__unbox_number")!;
-  fctx.body.push({ op: "call", funcIdx: unboxIdx });
+  // Use the same canonical coercion engine as IR `dyn.to_number`. In the JS
+  // host lane this remains the existing `__unbox_number` call; standalone
+  // first runs native OrdinaryToPrimitive("number") and only then unboxes.
+  // Calling `__unbox_number` directly skipped user valueOf/toString and the
+  // primitive slots of Boolean/Number wrappers.
+  emitToNumber(ctx, fctx, { kind: "externref" });
 }
 
 /**
@@ -1152,32 +1156,6 @@ function compilePrefixUpdate(
         // Check module globals for prefix ++
         const ppModIdx = ctx.moduleGlobals.get(ppOperand.text);
         if (ppModIdx !== undefined) {
-          const ppModGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, ppModIdx)];
-          if (ppModGlobalDef?.type.kind === "externref") {
-            // externref global: safe unbox to f64, add 1, box back
-            fctx.body.push({ op: "global.get", index: ppModIdx });
-            emitToNumericForUpdate(ctx, fctx);
-            fctx.body.push({ op: "f64.const", value: 1 });
-            fctx.body.push({ op: "f64.add" });
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__box_number")!,
-            });
-            fctx.body.push({ op: "global.set", index: ppModIdx });
-            fctx.body.push({ op: "global.get", index: ppModIdx });
-            return { kind: "externref" };
-          }
-          if (ppModGlobalDef && (ppModGlobalDef.type.kind === "ref" || ppModGlobalDef.type.kind === "ref_null")) {
-            // ref global: coerce via valueOf, result is NaN+1 = NaN for plain objects
-            fctx.body.push({ op: "global.get", index: ppModIdx });
-            coerceType(ctx, fctx, ppModGlobalDef.type, { kind: "f64" });
-            fctx.body.push({ op: "f64.const", value: 1 });
-            fctx.body.push({ op: "f64.add" });
-            return { kind: "f64" };
-          }
-          // (#4079) f64 OR i32 backing slot — the shared helper owns the
-          // read/store coercion so the i32 case cannot be forgotten again.
           return compileGlobalIncDec(ctx, fctx, ppModIdx, "f64.add", "prefix");
         }
         // Check captured globals for prefix ++
@@ -1358,29 +1336,6 @@ function compilePrefixUpdate(
         // Check module globals for prefix --
         const mmModIdx = ctx.moduleGlobals.get(mmOperand.text);
         if (mmModIdx !== undefined) {
-          const mmModGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, mmModIdx)];
-          if (mmModGlobalDef?.type.kind === "externref") {
-            fctx.body.push({ op: "global.get", index: mmModIdx });
-            emitToNumericForUpdate(ctx, fctx);
-            fctx.body.push({ op: "f64.const", value: 1 });
-            fctx.body.push({ op: arithOp });
-            addUnionImports(ctx);
-            fctx.body.push({
-              op: "call",
-              funcIdx: ctx.funcMap.get("__box_number")!,
-            });
-            fctx.body.push({ op: "global.set", index: mmModIdx });
-            fctx.body.push({ op: "global.get", index: mmModIdx });
-            return { kind: "externref" };
-          }
-          if (mmModGlobalDef && (mmModGlobalDef.type.kind === "ref" || mmModGlobalDef.type.kind === "ref_null")) {
-            fctx.body.push({ op: "global.get", index: mmModIdx });
-            coerceType(ctx, fctx, mmModGlobalDef.type, { kind: "f64" });
-            fctx.body.push({ op: "f64.const", value: 1 });
-            fctx.body.push({ op: arithOp });
-            return { kind: "f64" };
-          }
-          // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, mmModIdx, arithOp, "prefix");
         }
         // Check captured globals for prefix --
@@ -1468,31 +1423,6 @@ function compilePostfixUnary(
       // Check module globals for postfix ++/--
       const postModIdx = ctx.moduleGlobals.get(postOperand.text);
       if (postModIdx !== undefined) {
-        const postModGlobalDef = ctx.mod.globals[localGlobalIdx(ctx, postModIdx)];
-        if (postModGlobalDef?.type.kind === "externref") {
-          // externref global: safe unbox old value, compute new, box and store back
-          fctx.body.push({ op: "global.get", index: postModIdx });
-          emitToNumericForUpdate(ctx, fctx);
-          const postOldTmp = allocLocal(fctx, `__post_old_${fctx.locals.length}`, { kind: "f64" });
-          fctx.body.push({ op: "local.tee", index: postOldTmp });
-          fctx.body.push({ op: "f64.const", value: 1 });
-          fctx.body.push({ op: arithOp });
-          addUnionImports(ctx);
-          fctx.body.push({
-            op: "call",
-            funcIdx: ctx.funcMap.get("__box_number")!,
-          });
-          fctx.body.push({ op: "global.set", index: postModIdx });
-          fctx.body.push({ op: "local.get", index: postOldTmp });
-          return { kind: "f64" };
-        }
-        if (postModGlobalDef && (postModGlobalDef.type.kind === "ref" || postModGlobalDef.type.kind === "ref_null")) {
-          // ref global: coerce via valueOf, postfix returns old numeric value
-          fctx.body.push({ op: "global.get", index: postModIdx });
-          coerceType(ctx, fctx, postModGlobalDef.type, { kind: "f64" });
-          return { kind: "f64" };
-        }
-        // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
         return compileGlobalIncDec(ctx, fctx, postModIdx, arithOp, "postfix");
       }
       // Check captured globals for postfix ++/--

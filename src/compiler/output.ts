@@ -323,6 +323,7 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
         line: err.line,
         column: err.column,
         severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
+        ...(err.file ? { file: err.file } : {}),
       });
     }
     if (result.errors.some(isFatalCodegenDiagnostic)) {

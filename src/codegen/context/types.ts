@@ -20,6 +20,8 @@ export interface CodegenError {
   message: string;
   line: number;
   column: number;
+  /** Source file that owns the diagnostic node, when one is available. */
+  file?: string;
   /**
    * #1921 — the compile-failure gate keys on this field, not on a magic
    * `"Codegen error:"` message prefix.
@@ -949,6 +951,14 @@ export interface FunctionContext {
    * so non-Annex-B function decls are byte-identical.
    */
   annexBOuterBindings?: Set<string>;
+  /**
+   * Subset of `annexBOuterBindings` whose name is shared by multiple eligible,
+   * capture-free declaration sites in the same var scope. Direct calls for
+   * these names must dispatch through the live outer-binding local because the
+   * executed branch, rather than the name-keyed funcMap winner, determines the
+   * callee.
+   */
+  annexBRepeatedOuterBindings?: Set<string>;
   /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
@@ -2167,7 +2177,7 @@ export interface CodegenContext {
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */
   sourceFunctionStrictness: Map<string, boolean>;
-  /** Root source-function body → strictness; avoids collisions between shadowed names. */
+  /** Source-function or inlined-IIFE instruction region → strictness. */
   sourceFunctionStrictnessByBody: Map<Instr[], boolean>;
   /** Idempotence guard for the final call-site instrumentation pass. */
   functionPoisonPillCallsFinalized?: boolean;
@@ -2922,6 +2932,19 @@ export interface CodegenContext {
    * the #1897 closed-struct-consumer regression.
    */
   growableObjectLiteralVars: Set<string>;
+  /**
+   * (#4208) Exact declarations whose shared `var` binding is repeatedly
+   * initialized with different OrdinaryToPrimitive method shapes. These
+   * literals must use the open `$Object` carrier: a closed anonymous struct
+   * cannot safely receive a later sibling shape, and the guarded reassignment
+   * otherwise stores null before `valueOf` / `toString` can run.
+   *
+   * Declaration identity is intentional. A bare-name set would poison every
+   * unrelated local named `object` in the same compilation unit.
+   */
+  ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
+  /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
+  ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
   /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host

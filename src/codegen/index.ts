@@ -3992,6 +3992,21 @@ export function generateModule(
       // registered up-front so `emitLazyClassObjectGet` finds it in funcMap.
       const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
       addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
+      // (#4371) A name-only class-object registration can make reflection
+      // report a static method, but it cannot invoke that method after the
+      // class value crosses an `any`/host boundary. Register the real compiled
+      // closure on the singleton as well. This import is host-only for the same
+      // reason as __register_class_object; standalone/wasi keep their zero-host
+      // class representation and direct in-Wasm calls.
+      const regStaticMethodTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_static_method", {
+        kind: "func",
+        typeIdx: regStaticMethodTypeIdx,
+      });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more
@@ -9068,6 +9083,9 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // resolveStructNameForExpr sees the override at every later access.
     let initForcesExternref = false;
     if (decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+      if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
+        initForcesExternref = true;
+      }
       // (#802 Slice A) A proto-receiver object literal is built as an open
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
@@ -9769,7 +9787,12 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
-        const initForcesExternref = initIsAccessorLiteral || initIsHostSpreadLiteral || initIsProtoReceiverLiteral;
+        const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+        const initForcesExternref =
+          initIsAccessorLiteral ||
+          initIsHostSpreadLiteral ||
+          initIsOrdinaryToPrimitiveObjectLiteral ||
+          initIsProtoReceiverLiteral;
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);
         }

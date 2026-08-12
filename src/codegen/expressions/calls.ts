@@ -22,6 +22,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
@@ -33,6 +34,7 @@ import {
 } from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
+import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
@@ -2764,6 +2766,12 @@ export function emitWrapperDynamicMethodCall(
   methodName: string,
   callExpr?: ts.CallExpression,
 ): ValType | null {
+  // (#4373) The host wrapper can only preserve arguments that have a matching
+  // `__call_fn_method_N` dispatcher. Record the real dynamic call-site width
+  // before module finalization; otherwise modules whose declared closures are
+  // all narrower retain the historical five-argument cap and truncate extras.
+  if (callExpr) observeHostDynamicMethodCallArity(ctx, callExpr.arguments);
+
   // (#1888 Slice 2) Standalone routes __extern_method_call native, which reads
   // its args over a $ObjVec — build the (empty) args list with the native
   // $ObjVec builder, not the host __js_array_new. JS-host keeps the host import.
@@ -8600,6 +8608,9 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     labelMap: new Map(),
     savedBodies: [],
   };
+  // This fallback emits a real Wasm function instead of using the inline-IIFE
+  // fast path, so register its source strictness like every other source body.
+  initializeFunctionPoisonPillContext(ctx, liftedFctx, funcExpr);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);

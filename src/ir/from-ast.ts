@@ -765,6 +765,32 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
 }
 
+function isDirectSourceVarStatement(statement: ts.Statement): boolean {
+  return (
+    ts.isVariableStatement(statement) &&
+    (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+  );
+}
+
+/** Direct module `var`s have persistent globals; nested/for-init `var`s still need hoisting support. */
+function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
+  const findVarDecl = (node: ts.Node): boolean => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return false;
+    }
+    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+      return true;
+    }
+    return ts.forEachChild(node, findVarDecl) === true;
+  };
+  return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
+}
+
 export function lowerFunctionAstToIr(
   fn:
     | ts.FunctionDeclaration
@@ -1072,30 +1098,8 @@ export function lowerFunctionAstToIr(
     if (returnType !== null) {
       throw new Error(`ir/from-ast: module-init unit must be void (${name})`);
     }
-    // `var` gate: a `var` anywhere in the unit (including for-init /
-    // nested blocks, where the lowering below would bind it as a
-    // loop-local slot) is FUNCTION-scoped on the legacy path — it hoists
-    // to a module global other functions can observe. Slice 2 does not
-    // model that; demote the whole unit. `var`s inside nested
-    // function-likes are local to those functions and stay fine.
-    const findVarDecl = (node: ts.Node): boolean => {
-      if (
-        ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node)
-      ) {
-        return false;
-      }
-      if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-        return true;
-      }
-      return ts.forEachChild(node, findVarDecl) === true;
-    };
-    for (const s of stmts) {
-      if (findVarDecl(s)) {
-        throw new Error(`ir/from-ast: module-init unit contains a var declaration — not in Slice 2 scope (${name})`);
-      }
+    if (moduleInitContainsNestedVar(stmts)) {
+      throw new Error(`ir/from-ast: module-init unit contains a nested var declaration (${name})`);
     }
     for (const s of stmts) {
       lowerStmt(s, cx);
@@ -3014,7 +3018,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // the slot) would double-evaluate any side effect in `let s = f() | 0`.
     // Every other hint source wins: an explicit annotation, an empty-array
     // inference and a module binding each pin the representation.
-    const widenDynamic = cx.dynamicStringLocals.has(name);
+    const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
     const promoteI32Slot =
       annotated === undefined &&
       inferredEmptyArrayHint === undefined &&
@@ -3039,7 +3043,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
         throw new IrUnsupportedError(
           "operand-coercion-unsupported",
           "build",
-          `ir/from-ast: proven dynamic local '${name}' initializer has no dynamic string carrier (${cx.funcName})`,
+          `ir/from-ast: proven dynamic binding '${name}' initializer has no supported carrier (${cx.funcName})`,
         );
       }
       value = boxed;
@@ -3429,6 +3433,10 @@ function resolveIrType(node: ts.TypeNode | undefined, override: IrType | undefin
 /** True when two logical IR types use the same already-allocated global slot. */
 function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
   if (irTypeEquals(actual, expected)) return true;
+  // Dynamic tag refinements describe the value partition, not a different
+  // physical carrier. A `dynamic<tag:String>` initializer and the unrefined
+  // dynamic module global therefore use the same slot.
+  if (actual.kind === "dynamic" && expected.kind === "dynamic") return true;
   if (expected.kind !== "extern") return false;
   if (actual.kind === "extern") return true;
   return asVal(actual)?.kind === "externref";
@@ -4513,6 +4521,8 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   if (expr.properties.length === 0) {
     throw new Error(`ir/from-ast: empty object literal not in slice 2 (${cx.funcName})`);
   }
+  const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
+  if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
   const built: { name: string; type: IrType; value: IrValueId }[] = [];
   const seen = new Set<string>();
   for (const prop of expr.properties) {
@@ -4566,6 +4576,56 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
     shape,
     built.map((b) => b.value),
   );
+}
+
+/**
+ * #4208 S3/S7 — lower the selector-certified OrdinaryToPrimitive literal as
+ * an open object rather than a closed structural `object.new`:
+ *
+ *   { valueOf: function(): number { return 1; } }
+ *
+ * A closed IR object has a compile-time field layout and cannot participate in
+ * the runtime OrdinaryToPrimitive protocol. The open object stores canonical
+ * callable externrefs, so both the JS-host and host-free object runtimes can
+ * invoke the methods through their existing zero-arity closure dispatcher.
+ */
+function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId | null {
+  const properties: { name: "valueOf" | "toString"; initializer: ts.FunctionExpression }[] = [];
+  const seen = new Set<string>();
+  for (const property of expr.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) return null;
+    const name = phase1PropertyName(property.name);
+    if (
+      (name !== "valueOf" && name !== "toString") ||
+      seen.has(name) ||
+      property.initializer.parameters.length !== 0 ||
+      (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
+        property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
+        property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword)
+    ) {
+      return null;
+    }
+    seen.add(name);
+    properties.push({ name, initializer: property.initializer });
+  }
+  if (properties.length === 0) return null;
+
+  const objectType: IrType = { kind: "extern", className: "Object" };
+  const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
+  if (object === null) {
+    throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
+  }
+  for (const property of properties) {
+    const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
+    const closure = lowerClosureExpression(property.initializer, cx);
+    const closureType = cx.builder.typeOf(closure);
+    if (closureType.kind !== "closure") {
+      throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
+    }
+    const callable = cx.builder.emitCallablePack(closure, closureType.signature);
+    cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+  }
+  return object;
 }
 
 /**
@@ -8759,6 +8819,24 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
   if (randType.kind === "string") {
     const boxed = cx.builder.emitBox(rand, irDynamic(JsTag.String));
     return cx.builder.emitDynToNumber(boxed);
+  }
+  // #4208 S3/S7 — the open OrdinaryToPrimitive object produced above. Keep
+  // this branded as `extern:Object` so enabling the abstract operation does
+  // not silently widen every host-class externref unary expression. A null
+  // hint selects the default/number method order; the returned primitive then
+  // flows through the canonical lane-specific ToNumber helper.
+  if (randType.kind === "extern" && randType.className === "Object") {
+    const externref = irVal({ kind: "externref" });
+    const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
+    const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [rand, hint], externref);
+    if (primitive === null) {
+      throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
+    }
+    const number = cx.builder.emitCall(irRuntimeFuncRef("__unbox_number"), [primitive], irVal({ kind: "f64" }));
+    if (number === null) {
+      throw new Error(`ir/from-ast: __unbox_number produced no value in ${cx.funcName}`);
+    }
+    return number;
   }
   return null;
 }
