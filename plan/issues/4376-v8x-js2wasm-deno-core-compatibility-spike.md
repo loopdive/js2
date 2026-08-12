@@ -289,5 +289,7 @@ The exact pins, stop point, reproduction steps, rejected shortcuts, and safest
 next slice are recorded in
 [`plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md`](../agent-context/v8x-js2wasm-deno-handover-2026-08-12.md).
 
-Implementation is published in ready PR
-[#4396](https://github.com/loopdive/js2wasm/pull/4396).
+The initial spike merged in
+[#4396](https://github.com/loopdive/js2wasm/pull/4396). The compiler/runtime
+follow-ups and primordials bootstrap are published in ready PR
+[#4404](https://github.com/loopdive/js2wasm/pull/4404).

@@ -1,7 +1,9 @@
 # v8x + js2wasm Deno spike handover — 2026-08-12
 
-The spike is published in
-[#4396](https://github.com/loopdive/js2wasm/pull/4396). Its authoritative task
+The initial spike merged in
+[#4396](https://github.com/loopdive/js2wasm/pull/4396). Its compiler/runtime
+follow-ups and primordials bootstrap are published in ready
+[#4404](https://github.com/loopdive/js2wasm/pull/4404). The authoritative task
 record is
 [`#4376`](../issues/4376-v8x-js2wasm-deno-core-compatibility-spike.md).
 
@@ -11,6 +13,7 @@ record is
 - Prior spike commit: `f26d0bf23a59e89a23979f27ddf744e762a6b61f`
 - Compiler ABI fix: `35423bb9c1d4aa`
 - Embedded runtime follow-up: `3917c3caa3a63e`
+- Primordials bootstrap: `b0386cbd5e5afd`
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`
@@ -232,8 +235,8 @@ regression itself passes.
 ## Resume checklist
 
 1. Read issue #4376 and this handover completely.
-2. Verify PR #4396's final state and use its checked-in patch as the source of
-   truth.
+2. Treat merged PR #4396 as the initial spike and verify follow-up PR #4404's
+   final state; use their checked-in patch and tests as the source of truth.
 3. Recreate the exact v8x and Deno pins; do not silently upgrade either while
    attributing ABI movement.
 4. Re-run the module integration and strict Deno consumer compile as positive
