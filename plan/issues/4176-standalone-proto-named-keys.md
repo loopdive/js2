@@ -6,7 +6,7 @@ assignee: ttraenkler/W4-proto-followups
 completed: 2026-08-06
 sprint: current
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-11
 priority: high
 horizon: l
 feasibility: hard
@@ -132,4 +132,42 @@ in `plan/agent-context/W4-proto-followups.md`.
   L1's row 3 — different mechanism).
 - Error-subclass 3-level chain middle hop (TypeError.prototype →
   Error.prototype); no test in the lever exercises it.
-- for-in enumeration of inherited companion keys.
+- for-in enumeration beyond the receiver's first implicit builtin-prototype
+  companion (for example Array.prototype → Object.prototype) remains a
+  follow-up; the first companion is now covered below.
+
+## Follow-up — 2026-08-11: for-in sees the first builtin-prototype companion
+
+A fresh maintained standalone ES5 census isolated six `Object.defineProperty`
+rows with one shared symptom: `for…in` over a Boolean wrapper, RegExp instance,
+or bound function did not enumerate an enumerable `prop` installed on the
+corresponding builtin prototype. Reads and `hasOwnProperty` were already
+correct; only the enumeration snapshot omitted the per-brand companion.
+
+The repair stays in the shared native enumeration ABI. Both prepared IR and
+legacy lowering call `__object_keys_forin`; that helper now asks the existing
+prototype-companion subsystem to append the receiver brand's enumerable keys.
+The adapter reuses the ordinary ordered-property map, checks receiver own keys
+and the closer-level shadow set before appending, and therefore neither
+duplicates an own carrier-bag key nor exposes a shadowed prototype key. No
+second prototype or descriptor model was introduced.
+
+The shadow set uses own-only membership: a prototype-inclusive lookup would
+make Object.prototype's companion see its own key through the empty scratch
+object and suppress it. The finalize-time array enumeration fast path also
+appends through this same adapter before returning, so Array receivers cannot
+bypass prototype enumeration.
+
+Exact maintained standalone A/B:
+
+| cohort | before | after |
+| --- | ---: | ---: |
+| `15.2.3.6-4-{404,409,419,580,585,595}` | 0 / 6 | **6 / 6** |
+
+The focused suite is **13 / 13**. It proves that a prepared IR dynamic `for…in`
+body uses the same companion enumeration, a bound-function carrier sees the
+inherited key, Object.prototype's own companion key is not self-suppressed, and
+the array fast path still appends Array.prototype keys. The remaining deeper
+implicit tail for non-Object brands is deliberately not approximated here; it
+needs native-prototype intrinsic-name shadowing as well as the next Object
+companion hop.

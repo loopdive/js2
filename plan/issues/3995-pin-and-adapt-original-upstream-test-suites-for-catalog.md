@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-11
+updated: 2026-08-12
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -38,7 +38,7 @@ measurement** — `priority`, `horizon` and `feasibility` were not stated in the
 original and have not been validated against the corpus. Re-derive before
 scheduling.
 
-## UUID v14.0.1 lane (measured 2026-08-09)
+## UUID v14.0.1 lane (remeasured 2026-08-12)
 
 The UUID adapter is now pinned and runnable at
 `pnpm run dogfood:uuid-upstream-suite`. It clones
@@ -49,15 +49,52 @@ shared `test_constants.ts` fixture is pinned separately. Registration-shaped
 `Array#forEach` calls are expanded only by the generic runner so the source
 test bodies stay intact; this preserves all dynamically generated cases.
 
-Measured oracle/runtime result: **75/75 native tests pass; 6/75 admitted tests
-pass in Wasm** (exact denominator 75, no harness-incompatible tests). All ten
-generated modules compile; nine validate, while `v35.test.ts` emits the
-compiler validation error in `hashToHex` (`local.tee[0]` type mismatch). The
-remaining 69 Wasm failures are recorded individually in
-`tests/dogfood/report/uuid-upstream-suite.json`, including illegal casts in v1,
-null dereferences in validate/version, and assertion mismatches in vector and
-crypto paths. This is runtime evidence, not a compile-only card; the lane
-remains open until the compiler/runtime frontier improves.
+Measured oracle/runtime result on the first mainline merge carrying this lane
+and on current main: **75/75 native tests pass; 3/75 admitted tests pass in
+Wasm** (exact denominator 75, no harness-incompatible tests). All ten generated
+modules compile; nine validate, while `v7.test.ts` emits a `call_ref` operand
+type mismatch in `__call_fn_2`. The three passing cases are two parse cases and
+the v6 creation-time sort case. The remaining 72 Wasm failures are recorded
+individually in `tests/dogfood/report/uuid-upstream-suite.json`, including
+illegal casts in v1, null dereferences in validate/version, and assertion
+mismatches in vector and crypto paths. The opt-in floor now reflects this
+measured mainline baseline; it is not lowered below a result that ever existed
+on main. This is runtime evidence, not a compile-only card; the lane remains
+open until the compiler/runtime frontier improves.
+
+## Hono, Lodash, and Moment lanes (measured 2026-08-12)
+
+The matching upstream repositories are pinned to immutable commits and their
+complete unit inventories are verified before extraction:
+
+- Hono v4.12.16: 120 `src/**/*.test.{ts,tsx}` files and 2,355 measured
+  `test`/`it` registration sites. The initial adapter runs all 31 callbacks in
+  `utils/accept.test.ts` and `utils/mime.test.ts` against published `dist`.
+- Lodash 4.18.1: the complete 27,234-line `test/test.js` source is pinned by
+  digest (1,753 QUnit registration sites). Seven complete, self-contained
+  QUnit modules contribute 11 unchanged callbacks against the matching
+  published modular method files.
+- Moment 2.30.1: 190 core/locale unit files and 2,638 measured registration
+  sites. Six synchronous core files contribute ten original callbacks against
+  published `moment.js`.
+
+The adapters run the same callback text and assertion shim in Node and Wasm.
+Deferred files/registration sites remain explicit report fields; they are not
+counted as passes or silently removed from the upstream denominator. UUID's
+existing 75-test lane is reused unchanged rather than duplicated.
+
+Measured runtime results on the initial adapters:
+
+- Hono: **31/31 native, 25/31 Wasm**. Both generated modules compile and
+  validate; six exact assertion cases differ in Wasm.
+- Lodash: **11/11 native, 0/11 Wasm**. The generated module compiles and
+  validates, then the shared callback runner fails with `null is not a
+  function`; all eleven callbacks are reported as runtime failures.
+- Moment: **10/10 native, 0/10 Wasm**. All six generated modules compile and
+  validate; every callback executes but fails at least one original assertion.
+
+These are exact selected-slice denominators, not whole-suite pass rates. The
+reports retain the larger upstream inventories and deferred counts separately.
 
 ## Suspended catalog handoff (2026-08-09)
 
@@ -82,7 +119,7 @@ is not evidence that ReactDOM or Lit's implementation works.
 | styled-components | compiles; invalid `nt` local type | #3999 |
 | webpack / tailwindcss | bounded entry compile does not finish | #4287 |
 | Three.js | bounded entry compile does not finish | #3997 |
-| UUID | 6/75 original tests currently pass; one suite module is invalid | this issue's UUID section |
+| UUID | 3/75 original tests currently pass; the v7 suite module is invalid | this issue's UUID section |
 | Lit | 8/16 scored; implementation validation remains blocked | #3978 |
 | Acorn / clsx / cookie | 3508/3518, 17/18, and 21/21 respectively | existing package-specific issues |
 | Redux | runtime workload passes 1/1 | adapter can be expanded to originals |

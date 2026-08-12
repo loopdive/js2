@@ -1,9 +1,9 @@
 ---
 id: 1595
 title: "ArrayBuffer.prototype.transfer / transferToFixedLength / transferToImmutable not implemented (~40 fails)"
-status: blocked
+status: ready
 created: 2026-05-24
-updated: 2026-05-24
+updated: 2026-08-11
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -14,6 +14,15 @@ goal: spec-completeness
 sprint: Backlog
 test262_fail: 40
 test262_category: built-ins/ArrayBuffer
+loc-budget-allow:
+  - src/codegen/dataview-native.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/array-object-proto.ts
+func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 # #1595 — ArrayBuffer.prototype.transfer / transferToFixedLength / transferToImmutable
 
@@ -105,3 +114,70 @@ ops must honor.
 
 Marking `status: blocked` (depends on #1645). No source changed; worktree
 `issue-1595-arraybuffer-transfer` left in place (only this doc edit committed).
+
+## Implementation update (2026-08-11)
+
+#1645's resizable/detached ArrayBuffer representation is now available. This
+slice implements the ES2024 `transfer` and `transferToFixedLength` operations
+on that representation and fixes the detached-buffer observations needed by
+the maintained standalone residual. PR #4386 is the prerequisite harness
+change that lets `$262.detachArrayBuffer` mark the native standalone buffer;
+the measurements below use its exact head commit (`9383f0dddac7`) as A.
+
+The implementation is deliberately native and shared rather than an AST-only
+Test262 interception:
+
+- direct calls and reflective
+  `ArrayBuffer.prototype.transfer[ToFixedLength].call(...)` both delegate to
+  one canonical `ArrayBufferCopyAndDetach` helper;
+- the helper performs ordinary `ToIndex` coercion, validates real
+  `TypeError`/`RangeError` objects, copies `min(oldLength, newLength)` bytes,
+  preserves resizability and `maxByteLength` only for `transfer`, and detaches
+  the source through the representation's negative-length marker;
+- `byteLength`, `maxByteLength`, `resizable`, `resize`, and `slice` now observe
+  that same detached state; and
+- the checker loads `lib.es2024.arraybuffer.d.ts`, keeping transfer results on
+  the typed ArrayBuffer path instead of widening into the generic `any` MOP.
+
+### Focused verification
+
+- `tests/issue-1595.test.ts`: **7/7 pass** with zero imports (fixed and
+  resizable transfer, fixed-length conversion, reflective calls and receiver
+  errors, null/undefined optional-length distinction, detached/range errors,
+  and observable coercion ordering).
+- `tests/issue-3054-c-resizable.test.ts`: **22/22 pass**; combined focused run
+  **29/29 pass**.
+
+### Maintained residual A/B
+
+The process-isolated `scripts/harness-flip-probe.ts` instrument was run over
+the exact 12 arrays/buffers detach residuals left after #4386. Its must-pass and
+must-fail controls both behaved correctly on every run.
+
+| Target | A | B | Change |
+| --- | ---: | ---: | ---: |
+| standalone | 0/12 | 6/12 | **+6 / -0, net +6** |
+| host control | 7/12 | 7/12 | **+0 / -0** |
+
+The six standalone gains are:
+
+- `ArrayBuffer/prototype/byteLength/detached-buffer.js`
+- `ArrayBuffer/prototype/maxByteLength/detached-buffer.js`
+- `ArrayBuffer/prototype/resizable/detached-buffer.js`
+- `ArrayBuffer/prototype/resize/this-is-detached.js`
+- `ArrayBuffer/prototype/transfer/this-is-detached.js`
+- `ArrayBuffer/prototype/transferToFixedLength/this-is-detached.js`
+
+The six unchanged standalone residuals remain explicitly out of this slice:
+
+- detached `DataView` construction;
+- `sliceToImmutable` and `transferToImmutable` immutable-buffer semantics; and
+- detached `Uint8Array.prototype.toHex`, `setFromBase64`, and `setFromHex`.
+
+A broader standalone smoke over the two transfer-method directories was
+**20 pass / 26 fail / 2 compile-error (48 total)**. The native helper's focused
+copy/grow/shrink and metadata cases pass, while much of the remaining family
+currently fails before reaching it due to the pre-existing top-level global
+TypedArray-view representation path. SharedArrayBuffer receiver cases are the
+two host-import compile errors. Immutable-buffer cases remain part of this
+issue's open acceptance criteria, so #1595 stays `ready`, not `done`.

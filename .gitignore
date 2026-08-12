@@ -82,10 +82,16 @@ tests/dogfood/.prettier/
 tests/dogfood/.react/
 tests/dogfood/.react-upstream-suite/
 tests/dogfood/.lit-upstream-suite/
+tests/dogfood/.hono-upstream-suite/
+tests/dogfood/.lodash-upstream-suite/
+tests/dogfood/.moment-upstream-suite/
 /.uuid-upstream-suite/
 tests/dogfood/.lit-implementation/
 tests/dogfood/.npm-compat/
 tests/dogfood/report/
+/.hono-upstream-suite-generated/
+/.lodash-upstream-suite-generated/
+/.moment-upstream-suite-generated/
 /check-*.ts
 /check-*.mts
 /debug-*.ts

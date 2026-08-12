@@ -115,6 +115,8 @@ export interface CodegenOptions {
    *  `__unbox_string` JS-host string imports. Used so the compiled module is
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
+  /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
+  directEval?: "legacy" | "reified-host";
   /**
    * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
    * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
@@ -325,6 +327,13 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /**
+   * True only while every concrete allocation of this wrapper/subtype is a
+   * checker-certified one-shot host callback. Such values are consumed by
+   * `__make_callback(-2, closure)` immediately and never enter the generic
+   * callable/property/method bridges. An ordinary allocation clears the bit.
+   */
+  hostOneShotOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
@@ -894,6 +903,8 @@ export interface FunctionContext {
         // into a local; bare names matching a field route to direct struct
         // get/set.
         kind: "static";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         structTypeIdx: number;
         fields: FieldDef[];
@@ -905,6 +916,8 @@ export interface FunctionContext {
         // HasBinding gate (`__extern_has`) + `Get` (`emitDynGet`), falling back
         // to the outer lexical lowering when absent.
         kind: "dynamic";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         blockedNames: Set<string>;
       }
@@ -3176,6 +3189,10 @@ export interface CodegenContext {
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
+  /** Resolved JS-host direct-eval lowering. */
+  directEvalMode: "legacy" | "reified-host";
+  /** Private externref-array carrier used only by reified JS-host direct eval. */
+  hostRuntimeEvalVecTypeIdx?: number;
   /** (#2141 S1) Honest generic `any` boxing regime flag — see the
    *  `CodegenOptions.honestAnyBoxing` doc. Default false (legacy tag-5
    *  box-the-externref ABI, byte-identical). */

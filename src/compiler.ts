@@ -718,6 +718,12 @@ function buildCodegenOptions(
         `default gc-host lane (vacuous ${key} coverage). Use { target: "${key}" }. (#86)`,
     );
   }
+  if (options.directEval === "reified-host" && options.target !== undefined && options.target !== "gc") {
+    throw new Error(
+      `Compile option directEval: "reified-host" requires the WasmGC JavaScript-host target; ` +
+        `target: "${options.target}" does not use that cell bridge.`,
+    );
+  }
   return {
     sourceMap: emitSourceMap,
     fast: options.fast,
@@ -731,6 +737,7 @@ function buildCodegenOptions(
     // boolean was removed.
     link: [...new Set(options.link ?? [])],
     standalone: options.target === "standalone",
+    directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
     unionAnyRep: options.unionAnyRep,

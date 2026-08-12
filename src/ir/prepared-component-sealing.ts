@@ -254,6 +254,12 @@ export function sealDependencyCompletePreparedComponents(input: {
   const classIdByBindingId = new Map(
     inventory.classes.map((record) => [irClassTypeRef(record.id, record.displayName).binding.bindingId, record.id]),
   );
+  const callableFailureIsPreparable = (failure: PreparedComponentDependencyFailure): boolean => {
+    const key = failure.structuralReferenceKey;
+    if (failure.code !== "unplanned-abi-binding" || key === undefined) return false;
+    if (input.callableImports.has(key)) return true;
+    return ctx.programAbiCallableProviders?.importsForPreparedProviders(new Set([key])) !== undefined;
+  };
   let report = derive(candidateTerminalUnitIds);
   for (;;) {
     // Plan immutable callable support first while treating a preparable class
@@ -280,7 +286,11 @@ export function sealDependencyCompletePreparedComponents(input: {
       report.components.flatMap((component) =>
         component.status === "blocked"
           ? component.failures
-              .filter((failure) => preparableClassLayoutId(ctx, classIdByBindingId, failure) === undefined)
+              .filter(
+                (failure) =>
+                  preparableClassLayoutId(ctx, classIdByBindingId, failure) === undefined &&
+                  !callableFailureIsPreparable(failure),
+              )
               .map((failure) => failure.ownerUnitId)
               .filter((unitId) => candidateTerminalUnitIds.has(unitId))
           : [],

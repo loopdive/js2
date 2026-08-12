@@ -1,0 +1,3362 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 7d2c16b..5ad29cf 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4,0 +5,9 @@ version = 4
++[[package]]
++name = "addr2line"
++version = "0.26.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "59317f77929f0e679d39364702289274de2f0f0b22cbf50b2b8cff2169a0b27a"
++dependencies = [
++ "gimli",
++]
++
+@@ -19,0 +29,29 @@ checksum = "1926655ba000b19e21f0402be09a1d52d318c8a8a68622870bfb7af2a71315cd"
++[[package]]
++name = "allocator-api2"
++version = "0.2.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
++
++[[package]]
++name = "anyhow"
++version = "1.0.104"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
++
++[[package]]
++name = "arbitrary"
++version = "1.4.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
++
++[[package]]
++name = "async-trait"
++version = "0.1.89"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
+@@ -35 +73 @@ dependencies = [
+- "itertools",
++ "itertools 0.13.0",
+@@ -41 +79 @@ dependencies = [
+- "rustc-hash",
++ "rustc-hash 1.1.0",
+@@ -51,0 +90,18 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
++[[package]]
++name = "block-buffer"
++version = "0.10.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
++dependencies = [
++ "generic-array",
++]
++
++[[package]]
++name = "bumpalo"
++version = "3.20.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
++dependencies = [
++ "allocator-api2",
++]
++
+@@ -103,0 +160,9 @@ dependencies = [
++[[package]]
++name = "cobs"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
++dependencies = [
++ "thiserror",
++]
++
+@@ -112,0 +178,193 @@ dependencies = [
++[[package]]
++name = "cpp_demangle"
++version = "0.5.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0667304c32ea56cb4cd6d2d7c0cfe9a2f8041229db8c033af7f8d69492429def"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
++name = "cpufeatures"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
++dependencies = [
++ "libc",
++]
++
++[[package]]
++name = "cranelift-assembler-x64"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d552bd33b7a56dc70aeb1e1c960e51a218fa0db50f23873b500a310379450b2d"
++dependencies = [
++ "cranelift-assembler-x64-meta",
++]
++
++[[package]]
++name = "cranelift-assembler-x64-meta"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "078e80e4c222279e3330f6aa1a256ca77ddf156d4453166a9f09defedc4594dd"
++dependencies = [
++ "cranelift-srcgen",
++]
++
++[[package]]
++name = "cranelift-bforest"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "820ce15d4ad3562d613c31a67b6d0434d403e7091a68d1349903842f7d31737e"
++dependencies = [
++ "cranelift-entity",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "cranelift-bitset"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "61bca563d4b86d285928d9e27f97f27039bb33a0fc524fa130d7d0c106bf8ab3"
++dependencies = [
++ "serde",
++ "serde_derive",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "cranelift-codegen"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "709f4b7c0fb57d952658d5b5c07fbdc4149acd7b7f0de9678ae754b9c981949a"
++dependencies = [
++ "bumpalo",
++ "cranelift-assembler-x64",
++ "cranelift-bforest",
++ "cranelift-bitset",
++ "cranelift-codegen-meta",
++ "cranelift-codegen-shared",
++ "cranelift-control",
++ "cranelift-entity",
++ "cranelift-isle",
++ "gimli",
++ "hashbrown 0.17.1",
++ "libm",
++ "log",
++ "postcard",
++ "pulley-interpreter",
++ "regalloc2",
++ "rustc-hash 2.1.2",
++ "serde",
++ "serde_derive",
++ "sha2",
++ "smallvec",
++ "target-lexicon",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "cranelift-codegen-meta"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "903dc8915af62aad1d9d0f39a5968d33fa80b9aa899ed6f56e47f40ca4512e1e"
++dependencies = [
++ "cranelift-assembler-x64-meta",
++ "cranelift-codegen-shared",
++ "cranelift-srcgen",
++ "heck",
++ "pulley-interpreter",
++]
++
++[[package]]
++name = "cranelift-codegen-shared"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0522d74c227e49f3fd49ab055311486ae4f09083262b66705bed676952491469"
++
++[[package]]
++name = "cranelift-control"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "66560ea1c5cef72e170b18e46d263dba2d3169c9d39e8cafdab2173c6362cc1a"
++dependencies = [
++ "arbitrary",
++]
++
++[[package]]
++name = "cranelift-entity"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b62ef5b17cc814d27e96b66a5b46da0e4ce2b8ac55a6d478048bb99d04b05526"
++dependencies = [
++ "cranelift-bitset",
++ "serde",
++ "serde_derive",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "cranelift-frontend"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a87e0aaa39dbf70693b348a221e45904111704ee8f9fef140498471005f9842d"
++dependencies = [
++ "cranelift-codegen",
++ "hashbrown 0.17.1",
++ "log",
++ "smallvec",
++ "target-lexicon",
++]
++
++[[package]]
++name = "cranelift-isle"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf79003ebfa1eed5e87f3b84446ad5236f540268289960e14f387dc9b28e40b7"
++
++[[package]]
++name = "cranelift-native"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "05bf4f235743c81e67ee4db617c5a4a0b65d58d3f0cfc575ee0f1a4e0cd58273"
++dependencies = [
++ "cranelift-codegen",
++ "libc",
++ "target-lexicon",
++]
++
++[[package]]
++name = "cranelift-srcgen"
++version = "0.134.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f6977c2a71ab1e0d1e62f966b411a498aa04c4dce47d93d52f8a360a06058922"
++
++[[package]]
++name = "crc32fast"
++version = "1.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
++name = "crypto-common"
++version = "0.1.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
++dependencies = [
++ "generic-array",
++ "typenum",
++]
++
++[[package]]
++name = "digest"
++version = "0.10.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
++dependencies = [
++ "block-buffer",
++ "crypto-common",
++]
++
+@@ -161,0 +420,28 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
++[[package]]
++name = "embedded-io"
++version = "0.4.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
++
++[[package]]
++name = "embedded-io"
++version = "0.6.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
++
++[[package]]
++name = "equivalent"
++version = "1.0.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
++
++[[package]]
++name = "errno"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
++dependencies = [
++ "libc",
++ "windows-sys",
++]
++
+@@ -167,0 +454,98 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
++[[package]]
++name = "fnv"
++version = "1.0.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
++
++[[package]]
++name = "foldhash"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
++
++[[package]]
++name = "futures"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
++dependencies = [
++ "futures-channel",
++ "futures-core",
++ "futures-io",
++ "futures-sink",
++ "futures-task",
++ "futures-util",
++]
++
++[[package]]
++name = "futures-channel"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
++dependencies = [
++ "futures-core",
++ "futures-sink",
++]
++
++[[package]]
++name = "futures-core"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
++
++[[package]]
++name = "futures-io"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
++
++[[package]]
++name = "futures-sink"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d"
++
++[[package]]
++name = "futures-task"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
++
++[[package]]
++name = "futures-util"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
++dependencies = [
++ "futures-channel",
++ "futures-core",
++ "futures-io",
++ "futures-sink",
++ "futures-task",
++ "memchr",
++ "pin-project-lite",
++ "slab",
++]
++
++[[package]]
++name = "generic-array"
++version = "0.14.7"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
++dependencies = [
++ "typenum",
++ "version_check",
++]
++
++[[package]]
++name = "gimli"
++version = "0.33.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c"
++dependencies = [
++ "fnv",
++ "hashbrown 0.16.1",
++ "indexmap",
++ "stable_deref_trait",
++]
++
+@@ -173,0 +558,23 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
++[[package]]
++name = "hashbrown"
++version = "0.16.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
++
++[[package]]
++name = "hashbrown"
++version = "0.17.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
++dependencies = [
++ "foldhash",
++ "serde",
++ "serde_core",
++]
++
++[[package]]
++name = "heck"
++version = "0.5.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
++
+@@ -329,0 +737,12 @@ dependencies = [
++[[package]]
++name = "indexmap"
++version = "2.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
++dependencies = [
++ "equivalent",
++ "hashbrown 0.17.1",
++ "serde",
++ "serde_core",
++]
++
+@@ -338,0 +758,9 @@ dependencies = [
++[[package]]
++name = "itertools"
++version = "0.14.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
++dependencies = [
++ "either",
++]
++
+@@ -344,0 +773,6 @@ checksum = "2ceaf4c6c48465bead8cb6a0b7c4ee0c86ecbb31239032b9c66ab9a08d2f3ee1"
++[[package]]
++name = "leb128fmt"
++version = "0.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
++
+@@ -366,0 +801,6 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
++[[package]]
++name = "linux-raw-sys"
++version = "0.12.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
++
+@@ -378,0 +819,6 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
++[[package]]
++name = "mach2"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
++
+@@ -384,0 +831,9 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
++[[package]]
++name = "memfd"
++version = "0.6.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227"
++dependencies = [
++ "rustix",
++]
++
+@@ -409,0 +865,18 @@ dependencies = [
++[[package]]
++name = "object"
++version = "0.39.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
++dependencies = [
++ "crc32fast",
++ "hashbrown 0.17.1",
++ "indexmap",
++ "memchr",
++]
++
++[[package]]
++name = "once_cell"
++version = "1.21.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
+@@ -415,0 +889,18 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
++[[package]]
++name = "pin-project-lite"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
++
++[[package]]
++name = "postcard"
++version = "1.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
++dependencies = [
++ "cobs",
++ "embedded-io 0.4.0",
++ "embedded-io 0.6.1",
++ "serde",
++]
++
+@@ -445,0 +937,23 @@ dependencies = [
++[[package]]
++name = "pulley-interpreter"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bc5c8c21ea032e4efbdf2d067dc45171779dbe0c8ecf20ef4a57efa7474f2b0a"
++dependencies = [
++ "cranelift-bitset",
++ "log",
++ "pulley-macros",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "pulley-macros"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9f10925455d5dde962e3604eade797ba5488644c8ee14a44191e2f2b58980574"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
+@@ -454,0 +969,15 @@ dependencies = [
++[[package]]
++name = "regalloc2"
++version = "0.15.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "de2c52737737f8609e94f975dee22854a2d5c125772d4b1cf292120f4d45c186"
++dependencies = [
++ "allocator-api2",
++ "bumpalo",
++ "hashbrown 0.17.1",
++ "log",
++ "rustc-hash 2.1.2",
++ "serde",
++ "smallvec",
++]
++
+@@ -493,0 +1023,6 @@ dependencies = [
++[[package]]
++name = "rustc-demangle"
++version = "0.1.27"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
++
+@@ -499,0 +1035,29 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
++[[package]]
++name = "rustc-hash"
++version = "2.1.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
++
++[[package]]
++name = "rustix"
++version = "1.1.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
++dependencies = [
++ "bitflags",
++ "errno",
++ "libc",
++ "linux-raw-sys",
++ "windows-sys",
++]
++
++[[package]]
++name = "semver"
++version = "1.0.28"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
++dependencies = [
++ "serde",
++ "serde_core",
++]
++
+@@ -529,0 +1094,11 @@ dependencies = [
++[[package]]
++name = "sha2"
++version = "0.10.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
++dependencies = [
++ "cfg-if",
++ "cpufeatures",
++ "digest",
++]
++
+@@ -541,0 +1117,6 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
++[[package]]
++name = "slab"
++version = "0.4.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
++
+@@ -546,0 +1128,3 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
++dependencies = [
++ "serde",
++]
+@@ -584,0 +1169,6 @@ dependencies = [
++[[package]]
++name = "target-lexicon"
++version = "0.13.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
++
+@@ -618,0 +1209,29 @@ dependencies = [
++[[package]]
++name = "termcolor"
++version = "1.4.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
++dependencies = [
++ "winapi-util",
++]
++
++[[package]]
++name = "thiserror"
++version = "2.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
++dependencies = [
++ "thiserror-impl",
++]
++
++[[package]]
++name = "thiserror-impl"
++version = "2.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
+@@ -641,0 +1261,6 @@ dependencies = [
++[[package]]
++name = "typenum"
++version = "1.20.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
++
+@@ -674,0 +1300,224 @@ dependencies = [
++ "wasmtime",
++]
++
++[[package]]
++name = "version_check"
++version = "0.9.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
++
++[[package]]
++name = "wasm-encoder"
++version = "0.252.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f"
++dependencies = [
++ "leb128fmt",
++ "wasmparser",
++]
++
++[[package]]
++name = "wasmparser"
++version = "0.252.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3eb099dcadcde5be9eef55e3a337128efd4e44b4c93122487e4d2e4e1c6627c"
++dependencies = [
++ "bitflags",
++ "hashbrown 0.17.1",
++ "indexmap",
++ "semver",
++ "serde",
++]
++
++[[package]]
++name = "wasmprinter"
++version = "0.252.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7142797de29b35ab8dbf15c00f55fda75d409da4c423a8ab8bd6b667a785824b"
++dependencies = [
++ "anyhow",
++ "termcolor",
++ "wasmparser",
++]
++
++[[package]]
++name = "wasmtime"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c80ca6098e0d4d06886d91d7f2cc3cb6623eb583c4c0ab3c89cbfb6098c8586c"
++dependencies = [
++ "addr2line",
++ "async-trait",
++ "bitflags",
++ "bumpalo",
++ "cc",
++ "cfg-if",
++ "futures",
++ "libc",
++ "log",
++ "mach2",
++ "memfd",
++ "object",
++ "once_cell",
++ "postcard",
++ "pulley-interpreter",
++ "rustix",
++ "serde",
++ "serde_derive",
++ "smallvec",
++ "target-lexicon",
++ "wasmparser",
++ "wasmtime-environ",
++ "wasmtime-internal-core",
++ "wasmtime-internal-cranelift",
++ "wasmtime-internal-fiber",
++ "wasmtime-internal-jit-debug",
++ "wasmtime-internal-jit-icache-coherence",
++ "wasmtime-internal-unwinder",
++ "wasmtime-internal-versioned-export-macros",
++ "windows-sys",
++]
++
++[[package]]
++name = "wasmtime-environ"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "134f9d136d29c76f6c1b4c9b468e97a2efc38c7d49fd188e39b64870b2fea701"
++dependencies = [
++ "anyhow",
++ "cpp_demangle",
++ "cranelift-bforest",
++ "cranelift-bitset",
++ "cranelift-entity",
++ "gimli",
++ "hashbrown 0.17.1",
++ "indexmap",
++ "log",
++ "object",
++ "postcard",
++ "rustc-demangle",
++ "semver",
++ "serde",
++ "serde_derive",
++ "sha2",
++ "smallvec",
++ "target-lexicon",
++ "wasm-encoder",
++ "wasmparser",
++ "wasmprinter",
++ "wasmtime-internal-component-util",
++ "wasmtime-internal-core",
++]
++
++[[package]]
++name = "wasmtime-internal-component-util"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fc8a678149885cae00289f806fbe74c7863084cf74cace0b8dc73602279400e1"
++
++[[package]]
++name = "wasmtime-internal-core"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8a0092c4b9d070ac5e278b6d0db10f5e71214190f0347ca57502b4692f796321"
++dependencies = [
++ "hashbrown 0.17.1",
++ "libm",
++ "serde",
++]
++
++[[package]]
++name = "wasmtime-internal-cranelift"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6851ebc9e03cab23d9821d2b2505d380bdfe38f35ccec945247b05274d85c98b"
++dependencies = [
++ "cfg-if",
++ "cranelift-codegen",
++ "cranelift-control",
++ "cranelift-entity",
++ "cranelift-frontend",
++ "cranelift-native",
++ "gimli",
++ "itertools 0.14.0",
++ "log",
++ "object",
++ "pulley-interpreter",
++ "smallvec",
++ "target-lexicon",
++ "thiserror",
++ "wasmparser",
++ "wasmtime-environ",
++ "wasmtime-internal-core",
++ "wasmtime-internal-unwinder",
++ "wasmtime-internal-versioned-export-macros",
++]
++
++[[package]]
++name = "wasmtime-internal-fiber"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9b26da6d5f60d4c438da70bba3553fe810a840533a64156be287dca2081c6991"
++dependencies = [
++ "cc",
++ "cfg-if",
++ "libc",
++ "rustix",
++ "wasmtime-environ",
++ "wasmtime-internal-versioned-export-macros",
++ "windows-sys",
++]
++
++[[package]]
++name = "wasmtime-internal-jit-debug"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ed621ba25d7bf78b7edd7b4749abbb27c2e5cdba836c9504a424ee74b6c23149"
++dependencies = [
++ "cc",
++ "wasmtime-internal-versioned-export-macros",
++]
++
++[[package]]
++name = "wasmtime-internal-jit-icache-coherence"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5684ba160951baad06a725696f3c590e2fb0e8067c2aebee27bf7f9259058e85"
++dependencies = [
++ "cfg-if",
++ "libc",
++ "wasmtime-internal-core",
++ "windows-sys",
++]
++
++[[package]]
++name = "wasmtime-internal-unwinder"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "112eead527bffa8ff0646a11fb4339a9d52ddd1da2b9a6fce4aff84c815dd94f"
++dependencies = [
++ "cfg-if",
++ "cranelift-codegen",
++ "log",
++ "object",
++ "wasmtime-environ",
++]
++
++[[package]]
++name = "wasmtime-internal-versioned-export-macros"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "153592e0bed824fc13c6696203fa1bd7bd20eb355316475e39a55f081ef80eca"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
++[[package]]
++name = "winapi-util"
++version = "0.1.11"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
++dependencies = [
++ "windows-sys",
+@@ -682,0 +1532,9 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
++[[package]]
++name = "windows-sys"
++version = "0.61.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++dependencies = [
++ "windows-link",
++]
++
+diff --git a/Cargo.toml b/Cargo.toml
+index 3333d64..b268dd5 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -70,0 +71,7 @@ engine_quickjs = []
++# Engine-free, ahead-of-time module backend. This first vertical slice owns
++# handles in Rust and evaluates linked TypeScript graphs through js2wasm.
++engine_js2wasm = ["dep:wasmtime"]
++# Development-only bridge that invokes js2wasm and precompiles its raw Wasm in
++# the v8x process. Production builds use `engine_js2wasm` alone and therefore
++# do not link Cranelift or any other Wasm compiler.
++js2wasm_runtime_compile = ["engine_js2wasm", "wasmtime/cranelift"]
+@@ -89,0 +97,2 @@ vendor_jsc = []
++# Compatibility alias for the initial source-compiling spike name.
++js2wasm_spike = ["js2wasm_runtime_compile"]
+@@ -105,0 +115 @@ timezone_provider = { version = "0.2.3", features = ["zoneinfo64"] }
++wasmtime = { version = "=47.0.3", optional = true, default-features = false, features = ["gc", "gc-drc", "runtime", "std"] }
+@@ -124,2 +134,2 @@ bytes = "1"
+-# Excluded on purpose: test_ui (trybuild, needs deno crate fixtures),
+-# test_simdutf (feature-gated). They are not part of the tracked suite.
++# Excluded on purpose: test_ui (trybuild, needs deno crate fixtures).
++# test_simdutf is registered separately and runs when `simdutf` is enabled.
+@@ -130,0 +141,10 @@ path = "vendor/rusty_v8/tests/test_api.rs"
++[[test]]
++name = "js2wasm_spike"
++path = "tests/js2wasm_spike.rs"
++required-features = ["engine_js2wasm"]
++
++[[test]]
++name = "rv8_test_simdutf"
++path = "vendor/rusty_v8/tests/test_simdutf.rs"
++required-features = ["simdutf"]
++
+diff --git a/README.md b/README.md
+index b7e82e4..f518b6f 100644
+--- a/README.md
++++ b/README.md
+@@ -15,0 +16,29 @@ Supported engines:
++## Experimental compiler-free js2wasm backend
++
++`engine_js2wasm` executes a trusted Wasmtime-precompiled js2wasm artifact. It
++does not link Cranelift, invoke js2wasm, or require a JavaScript engine at run
++time. Deno-shaped functions are ordinary typed imports implemented directly in
++Rust; the current vertical slice implements `Deno.cwd()` without a WASI or
++Component Model boundary.
++
++Within one process the backend shares one Wasmtime `Engine`, one host-function
++`Linker`, and one cached `Module`/`InstancePre` for each artifact. Every v8x
++module evaluation receives a separate `Store` and `Instance`, so its WasmGC
++heap, globals, permissions, and host state remain isolated.
++
++The development-only `js2wasm_runtime_compile` feature invokes the external
++js2wasm compiler and enables Wasmtime's Cranelift precompiler. Set
++`V8X_JS2WASM_ARTIFACT_OUTPUT` to save its target-specific `.cwasm` result. A
++production build uses only `engine_js2wasm` and loads that immutable artifact
++through `V8X_JS2WASM_AOT_MODULE`:
++
++```sh
++V8X_JS2WASM_AOT_MODULE=/absolute/path/app.cwasm \
++cargo test --release --no-default-features \
++  --features engine_js2wasm,simdutf --test js2wasm_spike
++```
++
++Wasmtime precompiled artifacts contain native executable code. They must come
++from a trusted build pipeline using the same Wasmtime version, target, and
++engine configuration; never load an artifact supplied by an untrusted user.
++
+diff --git a/src/js2wasm/mod.rs b/src/js2wasm/mod.rs
+new file mode 100644
+index 0000000..590dba5
+--- /dev/null
++++ b/src/js2wasm/mod.rs
+@@ -0,0 +1,1740 @@
++//! Engine-free v8x vertical slice backed by js2wasm and Wasmtime.
++//!
++//! This module intentionally implements only the rusty_v8 ABI exercised by
++//! source-text module compilation. Values are stable Rust allocations owned by
++//! an isolate; no JavaScript interpreter is linked into this backend.
++
++#![allow(non_snake_case, unused)]
++
++// These helpers are engine-independent despite living under the QuickJS
++// backend today. Reuse their real Rust implementation so deno_core's string
++// conversion path never needs an interpreter or a native simdutf library.
++#[path = "../quickjs/simdutf.rs"]
++mod simdutf;
++
++use crate::isolate::ModuleImportPhase;
++use crate::module::{
++  ModuleStatus, ResolveModuleCallback, ResolveModuleCallbackRet,
++  ResolveSourceCallback,
++};
++use crate::script::ScriptOrigin;
++use crate::script_compiler::{
++  CachedData, CompileOptions, NoCacheReason, Source,
++};
++use crate::string::{NewStringType, ValueView};
++use crate::support::{MaybeBool, SharedPtrBase, UniquePtr, int, long};
++use crate::{
++  Allocator, Context, Data, FixedArray, Module, Object, Platform, Primitive,
++  RealIsolate, Script, String as V8String, Value,
++};
++use std::collections::HashSet;
++use std::ffi::{CStr, c_char, c_int, c_void};
++use std::mem::{MaybeUninit, size_of};
++use std::ptr;
++use std::sync::atomic::{AtomicUsize, Ordering};
++
++unsafe extern "C" {
++  fn v8__Platform__CustomPlatform__BASE__DROP(context: *mut c_void);
++}
++
++const STATUS_UNINSTANTIATED: u8 = 0;
++const STATUS_INSTANTIATING: u8 = 1;
++const STATUS_INSTANTIATED: u8 = 2;
++const STATUS_EVALUATING: u8 = 3;
++const STATUS_EVALUATED: u8 = 4;
++const STATUS_ERRORED: u8 = 5;
++
++struct ModuleState {
++  status: u8,
++  source: String,
++  specifier: String,
++  imports: Vec<String>,
++  dependencies: Vec<*const Module>,
++  runtime: Option<crate::js2wasm_spike::DenoRuntime>,
++}
++
++struct ScriptState {
++  source: String,
++  specifier: String,
++}
++
++#[derive(Clone, Copy)]
++struct TemplateProperty {
++  key: *const crate::Name,
++  value: *const Data,
++  attributes: u32,
++}
++
++struct ObjectTemplateState {
++  properties: Vec<TemplateProperty>,
++  internal_field_count: int,
++}
++
++struct FunctionTemplateState {
++  callback: crate::FunctionCallback,
++  data: *const Value,
++  properties: Vec<TemplateProperty>,
++  prototype_template: *const crate::ObjectTemplate,
++  instance_template: *const crate::ObjectTemplate,
++}
++
++struct ObjectState {
++  properties: Vec<TemplateProperty>,
++  internal_fields: Vec<*mut c_void>,
++}
++
++struct FunctionState {
++  callback: crate::FunctionCallback,
++  data: *const Value,
++  properties: Vec<TemplateProperty>,
++}
++
++struct ContextState {
++  global: *const Object,
++  extras: *const Object,
++  embedder_data: Vec<*mut c_void>,
++}
++
++enum HeapValue {
++  String(String),
++  Context(ContextState),
++  Object(ObjectState),
++  Function(FunctionState),
++  Module(ModuleState),
++  Script(ScriptState),
++  ObjectTemplate(ObjectTemplateState),
++  FunctionTemplate(FunctionTemplateState),
++  FixedArray,
++  Promise,
++  Error { name: &'static str, message: String },
++  Undefined,
++}
++
++struct IsolateState {
++  values: Vec<*mut HeapValue>,
++  contexts: Vec<*const Context>,
++  data_slots: [*mut c_void; 4],
++  microtasks_policy: crate::MicrotasksPolicy,
++}
++
++struct PlatformState {
++  custom_context: *mut c_void,
++}
++
++thread_local! {
++  static ENTERED_ISOLATES: std::cell::RefCell<Vec<*mut RealIsolate>> =
++    const { std::cell::RefCell::new(Vec::new()) };
++}
++
++fn current_isolate() -> *mut RealIsolate {
++  ENTERED_ISOLATES
++    .with(|entered| entered.borrow().last().copied().unwrap_or(ptr::null_mut()))
++}
++
++unsafe fn isolate_state<'a>(isolate: *mut RealIsolate) -> &'a mut IsolateState {
++  unsafe { &mut *(isolate as *mut IsolateState) }
++}
++
++fn allocate<T>(isolate: *mut RealIsolate, value: HeapValue) -> *const T {
++  if isolate.is_null() {
++    return ptr::null();
++  }
++  let value = Box::into_raw(Box::new(value));
++  unsafe { isolate_state(isolate).values.push(value) };
++  value.cast()
++}
++
++unsafe fn heap_value<'a, T>(value: *const T) -> Option<&'a HeapValue> {
++  unsafe { (value as *const HeapValue).as_ref() }
++}
++
++unsafe fn heap_value_mut<'a, T>(value: *const T) -> Option<&'a mut HeapValue> {
++  unsafe { (value as *mut HeapValue).as_mut() }
++}
++
++unsafe fn module_state<'a>(
++  module: *const Module,
++) -> Option<&'a mut ModuleState> {
++  match unsafe { (module as *mut HeapValue).as_mut() } {
++    Some(HeapValue::Module(state)) => Some(state),
++    _ => None,
++  }
++}
++
++unsafe fn string_value<'a, T>(value: *const T) -> Option<&'a str> {
++  match unsafe { heap_value(value) } {
++    Some(HeapValue::String(value)) => Some(value),
++    _ => None,
++  }
++}
++
++fn current_context() -> *const Context {
++  let isolate = current_isolate();
++  if isolate.is_null() {
++    return ptr::null();
++  }
++  unsafe {
++    isolate_state(isolate)
++      .contexts
++      .last()
++      .copied()
++      .unwrap_or(ptr::null())
++  }
++}
++
++fn allocate_error(
++  message: *const V8String,
++  name: &'static str,
++) -> *const Value {
++  let Some(message) = (unsafe { string_value(message) }) else {
++    return ptr::null();
++  };
++  allocate(
++    current_isolate(),
++    HeapValue::Error {
++      name,
++      message: message.to_owned(),
++    },
++  )
++}
++
++fn object_from_template(
++  isolate: *mut RealIsolate,
++  template: *const crate::ObjectTemplate,
++) -> *const Object {
++  let (properties, internal_field_count) = match unsafe { heap_value(template) }
++  {
++    Some(HeapValue::ObjectTemplate(state)) => (
++      state.properties.clone(),
++      state.internal_field_count.max(0) as usize,
++    ),
++    _ => (Vec::new(), 0),
++  };
++  allocate(
++    isolate,
++    HeapValue::Object(ObjectState {
++      properties,
++      internal_fields: vec![ptr::null_mut(); internal_field_count],
++    }),
++  )
++}
++
++fn new_object(isolate: *mut RealIsolate) -> *const Object {
++  allocate(
++    isolate,
++    HeapValue::Object(ObjectState {
++      properties: Vec::new(),
++      internal_fields: Vec::new(),
++    }),
++  )
++}
++
++fn same_property_key(left: *const Data, right: *const Data) -> bool {
++  std::ptr::addr_eq(left, right)
++    || match (unsafe { string_value(left) }, unsafe {
++      string_value(right)
++    }) {
++      (Some(left), Some(right)) => left == right,
++      _ => false,
++    }
++}
++
++fn properties<T>(value: *const T) -> Option<&'static Vec<TemplateProperty>> {
++  match unsafe { heap_value(value) } {
++    Some(HeapValue::Object(state)) => Some(&state.properties),
++    Some(HeapValue::Function(state)) => Some(&state.properties),
++    _ => None,
++  }
++}
++
++fn properties_mut<T>(
++  value: *const T,
++) -> Option<&'static mut Vec<TemplateProperty>> {
++  match unsafe { heap_value_mut(value) } {
++    Some(HeapValue::Object(state)) => Some(&mut state.properties),
++    Some(HeapValue::Function(state)) => Some(&mut state.properties),
++    _ => None,
++  }
++}
++
++// --- Platform and isolate ownership ---------------------------------------
++
++fn new_platform(custom_context: *mut c_void) -> *mut Platform {
++  Box::into_raw(Box::new(PlatformState { custom_context })).cast()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__V8__SetFlagsFromString(
++  _flags: *const u8,
++  _length: usize,
++) {
++  // Deno supplies V8 optimizer, parser, and GC flags here. The js2wasm
++  // backend has none of those runtime subsystems: source semantics are fixed
++  // at AOT compile time and memory is managed by WasmGC. Accepting the flags
++  // is therefore an intentional compatibility no-op, not a partial parser.
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__V8__InitializePlatform(_platform: *mut Platform) {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__V8__Initialize() {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__V8__Dispose() -> bool {
++  true
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__V8__DisposePlatform() {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__NewDefaultPlatform(
++  _thread_pool_size: c_int,
++  _idle_task_support: bool,
++) -> *mut Platform {
++  new_platform(ptr::null_mut())
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__NewUnprotectedDefaultPlatform(
++  thread_pool_size: c_int,
++  idle_task_support: bool,
++) -> *mut Platform {
++  v8__Platform__NewDefaultPlatform(thread_pool_size, idle_task_support)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__NewSingleThreadedDefaultPlatform(
++  idle_task_support: bool,
++) -> *mut Platform {
++  v8__Platform__NewDefaultPlatform(0, idle_task_support)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__NewCustomPlatform(
++  _thread_pool_size: c_int,
++  _idle_task_support: bool,
++  _unprotected: bool,
++  context: *mut c_void,
++) -> *mut Platform {
++  // `Platform::new_custom` transfers a double-boxed PlatformImpl through this
++  // pointer. Keep it alive for the platform lifetime even though an AOT
++  // module does not currently post V8 foreground tasks.
++  new_platform(context)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__PumpMessageLoop(
++  _platform: *mut Platform,
++  _isolate: *mut c_void,
++  _wait_for_work: bool,
++) -> bool {
++  // js2wasm has no engine-owned background queue. Deno's ordinary op/event
++  // loop remains in deno_core and is driven independently of this hook.
++  false
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__DELETE(platform: *mut Platform) {
++  if !platform.is_null() {
++    let platform = unsafe { Box::from_raw(platform.cast::<PlatformState>()) };
++    if !platform.custom_context.is_null() {
++      // Match the ownership transfer in rusty_v8's Platform::new_custom.
++      unsafe {
++        v8__Platform__CustomPlatform__BASE__DROP(platform.custom_context)
++      };
++    }
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Platform__NotifyIsolateShutdown(
++  _platform: *mut Platform,
++  _isolate: *mut c_void,
++) {
++}
++
++#[repr(C)]
++struct SharedRepr {
++  object: *mut c_void,
++  references: *mut AtomicUsize,
++}
++
++unsafe fn shared_from_repr<T: crate::support::Shared>(
++  repr: SharedRepr,
++) -> SharedPtrBase<T> {
++  unsafe { std::mem::transmute(repr) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__Platform__CONVERT__std__unique_ptr(
++  unique: UniquePtr<Platform>,
++) -> SharedPtrBase<Platform> {
++  let object: *mut c_void = unique.into_raw().cast();
++  let references = if object.is_null() {
++    ptr::null_mut()
++  } else {
++    Box::into_raw(Box::new(AtomicUsize::new(1)))
++  };
++  unsafe { shared_from_repr(SharedRepr { object, references }) }
++}
++
++unsafe fn shared_repr<T: crate::support::Shared>(
++  shared: *const SharedPtrBase<T>,
++) -> SharedRepr {
++  if shared.is_null() {
++    return SharedRepr {
++      object: ptr::null_mut(),
++      references: ptr::null_mut(),
++    };
++  }
++  unsafe { ptr::read_unaligned(shared.cast()) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__Platform__get(
++  shared: *const SharedPtrBase<Platform>,
++) -> *mut Platform {
++  unsafe { shared_repr(shared).object.cast() }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__Platform__COPY(
++  shared: *const SharedPtrBase<Platform>,
++) -> SharedPtrBase<Platform> {
++  let repr = unsafe { shared_repr(shared) };
++  if !repr.references.is_null() {
++    unsafe { (*repr.references).fetch_add(1, Ordering::Relaxed) };
++  }
++  unsafe { shared_from_repr(repr) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__Platform__reset(
++  shared: *mut SharedPtrBase<Platform>,
++) {
++  let repr = unsafe { shared_repr(shared) };
++  if !repr.references.is_null()
++    && unsafe { (*repr.references).fetch_sub(1, Ordering::AcqRel) } == 1
++  {
++    v8__Platform__DELETE(repr.object.cast());
++    unsafe { drop(Box::from_raw(repr.references)) };
++  }
++  if !shared.is_null() {
++    unsafe { ptr::write_bytes(shared, 0, 1) };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__Platform__use_count(
++  shared: *const SharedPtrBase<Platform>,
++) -> long {
++  let references = unsafe { shared_repr(shared).references };
++  if references.is_null() {
++    0
++  } else {
++    unsafe { (*references).load(Ordering::Acquire) as long }
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__CreateParams__SIZEOF() -> usize {
++  size_of::<crate::isolate_create_params::raw::CreateParams>()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__CreateParams__CONSTRUCT(
++  params: *mut MaybeUninit<crate::isolate_create_params::raw::CreateParams>,
++) {
++  if params.is_null() {
++    return;
++  }
++  unsafe {
++    ptr::write_bytes(params.cast::<u8>(), 0, size_of_val(&*params));
++    let params =
++      &mut *params.cast::<crate::isolate_create_params::raw::CreateParams>();
++    params.allow_atomics_wait = true;
++  }
++}
++
++struct RustAllocator;
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ArrayBuffer__Allocator__NewDefaultAllocator()
++-> *mut Allocator {
++  Box::into_raw(Box::new(RustAllocator)).cast()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ArrayBuffer__Allocator__DELETE(
++  allocator: *mut Allocator,
++) {
++  if !allocator.is_null() {
++    unsafe { drop(Box::from_raw(allocator.cast::<RustAllocator>())) };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__ArrayBuffer__Allocator__CONVERT__std__unique_ptr(
++  unique: UniquePtr<Allocator>,
++) -> SharedPtrBase<Allocator> {
++  let object: *mut c_void = unique.into_raw().cast();
++  let references = if object.is_null() {
++    ptr::null_mut()
++  } else {
++    Box::into_raw(Box::new(AtomicUsize::new(1)))
++  };
++  unsafe { shared_from_repr(SharedRepr { object, references }) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__ArrayBuffer__Allocator__get(
++  shared: *const SharedPtrBase<Allocator>,
++) -> *mut Allocator {
++  unsafe { shared_repr(shared).object.cast() }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__ArrayBuffer__Allocator__COPY(
++  shared: *const SharedPtrBase<Allocator>,
++) -> SharedPtrBase<Allocator> {
++  let repr = unsafe { shared_repr(shared) };
++  if !repr.references.is_null() {
++    unsafe { (*repr.references).fetch_add(1, Ordering::Relaxed) };
++  }
++  unsafe { shared_from_repr(repr) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__ArrayBuffer__Allocator__reset(
++  shared: *mut SharedPtrBase<Allocator>,
++) {
++  let repr = unsafe { shared_repr(shared) };
++  if !repr.references.is_null()
++    && unsafe { (*repr.references).fetch_sub(1, Ordering::AcqRel) } == 1
++  {
++    v8__ArrayBuffer__Allocator__DELETE(repr.object.cast());
++    unsafe { drop(Box::from_raw(repr.references)) };
++  }
++  if !shared.is_null() {
++    unsafe { ptr::write_bytes(shared, 0, 1) };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn std__shared_ptr__v8__ArrayBuffer__Allocator__use_count(
++  shared: *const SharedPtrBase<Allocator>,
++) -> long {
++  let references = unsafe { shared_repr(shared).references };
++  if references.is_null() {
++    0
++  } else {
++    unsafe { (*references).load(Ordering::Acquire) as long }
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__New(_params: *const c_void) -> *mut RealIsolate {
++  Box::into_raw(Box::new(IsolateState {
++    values: Vec::new(),
++    contexts: Vec::new(),
++    data_slots: [ptr::null_mut(); 4],
++    microtasks_policy: crate::MicrotasksPolicy::Auto,
++  }))
++  .cast()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__Dispose(isolate: *mut RealIsolate) {
++  if isolate.is_null() {
++    return;
++  }
++  let mut state = unsafe { Box::from_raw(isolate.cast::<IsolateState>()) };
++  for value in state.values.drain(..) {
++    unsafe { drop(Box::from_raw(value)) };
++  }
++  ENTERED_ISOLATES.with(|entered| {
++    entered
++      .borrow_mut()
++      .retain(|candidate| *candidate != isolate);
++  });
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__Enter(isolate: *mut RealIsolate) {
++  ENTERED_ISOLATES.with(|entered| entered.borrow_mut().push(isolate));
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__Exit(isolate: *mut RealIsolate) {
++  ENTERED_ISOLATES.with(|entered| {
++    let mut entered = entered.borrow_mut();
++    if entered.last().copied() == Some(isolate) {
++      entered.pop();
++    }
++  });
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__GetCurrent() -> *mut RealIsolate {
++  current_isolate()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__GetNumberOfDataSlots(
++  _isolate: *const RealIsolate,
++) -> u32 {
++  4
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__GetData(
++  isolate: *const RealIsolate,
++  slot: u32,
++) -> *mut c_void {
++  unsafe {
++    isolate_state(isolate.cast_mut())
++      .data_slots
++      .get(slot as usize)
++      .copied()
++      .unwrap_or(ptr::null_mut())
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetData(
++  isolate: *const RealIsolate,
++  slot: u32,
++  data: *mut c_void,
++) {
++  if let Some(target) = unsafe {
++    isolate_state(isolate.cast_mut())
++      .data_slots
++      .get_mut(slot as usize)
++  } {
++    *target = data;
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetMicrotasksPolicy(
++  isolate: *mut RealIsolate,
++  policy: crate::MicrotasksPolicy,
++) {
++  if !isolate.is_null() {
++    unsafe { isolate_state(isolate).microtasks_policy = policy };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__GetMicrotasksPolicy(
++  isolate: *const RealIsolate,
++) -> crate::MicrotasksPolicy {
++  if isolate.is_null() {
++    crate::MicrotasksPolicy::Auto
++  } else {
++    unsafe { isolate_state(isolate.cast_mut()).microtasks_policy }
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(
++  _isolate: *mut RealIsolate,
++  _capture: bool,
++  _frame_limit: i32,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetPromiseRejectCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::PromiseRejectCallback,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetPrepareStackTraceCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::PrepareStackTraceCallback<'static>,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetHostInitializeImportMetaObjectCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::HostInitializeImportMetaObjectCallback,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetHostImportModuleDynamicallyCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::RawHostImportModuleDynamicallyCallback,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetHostImportModuleWithPhaseDynamicallyCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::RawHostImportModuleWithPhaseDynamicallyCallback,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetWasmAsyncResolvePromiseCallback(
++  _isolate: *mut RealIsolate,
++  _callback: crate::isolate::WasmAsyncResolvePromiseCallback,
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__SetWasmStreamingCallback(
++  _isolate: *mut RealIsolate,
++  _callback: unsafe extern "C" fn(*const crate::function::FunctionCallbackInfo),
++) {
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Isolate__GetCurrentContext(
++  _isolate: *mut RealIsolate,
++) -> *const Context {
++  current_context()
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__HandleScope__CONSTRUCT(
++  scope: *mut usize,
++  isolate: *mut RealIsolate,
++) {
++  if !scope.is_null() {
++    unsafe { scope.write(isolate as usize) };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__HandleScope__DESTRUCT(_scope: *mut usize) {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Local__New(
++  _isolate: *mut RealIsolate,
++  value: *const Data,
++) -> *const Data {
++  value
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Global__New(
++  _isolate: *mut RealIsolate,
++  value: *const Data,
++) -> *const Data {
++  // Values are stable isolate-owned allocations in this backend, so a
++  // persistent handle can directly retain the same address.
++  value
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Global__Reset(_value: *const Data) {
++  // The isolate owns the allocation. Reset only releases the logical handle;
++  // there is no moving collector or separate persistent cell to destroy.
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__SnapshotCreator__DESTRUCT(_creator: *mut c_void) {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__StartupData__data__DELETE(_data: *const c_char) {}
++
++// --- Contexts and strings -------------------------------------------------
++
++fn new_object_template(
++  isolate: *mut RealIsolate,
++) -> *const crate::ObjectTemplate {
++  allocate(
++    isolate,
++    HeapValue::ObjectTemplate(ObjectTemplateState {
++      properties: Vec::new(),
++      internal_field_count: 0,
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__FunctionTemplate__New(
++  isolate: *mut RealIsolate,
++  callback: crate::FunctionCallback,
++  data: *const Value,
++  _signature: *const crate::Signature,
++  _length: i32,
++  _constructor_behavior: crate::ConstructorBehavior,
++  _side_effect_type: crate::SideEffectType,
++  _c_functions: *const crate::fast_api::CFunction,
++  _c_functions_len: usize,
++) -> *const crate::FunctionTemplate {
++  let prototype_template = new_object_template(isolate);
++  let instance_template = new_object_template(isolate);
++  allocate(
++    isolate,
++    HeapValue::FunctionTemplate(FunctionTemplateState {
++      callback,
++      data,
++      properties: Vec::new(),
++      prototype_template,
++      instance_template,
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__FunctionTemplate__PrototypeTemplate(
++  template: *const crate::FunctionTemplate,
++) -> *const crate::ObjectTemplate {
++  match unsafe { heap_value(template) } {
++    Some(HeapValue::FunctionTemplate(state)) => state.prototype_template,
++    _ => ptr::null(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__FunctionTemplate__InstanceTemplate(
++  template: *const crate::FunctionTemplate,
++) -> *const crate::ObjectTemplate {
++  match unsafe { heap_value(template) } {
++    Some(HeapValue::FunctionTemplate(state)) => state.instance_template,
++    _ => ptr::null(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ObjectTemplate__New(
++  isolate: *mut RealIsolate,
++  _constructor: *const crate::FunctionTemplate,
++) -> *const crate::ObjectTemplate {
++  new_object_template(isolate)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ObjectTemplate__InternalFieldCount(
++  template: *const crate::ObjectTemplate,
++) -> int {
++  match unsafe { heap_value(template) } {
++    Some(HeapValue::ObjectTemplate(state)) => state.internal_field_count,
++    _ => 0,
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ObjectTemplate__SetInternalFieldCount(
++  template: *const crate::ObjectTemplate,
++  count: int,
++) {
++  if let Some(HeapValue::ObjectTemplate(state)) =
++    unsafe { heap_value_mut(template) }
++  {
++    state.internal_field_count = count.max(0);
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Template__Set(
++  template: *const crate::Template,
++  key: *const crate::Name,
++  value: *const Data,
++  attributes: crate::PropertyAttribute,
++) {
++  let property = TemplateProperty {
++    key,
++    value,
++    attributes: unsafe { std::mem::transmute(attributes) },
++  };
++  match unsafe { heap_value_mut(template) } {
++    Some(HeapValue::ObjectTemplate(state)) => state.properties.push(property),
++    Some(HeapValue::FunctionTemplate(state)) => state.properties.push(property),
++    _ => {}
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__New(
++  isolate: *mut RealIsolate,
++  template: *const c_void,
++  global_object: *const c_void,
++  _microtask_queue: *mut c_void,
++) -> *const Context {
++  let global = if global_object.is_null() {
++    object_from_template(isolate, template.cast())
++  } else {
++    global_object.cast()
++  };
++  let console = new_object(isolate);
++  let console_key = new_string(isolate, "console".to_string());
++  let extras = new_object(isolate);
++  if let Some(properties) = properties_mut(extras) {
++    properties.push(TemplateProperty {
++      key: console_key.cast(),
++      value: console.cast(),
++      attributes: 0,
++    });
++  }
++  allocate(
++    isolate,
++    HeapValue::Context(ContextState {
++      global,
++      extras,
++      embedder_data: vec![ptr::null_mut(); 4],
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__Global(
++  context: *const Context,
++) -> *const Object {
++  match unsafe { heap_value(context) } {
++    Some(HeapValue::Context(state)) => state.global,
++    _ => ptr::null(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__GetExtrasBindingObject(
++  context: *const Context,
++) -> *const Object {
++  match unsafe { heap_value(context) } {
++    Some(HeapValue::Context(state)) => state.extras,
++    _ => ptr::null(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__GetNumberOfEmbedderDataFields(
++  context: *const Context,
++) -> u32 {
++  match unsafe { heap_value(context) } {
++    Some(HeapValue::Context(state)) => state.embedder_data.len() as u32,
++    _ => 0,
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__GetAlignedPointerFromEmbedderData(
++  context: *const Context,
++  index: int,
++) -> *mut c_void {
++  match unsafe { heap_value(context) } {
++    Some(HeapValue::Context(state)) if index >= 0 => state
++      .embedder_data
++      .get(index as usize)
++      .copied()
++      .unwrap_or(ptr::null_mut()),
++    _ => ptr::null_mut(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__SetAlignedPointerInEmbedderData(
++  context: *const Context,
++  index: int,
++  value: *mut c_void,
++) {
++  if index < 0 {
++    return;
++  }
++  if let Some(HeapValue::Context(state)) = unsafe { heap_value_mut(context) } {
++    let index = index as usize;
++    if state.embedder_data.len() <= index {
++      state.embedder_data.resize(index + 1, ptr::null_mut());
++    }
++    state.embedder_data[index] = value;
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ObjectTemplate__NewInstance(
++  template: *const crate::ObjectTemplate,
++  _context: *const Context,
++) -> *const Object {
++  object_from_template(current_isolate(), template)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__New(isolate: *mut RealIsolate) -> *const Object {
++  new_object(isolate)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__Get(
++  object: *const Object,
++  _context: *const Context,
++  key: *const Value,
++) -> *const Value {
++  properties(object)
++    .and_then(|properties| {
++      properties
++        .iter()
++        .rev()
++        .find(|property| same_property_key(property.key.cast(), key.cast()))
++    })
++    .map(|property| property.value.cast())
++    .unwrap_or_else(|| v8__Undefined(current_isolate()).cast())
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__Set(
++  object: *const Object,
++  _context: *const Context,
++  key: *const Value,
++  value: *const Value,
++) -> MaybeBool {
++  let Some(properties) = properties_mut(object) else {
++    return MaybeBool::Nothing;
++  };
++  if let Some(property) = properties
++    .iter_mut()
++    .rev()
++    .find(|property| same_property_key(property.key.cast(), key.cast()))
++  {
++    property.value = value.cast();
++  } else {
++    properties.push(TemplateProperty {
++      key: key.cast(),
++      value: value.cast(),
++      attributes: 0,
++    });
++  }
++  MaybeBool::JustTrue
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__InternalFieldCount(object: *const Object) -> int {
++  match unsafe { heap_value(object) } {
++    Some(HeapValue::Object(state)) => state.internal_fields.len() as int,
++    _ => 0,
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__GetAlignedPointerFromInternalField(
++  object: *const Object,
++  index: int,
++  _tag: u16,
++) -> *const c_void {
++  match unsafe { heap_value(object) } {
++    Some(HeapValue::Object(state)) if index >= 0 => state
++      .internal_fields
++      .get(index as usize)
++      .copied()
++      .unwrap_or(ptr::null_mut())
++      .cast_const(),
++    _ => ptr::null(),
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Object__SetAlignedPointerInInternalField(
++  object: *const Object,
++  index: int,
++  value: *const c_void,
++  _tag: u16,
++) {
++  if index < 0 {
++    return;
++  }
++  if let Some(HeapValue::Object(state)) = unsafe { heap_value_mut(object) }
++    && let Some(field) = state.internal_fields.get_mut(index as usize)
++  {
++    *field = value.cast_mut();
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Function__New(
++  _context: *const Context,
++  callback: crate::FunctionCallback,
++  data: *const Value,
++  _length: i32,
++  _constructor_behavior: crate::ConstructorBehavior,
++  _side_effect_type: crate::SideEffectType,
++) -> *const crate::Function {
++  allocate(
++    current_isolate(),
++    HeapValue::Function(FunctionState {
++      callback,
++      data,
++      properties: Vec::new(),
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__FunctionTemplate__GetFunction(
++  template: *const crate::FunctionTemplate,
++  _context: *const Context,
++) -> *const crate::Function {
++  let Some(HeapValue::FunctionTemplate(state)) =
++    (unsafe { heap_value(template) })
++  else {
++    return ptr::null();
++  };
++  let prototype =
++    object_from_template(current_isolate(), state.prototype_template);
++  let prototype_key = new_string(current_isolate(), "prototype".to_string());
++  let mut function_properties = state.properties.clone();
++  function_properties.push(TemplateProperty {
++    key: prototype_key.cast(),
++    value: prototype.cast(),
++    attributes: 0,
++  });
++  allocate(
++    current_isolate(),
++    HeapValue::Function(FunctionState {
++      callback: state.callback,
++      data: state.data,
++      properties: function_properties,
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__Enter(context: *const Context) {
++  let isolate = current_isolate();
++  if !isolate.is_null() {
++    unsafe { isolate_state(isolate).contexts.push(context) };
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Context__Exit(context: *const Context) {
++  let isolate = current_isolate();
++  if isolate.is_null() {
++    return;
++  }
++  let contexts = unsafe { &mut isolate_state(isolate).contexts };
++  if contexts.last().copied() == Some(context) {
++    contexts.pop();
++  }
++}
++
++fn new_string(isolate: *mut RealIsolate, value: String) -> *const V8String {
++  allocate(isolate, HeapValue::String(value))
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__Empty(
++  isolate: *mut RealIsolate,
++) -> *const V8String {
++  new_string(isolate, String::new())
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__NewFromUtf8(
++  isolate: *mut RealIsolate,
++  data: *const c_char,
++  _new_type: NewStringType,
++  length: int,
++) -> *const V8String {
++  if data.is_null() {
++    return ptr::null();
++  }
++  let bytes = unsafe {
++    if length < 0 {
++      CStr::from_ptr(data).to_bytes()
++    } else {
++      std::slice::from_raw_parts(data.cast::<u8>(), length as usize)
++    }
++  };
++  new_string(isolate, String::from_utf8_lossy(bytes).into_owned())
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__NewFromOneByte(
++  isolate: *mut RealIsolate,
++  data: *const u8,
++  _new_type: NewStringType,
++  length: int,
++) -> *const V8String {
++  if data.is_null() || length < 0 {
++    return ptr::null();
++  }
++  let bytes = unsafe { std::slice::from_raw_parts(data, length as usize) };
++  let value: String = bytes.iter().map(|byte| char::from(*byte)).collect();
++  new_string(isolate, value)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__NewFromTwoByte(
++  isolate: *mut RealIsolate,
++  data: *const u16,
++  _new_type: NewStringType,
++  length: int,
++) -> *const V8String {
++  if data.is_null() || length < 0 {
++    return ptr::null();
++  }
++  let units = unsafe { std::slice::from_raw_parts(data, length as usize) };
++  new_string(isolate, String::from_utf16_lossy(units))
++}
++
++#[repr(C)]
++struct OneByteConstRepr {
++  _vtable: *const c_void,
++  data: *const c_char,
++  length: usize,
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__NewExternalOneByteConst(
++  isolate: *mut RealIsolate,
++  one_byte: *const crate::OneByteConst,
++) -> *const V8String {
++  let Some(one_byte) =
++    (unsafe { one_byte.cast::<OneByteConstRepr>().as_ref() })
++  else {
++    return ptr::null();
++  };
++  v8__String__NewExternalOneByteStatic(
++    isolate,
++    one_byte.data,
++    one_byte.length.try_into().unwrap_or(int::MAX),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__NewExternalOneByteStatic(
++  isolate: *mut RealIsolate,
++  data: *const c_char,
++  length: int,
++) -> *const V8String {
++  v8__String__NewFromOneByte(
++    isolate,
++    data.cast(),
++    NewStringType::Normal,
++    length,
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__Length(value: *const V8String) -> int {
++  unsafe {
++    string_value(value)
++      .map(|value| value.encode_utf16().count() as int)
++      .unwrap_or(0)
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ContainsOnlyOneByte(
++  value: *const V8String,
++) -> bool {
++  unsafe { string_value(value).is_some_and(|value| value.is_ascii()) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__IsOneByte(value: *const V8String) -> bool {
++  v8__String__ContainsOnlyOneByte(value)
++}
++
++#[repr(C)]
++#[derive(Clone, Copy)]
++struct ValueViewState {
++  data: *mut c_void,
++  length: usize,
++  one_byte: usize,
++  reserved: usize,
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ValueView__CONSTRUCT(
++  view: *mut ValueView,
++  _isolate: *mut RealIsolate,
++  value: *const V8String,
++) {
++  let units: Vec<u16> = unsafe { string_value(value) }
++    .map(|value| value.encode_utf16().collect())
++    .unwrap_or_default();
++  let one_byte = units.iter().all(|unit| *unit <= u8::MAX as u16);
++  let length = units.len();
++  let data = if one_byte {
++    let bytes: Box<[u8]> = units.iter().map(|unit| *unit as u8).collect();
++    Box::into_raw(bytes).cast::<u8>().cast()
++  } else {
++    Box::into_raw(units.into_boxed_slice()).cast::<u16>().cast()
++  };
++  let state = ValueViewState {
++    data,
++    length,
++    one_byte: usize::from(one_byte),
++    reserved: 0,
++  };
++  unsafe { ptr::write_unaligned(view.cast(), state) };
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ValueView__DESTRUCT(view: *mut ValueView) {
++  if view.is_null() {
++    return;
++  }
++  let state = unsafe { value_view(view) };
++  if state.data.is_null() {
++    return;
++  }
++  if state.one_byte != 0 {
++    let slice =
++      ptr::slice_from_raw_parts_mut(state.data.cast::<u8>(), state.length);
++    unsafe { drop(Box::from_raw(slice)) };
++  } else {
++    let slice =
++      ptr::slice_from_raw_parts_mut(state.data.cast::<u16>(), state.length);
++    unsafe { drop(Box::from_raw(slice)) };
++  }
++  unsafe { ptr::write_bytes(view, 0, 1) };
++}
++
++unsafe fn value_view(view: *const ValueView) -> ValueViewState {
++  unsafe { ptr::read_unaligned(view.cast()) }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ValueView__is_one_byte(
++  view: *const ValueView,
++) -> bool {
++  unsafe { value_view(view).one_byte != 0 }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ValueView__data(
++  view: *const ValueView,
++) -> *const c_void {
++  unsafe { value_view(view).data.cast_const() }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__String__ValueView__length(view: *const ValueView) -> int {
++  unsafe { value_view(view).length as int }
++}
++
++// --- Error values ---------------------------------------------------------
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Undefined(isolate: *mut RealIsolate) -> *const Primitive {
++  allocate(isolate, HeapValue::Undefined)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsUndefined(value: *const Value) -> bool {
++  matches!(unsafe { heap_value(value) }, Some(HeapValue::Undefined))
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsString(value: *const Value) -> bool {
++  matches!(unsafe { heap_value(value) }, Some(HeapValue::String(_)))
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsStringObject(_value: *const Value) -> bool {
++  false
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsObject(value: *const Value) -> bool {
++  matches!(
++    unsafe { heap_value(value) },
++    Some(
++      HeapValue::Object(_) | HeapValue::Function(_) | HeapValue::Error { .. }
++    )
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsFunction(value: *const Value) -> bool {
++  matches!(unsafe { heap_value(value) }, Some(HeapValue::Function(_)))
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Exception__Error(
++  message: *const V8String,
++) -> *const Value {
++  allocate_error(message, "Error")
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Exception__RangeError(
++  message: *const V8String,
++) -> *const Value {
++  allocate_error(message, "RangeError")
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Exception__ReferenceError(
++  message: *const V8String,
++) -> *const Value {
++  allocate_error(message, "ReferenceError")
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Exception__SyntaxError(
++  message: *const V8String,
++) -> *const Value {
++  allocate_error(message, "SyntaxError")
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Exception__TypeError(
++  message: *const V8String,
++) -> *const Value {
++  allocate_error(message, "TypeError")
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Value__IsNativeError(value: *const Value) -> bool {
++  matches!(unsafe { heap_value(value) }, Some(HeapValue::Error { .. }))
++}
++
++// --- Classic scripts ------------------------------------------------------
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Script__Compile(
++  _context: *const Context,
++  source: *const V8String,
++  origin: *const ScriptOrigin,
++) -> *const Script {
++  let Some(source) = (unsafe { string_value(source) }) else {
++    return ptr::null();
++  };
++  let resource_name = if origin.is_null() {
++    "<anonymous>".to_string()
++  } else {
++    let resource = unsafe { origin.cast::<usize>().read() as *const Value };
++    unsafe { string_value(resource) }
++      .unwrap_or("<anonymous>")
++      .to_string()
++  };
++  allocate(
++    current_isolate(),
++    HeapValue::Script(ScriptState {
++      source: source.to_string(),
++      specifier: resource_name,
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Script__Run(
++  script: *const Script,
++  _context: *const Context,
++) -> *const Value {
++  let Some(HeapValue::Script(state)) = (unsafe { heap_value(script) }) else {
++    return ptr::null();
++  };
++  // Running this in a fresh Wasmtime subprocess would discard writes to the
++  // Rust-owned `Deno.core` graph. Refuse at the exact semantic boundary until
++  // the Deno target provides a shared-instance host bridge.
++  eprintln!(
++    "v8x/js2wasm: cannot run classic script {:?} ({} bytes): the Deno host bridge must preserve Rust-owned object side effects in the Wasm instance",
++    state.specifier,
++    state.source.len(),
++  );
++  ptr::null()
++}
++
++// --- Source-text modules --------------------------------------------------
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ScriptOrigin__CONSTRUCT(
++  origin: *mut MaybeUninit<ScriptOrigin>,
++  resource_name: *const Value,
++  _line_offset: i32,
++  _column_offset: i32,
++  _shared_cross_origin: bool,
++  _script_id: i32,
++  _source_map_url: *const Value,
++  _opaque: bool,
++  _wasm: bool,
++  _module: bool,
++  _host_options: *const Data,
++) {
++  if origin.is_null() {
++    return;
++  }
++  unsafe {
++    ptr::write_bytes(origin.cast::<u8>(), 0, size_of_val(&*origin));
++    origin.cast::<usize>().write(resource_name as usize);
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ScriptCompiler__Source__CONSTRUCT(
++  source: *mut MaybeUninit<Source>,
++  source_string: *const V8String,
++  origin: *const ScriptOrigin,
++  _cached_data: *mut CachedData,
++) {
++  if source.is_null() {
++    return;
++  }
++  unsafe {
++    ptr::write_bytes(source.cast::<u8>(), 0, size_of_val(&*source));
++    let words = source.cast::<usize>();
++    words.write(source_string as usize);
++    if !origin.is_null() {
++      words.add(1).write((origin.cast::<usize>()).read());
++    }
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ScriptCompiler__Source__DESTRUCT(_source: *mut Source) {}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ScriptCompiler__Source__GetCachedData<'a>(
++  _source: *const Source,
++) -> *const CachedData<'a> {
++  ptr::null()
++}
++
++fn quoted_specifier(text: &str) -> Option<String> {
++  let start = text.find(['\'', '"'])?;
++  let quote = text.as_bytes()[start];
++  let rest = &text[start + 1..];
++  let end = rest.as_bytes().iter().position(|byte| *byte == quote)?;
++  Some(rest[..end].to_string())
++}
++
++fn parse_static_imports(source: &str) -> Vec<String> {
++  let mut imports = Vec::new();
++  for statement in source.split(';') {
++    let statement = statement.trim();
++    let candidate = if let Some(rest) = statement.strip_prefix("import ") {
++      if rest.starts_with(['\'', '"']) {
++        Some(rest)
++      } else {
++        rest.rsplit_once(" from ").map(|(_, value)| value)
++      }
++    } else if statement.starts_with("export ") {
++      statement.rsplit_once(" from ").map(|(_, value)| value)
++    } else {
++      None
++    };
++    if let Some(specifier) = candidate.and_then(quoted_specifier) {
++      imports.push(specifier);
++    }
++  }
++  imports
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__ScriptCompiler__CompileModule(
++  isolate: *mut RealIsolate,
++  source: *mut Source,
++  _options: CompileOptions,
++  _no_cache_reason: NoCacheReason,
++) -> *const Module {
++  if source.is_null() {
++    return ptr::null();
++  }
++  let words = source.cast::<usize>();
++  let source_string = unsafe { words.read() as *const V8String };
++  let resource_name = unsafe { words.add(1).read() as *const V8String };
++  let Some(source) = (unsafe { string_value(source_string) }) else {
++    return ptr::null();
++  };
++  let specifier = unsafe { string_value(resource_name) }
++    .unwrap_or_default()
++    .to_string();
++  allocate(
++    isolate,
++    HeapValue::Module(ModuleState {
++      status: STATUS_UNINSTANTIATED,
++      source: source.to_string(),
++      specifier,
++      imports: parse_static_imports(source),
++      dependencies: Vec::new(),
++      runtime: None,
++    }),
++  )
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__GetStatus(module: *const Module) -> ModuleStatus {
++  match unsafe { module_state(module) }.map(|state| state.status) {
++    Some(STATUS_UNINSTANTIATED) => ModuleStatus::Uninstantiated,
++    Some(STATUS_INSTANTIATING) => ModuleStatus::Instantiating,
++    Some(STATUS_INSTANTIATED) => ModuleStatus::Instantiated,
++    Some(STATUS_EVALUATING) => ModuleStatus::Evaluating,
++    Some(STATUS_EVALUATED) => ModuleStatus::Evaluated,
++    _ => ModuleStatus::Errored,
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__InstantiateModule(
++  module: *const Module,
++  context: *const Context,
++  callback: ResolveModuleCallback,
++  source_callback: Option<ResolveSourceCallback>,
++) -> MaybeBool {
++  let Some(state) = (unsafe { module_state(module) }) else {
++    return MaybeBool::Nothing;
++  };
++  if state.status != STATUS_UNINSTANTIATED {
++    return MaybeBool::JustTrue;
++  }
++  state.status = STATUS_INSTANTIATING;
++  let imports = state.imports.clone();
++  let isolate = current_isolate();
++  let mut dependencies = Vec::with_capacity(imports.len());
++
++  for specifier in imports {
++    let specifier = new_string(isolate, specifier);
++    let attributes = allocate::<FixedArray>(isolate, HeapValue::FixedArray);
++    let Some(context_local) = (unsafe { crate::Local::from_raw(context) })
++    else {
++      return MaybeBool::Nothing;
++    };
++    let specifier_local = unsafe { crate::Local::from_raw(specifier) }.unwrap();
++    let attributes_local =
++      unsafe { crate::Local::from_raw(attributes) }.unwrap();
++    let module_local = unsafe { crate::Local::from_raw(module) }.unwrap();
++    let returned = unsafe {
++      callback(
++        context_local,
++        specifier_local,
++        attributes_local,
++        module_local,
++      )
++    };
++    let dependency = unsafe {
++      *(&returned as *const ResolveModuleCallbackRet as *const *const Module)
++    };
++    if dependency.is_null() {
++      if let Some(state) = unsafe { module_state(module) } {
++        state.status = STATUS_ERRORED;
++      }
++      return MaybeBool::Nothing;
++    }
++    if unsafe { module_state(dependency) }
++      .is_some_and(|state| state.status == STATUS_UNINSTANTIATED)
++      && v8__Module__InstantiateModule(
++        dependency,
++        context,
++        callback,
++        source_callback,
++      ) != MaybeBool::JustTrue
++    {
++      if let Some(state) = unsafe { module_state(module) } {
++        state.status = STATUS_ERRORED;
++      }
++      return MaybeBool::Nothing;
++    }
++    dependencies.push(dependency);
++  }
++
++  if let Some(state) = unsafe { module_state(module) } {
++    state.dependencies = dependencies;
++    state.status = STATUS_INSTANTIATED;
++  }
++  MaybeBool::JustTrue
++}
++
++fn collect_graph(
++  module: *const Module,
++  seen: &mut HashSet<usize>,
++  sources: &mut Vec<crate::js2wasm_spike::SourceModule>,
++) -> Result<(), String> {
++  if !seen.insert(module as usize) {
++    return Ok(());
++  }
++  let (specifier, source, dependencies) = unsafe { module_state(module) }
++    .map(|state| {
++      (
++        state.specifier.clone(),
++        state.source.clone(),
++        state.dependencies.clone(),
++      )
++    })
++    .ok_or_else(|| "v8x/js2wasm: invalid module handle".to_string())?;
++  sources.push(crate::js2wasm_spike::SourceModule { specifier, source });
++  for dependency in dependencies {
++    collect_graph(dependency, seen, sources)?;
++  }
++  Ok(())
++}
++
++fn mark_evaluated(module: *const Module, seen: &mut HashSet<usize>) {
++  if !seen.insert(module as usize) {
++    return;
++  }
++  let dependencies = match unsafe { module_state(module) } {
++    Some(state) => {
++      state.status = STATUS_EVALUATED;
++      state.dependencies.clone()
++    }
++    None => return,
++  };
++  for dependency in dependencies {
++    mark_evaluated(dependency, seen);
++  }
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__Evaluate(
++  module: *const Module,
++  _context: *const Context,
++) -> *const Value {
++  let Some(state) = (unsafe { module_state(module) }) else {
++    return ptr::null();
++  };
++  if state.status == STATUS_EVALUATED {
++    return allocate(current_isolate(), HeapValue::Promise);
++  }
++  if state.status != STATUS_INSTANTIATED {
++    state.status = STATUS_ERRORED;
++    return ptr::null();
++  }
++  state.status = STATUS_EVALUATING;
++  let entry = state.specifier.clone();
++  let mut seen = HashSet::new();
++  let mut sources = Vec::new();
++  let runtime =
++    match collect_graph(module, &mut seen, &mut sources).and_then(|()| {
++      crate::js2wasm_spike::compile_and_instantiate(&entry, &sources)
++    }) {
++      Ok(runtime) => runtime,
++      Err(error) => {
++        eprintln!("{error}");
++        if let Some(state) = unsafe { module_state(module) } {
++          state.status = STATUS_ERRORED;
++        }
++        return ptr::null();
++      }
++    };
++  if let Some(state) = unsafe { module_state(module) } {
++    state.runtime = Some(runtime);
++  }
++  mark_evaluated(module, &mut HashSet::new());
++  allocate(current_isolate(), HeapValue::Promise)
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__IsSourceTextModule(
++  _module: *const Module,
++) -> bool {
++  true
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__IsSyntheticModule(
++  _module: *const Module,
++) -> bool {
++  false
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__IsGraphAsync(_module: *const Module) -> bool {
++  false
++}
++
++#[unsafe(no_mangle)]
++pub extern "C" fn v8__Module__ScriptId(_module: *const Module) -> int {
++  1
++}
+diff --git a/src/js2wasm_spike.rs b/src/js2wasm_spike.rs
+new file mode 100644
+index 0000000..6dcd4cc
+--- /dev/null
++++ b/src/js2wasm_spike.rs
+@@ -0,0 +1,458 @@
++//! Experimental js2wasm module backend.
++//!
++//! js2wasm remains a build-time compiler. At runtime v8x embeds compiler-free
++//! Wasmtime, shares one engine plus each precompiled module across isolates,
++//! and keeps a private store/instance alive with each owning V8 module handle.
++//! The first Deno-shaped host seam is `Deno.cwd()`: the compiled TypeScript
++//! wrapper reconstructs its string from two direct UTF-16 imports, avoiding a
++//! JavaScript-host `externref` ABI or a WASI/component boundary.
++
++use std::collections::HashMap;
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::collections::HashSet;
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::fs;
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::io::Write;
++use std::path::{Path, PathBuf};
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::process::Command;
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
++use std::sync::{Mutex, OnceLock};
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::time::{SystemTime, UNIX_EPOCH};
++use wasmtime::{
++  Caller, Config, Engine, Instance, InstancePre, Linker, Module, Store,
++};
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
++
++const CWD_LENGTH_IMPORT: &str = "__v8x_op_cwd_utf16_length";
++const CWD_CODE_UNIT_IMPORT: &str = "__v8x_op_cwd_utf16_code_unit";
++const DENO_IMPORT_MODULE: &str = "v8x:deno";
++const CWD_LENGTH_PROBE: &str = "__v8x_probe_cwd_utf16_length";
++const CWD_CHECKSUM_PROBE: &str = "__v8x_probe_cwd_utf16_checksum";
++
++#[cfg_attr(not(feature = "js2wasm_runtime_compile"), allow(dead_code))]
++pub(crate) struct SourceModule {
++  pub(crate) specifier: String,
++  pub(crate) source: String,
++}
++
++struct DenoHostState {
++  cwd: Vec<u16>,
++  cwd_op_calls: u64,
++}
++
++#[derive(Hash, PartialEq, Eq)]
++enum ModuleCacheKey {
++  TrustedFile(PathBuf),
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  DevelopmentBytes(Vec<u8>),
++}
++
++struct SharedDenoRuntime {
++  engine: Engine,
++  linker: Linker<DenoHostState>,
++  modules: Mutex<HashMap<ModuleCacheKey, InstancePre<DenoHostState>>>,
++  module_loads: AtomicUsize,
++  instantiations: AtomicUsize,
++}
++
++static SHARED_DENO_RUNTIME: OnceLock<Result<SharedDenoRuntime, String>> =
++  OnceLock::new();
++
++/// Diagnostic counters exposed only to verify the experimental backend.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Js2WasmRuntimeStats {
++  pub cached_modules: usize,
++  pub module_loads: usize,
++  pub instantiations: usize,
++}
++
++impl SharedDenoRuntime {
++  fn new() -> Result<Self, String> {
++    let mut config = Config::new();
++    config
++      .wasm_function_references(true)
++      .wasm_gc(true)
++      .wasm_tail_call(true)
++      .wasm_exceptions(true);
++    let engine = Engine::new(&config)
++      .map_err(|error| format!("configure embedded Wasmtime: {error}"))?;
++    let mut linker = Linker::new(&engine);
++    linker
++      .func_wrap(
++        DENO_IMPORT_MODULE,
++        CWD_LENGTH_IMPORT,
++        |mut caller: Caller<'_, DenoHostState>| -> f64 {
++          caller.data_mut().cwd_op_calls += 1;
++          caller.data().cwd.len() as f64
++        },
++      )
++      .map_err(|error| format!("bind {CWD_LENGTH_IMPORT}: {error}"))?;
++    linker
++      .func_wrap(
++        DENO_IMPORT_MODULE,
++        CWD_CODE_UNIT_IMPORT,
++        |mut caller: Caller<'_, DenoHostState>, index: f64| -> f64 {
++          caller.data_mut().cwd_op_calls += 1;
++          let index = if index.is_finite() && index >= 0.0 {
++            index as usize
++          } else {
++            usize::MAX
++          };
++          caller.data().cwd.get(index).copied().unwrap_or_default() as f64
++        },
++      )
++      .map_err(|error| format!("bind {CWD_CODE_UNIT_IMPORT}: {error}"))?;
++    Ok(Self {
++      engine,
++      linker,
++      modules: Mutex::new(HashMap::new()),
++      module_loads: AtomicUsize::new(0),
++      instantiations: AtomicUsize::new(0),
++    })
++  }
++
++  fn precompiled_file(
++    &self,
++    artifact: &Path,
++  ) -> Result<InstancePre<DenoHostState>, String> {
++    let artifact = artifact.canonicalize().map_err(|error| {
++      format!(
++        "resolve precompiled js2wasm artifact {}: {error}",
++        artifact.display()
++      )
++    })?;
++    let key = ModuleCacheKey::TrustedFile(artifact.clone());
++    let mut modules = self
++      .modules
++      .lock()
++      .map_err(|_| "lock shared js2wasm module cache".to_string())?;
++    if let Some(module) = modules.get(&key) {
++      return Ok(module.clone());
++    }
++
++    // Deployment artifacts are generated by the trusted build pipeline for
++    // this exact Wasmtime version/configuration and remain immutable while
++    // mapped. Never use this path for user-supplied files.
++    let module = unsafe { Module::deserialize_file(&self.engine, &artifact) }
++      .map_err(|error| {
++      format!(
++        "load trusted precompiled js2wasm artifact {}: {error:#}",
++        artifact.display()
++      )
++    })?;
++    self.trace_imports(&module);
++    let instance_pre = self
++      .linker
++      .instantiate_pre(&module)
++      .map_err(|error| format!("resolve js2wasm host imports: {error:#}"))?;
++    modules.insert(key, instance_pre.clone());
++    self.module_loads.fetch_add(1, Ordering::Relaxed);
++    Ok(instance_pre)
++  }
++
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  fn precompile(&self, wasm: &[u8]) -> Result<Vec<u8>, String> {
++    self
++      .engine
++      .precompile_module(wasm)
++      .map_err(|error| format!("precompile js2wasm output: {error:#}"))
++  }
++
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  fn development_bytes(
++    &self,
++    artifact: &[u8],
++  ) -> Result<InstancePre<DenoHostState>, String> {
++    let key = ModuleCacheKey::DevelopmentBytes(artifact.to_vec());
++    let mut modules = self
++      .modules
++      .lock()
++      .map_err(|_| "lock shared js2wasm module cache".to_string())?;
++    if let Some(module) = modules.get(&key) {
++      return Ok(module.clone());
++    }
++    // These bytes were created immediately above by this process's trusted
++    // development compiler using the same Engine configuration.
++    let module = unsafe { Module::deserialize(&self.engine, artifact) }
++      .map_err(|error| {
++        format!("load development js2wasm artifact: {error:#}")
++      })?;
++    self.trace_imports(&module);
++    let instance_pre = self
++      .linker
++      .instantiate_pre(&module)
++      .map_err(|error| format!("resolve js2wasm host imports: {error:#}"))?;
++    modules.insert(key, instance_pre.clone());
++    self.module_loads.fetch_add(1, Ordering::Relaxed);
++    Ok(instance_pre)
++  }
++
++  fn trace_imports(&self, module: &Module) {
++    if std::env::var_os("V8X_JS2WASM_TRACE_IMPORTS").is_some() {
++      for import in module.imports() {
++        eprintln!("v8x/js2wasm import {}::{}", import.module(), import.name());
++      }
++    }
++  }
++
++  fn stats(&self) -> Result<Js2WasmRuntimeStats, String> {
++    let modules = self.modules.lock().map_err(|_| {
++      "lock shared js2wasm module cache for diagnostics".to_string()
++    })?;
++    Ok(Js2WasmRuntimeStats {
++      cached_modules: modules.len(),
++      module_loads: self.module_loads.load(Ordering::Relaxed),
++      instantiations: self.instantiations.load(Ordering::Relaxed),
++    })
++  }
++}
++
++fn shared_runtime() -> Result<&'static SharedDenoRuntime, String> {
++  SHARED_DENO_RUNTIME
++    .get_or_init(SharedDenoRuntime::new)
++    .as_ref()
++    .map_err(Clone::clone)
++}
++
++/// Returns counters for structural sharing tests of the experimental backend.
++#[doc(hidden)]
++pub fn js2wasm_runtime_stats() -> Result<Js2WasmRuntimeStats, String> {
++  shared_runtime()?.stats()
++}
++
++/// One private Wasmtime store and instance owned by a v8x module handle.
++pub(crate) struct DenoRuntime {
++  store: Store<DenoHostState>,
++  instance: Instance,
++}
++
++impl DenoRuntime {
++  fn instantiate(
++    shared: &SharedDenoRuntime,
++    instance_pre: &InstancePre<DenoHostState>,
++    cwd: PathBuf,
++  ) -> Result<Self, String> {
++    let cwd = cwd.to_string_lossy().encode_utf16().collect();
++    let mut store = Store::new(
++      &shared.engine,
++      DenoHostState {
++        cwd,
++        cwd_op_calls: 0,
++      },
++    );
++    let instance = instance_pre
++      .instantiate(&mut store)
++      .map_err(|error| format!("instantiate js2wasm artifact: {error}"))?;
++    shared.instantiations.fetch_add(1, Ordering::Relaxed);
++    let mut runtime = Self { store, instance };
++    runtime.verify_cwd_probe()?;
++    Ok(runtime)
++  }
++
++  fn verify_cwd_probe(&mut self) -> Result<(), String> {
++    let Some(length) =
++      self.instance.get_func(&mut self.store, CWD_LENGTH_PROBE)
++    else {
++      return Ok(());
++    };
++    let checksum = self
++      .instance
++      .get_func(&mut self.store, CWD_CHECKSUM_PROBE)
++      .ok_or_else(|| {
++        format!(
++          "artifact exports {CWD_LENGTH_PROBE} without {CWD_CHECKSUM_PROBE}"
++        )
++      })?;
++    let length = length
++      .typed::<(), f64>(&self.store)
++      .map_err(|error| format!("type {CWD_LENGTH_PROBE}: {error}"))?
++      .call(&mut self.store, ())
++      .map_err(|error| format!("call {CWD_LENGTH_PROBE}: {error}"))?;
++    let checksum = checksum
++      .typed::<(), f64>(&self.store)
++      .map_err(|error| format!("type {CWD_CHECKSUM_PROBE}: {error}"))?
++      .call(&mut self.store, ())
++      .map_err(|error| format!("call {CWD_CHECKSUM_PROBE}: {error}"))?;
++    let expected_length = self.store.data().cwd.len() as f64;
++    let expected_checksum = self
++      .store
++      .data()
++      .cwd
++      .iter()
++      .enumerate()
++      .map(|(index, unit)| (index as f64 + 1.0) * f64::from(*unit))
++      .sum::<f64>();
++    if length != expected_length || checksum != expected_checksum {
++      return Err(format!(
++        "Deno.cwd() bridge returned length/checksum {length}/{checksum}, expected {expected_length}/{expected_checksum} ({} host calls)",
++        self.store.data().cwd_op_calls,
++      ));
++    }
++    let expected_calls = 2 * (self.store.data().cwd.len() as u64 + 1);
++    if self.store.data().cwd_op_calls != expected_calls {
++      return Err(format!(
++        "Deno.cwd() probe made {} typed host calls, expected {expected_calls} for a fresh instance",
++        self.store.data().cwd_op_calls,
++      ));
++    }
++    Ok(())
++  }
++}
++
++pub(crate) fn compile_and_instantiate(
++  entry: &str,
++  modules: &[SourceModule],
++) -> Result<DenoRuntime, String> {
++  if modules.is_empty() {
++    return Err("js2wasm module graph is empty".to_string());
++  }
++  let shared = shared_runtime()?;
++  let instance_pre = if let Some(artifact) =
++    std::env::var_os("V8X_JS2WASM_AOT_MODULE")
++  {
++    shared.precompiled_file(Path::new(&artifact))?
++  } else {
++    #[cfg(feature = "js2wasm_runtime_compile")]
++    {
++      let wasm = compile_graph(entry, modules)?;
++      let artifact = shared.precompile(&wasm)?;
++      if let Some(output) = std::env::var_os("V8X_JS2WASM_ARTIFACT_OUTPUT") {
++        fs::write(&output, &artifact).map_err(|error| {
++          format!(
++            "write precompiled js2wasm artifact {}: {error}",
++            Path::new(&output).display()
++          )
++        })?;
++      }
++      shared.development_bytes(&artifact)?
++    }
++    #[cfg(not(feature = "js2wasm_runtime_compile"))]
++    {
++      let _ = (entry, modules);
++      return Err(
++          "compiler-free engine_js2wasm builds require V8X_JS2WASM_AOT_MODULE to point to a trusted Wasmtime-precompiled artifact"
++            .to_string(),
++        );
++    }
++  };
++  let cwd = std::env::current_dir()
++    .map_err(|error| format!("resolve Deno.cwd() host value: {error}"))?;
++  DenoRuntime::instantiate(shared, &instance_pre, cwd)
++}
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++fn compile_graph(
++  entry: &str,
++  modules: &[SourceModule],
++) -> Result<Vec<u8>, String> {
++  let temp = TempDir::new()?;
++  let manifest_path = temp.path.join("modules.tsv");
++  let wasm_path = temp.path.join("module.wasm");
++  let mut manifest = fs::File::create(&manifest_path)
++    .map_err(|error| format!("create js2wasm manifest: {error}"))?;
++
++  let mut seen = HashSet::new();
++  for (index, module) in modules.iter().enumerate() {
++    if module.specifier.contains(['\t', '\n', '\r']) {
++      return Err(format!(
++        "js2wasm spike cannot encode module specifier {:?}",
++        module.specifier
++      ));
++    }
++    if !seen.insert(module.specifier.as_str()) {
++      continue;
++    }
++    let source_path = temp.path.join(format!("source-{index}.ts"));
++    fs::write(&source_path, &module.source)
++      .map_err(|error| format!("write js2wasm source: {error}"))?;
++    writeln!(manifest, "{}\t{}", module.specifier, source_path.display())
++      .map_err(|error| format!("write js2wasm manifest: {error}"))?;
++  }
++  drop(manifest);
++
++  let script =
++    std::env::var_os("V8X_JS2WASM_COMPILER_SCRIPT").ok_or_else(|| {
++      "V8X_JS2WASM_COMPILER_SCRIPT must point to compile-graph.ts (or set V8X_JS2WASM_AOT_MODULE)".to_string()
++    })?;
++  let compiler =
++    std::env::var_os("V8X_JS2WASM_COMPILER").unwrap_or_else(|| "node".into());
++  let mut compile = Command::new(&compiler);
++  if Path::new(&compiler)
++    .file_name()
++    .is_some_and(|name| name == "node")
++  {
++    compile.args(["--import", "tsx"]);
++  }
++  compile
++    .arg(script)
++    .arg("--manifest")
++    .arg(&manifest_path)
++    .arg("--entry")
++    .arg(entry)
++    .arg("--output")
++    .arg(&wasm_path);
++  if let Some(workdir) = std::env::var_os("V8X_JS2WASM_WORKDIR") {
++    compile.current_dir(workdir);
++  }
++  run(compile, "js2wasm compilation")?;
++  fs::read(&wasm_path)
++    .map_err(|error| format!("read compiled js2wasm artifact: {error}"))
++}
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++fn run(mut command: Command, phase: &str) -> Result<(), String> {
++  let output = command
++    .output()
++    .map_err(|error| format!("start {phase}: {error}"))?;
++  if output.status.success() {
++    return Ok(());
++  }
++
++  let stderr = String::from_utf8_lossy(&output.stderr);
++  let stdout = String::from_utf8_lossy(&output.stdout);
++  let detail = if !stderr.trim().is_empty() {
++    stderr.trim()
++  } else if !stdout.trim().is_empty() {
++    stdout.trim()
++  } else {
++    "process exited without output"
++  };
++  Err(format!("{phase} failed: {detail}"))
++}
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++struct TempDir {
++  path: PathBuf,
++}
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++impl TempDir {
++  fn new() -> Result<Self, String> {
++    let timestamp = SystemTime::now()
++      .duration_since(UNIX_EPOCH)
++      .unwrap_or_default()
++      .as_nanos();
++    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
++    let path = std::env::temp_dir().join(format!(
++      "v8x-js2wasm-{}-{timestamp}-{id}",
++      std::process::id()
++    ));
++    fs::create_dir(&path)
++      .map_err(|error| format!("create js2wasm temp directory: {error}"))?;
++    Ok(Self { path })
++  }
++}
++
++#[cfg(feature = "js2wasm_runtime_compile")]
++impl Drop for TempDir {
++  fn drop(&mut self) {
++    let _ = fs::remove_dir_all(&self.path);
++  }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 3f10de9..0fcae6e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -112,0 +113,10 @@ mod jsc;
++#[cfg(any(feature = "js2wasm_spike", feature = "engine_js2wasm"))]
++mod js2wasm_spike;
++
++#[cfg(feature = "engine_js2wasm")]
++#[doc(hidden)]
++pub use js2wasm_spike::{Js2WasmRuntimeStats, js2wasm_runtime_stats};
++
++#[cfg(feature = "engine_js2wasm")]
++mod js2wasm;
++
+@@ -289,0 +300,2 @@ pub const V8X_ENGINE: &str = if cfg!(feature = "engine_quickjs") {
++} else if cfg!(feature = "engine_js2wasm") {
++  "js2wasm"
+diff --git a/tests/js2wasm_spike.rs b/tests/js2wasm_spike.rs
+new file mode 100644
+index 0000000..5ea714d
+--- /dev/null
++++ b/tests/js2wasm_spike.rs
+@@ -0,0 +1,165 @@
++// Copyright 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++use std::sync::Once;
++
++const MAIN: &str = "file:///tmp/v8x-js2wasm-main.ts";
++const DEPENDENCY: &str = "file:///tmp/v8x-js2wasm-math.ts";
++const DENO: &str = "file:///tmp/v8x-js2wasm-deno.ts";
++const DENO_SOURCE: &str = r#"
++declare function __v8x_op_cwd_utf16_length(): number;
++declare function __v8x_op_cwd_utf16_code_unit(index: number): number;
++
++function cwd(): string {
++  const length = __v8x_op_cwd_utf16_length();
++  let value = "";
++  for (let index = 0; index < length; index++) {
++    value += String.fromCharCode(__v8x_op_cwd_utf16_code_unit(index));
++  }
++  return value;
++}
++
++export const Deno = { cwd };
++"#;
++
++fn initialize() {
++  static ONCE: Once = Once::new();
++  ONCE.call_once(|| {
++    v8::V8::initialize_platform(
++      v8::new_unprotected_default_platform(0, false).make_shared(),
++    );
++    v8::V8::initialize();
++  });
++}
++
++fn origin<'s>(
++  scope: &mut v8::PinScope<'s, '_>,
++  name: v8::Local<'s, v8::Value>,
++) -> v8::ScriptOrigin<'s> {
++  v8::ScriptOrigin::new(
++    scope, name, 0, 0, false, -1, None, false, false, true, None,
++  )
++}
++
++#[allow(clippy::unnecessary_wraps)]
++fn resolve_dependency<'s>(
++  context: v8::Local<'s, v8::Context>,
++  specifier: v8::Local<'s, v8::String>,
++  _import_attributes: v8::Local<'s, v8::FixedArray>,
++  _referrer: v8::Local<'s, v8::Module>,
++) -> Option<v8::Local<'s, v8::Module>> {
++  v8::callback_scope!(unsafe scope, context);
++  let specifier = specifier.to_rust_string_lossy(scope);
++  let source = match specifier.as_str() {
++    DEPENDENCY => {
++      "export function add(left: number, right: number): number { return left + right; }"
++    }
++    DENO => DENO_SOURCE,
++    _ => panic!("unexpected module dependency {specifier}"),
++  };
++  let source = v8::String::new(scope, source).unwrap();
++  let name = v8::String::new(scope, &specifier).unwrap().into();
++  let script_origin = origin(scope, name);
++  let mut source =
++    v8::script_compiler::Source::new(source, Some(&script_origin));
++  v8::script_compiler::compile_module(scope, &mut source)
++}
++
++fn evaluate_graph_once() {
++  let isolate = &mut v8::Isolate::new(Default::default());
++  v8::scope!(let scope, isolate);
++  let context = v8::Context::new(scope, Default::default());
++  let scope = &mut v8::ContextScope::new(scope, context);
++
++  let global = context.global(scope);
++  let property_key = v8::String::new(scope, "greeting").unwrap();
++  let property_value = v8::String::new(scope, "Grüße").unwrap();
++  assert_eq!(
++    global.set(scope, property_key.into(), property_value.into()),
++    Some(true)
++  );
++  let stored = global.get(scope, property_key.into()).unwrap();
++  let stored = v8::Local::<v8::String>::try_from(stored).unwrap();
++  assert_eq!(stored.to_rust_string_lossy(scope), "Grüße");
++
++  let persistent = v8::Global::new(scope, global);
++  let reopened = v8::Local::new(scope, &persistent);
++  assert_eq!(
++    reopened
++      .get(scope, property_key.into())
++      .unwrap()
++      .is_string(),
++    true
++  );
++
++  let object_template = v8::ObjectTemplate::new(scope);
++  assert!(object_template.set_internal_field_count(1));
++  let templated_object = object_template.new_instance(scope).unwrap();
++  assert_eq!(templated_object.internal_field_count(), 1);
++  let marker = 42_u64;
++  let marker_ptr = (&marker as *const u64).cast();
++  templated_object.set_aligned_pointer_in_internal_field(0, marker_ptr, 7);
++  assert_eq!(
++    unsafe { templated_object.get_aligned_pointer_from_internal_field(0, 7) },
++    marker_ptr
++  );
++
++  let message = v8::String::new(scope, "operation failed").unwrap();
++  assert!(v8::Exception::error(scope, message).is_native_error());
++
++  let source = format!(
++    "import {{ add }} from {DEPENDENCY:?};\n\
++     import {{ Deno }} from {DENO:?};\n\
++     const answer: number = add(20, 22);\n\
++     if (answer !== 42) throw new Error('wrong result');\n\
++     export function __v8x_probe_cwd_utf16_length(): number {{\n\
++       return Deno.cwd().length;\n\
++     }}\n\
++     export function __v8x_probe_cwd_utf16_checksum(): number {{\n\
++       const value = Deno.cwd();\n\
++       let checksum = 0;\n\
++       for (let index = 0; index < value.length; index++) {{\n\
++         checksum += (index + 1) * value.charCodeAt(index);\n\
++       }}\n\
++       return checksum;\n\
++     }}"
++  );
++  let source = v8::String::new(scope, &source).unwrap();
++  let name = v8::String::new(scope, MAIN).unwrap().into();
++  let script_origin = origin(scope, name);
++  let mut source =
++    v8::script_compiler::Source::new(source, Some(&script_origin));
++
++  let module = v8::script_compiler::compile_module(scope, &mut source).unwrap();
++  assert_eq!(module.get_status(), v8::ModuleStatus::Uninstantiated);
++  assert!(
++    module
++      .instantiate_module(scope, resolve_dependency)
++      .unwrap()
++  );
++  assert_eq!(module.get_status(), v8::ModuleStatus::Instantiated);
++
++  assert!(module.evaluate(scope).is_some());
++  assert_eq!(module.get_status(), v8::ModuleStatus::Evaluated);
++}
++
++#[test]
++fn evaluates_raw_typescript_graph_through_wasmtime() {
++  initialize();
++  assert_eq!(v8::V8X_ENGINE, "js2wasm");
++  assert!(
++    std::env::var_os("V8X_JS2WASM_COMPILER_SCRIPT").is_some()
++      || std::env::var_os("V8X_JS2WASM_AOT_MODULE").is_some(),
++    "set V8X_JS2WASM_COMPILER_SCRIPT to compile-graph.ts or V8X_JS2WASM_AOT_MODULE to a trusted Wasmtime-precompiled artifact"
++  );
++
++  let before = v8::js2wasm_runtime_stats().unwrap();
++  evaluate_graph_once();
++
++  if std::env::var_os("V8X_JS2WASM_AOT_MODULE").is_some() {
++    evaluate_graph_once();
++    let after = v8::js2wasm_runtime_stats().unwrap();
++    assert_eq!(after.module_loads - before.module_loads, 1);
++    assert_eq!(after.cached_modules - before.cached_modules, 1);
++    assert_eq!(after.instantiations - before.instantiations, 2);
++  }
++}

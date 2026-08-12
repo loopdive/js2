@@ -1385,6 +1385,8 @@ export interface IrInstrClosureNew extends IrInstrBase {
   readonly captureFieldTypes: readonly IrType[];
   /** SSA values populating the capture fields, parallel to captureFieldTypes. */
   readonly captures: readonly IrValueId[];
+  /** Checker-certified immediate one-shot host-boundary consumption. */
+  readonly hostOneShot?: boolean;
 }
 
 /**
@@ -2827,6 +2829,7 @@ export interface IrFunction extends IrFunctionIdentity {
   readonly closureSubtype?: {
     readonly signature: IrClosureSignature;
     readonly captureFieldTypes: readonly IrType[];
+    readonly hostOneShot?: boolean;
   };
   /**
    * Slice 6 (#1169e): Wasm-local slots used for cross-iteration mutable

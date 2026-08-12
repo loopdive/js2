@@ -134,7 +134,7 @@ function quarantineFromErrors(moduleSource, tests, errors) {
   return offenders;
 }
 
-export async function runHarness({ quiet = false } = {}) {
+export async function runHarness({ quiet = false, filter = process.env.DOGFOOD_REACT_FILTER || "" } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   installReactTestEnvironment();
 
@@ -167,17 +167,25 @@ export async function runHarness({ quiet = false } = {}) {
   // a test filtered out before it runs is invisible. Only the structural
   // rejection left is a `done`-callback signature, which has no scheduler to
   // invoke it. Async bodies DO run — see buildTestFunction / the awaits below.
-  const extracted = extractReactUpstreamTests({
+  const extractedAll = extractReactUpstreamTests({
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_REACT_ADMIT_ALL !== "0",
   });
+  const filterPattern = filter ? new RegExp(filter, "i") : null;
+  const extracted = filterPattern
+    ? {
+        ...extractedAll,
+        tests: extractedAll.tests.filter((test) => filterPattern.test(test.fullName)),
+      }
+    : extractedAll;
   report.extraction = {
-    upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
+    upstreamTestsSeen: extractedAll.tests.length + extractedAll.rejected.length,
     admitted: extracted.tests.length,
-    rejected: extracted.rejected.length,
-    rejectionCounts: extracted.rejectionCounts,
-    rejectedTests: extracted.rejected,
+    rejected: extractedAll.rejected.length,
+    rejectionCounts: extractedAll.rejectionCounts,
+    rejectedTests: extractedAll.rejected,
+    ...(filterPattern ? { filter } : {}),
   };
   log(
     `[dogfood] react@${version} upstream @ ${suitePin.tag}: ` +

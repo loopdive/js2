@@ -2,6 +2,15 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-12 — Deno primordials bootstrap
+
+- [#4378](../4378-deno-primordials-array-prototype-iterator.md) — let the
+  unchanged Deno bootstrap capture `%ArrayIteratorPrototype%` from the pristine
+  `Array.prototype` through js2wasm's host-free iterator substrate.
+- [#4380](../4380-empty-object-widening-iife-body.md) — make the empty-object
+  widening prepass enter arrow/function-expression IIFEs before Deno initializes
+  its primordials object.
+
 ## 2026-08-11 — Jest accessor descriptor import
 
 - [#4367](../4367-jest-parenthesized-accessor-descriptor-import.md) — unwrap

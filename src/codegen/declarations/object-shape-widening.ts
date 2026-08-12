@@ -455,6 +455,24 @@ export function collectEmptyObjectWidening(
       // Recurse into function bodies
       if (ts.isFunctionDeclaration(stmt) && stmt.body) {
         scanStatements(stmt.body.statements);
+      } else {
+        // (#4380) Script/bootstrap code commonly wraps its whole realm setup in
+        // an arrow/function IIFE. Empty-object widening used to inspect named
+        // function declarations only, so `{}` locals inside an IIFE missed both
+        // their later fields and their dynamic-object consumers. Codegen then
+        // built an open `$Object`, while the evolved checker type independently
+        // allocated a closed struct local; the guarded cast stored null and the
+        // first property write trapped. Walk function-expression bodies nested
+        // in ordinary statements, stopping at each body because scanStatements
+        // owns recursive scope traversal from there.
+        const scanNestedFunctionExpressions = (node: ts.Node): void => {
+          if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isBlock(node.body)) {
+            scanStatements(node.body.statements);
+            return;
+          }
+          forEachChild(node, scanNestedFunctionExpressions);
+        };
+        forEachChild(stmt, scanNestedFunctionExpressions);
       }
       // Recurse into try/catch blocks (wrapTest wraps test bodies in try blocks)
       if (ts.isTryStatement(stmt)) {

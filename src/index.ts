@@ -318,6 +318,21 @@ export interface CompileOptions {
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
   /**
+   * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
+   *
+   * `"legacy"` (default) preserves the historical `(source, isDirect)` host
+   * import, which cannot observe Wasm locals. `"reified-host"` promotes the
+   * caller-visible bindings into the same canonical mutable cells used by the
+   * standalone runtime-eval provider and passes those cells to the host through
+   * `env::__extern_direct_eval`. The AOT module remains in its original host;
+   * an isolated evaluator receives only opaque binding/value handles.
+   *
+   * This option is invalid for linear/WASI/standalone targets. The no-JS-host
+   * lanes own their runtime-eval routing, while the linear backend does not use
+   * the WasmGC cell carrier.
+   */
+  directEval?: "legacy" | "reified-host";
+  /**
    * (#743) Declaration source text for the entry module's shipped sibling
    * `.d.ts` (e.g. acorn's `dist/acorn.d.ts` when compiling `dist/acorn.mjs`).
    * Only consulted while `JS2WASM_DTS_ENTRYPOINT_SEEDS` is enabled (**ON by

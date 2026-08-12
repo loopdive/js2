@@ -424,7 +424,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).answer!()).toBe(42);
   });
 
-  it("defers module globals but seals free-to-class dependencies in one prepared component", async () => {
+  it("seals an exact lexical module global with its reader and free-to-class dependencies", async () => {
     const moduleGlobal = await compile(
       `
       let answer = 42;
@@ -437,13 +437,50 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       },
     );
     expect(moduleGlobal.success, moduleGlobal.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(moduleGlobal.irFirstSkipped ?? []).not.toContain("readAnswer");
+    expect(moduleGlobal.irFirstSkipped ?? []).toContain("readAnswer");
     expect(outcome(moduleGlobal, "readAnswer")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(
+      moduleGlobal.irOutcomes?.find(
+        ({ unitKind, displayName }) => unitKind === "module-init" && displayName === "<module-init>",
+      ),
+    ).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: outcome(moduleGlobal, "readAnswer").preparedComponentId,
     });
     expect((await instantiate(moduleGlobal)).readAnswer!()).toBe(42);
+
+    const earlyClassCall = await compile(
+      `
+      class Reader {
+        value(): number { return value; }
+      }
+      const observed: number = new Reader().value();
+      let value: number = 42;
+      export function readObserved(): number { return observed; }
+      `,
+      {
+        fileName: "prepared-module-class-tdz-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        skipSemanticDiagnostics: true,
+      },
+    );
+    expect(earlyClassCall.success, earlyClassCall.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(earlyClassCall.irOutcomes?.find(({ unitKind }) => unitKind === "module-init")).toMatchObject({
+      legacyBodyEmitted: true,
+    });
+    expect(
+      earlyClassCall.irOutcomes?.find(({ unitKind }) => unitKind === "module-init")?.preparedComponentId,
+    ).toBeUndefined();
+    const earlyImports = buildImports(earlyClassCall.imports, undefined, earlyClassCall.stringPool);
+    await expect(WebAssembly.instantiate(earlyClassCall.binary, earlyImports)).rejects.toThrow();
 
     const classOwned = await compile(
       `
@@ -567,35 +604,57 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).run!(41)).toBe(42);
   });
 
-  it.each([
-    [
-      "module-init",
+  it("keeps a free function called by a direct module initializer in the direct component", async () => {
+    const result = await compile(
       `
       function increment(value: number): number { return value + 1; }
       let seeded = increment(41);
       export function run(): number { return seeded; }
       `,
-    ],
-    [
-      "class-member",
-      `
-      function increment(value: number): number { return value + 1; }
-      class Box { value(): number { return increment(41); } }
-      export function run(): number { return new Box().value(); }
-      `,
-    ],
-  ] as const)("keeps a free function called by a direct %s in the direct component", async (owner, source) => {
-    const result = await compile(source, {
-      fileName: `prepared-${owner}-call-boundary.ts`,
-      experimentalIR: true,
-      trackIrOutcomes: true,
-    });
+      {
+        fileName: "prepared-module-init-call-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irFirstSkipped ?? []).not.toContain("increment");
     expect(outcome(result, "increment")).toMatchObject({
       legacyBodyEmitted: true,
       irBodyEmitted: true,
+    });
+    expect((await instantiate(result)).run!()).toBe(42);
+  });
+
+  it("prepares a free function called by a prepared class member", async () => {
+    const result = await compile(
+      `
+      function increment(value: number): number { return value + 1; }
+      class Box { value(): number { return increment(41); } }
+      export function run(): number { return new Box().value(); }
+      `,
+      {
+        fileName: "prepared-class-member-call-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    for (const observed of [outcome(result, "increment"), classMemberOutcome(result, "Box_value")]) {
+      expect(observed).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+    expect(outcome(result, "run")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).run!()).toBe(42);
   });

@@ -74,6 +74,8 @@ export interface VecPresenceDeps {
   objFindIdx: number;
   /** `FLAG_DELETED_INDEX` — owned by `vec-overlay.ts`. */
   deletedIndexFlag: number;
+  /** Prototype-chain HasProperty answer for a deleted own index. */
+  deletedIndexMiss?: Instr[];
 }
 
 /**
@@ -86,7 +88,8 @@ export interface VecPresenceDeps {
  *     comp = __vec_overlay_lookup(v);
  *     if (comp != null) {
  *       e = __obj_find(comp, ToString(idx));
- *       if (e != null && (e.flags & FLAG_DELETED_INDEX)) return 0;
+ *       if (e != null && (e.flags & FLAG_DELETED_INDEX))
+ *         return prototypeHas(idx); // or 0 when the proto store is inactive
  *     }
  *   }
  * }
@@ -148,7 +151,7 @@ export function buildVecHasIdxPresencePrologue(fn: WasmFunction, d: VecPresenceD
                     {
                       op: "if",
                       blockType: { kind: "empty" },
-                      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+                      then: [...(d.deletedIndexMiss ?? [{ op: "i32.const", value: 0 }]), { op: "return" }],
                     },
                   ],
                 },

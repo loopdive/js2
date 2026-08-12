@@ -3,6 +3,7 @@ id: 4221
 title: "Calling a non-callable answers undefined instead of throwing TypeError; bound functions do not poison caller/arguments"
 status: done
 completed: 2026-08-08
+updated: 2026-08-11
 sprint: current
 created: 2026-08-08
 priority: high
@@ -11,7 +12,7 @@ feasibility: medium
 task_type: bug
 area: codegen
 goal: es5
-related: [1888, 2106, 2151, 3673, 4220]
+related: [1888, 2106, 2151, 2552, 2929, 3673, 4137, 4220]
 loc-budget-allow:
   # object-runtime.ts (+43): the absent-callee TypeError has to be emitted at
   # the site that RESOLVES the method — `__extern_method_call`'s $Object arm,
@@ -195,3 +196,49 @@ pass of this very measurement reported **38** of them.
   `length`/`name` on bound functions; out of the ES5 pool.
 - `language/arguments-object` — `arguments.callee` as a real own property with
   descriptor attributes, and `arguments.constructor`. Untouched.
+
+## Follow-up — 2026-08-11: runtime eval invalidates a primitive callee fact
+
+The fresh 48,661-row standalone baseline left 89 exact ES5 Annex B residuals.
+After excluding the seven `function-code/*-existing-block-fn-update` rows owned
+by PR #4387, the largest coherent eval family was the 16 direct+indirect
+`eval-code/global-*-eval-global-existing-var-update.js` files. Every one failed
+with `TypeError: f is not a function` for this shape:
+
+```js
+var f = 123;
+eval('{ function f() { return 1; } }');
+f();
+```
+
+The provider and global pull-sync were already correct: the assertion
+`typeof f === "function"` passed after eval. The throw came **before IR
+selection**. `tryNonCallableValueCall` trusted the checker's fact for the
+original numeric initializer and emitted an unconditional TypeError, so the
+updated live global never reached the native IsCallable dispatcher. There is
+therefore no competing IR lowering to repair or prefer for this slice; the
+pre-IR guard must yield when a linked standalone eval can replace the binding.
+
+The follow-up adds that narrow exception. It applies only when all of these are
+true: standalone runtime eval is enabled, the callee is a bare identifier, it
+is not shadowed by a local, and it is a caller/provider-synchronised global
+`var` or global lexical binding. The ordinary primitive-callee rule remains in
+force for modules without runtime eval, local primitive bindings, and the host
+lane. A still-non-callable live value reaches the runtime dispatcher and throws
+the same TypeError after the specified callee/argument evaluation order.
+
+Maintained standalone A/B, full interpreter provider, one worker, exact filter
+`global-existing-var-update`:
+
+| build | pass / 24 | eval failures | controls / other |
+| --- | ---: | ---: | ---: |
+| fresh `origin/main` (`ebba42dfff7ceb`) | 5 | 16 | 5 pass, 3 fail |
+| follow-up | 21 | **0** | 5 pass, 3 fail |
+
+The delta is exactly **+16, 0 regressions**. The three surviving failures are
+the non-eval `global-code/{block,switch-*}-global-existing-var-update.js` rows;
+they are a separate AOT Annex B publication gap and are deliberately not folded
+into this call-guard change. The focused regression executes both direct and
+indirect eval through the linked interpreter provider, while the original 14
+#4221 tests preserve primitive TypeErrors, evaluation order, dynamic-call
+controls, bound-function guards, and host compilation safety.
