@@ -771,6 +771,69 @@ describe("#3522 prepared cross-owner retirement", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
+    "withdraws an initialized-field constructor atomically when its local callee is not IR-preparable in %s",
+    async (target) => {
+      const source = `
+        class Boom extends Error {}
+        function fail() { throw new Boom(); }
+        class C { value = fail(); }
+        export function run(): number {
+          try { new C(); return 0; }
+          catch { return 1; }
+        }
+      `;
+      const options = {
+        fileName: `initialized-field-unprepared-callee-${target}.ts`,
+        emitWat: true,
+        target,
+      } as const;
+      const direct = await compile(source, options);
+      const prepared = await compile(source, {
+        ...options,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      expect((await instantiate(prepared)).run!()).toBe(1);
+      expect(prepared.binary).toEqual(direct.binary);
+      expect(prepared.wat).toBe(direct.wat);
+      expect(outcome(prepared, "function", "fail")).toMatchObject({
+        kind: "unsupported",
+        stage: "select",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+      expect(outcome(prepared, "class-member", "C_new")).toMatchObject({
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "C_init"))).toEqual(["fail"]);
+
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "C_new";
+        const poisoned = await compile(source, {
+          ...options,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: C_new")),
+        ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
     "prepares private and literal-computed fields without mixing static initialization in %s",
     async (target) => {
       const source = `

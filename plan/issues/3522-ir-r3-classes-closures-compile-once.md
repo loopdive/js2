@@ -895,6 +895,38 @@ fully requalified after parent PR #4395 landed. Once #4402 enters the merge
 queue, do not modify its branch; resume the next exact constructor family only
 after this overlapping production checkpoint lands.
 
+### Merge-queue field-call closure repair (2026-08-12)
+
+The first #4402 merge-group Test262 comparison found three genuine
+pass-to-compile-error regressions in public instance-field abrupt-completion
+coverage:
+
+- `fielddefinition-initializer-abrupt-completion.js`;
+- `init-err-evaluation.js`; and
+- `super-fielddefinition-initializer-abrupt-completion.js`.
+
+The identity call-edge inventory already attributed each `x = f()` call to
+the exact explicit or implicit constructor terminal. The fault was later in
+routing: the combined free/class fixed point correctly removed a constructor
+when `f` was not IR-preparable, but the post-direct overlay retried that
+rejected class member after emitting its legacy body. Its projected direct-call
+targets intentionally excluded `f`, so the retry became an invariant instead
+of the typed atomic withdrawal the fixed point had decided.
+
+The routing boundary now removes only those considered class-member UnitIds
+that did not survive the prepared owner closure, records
+`late-preparation-unsupported`, and leaves their legacy bodies untouched. It
+does not weaken the positive initialized-field path: the existing inline-small
+matrix still prepares `bump`, the constructor, and its caller together. A new
+GC/standalone negative matrix executes the abrupt completion, proves the
+constructor and callee remain direct, activates the class-body poison seam,
+and requires the hybrid binary and WAT to be byte-for-byte identical to the
+direct compilation. A maintained path-filtered Test262 run restores all three
+merge-group regressions to pass (and the matching class-expression variant),
+with zero compile errors. The two wider substring matches remain their known
+baseline runtime failures rather than changing category. The ready PR remains
+held outside the queue until the complete branch gates are requalified.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

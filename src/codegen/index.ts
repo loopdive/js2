@@ -3686,6 +3686,52 @@ function rejectPreparedLexicalComponentBeforeMutation(
   plan.safeSelection.moduleInit = undefined;
 }
 
+/**
+ * A class member admitted by the selector may still leave the prepared owner
+ * fixed point when one of its exact local callees is not preparable. Class
+ * bodies cannot use the old post-direct overlay as a retry path: doing so
+ * compiles the legacy body first and then rebuilds the rejected member against
+ * a target population that deliberately excludes its callee. Withdraw the
+ * exact structural member before final-context integration and retain one
+ * typed reason for the terminal ledger.
+ */
+function withdrawClassMembersOutsidePreparedOwnerClosure(
+  plan: IrOverlayPlan,
+  consideredUnitIds: ReadonlySet<IrUnitId>,
+  retainedUnitIds: ReadonlySet<IrUnitId>,
+): void {
+  const rejectedUnitIds = new Set([...consideredUnitIds].filter((unitId) => !retainedUnitIds.has(unitId)));
+  if (rejectedUnitIds.size === 0) return;
+
+  const retainedSelectionUnitIds = new Set(
+    [...(plan.safeSelection.classMemberUnitIds ?? [])].filter((unitId) => !rejectedUnitIds.has(unitId)),
+  );
+  const retainedLegacyNames = new Set<string>();
+  for (const unitId of retainedSelectionUnitIds) {
+    const claim = plan.identityPlan.identitySelection.classMembers?.get(unitId);
+    if (!claim) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `retained prepared class member ${unitId} has no exact structural claim`,
+      );
+    }
+    retainedLegacyNames.add(claim.legacyMatchName);
+  }
+  for (const unitId of rejectedUnitIds) {
+    if (!plan.preparationFailuresByUnitId.has(unitId)) {
+      plan.preparationFailuresByUnitId.set(unitId, {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: "the class member's exact local call graph crosses the final prepared owner population",
+      });
+    }
+  }
+  plan.safeSelection.classMemberUnitIds = retainedSelectionUnitIds;
+  plan.safeSelection.classMembers = retainedLegacyNames;
+}
+
 function planIrFirstBodyRouting(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -3761,6 +3807,11 @@ function planIrFirstBodyRouting(
         };
   const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
   const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
+  withdrawClassMembersOutsidePreparedOwnerClosure(
+    plan,
+    eligiblePreliminaryClassMemberUnitIds,
+    preliminaryClassMemberUnitIds,
+  );
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
