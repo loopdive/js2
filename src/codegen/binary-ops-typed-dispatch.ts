@@ -77,6 +77,93 @@ export function compileTypedBinaryDispatch(
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
       if (isStrictEq || isStrictNeq) {
         if (leftIsRef && rightIsRef) {
+          // (#2742) Native strings are structs, but JS String strict equality
+          // compares values. Dynamic String methods can retain a native-string
+          // ValType while the checker calls the expression `any`, bypassing the
+          // syntax-directed string path and reaching this ref dispatch. Compare
+          // the physical native-string pair by content, with null refs retaining
+          // their undefined-sentinel identity semantics.
+          const isNativeStringRef = (type: ValType): boolean =>
+            (type.kind === "ref" || type.kind === "ref_null") &&
+            (type.typeIdx === ctx.anyStrTypeIdx || type.typeIdx === ctx.nativeStrTypeIdx);
+          if (
+            ctx.nativeStrings &&
+            ctx.anyStrTypeIdx >= 0 &&
+            isNativeStringRef(leftType) &&
+            isNativeStringRef(rightType)
+          ) {
+            ensureNativeStringHelpers(ctx);
+            const strEqIdx = ctx.nativeStrHelpers.get("__str_equals");
+            if (strEqIdx !== undefined) {
+              const nullableString: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+              const tmpRightString = allocTempLocal(fctx, nullableString);
+              const tmpLeftString = allocTempLocal(fctx, nullableString);
+              fctx.body.push({ op: "local.set", index: tmpRightString });
+              fctx.body.push({ op: "local.set", index: tmpLeftString });
+              fctx.body.push({ op: "local.get", index: tmpLeftString });
+              fctx.body.push({ op: "ref.is_null" });
+              fctx.body.push({ op: "local.get", index: tmpRightString });
+              fctx.body.push({ op: "ref.is_null" });
+              fctx.body.push({ op: "i32.or" });
+              fctx.body.push({
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  { op: "local.get", index: tmpLeftString },
+                  { op: "local.get", index: tmpRightString },
+                  { op: "ref.eq" },
+                ],
+                else: [
+                  { op: "local.get", index: tmpLeftString },
+                  { op: "ref.as_non_null" },
+                  { op: "local.get", index: tmpRightString },
+                  { op: "ref.as_non_null" },
+                  { op: "call", funcIdx: strEqIdx },
+                ],
+              });
+              releaseTempLocal(fctx, tmpLeftString);
+              releaseTempLocal(fctx, tmpRightString);
+              if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+              return { kind: "i32" };
+            }
+          }
+
+          // (#2742) Dynamic `+` returns `$AnyValue`, so compare a mixed
+          // `$AnyValue`/native-string pair through the canonical tag-aware
+          // engine used by IR `dyn.eq`, never through carrier identity.
+          const isAnyValueRef = (type: ValType): boolean =>
+            (type.kind === "ref" || type.kind === "ref_null") &&
+            ctx.anyValueTypeIdx >= 0 &&
+            type.typeIdx === ctx.anyValueTypeIdx;
+          const leftIsAnyValue = isAnyValueRef(leftType);
+          const rightIsAnyValue = isAnyValueRef(rightType);
+          const mixedAnyValueNativeString =
+            (ctx.standalone === true || ctx.wasi === true) &&
+            ctx.nativeStrings &&
+            leftIsAnyValue !== rightIsAnyValue &&
+            ((leftIsAnyValue && isNativeStringRef(rightType)) ||
+              (rightIsAnyValue && isNativeStringRef(leftType)));
+          if (mixedAnyValueNativeString) {
+            const honestFromExternIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+            ensureAnyHelpers(ctx);
+            const strictEqIdx = ctx.funcMap.get("__any_strict_eq");
+            if (honestFromExternIdx !== undefined && strictEqIdx !== undefined) {
+              if (leftIsAnyValue) {
+                coerceType(ctx, fctx, rightType, { kind: "externref" });
+                fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
+              } else {
+                const tmpRightAnyValue = allocTempLocal(fctx, rightType);
+                fctx.body.push({ op: "local.set", index: tmpRightAnyValue });
+                coerceType(ctx, fctx, leftType, { kind: "externref" });
+                fctx.body.push({ op: "call", funcIdx: honestFromExternIdx });
+                fctx.body.push({ op: "local.get", index: tmpRightAnyValue });
+                releaseTempLocal(fctx, tmpRightAnyValue);
+              }
+              fctx.body.push({ op: "call", funcIdx: strictEqIdx });
+              if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+              return { kind: "i32" };
+            }
+          }
           // (#3037 CS1b(ii)) When BOTH operands are the tagged `$AnyValue` box (in
           // standalone), raw `ref.eq` is the WRONG strict-eq: `$AnyValue` is a
           // discriminated union, so two boxes of the same logical value have

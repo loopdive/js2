@@ -1,11 +1,11 @@
 ---
 id: 2742
 title: "String.prototype methods: ToString(this) generic-receiver coercion, RequireObjectCoercible, and function `.length` own property"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-06-27
-updated: 2026-08-01
-assignee: ttraenkler/s78-dev2
+updated: 2026-08-12
+assignee: ttraenkler/codex-es5-string
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -39,11 +39,14 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - src/codegen/string-ops.ts
+  - src/codegen/binary-ops-typed-dispatch.ts
+  - tests/issue-2742-native-string-equality.test.ts
 func-budget-allow:
   - src/runtime.ts::resolveImport
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  - src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch
 ---
 
 # #2742 — String.prototype generic-receiver `ToString(this)` coercion
@@ -893,3 +896,40 @@ times here.
 - **#3254** — reopened 2026-07-31 as false-`done`: it claims to generalise beyond
   `trim` and left `trim` itself on the pre-fix `"[object Object]"` terminal.
 - **#3887 / #3888** — "TypeError never raised" family, separate from this one.
+
+## Standalone residual: native String carrier equality (2026-08-12)
+
+Fresh ≤ES5 standalone clustering on `main` @
+`8c9f889680730001c08d0290bc40234514277505` left 44 failures under
+`test/built-ins/String/prototype/`. Five shared one representation defect: the
+reported actual value had the expected text, but the inline strict comparison
+returned false.
+
+Two physical shapes reached the same wrong terminal:
+
+- a dynamic concatenation returned `(ref $AnyValue)` and was compared with a
+  native String literal;
+- a dynamically-dispatched String method returned `(ref null $AnyString)` and
+  was compared with a separately allocated native String literal.
+
+`compileTypedBinaryDispatch` treated both as ordinary object refs and emitted
+raw `ref.eq`. The fix preserves `ref.eq` for actual objects, but routes native
+String-ref pairs through the null-safe `__str_equals` content comparator and
+routes mixed `$AnyValue`/native-String pairs through the canonical
+`__any_strict_eq` engine. That is the same tag-aware equality engine used by IR
+`dyn.eq`; the regression suite additionally requires the dynamic concat/equality
+control to appear in `irCompiledFuncs`, so the semantic contract stays live on
+the IR path.
+
+Exact fresh-baseline A/B over the 44-file residual:
+
+- base: 0 pass / 44 non-pass;
+- candidate: 5 pass / 39 non-pass;
+- fail → pass: 5; pass → fail: 0 within the fixed residual;
+- flipped files: the two `charAt` rows `S15.5.4.4_A1_T1/T2`,
+  `slice/S15.5.4.13_A3_T3`, `toLowerCase/S15.5.4.16_A1_T3`, and
+  `toUpperCase/S15.5.4.18_A1_T3`.
+
+The remaining 39 rows retain distinct causes (RegExp-backed methods, concat and
+split coverage, ToPrimitive/object branding, and missing transferred-method
+semantics); they are not attributed to this equality fix.
