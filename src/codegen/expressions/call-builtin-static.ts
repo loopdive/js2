@@ -28,6 +28,7 @@ import {
 } from "../array-object-proto.js";
 import { undefinedExternInstrs } from "../any-helpers.js";
 import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
+import { ensureFunctionPrototypeCallHelper } from "../function-prototype-callable.js";
 import {
   allocJoinFoldLocals,
   emitStringJoinFold,
@@ -265,6 +266,29 @@ export function compileBuiltinStaticCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
+  // #4385 — ES5 §15.3.4: `%Function.prototype%` is itself callable, ignores
+  // its arguments, and returns undefined. The generic `Namespace.member()`
+  // path otherwise asks `__get_builtin` for a dynamic property and hard-refuses
+  // in standalone. Keep this exact to the ambient `Function` binding: a local
+  // object named Function must retain ordinary member-call semantics.
+  if (
+    noJsHost(ctx) &&
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "Function" &&
+    propAccess.name.text === "prototype" &&
+    isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression)
+  ) {
+    for (const argument of expr.arguments) {
+      const argumentType = compileExpression(ctx, fctx, argument);
+      if (argumentType) fctx.body.push({ op: "drop" });
+    }
+    const helperIdx = ensureFunctionPrototypeCallHelper(ctx);
+    if (helperIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: helperIdx });
+      return { kind: "externref" };
+    }
+  }
+
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Math") {
     const mathResult = compileMathCall(ctx, fctx, propAccess.name.text, expr);
     if (mathResult !== undefined) return mathResult;

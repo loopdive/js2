@@ -19,6 +19,7 @@ export type IrBackendTargetCapability =
   | "host-date-snapshot"
   | "host-regexp-constructor"
   | "host-object-define-property"
+  | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "legacy-numeric-array-global";
 
@@ -54,6 +55,8 @@ export function supportsIrBackendTargetCapability(
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "host-object-define-property":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "standalone-function-prototype-call":
+      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-native-regexp-test-carrier":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "legacy-numeric-array-global":
