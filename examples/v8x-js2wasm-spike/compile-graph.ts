@@ -58,6 +58,7 @@ async function main(): Promise<void> {
     platform: "deno",
     emitWat: false,
     moduleName: "v8x-js2wasm-spike",
+    externImportModule: "v8x:deno",
   });
   if (!result.success) {
     const diagnostics = result.diagnostics

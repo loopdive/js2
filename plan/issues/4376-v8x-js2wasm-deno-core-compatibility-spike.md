@@ -14,11 +14,12 @@ goal: deno-runtime
 sprint: current
 assignee: ttraenkler/codex-v8x-js2wasm
 horizon: xl
-related: [1584, 1662, 1772, 2525, 2658, 2928]
+related: [1584, 1662, 1772, 2525, 2658, 2928, 4377]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 files:
   - examples/v8x-js2wasm-spike/README.md
   - examples/v8x-js2wasm-spike/compile-graph.ts
+  - examples/v8x-js2wasm-spike/deno.ts
   - examples/v8x-js2wasm-spike/v8x-js2wasm.patch
   - tests/v8x-js2wasm-spike.test.ts
   - plan/agent-context/v8x-js2wasm-deno-handover-2026-08-12.md
@@ -92,8 +93,14 @@ The implemented vertical slice provides Rust-owned:
 
 The module path gathers untouched `.ts` sources through v8x's existing module
 resolver, passes the linked graph to js2wasm with `platform: "deno"`, and runs
-the WasmGC result with Wasmtime. The integration fixture enters through the
-public `rusty_v8` API and proves a typed two-module graph evaluates correctly.
+the WasmGC result in an embedded Wasmtime 45 store. The store and instance are
+owned by the v8x module handle and remain alive after evaluation.
+
+The integration fixture enters through the public `rusty_v8` API, evaluates a
+typed three-module graph, and calls a Rust-owned `Deno.cwd()` implementation
+through two primitive `v8x:deno` imports. It verifies the returned UTF-16
+length and checksum against the host working directory and rejects a vacuous
+result if no host op was called.
 
 The test binary links neither JSC nor QuickJS. On macOS, `otool -L` reports
 only `/usr/lib/libSystem.B.dylib`.
@@ -109,7 +116,8 @@ v8 = { package = "v8x", path = "/path/to/v8x", default-features = false, feature
 ```
 
 No `deno_core`, `serde_v8`, or Deno JavaScript/TypeScript wrapper source is
-patched. All Rust source compiles successfully against the new backend.
+patched. All Rust source compiles successfully against the new backend with
+the Wasmtime dependency graph resolved in the probe lockfile.
 
 A strict normal link still rejects the incomplete ABI. A diagnostic-only
 macOS link with `-undefined dynamic_lookup` was used to discover the first
@@ -121,10 +129,19 @@ callbacks, creates templates and persistent handles, constructs the context,
 installs the initial `Deno.core` object graph, and reaches execution of
 `ext:core/00_primordials.js`.
 
-`Script::Run` then refuses explicitly. Launching a detached Wasmtime process
-would lose the Rust-owned `Deno.core` properties that the wrapper reads and
-mutates. Correct execution requires those writes, op calls, promises, and
-microtasks to share one Wasmtime instance and store.
+`Script::Run` then refuses explicitly. The new module prototype establishes
+the needed execution shape—an embedded, persistent Wasmtime store plus typed
+host imports—but has not yet routed the real Deno bootstrap scripts through
+it. It proves that shape with a narrow, typed `Deno.cwd()` adapter.
+
+### Primordials boundary
+
+`00_primordials.js` captures trusted copies of JavaScript built-ins such as
+`Object`, `Array`, `Promise`, and `Reflect` before application code can
+monkey-patch them. Deno's later wrappers use those private copies for stable
+internal behavior. Primordials are therefore JavaScript object identities and
+functions, not Rust ops and not WASI calls. Compiling that actual wrapper is
+the next meaningful shared-object-graph test.
 
 ## What “306 ABI symbols” meant
 
@@ -146,15 +163,15 @@ drive the unresolved count to zero with empty stubs.
 
 ## Compiler-free deployment answer
 
-Yes: after build-time compilation, the intended deployed runtime needs only
-the linked Wasm artifact, the Rust/v8x host layer, and Wasmtime. It does not
-need js2wasm, Node, or a JavaScript engine.
+Yes: after build-time compilation, the deployed runtime needs only the linked
+Wasm artifact, the Rust/v8x host layer, and embedded Wasmtime. It does not need
+js2wasm, Node, or a JavaScript engine.
 
-The current spike is not packaged that way yet. Its compiler sidecar runs
-under Node and compilation happens when the module is evaluated. That is a
-development proof of the boundary. The production `deno` target must move
-application code, Deno wrappers, and the op manifest into one ahead-of-time
-linked program.
+The spike now proves this explicitly: one test saves the linked Wasm artifact,
+and a second invocation evaluates it while the configured compiler path is
+`/compiler-is-not-installed`. The production `deno` target must still package
+the application, real Deno wrappers, and generated op manifest as that one
+ahead-of-time linked program.
 
 ## Spike acceptance
 
@@ -163,6 +180,8 @@ linked program.
 - [x] Enter through v8x's public `rusty_v8` module lifecycle.
 - [x] Compile and evaluate a linked multi-file graph in Wasmtime without JSC
       or QuickJS.
+- [x] Resolve canonical `file:` imports to compileMulti's virtual filesystem
+      identity, including incremental compilation (#4377).
 - [x] Compile unchanged `deno_core` Rust source against `engine_js2wasm`.
 - [x] Advance the diagnostic startup path through `Deno.core` installation to
       `ext:core/00_primordials.js`.
@@ -171,24 +190,30 @@ linked program.
 - [x] State the compiler-free deployment shape and the current sidecar
       limitation separately.
 
-## Follow-up acceptance — not completed by this spike
+## Follow-up acceptance
 
-- [ ] Embed Wasmtime and keep one store/instance alive for the runtime.
+- [x] Embed Wasmtime and keep one store/instance alive for the v8x module
+      runtime.
 - [ ] Compile `00_primordials.js`, `00_infra.js`, extension wrappers, and the
       application as one state-sharing program.
-- [ ] Bind the Rust op table through typed imports and preserve exceptions,
+- [x] Bind a first Rust op (`Deno.cwd()`) through explicit typed imports.
+- [ ] Generate the broader Rust op table imports and preserve exceptions,
       promises, and microtask ordering across the bridge.
 - [ ] Return module namespaces and live bindings through the v8x handles.
 - [ ] Add dynamic imports, top-level await, synthetic modules, and non-`file:`
       specifier handling as demanded by executed Deno paths.
-- [ ] Package and run an artifact without the compiler sidecar or Node.
+- [x] Save and run a proof artifact without the compiler sidecar or Node.
+- [ ] Package the real Deno wrapper/application artifact for distribution.
 
 ## Verification
 
 Repository checks:
 
 ```sh
-pnpm exec vitest run tests/v8x-js2wasm-spike.test.ts
+pnpm exec vitest run \
+  tests/issue-4377-multifile-exported-object-shorthand-callable.test.ts \
+  tests/v8x-js2wasm-spike.test.ts \
+  tests/multi-file.test.ts
 pnpm run typecheck
 pnpm exec prettier --check \
   examples/v8x-js2wasm-spike/compile-graph.ts \
@@ -206,14 +231,27 @@ cargo test --no-default-features \
 
 V8X_JS2WASM_COMPILER_SCRIPT=/absolute/path/to/compile-graph.ts \
 V8X_JS2WASM_WORKDIR=/absolute/path/to/js2wasm \
+V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.wasm \
+cargo test --no-default-features \
+  --features js2wasm_spike,simdutf \
+  --test js2wasm_spike
+
+V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.wasm \
+V8X_JS2WASM_COMPILER=/compiler-is-not-installed \
 cargo test --no-default-features \
   --features js2wasm_spike,simdutf \
   --test js2wasm_spike
 ```
 
-Results: repository integration 1/1, simdutf 14/14, v8x module integration
-1/1, and TypeScript project type-checking all pass. The patch also
-reverse-applies cleanly to the pinned dirty v8x probe checkout.
+The pinned unchanged-Deno probe also passes
+`cargo check -p deno_core --example hello_world` after resolving the Wasmtime
+45 dependency graph.
+
+Results: focused repository and multi-file regression tests 20/20, simdutf
+14/14, v8x source-compile integration 1/1, compiler-free AOT integration 1/1,
+and TypeScript project type-checking all pass. The zero-context patch also
+reverse-applies cleanly with `git apply --unidiff-zero` to the pinned dirty
+v8x probe checkout.
 
 ## Handover
 
