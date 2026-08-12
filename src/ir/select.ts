@@ -513,6 +513,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-date-snapshot"
       | "host-regexp-constructor"
       | "host-object-define-property"
+      | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "legacy-numeric-array-global",
   ) => boolean;
@@ -6626,6 +6627,25 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
+      // #4385 — exact ambient `%Function.prototype%()` call. This is a
+      // callable intrinsic object, not a dynamic method lookup. Its arguments
+      // are still ordinary evaluated expressions; the runtime entry point
+      // ignores their values and returns undefined.
+      if (
+        ts.isIdentifier(expr.expression.expression) &&
+        expr.expression.expression.text === "Function" &&
+        expr.expression.name.text === "prototype" &&
+        selectorSeesAmbientBinding(expr.expression.expression) &&
+        !scope.has("Function")
+      ) {
+        if (currentSelectionOptions?.supportsBackendCapability?.("standalone-function-prototype-call") !== true) {
+          return capabilityNo("call-resolution-unsupported", "expr-function-prototype-call-target", expr);
+        }
+        if (expr.arguments.some(ts.isSpreadElement)) {
+          return shapeNo("expr-function-prototype-call-spread", expr);
+        }
+        return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+      }
       if (
         isPristineEs5IntrinsicIsFrozenCall(expr, (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text))
       ) {
