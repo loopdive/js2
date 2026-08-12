@@ -40,11 +40,30 @@ export function multiFileExtension(name: string): ts.Extension {
 }
 
 /**
+ * Convert a canonical `file:` module URL into the virtual filesystem spelling
+ * used by compileMulti. v8/rusty_v8 module resolvers commonly identify source
+ * modules with file URLs while callers provide the corresponding source map
+ * under filesystem paths. Those are one module identity, not a bare package
+ * named `file:` (#4377).
+ */
+function multiFilePathFromFileUrl(name: string): string | undefined {
+  if (!name.startsWith("file:")) return undefined;
+  try {
+    const url = new URL(name);
+    if (url.protocol !== "file:" || url.search || url.hash) return undefined;
+    const host = url.hostname && url.hostname !== "localhost" ? `/${url.hostname}` : "";
+    return host + decodeURIComponent(url.pathname);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Normalize an in-memory project path to the canonical key used by both the
  * one-shot CompilerHost and the incremental LanguageServiceHost.
  */
 export function normalizeMultiFileName(name: string): string {
-  let normalized = name.replaceAll("\\", "/");
+  let normalized = (multiFilePathFromFileUrl(name) ?? name).replaceAll("\\", "/");
   if (normalized.startsWith("./")) normalized = normalized.slice(2);
   if (normalized.startsWith("/")) normalized = normalized.slice(1);
 
@@ -148,7 +167,10 @@ export function resolveMultiFileModule(
   }
 
   let resolved: string;
-  if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
+  const fileUrlPath = multiFilePathFromFileUrl(moduleName);
+  if (fileUrlPath !== undefined) {
+    resolved = normalizeMultiFileName(fileUrlPath);
+  } else if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
     const containingDir = normalizedContainingFile.replace(/[^/]*$/, "");
     resolved = normalizeMultiFileName(containingDir + moduleName);
   } else {

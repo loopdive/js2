@@ -525,12 +525,14 @@ export class IncrementalProjectLanguageService {
             ? statement.moduleSpecifier.text
             : undefined;
         if (!specifier) continue;
-        // Match analyzeMultiSource's dependency-order walk exactly. The
-        // Program itself uses the custom virtual resolver above; this DFS has
-        // historically called TypeScript's public resolver against the same
-        // host, including its fallback behavior for bare specifiers.
-        const resolved = ts.resolveModuleName(specifier, normalizedName, this.compilerOptions, this.host).resolvedModule
-          ?.resolvedFileName;
+        // Match analyzeMultiSource and the Program's custom virtual resolver
+        // exactly, including canonical file: URL identities (#4377).
+        const resolved = resolveMultiFileModule(
+          specifier,
+          normalizedName,
+          this.documents,
+          this.bareSpecifierLookup,
+        )?.resolvedFileName;
         if (resolved && resolved !== normalizedName) visit(resolved);
       }
       visited.add(normalizedName);
