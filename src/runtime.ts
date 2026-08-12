@@ -28,11 +28,13 @@ import {
   _getAsyncGeneratorInstancePrototype,
   _getAsyncGeneratorFunctionPrototype,
   _installIteratorHelperPolyfills,
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 export { buildStringConstants, buildStringConstants16 };
+export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 import {
   compiledClosureNativeSource,
   createNativeFunctionCallbackBridge,
