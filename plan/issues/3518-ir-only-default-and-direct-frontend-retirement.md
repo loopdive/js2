@@ -18,7 +18,7 @@ complexity: XL
 es_edition: n/a
 lane: ir-retirement
 model: gpt-5.6-sol
-related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528]
+related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 ---
 # #3518 — IR-only default and direct front-end retirement
@@ -51,6 +51,12 @@ through semantic IR intents rather than `compileExpression` /
 `compileStatement`. Features intentionally outside the compiler's supported
 language fail with a stable source-located `Unsupported` diagnostic; they do
 not resurrect the direct path.
+
+`PreparedIrProgram` is also the versioned, validated, losslessly serializable
+handoff between frontend preparation and backend emission. Both backends
+consume the same frozen program snapshot. Deserialization re-runs structural,
+type, ABI, effect, and runtime-manifest verification before any artifact side
+effect; it never reparses source, reselects features, or invokes a legacy path.
 
 ## Current truth (audited 2026-08-09)
 
@@ -125,7 +131,7 @@ their order and acceptance boundaries.
 | **R0a — #3529 (done)**       | Restore typed-producer equivalence parity without weakening unknown-throw-to-Invariant classification | #3143; exposed by #3519               | 154 new compile failures return to the committed baseline through preclaim/typed Unsupported or true invariant fixes; no baseline expansion                     |
 | **R0b — #3519 (done)**       | Typed `Prepared` / `Unsupported` / `Invariant` outcomes plus an honest `check:ir-only` readiness gate | #3143, #3529; informed by #2855/#3341 | No TypeMap or compile failures are skipped; `result.errors` and every unit outcome are accounted for; hybrid vs IR-only policy is tested                        |
 | **R1 — #3520 (in progress)** | Source-qualified `IrUnitId` and a whole-program `ProgramAbiMap`                                       | R0                                    | Same-named units across files/classes cannot collide; signatures, globals, imports, types, exports, and synthetic units are planned once                        |
-| **R2 — #3521 (in progress)** | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; unsupported units are decided before any body emitter side effect                                   |
+| **R2 — #3521 (in progress)** | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; the versioned validated program round-trips losslessly; unsupported units are decided before emission |
 | **R3 — #3522 (in progress)** | Classes and class members are Prepared/compile-once                                                   | #3521                                 | Constructors, instance/static methods, fields, inheritance, wrappers, and type indices no longer depend on legacy body compilation                              |
 | **R4 — #3523 (in progress)** | Module init is Prepared/compile-once                                                                  | #3521, #3522                          | One program-owned module-init unit replaces the compile-first/patch-later `__module_init` overlay, including top-level binding/TDZ/export effects               |
 | **R5 — #3525 (blocked)**     | Whole-program single- and multi-source Prepared ownership                                             | #3520–#3523                           | Cross-file calls/imports, fast mode, collisions, module init, and class members use one `PreparedIrProgram`; no per-source overlay loop remains                 |
@@ -174,6 +180,10 @@ above.
 8. **Deletion follows reachability.** No direct handler is removed until the
    new gate proves it unreachable in every supported policy/backend and the
    #3090 audit confirms the call edge is gone.
+9. **One serializable backend handoff.** The prepared program schema is
+   versioned and deterministic. WasmGC and linear accept the same verified
+   snapshot; backend incapability is a typed pre-emission outcome, never a
+   request to reparse, reselect, or fall back.
 
 ## Acceptance criteria
 
@@ -186,6 +196,13 @@ above.
       before backend emission; no class/module/M0 exception remains.
 - [ ] WasmGC and linear consume the same IR and `ProgramAbiMap`; their only
       divergence is backend lowering/runtime representation.
+- [ ] The versioned `PreparedIrProgram` serialization round-trips all semantic
+      values, source identities, ABI/effect data, and frozen runtime intents
+      without loss. Malformed or incompatible input fails validation before
+      artifact emission.
+- [ ] A differential backend-input fixture proves WasmGC and linear consume the
+      exact same prepared-program snapshot. Backend incapability returns a
+      typed diagnostic and cannot trigger frontend reconstruction or fallback.
 - [ ] Unsupported source produces stable source-located diagnostics. There is
       no silent selector fallback, post-claim demotion, skipped-slot escape, or
       legacy catch path.

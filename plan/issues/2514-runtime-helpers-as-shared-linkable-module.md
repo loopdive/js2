@@ -1,19 +1,22 @@
 ---
 id: 2514
-title: "Runtime helpers (number_toString, string/array/GC helpers) as a shared linkable module via a canonical runtime-type rec-group ABI"
+title: "Link-gated shared core-Wasm runtime providers with a versioned runtime ABI"
 status: backlog
 sprint: Backlog
 created: 2026-06-19
-updated: 2026-06-19
-priority: medium
+updated: 2026-08-12
+priority: high
 feasibility: hard
 reasoning_effort: high
-task_type: architecture
-area: codegen
+task_type: refactor
+area: runtime, linking, codegen, codegen-linear
 language_feature: runtime-helpers
+es_edition: n/a
 goal: architecture
-related: [2512, 1046]
+related: [1046, 2512, 2524, 2525, 2783, 3526, 3678, 4382]
 ---
+
+# #2514 — Link-gated shared core-Wasm runtime providers
 
 > **Linking mechanism (decided):** **core-wasm module linking in a shared store**
 > + a frozen canonical rec group — see **#2524** (chosen). The Component Model is
@@ -28,8 +31,31 @@ string/array/vec helpers, boxing helpers, GC struct accessors, etc. — **inline
 into every compiled module** (each only when used, via DCE). Across multiple
 compiled modules this duplicates the same helper code.
 
-Proposal: compile the runtime helpers once into a shared `runtime.wasm` and have
-user modules **import** them, instead of re-emitting per module.
+Proposal: compile stable provider families into shared core-Wasm modules and
+have user modules import only the families required by their frozen runtime
+feature manifest, instead of re-emitting those providers per module. Preserve
+the existing inline path until size, startup, and engine-compatibility evidence
+shows that a linked provider is a net improvement for the selected target.
+
+## Link-gated provider plan
+
+#3526 becomes the sole semantic authority for provider selection. Its frozen
+`RuntimeFeature` closure is mapped to versioned provider units before body
+lowering. The linker then chooses one of three explicit outcomes per unit:
+
+1. backend-native lowering, requiring no provider import;
+2. inline/self-host provider, preserving the current single-module artifact;
+3. shared core-Wasm provider import with an exact ABI version.
+
+Do not replace conditional inline emission with one monolithic always-linked
+runtime. Provider units must be feature-granular enough that unused regex,
+collections, async, dynamic-value, or host-adapter families add neither imports
+nor required side modules. The final compile/capability manifest records the
+selected units, versions, and transitive host capabilities for #4382.
+
+The module import set and provider versions freeze before lowering. A missing
+provider, ABI mismatch, unexpected late import, or unsupported target adapter
+is a typed pre-emission failure, not a retry through inline or legacy code.
 
 ## This is NOT blocked on a missing standard — it's an ABI engineering project
 
@@ -110,6 +136,41 @@ required.
 - Phase 1: factor out **non-GC** helpers behind a stable interface (no
   identity concern) — and/or the `--nativeStrings` linear path.
 - Phase 2: GC-typed helpers via the canonical rec-group ABI once #2 is solved.
+- Phase 3: integrate #3526 feature-closure selection, provider-unit packaging,
+  ABI/version checks, and #4382 manifest projection. Promote each family only
+  after differential correctness and artifact/startup-size evidence is green.
+
+## Acceptance criteria
+
+- [ ] A versioned provider registry maps frozen #3526 `RuntimeFeature`s to
+      backend-native, inline, or shared core-Wasm implementations without
+      inspecting source AST or emitted import spellings.
+- [ ] Provider selection and the complete import set freeze before body
+      lowering; late demand, missing adapters, and ABI mismatches fail with
+      typed #3678 diagnostics before artifacts are published.
+- [ ] A minimal program imports no shared provider, and focused programs import
+      only their exact feature-granular provider units and dependencies.
+- [ ] Non-GC/linear providers land first with JS-host and standalone/WASI
+      differential parity, import-leak checks, and multi-module integration
+      tests in every supported runtime.
+- [ ] WasmGC provider exchange proves canonical rec-group identity across
+      separately compiled modules on every supported engine and fails closed on
+      ABI or Binaryen rec-group drift.
+- [ ] Release artifacts distribute provider modules and ABI metadata
+      atomically; incompatible combinations fail deterministically.
+- [ ] Per-family measurements compare inline and linked code size, startup,
+      steady-state performance, and cache reuse. Linking remains opt-in for a
+      family until the target-specific tradeoff is documented.
+- [ ] #4382 reports selected provider units/versions and never hides a linked
+      runtime or host capability behind a generic successful-build status.
+
+## Out of scope
+
+- Rewriting runtime providers in C or adopting a second semantic runtime.
+- Using the Component Model where its ABI would copy WasmGC values.
+- Shipping one always-linked runtime blob that defeats feature gating.
+- Adding a general JavaScript engine fallback or changing the supported
+  language contract to simplify the provider boundary.
 
 ## Notes
 
