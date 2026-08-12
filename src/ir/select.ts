@@ -66,6 +66,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
@@ -156,7 +157,7 @@ export type IrFallbackReason =
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
   | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
-  | "deferred-feature"; // permanently excluded (eval, with, import(), Proxy)
+  | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 
 export interface IrFallback {
   readonly name: string;
@@ -3142,6 +3143,10 @@ function isPhase1StatementListInScope(
         return shapeNo("nontail-if-then-guard", s.thenStatement);
       continue;
     }
+    if (ts.isWithStatement(s)) {
+      if (!isPhase1WithStatement(s, scope, localClasses)) return false;
+      continue;
+    }
     // Slice 6 part 2 (#1181) — for-of statement (always non-tail). The
     // body is itself shape-checked. The bridge in `from-ast.ts` lowers
     // the iterable expression and dispatches to the vec fast path when
@@ -3864,6 +3869,65 @@ function isPhase1ForInStatement(
 }
 
 /**
+ * #4206 first IR `with` slice. Selection is deliberately exact:
+ *
+ * - a closed inline object literal target (therefore every binding is a known
+ *   object field and needs no runtime HasBinding fallback),
+ * - a block body containing at least one ordinary synchronous function
+ *   expression selected by `ir/with-environment`,
+ * - no body declaration may collide with a target field in this slice.
+ *
+ * The field names join the nested selector scope so a function expression can
+ * capture them. AST→IR lowering captures the receiver reference and restores
+ * each property as an invocation-time `object.get`/`object.set` binding.
+ */
+function isPhase1WithStatement(
+  stmt: ts.WithStatement,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+  inLoop: boolean = false,
+  labels: ReadonlySet<string> = NO_LABELS,
+  breaks: BreakScope = NO_BREAKS,
+): boolean {
+  if (!ts.isObjectLiteralExpression(stmt.expression)) return shapeNo("with-target-not-objectlit", stmt.expression);
+  if (!ts.isBlock(stmt.statement)) return shapeNo("with-body-not-block", stmt.statement);
+  const body = stmt.statement;
+  const selection = selectWithEnvironmentClosures(body);
+  if (!selection.ok) return shapeNo("with-closure-boundary", body);
+  if (selection.closureCount === 0) return shapeNo("with-no-closure", stmt.statement);
+  if (!isPhase1ObjectLiteral(stmt.expression, scope, localClasses))
+    return shapeNo("with-target-shape", stmt.expression);
+
+  const fieldNames = new Set<string>();
+  for (const property of stmt.expression.properties) {
+    const name =
+      ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)
+        ? phase1PropertyName(property.name)
+        : null;
+    if (name === null) return shapeNo("with-target-field", property);
+    fieldNames.add(name);
+  }
+  for (const bodyStatement of body.statements) {
+    if (!ts.isVariableStatement(bodyStatement)) continue;
+    for (const declaration of bodyStatement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) return shapeNo("with-declaration-pattern", declaration.name);
+      if (fieldNames.has(declaration.name.text)) return shapeNo("with-field-shadow", declaration.name);
+    }
+  }
+
+  return withProjectionEvidenceScope(() =>
+    withLexicalValueBindingScope(body.statements, () => {
+      const bodyScope = new Set(scope);
+      for (const name of fieldNames) bodyScope.add(name);
+      for (const bodyStatement of body.statements) {
+        if (!isPhase1BodyStatement(bodyStatement, bodyScope, localClasses, inLoop, labels, breaks)) return false;
+      }
+      return true;
+    }),
+  );
+}
+
+/**
  * Slice 6 part 2 (#1181): recogniser for body statements inside a for-of
  * loop. Narrower than `isPhase1StatementList` — no nested closures, no
  * nested function decls, no fall-through if/else patterns. Accepts:
@@ -3905,6 +3969,9 @@ function isPhase1BodyStatement(
   }
   if (ts.isVariableStatement(stmt)) {
     return isPhase1VarDecl(stmt, scope, localClasses);
+  }
+  if (ts.isWithStatement(stmt)) {
+    return isPhase1WithStatement(stmt, scope, localClasses, inLoop, labels, breaks);
   }
   if (ts.isExpressionStatement(stmt)) {
     if (ts.isCallExpression(stmt.expression)) {
