@@ -47,6 +47,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
   - src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch
+coercion-sites-allow:
+  - src/codegen/binary-ops-typed-dispatch.ts
 ---
 
 # #2742 — String.prototype generic-receiver `ToString(this)` coercion
@@ -919,7 +921,9 @@ routes mixed `$AnyValue`/native-String pairs through the canonical
 `__any_strict_eq` engine. That is the same tag-aware equality engine used by IR
 `dyn.eq`; the regression suite additionally requires the dynamic concat/equality
 control to appear in `irCompiledFuncs`, so the semantic contract stays live on
-the IR path.
+the IR path. The `coercion-sites-allow` entry records this reviewed call-site
+increase: it reuses that canonical engine instead of introducing another
+coercion or equality implementation.
 
 Exact fresh-baseline A/B over the 44-file residual:
 
