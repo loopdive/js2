@@ -9,7 +9,8 @@ record is
 
 - Branch: `codex/v8x-js2wasm-deno-spike`
 - Prior spike commit: `f26d0bf23a59e89a23979f27ddf744e762a6b61f`
-- Compiler/runtime follow-up: current branch head (see PR #4396)
+- Compiler ABI fix: `35423bb9c1d4aa`
+- Embedded runtime follow-up: `3917c3caa3a63e`
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`
