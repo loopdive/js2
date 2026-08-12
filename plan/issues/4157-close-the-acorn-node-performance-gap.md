@@ -1186,3 +1186,55 @@ slice needs to verify its caller targeting. The per-type census
 Not filed as its own issue: `claim-issue.mjs --allocate` reports the open-PR scan
 DEGRADED in this container (no `gh`), and reserving an id against a degraded
 universe is how #4215 was burned. It should get one when allocation is healthy.
+
+## 2026-08-12 (4) — second null on the same helper: instruction-shaving `__extern_get` is exhausted
+
+A second, independent attempt at `__extern_get`, aimed at the **hit** path this
+time (the previous one only ever reached the 12.76 % that miss).
+
+Two of the ~40 instructions on the hit path are `ref.cast`s that exist **only**
+to make an `anyref` cache field acceptable to `ref.eq` — nothing downstream
+reads a field off either result. Replacing them with the abstract
+`ref.cast_null (ref null eq)` is strictly safe in the direction that matters:
+`ref.eq` is identity, so a value that is not the owner cannot compare equal, and
+a mismatch that used to trap simply misses the cache and takes the slow path.
+The build is **14 bytes smaller** and checksum 422 holds.
+
+Order-reversed **ON → OFF → OFF → ON**:
+
+| block | order | `__extern_get` self | dynamic-lookup |
+| --- | --- | ---: | ---: |
+| onA | 1 | 9.24 % | 20.96 % |
+| offA | 2 | 9.23 % | 21.50 % |
+| offB | 3 | 8.85 % | 20.52 % |
+| onB | 4 | 9.75 % | 20.76 % |
+
+Mean 9.50 % ON vs 9.04 % OFF — trending the *wrong* way, with the ON blocks
+scattering 0.51 pp and the OFF blocks 0.38 pp. This run was noisier than the
+morning's (whose ON blocks replicated to 0.11 pp), so the honest bound here is
+about **±0.5 pp**: null. Reverted, for the same reason as the screen — no
+measured benefit, and the concrete cast at least documents the invariant that
+the cached owner really is a `$Object`.
+
+### What two nulls in a row establish
+
+The first attempt removed 14,770 instructions of provably-dead ladder from the
+miss path. The second removed two RTT checks from the hit path. Neither moved
+the bucket. Taken together they say the same thing:
+
+**`__extern_get`'s 9 % is not made of instructions that can be removed from
+inside it.** At 21.7 ns / ~45 cycles per call it is already tight; what is left
+is call overhead, the pointer-chase through the props array, and branch
+behaviour — none of which shrinks by editing the body. Micro-optimisation of
+this helper is **exhausted at this box's ±0.3–0.5 pp resolution**, and future
+lanes should not spend another A/B cycle on it.
+
+That does **not** retire the bucket — it retires one approach to it. Dynamic
+lookup is still ~25 ms/parse and the largest addressable line in the gap. The
+lever is the one already named above: **remove the CALL**, via site- or
+name-local inline caching, which is a structural change to how reads are emitted
+rather than an edit to the helper. It remains unbuilt, and it is now the only
+priced candidate in this issue above the measurement floor.
+
+Both reverted experiments are described here in enough detail to rebuild without
+rediscovering them; neither is in the tree.
