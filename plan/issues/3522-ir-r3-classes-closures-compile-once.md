@@ -40,6 +40,7 @@ files:
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
+  - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
@@ -51,6 +52,7 @@ files:
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
@@ -64,6 +66,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
@@ -755,6 +758,60 @@ IR-only shadow corpus is **37/37 IR-emitted, 0 legacy bodies, 0 Unsupported,
 and 0 Invariants**. This branch remains local and stacked on queued PR #4395;
 rebase, publication, and merge-queue entry wait until that immutable parent
 lands.
+
+### Implicit derived-forwarding checkpoint (2026-08-12)
+
+This checkpoint extends the prepared implicit-constructor family through exact
+local-user inheritance chains. A synthesized derived constructor now inherits
+its parent's proven constructor parameter ABI, and preparation installs an
+exact `_init(args..., self)` body that forwards those arguments and the same
+receiver to the parent's `_init`, drops the parent result, and returns the
+original receiver. Dependency discovery records the complete parent-init chain
+recursively. Preparation is component-atomic: every implicit parent must be
+staged in the same transaction, while an explicit parent constructor must be a
+terminal owner in the prepared component. If either condition fails, the whole
+constructing caller stays direct rather than mixing prepared and legacy bodies.
+
+The Program ABI session records the forwarding contract before sealing and
+accepts the non-terminal support body only when its signature, locals, ordered
+argument loads, exact parent call, dropped parent result, and returned self all
+match. Plain implicit constructors may now also contain declared-but-
+uninitialized instance fields; their existing allocation wrapper supplies the
+typed zero values before calling the exact empty `_init`. Initialized instance
+fields remain a tested direct negative control because their ordered side
+effects are not represented by this support-only slice.
+
+The exact positive fixture is a three-level `Base -> Mid -> Leaf` chain where
+`Base(number)` stores its argument and `run()` reads `new Leaf(7).value`. In GC
+and standalone, `Base_new` and `run` are IR-only, all terminal outcomes contain
+zero legacy bodies, and the implicit `Mid`/`Leaf` support pairs exactly match
+the direct backend's canonical WAT. The terminal census improves **1 -> 0** for
+the constructing caller. The prepared caller is strictly leaner than direct:
+it calls `Leaf_new` and reads the field without the direct null-check/throw
+scaffolding, ambient `this`, boxing, `call_ref`, or `call_indirect`.
+
+The paired unoptimized artifacts are smaller while every implicit support body
+remains shape-identical:
+
+| Target | Direct | Prepared IR | Delta |
+| --- | ---: | ---: | ---: |
+| WasmGC | 1,428 bytes | 1,212 bytes | -216 bytes (-15.1%) |
+| standalone | 46,767 bytes | 21,512 bytes | -25,255 bytes (-54.0%) |
+
+An additional GC/standalone fixture proves a declared numeric field is
+zero-initialized and reaches IR-only execution. A separate initialized-field
+base plus implicit child proves atomic withdrawal, preserves `run() === 7`,
+and trips the direct-body poison when the legacy constructor is disabled.
+
+The full focused preparation, class, dependency, and Program ABI matrix passes
+**121/121**. Typecheck, formatting, oracle, fallback, shape diagnostics, issue
+integrity, optimization-retirement, LOC, and function-budget gates are green.
+The IR-only shadow remains **37/37 IR-emitted, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. No shared legacy helper is deleted yet: initialized fields,
+default/rest and forward ABIs, unsafe or conditional `super`, externref/builtin
+construction, and nested/class-expression owners still consume those paths.
+Each remaining family must delete its obsolete implementation in the same PR
+that proves its complete IR replacement.
 
 ## Exhaustive source-unit census
 

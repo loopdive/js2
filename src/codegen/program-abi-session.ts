@@ -1,6 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { FuncTypeDef, GlobalDef, Import, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
+import type {
+  FuncHandle,
+  FuncTypeDef,
+  GlobalDef,
+  Import,
+  TypeDef,
+  ValType,
+  WasmFunction,
+  WasmModule,
+} from "../ir/types.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import { irUnitCallableBindingId } from "../ir/callable-bindings.js";
 import { arePairedIrModuleGlobalBindingIds, irClassTypeRef } from "../ir/abi-bindings.js";
@@ -383,6 +392,11 @@ export interface ProgramAbiTypeLayoutRemap {
 interface ProgramAbiGlobalTypeContract {
   readonly type: ValType;
   readonly mutable: boolean;
+}
+
+interface PreparedImplicitConstructorSupportContract {
+  readonly selfParamIndex: number;
+  readonly parentInitFuncIdx?: FuncHandle;
 }
 
 export type ProgramAbiSlotLocator =
@@ -943,6 +957,10 @@ export class ProgramAbiSession {
   private readonly preparedScopeByUnitId = new Map<IrUnitId, string>();
   private readonly preparedScopeByClassId = new Map<IrClassId, string>();
   private readonly preparedScopeIdsByBindingId = new Map<IrBindingId, Set<string>>();
+  private readonly preparedImplicitConstructorSupportContracts = new Map<
+    IrUnitId,
+    PreparedImplicitConstructorSupportContract
+  >();
   private readonly openPreparedScopeIds = new Set<string>();
   private applyingPreparedTypeLayoutRemap = false;
   private state: SessionState = "planning";
@@ -973,6 +991,37 @@ export class ProgramAbiSession {
         "ProgramAbiSession belongs to a different WasmModule",
       );
     }
+  }
+
+  /** Record the exact AST-free body contract for one implicit constructor support unit. */
+  recordPreparedImplicitConstructorSupport(
+    unitId: IrUnitId,
+    contract: PreparedImplicitConstructorSupportContract,
+  ): void {
+    this.assertPlanning(`record implicit constructor support ${unitId}`);
+    const unit = this.inventory.allUnits.find(({ id }) => id === unitId);
+    if (
+      unit?.kind !== "class-implicit-constructor" ||
+      unit.terminalOwnerId !== null ||
+      contract.selfParamIndex < 0 ||
+      !Number.isInteger(contract.selfParamIndex)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `implicit constructor support ${unitId} has no exact non-terminal inventory contract`,
+      );
+    }
+    const existing = this.preparedImplicitConstructorSupportContracts.get(unitId);
+    if (
+      existing &&
+      (existing.selfParamIndex !== contract.selfParamIndex || existing.parentInitFuncIdx !== contract.parentInitFuncIdx)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "session-draft-mismatch",
+        `implicit constructor support ${unitId} was prepared with a different forwarding contract`,
+      );
+    }
+    if (!existing) this.preparedImplicitConstructorSupportContracts.set(unitId, Object.freeze({ ...contract }));
   }
 
   get publication(): PublishedProgramAbi | undefined {
@@ -1955,7 +2004,7 @@ export class ProgramAbiSession {
         draft.intent.origin === "source" &&
         draft.intent.unitId !== undefined &&
         !unitIds.has(draft.intent.unitId) &&
-        !this.isPreparedPlainImplicitConstructorSupportDraft(draft)
+        !this.isPreparedImplicitConstructorSupportDraft(draft)
       ) {
         throw new ProgramAbiInvariantError(
           "invalid-callable-provenance",
@@ -2222,10 +2271,10 @@ export class ProgramAbiSession {
       this.assertPreparedBorrowedDependency(scopeId, terminalUnitIds, draft, borrowing);
       return;
     }
-    const plainImplicitConstructorSupport = this.isPreparedPlainImplicitConstructorSupportDraft(draft);
+    const implicitConstructorSupport = this.isPreparedImplicitConstructorSupportDraft(draft);
     if (
       draft.intent.kind === "export" ||
-      (draft.intent.kind === "callable" && draft.intent.origin === "source" && !plainImplicitConstructorSupport)
+      (draft.intent.kind === "callable" && draft.intent.origin === "source" && !implicitConstructorSupport)
     ) {
       throw new ProgramAbiInvariantError(
         "invalid-callable-provenance",
@@ -2262,8 +2311,8 @@ export class ProgramAbiSession {
     }
   }
 
-  /** Exact AST-free `_init(self) -> self` body allowed as a shared prepared dependency. */
-  private isPreparedPlainImplicitConstructorSupportDraft(draft: ProgramAbiDraft): boolean {
+  /** Exact AST-free implicit `_init` body allowed as a shared prepared dependency. */
+  private isPreparedImplicitConstructorSupportDraft(draft: ProgramAbiDraft): boolean {
     const intent = draft.intent;
     if (intent.kind !== "callable" || intent.origin !== "source" || !intent.unitId) return false;
     const unit = this.inventory.allUnits.find(({ id }) => id === intent.unitId);
@@ -2277,15 +2326,43 @@ export class ProgramAbiSession {
     }
     const func = locator.value;
     const signature = this.module.types[func.typeIdx];
+    const contract = this.preparedImplicitConstructorSupportContracts.get(intent.unitId);
+    if (
+      !contract ||
+      func.locals.length !== 0 ||
+      signature?.kind !== "func" ||
+      signature.params.length !== contract.selfParamIndex + 1 ||
+      signature.results.length !== 1 ||
+      canonicalProgramAbiValType(signature.params[contract.selfParamIndex]!) !==
+        canonicalProgramAbiValType(signature.results[0]!)
+    ) {
+      return false;
+    }
+    if (contract.parentInitFuncIdx === undefined) {
+      return (
+        contract.selfParamIndex === 0 &&
+        func.body.length === 1 &&
+        func.body[0]?.op === "local.get" &&
+        func.body[0].index === 0
+      );
+    }
+    if (func.body.length !== contract.selfParamIndex + 4) return false;
+    for (let index = 0; index < contract.selfParamIndex; index++) {
+      const instr = func.body[index];
+      if (instr?.op !== "local.get" || instr.index !== index) return false;
+    }
+    const selfBeforeCall = func.body[contract.selfParamIndex];
+    const parentCall = func.body[contract.selfParamIndex + 1];
+    const dropParentResult = func.body[contract.selfParamIndex + 2];
+    const returnedSelf = func.body[contract.selfParamIndex + 3];
     return (
-      func.locals.length === 0 &&
-      func.body.length === 1 &&
-      func.body[0]?.op === "local.get" &&
-      func.body[0].index === 0 &&
-      signature?.kind === "func" &&
-      signature.params.length === 1 &&
-      signature.results.length === 1 &&
-      canonicalProgramAbiValType(signature.params[0]!) === canonicalProgramAbiValType(signature.results[0]!)
+      selfBeforeCall?.op === "local.get" &&
+      selfBeforeCall.index === contract.selfParamIndex &&
+      parentCall?.op === "call" &&
+      parentCall.funcIdx === contract.parentInitFuncIdx &&
+      dropParentResult?.op === "drop" &&
+      returnedSelf?.op === "local.get" &&
+      returnedSelf.index === contract.selfParamIndex
     );
   }
 

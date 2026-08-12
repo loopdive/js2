@@ -90,6 +90,20 @@ function watCallTargets(wat: string, body: string): string[] {
   return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => names[Number(match[1])] ?? "<missing>");
 }
 
+function canonicalWatFunctionBody(wat: string, name: string): string {
+  const imports = [...wat.matchAll(/^\s*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const definitions = [...wat.matchAll(/^\s*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const names = [...imports, ...definitions];
+  return watFunctionBody(wat, name)
+    .replace(/\(type \d+\)/g, "(type <canonical>)")
+    .replace(/\b(return_)?call (\d+)/g, (_match, tail: string | undefined, index: string) => {
+      const target = names[Number(index)] ?? "<missing>";
+      return `${tail ?? ""}call $${target}`;
+    });
+}
+
 function staticInstanceofShapes(
   body: string,
 ): { readonly tags: readonly number[]; readonly equals: number; readonly unions: number }[] {
@@ -389,58 +403,177 @@ describe("#3522 prepared cross-owner retirement", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
-    "keeps implicit derived forwarding and instance field initialization direct in %s",
+    "prepares an implicit local-user derived forwarding chain in %s",
     async (target) => {
-      const cases = [
-        {
-          name: "ImplicitDerived",
-          source: `
-            class Base {
-              value: number;
-              constructor(value: number) { this.value = value; }
-            }
-            class ImplicitDerived extends Base {}
-            export function run(): number { return new ImplicitDerived(7).value; }
-          `,
-        },
-        {
-          name: "ImplicitField",
-          source: `
-            class ImplicitField { value: number = 7; }
-            export function run(): number { return new ImplicitField().value; }
-          `,
-        },
-      ] as const;
+      const source = `
+        class Base {
+          value: number;
+          constructor(value: number) { this.value = value; }
+        }
+        class Mid extends Base {}
+        class Leaf extends Mid {}
+        export function run(): number { return new Leaf(7).value; }
+      `;
+      const fileName = `implicit-derived-chain-${target}.ts`;
+      const direct = await compile(source, {
+        fileName,
+        experimentalIR: false,
+        emitWat: true,
+        target,
+      });
+      expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(direct.binary)).toBe(true);
+      expect((await instantiate(direct)).run!()).toBe(7);
+
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Base_new,Mid_new,Leaf_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        prepared = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(prepared.binary)).toBe(true);
+      expect((await instantiate(prepared)).run!()).toBe(7);
+      for (const terminal of [outcome(prepared, "class-member", "Base_new"), outcome(prepared, "function", "run")]) {
+        expect(terminal).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect((prepared.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      expect(prepared.binary.length).toBeLessThanOrEqual(direct.binary.length);
+
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Mid_new"))).toEqual(["Mid_init"]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Mid_init"))).toEqual(["Base_init"]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Leaf_new"))).toEqual(["Leaf_init"]);
+      expect(watCallTargets(prepared.wat, watFunctionBody(prepared.wat, "Leaf_init"))).toEqual(["Mid_init"]);
+      for (const name of ["Mid_new", "Mid_init", "Leaf_new", "Leaf_init"] as const) {
+        expect(canonicalWatFunctionBody(prepared.wat, name)).toBe(canonicalWatFunctionBody(direct.wat, name));
+      }
+      const preparedRun = watFunctionBody(prepared.wat, "run");
+      const directRun = watFunctionBody(direct.wat, "run");
+      expect(watCallTargets(prepared.wat, preparedRun)).toEqual(["Leaf_new"]);
+      expect(preparedRun).toMatch(/call \d+[\s\S]*struct\.get/);
+      expect(preparedRun).not.toMatch(/ref\.is_null|throw|local\.(?:get|set|tee)/);
+      expect(directRun).toMatch(/ref\.is_null[\s\S]*throw/);
+      expect(preparedRun.split("\n").length).toBeLessThan(directRun.split("\n").length);
+      for (const body of [
+        watFunctionBody(prepared.wat, "Mid_new"),
+        watFunctionBody(prepared.wat, "Mid_init"),
+        watFunctionBody(prepared.wat, "Leaf_new"),
+        watFunctionBody(prepared.wat, "Leaf_init"),
+      ]) {
+        expect(body).not.toMatch(
+          /__current_this|(?:return_)?call_ref|call_indirect|any\.convert_extern|extern\.convert_any|(?:^|_)(?:box|unbox)(?:_|$)/,
+        );
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "prepares a plain implicit constructor with zero-initialized declared fields in %s",
+    async (target) => {
+      const source = `
+        class Box { value: number; }
+        export function run(): number { return new Box().value; }
+      `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let result: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        result = await compile(source, {
+          fileName: `implicit-declared-field-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      expect((await instantiate(result)).run!()).toBe(0);
+      expect(outcome(result, "function", "run")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect((result.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      expect(watFunctionBody(result.wat, "Box_new")).toMatch(/f64\.const 0[\s\S]*struct\.new/);
+      expect(watFunctionBody(result.wat, "Box_init")).toMatch(/local\.get 0/);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps initialized implicit fields on the direct constructor path in %s",
+    async (target) => {
+      const source = `
+        class FieldBase { value: number = 7; }
+        class ImplicitField extends FieldBase {}
+        export function run(): number { return new ImplicitField().value; }
+      `;
+      const fileName = `implicit-initialized-field-${target}.ts`;
       const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
       try {
-        for (const control of cases) {
-          const fileName = `plain-implicit-${control.name.toLowerCase()}-${target}.ts`;
-          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-          const direct = await compile(control.source, {
-            fileName,
-            experimentalIR: true,
-            trackIrOutcomes: true,
-            target,
-          });
-          expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
-          expect(WebAssembly.validate(direct.binary)).toBe(true);
-          expect((await instantiate(direct)).run!()).toBe(7);
-          expect(outcome(direct, "function", "run").legacyBodyEmitted).toBe(true);
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect((await instantiate(direct)).run!()).toBe(7);
+        expect(outcome(direct, "function", "run").legacyBodyEmitted).toBe(true);
 
-          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = `${control.name}_new`;
-          const poisoned = await compile(control.source, {
-            fileName,
-            experimentalIR: true,
-            trackIrOutcomes: true,
-            target,
-          });
-          expect(poisoned.success).toBe(false);
-          expect(
-            poisoned.errors.some((error) =>
-              error.message.includes(`injected direct class-body poison: ${control.name}_new`),
-            ),
-          ).toBe(true);
-        }
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "ImplicitField_new";
+        const poisoned = await compile(source, {
+          fileName,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(
+          poisoned.errors.some((error) =>
+            error.message.includes("injected direct class-body poison: ImplicitField_new"),
+          ),
+        ).toBe(true);
       } finally {
         if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
         else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;

@@ -398,7 +398,13 @@ export class ProgramAbiClassCallableRegistry {
   }
 
   /** Plan one exact non-terminal implicit-constructor `_init` support unit. */
-  preparePlainImplicitConstructorUnit(unitId: IrUnitId): FuncHandle {
+  prepareImplicitConstructorUnit(
+    unitId: IrUnitId,
+    contract: {
+      readonly selfParamIndex: number;
+      readonly parent?: { readonly unitId: IrUnitId; readonly funcIdx: FuncHandle };
+    },
+  ): FuncHandle {
     this.assertOpen(unitId);
     const unit = this.identityContext.unitByUnitId.get(unitId);
     const canonical = this.units
@@ -409,15 +415,25 @@ export class ProgramAbiClassCallableRegistry {
     if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null || !canonical || !func) {
       throw new ProgramAbiInvariantError(
         "missing-source-unit",
-        `plain implicit constructor support ${unitId} has no exact live non-terminal allocator`,
+        `implicit constructor support ${unitId} has no exact live non-terminal allocator`,
       );
     }
+    if (contract.parent && this.handleForUnit(contract.parent.unitId) !== contract.parent.funcIdx) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `implicit constructor support ${canonical.displayName} lost its exact parent init allocator`,
+      );
+    }
+    this.session.recordPreparedImplicitConstructorSupport(unitId, {
+      selfParamIndex: contract.selfParamIndex,
+      ...(contract.parent ? { parentInitFuncIdx: contract.parent.funcIdx } : {}),
+    });
     const expectedBindingId = irUnitCallableBindingId(unitId);
     if (this.session.hasPlan(expectedBindingId)) {
       if (!this.session.hasLocator(expectedBindingId, func)) {
         throw new ProgramAbiInvariantError(
           "duplicate-slot-locator",
-          `plain implicit constructor support ${canonical.displayName} is not the exact allocator owned by ${expectedBindingId}`,
+          `implicit constructor support ${canonical.displayName} is not the exact allocator owned by ${expectedBindingId}`,
         );
       }
     } else {
@@ -429,7 +445,7 @@ export class ProgramAbiClassCallableRegistry {
       if (bindingId !== expectedBindingId) {
         throw new ProgramAbiInvariantError(
           "missing-source-unit",
-          `plain implicit constructor support ${canonical.displayName} was not accepted for ${unitId}`,
+          `implicit constructor support ${canonical.displayName} was not accepted for ${unitId}`,
         );
       }
     }

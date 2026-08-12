@@ -1636,8 +1636,8 @@ export interface ClassBodyCompileRouting {
   readonly preserveSkippedBodyUnitIds?: ReadonlySet<IrUnitId>;
   readonly skippedUnitIds?: IrUnitId[];
   /** Exact non-terminal implicit-constructor support units installed during preparation. */
-  readonly skipPlainImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
-  readonly skippedPlainImplicitConstructorUnitIds?: IrUnitId[];
+  readonly skipImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
 }
 
 function skipExactPreparedClassBody(
@@ -1735,7 +1735,7 @@ function skipPreparedClassConstructorBody(
 ): boolean {
   if (!declaration) {
     const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(classDeclaration);
-    if (unitId !== undefined && routing?.skipPlainImplicitConstructorUnitIds?.has(unitId) === true) {
+    if (unitId !== undefined && routing?.skipImplicitConstructorUnitIds?.has(unitId) === true) {
       const unit = ctx.irPlanningIdentityContext?.unitByUnitId.get(unitId);
       const initKey = classMemberFuncKey(ctx, `${className}_init`);
       const initLocalIdx = funcByName.get(initKey);
@@ -1753,13 +1753,10 @@ function skipPreparedClassConstructorBody(
         !newFunc ||
         newFunc.body.length === 0
       ) {
-        throw new Error(`prepared plain implicit constructor ${ctorName} has no exact installed support pair`);
+        throw new Error(`prepared implicit constructor ${ctorName} has no exact installed support pair`);
       }
-      if (
-        routing.skippedPlainImplicitConstructorUnitIds &&
-        !routing.skippedPlainImplicitConstructorUnitIds.includes(unitId)
-      ) {
-        routing.skippedPlainImplicitConstructorUnitIds.push(unitId);
+      if (routing.skippedImplicitConstructorUnitIds && !routing.skippedImplicitConstructorUnitIds.includes(unitId)) {
+        routing.skippedImplicitConstructorUnitIds.push(unitId);
       }
       return true;
     }

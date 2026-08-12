@@ -907,12 +907,12 @@ function recordUnitReference(
 }
 
 /**
- * A plain implicit base constructor is source-identifiable but has no terminal
- * source body: preparation installs its exact `_init(self) -> self` support
- * body. Treat that non-terminal callable as a sealed support dependency rather
- * than trying to union it with a terminal component that cannot exist.
+ * An implicit constructor is source-identifiable but has no terminal source
+ * body. Preparation installs its exact `_init` support body; derived support
+ * bodies additionally forward to their parent `_init`. Treat the non-terminal
+ * callable as sealed support and let the caller record the parent chain.
  */
-function recordPlainImplicitConstructorSupportReference(
+function recordImplicitConstructorSupportReference(
   evidence: MutableFunctionEvidence,
   targetUnitId: IrUnitId,
   input: DerivePreparedComponentDependenciesInput,
@@ -928,6 +928,50 @@ function recordPlainImplicitConstructorSupportReference(
     expected: (intent) => intent.kind === "callable" && intent.origin === "source" && intent.unitId === targetUnitId,
   });
   return true;
+}
+
+function recordClassConstructorInitReference(
+  evidence: MutableFunctionEvidence,
+  shape: IrClassShape,
+  input: DerivePreparedComponentDependenciesInput,
+  ownership: OwnershipIndex,
+  functionsByUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+  visitedClassIds: Set<IrClassId> = new Set(),
+): void {
+  if (visitedClassIds.has(shape.classId)) {
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      referencedClassId: shape.classId,
+      detail: `implicit constructor parent chain cycles through class ${shape.classId}`,
+    });
+    return;
+  }
+  visitedClassIds.add(shape.classId);
+  const initTarget = shape.constructorInitTarget;
+  if (initTarget?.binding.kind !== "unit") {
+    addFailure(evidence, {
+      code: "class-member-callable-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      referencedClassId: shape.classId,
+      detail: "class.new has no exact source-owned constructor init dependency",
+    });
+    return;
+  }
+  if (recordImplicitConstructorSupportReference(evidence, initTarget.binding.unitId, input, ownership)) {
+    if (shape.parent) {
+      recordClassConstructorInitReference(evidence, shape.parent, input, ownership, functionsByUnitId, visitedClassIds);
+    }
+    return;
+  }
+  recordUnitReference(
+    evidence,
+    initTarget.binding.unitId,
+    functionsByUnitId,
+    input.terminalUnitIds,
+    input.abi,
+    ownership,
+  );
 }
 
 function recordGlobalReference(
@@ -1460,28 +1504,16 @@ function collectFunctionEvidence(
         // `class.new` lowers through the AST-free `<Class>_new` support
         // wrapper above, but that wrapper tail-calls the exact source-owned
         // `<Class>_init`. Keep the semantic source edge explicit so sealing
-        // unions a constructing caller with the constructor body it executes.
+        // unions a constructing caller with every constructor body it executes,
+        // including the parent chain of a synthesized derived forwarder.
         if (nested.kind === "class.new") {
-          const initTarget = shape?.constructorInitTarget;
-          if (initTarget?.binding.kind === "unit") {
-            if (
-              !recordPlainImplicitConstructorSupportReference(evidence, initTarget.binding.unitId, input, ownership)
-            ) {
-              recordUnitReference(
-                evidence,
-                initTarget.binding.unitId,
-                functionsByUnitId,
-                input.terminalUnitIds,
-                input.abi,
-                ownership,
-              );
-            }
+          if (shape) {
+            recordClassConstructorInitReference(evidence, shape, input, ownership, functionsByUnitId);
           } else {
             addFailure(evidence, {
               code: "class-member-callable-unavailable",
               ownerUnitId: terminalOwnerUnitId,
-              ...(shape ? { referencedClassId: shape.classId } : {}),
-              detail: "class.new has no exact source-owned constructor init dependency",
+              detail: "class.new has no exact class shape for constructor dependency sealing",
             });
           }
         }

@@ -35,7 +35,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
-import { preparePlainImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
+import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -127,7 +127,7 @@ export interface PreparedIrBodies {
   readonly classMembers?: PreparedIrClassMemberBodies;
   readonly moduleInit?: PreparedIrModuleInitBody;
   /** Exact support units whose plain implicit constructor bodies were prepared before direct emission. */
-  readonly plainImplicitConstructorUnitIds: ReadonlySet<IrUnitId>;
+  readonly implicitConstructorUnitIds: ReadonlySet<IrUnitId>;
 }
 
 function topLevelClassDeclarationsByName(sourceFile: ts.SourceFile): ReadonlyMap<string, ts.ClassDeclaration> {
@@ -1272,7 +1272,7 @@ export function prepareIrBodies(input: {
     classMemberUnitIds: classPopulation?.memberUnitIds ?? new Set<IrUnitId>(),
     moduleInit: input.selection.moduleInit,
   };
-  const plainImplicitConstructorUnitIds = preparePlainImplicitConstructorSupports({
+  const implicitConstructorUnitIds = prepareImplicitConstructorSupports({
     ctx: input.ctx,
     sourceFile: input.sourceFile,
     ownerUnitIds: new Set(claimsByUnitId.keys()),
@@ -1380,7 +1380,7 @@ export function prepareIrBodies(input: {
   return {
     report,
     freeFunctions,
-    plainImplicitConstructorUnitIds,
+    implicitConstructorUnitIds,
     ...(classPopulation && classRequestedSkipProjection && classPreparedProjection
       ? {
           classMembers: {

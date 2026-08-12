@@ -26,12 +26,12 @@ function sameValType(left: ValType, right: ValType): boolean {
 }
 
 /**
- * Install the AST-free support pair for exact plain implicit constructors used
- * by the prepared owner population. Derived forwarding, instance fields, and
- * host-backed construction remain on the direct path until their complete
- * contracts are represented.
+ * Install the AST-free support pair for exact implicit constructors used by
+ * the prepared owner population. Local-user derived forwarding is represented
+ * as an exact parent-init chain. Initialized instance fields and host-backed
+ * construction remain direct until their complete contracts are represented.
  */
-export function preparePlainImplicitConstructorSupports(input: {
+export function prepareImplicitConstructorSupports(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly ownerUnitIds: ReadonlySet<IrUnitId>;
@@ -59,10 +59,33 @@ export function preparePlainImplicitConstructorSupports(input: {
     visit(root);
   }
 
+  // A synthesized derived constructor forwards to its exact parent `_init`.
+  // Pull every local ancestor into the support-preparation population so a
+  // leaf construction cannot seal while an implicit middle constructor is
+  // still backed by the direct class emitter.
+  for (const declaration of [...referencedClassDeclarations]) {
+    let classId = input.identityPlan.identityContext.classIdByDeclaration.get(declaration);
+    const seen = new Set<IrClassId>();
+    while (classId && !seen.has(classId)) {
+      seen.add(classId);
+      const parentShape = input.classShapesById.get(classId)?.parent;
+      if (!parentShape) break;
+      const parentDeclaration = input.identityPlan.identityContext.declarationByClassId.get(parentShape.classId);
+      if (
+        parentDeclaration &&
+        ts.isClassDeclaration(parentDeclaration) &&
+        parentDeclaration.parent === input.sourceFile
+      ) {
+        referencedClassDeclarations.add(parentDeclaration);
+      }
+      classId = parentShape.classId;
+    }
+  }
+
   const registry = input.ctx.programAbiClassCallables;
   const types = input.ctx.programAbiTypes;
   if (!registry || !types) return new Set();
-  const staged: {
+  let staged: {
     readonly unitId: IrUnitId;
     readonly shape: IrClassShape;
     readonly structTypeIdx: number;
@@ -70,11 +93,17 @@ export function preparePlainImplicitConstructorSupports(input: {
     readonly newFuncIdx: FuncHandle;
     readonly initFuncIdx: FuncHandle;
     readonly initFunc: WasmFunction;
+    readonly selfParamIndex: number;
+    readonly parentInitUnitId?: IrUnitId;
+    readonly parentInitFuncIdx?: FuncHandle;
   }[] = [];
   for (const declaration of referencedClassDeclarations) {
     const classId = input.identityPlan.identityContext.classIdByDeclaration.get(declaration);
     const shape = classId ? input.classShapesById.get(classId) : undefined;
+    const parentShape = shape?.parent;
     const className = declaration.name?.text;
+    const hasExtends =
+      declaration.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) ?? false;
     if (
       !className ||
       !shape ||
@@ -82,10 +111,12 @@ export function preparePlainImplicitConstructorSupports(input: {
       input.classShapes.get(className) !== shape ||
       input.identityPlan.identityContext.declarationByClassId.get(shape.classId) !== declaration ||
       declaration.parent !== input.sourceFile ||
-      declaration.heritageClauses?.length ||
+      (hasExtends && !parentShape) ||
       declaration.members.some(ts.isConstructorDeclaration) ||
-      declaration.members.some((member) => ts.isPropertyDeclaration(member) && !hasStaticModifier(member)) ||
-      shape.constructorParams.length !== 0 ||
+      declaration.members.some(
+        (member) => ts.isPropertyDeclaration(member) && member.initializer && !hasStaticModifier(member),
+      ) ||
+      (!parentShape && shape.constructorParams.length !== 0) ||
       input.ctx.classExternrefBackedSet.has(className)
     ) {
       continue;
@@ -95,6 +126,8 @@ export function preparePlainImplicitConstructorSupports(input: {
     const newTarget = shape.constructorTarget;
     const initTarget = shape.constructorInitTarget;
     const layout = types.layoutForClass(shape.classId);
+    const parentInitTarget = parentShape?.constructorInitTarget;
+    const parentLayout = parentShape ? types.layoutForClass(parentShape.classId) : undefined;
     if (
       !unitId ||
       unit?.kind !== "class-implicit-constructor" ||
@@ -105,7 +138,14 @@ export function preparePlainImplicitConstructorSupports(input: {
       newTarget?.binding.kind !== "support" ||
       initTarget?.binding.kind !== "unit" ||
       initTarget.binding.unitId !== unitId ||
-      !layout
+      !layout ||
+      (parentShape &&
+        (parentInitTarget?.binding.kind !== "unit" ||
+          !parentLayout ||
+          (input.identityPlan.identityContext.unitByUnitId.get(parentInitTarget.binding.unitId)?.kind ===
+            "class-implicit-constructor" &&
+            input.identityPlan.identityContext.unitByUnitId.get(parentInitTarget.binding.unitId)?.terminalOwnerId !==
+              null)))
     ) {
       continue;
     }
@@ -116,6 +156,13 @@ export function preparePlainImplicitConstructorSupports(input: {
     const newSignature = newFunc ? input.ctx.mod.types[newFunc.typeIdx] : undefined;
     const initSignature = initFunc ? input.ctx.mod.types[initFunc.typeIdx] : undefined;
     const selfType: ValType = { kind: "ref", typeIdx: layout.typeIdx };
+    const parentInitUnitId = parentInitTarget?.binding.kind === "unit" ? parentInitTarget.binding.unitId : undefined;
+    const parentInitFuncIdx = parentInitUnitId ? registry.handleForUnit(parentInitUnitId) : undefined;
+    const parentInitFunc = parentInitFuncIdx === undefined ? undefined : definedFuncAt(input.ctx, parentInitFuncIdx);
+    const parentInitSignature = parentInitFunc ? input.ctx.mod.types[parentInitFunc.typeIdx] : undefined;
+    const parentSelfType: ValType | undefined = parentLayout
+      ? { kind: "ref", typeIdx: parentLayout.typeIdx }
+      : undefined;
     if (
       newFuncIdx === undefined ||
       initFuncIdx === undefined ||
@@ -123,15 +170,27 @@ export function preparePlainImplicitConstructorSupports(input: {
       !initFunc ||
       !newSignature ||
       newSignature.kind !== "func" ||
-      newSignature.params.length !== 0 ||
+      newSignature.params.length !== shape.constructorParams.length ||
       newSignature.results.length !== 1 ||
       !sameValType(newSignature.results[0]!, selfType) ||
       !initSignature ||
       initSignature.kind !== "func" ||
-      initSignature.params.length !== 1 ||
-      !sameValType(initSignature.params[0]!, selfType) ||
+      initSignature.params.length !== newSignature.params.length + 1 ||
+      !newSignature.params.every((param, index) => sameValType(param, initSignature.params[index]!)) ||
+      !sameValType(initSignature.params.at(-1)!, selfType) ||
       initSignature.results.length !== 1 ||
-      !sameValType(initSignature.results[0]!, selfType)
+      !sameValType(initSignature.results[0]!, selfType) ||
+      (parentShape &&
+        (parentInitUnitId === undefined ||
+          parentInitFuncIdx === undefined ||
+          !parentInitSignature ||
+          parentInitSignature.kind !== "func" ||
+          parentInitSignature.params.length !== newSignature.params.length + 1 ||
+          !newSignature.params.every((param, index) => sameValType(param, parentInitSignature.params[index]!)) ||
+          !parentSelfType ||
+          !sameValType(parentInitSignature.params.at(-1)!, parentSelfType) ||
+          parentInitSignature.results.length !== 1 ||
+          !sameValType(parentInitSignature.results[0]!, parentSelfType)))
     ) {
       continue;
     }
@@ -143,8 +202,42 @@ export function preparePlainImplicitConstructorSupports(input: {
       newFuncIdx,
       initFuncIdx,
       initFunc,
+      selfParamIndex: newSignature.params.length,
+      ...(parentInitUnitId ? { parentInitUnitId } : {}),
+      ...(parentInitFuncIdx !== undefined ? { parentInitFuncIdx } : {}),
     });
   }
+
+  // Preparation is component-atomic across the synthesized parent chain. A
+  // derived support body may reference an implicit parent only when that exact
+  // parent support is staged too, and may reference an explicit constructor
+  // only when its terminal body belongs to this preparation transaction.
+  for (let changed = true; changed; ) {
+    changed = false;
+    const stagedUnitIds = new Set(staged.map(({ unitId }) => unitId));
+    const filtered = staged.filter((candidate) => {
+      if (!candidate.parentInitUnitId) return true;
+      const parentUnit = input.identityPlan.identityContext.unitByUnitId.get(candidate.parentInitUnitId);
+      return parentUnit?.kind === "class-implicit-constructor"
+        ? stagedUnitIds.has(candidate.parentInitUnitId)
+        : input.ownerUnitIds.has(candidate.parentInitUnitId);
+    });
+    if (filtered.length !== staged.length) {
+      staged = filtered;
+      changed = true;
+    }
+  }
+
+  const inheritanceDepth = (shape: IrClassShape): number => {
+    let depth = 0;
+    const seen = new Set<IrClassId>();
+    for (let current = shape.parent; current && !seen.has(current.classId); current = current.parent) {
+      seen.add(current.classId);
+      depth++;
+    }
+    return depth;
+  };
+  staged.sort((left, right) => inheritanceDepth(left.shape) - inheritanceDepth(right.shape));
 
   for (const candidate of staged) {
     const target = candidate.shape.constructorTarget;
@@ -152,7 +245,7 @@ export function preparePlainImplicitConstructorSupports(input: {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `plain implicit constructor ${candidate.unitId} lost its prepared _new support binding`,
+        `implicit constructor ${candidate.unitId} lost its prepared _new support binding`,
       );
     }
     const preparedNewFuncIdx = registry.prepareSupport(target.binding.bindingId);
@@ -160,17 +253,31 @@ export function preparePlainImplicitConstructorSupports(input: {
       throw new IrInvariantError(
         "missing-function-slot",
         "resolve",
-        `plain implicit constructor ${candidate.unitId} changed its _new allocator during preparation`,
+        `implicit constructor ${candidate.unitId} changed its _new allocator during preparation`,
       );
     }
     candidate.initFunc.locals = [];
-    candidate.initFunc.body = [{ op: "local.get", index: 0 }];
-    const preparedInitFuncIdx = registry.preparePlainImplicitConstructorUnit(candidate.unitId);
+    candidate.initFunc.body = [];
+    if (candidate.parentInitFuncIdx !== undefined) {
+      for (let index = 0; index < candidate.selfParamIndex; index++) {
+        candidate.initFunc.body.push({ op: "local.get", index });
+      }
+      candidate.initFunc.body.push({ op: "local.get", index: candidate.selfParamIndex });
+      candidate.initFunc.body.push({ op: "call", funcIdx: candidate.parentInitFuncIdx });
+      candidate.initFunc.body.push({ op: "drop" });
+    }
+    candidate.initFunc.body.push({ op: "local.get", index: candidate.selfParamIndex });
+    const preparedInitFuncIdx = registry.prepareImplicitConstructorUnit(candidate.unitId, {
+      selfParamIndex: candidate.selfParamIndex,
+      ...(candidate.parentInitUnitId && candidate.parentInitFuncIdx !== undefined
+        ? { parent: { unitId: candidate.parentInitUnitId, funcIdx: candidate.parentInitFuncIdx } }
+        : {}),
+    });
     if (preparedInitFuncIdx !== candidate.initFuncIdx) {
       throw new IrInvariantError(
         "missing-function-slot",
         "resolve",
-        `plain implicit constructor ${candidate.unitId} changed its _init allocator during preparation`,
+        `implicit constructor ${candidate.unitId} changed its _init allocator during preparation`,
       );
     }
     installAstFreeClassConstructorNewWrapper(input.ctx, {
