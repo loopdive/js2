@@ -51,6 +51,7 @@ import {
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { remainderFastPathPlan } from "../codegen/analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
@@ -70,6 +71,7 @@ import {
   referencesPromotedI32Slot,
 } from "./analysis/i32-slots.js";
 import { IrFunctionBuilder } from "./builder.js";
+import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import {
   irImportFuncRef,
@@ -9748,25 +9750,20 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       binop = "f64.div";
       resultType = irVal({ kind: "f64" });
       break;
-    // #2945 — `a % b` lowers to a call of the Wasm-native exact-remainder
-    // helper (`__fmod`, #2056): the SAME helper legacy's `emitModulo` emits,
-    // so IR and legacy agree bit-for-bit on every edge (`x % 0` → NaN,
-    // `-0 % x` → -0, `Inf % x` → NaN, `x % Inf` → x, large-quotient
-    // exactness). Deliberately NOT the naive `a - trunc(a/b)*b` sequence —
-    // legacy tried that and replaced it (ULP drift, collapse-to-0 for large
-    // quotients, overflow to ±Inf; see `src/codegen/fmod.ts`). The symbolic
-    // exact-helper ref is materialized on demand by the integration resolver
-    // (`resolveFunc` calls `ensureFmodIntrinsic` — append-only, idempotent).
-    // f64 operands only: i32-typed operands demote to legacy, which keeps
-    // its `emitSafeI32Rem` i32 fast mode (trap-free rem semantics).
+    // AOT-proven integer operands lower directly to signed-i64 remainder.
+    // Unknown operands get an inline integrality/range guard and the exact
+    // `__fmod` helper only in the fallback arm. Negative proof (fractional,
+    // non-finite, out-of-i64, or zero-divisor constants) skips speculation.
     case ts.SyntaxKind.PercentToken: {
       requireF64(isF64, "%", cx.funcName);
-      const fmodResult = cx.builder.emitCall(fmodRefFor(expr.right, cx.checker), [lhs, rhs], irVal({ kind: "f64" }));
-      if (fmodResult === null) {
-        // Unreachable: a non-null resultType always yields a value id.
-        throw new Error(`ir/from-ast: internal — __fmod call produced no value in ${cx.funcName}`);
-      }
-      return fmodResult;
+      const rangeContext = cx.checker ? { oracle: new TsCheckerOracle(cx.checker) } : undefined;
+      return emitNumberRemainder(
+        cx.builder,
+        lhs,
+        rhs,
+        remainderFastPathPlan(rangeContext, expr.left, expr.right),
+        fmodRefFor(expr.right, cx.checker),
+      );
     }
     // #1126 Stage 3 — magnitude compares accept f64 OR i32 operands.
     // i32 operands emit native `i32.{lt,le,gt,ge}_{s,u}` based on

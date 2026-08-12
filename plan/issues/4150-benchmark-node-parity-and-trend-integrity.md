@@ -3,7 +3,7 @@ id: 4150
 title: "`perf(benchmarks): finish Node parity and make trend data comparable`"
 status: ready
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-12
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -22,6 +22,8 @@ related: [3898, 3899, 3900, 3902, 3904, 3929]
 # which own the closures being specialized.
 loc-budget-allow:
   - src/runtime.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
 # `<anonymous>#83` is the depth-guard wrapper block inside buildImports. The
 # gate keys anonymous functions positionally, so this entry is brittle by
 # nature — if it stops matching after an unrelated edit to buildImports, the
@@ -39,6 +41,23 @@ func-budget-allow:
 Continue the benchmark-parity program that brought the published compiler lanes
 much closer to, or ahead of, Node/V8. This issue is the durable takeover record
 for the remaining compiler work and benchmark-page credibility fixes.
+
+### 2026-08-12 remainder fast-path handoff
+
+Numeric `%` now has three AOT outcomes shared by the legacy and IR frontends:
+proven signed-i64 operands emit direct `i64.rem_s`; unknown operands emit
+finite/integral/range and trap guards with exact `__fmod` fallback; and a
+negative proof (fractional, out-of-range, or zero-divisor constants) emits only
+the exact helper. `JS2WASM_INLINE_REMAINDER_FAST_PATH=0` is the comparison and
+rollback switch. The IR primitive additions require the narrow `nodes.ts` and
+`verify.ts` LOC allowances above; the lowering itself lives in focused
+remainder modules rather than growing compiler drivers.
+
+On the v8x mixed kernel (20,000 calls × 512 rounds, js2wasm O4 followed by
+`wasm-opt -O4`), the matched five-process median moved from 22,839.8 to
+16,521.7 ns/call: 1.4× faster, or 27.7% less elapsed time. The optimized Wasm
+contains one guard-free statically proven remainder and four guarded dynamic
+remainders per round instead of five unconditional helper calls.
 
 ## Takeover point and branches
 
