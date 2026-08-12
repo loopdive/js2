@@ -169,7 +169,7 @@ import {
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
   prepareIrBodies,
-  selectR2PreparedFreeFunctions,
+  selectR2PreparedOwnerComponents,
   selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMemberUnitIds,
   type PreparedIrClassMemberBodies,
@@ -1345,6 +1345,13 @@ function buildIrClassShapes(
         }
         constructorParams.push(ir);
       }
+    } else if (parentShape) {
+      // A derived class with no source constructor has the spec-synthesized
+      // `constructor(...args) { super(...args); }`. The direct backend already
+      // clones the nearest user-parent constructor ABI for this support body;
+      // project the same exact ABI so `new Derived(args)` can be prepared
+      // instead of being rejected as an apparent zero-arity call.
+      constructorParams.push(...parentShape.constructorParams);
     }
     if (!ctorOk) continue;
     const constructorInitTarget = callableTarget(
@@ -3468,6 +3475,7 @@ interface IrFirstBodyRouting {
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skipBodies?: ReadonlySet<string>;
@@ -3678,6 +3686,52 @@ function rejectPreparedLexicalComponentBeforeMutation(
   plan.safeSelection.moduleInit = undefined;
 }
 
+/**
+ * A class member admitted by the selector may still leave the prepared owner
+ * fixed point when one of its exact local callees is not preparable. Class
+ * bodies cannot use the old post-direct overlay as a retry path: doing so
+ * compiles the legacy body first and then rebuilds the rejected member against
+ * a target population that deliberately excludes its callee. Withdraw the
+ * exact structural member before final-context integration and retain one
+ * typed reason for the terminal ledger.
+ */
+function withdrawClassMembersOutsidePreparedOwnerClosure(
+  plan: IrOverlayPlan,
+  consideredUnitIds: ReadonlySet<IrUnitId>,
+  retainedUnitIds: ReadonlySet<IrUnitId>,
+): void {
+  const rejectedUnitIds = new Set([...consideredUnitIds].filter((unitId) => !retainedUnitIds.has(unitId)));
+  if (rejectedUnitIds.size === 0) return;
+
+  const retainedSelectionUnitIds = new Set(
+    [...(plan.safeSelection.classMemberUnitIds ?? [])].filter((unitId) => !rejectedUnitIds.has(unitId)),
+  );
+  const retainedLegacyNames = new Set<string>();
+  for (const unitId of retainedSelectionUnitIds) {
+    const claim = plan.identityPlan.identitySelection.classMembers?.get(unitId);
+    if (!claim) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `retained prepared class member ${unitId} has no exact structural claim`,
+      );
+    }
+    retainedLegacyNames.add(claim.legacyMatchName);
+  }
+  for (const unitId of rejectedUnitIds) {
+    if (!plan.preparationFailuresByUnitId.has(unitId)) {
+      plan.preparationFailuresByUnitId.set(unitId, {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: "the class member's exact local call graph crosses the final prepared owner population",
+      });
+    }
+  }
+  plan.safeSelection.classMemberUnitIds = retainedSelectionUnitIds;
+  plan.safeSelection.classMembers = retainedLegacyNames;
+}
+
 function planIrFirstBodyRouting(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -3712,19 +3766,6 @@ function planIrFirstBodyRouting(
     moduleInitPlanning,
     plan.identityPlan.identityContext,
   );
-  const preliminaryR2Names =
-    !hasLateFeaturePreparation || preliminaryModuleInit
-      ? selectR2PreparedFreeFunctions({
-          ctx,
-          sourceFile,
-          selectedLegacyNames: preliminarySelection.funcs,
-          baselineLegacyNames: new Set(),
-          identityPlan: plan.identityPlan,
-          claimsByUnitId: plan.functionClaimsByUnitId,
-          overridesByUnitId: plan.overrideMapByUnitId,
-          hostVoidCallbacks: plan.hostVoidCallbacks,
-        })
-      : new Set<string>();
   const selectedPreliminaryClassMemberUnitIds = selectPreparedClassMemberUnitIds(
     ctx,
     preliminarySelection,
@@ -3734,7 +3775,7 @@ function planIrFirstBodyRouting(
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
-  const preliminaryClassMemberUnitIds = new Set(
+  const eligiblePreliminaryClassMemberUnitIds = new Set(
     [...selectedPreliminaryClassMemberUnitIds].filter((unitId) => {
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
@@ -3747,15 +3788,39 @@ function planIrFirstBodyRouting(
       );
     }),
   );
+  const preliminaryOwnerPopulation =
+    !hasLateFeaturePreparation || preliminaryModuleInit
+      ? selectR2PreparedOwnerComponents({
+          ctx,
+          sourceFile,
+          selectedLegacyNames: preliminarySelection.funcs,
+          baselineLegacyNames: new Set(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+          identityPlan: plan.identityPlan,
+          claimsByUnitId: plan.functionClaimsByUnitId,
+          overridesByUnitId: plan.overrideMapByUnitId,
+          hostVoidCallbacks: plan.hostVoidCallbacks,
+        })
+      : {
+          freeFunctionNames: new Set<string>(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+        };
+  const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
+  const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
+  withdrawClassMembersOutsidePreparedOwnerClosure(
+    plan,
+    eligiblePreliminaryClassMemberUnitIds,
+    preliminaryClassMemberUnitIds,
+  );
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
   // preparation transaction. Constructor `_new` wrappers remain AST-free
   // support. The exact prepared Map initializer may join that transaction;
   // every other module-init shape remains direct.
-  // selectR2PreparedFreeFunctions closes candidates over exact local call
-  // edges, so any callable edge that crosses into one of those owners removes
-  // the complete affected free-function component before preparation.
+  // selectR2PreparedOwnerComponents closes candidates over exact local call
+  // edges, so any callable edge that crosses into those owners removes the
+  // complete affected free/class component before preparation.
   const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
   const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
@@ -3882,6 +3947,7 @@ function planIrFirstBodyRouting(
       const preparedFreeFunctions = preparedBodies.freeFunctions;
       const preparedClassMembers = preparedBodies.classMembers;
       const preparedModuleInit = preparedBodies.moduleInit;
+      const preparedImplicitConstructorUnitIds = preparedBodies.implicitConstructorUnitIds;
       const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
@@ -3896,6 +3962,7 @@ function planIrFirstBodyRouting(
         preparedFreeFunctions,
         ...(preparedClassMembers ? { preparedClassMembers } : {}),
         ...(preparedModuleInit ? { preparedModuleInit } : {}),
+        ...(preparedImplicitConstructorUnitIds.size > 0 ? { preparedImplicitConstructorUnitIds } : {}),
         preparedReport,
         preparedSelection,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
@@ -3926,6 +3993,66 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   const keepOpenTypeIdxs = callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
+}
+
+function compileIrRoutedDeclarations(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly preparedClassMembers?: PreparedIrClassMemberBodies;
+  readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly irSkipBodies?: ReadonlySet<string>;
+  readonly irPreserveBodies?: ReadonlySet<string>;
+}): {
+  readonly actuallySkipped?: string[];
+  readonly classMemberUnitIds: readonly IrUnitId[];
+  readonly implicitConstructorUnitIds: readonly IrUnitId[];
+  readonly moduleInitNames: readonly string[];
+} {
+  const classMemberNames: string[] = [];
+  const classMemberUnitIds: IrUnitId[] = [];
+  const implicitConstructorUnitIds: IrUnitId[] = [];
+  const moduleInitNames: string[] = [];
+  const classBodyRouting =
+    input.preparedClassMembers || (input.preparedImplicitConstructorUnitIds?.size ?? 0) > 0
+      ? {
+          skipBodies: input.preparedClassMembers?.skipBodies ?? new Set<string>(),
+          preserveSkippedBodies: input.preparedClassMembers?.preserveBodies ?? new Set<string>(),
+          skippedNames: classMemberNames,
+          skipBodyUnitIds: input.preparedClassMembers?.skipBodyUnitIds ?? new Set<IrUnitId>(),
+          preserveSkippedBodyUnitIds: input.preparedClassMembers?.preserveBodyUnitIds ?? new Set<IrUnitId>(),
+          skippedUnitIds: classMemberUnitIds,
+          skipImplicitConstructorUnitIds: input.preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
+          skippedImplicitConstructorUnitIds: implicitConstructorUnitIds,
+        }
+      : undefined;
+  const moduleInitBodyRouting = input.preparedModuleInit
+    ? {
+        skipBody: input.preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
+        preserveSkippedBody: input.preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
+        skippedNames: moduleInitNames,
+      }
+    : undefined;
+  const previousClassBodyRouting = input.ctx.irClassBodyRouting;
+  try {
+    input.ctx.irClassBodyRouting = classBodyRouting;
+    return {
+      actuallySkipped: compileDeclarations(
+        input.ctx,
+        input.sourceFile,
+        input.irSkipBodies,
+        input.irPreserveBodies,
+        classBodyRouting,
+        "full",
+        moduleInitBodyRouting,
+      ),
+      classMemberUnitIds,
+      implicitConstructorUnitIds,
+      moduleInitNames,
+    };
+  } finally {
+    input.ctx.irClassBodyRouting = previousClassBodyRouting;
+  }
 }
 
 /** Compile a typed AST into a WasmModule IR */
@@ -4470,6 +4597,7 @@ export function generateModule(
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
     let preparedClassMembers: PreparedIrClassMemberBodies | undefined;
     let preparedModuleInit: PreparedIrModuleInitBody | undefined;
+    let preparedImplicitConstructorUnitIds: ReadonlySet<IrUnitId> | undefined;
     let preparedReport: IrIntegrationReport | undefined;
     let preparedSelection:
       | Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">
@@ -4486,6 +4614,7 @@ export function generateModule(
       preparedFreeFunctions = routing.preparedFreeFunctions;
       preparedClassMembers = routing.preparedClassMembers;
       preparedModuleInit = routing.preparedModuleInit;
+      preparedImplicitConstructorUnitIds = routing.preparedImplicitConstructorUnitIds;
       preparedReport = routing.preparedReport;
       preparedSelection = routing.preparedSelection;
       irSkipBodies = routing.skipBodies;
@@ -4493,50 +4622,20 @@ export function generateModule(
     }
 
     // Third pass: compile function bodies
-    const actuallySkippedClassMembers: string[] = [];
-    const actuallySkippedClassMemberUnitIds: IrUnitId[] = [];
-    const actuallySkippedModuleInit: string[] = [];
-    const classBodyRouting = preparedClassMembers
-      ? {
-          skipBodies: preparedClassMembers.skipBodies,
-          preserveSkippedBodies: preparedClassMembers.preserveBodies,
-          skippedNames: actuallySkippedClassMembers,
-          skipBodyUnitIds: preparedClassMembers.skipBodyUnitIds,
-          preserveSkippedBodyUnitIds: preparedClassMembers.preserveBodyUnitIds,
-          skippedUnitIds: actuallySkippedClassMemberUnitIds,
-        }
-      : undefined;
-    const moduleInitBodyRouting = preparedModuleInit
-      ? {
-          skipBody: preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
-          preserveSkippedBody: preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
-          skippedNames: actuallySkippedModuleInit,
-        }
-      : undefined;
-    const previousClassBodyRouting = ctx.irClassBodyRouting;
-    let actuallySkipped: string[] | undefined;
-    try {
-      if (classBodyRouting) {
-        ctx.irClassBodyRouting = classBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-      actuallySkipped = compileDeclarations(
-        ctx,
-        ast.sourceFile,
-        irSkipBodies,
-        irPreserveBodies,
-        classBodyRouting,
-        "full",
-        moduleInitBodyRouting,
-      );
-    } finally {
-      if (previousClassBodyRouting) {
-        ctx.irClassBodyRouting = previousClassBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-    }
+    const {
+      actuallySkipped,
+      classMemberUnitIds: actuallySkippedClassMemberUnitIds,
+      implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
+      moduleInitNames: actuallySkippedModuleInit,
+    } = compileIrRoutedDeclarations({
+      ctx,
+      sourceFile: ast.sourceFile,
+      preparedClassMembers,
+      preparedImplicitConstructorUnitIds,
+      preparedModuleInit,
+      irSkipBodies,
+      irPreserveBodies,
+    });
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
@@ -4554,6 +4653,13 @@ export function generateModule(
           preparedClassMembers.skipBodyUnitIds,
           actuallySkippedClassMemberUnitIds,
           "class member",
+        );
+      }
+      if (preparedImplicitConstructorUnitIds && preparedImplicitConstructorUnitIds.size > 0) {
+        correlateIrSkippedBodyUnitIds(
+          preparedImplicitConstructorUnitIds,
+          actuallySkippedImplicitConstructorUnitIds,
+          "implicit constructor support",
         );
       }
       if (preparedModuleInit) {

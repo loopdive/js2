@@ -1089,12 +1089,7 @@ class SourceInventoryBuilder {
             `${displayName}_new`,
             "class-member",
             false,
-            {
-              kind: "unsupported",
-              code: "implicit-class-initializer",
-              stage: "select",
-              detail: `${displayName} has instance field initialization owned by an implicit direct constructor`,
-            },
+            undefined,
             true,
             compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
           )
