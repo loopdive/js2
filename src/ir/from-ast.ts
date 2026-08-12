@@ -315,6 +315,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
+  functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
@@ -5910,6 +5912,40 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
+
+  // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
+  // object. Evaluate arguments left-to-right for effects, discard them, then
+  // call the symbolic zero-arg provider which returns the lane's real
+  // undefined carrier. Intercept before receiver lowering: ambient Function
+  // has no general IR value representation, and treating `prototype` as an
+  // instance method is the original category error.
+  if (
+    receiverIdentifier?.text === "Function" &&
+    methodName === "prototype" &&
+    !receiverIsDirectModuleBinding &&
+    cx.scope.get("Function") === undefined &&
+    cx.resolver?.isAmbientBinding?.(receiverIdentifier) !== false
+  ) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype spread call is not supported (${cx.funcName})`,
+      );
+    }
+    const target = cx.resolver?.functionPrototypeCallTarget?.();
+    if (!target) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype call provider unavailable (${cx.funcName})`,
+      );
+    }
+    for (const argument of expr.arguments) lowerDiscardedExpression(argument, cx);
+    const result = cx.builder.emitCall(target, [], irVal({ kind: "externref" }));
+    if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
+    return result;
+  }
 
   const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
   if (preparedDateNow !== null) return preparedDateNow;
