@@ -743,28 +743,41 @@ export function tryBufferViewAttributeReads(
       const abAny = allocLocal(fctx, `__rab_any_${fctx.locals.length}`, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: abAny });
       if (propName === "resizable") {
+        // IsResizableArrayBuffer is the native subtype identity and is
+        // intentionally unaffected by detachment. Keep the boolean tag on the
+        // ValType so an escaped value boxes as true/false, not numeric 1/0.
         fctx.body.push({ op: "local.get", index: abAny });
         fctx.body.push({ op: "ref.test", typeIdx: rabTypeIdx });
-        // Boolean result. In non-fast mode surface it as an f64 0/1 (truthy in
-        // conditionals, and `=== true` compares fold correctly downstream).
-        if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
-        return ctx.fast ? { kind: "i32", boolean: true } : { kind: "f64" };
+        return { kind: "i32", boolean: true };
       }
-      // maxByteLength: if resizable read field 2, else the byteLength (field 0).
+      // maxByteLength: detached -> 0; otherwise resizable field 2 or fixed
+      // byteLength field 0.
       fctx.body.push({ op: "local.get", index: abAny });
-      fctx.body.push({ op: "ref.test", typeIdx: rabTypeIdx });
+      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "i32.const", value: 0 });
+      fctx.body.push({ op: "i32.lt_s" });
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } as ValType },
-        then: [
-          { op: "local.get", index: abAny },
-          { op: "ref.cast", typeIdx: rabTypeIdx },
-          { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
-        ],
+        then: [{ op: "i32.const", value: 0 }],
         else: [
           { op: "local.get", index: abAny },
-          { op: "ref.cast", typeIdx: vecTypeIdx },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+          { op: "ref.test", typeIdx: rabTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } as ValType },
+            then: [
+              { op: "local.get", index: abAny },
+              { op: "ref.cast", typeIdx: rabTypeIdx },
+              { op: "struct.get", typeIdx: rabTypeIdx, fieldIdx: 2 },
+            ],
+            else: [
+              { op: "local.get", index: abAny },
+              { op: "ref.cast", typeIdx: vecTypeIdx },
+              { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            ],
+          },
         ],
       });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
@@ -967,6 +980,15 @@ export function tryBufferViewAttributeReads(
             { op: "local.get", index: lenTmpBL },
             { op: "ref.cast", typeIdx: vecTypeIdx },
             { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            // A detached ArrayBuffer stores -1 as its canonical native marker;
+            // the public byteLength accessor observes zero.
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: lenTmpBL },
+            { op: "ref.cast", typeIdx: vecTypeIdx },
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            { op: "select" },
           ],
           else: [{ op: "i32.const", value: 0 }],
         });

@@ -20,6 +20,8 @@ export interface CodegenError {
   message: string;
   line: number;
   column: number;
+  /** Source file that owns the diagnostic node, when one is available. */
+  file?: string;
   /**
    * #1921 — the compile-failure gate keys on this field, not on a magic
    * `"Codegen error:"` message prefix.
@@ -323,6 +325,13 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /**
+   * True only while every concrete allocation of this wrapper/subtype is a
+   * checker-certified one-shot host callback. Such values are consumed by
+   * `__make_callback(-2, closure)` immediately and never enter the generic
+   * callable/property/method bridges. An ordinary allocation clears the bit.
+   */
+  hostOneShotOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined

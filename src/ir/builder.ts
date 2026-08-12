@@ -725,6 +725,7 @@ export class IrFunctionBuilder {
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     captures: readonly IrValueId[],
+    hostOneShot = false,
   ): IrValueId {
     if (captureFieldTypes.length !== captures.length) {
       throw new Error(
@@ -741,6 +742,7 @@ export class IrFunctionBuilder {
       signature,
       captureFieldTypes: [...captureFieldTypes],
       captures: [...captures],
+      ...(hostOneShot ? { hostOneShot: true } : {}),
       result,
       resultType,
       alloc,
@@ -1167,6 +1169,7 @@ export class IrFunctionBuilder {
   finish(closureSubtype?: {
     readonly signature: IrClosureSignature;
     readonly captureFieldTypes: readonly IrType[];
+    readonly hostOneShot?: boolean;
   }): IrFunction {
     if (this.current !== null) {
       throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.id.name})`);

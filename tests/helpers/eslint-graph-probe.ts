@@ -29,7 +29,13 @@ export interface CompileProjectProbeReport {
   binaryByteLength: number;
   valid: boolean;
   validationError: string | null;
-  errors: Array<{ message: string }>;
+  errors: Array<{
+    message: string;
+    line: number;
+    column: number;
+    severity: "error" | "warning";
+    file?: string;
+  }>;
 }
 
 /** Every way the probe can fail *as a probe*, as opposed to compiling badly. */

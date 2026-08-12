@@ -86,6 +86,8 @@ import {
   requireMatchingLoweringPlanOwner,
   requireValidImportedCallTarget,
   type IrDirectCallLoweringPlan,
+  type IrHostDateGetterLoweringPlan,
+  type IrHostDateSnapshotLoweringPlan,
   type IrHostVoidCallbackLoweringPlan,
   type IrImportedCallLoweringPlan,
   type IrImportedOptionalParamPlan,
@@ -94,12 +96,15 @@ import {
 } from "./ast-lowering-plans.js";
 export type {
   IrDirectCallLoweringPlan,
+  IrHostDateGetterLoweringPlan,
+  IrHostDateSnapshotLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
   IrImportedOptionalParamPlan,
   IrTopLevelFunctionValueLoweringPlan,
   ModuleBindingGlobal,
 } from "./ast-lowering-plans.js";
+import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
@@ -686,6 +691,8 @@ export interface AstToIrOptions {
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** (#2856) Exact Promise-delay construction/timer/resolve node plans. */
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   /**
@@ -1053,6 +1060,8 @@ export function lowerFunctionAstToIr(
     importedCalls: options.importedCalls,
     topLevelFunctionValues: options.topLevelFunctionValues,
     hostVoidCallbacks: options.hostVoidCallbacks,
+    hostDateSnapshots: options.hostDateSnapshots,
+    hostDateGetters: options.hostDateGetters,
     promiseDelays: options.promiseDelays,
     classShapes: options.classShapes,
     resolver: options.resolver,
@@ -1529,6 +1538,18 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         // in the same block / scope.
         continue;
       }
+
+      // A non-terminating guard is already representable by the structured
+      // statement-if used inside loop/body buffers. Keep it in the current
+      // statement list so the condition is evaluated exactly once and the
+      // trailing statements are emitted once, rather than building a CFG
+      // continuation that the Wasm structurizer must duplicate into both
+      // arms.
+      if (!terminates) {
+        lowerIfBodyStatement(s, cx);
+        continue;
+      }
+
       const rawCond = lowerExpr(s.expression, cx, irVal({ kind: "i32" }));
       // The move-only selector already admits dynamic conditions and the
       // structured-if path below uses this same canonical ToBoolean bridge.
@@ -1536,50 +1557,21 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
       const cond = coerceLoopCondToBool(rawCond, s.expression, cx, "if");
       const rest = stmts.slice(i + 1);
 
-      if (terminates) {
-        // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
-        const thenId = cx.builder.reserveBlockId();
-        const elseId = cx.builder.reserveBlockId();
-        cx.builder.terminate({
-          kind: "br_if",
-          condition: cond,
-          ifTrue: { target: thenId, args: [] },
-          ifFalse: { target: elseId, args: [] },
-        });
-
-        cx.builder.openReservedBlock(thenId);
-        lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
-
-        cx.builder.openReservedBlock(elseId);
-        lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
-        return;
-      }
-
-      // Non-terminating then-arm: emit a converging guard. Both the then-block
-      // (after its side effect) and the false branch fall through to a shared
-      // continuation block holding `<rest>`. (#1979)
+      // Early-return rewrite: `if (cond) <tail> else { <rest> }`.
       const thenId = cx.builder.reserveBlockId();
-      const contId = cx.builder.reserveBlockId();
+      const elseId = cx.builder.reserveBlockId();
       cx.builder.terminate({
         kind: "br_if",
         condition: cond,
         ifTrue: { target: thenId, args: [] },
-        ifFalse: { target: contId, args: [] },
+        ifFalse: { target: elseId, args: [] },
       });
 
       cx.builder.openReservedBlock(thenId);
-      const thenCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
-      lowerStmt(s.thenStatement, thenCx);
-      cx.builder.terminate({ kind: "br", branch: { target: contId, args: [] } });
+      lowerTail(s.thenStatement, { ...cx, scope: new Map(cx.scope) });
 
-      cx.builder.openReservedBlock(contId);
-      const continuationScope = joinedStringEncodingScope(cx.scope, [cx.scope, thenCx.scope]);
-      if (rest.length === 0) {
-        // No trailing statements — the function's implicit void return.
-        cx.builder.terminate({ kind: "return", values: [] });
-      } else {
-        lowerStatementList(rest, { ...cx, scope: continuationScope });
-      }
+      cx.builder.openReservedBlock(elseId);
+      lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
       return;
     }
     throw new Error(`ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`);
@@ -1634,6 +1626,8 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     return;
   }
   if (ts.isCallExpression(expr)) {
+    const hostDateGetter = lowerHostDateGetterCall(expr, cx);
+    if (hostDateGetter !== undefined) return;
     if (ts.isPropertyAccessExpression(expr.expression) && !expr.questionDotToken) {
       void lowerMethodCall(expr, cx, /* statementPosition */ true);
       return;
@@ -1937,6 +1931,8 @@ interface LowerCtx {
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
@@ -3079,7 +3075,15 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     const scalarVecValue =
       cx.resolver?.isVecValueExpression?.(d.initializer) === true ||
       cx.emptyArrayInference.isResolvedVectorExpression(d.initializer);
-    if (!scalarVecValue && !proveUnboxedNumberLocal(d, inferred, cx)) {
+    // A checker-certified Date snapshot is deliberately carried as raw f64
+    // milliseconds. The snapshot resolver proves this exact `const` has no
+    // aliases, writes, escapes, or uses outside the three supported getters,
+    // so it has a closed representation contract even though its TS type is
+    // `Date`, not `number`. Keep the general scalar proof gate for every other
+    // f64 local.
+    const hostDateSnapshotCarrier =
+      ts.isNewExpression(d.initializer) && cx.hostDateSnapshots?.has(d.initializer) === true;
+    if (!scalarVecValue && !hostDateSnapshotCarrier && !proveUnboxedNumberLocal(d, inferred, cx)) {
       const boundKind = asVal(inferred)?.kind === "i32" ? "i32" : "f64";
       // (#3784) Typed `unsupported`, never a plain `Error` — an untyped throw is
       // classified `invariant` and hard-fails, defeating the demotion below.
@@ -3452,7 +3456,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
       cx.funcName,
     );
   }
-  if (binding.tdzGlobalRef) {
+  if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
     const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
     const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
     const thenBody = cx.builder.collectBodyInstrs(() => {
@@ -3478,6 +3482,39 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
 function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
   lowerResolvedModuleBindingTdzCheck(name, binding, cx);
   return cx.builder.emitGlobalGet(binding.globalRef, binding.type);
+}
+
+function lowerHostDateSnapshotExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId | undefined {
+  const plan = cx.hostDateSnapshots?.get(expr);
+  if (!plan) return undefined;
+  requireMatchingLoweringPlanOwner("host Date snapshot", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  const snapshot = cx.builder.emitCall(irImportFuncRef("env", "__date_now"), [], irVal({ kind: "f64" }));
+  if (snapshot === null) throw new Error(`ir/from-ast: host Date snapshot produced no value (${cx.funcName})`);
+  return snapshot;
+}
+
+function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | undefined {
+  const plan = cx.hostDateGetters?.get(expr);
+  if (!plan) return undefined;
+  requireMatchingLoweringPlanOwner("host Date getter", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  if (
+    !ts.isPropertyAccessExpression(expr.expression) ||
+    expr.expression.name.text !== plan.getter ||
+    expr.arguments.length !== 0
+  ) {
+    throw new Error(`ir/from-ast: host Date getter plan changed shape (${cx.funcName})`);
+  }
+  const receiver = lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
+  if (asVal(cx.builder.typeOf(receiver))?.kind !== "f64") {
+    throw new Error(`ir/from-ast: host Date snapshot lost its f64 timestamp carrier (${cx.funcName})`);
+  }
+  const result = cx.builder.emitCall(
+    irIntrinsicFuncRef(irDateSnapshotGetterSymbol(plan.getter)),
+    [receiver],
+    irVal({ kind: "f64" }),
+  );
+  if (result === null) throw new Error(`ir/from-ast: host Date getter produced no value (${cx.funcName})`);
+  return result;
 }
 
 function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
@@ -3682,6 +3719,8 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     return lowerConditional(expr, cx);
   }
   if (ts.isCallExpression(expr)) {
+    const hostDateGetter = lowerHostDateGetterCall(expr, cx);
+    if (hostDateGetter !== undefined) return hostDateGetter;
     const callResult = lowerCall(expr, cx);
     if (callResult === null) {
       // Unreachable: expression position (statementPosition=false) throws
@@ -3698,6 +3737,8 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   // by checking the resolver's `getExternClassInfo` before the slice-4
   // class-shape lookup.
   if (ts.isNewExpression(expr)) {
+    const hostDateSnapshot = lowerHostDateSnapshotExpression(expr, cx);
+    if (hostDateSnapshot !== undefined) return hostDateSnapshot;
     return lowerNewExpression(expr, cx);
   }
   // Slice 10 (#1169i): RegExp literal `/pattern/flags`. Lowers to
@@ -6372,7 +6413,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         const closure = lowerHostVoidCallbackExpression(hostCallbackArrow, hostCallbackPlan, cx);
         const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
-        const sentinel = cx.builder.emitConst({ kind: "i32", value: -1 }, irVal({ kind: "i32" }));
+        // -2 is the compiler-owned one-shot sentinel: this exact inline
+        // closure is created solely for the immediately following host call,
+        // so it cannot cross the boundary a second time. The runtime may
+        // therefore skip the identity WeakMap used by the reusable -1 ABI.
+        const sentinel = cx.builder.emitConst({ kind: "i32", value: -2 }, irVal({ kind: "i32" }));
         const wrapped = cx.builder.emitCall(
           irImportFuncRef("env", "__make_callback"),
           [sentinel, packed],
@@ -10440,7 +10485,7 @@ function lowerHostVoidCallbackExpression(
   ) {
     throw new Error(`ir/from-ast: malformed host void callback plan (${cx.funcName})`);
   }
-  return lowerClosureExpressionWithSignature(expr, plan.signature, plan.captureNames, cx);
+  return lowerClosureExpressionWithSignature(expr, plan.signature, plan.captureNames, cx, { hostOneShot: true });
 }
 
 function lowerClosureExpressionWithSignature(
@@ -10530,10 +10575,17 @@ function lowerClosureExpressionWithSignature(
     captureFieldTypes,
     cx,
     exact?.allowConciseVoidBody === true,
+    exact?.hostOneShot === true,
   );
   cx.lifted.push(lifted);
 
-  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs);
+  return cx.builder.emitClosureNew(
+    liftedTarget,
+    signature,
+    captureFieldTypes,
+    captureArgs,
+    exact?.hostOneShot === true,
+  );
 }
 
 /**
@@ -10622,6 +10674,8 @@ function liftNestedFunction(
     importedCalls: cx.importedCalls,
     topLevelFunctionValues: cx.topLevelFunctionValues,
     hostVoidCallbacks: cx.hostVoidCallbacks,
+    hostDateSnapshots: cx.hostDateSnapshots,
+    hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
@@ -10676,6 +10730,7 @@ function liftClosureBody(
   captureFieldTypes: readonly IrType[],
   cx: LowerCtx,
   allowConciseVoidBody = false,
+  hostOneShot = false,
 ): IrFunction {
   const liftedName = liftedIdentity.name;
   const builder = new IrFunctionBuilder(
@@ -10719,6 +10774,8 @@ function liftClosureBody(
     importedCalls: cx.importedCalls,
     topLevelFunctionValues: cx.topLevelFunctionValues,
     hostVoidCallbacks: cx.hostVoidCallbacks,
+    hostDateSnapshots: cx.hostDateSnapshots,
+    hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
@@ -10755,7 +10812,11 @@ function liftClosureBody(
       }
       lowerDiscardedExpression(expr.body, innerCx);
       builder.terminate({ kind: "return", values: [] });
-      return builder.finish({ signature, captureFieldTypes: [...captureFieldTypes] });
+      return builder.finish({
+        signature,
+        captureFieldTypes: [...captureFieldTypes],
+        ...(hostOneShot ? { hostOneShot: true } : {}),
+      });
     }
     // Concise body — wrap as `return <expr>`.
     const v = lowerExpr(expr.body, innerCx, signature.returnType);
@@ -10772,7 +10833,11 @@ function liftClosureBody(
     lowerStatementList(expr.body.statements, innerCx);
   }
 
-  return builder.finish({ signature, captureFieldTypes: [...captureFieldTypes] });
+  return builder.finish({
+    signature,
+    captureFieldTypes: [...captureFieldTypes],
+    ...(hostOneShot ? { hostOneShot: true } : {}),
+  });
 }
 
 /**

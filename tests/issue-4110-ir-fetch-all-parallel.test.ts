@@ -177,7 +177,10 @@ describe("#4110 prepared fetchAllParallel", () => {
     expect(entry).toMatch(/array\.new_fixed/);
     expect(entry.match(/array\.new_fixed/g)).toHaveLength(1);
     expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b`));
-    expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b\\s+local\\.(?:tee|set) \\d+`));
+    // The Promise result is single-use by pending.push. Keep it on the Wasm
+    // stack through the immediately following typed vec append; a local spill
+    // here is safe but needlessly regresses the direct backend's call shape.
+    expect(entry).toMatch(new RegExp(`\\bcall ${fetchUserIdx}\\b\\s+call \\d+\\b`));
     expect(scalarBridgeIndices.length).toBeGreaterThan(0);
     for (const index of scalarBridgeIndices) expect(entry).not.toMatch(new RegExp(`\\bcall ${index}\\b`));
     expect(entry).toMatch(new RegExp(`\\bcall ${promiseAllIdx}\\b`));
@@ -192,6 +195,34 @@ describe("#4110 prepared fetchAllParallel", () => {
     expectExactMaterializedContinuation(result.wat);
     expect(resume).toMatch(/struct\.set/);
     expect(`${source}\n${continuation}\n${resume}`).not.toMatch(/array\.new_fixed/);
+  });
+
+  it("prepares unique string support used only in the post-await IR state", async () => {
+    const literal = "__post_await_ir_string__";
+    const source = EXACT_SOURCE.replace("let code = 0;", `let code = "${literal}".length;`);
+    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "fetchAllParallel";
+      const result = await compileTracked(source, "issue-4110-post-await-string-preparation.ts");
+      expectSuccess(result);
+      expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchAllParallel")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+
+      const imports = buildImports(result.imports, undefined, result.stringPool);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+      imports.setExports?.(instance.exports as Record<string, Function>);
+      const ids = numberVec(instance.exports, [1, 2, 3]);
+      await expect(
+        settled((instance.exports.fetchAllParallel as (ids: unknown) => Promise<number>)(ids)),
+      ).resolves.toBe(60 + literal.length);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+    }
   });
 
   it("fans out before settlement and preserves Promise.all input order", async () => {

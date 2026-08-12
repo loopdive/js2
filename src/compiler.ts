@@ -1027,6 +1027,7 @@ function runPipeline(input: PipelineInput): CompileResult {
           line: err.line,
           column: err.column,
           severity: isFatalCodegenDiagnostic(err) ? "error" : "warning",
+          ...(err.file ? { file: err.file } : {}),
         });
       }
       // #1921 — gate on severity, not a "Codegen error:" message prefix.

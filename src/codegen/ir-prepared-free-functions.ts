@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
@@ -34,6 +34,7 @@ import {
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
+import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -295,10 +296,17 @@ function deferUnsealedPreparedComponents(
       deferredUnitIds.has(artifact.terminalOwnerUnitId) && artifact.artifactUnitId !== artifact.terminalOwnerUnitId,
   );
   if (deferredDerivedArtifact) {
+    const ownerEvidence = report.terminalEvidence.find(
+      (evidence) => evidence.unitId === deferredDerivedArtifact.terminalOwnerUnitId,
+    );
+    const detail =
+      ownerEvidence?.kind === "failed"
+        ? `: ${ownerEvidence.error.outcome.code}: ${ownerEvidence.error.outcome.detail}`
+        : "";
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "patch",
-      `unsealed prepared owner ${deferredDerivedArtifact.terminalOwnerUnitId} produced derived artifact ${deferredDerivedArtifact.artifactUnitId}`,
+      `unsealed prepared owner ${deferredDerivedArtifact.terminalOwnerUnitId} produced derived artifact ${deferredDerivedArtifact.artifactUnitId}${detail}`,
     );
   }
   return {
@@ -868,6 +876,7 @@ export function selectR2PreparedFreeFunctions(input: {
     IrUnitId,
     { readonly params: readonly IrType[]; readonly returnType: IrType | null }
   >;
+  readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
 }): ReadonlySet<string> {
   const candidates = new Set<IrUnitId>();
   const baseline = new Set<IrUnitId>();
@@ -896,7 +905,7 @@ export function selectR2PreparedFreeFunctions(input: {
       input.ctx.fast ||
       isAsync ||
       claim.declaration.asteriskToken ||
-      containsNestedExecutableSyntax(claim.declaration) ||
+      containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
       functionValueTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
       !override.params.every(r2StableSignatureType) ||
