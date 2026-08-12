@@ -7735,7 +7735,7 @@ function compileTypedArraySet(
     compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
     fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx, nullable: true });
+    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
   } else {
     compileExpression(ctx, fctx, propAccess.expression);
   }

@@ -423,7 +423,6 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
-import { emitDateHostBridge } from "./date-host-bridge.js";
 import {
   emitStructFieldGetters,
   emitStructFieldBooleanMarkers,
@@ -4977,7 +4976,6 @@ export function generateModule(
     // closures of arity ≤ N; lower-arity closures see extra args dropped.
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
-    emitDateHostBridge(ctx);
 
     // #1636-S1 — emit __call_fn_method_N exports (N=0..2) for calling Wasm
     // closures from JS with a host-supplied `this`-value. Same dispatch
@@ -7674,7 +7672,6 @@ export function generateMultiModule(
     emitClosureCallExport2(ctx);
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
-    emitDateHostBridge(ctx);
 
     // Mirror the single-source receiver bridge over the complete multi-source
     // closure registry. Include native-construction demand in the cap so its

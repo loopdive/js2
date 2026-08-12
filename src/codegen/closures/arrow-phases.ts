@@ -659,7 +659,7 @@ export function planClosureCaptures(
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
-      !ts.isVariableDeclaration(bindingDeclaration) &&
+      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) ||
         (!transitivelyRequiredNames.has(name) && !observesHoistedFunctionValue(ctx, arrow, name)))
     ) {

@@ -3544,6 +3544,7 @@ export function compileArrowAsCallback(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       directReferencedNames.has(name) &&
+      bindingDeclaration !== undefined &&
       isCallbackFunctionDeclaration(bindingDeclaration) &&
       !ts.isVariableDeclaration(bindingDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
