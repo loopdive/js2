@@ -1036,6 +1036,17 @@ recursive layouts, the direct-only mode, and the other excluded class families
 still consume the late class ABI/body paths. The next exact R3 transaction is
 forward class-field layout commitment; recursive cells follow separately.
 
+Qualification after rebasing onto current `origin/main` is green. The complete
+focused R2/R3 matrix passes **122/122**. Hybrid and fail-closed IR-only shadows
+both report **37/37 IR, 0 legacy bodies, 0 Unsupported, and 0 Invariants**. The
+ordinary fallback gate has zero unintended, post-claim, or module-level
+rejections; the shape diagnostic has zero attributed body-shape rejections.
+All eight equivalence shards report **1,645 passing, 24 known failures, and zero
+new regressions** (twelve stale baseline entries now pass but are deliberately
+not mixed into this PR). Cross-backend differential is **29/29**. Typecheck,
+lint, formatting, issue/optimization-retirement integrity, oracle separation,
+IR adoption, verdict-oracle, LOC, and function-budget gates also pass.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
