@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 7d2c16b..5433d46 100644
+index 7d2c16b..5ad29cf 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -4,0 +5,9 @@ version = 4
@@ -21,9 +21,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "anyhow"
-+version = "1.0.102"
++version = "1.0.104"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
++checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 +
 +[[package]]
 +name = "arbitrary"
@@ -77,12 +77,12 @@ index 7d2c16b..5433d46 100644
 + "thiserror",
 +]
 +
-@@ -112,0 +178,189 @@ dependencies = [
+@@ -112,0 +178,193 @@ dependencies = [
 +[[package]]
 +name = "cpp_demangle"
-+version = "0.4.5"
++version = "0.5.1"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "f2bb79cb74d735044c972aae58ed0aaa9a837e85b01106a54c39e42e97f62253"
++checksum = "0667304c32ea56cb4cd6d2d7c0cfe9a2f8041229db8c033af7f8d69492429def"
 +dependencies = [
 + "cfg-if",
 +]
@@ -98,27 +98,27 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-assembler-x64"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "3d521bdbc6098937af83ef4ab6d5c07398126bc71878f7ef4ea9499977978ef5"
++checksum = "d552bd33b7a56dc70aeb1e1c960e51a218fa0db50f23873b500a310379450b2d"
 +dependencies = [
 + "cranelift-assembler-x64-meta",
 +]
 +
 +[[package]]
 +name = "cranelift-assembler-x64-meta"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "3dde0b83164d4a497860af4236271178bc640512b067101e0853e4f74eaa4df5"
++checksum = "078e80e4c222279e3330f6aa1a256ca77ddf156d4453166a9f09defedc4594dd"
 +dependencies = [
 + "cranelift-srcgen",
 +]
 +
 +[[package]]
 +name = "cranelift-bforest"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "0111d110b72b4efad69a372e29e21628652fd0bcab66967e5c8350ab679affd5"
++checksum = "820ce15d4ad3562d613c31a67b6d0434d403e7091a68d1349903842f7d31737e"
 +dependencies = [
 + "cranelift-entity",
 + "wasmtime-internal-core",
@@ -126,9 +126,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-bitset"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "cf01ecc92fc5499789d79c3b817299d5a8ddd828d31dcf0f9cc3cc66f38dbb36"
++checksum = "61bca563d4b86d285928d9e27f97f27039bb33a0fc524fa130d7d0c106bf8ab3"
 +dependencies = [
 + "serde",
 + "serde_derive",
@@ -137,9 +137,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-codegen"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "6cd2563bead0090c3879a7ff7327f7550c9d59bb5d05ecc8cd7886977aa3125a"
++checksum = "709f4b7c0fb57d952658d5b5c07fbdc4149acd7b7f0de9678ae754b9c981949a"
 +dependencies = [
 + "bumpalo",
 + "cranelift-assembler-x64",
@@ -154,10 +154,13 @@ index 7d2c16b..5433d46 100644
 + "hashbrown 0.17.1",
 + "libm",
 + "log",
++ "postcard",
 + "pulley-interpreter",
 + "regalloc2",
 + "rustc-hash 2.1.2",
 + "serde",
++ "serde_derive",
++ "sha2",
 + "smallvec",
 + "target-lexicon",
 + "wasmtime-internal-core",
@@ -165,9 +168,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-codegen-meta"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "9640d250d26f9381a73dc7f9862b27928d4809119aec73be0e556612e67b6a99"
++checksum = "903dc8915af62aad1d9d0f39a5968d33fa80b9aa899ed6f56e47f40ca4512e1e"
 +dependencies = [
 + "cranelift-assembler-x64-meta",
 + "cranelift-codegen-shared",
@@ -178,24 +181,24 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-codegen-shared"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "a07f156b90efc94371ddb3536f76e4ab671ad2e093bfa5511e10198cadbb0c47"
++checksum = "0522d74c227e49f3fd49ab055311486ae4f09083262b66705bed676952491469"
 +
 +[[package]]
 +name = "cranelift-control"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d75a76fd9dd37dcbc3d2d2e00abe3281a7e88adc035fba3b8114cc69981576ec"
++checksum = "66560ea1c5cef72e170b18e46d263dba2d3169c9d39e8cafdab2173c6362cc1a"
 +dependencies = [
 + "arbitrary",
 +]
 +
 +[[package]]
 +name = "cranelift-entity"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "2eea22522144ba08c7e7ef94bfc25d474ef016c2771974b8ab1986734ac85965"
++checksum = "b62ef5b17cc814d27e96b66a5b46da0e4ce2b8ac55a6d478048bb99d04b05526"
 +dependencies = [
 + "cranelift-bitset",
 + "serde",
@@ -205,11 +208,12 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-frontend"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "efa2826c80dff1d93b19b3cfbcaf9fae44c78d739a98d146dd5bd89c51e14367"
++checksum = "a87e0aaa39dbf70693b348a221e45904111704ee8f9fef140498471005f9842d"
 +dependencies = [
 + "cranelift-codegen",
++ "hashbrown 0.17.1",
 + "log",
 + "smallvec",
 + "target-lexicon",
@@ -217,15 +221,15 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-isle"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "e238a69b95c5415456f22189494a12db94f313bb72b6ec9cc88ddf2f1056e28e"
++checksum = "cf79003ebfa1eed5e87f3b84446ad5236f540268289960e14f387dc9b28e40b7"
 +
 +[[package]]
 +name = "cranelift-native"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "eceb0ebd8d6aef6bb287e8d532a164b0db1c0062961211e9c22a91f67521c098"
++checksum = "05bf4f235743c81e67ee4db617c5a4a0b65d58d3f0cfc575ee0f1a4e0cd58273"
 +dependencies = [
 + "cranelift-codegen",
 + "libc",
@@ -234,9 +238,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "cranelift-srcgen"
-+version = "0.132.3"
++version = "0.134.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "004643f39a7bec553de5263d650db30e5b9caec1d5cbe065fd732b7ec9ae40d0"
++checksum = "f6977c2a71ab1e0d1e62f966b411a498aa04c4dce47d93d52f8a360a06058922"
 +
 +[[package]]
 +name = "crc32fast"
@@ -267,7 +271,7 @@ index 7d2c16b..5433d46 100644
 + "crypto-common",
 +]
 +
-@@ -161,0 +416,28 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
+@@ -161,0 +420,28 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 +[[package]]
 +name = "embedded-io"
 +version = "0.4.0"
@@ -296,7 +300,7 @@ index 7d2c16b..5433d46 100644
 + "windows-sys",
 +]
 +
-@@ -167,0 +450,34 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+@@ -167,0 +454,98 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 +[[package]]
 +name = "fnv"
 +version = "1.0.7"
@@ -308,6 +312,70 @@ index 7d2c16b..5433d46 100644
 +version = "0.2.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
++
++[[package]]
++name = "futures"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
++dependencies = [
++ "futures-channel",
++ "futures-core",
++ "futures-io",
++ "futures-sink",
++ "futures-task",
++ "futures-util",
++]
++
++[[package]]
++name = "futures-channel"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
++dependencies = [
++ "futures-core",
++ "futures-sink",
++]
++
++[[package]]
++name = "futures-core"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
++
++[[package]]
++name = "futures-io"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
++
++[[package]]
++name = "futures-sink"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d"
++
++[[package]]
++name = "futures-task"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
++
++[[package]]
++name = "futures-util"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
++dependencies = [
++ "futures-channel",
++ "futures-core",
++ "futures-io",
++ "futures-sink",
++ "futures-task",
++ "memchr",
++ "pin-project-lite",
++ "slab",
++]
 +
 +[[package]]
 +name = "generic-array"
@@ -331,7 +399,7 @@ index 7d2c16b..5433d46 100644
 + "stable_deref_trait",
 +]
 +
-@@ -173,0 +490,23 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+@@ -173,0 +558,23 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 +[[package]]
 +name = "hashbrown"
 +version = "0.16.1"
@@ -355,7 +423,7 @@ index 7d2c16b..5433d46 100644
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 +
-@@ -329,0 +669,12 @@ dependencies = [
+@@ -329,0 +737,12 @@ dependencies = [
 +[[package]]
 +name = "indexmap"
 +version = "2.14.0"
@@ -368,7 +436,7 @@ index 7d2c16b..5433d46 100644
 + "serde_core",
 +]
 +
-@@ -338,0 +690,9 @@ dependencies = [
+@@ -338,0 +758,9 @@ dependencies = [
 +[[package]]
 +name = "itertools"
 +version = "0.14.0"
@@ -378,31 +446,28 @@ index 7d2c16b..5433d46 100644
 + "either",
 +]
 +
-@@ -344,0 +705,6 @@ checksum = "2ceaf4c6c48465bead8cb6a0b7c4ee0c86ecbb31239032b9c66ab9a08d2f3ee1"
+@@ -344,0 +773,6 @@ checksum = "2ceaf4c6c48465bead8cb6a0b7c4ee0c86ecbb31239032b9c66ab9a08d2f3ee1"
 +[[package]]
 +name = "leb128fmt"
 +version = "0.1.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 +
-@@ -366,0 +733,6 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+@@ -366,0 +801,6 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 +[[package]]
 +name = "linux-raw-sys"
 +version = "0.12.1"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 +
-@@ -378,0 +751,9 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+@@ -378,0 +819,6 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 +[[package]]
 +name = "mach2"
-+version = "0.4.3"
++version = "0.6.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
-+dependencies = [
-+ "libc",
-+]
++checksum = "dae608c151f68243f2b000364e1f7b186d9c29845f7d2d85bd31b9ad77ad552b"
 +
-@@ -384,0 +766,9 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+@@ -384,0 +831,9 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 +[[package]]
 +name = "memfd"
 +version = "0.6.5"
@@ -412,7 +477,7 @@ index 7d2c16b..5433d46 100644
 + "rustix",
 +]
 +
-@@ -409,0 +800,18 @@ dependencies = [
+@@ -409,0 +865,18 @@ dependencies = [
 +[[package]]
 +name = "object"
 +version = "0.39.1"
@@ -431,7 +496,13 @@ index 7d2c16b..5433d46 100644
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 +
-@@ -415,0 +824,12 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+@@ -415,0 +889,18 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
++[[package]]
++name = "pin-project-lite"
++version = "0.2.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
++
 +[[package]]
 +name = "postcard"
 +version = "1.1.3"
@@ -444,12 +515,12 @@ index 7d2c16b..5433d46 100644
 + "serde",
 +]
 +
-@@ -445,0 +866,23 @@ dependencies = [
+@@ -445,0 +937,23 @@ dependencies = [
 +[[package]]
 +name = "pulley-interpreter"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "b04adf8f93264685f2c70a3edb8f828c791e71b22659253319c33f29d1165aef"
++checksum = "bc5c8c21ea032e4efbdf2d067dc45171779dbe0c8ecf20ef4a57efa7474f2b0a"
 +dependencies = [
 + "cranelift-bitset",
 + "log",
@@ -459,16 +530,16 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "pulley-macros"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "2c120a6af1a574a42efcd9df2ad27cb78bc04118c5e0c69e90599f17301a1c7a"
++checksum = "9f10925455d5dde962e3604eade797ba5488644c8ee14a44191e2f2b58980574"
 +dependencies = [
 + "proc-macro2",
 + "quote",
 + "syn",
 +]
 +
-@@ -454,0 +898,14 @@ dependencies = [
+@@ -454,0 +969,15 @@ dependencies = [
 +[[package]]
 +name = "regalloc2"
 +version = "0.15.1"
@@ -480,17 +551,18 @@ index 7d2c16b..5433d46 100644
 + "hashbrown 0.17.1",
 + "log",
 + "rustc-hash 2.1.2",
++ "serde",
 + "smallvec",
 +]
 +
-@@ -493,0 +951,6 @@ dependencies = [
+@@ -493,0 +1023,6 @@ dependencies = [
 +[[package]]
 +name = "rustc-demangle"
 +version = "0.1.27"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "b50b8869d9fc858ce7266cce0194bd74df58b9d0e3f6df3a9fc8eb470d95c09d"
 +
-@@ -499,0 +963,25 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+@@ -499,0 +1035,29 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 +[[package]]
 +name = "rustc-hash"
 +version = "2.1.2"
@@ -515,8 +587,12 @@ index 7d2c16b..5433d46 100644
 +version = "1.0.28"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
++dependencies = [
++ "serde",
++ "serde_core",
++]
 +
-@@ -529,0 +1018,11 @@ dependencies = [
+@@ -529,0 +1094,11 @@ dependencies = [
 +[[package]]
 +name = "sha2"
 +version = "0.10.9"
@@ -528,18 +604,25 @@ index 7d2c16b..5433d46 100644
 + "digest",
 +]
 +
-@@ -546,0 +1046,3 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+@@ -541,0 +1117,6 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
++[[package]]
++name = "slab"
++version = "0.4.12"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
++
+@@ -546,0 +1128,3 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 +dependencies = [
 + "serde",
 +]
-@@ -584,0 +1087,6 @@ dependencies = [
+@@ -584,0 +1169,6 @@ dependencies = [
 +[[package]]
 +name = "target-lexicon"
 +version = "0.13.5"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 +
-@@ -618,0 +1127,29 @@ dependencies = [
+@@ -618,0 +1209,29 @@ dependencies = [
 +[[package]]
 +name = "termcolor"
 +version = "1.4.1"
@@ -569,14 +652,14 @@ index 7d2c16b..5433d46 100644
 + "syn",
 +]
 +
-@@ -641,0 +1179,6 @@ dependencies = [
+@@ -641,0 +1261,6 @@ dependencies = [
 +[[package]]
 +name = "typenum"
 +version = "1.20.1"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
 +checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 +
-@@ -674,0 +1218,252 @@ dependencies = [
+@@ -674,0 +1300,224 @@ dependencies = [
 + "wasmtime",
 +]
 +
@@ -588,9 +671,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasm-encoder"
-+version = "0.248.0"
++version = "0.252.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "ac92cf547bc18d27ecc521015c08c353b4f18b84ab388bb6d1b6b682c620d9b6"
++checksum = "8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f"
 +dependencies = [
 + "leb128fmt",
 + "wasmparser",
@@ -598,9 +681,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmparser"
-+version = "0.248.0"
++version = "0.252.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "aa4439c5eee9df71ee0c6efb37f63b1fcb1fec38f85f5142c54e7ed05d33091a"
++checksum = "d3eb099dcadcde5be9eef55e3a337128efd4e44b4c93122487e4d2e4e1c6627c"
 +dependencies = [
 + "bitflags",
 + "hashbrown 0.17.1",
@@ -611,9 +694,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmprinter"
-+version = "0.248.0"
++version = "0.252.0"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "30b264a5410b008d4d199a92bf536eae703cbd614482fc1ec53831cf19e1c183"
++checksum = "7142797de29b35ab8dbf15c00f55fda75d409da4c423a8ab8bd6b667a785824b"
 +dependencies = [
 + "anyhow",
 + "termcolor",
@@ -622,9 +705,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "8a83ef84ac8bab735c89e27b0268b0586099fbe81281ae45be2b8e4f407b2daa"
++checksum = "c80ca6098e0d4d06886d91d7f2cc3cb6623eb583c4c0ab3c89cbfb6098c8586c"
 +dependencies = [
 + "addr2line",
 + "async-trait",
@@ -632,6 +715,7 @@ index 7d2c16b..5433d46 100644
 + "bumpalo",
 + "cc",
 + "cfg-if",
++ "futures",
 + "libc",
 + "log",
 + "mach2",
@@ -654,15 +738,14 @@ index 7d2c16b..5433d46 100644
 + "wasmtime-internal-jit-icache-coherence",
 + "wasmtime-internal-unwinder",
 + "wasmtime-internal-versioned-export-macros",
-+ "wasmtime-internal-winch",
 + "windows-sys",
 +]
 +
 +[[package]]
 +name = "wasmtime-environ"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "439686d3deb38525c86b88bbc90f7ba669f70c8edc7d6b35147c738bbef5ff76"
++checksum = "134f9d136d29c76f6c1b4c9b468e97a2efc38c7d49fd188e39b64870b2fea701"
 +dependencies = [
 + "anyhow",
 + "cpp_demangle",
@@ -676,6 +759,7 @@ index 7d2c16b..5433d46 100644
 + "object",
 + "postcard",
 + "rustc-demangle",
++ "semver",
 + "serde",
 + "serde_derive",
 + "sha2",
@@ -684,14 +768,21 @@ index 7d2c16b..5433d46 100644
 + "wasm-encoder",
 + "wasmparser",
 + "wasmprinter",
++ "wasmtime-internal-component-util",
 + "wasmtime-internal-core",
 +]
 +
 +[[package]]
-+name = "wasmtime-internal-core"
-+version = "45.0.3"
++name = "wasmtime-internal-component-util"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "3073c03f97f871fe6400e68621c863b93ba79296f8e570285231952d23fcc804"
++checksum = "fc8a678149885cae00289f806fbe74c7863084cf74cace0b8dc73602279400e1"
++
++[[package]]
++name = "wasmtime-internal-core"
++version = "47.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8a0092c4b9d070ac5e278b6d0db10f5e71214190f0347ca57502b4692f796321"
 +dependencies = [
 + "hashbrown 0.17.1",
 + "libm",
@@ -700,9 +791,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-cranelift"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "7a15981261d361f9c93b42929f446b4009840853ceea181ad6e17730f4016a0b"
++checksum = "6851ebc9e03cab23d9821d2b2505d380bdfe38f35ccec945247b05274d85c98b"
 +dependencies = [
 + "cfg-if",
 + "cranelift-codegen",
@@ -727,9 +818,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-fiber"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "33aed9d91d54c9f861ba7e3c3130bded8a7a63e01fe58c3a9a36b45d6ee0fb57"
++checksum = "9b26da6d5f60d4c438da70bba3553fe810a840533a64156be287dca2081c6991"
 +dependencies = [
 + "cc",
 + "cfg-if",
@@ -742,9 +833,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-jit-debug"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "944942118aab67e7b4febfe88a65d0af4cfd10af8ed0e79fd6cf39d75359ab7e"
++checksum = "ed621ba25d7bf78b7edd7b4749abbb27c2e5cdba836c9504a424ee74b6c23149"
 +dependencies = [
 + "cc",
 + "wasmtime-internal-versioned-export-macros",
@@ -752,9 +843,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-jit-icache-coherence"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "37dee05e8c35759826f6b926cd949c51f771b6a58619d8e60c63c3f3d3e5e59b"
++checksum = "5684ba160951baad06a725696f3c590e2fb0e8067c2aebee27bf7f9259058e85"
 +dependencies = [
 + "cfg-if",
 + "libc",
@@ -764,9 +855,9 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-unwinder"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "a83f7ebe911a6f1605ff0d3a678472ddb1fcc57c3e2f6bae5dd4d170b625b3ed"
++checksum = "112eead527bffa8ff0646a11fb4339a9d52ddd1da2b9a6fce4aff84c815dd94f"
 +dependencies = [
 + "cfg-if",
 + "cranelift-codegen",
@@ -777,30 +868,13 @@ index 7d2c16b..5433d46 100644
 +
 +[[package]]
 +name = "wasmtime-internal-versioned-export-macros"
-+version = "45.0.3"
++version = "47.0.3"
 +source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d75980644456dc003238766254b0e5f002704630237ccd0728747991fe2739d7"
++checksum = "153592e0bed824fc13c6696203fa1bd7bd20eb355316475e39a55f081ef80eca"
 +dependencies = [
 + "proc-macro2",
 + "quote",
 + "syn",
-+]
-+
-+[[package]]
-+name = "wasmtime-internal-winch"
-+version = "45.0.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "81af36995b4720b32e3d667541b548a27184a859d09a6ee745eaba095f5a6f6e"
-+dependencies = [
-+ "cranelift-codegen",
-+ "gimli",
-+ "log",
-+ "object",
-+ "target-lexicon",
-+ "wasmparser",
-+ "wasmtime-environ",
-+ "wasmtime-internal-cranelift",
-+ "winch-codegen",
 +]
 +
 +[[package]]
@@ -810,26 +884,7 @@ index 7d2c16b..5433d46 100644
 +checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 +dependencies = [
 + "windows-sys",
-+]
-+
-+[[package]]
-+name = "winch-codegen"
-+version = "45.0.3"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d73bc25d27222248f9bafc7e9945f61e74275360c3ea0d34008810d436140a53"
-+dependencies = [
-+ "cranelift-assembler-x64",
-+ "cranelift-codegen",
-+ "gimli",
-+ "regalloc2",
-+ "smallvec",
-+ "target-lexicon",
-+ "thiserror",
-+ "wasmparser",
-+ "wasmtime-environ",
-+ "wasmtime-internal-core",
-+ "wasmtime-internal-cranelift",
-@@ -682,0 +1478,9 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+@@ -682,0 +1532,9 @@ checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 +[[package]]
 +name = "windows-sys"
 +version = "0.61.2"
@@ -840,33 +895,71 @@ index 7d2c16b..5433d46 100644
 +]
 +
 diff --git a/Cargo.toml b/Cargo.toml
-index 3333d64..4da60be 100644
+index 3333d64..b268dd5 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -70,0 +71,3 @@ engine_quickjs = []
+@@ -70,0 +71,7 @@ engine_quickjs = []
 +# Engine-free, ahead-of-time module backend. This first vertical slice owns
 +# handles in Rust and evaluates linked TypeScript graphs through js2wasm.
 +engine_js2wasm = ["dep:wasmtime"]
-@@ -89,0 +93,2 @@ vendor_jsc = []
-+# Compatibility alias for the initial spike name.
-+js2wasm_spike = ["engine_js2wasm"]
-@@ -105,0 +111 @@ timezone_provider = { version = "0.2.3", features = ["zoneinfo64"] }
-+wasmtime = { version = "=45.0.3", optional = true, default-features = false, features = ["cranelift", "gc", "gc-drc", "runtime", "std"] }
-@@ -124,2 +130,2 @@ bytes = "1"
++# Development-only bridge that invokes js2wasm and precompiles its raw Wasm in
++# the v8x process. Production builds use `engine_js2wasm` alone and therefore
++# do not link Cranelift or any other Wasm compiler.
++js2wasm_runtime_compile = ["engine_js2wasm", "wasmtime/cranelift"]
+@@ -89,0 +97,2 @@ vendor_jsc = []
++# Compatibility alias for the initial source-compiling spike name.
++js2wasm_spike = ["js2wasm_runtime_compile"]
+@@ -105,0 +115 @@ timezone_provider = { version = "0.2.3", features = ["zoneinfo64"] }
++wasmtime = { version = "=47.0.3", optional = true, default-features = false, features = ["gc", "gc-drc", "runtime", "std"] }
+@@ -124,2 +134,2 @@ bytes = "1"
 -# Excluded on purpose: test_ui (trybuild, needs deno crate fixtures),
 -# test_simdutf (feature-gated). They are not part of the tracked suite.
 +# Excluded on purpose: test_ui (trybuild, needs deno crate fixtures).
 +# test_simdutf is registered separately and runs when `simdutf` is enabled.
-@@ -130,0 +137,10 @@ path = "vendor/rusty_v8/tests/test_api.rs"
+@@ -130,0 +141,10 @@ path = "vendor/rusty_v8/tests/test_api.rs"
 +[[test]]
 +name = "js2wasm_spike"
 +path = "tests/js2wasm_spike.rs"
-+required-features = ["js2wasm_spike"]
++required-features = ["engine_js2wasm"]
 +
 +[[test]]
 +name = "rv8_test_simdutf"
 +path = "vendor/rusty_v8/tests/test_simdutf.rs"
 +required-features = ["simdutf"]
++
+diff --git a/README.md b/README.md
+index b7e82e4..f518b6f 100644
+--- a/README.md
++++ b/README.md
+@@ -15,0 +16,29 @@ Supported engines:
++## Experimental compiler-free js2wasm backend
++
++`engine_js2wasm` executes a trusted Wasmtime-precompiled js2wasm artifact. It
++does not link Cranelift, invoke js2wasm, or require a JavaScript engine at run
++time. Deno-shaped functions are ordinary typed imports implemented directly in
++Rust; the current vertical slice implements `Deno.cwd()` without a WASI or
++Component Model boundary.
++
++Within one process the backend shares one Wasmtime `Engine`, one host-function
++`Linker`, and one cached `Module`/`InstancePre` for each artifact. Every v8x
++module evaluation receives a separate `Store` and `Instance`, so its WasmGC
++heap, globals, permissions, and host state remain isolated.
++
++The development-only `js2wasm_runtime_compile` feature invokes the external
++js2wasm compiler and enables Wasmtime's Cranelift precompiler. Set
++`V8X_JS2WASM_ARTIFACT_OUTPUT` to save its target-specific `.cwasm` result. A
++production build uses only `engine_js2wasm` and loads that immutable artifact
++through `V8X_JS2WASM_AOT_MODULE`:
++
++```sh
++V8X_JS2WASM_AOT_MODULE=/absolute/path/app.cwasm \
++cargo test --release --no-default-features \
++  --features engine_js2wasm,simdutf --test js2wasm_spike
++```
++
++Wasmtime precompiled artifacts contain native executable code. They must come
++from a trusted build pipeline using the same Wasmtime version, target, and
++engine configuration; never load an artifact supplied by an untrusted user.
 +
 diff --git a/src/js2wasm/mod.rs b/src/js2wasm/mod.rs
 new file mode 100644
@@ -2616,27 +2709,40 @@ index 0000000..590dba5
 +}
 diff --git a/src/js2wasm_spike.rs b/src/js2wasm_spike.rs
 new file mode 100644
-index 0000000..bde508f
+index 0000000..6dcd4cc
 --- /dev/null
 +++ b/src/js2wasm_spike.rs
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,458 @@
 +//! Experimental js2wasm module backend.
 +//!
-+//! js2wasm remains a build-time compiler. At runtime v8x embeds Wasmtime,
-+//! instantiates the resulting WasmGC module once, and keeps that instance alive
-+//! with the owning V8 module handle. The first Deno-shaped host seam is
-+//! `Deno.cwd()`: the compiled TypeScript wrapper reconstructs its string from
-+//! two primitive UTF-16 imports, avoiding a JavaScript-host `externref` ABI.
++//! js2wasm remains a build-time compiler. At runtime v8x embeds compiler-free
++//! Wasmtime, shares one engine plus each precompiled module across isolates,
++//! and keeps a private store/instance alive with each owning V8 module handle.
++//! The first Deno-shaped host seam is `Deno.cwd()`: the compiled TypeScript
++//! wrapper reconstructs its string from two direct UTF-16 imports, avoiding a
++//! JavaScript-host `externref` ABI or a WASI/component boundary.
 +
++use std::collections::HashMap;
++#[cfg(feature = "js2wasm_runtime_compile")]
 +use std::collections::HashSet;
++#[cfg(feature = "js2wasm_runtime_compile")]
 +use std::fs;
++#[cfg(feature = "js2wasm_runtime_compile")]
 +use std::io::Write;
 +use std::path::{Path, PathBuf};
++#[cfg(feature = "js2wasm_runtime_compile")]
 +use std::process::Command;
-+use std::sync::atomic::{AtomicU64, Ordering};
++#[cfg(feature = "js2wasm_runtime_compile")]
++use std::sync::atomic::AtomicU64;
++use std::sync::atomic::{AtomicUsize, Ordering};
++use std::sync::{Mutex, OnceLock};
++#[cfg(feature = "js2wasm_runtime_compile")]
 +use std::time::{SystemTime, UNIX_EPOCH};
-+use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, Store};
++use wasmtime::{
++  Caller, Config, Engine, Instance, InstancePre, Linker, Module, Store,
++};
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 +
 +const CWD_LENGTH_IMPORT: &str = "__v8x_op_cwd_utf16_length";
@@ -2645,6 +2751,7 @@ index 0000000..bde508f
 +const CWD_LENGTH_PROBE: &str = "__v8x_probe_cwd_utf16_length";
 +const CWD_CHECKSUM_PROBE: &str = "__v8x_probe_cwd_utf16_checksum";
 +
++#[cfg_attr(not(feature = "js2wasm_runtime_compile"), allow(dead_code))]
 +pub(crate) struct SourceModule {
 +  pub(crate) specifier: String,
 +  pub(crate) source: String,
@@ -2655,14 +2762,34 @@ index 0000000..bde508f
 +  cwd_op_calls: u64,
 +}
 +
-+/// One persistent Wasmtime store and instance owned by a v8x module handle.
-+pub(crate) struct DenoRuntime {
-+  store: Store<DenoHostState>,
-+  instance: Instance,
++#[derive(Hash, PartialEq, Eq)]
++enum ModuleCacheKey {
++  TrustedFile(PathBuf),
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  DevelopmentBytes(Vec<u8>),
 +}
 +
-+impl DenoRuntime {
-+  fn instantiate(binary: &[u8], cwd: PathBuf) -> Result<Self, String> {
++struct SharedDenoRuntime {
++  engine: Engine,
++  linker: Linker<DenoHostState>,
++  modules: Mutex<HashMap<ModuleCacheKey, InstancePre<DenoHostState>>>,
++  module_loads: AtomicUsize,
++  instantiations: AtomicUsize,
++}
++
++static SHARED_DENO_RUNTIME: OnceLock<Result<SharedDenoRuntime, String>> =
++  OnceLock::new();
++
++/// Diagnostic counters exposed only to verify the experimental backend.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Js2WasmRuntimeStats {
++  pub cached_modules: usize,
++  pub module_loads: usize,
++  pub instantiations: usize,
++}
++
++impl SharedDenoRuntime {
++  fn new() -> Result<Self, String> {
 +    let mut config = Config::new();
 +    config
 +      .wasm_function_references(true)
@@ -2671,14 +2798,6 @@ index 0000000..bde508f
 +      .wasm_exceptions(true);
 +    let engine = Engine::new(&config)
 +      .map_err(|error| format!("configure embedded Wasmtime: {error}"))?;
-+    let module = Module::new(&engine, binary).map_err(|error| {
-+      format!("compile js2wasm artifact in Wasmtime: {error:#}")
-+    })?;
-+    if std::env::var_os("V8X_JS2WASM_TRACE_IMPORTS").is_some() {
-+      for import in module.imports() {
-+        eprintln!("v8x/js2wasm import {}::{}", import.module(), import.name());
-+      }
-+    }
 +    let mut linker = Linker::new(&engine);
 +    linker
 +      .func_wrap(
@@ -2705,18 +2824,148 @@ index 0000000..bde508f
 +        },
 +      )
 +      .map_err(|error| format!("bind {CWD_CODE_UNIT_IMPORT}: {error}"))?;
++    Ok(Self {
++      engine,
++      linker,
++      modules: Mutex::new(HashMap::new()),
++      module_loads: AtomicUsize::new(0),
++      instantiations: AtomicUsize::new(0),
++    })
++  }
 +
++  fn precompiled_file(
++    &self,
++    artifact: &Path,
++  ) -> Result<InstancePre<DenoHostState>, String> {
++    let artifact = artifact.canonicalize().map_err(|error| {
++      format!(
++        "resolve precompiled js2wasm artifact {}: {error}",
++        artifact.display()
++      )
++    })?;
++    let key = ModuleCacheKey::TrustedFile(artifact.clone());
++    let mut modules = self
++      .modules
++      .lock()
++      .map_err(|_| "lock shared js2wasm module cache".to_string())?;
++    if let Some(module) = modules.get(&key) {
++      return Ok(module.clone());
++    }
++
++    // Deployment artifacts are generated by the trusted build pipeline for
++    // this exact Wasmtime version/configuration and remain immutable while
++    // mapped. Never use this path for user-supplied files.
++    let module = unsafe { Module::deserialize_file(&self.engine, &artifact) }
++      .map_err(|error| {
++      format!(
++        "load trusted precompiled js2wasm artifact {}: {error:#}",
++        artifact.display()
++      )
++    })?;
++    self.trace_imports(&module);
++    let instance_pre = self
++      .linker
++      .instantiate_pre(&module)
++      .map_err(|error| format!("resolve js2wasm host imports: {error:#}"))?;
++    modules.insert(key, instance_pre.clone());
++    self.module_loads.fetch_add(1, Ordering::Relaxed);
++    Ok(instance_pre)
++  }
++
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  fn precompile(&self, wasm: &[u8]) -> Result<Vec<u8>, String> {
++    self
++      .engine
++      .precompile_module(wasm)
++      .map_err(|error| format!("precompile js2wasm output: {error:#}"))
++  }
++
++  #[cfg(feature = "js2wasm_runtime_compile")]
++  fn development_bytes(
++    &self,
++    artifact: &[u8],
++  ) -> Result<InstancePre<DenoHostState>, String> {
++    let key = ModuleCacheKey::DevelopmentBytes(artifact.to_vec());
++    let mut modules = self
++      .modules
++      .lock()
++      .map_err(|_| "lock shared js2wasm module cache".to_string())?;
++    if let Some(module) = modules.get(&key) {
++      return Ok(module.clone());
++    }
++    // These bytes were created immediately above by this process's trusted
++    // development compiler using the same Engine configuration.
++    let module = unsafe { Module::deserialize(&self.engine, artifact) }
++      .map_err(|error| {
++        format!("load development js2wasm artifact: {error:#}")
++      })?;
++    self.trace_imports(&module);
++    let instance_pre = self
++      .linker
++      .instantiate_pre(&module)
++      .map_err(|error| format!("resolve js2wasm host imports: {error:#}"))?;
++    modules.insert(key, instance_pre.clone());
++    self.module_loads.fetch_add(1, Ordering::Relaxed);
++    Ok(instance_pre)
++  }
++
++  fn trace_imports(&self, module: &Module) {
++    if std::env::var_os("V8X_JS2WASM_TRACE_IMPORTS").is_some() {
++      for import in module.imports() {
++        eprintln!("v8x/js2wasm import {}::{}", import.module(), import.name());
++      }
++    }
++  }
++
++  fn stats(&self) -> Result<Js2WasmRuntimeStats, String> {
++    let modules = self.modules.lock().map_err(|_| {
++      "lock shared js2wasm module cache for diagnostics".to_string()
++    })?;
++    Ok(Js2WasmRuntimeStats {
++      cached_modules: modules.len(),
++      module_loads: self.module_loads.load(Ordering::Relaxed),
++      instantiations: self.instantiations.load(Ordering::Relaxed),
++    })
++  }
++}
++
++fn shared_runtime() -> Result<&'static SharedDenoRuntime, String> {
++  SHARED_DENO_RUNTIME
++    .get_or_init(SharedDenoRuntime::new)
++    .as_ref()
++    .map_err(Clone::clone)
++}
++
++/// Returns counters for structural sharing tests of the experimental backend.
++#[doc(hidden)]
++pub fn js2wasm_runtime_stats() -> Result<Js2WasmRuntimeStats, String> {
++  shared_runtime()?.stats()
++}
++
++/// One private Wasmtime store and instance owned by a v8x module handle.
++pub(crate) struct DenoRuntime {
++  store: Store<DenoHostState>,
++  instance: Instance,
++}
++
++impl DenoRuntime {
++  fn instantiate(
++    shared: &SharedDenoRuntime,
++    instance_pre: &InstancePre<DenoHostState>,
++    cwd: PathBuf,
++  ) -> Result<Self, String> {
 +    let cwd = cwd.to_string_lossy().encode_utf16().collect();
 +    let mut store = Store::new(
-+      &engine,
++      &shared.engine,
 +      DenoHostState {
 +        cwd,
 +        cwd_op_calls: 0,
 +      },
 +    );
-+    let instance = linker
-+      .instantiate(&mut store, &module)
++    let instance = instance_pre
++      .instantiate(&mut store)
 +      .map_err(|error| format!("instantiate js2wasm artifact: {error}"))?;
++    shared.instantiations.fetch_add(1, Ordering::Relaxed);
 +    let mut runtime = Self { store, instance };
 +    runtime.verify_cwd_probe()?;
 +    Ok(runtime)
@@ -2761,10 +3010,12 @@ index 0000000..bde508f
 +        self.store.data().cwd_op_calls,
 +      ));
 +    }
-+    if self.store.data().cwd_op_calls == 0 {
-+      return Err(
-+        "Deno.cwd() probe did not execute its typed host imports".to_string(),
-+      );
++    let expected_calls = 2 * (self.store.data().cwd.len() as u64 + 1);
++    if self.store.data().cwd_op_calls != expected_calls {
++      return Err(format!(
++        "Deno.cwd() probe made {} typed host calls, expected {expected_calls} for a fresh instance",
++        self.store.data().cwd_op_calls,
++      ));
 +    }
 +    Ok(())
 +  }
@@ -2777,22 +3028,41 @@ index 0000000..bde508f
 +  if modules.is_empty() {
 +    return Err("js2wasm module graph is empty".to_string());
 +  }
-+  let binary =
-+    if let Some(artifact) = std::env::var_os("V8X_JS2WASM_AOT_MODULE") {
-+      fs::read(&artifact).map_err(|error| {
-+        format!(
-+          "read ahead-of-time js2wasm artifact {}: {error}",
-+          Path::new(&artifact).display()
-+        )
-+      })?
-+    } else {
-+      compile_graph(entry, modules)?
-+    };
++  let shared = shared_runtime()?;
++  let instance_pre = if let Some(artifact) =
++    std::env::var_os("V8X_JS2WASM_AOT_MODULE")
++  {
++    shared.precompiled_file(Path::new(&artifact))?
++  } else {
++    #[cfg(feature = "js2wasm_runtime_compile")]
++    {
++      let wasm = compile_graph(entry, modules)?;
++      let artifact = shared.precompile(&wasm)?;
++      if let Some(output) = std::env::var_os("V8X_JS2WASM_ARTIFACT_OUTPUT") {
++        fs::write(&output, &artifact).map_err(|error| {
++          format!(
++            "write precompiled js2wasm artifact {}: {error}",
++            Path::new(&output).display()
++          )
++        })?;
++      }
++      shared.development_bytes(&artifact)?
++    }
++    #[cfg(not(feature = "js2wasm_runtime_compile"))]
++    {
++      let _ = (entry, modules);
++      return Err(
++          "compiler-free engine_js2wasm builds require V8X_JS2WASM_AOT_MODULE to point to a trusted Wasmtime-precompiled artifact"
++            .to_string(),
++        );
++    }
++  };
 +  let cwd = std::env::current_dir()
 +    .map_err(|error| format!("resolve Deno.cwd() host value: {error}"))?;
-+  DenoRuntime::instantiate(&binary, cwd)
++  DenoRuntime::instantiate(shared, &instance_pre, cwd)
 +}
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +fn compile_graph(
 +  entry: &str,
 +  modules: &[SourceModule],
@@ -2847,19 +3117,11 @@ index 0000000..bde508f
 +    compile.current_dir(workdir);
 +  }
 +  run(compile, "js2wasm compilation")?;
-+  let binary = fs::read(&wasm_path)
-+    .map_err(|error| format!("read compiled js2wasm artifact: {error}"))?;
-+  if let Some(output) = std::env::var_os("V8X_JS2WASM_ARTIFACT_OUTPUT") {
-+    fs::write(&output, &binary).map_err(|error| {
-+      format!(
-+        "write ahead-of-time js2wasm artifact {}: {error}",
-+        Path::new(&output).display()
-+      )
-+    })?;
-+  }
-+  Ok(binary)
++  fs::read(&wasm_path)
++    .map_err(|error| format!("read compiled js2wasm artifact: {error}"))
 +}
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +fn run(mut command: Command, phase: &str) -> Result<(), String> {
 +  let output = command
 +    .output()
@@ -2880,10 +3142,12 @@ index 0000000..bde508f
 +  Err(format!("{phase} failed: {detail}"))
 +}
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +struct TempDir {
 +  path: PathBuf,
 +}
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +impl TempDir {
 +  fn new() -> Result<Self, String> {
 +    let timestamp = SystemTime::now()
@@ -2901,31 +3165,36 @@ index 0000000..bde508f
 +  }
 +}
 +
++#[cfg(feature = "js2wasm_runtime_compile")]
 +impl Drop for TempDir {
 +  fn drop(&mut self) {
 +    let _ = fs::remove_dir_all(&self.path);
 +  }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3f10de9..23aad4b 100644
+index 3f10de9..0fcae6e 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -112,0 +113,6 @@ mod jsc;
+@@ -112,0 +113,10 @@ mod jsc;
 +#[cfg(any(feature = "js2wasm_spike", feature = "engine_js2wasm"))]
 +mod js2wasm_spike;
 +
 +#[cfg(feature = "engine_js2wasm")]
++#[doc(hidden)]
++pub use js2wasm_spike::{Js2WasmRuntimeStats, js2wasm_runtime_stats};
++
++#[cfg(feature = "engine_js2wasm")]
 +mod js2wasm;
 +
-@@ -289,0 +296,2 @@ pub const V8X_ENGINE: &str = if cfg!(feature = "engine_quickjs") {
+@@ -289,0 +300,2 @@ pub const V8X_ENGINE: &str = if cfg!(feature = "engine_quickjs") {
 +} else if cfg!(feature = "engine_js2wasm") {
 +  "js2wasm"
 diff --git a/tests/js2wasm_spike.rs b/tests/js2wasm_spike.rs
 new file mode 100644
-index 0000000..b6fb581
+index 0000000..5ea714d
 --- /dev/null
 +++ b/tests/js2wasm_spike.rs
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,165 @@
 +// Copyright 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 +
 +use std::sync::Once;
@@ -2992,18 +3261,7 @@ index 0000000..b6fb581
 +  v8::script_compiler::compile_module(scope, &mut source)
 +}
 +
-+#[test]
-+fn evaluates_raw_typescript_graph_through_wasmtime() {
-+  initialize();
-+  if cfg!(feature = "engine_js2wasm") {
-+    assert_eq!(v8::V8X_ENGINE, "js2wasm");
-+  }
-+  assert!(
-+    std::env::var_os("V8X_JS2WASM_COMPILER_SCRIPT").is_some()
-+      || std::env::var_os("V8X_JS2WASM_AOT_MODULE").is_some(),
-+    "set V8X_JS2WASM_COMPILER_SCRIPT to compile-graph.ts or V8X_JS2WASM_AOT_MODULE to a precompiled artifact"
-+  );
-+
++fn evaluate_graph_once() {
 +  let isolate = &mut v8::Isolate::new(Default::default());
 +  v8::scope!(let scope, isolate);
 +  let context = v8::Context::new(scope, Default::default());
@@ -3079,4 +3337,26 @@ index 0000000..b6fb581
 +
 +  assert!(module.evaluate(scope).is_some());
 +  assert_eq!(module.get_status(), v8::ModuleStatus::Evaluated);
++}
++
++#[test]
++fn evaluates_raw_typescript_graph_through_wasmtime() {
++  initialize();
++  assert_eq!(v8::V8X_ENGINE, "js2wasm");
++  assert!(
++    std::env::var_os("V8X_JS2WASM_COMPILER_SCRIPT").is_some()
++      || std::env::var_os("V8X_JS2WASM_AOT_MODULE").is_some(),
++    "set V8X_JS2WASM_COMPILER_SCRIPT to compile-graph.ts or V8X_JS2WASM_AOT_MODULE to a trusted Wasmtime-precompiled artifact"
++  );
++
++  let before = v8::js2wasm_runtime_stats().unwrap();
++  evaluate_graph_once();
++
++  if std::env::var_os("V8X_JS2WASM_AOT_MODULE").is_some() {
++    evaluate_graph_once();
++    let after = v8::js2wasm_runtime_stats().unwrap();
++    assert_eq!(after.module_loads - before.module_loads, 1);
++    assert_eq!(after.cached_modules - before.cached_modules, 1);
++    assert_eq!(after.instantiations - before.instantiations, 2);
++  }
 +}

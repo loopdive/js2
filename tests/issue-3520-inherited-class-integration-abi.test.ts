@@ -6,8 +6,8 @@ import { analyzeSource } from "../src/checker/index.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { compileDeclarations, collectDeclarations } from "../src/codegen/declarations.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
-import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
-import { buildIrUnitInventory, type IrClassId, type IrUnitInventory } from "../src/ir/identity.js";
+import { irSupportFuncRef, irUnitFuncRef } from "../src/ir/callable-bindings.js";
+import { buildIrUnitInventory, type IrClassId, type IrUnitId, type IrUnitInventory } from "../src/ir/identity.js";
 import { compileIrPathFunctions } from "../src/ir/integration.js";
 import type { IrClassShape } from "../src/ir/nodes.js";
 import { buildIrLegacyUnitProjection, buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
@@ -18,6 +18,14 @@ function classId(inventory: IrUnitInventory, name: string): IrClassId {
   const record = inventory.classes.find((candidate) => candidate.displayName === name);
   if (!record) throw new Error(`missing ${name} class identity`);
   return record.id;
+}
+
+function implicitConstructorUnitId(inventory: IrUnitInventory, ownerClassId: IrClassId): IrUnitId {
+  const unit = inventory.allUnits.find(
+    (candidate) => candidate.lexicalOwnerId === ownerClassId && candidate.kind === "class-implicit-constructor",
+  );
+  if (!unit) throw new Error(`missing implicit constructor identity for ${ownerClassId}`);
+  return unit.id;
 }
 
 describe("#3520 production inherited class integration ABI", () => {
@@ -48,6 +56,9 @@ describe("#3520 production inherited class integration ABI", () => {
     const aClassId = classId(inventory, "A");
     const bClassId = classId(inventory, "B");
     const cClassId = classId(inventory, "C");
+    const aConstructorUnitId = implicitConstructorUnitId(inventory, aClassId);
+    const bConstructorUnitId = implicitConstructorUnitId(inventory, bClassId);
+    const cConstructorUnitId = implicitConstructorUnitId(inventory, cClassId);
     const canonicalMembers = [
       {
         kind: "class-instance-method",
@@ -154,6 +165,8 @@ describe("#3520 production inherited class integration ABI", () => {
         },
       ],
       constructorParams: [],
+      constructorTarget: irSupportFuncRef(aClassId, "class-constructor-new", "A_new"),
+      constructorInitTarget: irUnitFuncRef({ unitId: aConstructorUnitId, name: "A_init" }),
     };
     const bShape: IrClassShape = {
       classId: bClassId,
@@ -162,6 +175,8 @@ describe("#3520 production inherited class integration ABI", () => {
       methods: [],
       constructorParams: [],
       parent: aShape,
+      constructorTarget: irSupportFuncRef(bClassId, "class-constructor-new", "B_new"),
+      constructorInitTarget: irUnitFuncRef({ unitId: bConstructorUnitId, name: "B_init" }),
     };
     const cShape: IrClassShape = {
       classId: cClassId,
@@ -170,6 +185,8 @@ describe("#3520 production inherited class integration ABI", () => {
       methods: [],
       constructorParams: [],
       parent: bShape,
+      constructorTarget: irSupportFuncRef(cClassId, "class-constructor-new", "C_new"),
+      constructorInitTarget: irUnitFuncRef({ unitId: cConstructorUnitId, name: "C_init" }),
     };
     const selection: IrSelection = { funcs: new Set(["main"]) };
     const ownerProjection = buildIrLegacyUnitProjection([{ unitId: main!.id, legacyName: "main" }]);
