@@ -14,6 +14,8 @@ import { ts } from "../../ts-api.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { emitArrayIteratorPrototypeSingleton } from "../array-object-proto.js";
+import { isPristineArrayPrototypeIteratorCall } from "../array-methods.js";
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
@@ -102,6 +104,28 @@ function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
     current = current.expression;
   }
   return current;
+}
+
+/**
+ * Deno's first core script captures `%ArrayIteratorPrototype%` through an
+ * exact pristine-intrinsic expression. TypeScript names its result
+ * `IterableIterator<any>` rather than `ArrayIterator<T>`, so the type-based
+ * Object path cannot identify it. Compile and drop the iterator for normal
+ * evaluation, then return the genuine singleton shared by ordinary array
+ * iterators (#4378).
+ */
+function compilePristineArrayIteratorPrototypeCapture(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argument: ts.Expression,
+): ValType | undefined {
+  if (!noJsHost(ctx) || !isPristineArrayPrototypeIteratorCall(fctx, argument)) return undefined;
+  const argumentType = compileExpression(ctx, fctx, argument);
+  if (argumentType) fctx.body.push({ op: "drop" });
+  const prototypeType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+  if (prototypeType) return prototypeType;
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
 }
 
 /**
@@ -867,10 +891,8 @@ export function compileNamespaceStaticCall(
 
       if (reflectMethod === "getPrototypeOf" && expr.arguments.length >= 1) {
         // (#2046 PR-C) Route Reflect.getPrototypeOf(target) to the native
-        // __getPrototypeOf — the SAME helper backing standalone
-        // Object.getPrototypeOf (calls.ts ~5943). It returns
-        // extern.convert_any($Object.$proto) (may be null) for an $Object
-        // target. §28.1.1 Reflect.getPrototypeOf(target):
+        // Object.getPrototypeOf helper. It returns the `$Object.$proto` value.
+        // §28.1.1 Reflect.getPrototypeOf(target):
         //   step 1: target not an Object → throw a TypeError. The native
         //     returns null for a non-$Object receiver (correct for
         //     Object.getPrototypeOf after its ToObject), so — exactly as the
@@ -884,6 +906,8 @@ export function compileNamespaceStaticCall(
           fctx.body.push({ op: "ref.null.extern" }); // unreachable after throw
           return { kind: "externref" };
         }
+        const pristineIteratorPrototype = compilePristineArrayIteratorPrototypeCapture(ctx, fctx, arg0);
+        if (pristineIteratorPrototype) return pristineIteratorPrototype;
         const argType = compileExpression(ctx, fctx, arg0, externRef);
         if (!argType) {
           fctx.body.push({ op: "ref.null.extern" });

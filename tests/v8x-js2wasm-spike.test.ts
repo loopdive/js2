@@ -18,15 +18,25 @@ describe("v8x js2wasm module-backend spike", () => {
     const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-"));
     const mainPath = join(dir, "main.ts");
     const mathPath = join(dir, "math.ts");
+    const bootstrapPath = join(dir, "bootstrap.js");
     const manifestPath = join(dir, "modules.tsv");
     const wasmPath = join(dir, "module.wasm");
 
     writeFileSync(mathPath, `export function add(left: number, right: number): number { return left + right; }\n`);
+    writeFileSync(bootstrapPath, `globalThis.__v8xBootstrapValue = 21;\n`);
     writeFileSync(
       mainPath,
-      `import { add } from "./math.ts";\nconst answer: number = add(20, 22);\nif (answer !== 42) throw new Error("wrong result");\n`,
+      `import "./bootstrap.js";\n` +
+        `import { add } from "./math.ts";\n` +
+        `const answer: number = add((globalThis as any).__v8xBootstrapValue, 21);\n` +
+        `if (answer !== 42) throw new Error("wrong result");\n`,
     );
-    writeFileSync(manifestPath, `${pathToFileURL(mainPath)}\t${mainPath}\n${pathToFileURL(mathPath)}\t${mathPath}\n`);
+    writeFileSync(
+      manifestPath,
+      `${pathToFileURL(mainPath)}\t${mainPath}\n` +
+        `${pathToFileURL(mathPath)}\t${mathPath}\n` +
+        `${pathToFileURL(bootstrapPath)}\t${bootstrapPath}\n`,
+    );
 
     const compiled = spawnSync(
       process.execPath,
@@ -44,7 +54,7 @@ describe("v8x js2wasm module-backend spike", () => {
       { cwd: root, encoding: "utf8" },
     );
     expect(compiled.status, compiled.stderr).toBe(0);
-    expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 2 });
+    expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 3 });
     expect(readFileSync(wasmPath).byteLength).toBeGreaterThan(8);
 
     const evaluated = spawnSync(

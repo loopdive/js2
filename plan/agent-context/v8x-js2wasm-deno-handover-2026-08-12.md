@@ -24,6 +24,10 @@ record is
 - Runtime prototype result: an embedded, persistent Wasmtime 45 instance calls
   a typed Rust `Deno.cwd()` bridge and can reload the saved artifact with the
   compiler path deliberately absent.
+- Compiler bootstrap result: the pinned unchanged `00_primordials.js` now
+  compiles in the two-source graph. #4378 fixes its pristine
+  `Array.prototype` iterator capture; #4380 fixes the IIFE empty-object carrier
+  trap. Instrumented execution reaches the first JSON namespace copy.
 
 The local `.tmp` v8x and Deno checkouts were disposable instruments. Do not
 depend on them; the checked-in patch, issue, tests, and this handover are the
@@ -69,8 +73,10 @@ portable record.
 - Shared promise and microtask semantics between Rust and compiled wrappers.
 - Dynamic imports, top-level await, synthetic modules, or general URL/module
   loading.
-- Compilation of Deno's real `00_primordials.js`, `00_infra.js`, extension
-  wrappers, and generated op manifest into the AOT graph.
+- Completion of Deno's real `00_primordials.js` bootstrap, compilation of
+  `00_infra.js`, extension wrappers, and the generated op manifest into the
+  v8x-owned AOT instance. The unchanged first source compiles, but stops during
+  builtin namespace reflection.
 
 Do not phrase “unchanged `deno_core` compiles” as “Deno runs.” The strict link
 still rejects the incomplete ABI, and the diagnostic link exists only to
@@ -87,10 +93,23 @@ those copies even if application code monkey-patches the globals. They are
 JavaScript object identities and functions—not Rust ops or WASI calls.
 
 The module prototype now has one persistent embedded Wasmtime store/instance
-and proves a typed `Deno.cwd()` host call. Unchanged Deno still stops because
-its actual primordials source, initial `Deno.core` object graph, generated op
-manifest, and promise/microtask queues have not yet been compiled and mapped
-into that instance.
+and proves a typed `Deno.cwd()` host call. On the compiler side, the pinned
+unchanged source is now included honestly with `allowJs` and compiles after two
+focused fixes (#4378 and #4380). A temporary checkpoint instrument (not part of
+the source or commit) proves execution advances through trusted Reflect/
+Function helper capture and stops at:
+
+```js
+copyPropsRenamed(globalThis["JSON"], primordials, "JSON");
+```
+
+That is #3571's corrected boundary: standalone can name some builtin carriers,
+but does not yet reify `globalThis` namespace entries such as JSON/Math/Reflect
+as objects whose own keys and descriptors Deno can copy. The full compiled
+artifact also has `env.Promise_new`, `env.Promise_then2`, and two
+`js2wasm:runtime-eval` imports. Wasmtime 45 additionally rejects the emitted
+legacy exception encoding (#2997), although Node's Wasm engine can execute the
+diagnostic far enough to identify the semantic stop.
 
 ## Decisions already settled
 
@@ -116,19 +135,25 @@ into that instance.
 Build the smallest path from the proven `Deno.cwd()` adapter into the first
 real Deno core wrapper:
 
-1. Compile `00_primordials.js` and the minimum prerequisite wrapper sources
-   into the same program as a tiny probe application.
-2. Generate typed imports for only the Rust ops executed by that program. Keep
+1. Implement #3571's bounded builtin-object value surface needed by the
+   namespace and intrinsic copy loops, starting with JSON/Math/Reflect and
+   proving real own-key/descriptor results rather than empty carriers.
+2. Remove or replace the Promise and runtime-eval host imports retained by the
+   full primordials graph, and migrate standalone exception output to
+   standardized `try_table` through #2997 so embedded Wasmtime can load it.
+3. Route `00_primordials.js` and the minimum prerequisite wrapper sources into
+   v8x's persistent instance as the same program as a tiny probe application.
+4. Generate typed imports for only the Rust ops executed by that program. Keep
    the op manifest explicit and generated from the same source of truth Deno
    uses.
-3. Bridge the initial `Deno.core` namespace into the instance with stable
+5. Bridge the initial `Deno.core` namespace into the instance with stable
    identity and observable property writes.
-4. Prove one value-level effect after wrapper execution, not merely successful
+6. Prove one value-level effect after wrapper execution, not merely successful
    return—for example, a known primordial captured and read back through the
    same context.
-5. Add the promise/microtask behavior exercised by this graph within the same
+7. Add the promise/microtask behavior exercised by this graph within the same
    persistent store.
-6. Advance to `00_infra.js` and extension wrappers only after that proof. Add
+8. Advance to `00_infra.js` and extension wrappers only after that proof. Add
    additional `rusty_v8` ABI functions when an executed call requires them.
 
 Keep the first slice narrow. Module namespace exports, live bindings, dynamic
@@ -184,6 +209,10 @@ part of a production build.
 
 - Focused compiler/v8x plus existing multi-file regression tests: 20/20
   passed.
+- Bootstrap regressions #4378/#4380: 5/5 passed; each artifact has zero host
+  imports.
+- Pinned unchanged `00_primordials.js`: compiles as a two-module graph;
+  checkpointed diagnostic reaches the first JSON namespace copy.
 - v8x source-compile js2wasm integration: 1/1 passed.
 - v8x compiler-free AOT integration with an invalid compiler path: 1/1
   passed.

@@ -14,7 +14,7 @@ goal: deno-runtime
 sprint: current
 assignee: ttraenkler/codex-v8x-js2wasm
 horizon: xl
-related: [1584, 1662, 1772, 2525, 2658, 2928, 4377]
+related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 files:
   - examples/v8x-js2wasm-spike/README.md
@@ -140,8 +140,30 @@ it. It proves that shape with a narrow, typed `Deno.cwd()` adapter.
 `Object`, `Array`, `Promise`, and `Reflect` before application code can
 monkey-patch them. Deno's later wrappers use those private copies for stable
 internal behavior. Primordials are therefore JavaScript object identities and
-functions, not Rust ops and not WASI calls. Compiling that actual wrapper is
-the next meaningful shared-object-graph test.
+functions, not Rust ops and not WASI calls.
+
+The pinned, unchanged file now compiles as part of the two-source virtual graph
+(400,790-byte diagnostic artifact). The compiler adapter had previously
+omitted side-effect JavaScript imports because it did not set `allowJs`; fixing
+that exposed and then fixed two honest compiler boundaries:
+
+1. #4378 lowers the exact pristine
+   `Reflect.getPrototypeOf(Array.prototype[Symbol.iterator]())` capture through
+   the native empty-array iterator and returns the genuine shared iterator
+   prototype.
+2. #4380 makes empty-object widening inspect arrow/function-expression IIFE
+   bodies, preventing `primordials` from becoming a null carrier during the
+   first property write.
+
+An instrumented diagnostic source then reaches
+`copyPropsRenamed(globalThis["JSON"], primordials, "JSON")`. Standalone's
+`globalThis` is intentionally not yet a builtin-object emulator, and JSON/Math/
+Reflect carriers are not reified with inspectable own properties. That next
+boundary is the corrected scope of #3571. The full artifact also imports
+`env.Promise_new`, `env.Promise_then2`, and the two runtime-eval functions; and
+Wasmtime 45 rejects its legacy exception opcodes pending #2997. Thus the real
+source now compiles, but the primordials bootstrap is not yet complete or
+host-free.
 
 ## What “306 ABI symbols” meant
 
@@ -203,6 +225,9 @@ ahead-of-time linked program.
 - [ ] Add dynamic imports, top-level await, synthetic modules, and non-`file:`
       specifier handling as demanded by executed Deno paths.
 - [x] Save and run a proof artifact without the compiler sidecar or Node.
+- [x] Include JavaScript side-effect modules in the virtual graph and compile
+      the pinned unchanged `00_primordials.js` through its first two compiler
+      boundaries (#4378, #4380).
 - [ ] Package the real Deno wrapper/application artifact for distribution.
 
 ## Verification
@@ -211,6 +236,8 @@ Repository checks:
 
 ```sh
 pnpm exec vitest run \
+  tests/issue-4378-array-prototype-iterator-bootstrap.test.ts \
+  tests/issue-4380-empty-object-widening-iife-body.test.ts \
   tests/issue-4377-multifile-exported-object-shorthand-callable.test.ts \
   tests/v8x-js2wasm-spike.test.ts \
   tests/multi-file.test.ts
@@ -247,11 +274,14 @@ The pinned unchanged-Deno probe also passes
 `cargo check -p deno_core --example hello_world` after resolving the Wasmtime
 45 dependency graph.
 
-Results: focused repository and multi-file regression tests 20/20, simdutf
-14/14, v8x source-compile integration 1/1, compiler-free AOT integration 1/1,
-and TypeScript project type-checking all pass. The zero-context patch also
-reverse-applies cleanly with `git apply --unidiff-zero` to the pinned dirty
-v8x probe checkout.
+The bootstrap regressions pass 5/5. The pinned unchanged Deno primordials file
+compiles as a two-module graph; temporary checkpoints (removed afterward)
+prove execution advances through the two fixed boundaries to the first JSON
+namespace copy. Prior results remain: focused repository and multi-file tests
+20/20, simdutf 14/14, v8x source-compile integration 1/1, compiler-free AOT
+integration 1/1, and TypeScript project type-checking all pass. The zero-context
+patch also reverse-applies cleanly with `git apply --unidiff-zero` to the pinned
+dirty v8x probe checkout.
 
 ## Handover
 

@@ -118,11 +118,18 @@ example now:
 6. installs the initial `Deno.core` namespace using Rust-owned properties, and
 7. requests execution of `ext:core/00_primordials.js`.
 
-That diagnostic still stops before the real wrapper can execute. The new
-module slice supplies the previously missing runtime shape—one embedded,
-persistent Wasmtime instance plus typed host imports—but proves it only with a
-small `Deno.cwd()` adapter. The next integration step is to feed Deno's actual
-wrapper graph and generated op manifest into that same instance.
+That diagnostic still stops before the real wrapper can execute through v8x.
+The compiler side of the next slice now includes JavaScript graph sources
+honestly (`allowJs: true`) and compiles Deno's pinned, unchanged
+`00_primordials.js`. Two bootstrap blockers were fixed: capturing
+`%ArrayIteratorPrototype%` from the pristine `Array.prototype`, and running the
+empty-object shape prepass inside arrow/function-expression IIFEs.
+
+An instrumented diagnostic run advances through Deno's initial trusted helper
+capture and reaches `copyPropsRenamed(globalThis["JSON"], ...)`. The next
+boundary is reifying builtin namespace objects as inspectable standalone
+values (#3571). The compiled full file also retains Promise host imports and
+runtime-eval imports, so this is not yet a host-free completed bootstrap.
 
 ### What primordials are
 
@@ -148,12 +155,15 @@ ship only that artifact, v8x's Rust host layer, and embedded Wasmtime. The AOT
 test proves that compiler-free execution path, although packaging and the real
 Deno wrapper graph remain future work.
 
-The next useful slice is the real Deno bootstrap graph, not a broad
-symbol-filling exercise. It must compile `00_primordials.js`, `00_infra.js`,
-extension wrappers, and the application into the existing state-sharing Wasm
-program; generate typed imports from Deno's Rust op table; and keep
-promises/microtasks in the same instance. Remaining rusty_v8 functions should
-then be implemented only when this path actually executes them.
+The next useful slice remains the real Deno bootstrap graph, not a broad
+symbol-filling exercise. The first source now compiles, but v8x must route it
+into the existing state-sharing Wasm program; builtin namespace/prototype
+objects must be inspectable; Promise/microtask and indirect-eval imports must
+be made host-free or eliminated; and Wasmtime needs standardized `try_table`
+exception encoding (#2997). Only then should the graph advance to
+`00_infra.js`, generated typed op imports, extension wrappers, and the
+application. Remaining rusty_v8 functions should still be implemented only
+when this path actually executes them.
 
 Not covered by this spike:
 

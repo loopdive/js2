@@ -59,13 +59,11 @@ async function main(): Promise<void> {
     emitWat: false,
     moduleName: "v8x-js2wasm-spike",
     externImportModule: "v8x:deno",
+    allowJs: true,
   });
   if (!result.success) {
-    const diagnostics = result.diagnostics
-      .map(
-        (diagnostic) =>
-          `${diagnostic.file ?? entry}:${diagnostic.line ?? 0}:${diagnostic.column ?? 0} ${diagnostic.message}`,
-      )
+    const diagnostics = result.errors
+      .map((diagnostic) => `${entry}:${diagnostic.line ?? 0}:${diagnostic.column ?? 0} ${diagnostic.message}`)
       .join("\n");
     throw new Error(diagnostics || "js2wasm compilation failed without diagnostics");
   }
