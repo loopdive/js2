@@ -146,6 +146,15 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
   if (!parent) return false;
   if (ts.isCallExpression(parent)) {
     if (!parent.arguments.some((arg) => arg === node)) return false;
+    // #3747 — an argument to an immediately-invoked function expression is
+    // consumed by compiled Wasm code, not by the JS host. Classifying it as a
+    // host callback wrapped the function in `__make_callback`; the inlined
+    // IIFE parameter later tried to cast that host function back to a WasmGC
+    // closure struct and null-dereferenced. This is the UMD factory shape used
+    // by Moment: `(function (factory) { factory(); }(function () { ... }))`.
+    let directCallee: ts.Expression = parent.expression;
+    while (ts.isParenthesizedExpression(directCallee)) directCallee = directCallee.expression;
+    if (ts.isFunctionExpression(directCallee) || ts.isArrowFunction(directCallee)) return false;
     // Check if the callee is a user-defined function — if so, NOT a host callback
     if (ts.isIdentifier(parent.expression)) {
       const calleeName = parent.expression.text;

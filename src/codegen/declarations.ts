@@ -416,6 +416,7 @@ function lowerParamType(
   // (from `any`), try to infer a concrete type from call sites, then body usage.
   if (
     !param.type &&
+    ts.getJSDocType(param) === undefined &&
     paramType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown) &&
     (wasmType.kind === "externref" ||
       (wasmType.kind === "ref_null" && ctx.anyValueTypeIdx >= 0 && wasmType.typeIdx === ctx.anyValueTypeIdx))

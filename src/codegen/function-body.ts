@@ -71,6 +71,7 @@ import {
 } from "./linear-uint8-signatures.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
 import { walkInstructions } from "./walk-instructions.js";
+import { emitUndefined } from "./expressions/late-imports.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -866,7 +867,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
         } else if (fctx.returnType.kind === "i32") {
           fctx.body.push({ op: "i32.const", value: 0 });
         } else if (fctx.returnType.kind === "externref") {
-          fctx.body.push({ op: "ref.null.extern" });
+          emitUndefined(ctx, fctx);
         } else if (fctx.returnType.kind === "ref" || fctx.returnType.kind === "ref_null") {
           fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
         }

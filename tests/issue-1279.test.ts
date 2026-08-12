@@ -33,9 +33,15 @@ describe("issue-1279: CJS require() static module graph", () => {
       expect(out).toContain(`import x from "./x";`);
     });
 
-    it("preserves `let`/`var` require() — only `const` is rewritten", () => {
-      expect(rewriteCjsRequire(`let y = require("y");`)).toContain(`require("y")`);
-      expect(rewriteCjsRequire(`var y = require("y");`)).toContain(`require("y")`);
+    it("rewrites unmodified `let`/`var` require bindings and preserves reassigned bindings", () => {
+      const letResult = rewriteCjsRequire(`let y = require("y");`);
+      expect(letResult).toBe(`import y from "y";`);
+      const varResult = rewriteCjsRequire(`var y = require("y");`);
+      expect(varResult).toBe(`import y from "y";`);
+      expect(letResult).not.toContain("require(");
+      expect(varResult).not.toContain("require(");
+      const reassigned = `var y = require("y");\ny = replacement;`;
+      expect(rewriteCjsRequire(reassigned)).toBe(reassigned);
     });
 
     it("preserves rest patterns and default initializers (not expressible as ESM imports)", () => {
@@ -150,6 +156,20 @@ export function g(): number { return x(); }`,
         throw new Error(`expected success but got errors:\n${msgs}`);
       }
       expect(r.success).toBe(true);
+    });
+
+    it("an unmodified `var x = require('./x')` links the callable value", async () => {
+      const files = {
+        "./x.ts": `export default function X(value: number): number { return value + 1; }`,
+        "./entry.ts": `
+var x = require("./x");
+export function g(): number { return x(6); }`,
+      };
+      const r = await compileMulti(files, "./entry.ts", { skipSemanticDiagnostics: true });
+      expect(r.success).toBe(true);
+      const imports = buildImports(r.imports, undefined, r.stringPool);
+      const { instance } = await WebAssembly.instantiate(r.binary, imports);
+      expect((instance.exports as { g: () => number }).g()).toBe(7);
     });
   });
 

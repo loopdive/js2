@@ -63,7 +63,10 @@ run time
           v8x compatibility layer
                    |
                    v
-    one persistent Wasmtime store + instance
+ shared Engine + Module + Linker + InstancePre
+                   |
+                   v
+       private store + instance per module
                    |
                    v
        compiled wrappers call typed host ops
@@ -92,9 +95,11 @@ The implemented vertical slice provides Rust-owned:
 - exception values plus the complete simdutf compatibility surface.
 
 The module path gathers untouched `.ts` sources through v8x's existing module
-resolver, passes the linked graph to js2wasm with `platform: "deno"`, and runs
-the WasmGC result in an embedded Wasmtime 47.0.3 store. The store and instance
-are owned by the v8x module handle and remain alive after evaluation.
+resolver, passes the linked graph to js2wasm with `platform: "deno"`, and
+precompiles the WasmGC result for embedded Wasmtime 47.0.3. Production v8x
+shares one compiler-free Engine and direct-Rust host Linker, caches one
+Module/InstancePre per trusted artifact, and gives every evaluated module a
+private store/instance that remains alive with its v8x module handle.
 
 The integration fixture enters through the public `rusty_v8` API, evaluates a
 typed three-module graph, and calls a Rust-owned `Deno.cwd()` implementation
@@ -185,9 +190,10 @@ drive the unresolved count to zero with empty stubs.
 
 ## Compiler-free deployment answer
 
-Yes: after build-time compilation, the deployed runtime needs only the linked
-Wasm artifact, the Rust/v8x host layer, and embedded Wasmtime. It does not need
-js2wasm, Node, or a JavaScript engine.
+Yes: after build-time compilation and Wasmtime precompilation, the deployed
+runtime needs only the target-specific trusted `.cwasm` artifact, the Rust/v8x
+host layer, and compiler-free embedded Wasmtime. It does not need js2wasm,
+Node, Cranelift, or a JavaScript engine.
 
 The spike now proves this explicitly: one test saves the linked Wasm artifact,
 and a second invocation evaluates it while the configured compiler path is
@@ -214,8 +220,8 @@ ahead-of-time linked program.
 
 ## Follow-up acceptance
 
-- [x] Embed Wasmtime and keep one store/instance alive for the v8x module
-      runtime.
+- [x] Embed Wasmtime, share the Engine/Linker/precompiled Module/InstancePre,
+      and keep one isolated store/instance alive per v8x module runtime.
 - [ ] Compile `00_primordials.js`, `00_infra.js`, extension wrappers, and the
       application as one state-sharing program.
 - [x] Bind a first Rust op (`Deno.cwd()`) through explicit typed imports.
@@ -258,15 +264,15 @@ cargo test --no-default-features \
 
 V8X_JS2WASM_COMPILER_SCRIPT=/absolute/path/to/compile-graph.ts \
 V8X_JS2WASM_WORKDIR=/absolute/path/to/js2wasm \
-V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.wasm \
+V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.cwasm \
 cargo test --no-default-features \
   --features js2wasm_spike,simdutf \
   --test js2wasm_spike
 
-V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.wasm \
+V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.cwasm \
 V8X_JS2WASM_COMPILER=/compiler-is-not-installed \
 cargo test --no-default-features \
-  --features js2wasm_spike,simdutf \
+  --features engine_js2wasm,simdutf \
   --test js2wasm_spike
 ```
 
@@ -279,7 +285,11 @@ compiles as a two-module graph; temporary checkpoints (removed afterward)
 prove execution advances through the two fixed boundaries to the first JSON
 namespace copy. Prior results remain: focused repository and multi-file tests
 20/20, simdutf 14/14, v8x source-compile integration 1/1, compiler-free AOT
-integration 1/1, and TypeScript project type-checking all pass. The zero-context
+integration 1/1 with one module load and two isolated instantiations, and
+TypeScript project type-checking all pass. The compiler-free dependency graph
+contains neither `wasmtime-cranelift` nor `cranelift-codegen`; on Apple arm64
+the stripped test runtime is 1,768,024 bytes and its `.cwasm` fixture is
+1,434,192 bytes. The zero-context
 patch also reverse-applies cleanly with `git apply --unidiff-zero` to the pinned
 dirty v8x probe checkout.
 
@@ -291,7 +301,9 @@ next slice are recorded in
 
 The initial spike merged in
 [#4396](https://github.com/loopdive/js2wasm/pull/4396). The compiler/runtime
-follow-ups and primordials bootstrap are published in ready PR
+follow-ups and primordials bootstrap merged in
 [#4404](https://github.com/loopdive/js2wasm/pull/4404). The v8x-side changes
-are also published on
-[`loopdive/v8x:codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend).
+are published as ready
+[`loopdive/v8x#1`](https://github.com/loopdive/v8x/pull/1) from
+[`codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend)
+at `f37c7d3d1cb9423abdb5399cd1d0b6dd5d7638d2`.

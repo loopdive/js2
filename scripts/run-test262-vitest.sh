@@ -18,6 +18,7 @@ RUN_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 INCLUDE_PROPOSALS=1
 TEST262_TARGET="${TEST262_TARGET:-gc}"
 TEST262_REPORTER="${TEST262_REPORTER:-verbose}"
+EVAL_ENGINE="${JS2WASM_EVAL_ENGINE:-quickjs}"
 
 case "$TEST262_TARGET" in
   gc|linear|wasi|standalone) ;;
@@ -26,6 +27,16 @@ case "$TEST262_TARGET" in
     exit 1
     ;;
 esac
+
+if [ "$TEST262_TARGET" = "standalone" ]; then
+  case "$EVAL_ENGINE" in
+    interpreter|quickjs) ;;
+    *)
+      echo "ERROR: JS2WASM_EVAL_ENGINE must be one of: interpreter, quickjs"
+      exit 1
+      ;;
+  esac
+fi
 
 RESULT_PREFIX="test262"
 if [ "$TEST262_TARGET" != "gc" ]; then
@@ -181,37 +192,36 @@ fi
 # load the cached binary (the per-test pool timeout is 30s). Idempotent: a
 # cache hit exits in <1s, and the cache lives in the shared .test262-cache.
 #
-# TWO tiers (#2928 E7):
-#   default            — the REFUSAL provider only. This is the fast local
-#                        diagnostic tier: seconds to compile, no parser, no
-#                        interpreter, no capability. It keeps eval-mentioning
-#                        modules linkable, but its score is NOT CI-comparable.
-#   TEST262_FULL_RUNTIME_EVAL=1 — additionally build the real Acorn+interpreter
-#                        provider (MINUTES) and let the worker prefer it. CI
-#                        distributes one shared build to every standalone shard,
-#                        so this is the authoritative CI-comparable tier.
+# TWO engines (#4242): QuickJS is the default behind the frozen
+# `js2wasm:runtime-eval` seam. The native Acorn+bytecode interpreter remains a
+# permanent opt-in via JS2WASM_EVAL_ENGINE=interpreter. Its refusal/full tiers
+# are still selected by TEST262_FULL_RUNTIME_EVAL exactly as before.
 #
-# (#4238) A THIRD, flag-gated ENGINE: JS2WASM_EVAL_ENGINE=quickjs swaps the
-# Acorn+interpreter provider for the QuickJS WASI artifact behind the same
-# frozen `js2wasm:runtime-eval` seam. Symmetric hook — prebuild it here (the
-# selector never builds), and fail the run on error rather than degrading to
-# the interpreter, which would invalidate every measurement made under the flag.
-# NOTE (slice 1/2): `assembleOriginalHarness` injects a direct-eval-bearing
-# `$262.evalScript` shim into every assembled test, and direct eval is a typed
-# refusal under this engine until slice 3 — so a FULL test262 run under the flag
-# is not yet meaningful; `tests/quickjs-eval-provider.test.ts` is the gate.
-if [ "$TEST262_TARGET" = "standalone" ] && [ "${JS2WASM_EVAL_ENGINE:-interpreter}" = "quickjs" ]; then
-  echo "Prebuilding QUICKJS eval-engine provider (#4238; JS2WASM_EVAL_ENGINE=quickjs)..."
-  NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-quickjs-eval-provider.mjs
-fi
+# Prebuild the selected engine here (the selector never builds), and fail the
+# run on error rather than degrading to the other engine. Silent fallback would
+# label one engine's conformance numbers as the other's.
+#
+# Build ONLY the selected engine. Building the interpreter fallback after a
+# quickjs prebuild makes a missing/mis-keyed quickjs cache harder to diagnose
+# and wastes minutes, while the selector is deliberately forbidden from
+# falling back between engines.
 if [ "$TEST262_TARGET" = "standalone" ]; then
-  if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
-    echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."
-    NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs
-  else
-    echo "Prebuilding runtime-eval REFUSAL provider (#2928 E7; TEST262_FULL_RUNTIME_EVAL=1 for the interpreter)..."
-    NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
-  fi
+  echo "Eval engine selection: $EVAL_ENGINE"
+  case "$EVAL_ENGINE" in
+    quickjs)
+      echo "Prebuilding QUICKJS eval-engine provider (#4242 default)..."
+      NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-quickjs-eval-provider.mjs
+      ;;
+    interpreter)
+      if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
+        echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."
+        NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs
+      else
+        echo "Prebuilding runtime-eval REFUSAL provider (#2928 E7; TEST262_FULL_RUNTIME_EVAL=1 for the interpreter)..."
+        NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs --refusal-only
+      fi
+      ;;
+  esac
 fi
 
 # ── Prepare result files ─────────────────────────────────────────

@@ -23,6 +23,36 @@ in-progress), #2527 (core-wasm module linking, in-progress).
 
 ---
 
+## Operational engine selection (updated 2026-08-12)
+
+Standalone runtime evaluation now has two production engines behind the same
+four-function `js2wasm:runtime-eval` seam:
+
+- **QuickJS-NG is the default.** An unset `JS2WASM_EVAL_ENGINE` selects the
+  content-keyed QuickJS WASI artifact plus its WasmGC adapter. The artifact must
+  be prebuilt; if it is missing or stale, selection fails loudly and never
+  substitutes another engine.
+- **The native Acorn + bytecode interpreter is a permanent option.** Select it
+  with `JS2WASM_EVAL_ENGINE=interpreter`. `TEST262_FULL_RUNTIME_EVAL=1` still
+  chooses its full provider; without that flag its refusal/diagnostic tier is
+  unchanged. Its source, pinned Acorn input, provider builder, tests, and weekly
+  conformance lane are retained deliberately.
+
+The default changed only after the exact 1,351-file eval/Function collision
+slice reached mechanical parity: QuickJS passed 1,112 files versus 1,108 for
+the interpreter, with zero QuickJS losses. The measured provenance and gate are
+recorded in `plan/issues/4242-quickjs-eval-default-flip.md` and
+`benchmarks/results/eval-parity/parity-20260812-0230-0237.md`.
+
+The architecture discussion below documents why the bytecode interpreter was
+built and how it works. It remains authoritative for that engine; references
+to it as the only or default standalone route are historical and are
+superseded by this operational section. A QuickJS acquisition failure is not
+permission to fall back silently: engine identity is part of every conformance
+result.
+
+---
+
 ## 1. TL;DR — the recommendation
 
 Runtime code evaluation is **not one feature**; it is a **tiered fallback

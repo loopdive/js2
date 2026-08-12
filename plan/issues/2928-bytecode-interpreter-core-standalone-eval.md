@@ -4,7 +4,7 @@ title: "Bytecode interpreter core + standalone new Function / indirect eval"
 status: in-progress
 assignee: ttraenkler/s78-sendev-eval
 created: 2026-07-02
-updated: 2026-08-03
+updated: 2026-08-11
 priority: medium
 horizon: xl
 feasibility: hard
@@ -984,3 +984,43 @@ B.3.3 **cancellation** half — a destructuring CatchParameter *cancels* the Ann
 synthetic var binding, the `cancelsAnnexBVarBinding` counterpart to the
 `SIMPLE_CATCH_SCOPE_LABEL` B.3.5 exemption that landed in PR #4139. That
 cancellation path is currently unreached and untested.
+
+## 2026-08-11 runtime-eval state checkpoint
+
+The bytecode-interpreter route now carries persistent direct-eval activation
+state coherently across the separately compiled provider boundary without
+changing the 12-argument provider import, callable carrier, or rec-group ABI.
+The same route continues to execute indirect eval and both `Function(...)` and
+`new Function(...)`; `tests/issue-2928.test.ts` passes against a freshly
+self-compiled, zero-import provider.
+
+This checkpoint adds the missing direct-eval state transitions:
+
+- eval-created `var` and function bindings have exact, out-of-line
+  deletability metadata, can be tombstoned, and can reuse their slot;
+- deleting a binding severs the matching persistent state cell, including a
+  returned interpreted closure, while ordinary caller bindings still refuse
+  deletion;
+- AOT reads, `typeof`, simple writes, and capture-only nested closures share a
+  compact 256-cell activation carrier representing 64 visible bindings; and
+- the QuickJS compatibility provider understands the same carrier, while the
+  interpreter remains the default and a permanent selectable option.
+
+The authoritative A/B scope contains all 1,351 eval-dependent Test262 files:
+
+| Engine | Run | Pass | Fail | Compile error | Timeout / skip |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Acorn + bytecode interpreter | `20260811-222840` | **1,099** | 226 | 26 | 0 / 0 |
+| QuickJS compatibility engine | `20260811-221743` | 1,081 | 244 | 26 | 0 / 0 |
+
+The interpreter has exactly three new promoted-baseline passes:
+`var-env-var-init-local-new-delete`, `var-env-func-init-local-new-delete`, and
+`var-env-func-non-strict`. The #4242 parity gate is deliberately blocked
+because QuickJS is net -18, so no default flip is included here.
+
+The remaining state-carrier follow-ups are bounded and recorded under #2929:
+compound/logical/update assignments must join the simple-assignment lookup,
+and a nested closure that owns direct eval needs a two-pool inner/outer chain.
+These do not undo the working direct-eval, indirect-eval, or dynamic-function
+routing surface, but they remain conformance work rather than being silently
+claimed as complete.

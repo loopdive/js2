@@ -35,6 +35,10 @@ on:
       - "scripts/compiler-fork-worker.mjs"
       - "scripts/compiler-pool.ts"
       - "scripts/diff-test262.ts"
+      - "scripts/build-quickjs-eval-provider.mjs"
+      - "scripts/quickjs-eval-provider.mjs"
+      - "scripts/runtime-eval-provider.mjs"
+      - "scripts/quickjs-artifact/**"
       - "scripts/generate-editions.ts"
       # Part of the merge_group gating logic (it decides which manifest
       # changes the matcher never sees), so a change to it must be validated
@@ -67,6 +71,14 @@ on:
         required: false
         default: "4"
         type: string
+      eval_engine:
+        description: "Standalone eval engine. QuickJS is the default; interpreter is the kept native bytecode-engine lane."
+        required: true
+        default: quickjs
+        type: choice
+        options:
+          - quickjs
+          - interpreter
       force_baseline_refresh:
         description: "Force promote merged report to baseline regardless of regressions. Requires confirm_force=YES."
         required: false
@@ -575,13 +587,13 @@ jobs:
             echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
           fi
 
-  # #2928 E7 / #4013 — compile the real Acorn+interpreter provider ONCE for
-  # every authoritative standalone run, canary-verify it, and distribute the
-  # resulting zero-import Wasm module to all standalone shards. Building it in
-  # each matrix cell costs minutes and several GB; sharing one content-keyed
-  # artifact keeps the interpreter-backed lane affordable and deterministic.
+  # #2928 E7 / #4013 / #4242 P1-S2 — build the SELECTED standalone eval
+  # provider ONCE, canary-verify it, and distribute it to every standalone
+  # shard. Push and merge_group select the current default (QuickJS);
+  # workflow_dispatch may explicitly select the kept native bytecode
+  # interpreter. Neither engine may fall back to the other on a cache miss.
   runtime-eval-provider:
-    name: build standalone runtime-eval provider
+    name: build standalone runtime-eval provider (${{ inputs.eval_engine || 'quickjs' }})
     needs: [changes, mg-artifact-probe]
     if: |
       always() &&
@@ -592,6 +604,11 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      # Explicit in the provider job even when workflow inputs do not exist
+      # (push / merge_group). Keep this fallback aligned with the repo default
+      # declared by the synchronous selector in runtime-eval-provider.mjs.
+      JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}
     steps:
       # A host-only merge_group still needs this job to succeed so its shard
       # matrix is not cascade-skipped through `needs`. Every expensive step is
@@ -611,20 +628,83 @@ jobs:
         if: needs.changes.outputs.run_standalone != 'false'
         run: pnpm install --frozen-lockfile
 
-      - name: Build and verify full runtime-eval provider (#2928)
+      - name: Compute QuickJS artifact cache key (#4242)
+        id: quickjs-key
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs'
+        run: |
+          set -euo pipefail
+          ARTIFACT_KEY="$(node --input-type=module -e '
+            import { quickjsArtifactCacheKey } from "./scripts/quickjs-eval-provider.mjs";
+            process.stdout.write(quickjsArtifactCacheKey());
+          ')"
+          CLANG_V="$(clang-18 --version | head -1)"
+          CACHE_HASH="$(printf '%s|%s' "$ARTIFACT_KEY" "$CLANG_V" | sha256sum | cut -d' ' -f1)"
+          echo "artifact_key=$ARTIFACT_KEY" >> "$GITHUB_OUTPUT"
+          echo "cache_hash=$CACHE_HASH" >> "$GITHUB_OUTPUT"
+          echo "QuickJS artifact key: $ARTIFACT_KEY"
+          echo "QuickJS Actions cache key: $CACHE_HASH"
+
+      # Share the expensive upstream QuickJS+WASI build with the scheduled
+      # quickjs-wasi-artifact lane. The adapter is deliberately NOT cached
+      # across commits: its key includes this run's compiler-bundle hash.
+      - name: Restore QuickJS WASI artifact (#4242)
+        id: quickjs-cache
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs'
+        uses: actions/cache@v4
+        with:
+          path: .tmp/quickjs-artifact
+          key: quickjs-wasi-${{ steps.quickjs-key.outputs.cache_hash }}
+
+      - name: Install QuickJS wasm toolchain on cache miss (#4242)
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs' && steps.quickjs-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 cmake
+          clang-18 --version
+
+      - name: Build QuickJS WASI artifact on cache miss (#4242)
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs' && steps.quickjs-cache.outputs.cache-hit != 'true'
+        env:
+          JOBS: "4"
+          OUT_DIR: .tmp/quickjs-artifact
+        run: bash scripts/quickjs-artifact/build.sh
+
+      - name: Build compiler bundle
         if: needs.changes.outputs.run_standalone != 'false'
+        run: pnpm run build:compiler-bundle
+
+      - name: Build and verify full interpreter provider (#2928)
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'interpreter'
         env:
           NODE_OPTIONS: --max-old-space-size=3072
-        run: |
-          pnpm run build:compiler-bundle
-          node scripts/build-runtime-eval-provider.mjs
+        run: node scripts/build-runtime-eval-provider.mjs
 
-      - name: Upload full runtime-eval provider
-        if: needs.changes.outputs.run_standalone != 'false'
+      - name: Build and verify QuickJS provider pair (#4242)
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs'
+        env:
+          JS2WASM_QUICKJS_ARTIFACT_DIR: .tmp/quickjs-artifact
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: node scripts/build-quickjs-eval-provider.mjs
+
+      - name: Upload full interpreter provider
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'interpreter'
         uses: actions/upload-artifact@v6
         with:
           name: runtime-eval-provider-${{ github.run_id }}
           path: .test262-cache/runtime-eval-provider-*.wasm
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload QuickJS provider pair
+        if: needs.changes.outputs.run_standalone != 'false' && env.JS2WASM_EVAL_ENGINE == 'quickjs'
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: |
+            .test262-cache/quickjs-artifact-*/
+            .test262-cache/quickjs-eval-adapter-*.wasm
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
@@ -765,6 +845,12 @@ jobs:
       # to 3 later, change BOTH workflows together after validating the new
       # baseline rather than changing this gate in isolation.
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      # The Test262 file fork occasionally lazy-loads the full multi-source
+      # compiler for fixture tests. That process is separate from the four
+      # 512 MiB compiler workers; 512 MiB for the parent proved insufficient
+      # on standalone shards 10/17 in #4402. Match the repo's issue/equivalence
+      # gates and leave compiler-worker limits unchanged.
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv
@@ -781,8 +867,10 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
-      # The shared provider artifact makes the full interpreter tier the
-      # authoritative CI standalone lane. Host cells leave the flag empty.
+      JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
+      # The shared provider artifact makes QuickJS the authoritative CI
+      # standalone lane. Host cells leave the flag empty; the interpreter
+      # escape hatch still uses this full-tier switch.
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
       # #1954 — empty (= run everything) unless the PR body opts into a scope.
       # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
@@ -818,20 +906,26 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      - name: Download full runtime-eval provider (#2928)
+      - name: Download selected runtime-eval provider (#2928/#4242)
         if: matrix.target.test262_target == 'standalone'
         uses: actions/download-artifact@v7
         with:
           name: runtime-eval-provider-${{ github.run_id }}
           path: .test262-cache
 
-      # Build the cheap refusal fallback and fail loudly unless the downloaded
-      # full provider matches this cell's compiler-bundle content key. This
-      # prevents a missing/stale artifact from silently changing the measured
-      # capability tier or recompiling Acorn independently in every shard.
-      - name: Verify shared runtime-eval provider cache (#2928)
+      # The selected full provider is never built in a shard. The interpreter
+      # command retains its cheap refusal-module build before requiring the
+      # downloaded full cache; QuickJS is strictly verify-only. A missing or
+      # compiler-key-mismatched download is a hard failure, never a silent
+      # fallback that labels one engine's numbers as the other's.
+      - name: Verify shared runtime-eval provider cache (#2928/#4242)
         if: matrix.target.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
+        run: |
+          case "$JS2WASM_EVAL_ENGINE" in
+            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+          esac
 
       - name: Run shard
         run: |
@@ -845,6 +939,11 @@ jobs:
           if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
+          fi
+          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
+          if [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
           fi
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
@@ -861,6 +960,7 @@ jobs:
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
           if-no-files-found: warn
 
       # #3404 — a single transient artifact-upload flake (e.g. `Failed to
@@ -932,8 +1032,8 @@ jobs:
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
     # Same 25-min timeout as `test262-shard`. The per-target counts
-    # (js-host=72, standalone=34) target ~6-8 minutes from the first #3470
-    # production run while leaving ample timeout headroom — see the generator.
+    # (js-host=66, standalone=36) target ~6-8 minutes in the current production
+    # configuration while leaving ample timeout headroom — see the generator.
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -949,12 +1049,18 @@ jobs:
       # stays comparable — do not lower this without re-auditing the
       # baseline alongside refresh-baseline.yml.
       COMPILER_POOL_SIZE: "4"
+      # Parent Vitest fork; compiler workers retain their independent 512 MiB
+      # cap. Fixture-bearing standalone shards load the multi-source compiler
+      # in this parent and need the same 1 GiB ceiling as the required issue and
+      # equivalence gates.
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
       JS2WASM_IR_FIRST: ""
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
+      JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'quickjs' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
@@ -984,16 +1090,21 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      - name: Download full runtime-eval provider (#2928)
+      - name: Download selected runtime-eval provider (#2928/#4242)
         if: matrix.test262_target == 'standalone'
         uses: actions/download-artifact@v7
         with:
           name: runtime-eval-provider-${{ github.run_id }}
           path: .test262-cache
 
-      - name: Verify shared runtime-eval provider cache (#2928)
+      - name: Verify shared runtime-eval provider cache (#2928/#4242)
         if: matrix.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
+        run: |
+          case "$JS2WASM_EVAL_ENGINE" in
+            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+          esac
 
       - name: Run shard
         run: |
@@ -1007,6 +1118,11 @@ jobs:
           if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
+          fi
+          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
+          if [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
           fi
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
@@ -1025,10 +1141,11 @@ jobs:
           # (test262-*-shard-*) pick these up with no changes there — only
           # one of the two shard jobs ever runs per workflow run, so there is
           # no naming collision risk even though chunk_label ranges overlap
-          # (1..72 / 1..34 here vs 1..57 in test262-shard).
+          # (1..66 / 1..36 here vs 1..57 in test262-shard).
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once (see the matching
@@ -2279,11 +2396,10 @@ jobs:
           exit 1
 
   promote-baseline:
-    # (#2947) `!(… && inputs.ir_first)` — an IR-first measurement dispatch
-    # (JS2WASM_IR_FIRST=1 in the shards) must NEVER promote its merged report:
-    # promoting a flagged run's pass-set would poison the regression baseline
-    # every PR gates against. The merged-report ARTIFACT is the measurement
-    # deliverable; the baseline stays owned by unflagged runs.
+    # Measurement dispatches (IR-first, layout-emit, or the explicit native
+    # interpreter lane) must NEVER promote their merged report: promoting a
+    # non-default pass-set would poison the QuickJS baseline every PR gates
+    # against. The merged-report ARTIFACT is the measurement deliverable.
     # (#3611) `!cancelled() &&` IS LOAD-BEARING — do not "simplify" it away.
     #
     # Measured 2026-08-01 across **30 of 30** available push:main runs: this job
@@ -2314,13 +2430,11 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
-      !(github.event_name == 'workflow_dispatch' && inputs.layout_emit)
+      !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
-    # (#2947) `!(… && inputs.ir_first)` above — an IR-first measurement dispatch
-    # (JS2WASM_IR_FIRST=1 in the shards) must NEVER promote its merged report:
-    # promoting a flagged run's pass-set would poison the regression baseline
-    # every PR gates against. The merged-report ARTIFACT is the measurement
-    # deliverable; the baseline stays owned by unflagged runs.
+    # Explicit interpreter dispatches are anti-rot measurements for the kept
+    # engine, not replacements for the QuickJS-owned default baseline.
     #
     # #3448 — mg-artifact-probe decides where the merged JSONLs come from:
     # MISS → the `test262-merged-report` artifact built by merge-report from a

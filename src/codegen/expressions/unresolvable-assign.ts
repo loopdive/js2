@@ -16,15 +16,22 @@ import { ts } from "../../ts-api.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
+  emitCaptureRuntimeEvalBindingValueCell,
   emitCaptureGlobalEnvironmentHasBinding,
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
+  emitRefreshRuntimeEvalBindingValueCellForWrite,
+  emitRuntimeEvalBindingCellWrite,
   emitStrictUnresolvableGlobalWrite,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
+import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
+import { popBody, pushBody } from "../context/bodies.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { coerceType } from "../type-coercion.js";
 import { compileExpression } from "../expressions.js";
+import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
+import { skipTransparentExpressions } from "../shared.js";
 
 /**
  * Returned when the assignment is NOT an unresolvable-identifier assignment, so
@@ -32,6 +39,20 @@ import { compileExpression } from "../expressions.js";
  * which means "claimed, and compilation failed".
  */
 export const NOT_UNRESOLVABLE = Symbol("not-unresolvable");
+
+/** Conservative proof for values that need the cross-module callable carrier
+ * when they are stored in an eval-created activation cell. */
+function isStaticallyCallableExpression(ctx: CodegenContext, value: ts.Expression): boolean {
+  const expr = skipTransparentExpressions(value);
+  if (
+    ts.isFunctionExpression(expr) ||
+    ts.isArrowFunction(expr) ||
+    (ts.isIdentifier(expr) && (ctx.funcMap.has(expr.text) || ctx.topLevelFunctionNames.has(expr.text)))
+  ) {
+    return true;
+  }
+  return ctx.oracle.signatureOf(expr) !== undefined;
+}
 
 /**
  * True if `id` is an identifier that cannot be resolved to any binding the
@@ -136,6 +157,88 @@ export function tryCompileUnresolvableIdentifierAssign(
   if (!isUnresolvableIdent(ctx, fctx, left)) return NOT_UNRESOLVABLE;
   const name = left.text;
   const strict = isStrictContext(left, ctx.inferModuleStrictArguments);
+
+  // Resolve the provider-created activation binding BEFORE the RHS. The
+  // captured value cell is a stable Reference: an RHS that performs another
+  // eval cannot retroactively change whether this assignment targeted the
+  // existing eval var or the realm global. The miss arm preserves the exact
+  // sloppy/strict global behavior below.
+  if (runtimeEvalStateMayShadowBinding(ctx, fctx, name)) {
+    const runtimeBinding = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
+    if (runtimeBinding) {
+      let globalObjectLocal: number | undefined;
+      let globalHasBinding: { objLocalIdx: number; hasLocalIdx: number } | undefined;
+      let globalSetIdx: number | undefined;
+      if (strict) {
+        globalHasBinding = emitCaptureGlobalEnvironmentHasBinding(ctx, fctx, name);
+        if (!globalHasBinding) return NOT_UNRESOLVABLE;
+      } else {
+        if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
+        globalObjectLocal = allocLocal(fctx, `__runtime_eval_global_obj_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: globalObjectLocal });
+        globalSetIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+        if (globalSetIdx === undefined) return null;
+        (ctx.sloppyImplicitGlobals ??= new Set()).add(name);
+      }
+
+      const resultType = compileExpression(ctx, fctx, right);
+      if (!resultType) return null;
+      const resultLocal = allocLocal(fctx, `__runtime_eval_assign_result_${fctx.locals.length}`, resultType);
+      fctx.body.push({ op: "local.set", index: resultLocal }, { op: "local.get", index: resultLocal });
+      if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+      const valueLocal = allocLocal(fctx, `__runtime_eval_assign_value_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      fctx.body.push({ op: "local.set", index: valueLocal });
+
+      const savedPresent = pushBody(fctx);
+      let cellValueLocal = valueLocal;
+      if (isStaticallyCallableExpression(ctx, right)) {
+        fctx.body.push({ op: "local.get", index: valueLocal });
+        emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+        cellValueLocal = allocLocal(fctx, `__runtime_eval_assign_cell_value_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: cellValueLocal });
+      }
+      const refreshedBinding = emitRefreshRuntimeEvalBindingValueCellForWrite(ctx, fctx, name, runtimeBinding);
+      emitRuntimeEvalBindingCellWrite(fctx, refreshedBinding ?? runtimeBinding, cellValueLocal);
+      const presentBody = fctx.body;
+      popBody(fctx, savedPresent);
+
+      const savedMiss = pushBody(fctx);
+      if (strict) {
+        emitStrictUnresolvableGlobalWrite(
+          ctx,
+          fctx,
+          name,
+          globalHasBinding!.objLocalIdx,
+          globalHasBinding!.hasLocalIdx,
+          valueLocal,
+        );
+      } else {
+        fctx.body.push({ op: "local.get", index: globalObjectLocal! });
+        emitGlobalEnvironmentKey(ctx, fctx, name);
+        fctx.body.push(
+          { op: "local.get", index: valueLocal },
+          { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? globalSetIdx! },
+        );
+      }
+      const missBody = fctx.body;
+      popBody(fctx, savedMiss);
+
+      fctx.body.push(
+        { op: "local.get", index: runtimeBinding.valueCellLocal },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: presentBody, else: missBody },
+        { op: "local.get", index: resultLocal },
+      );
+      return resultType;
+    }
+  }
 
   // ── Sloppy arm: create/update a configurable property on the realm's global
   // object. Host and host-free targets share the same carrier (#2726).

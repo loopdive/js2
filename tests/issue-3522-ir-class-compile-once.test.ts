@@ -227,7 +227,7 @@ describe("#3522 instance class-method compile-once ownership", () => {
         });
         expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
         for (const name of ["Animal_new", "Dog_new"]) {
-          expect(classMemberOutcome(prepared, name)).toMatchObject({
+          expect(classMemberOutcome(prepared, name), `${name} must compile once through IR`).toMatchObject({
             kind: "emitted",
             legacyBodyEmitted: false,
             irBodyEmitted: true,
@@ -697,25 +697,178 @@ describe("#3522 instance class-method compile-once ownership", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
-    "keeps a forward-class constructor parameter direct until its finalized ABI is exact in the %s lane",
+    "prepares every exact forward-class callable ABI position once in the %s lane",
     async (target) => {
       const source = `
-        class A { constructor(b: B) {} }
-        class B {}
-        export function marker(): number { return 1; }
+        class Holder {
+          constructor(current: Value) { current.amount = current.amount; }
+          replace(next: Value): Value { return next; }
+          get held(): Value { return new Value(5); }
+          set held(next: Value) { next.amount = next.amount; }
+          static keep(next: Value): Value { return next; }
+        }
+        class Value {
+          amount: number;
+          constructor(amount: number) { this.amount = amount; }
+        }
+        export function run(): number {
+          const holder = new Holder(new Value(3));
+          holder.held = holder.replace(new Value(4));
+          return Holder.keep(holder.held).amount;
+        }
       `;
       const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
       try {
         Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
         const direct = await compile(source, {
           fileName: `forward-class-constructor-param-${target}.ts`,
+          experimentalIR: false,
+          emitWat: true,
+          target,
+        });
+        const prepared = await compile(source, {
+          fileName: `forward-class-constructor-param-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        expect(WebAssembly.validate(prepared.binary)).toBe(true);
+        expect((await instantiate(direct)).run!()).toBe(5);
+        expect((await instantiate(prepared)).run!()).toBe(5);
+        for (const name of [
+          "Holder_new",
+          "Holder_replace",
+          "Holder_get_held",
+          "Holder_set_held",
+          "Holder_keep",
+          "Value_new",
+        ]) {
+          const observed = classMemberOutcome(prepared, name);
+          expect(observed, `${name} must compile once through IR: ${JSON.stringify(observed)}`).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+          });
+        }
+        expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+        expect(prepared.binary.length).toBeLessThanOrEqual(direct.binary.length);
+
+        const valueTypeIdx = watNullableRefResultTypeIndex(watFunctionBody(prepared.wat, "Value_new"), "Value_new");
+        for (const name of ["Holder_init", "Holder_replace", "Holder_get_held", "Holder_set_held", "Holder_keep"]) {
+          const body = watFunctionBody(prepared.wat, name);
+          expect(body.split("\n")[0], `${name} forward-class ABI`).toContain(`(ref null ${valueTypeIdx})`);
+          expect(body).not.toMatch(
+            /externref|any\.convert_extern|extern\.convert_any|call_ref|call_indirect|ref\.(?:test|cast)/,
+          );
+        }
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY =
+          "Holder_new,Holder_replace,Holder_get_held,Holder_set_held,Holder_keep,Value_new";
+        const poisoned = await compile(source, {
+          fileName: `forward-class-constructor-param-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success, poisoned.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect((await instantiate(poisoned)).run!()).toBe(5);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "prepares an exact class-typed field only when its committed struct ABI matches in the %s lane",
+    async (target) => {
+      const source = `
+        class Value {
+          amount: number;
+          constructor(amount: number) { this.amount = amount; }
+        }
+        class Holder {
+          current: Value;
+          constructor(current: Value) { this.current = current; }
+          read(): number { return this.current.amount; }
+        }
+        export function run(): number { return new Holder(new Value(42)).read(); }
+      `;
+      const direct = await compile(source, {
+        fileName: `exact-class-field-abi-${target}.ts`,
+        experimentalIR: false,
+        emitWat: true,
+        target,
+      });
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Value_new,Holder_new,Holder_read";
+        prepared = await compile(source, {
+          fileName: `exact-class-field-abi-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+
+      for (const result of [direct, prepared]) {
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        expect((await instantiate(result)).run!()).toBe(42);
+      }
+      for (const name of ["Value_new", "Holder_new", "Holder_read"]) {
+        expect(classMemberOutcome(prepared, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+      }
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.binary.length).toBeLessThanOrEqual(direct.binary.length);
+
+      const valueTypeIdx = watNullableRefResultTypeIndex(watFunctionBody(prepared.wat, "Value_new"), "Value_new");
+      expect(watTypeDefinition(prepared.wat, "Holder")).toContain(`(field $current (mut (ref null ${valueTypeIdx})))`);
+      for (const name of ["Holder_init", "Holder_read"]) {
+        const body = watFunctionBody(prepared.wat, name);
+        expect(body).not.toMatch(
+          /externref|any\.convert_extern|extern\.convert_any|call_ref|call_indirect|ref\.(?:test|cast)/,
+        );
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps a forward class field direct while its committed storage ABI is externref in the %s lane",
+    async (target) => {
+      const source = `
+        class Holder {
+          current: Value;
+          constructor(current: Value) { this.current = current; }
+        }
+        class Value { amount: number; }
+        export function marker(): number { return 1; }
+      `;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName: `forward-class-field-abi-${target}.ts`,
           experimentalIR: true,
           trackIrOutcomes: true,
           target,
         });
         expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
         expect(WebAssembly.validate(direct.binary)).toBe(true);
-        expect(classMemberOutcome(direct, "A_new")).toMatchObject({
+        expect(classMemberOutcome(direct, "Holder_new")).toMatchObject({
           kind: "unsupported",
           stage: "select",
           legacyBodyEmitted: true,
@@ -723,23 +876,64 @@ describe("#3522 instance class-method compile-once ownership", () => {
         });
         expect(direct.irPostClaimErrors ?? []).toEqual([]);
 
-        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "A_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Holder_new";
         const poisoned = await compile(source, {
-          fileName: `forward-class-constructor-param-${target}.ts`,
+          fileName: `forward-class-field-abi-${target}.ts`,
           experimentalIR: true,
           trackIrOutcomes: true,
           target,
         });
         expect(poisoned.success).toBe(false);
-        expect(classMemberOutcome(poisoned, "A_new")).toMatchObject({
-          kind: "unsupported",
-          stage: "select",
-          legacyBodyEmitted: true,
-          irBodyEmitted: false,
-        });
         expect(
-          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: A_new")),
+          poisoned.errors.some((error) => error.message.includes("injected direct class-body poison: Holder_new")),
         ).toBe(true);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps cyclic class ABIs on one typed direct path in the %s lane",
+    async (target) => {
+      const source = `
+        class Left { constructor(right: Right) {} }
+        class Right { constructor(left: Left) {} }
+        export function marker(): number { return 1; }
+      `;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      try {
+        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        const direct = await compile(source, {
+          fileName: `cyclic-class-constructor-abi-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(direct.binary)).toBe(true);
+        for (const name of ["Left_new", "Right_new"]) {
+          expect(classMemberOutcome(direct, name)).toMatchObject({
+            kind: "unsupported",
+            stage: "select",
+            legacyBodyEmitted: true,
+            irBodyEmitted: false,
+          });
+        }
+        expect(direct.irPostClaimErrors ?? []).toEqual([]);
+
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Left_new,Right_new";
+        const poisoned = await compile(source, {
+          fileName: `cyclic-class-constructor-abi-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+        expect(poisoned.success).toBe(false);
+        expect(poisoned.errors.some((error) => error.message.includes("injected direct class-body poison:"))).toBe(
+          true,
+        );
       } finally {
         if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
         else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;

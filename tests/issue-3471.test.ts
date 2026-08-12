@@ -108,6 +108,23 @@ describe("#3471 — polymorphic comparator param must not be narrowed to f64", (
 });
 
 describe("#3471 — numeric-kernel param inference is NOT regressed", () => {
+  it("an explicit JSDoc {*} parameter remains polymorphic when called across a module boundary", async () => {
+    const src = `
+      /** @param {*} value */
+      export function baseToString(value) {
+        if (typeof value == "string") return value;
+        var result = value + "";
+        return result == "0" && 1 / value == -Infinity ? "-0" : result;
+      }
+    `;
+    const r = await compile(src, { fileName: "lodash-base-to-string.js", allowJs: true });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(r.wat ?? "").not.toMatch(/\(func \$baseToString \(param f64\)/);
+    const imports = buildImports(r.imports, {}, r.stringPool);
+    const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+    expect((instance.exports.baseToString as (value: string) => string)("Foo")).toBe("Foo");
+  });
+
   it("a recursive numeric kernel still narrows its param to f64", async () => {
     // fact(n) is called internally as fact(n-1) with a number-typed arg, so
     // call-site inference (not the body fallback) supplies f64. Must stay f64.

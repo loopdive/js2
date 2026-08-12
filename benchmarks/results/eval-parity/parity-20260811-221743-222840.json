@@ -1,0 +1,417 @@
+{
+  "schema_version": 1,
+  "generatedAt": "2026-08-11T20:39:44.202Z",
+  "generated_by": "scripts/eval-engine-parity.mjs",
+  "inputs": {
+    "quickjs": {
+      "path": ".test262-cache/eval-parity/quickjs-scoped-20260811-221743.jsonl",
+      "tier": "QUICKJS",
+      "tier_announcement": "QUICKJS"
+    },
+    "interpreter": {
+      "path": ".test262-cache/eval-parity/interpreter-scoped-20260811-222840.jsonl",
+      "tier": "INTERPRETER",
+      "tier_announcement": "INTERPRETER"
+    },
+    "baseline": {
+      "path": ".test262-cache/test262-standalone-current.jsonl"
+    }
+  },
+  "admissible": true,
+  "set": {
+    "mode": "scoped",
+    "manifest": null,
+    "files": 1351,
+    "outside_files": 0
+  },
+  "set_mismatch": {
+    "count": 0,
+    "only_quickjs": [],
+    "only_interpreter": []
+  },
+  "expected_set": {
+    "kind": "count",
+    "source": null,
+    "count": 1351,
+    "files": null,
+    "quickjs_count": 1351,
+    "interpreter_count": 1351,
+    "complete": true,
+    "missing_quickjs": [],
+    "missing_interpreter": [],
+    "unexpected_quickjs": [],
+    "unexpected_interpreter": []
+  },
+  "summary": {
+    "quickjs": {
+      "pass": 1081,
+      "fail": 244,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1351
+    },
+    "interpreter": {
+      "pass": 1099,
+      "fail": 226,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1351
+    },
+    "baseline": {
+      "pass": 1094,
+      "fail": 229,
+      "compile_error": 26,
+      "compile_timeout": 0,
+      "skip": 0,
+      "other": 0,
+      "total": 1349
+    },
+    "net_vs_interpreter": -18
+  },
+  "sanity": {
+    "baseline_provided": true,
+    "interpreter_vs_baseline_flips": 3,
+    "baseline_missing_files": 2,
+    "baseline_missing_file_paths": [
+      "test/annexB/language/eval-code/direct/func-if-decl-no-else-eval-func-block-scoping.js",
+      "test/annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-skip-early-err-for.js"
+    ]
+  },
+  "neutral_status_changes": {
+    "count": 0,
+    "files": []
+  },
+  "flips": [
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T10.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T10.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T11.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T11.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T12.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T12.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T2.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T2.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T3.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T3.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T4.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T4.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T5.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T5.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A1_T7.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A1_T7.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T11.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T11.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T12.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T12.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T13.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T13.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T14.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T14.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T2.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T2.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T4.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T4.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T5.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T5.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T7.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T7.js"
+    },
+    {
+      "file": "test/built-ins/Function/S15.3.2.1_A3_T8.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of f.constructor is expected to equal the value of Function Expected SameValue(«undefined», «[object Object]») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/S15.3.2.1_A3_T8.js"
+    },
+    {
+      "file": "test/built-ins/Function/prototype/apply/S15.3.4.3_A3_T9.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of this[\"feat\"] is expected to be 1 Expected SameValue(«undefined», «1») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/prototype/apply"
+    },
+    {
+      "file": "test/built-ins/Function/prototype/call/S15.3.4.4_A3_T9.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "pass",
+      "error": "Test262Error: The value of this[\"feat\"] is expected to be 1 Expected SameValue(«undefined», «1») to be true",
+      "bucket": "engine-difference",
+      "rule": "E3",
+      "path_bucket": "test/built-ins/Function/prototype/call"
+    },
+    {
+      "file": "test/language/eval-code/direct/non-definable-global-function.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "Test262Error: Expected true but got false",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/language/eval-code/direct/non-definable-global-function.js"
+    },
+    {
+      "file": "test/language/eval-code/direct/non-definable-global-generator.js",
+      "kind": "win",
+      "interpreter": "fail",
+      "quickjs": "pass",
+      "baseline": "fail",
+      "error": "Test262Error: Expected true but got false",
+      "bucket": "genuine-win",
+      "rule": "W1",
+      "path_bucket": "test/language/eval-code/direct/non-definable-global-generator.js"
+    },
+    {
+      "file": "test/language/eval-code/direct/var-env-func-non-strict.js",
+      "kind": "loss",
+      "interpreter": "pass",
+      "quickjs": "fail",
+      "baseline": "fail",
+      "error": "Test262Error: Expected SameValue(«\"undefined\"», «\"function\"») to be true",
+      "bucket": "scope-fidelity",
+      "rule": "S2",
+      "path_bucket": "test/language/eval-code/direct/var-env-func-non-strict.js"
+    }
+  ],
+  "buckets": {
+    "genuine-win": {
+      "wins": 2,
+      "losses": 0,
+      "net": 2,
+      "files": [
+        "test/language/eval-code/direct/non-definable-global-function.js",
+        "test/language/eval-code/direct/non-definable-global-generator.js"
+      ]
+    },
+    "scope-fidelity": {
+      "wins": 0,
+      "losses": 1,
+      "net": -1,
+      "files": [
+        "test/language/eval-code/direct/var-env-func-non-strict.js"
+      ]
+    },
+    "membrane-residual": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "engine-difference": {
+      "wins": 0,
+      "losses": 19,
+      "net": -19,
+      "files": [
+        "test/built-ins/Function/S15.3.2.1_A1_T10.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T11.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T12.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T2.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T3.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T4.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T5.js",
+        "test/built-ins/Function/S15.3.2.1_A1_T7.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T11.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T12.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T13.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T14.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T2.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T4.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T5.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T7.js",
+        "test/built-ins/Function/S15.3.2.1_A3_T8.js",
+        "test/built-ins/Function/prototype/apply/S15.3.4.3_A3_T9.js",
+        "test/built-ins/Function/prototype/call/S15.3.4.4_A3_T9.js"
+      ]
+    },
+    "harness-infra": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    },
+    "unattributed": {
+      "wins": 0,
+      "losses": 0,
+      "net": 0,
+      "files": []
+    }
+  },
+  "outside_set_delta": {
+    "count": 0,
+    "files": []
+  },
+  "gate": {
+    "verdict": "BLOCKED",
+    "reason": "net -18 with no accepted-residuals entry for net-negative bucket `scope-fidelity`",
+    "reasons": [
+      "net -18 with no accepted-residuals entry for net-negative bucket `scope-fidelity`",
+      "net -18 with no accepted-residuals entry for net-negative bucket `engine-difference`",
+      "sanity: standalone baseline is missing 2 measured file(s) — the interpreter run has no complete cross-check"
+    ],
+    "unaccepted_negative_buckets": [
+      "engine-difference",
+      "scope-fidelity"
+    ],
+    "accepted_residuals": {
+      "source": "plan/issues/4242-quickjs-eval-default-flip.md",
+      "present": false,
+      "entries": []
+    }
+  }
+}

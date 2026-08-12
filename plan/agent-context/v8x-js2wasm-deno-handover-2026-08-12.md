@@ -2,10 +2,12 @@
 
 The initial spike merged in
 [#4396](https://github.com/loopdive/js2wasm/pull/4396). Its compiler/runtime
-follow-ups and primordials bootstrap are published in ready
+follow-ups and primordials bootstrap merged in
 [#4404](https://github.com/loopdive/js2wasm/pull/4404). The authoritative task
 record is
 [`#4376`](../issues/4376-v8x-js2wasm-deno-core-compatibility-spike.md).
+The v8x backend itself is published as ready
+[`loopdive/v8x#1`](https://github.com/loopdive/v8x/pull/1).
 
 ## Exact stop point
 
@@ -16,7 +18,7 @@ record is
 - Primordials bootstrap: `b0386cbd5e5afd`
 - Published v8x branch:
   `loopdive/v8x:codex/js2wasm-module-backend` at
-  `074091faa356043c1795ebeab159c86bf77ab62f`
+  `f37c7d3d1cb9423abdb5399cd1d0b6dd5d7638d2`
 - PR base: `loopdive/js2wasm:main`
 - v8x pin: `v149.4.0-rc.4`, commit
   `22cf7342405794d6e1cd851aa43a9b3447654742`
@@ -27,9 +29,11 @@ record is
 - Diagnostic execution result: startup reaches
   `ext:core/00_primordials.js`, then v8x reports the missing shared-instance
   semantic boundary as an explicit failure.
-- Runtime prototype result: an embedded, persistent Wasmtime 47.0.3 instance
-  calls a typed Rust `Deno.cwd()` bridge and can reload the saved artifact with
-  the compiler path deliberately absent.
+- Runtime prototype result: compiler-free Wasmtime 47.0.3 shares one Engine,
+  direct-Rust host Linker, and cached Module/InstancePre for the trusted
+  `.cwasm` artifact. Two private stores/instances call the typed Rust
+  `Deno.cwd()` bridge with exact fresh-instance call counts while the compiler
+  path is deliberately absent.
 - Compiler bootstrap result: the pinned unchanged `00_primordials.js` now
   compiles in the two-source graph. #4378 fixes its pristine
   `Array.prototype` iterator capture; #4380 fixes the IIFE empty-object carrier
@@ -62,13 +66,15 @@ portable record.
    implementations.
 2. The `rusty_v8` module API can collect raw TypeScript sources and preserve
    normal resolver callbacks while js2wasm performs compilation.
-3. Embedded Wasmtime can execute the resulting linked WasmGC graph and keep
-   its store/instance alive with the v8x module handle.
+3. Embedded Wasmtime can execute the resulting linked WasmGC graph, share its
+   engine/precompiled code/import resolution, and keep a private store/instance
+   alive with each v8x module handle.
 4. The relevant isolate, context, handle, string, template, object, property,
    module, and promise state can be Rust-owned.
 5. `deno_core` can compile unchanged against the compatibility surface.
 6. A typed Rust op can implement the natural `Deno.cwd()` wrapper shape.
-7. The saved artifact executes with no compiler or Node process available.
+7. The trusted, target-specific `.cwasm` artifact executes with no compiler or
+   Node process available; the runtime dependency graph excludes Cranelift.
 
 ## What is not proven
 
@@ -98,7 +104,8 @@ such as `Object`, `Array`, `Promise`, and `Reflect`. Later wrappers rely on
 those copies even if application code monkey-patches the globals. They are
 JavaScript object identities and functions—not Rust ops or WASI calls.
 
-The module prototype now has one persistent embedded Wasmtime store/instance
+The module prototype now shares compiler-free Wasmtime runtime/code/import
+state while giving every evaluated module a persistent private store/instance,
 and proves a typed `Deno.cwd()` host call. On the compiler side, the pinned
 unchanged source is now included honestly with `allowJs` and compiles after two
 focused fixes (#4378 and #4380). A temporary checkpoint instrument (not part of
@@ -133,8 +140,9 @@ diagnostic far enough to identify the semantic stop.
   ABI. Add WIT/component packaging once the bridge semantics stabilize; use
   WASI for standard capabilities, not as a substitute for Deno's JavaScript
   object model.
-- **Compile ahead of time for deployment.** The end state ships a linked Wasm
-  artifact, v8x's Rust host layer, and Wasmtime—not js2wasm or Node.
+- **Compile and Wasmtime-precompile ahead of time for deployment.** The end
+  state ships a trusted target-specific `.cwasm` artifact, v8x's Rust host
+  layer, and compiler-free Wasmtime—not js2wasm, Node, or Cranelift.
 
 ## Safest next implementation slice
 
@@ -181,15 +189,15 @@ cargo test --no-default-features \
 
 V8X_JS2WASM_COMPILER_SCRIPT=/absolute/path/to/js2wasm/examples/v8x-js2wasm-spike/compile-graph.ts \
 V8X_JS2WASM_WORKDIR=/absolute/path/to/js2wasm \
-V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.wasm \
+V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.cwasm \
 cargo test --no-default-features \
   --features js2wasm_spike,simdutf \
   --test js2wasm_spike
 
-V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.wasm \
+V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.cwasm \
 V8X_JS2WASM_COMPILER=/compiler-is-not-installed \
 cargo test --no-default-features \
-  --features js2wasm_spike,simdutf \
+  --features engine_js2wasm,simdutf \
   --test js2wasm_spike
 ```
 
@@ -221,7 +229,11 @@ part of a production build.
   checkpointed diagnostic reaches the first JSON namespace copy.
 - v8x source-compile js2wasm integration: 1/1 passed.
 - v8x compiler-free AOT integration with an invalid compiler path: 1/1
-  passed.
+  passed; the test observes one module load, one cached module, two isolated
+  instantiations, and exact value-level `Deno.cwd()` host-call counts.
+- Compiler-free dependency audit: no `wasmtime-cranelift` or
+  `cranelift-codegen`. Apple-arm64 stripped test runtime: 1,768,024 bytes;
+  precompiled fixture: 1,434,192 bytes.
 - Vendored simdutf suite: 14/14 passed.
 - Unchanged `deno_core` Rust consumer check: passed with Wasmtime 45.
 - Repository TypeScript typecheck: passed.

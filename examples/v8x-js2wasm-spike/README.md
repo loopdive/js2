@@ -16,7 +16,13 @@ v8x InstantiateModule ── calls the normal V8 resolver for every import
 linked TypeScript graph ── js2wasm target=standalone, platform=deno
       │
       ▼
-WasmGC module ── embedded Wasmtime store + instance
+WasmGC module ── Wasmtime precompile at build time
+      │
+      ▼
+trusted .cwasm ── shared Engine + Module + Linker + InstancePre
+      │
+      ├── private Store + Instance A
+      └── private Store + Instance B
       │
       ▼
 typed v8x:deno imports ── Rust host ops (`Deno.cwd()` in this slice)
@@ -52,7 +58,7 @@ submodule, and run:
 ```sh
 V8X_JS2WASM_COMPILER_SCRIPT=/absolute/path/to/js2wasm/examples/v8x-js2wasm-spike/compile-graph.ts \
 V8X_JS2WASM_WORKDIR=/absolute/path/to/js2wasm \
-V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.wasm \
+V8X_JS2WASM_ARTIFACT_OUTPUT=/tmp/deno-app.cwasm \
 cargo test --no-default-features \
   --features js2wasm_spike \
   --test js2wasm_spike
@@ -62,15 +68,18 @@ This compiles once and saves the linked artifact. The same test then runs
 without Node or js2wasm when given only that artifact:
 
 ```sh
-V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.wasm \
+V8X_JS2WASM_AOT_MODULE=/tmp/deno-app.cwasm \
 V8X_JS2WASM_COMPILER=/compiler-is-not-installed \
 cargo test --no-default-features \
-  --features js2wasm_spike \
+  --features engine_js2wasm \
   --test js2wasm_spike
 ```
 
-The feature is a third backend, embeds Wasmtime 47.0.3, and does not enable the
-JSC or QuickJS features.
+The production feature is a third backend, embeds Wasmtime 47.0.3, and enables
+neither JSC, QuickJS, nor Wasmtime's Cranelift compiler. The `.cwasm` file is
+target-specific executable code and must be produced by a trusted build using
+the same Wasmtime version and configuration; it must remain immutable while
+the runtime maps it.
 
 ## What this proves
 
@@ -81,8 +90,10 @@ JSC or QuickJS features.
   js2wasm performs build-time compilation and embedded Wasmtime performs
   execution.
 - A linked multi-file graph can be lowered by js2wasm and run by Wasmtime.
-- A persistent Wasmtime store can call a Rust-owned typed Deno op and retain
-  the instance for the lifetime of the v8x module handle.
+- One shared Wasmtime Engine, host Linker, and cached precompiled module can
+  create multiple isolated stores/instances. The integration test observes one
+  module load and two independent instantiations, and each fresh store must
+  make the exact expected number of typed `Deno.cwd()` host calls.
 - The resulting artifact runs when the compiler executable is absent.
 
 On macOS, `otool -L` reports only `/usr/lib/libSystem.B.dylib` for the test
@@ -156,10 +167,12 @@ compiler sidecar currently runs under Node at build time. Wasmtime is embedded;
 runtime execution no longer crosses a process boundary.
 
 The deployed shape does not require the compiler: compile and link the
-application plus Deno's JS/TS wrappers to a Wasm artifact at build time, then
-ship only that artifact, v8x's Rust host layer, and embedded Wasmtime. The AOT
-test proves that compiler-free execution path, although packaging and the real
-Deno wrapper graph remain future work.
+application plus Deno's JS/TS wrappers to raw WasmGC, precompile that output to
+a target-specific `.cwasm` file, then ship only that trusted artifact, v8x's
+Rust host layer, and compiler-free Wasmtime. The AOT test proves that path and
+the runtime dependency graph contains no `wasmtime-cranelift` or
+`cranelift-codegen`, although packaging and the real Deno wrapper graph remain
+future work.
 
 The next useful slice remains the real Deno bootstrap graph, not a broad
 symbol-filling exercise. The first source now compiles, but v8x must route it

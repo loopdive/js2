@@ -29,4 +29,19 @@ describe("lodash 4.18.1 upstream suite", () => {
     expect(report.extraction.nativePassed).toBe(11);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
+
+  const heavyEs = process.env.DOGFOOD_LODASH_ES_UPSTREAM_SUITE === "1" ? it : it.skip;
+  heavyEs("runs the same unchanged callbacks against lodash-es", { timeout: 600_000 }, () => {
+    const out = execFileSync(
+      "node",
+      ["--import", "tsx", join(HERE, "lodash-upstream-suite.mjs"), "--package=lodash-es", "--json"],
+      { encoding: "utf-8", maxBuffer: 32 * 1024 * 1024 },
+    );
+    const report = JSON.parse(out);
+    expect(report.package).toBe("lodash-es@4.18.1");
+    expect(report.upstreamSuite.commit).toBe(pin.commit);
+    expect(report.extraction.testsRegistered).toBe(11);
+    expect(report.extraction.nativePassed).toBe(11);
+    expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
+  });
 });

@@ -13,7 +13,7 @@
  * nothing. That comparison MUST be rejected, not merely annotated.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -48,7 +48,7 @@ function results(rows: Row[], path = "synthetic.jsonl") {
 }
 
 const QUICKJS_TIER = parseTierAnnouncement(
-  "QUICKJS (artifact 0c848fd169d8, adapter key 24b25990cf116fd5) — flag-gated engine (#4238)",
+  "QUICKJS (artifact 0c848fd169d8, adapter key 24b25990cf116fd5) — DEFAULT engine (#4242)",
 );
 const INTERPRETER_TIER = parseTierAnnouncement(
   "INTERPRETER (key abc123, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable standalone tier (#2928 E7)",
@@ -73,7 +73,10 @@ function artifactOf(opts: {
   tiers?: { quickjs: unknown; interpreter: unknown };
   mode?: string;
   manifest?: Set<string>;
+  expectedFiles?: Set<string>;
+  expectedCount?: number;
 }) {
+  const inferredExpectedFiles = new Set([...opts.quickjs, ...opts.interpreter].map((row) => row.file));
   return buildParityArtifact({
     quickjs: results(opts.quickjs, "quickjs.jsonl"),
     interpreter: results(opts.interpreter, "interpreter.jsonl"),
@@ -81,6 +84,8 @@ function artifactOf(opts: {
     tiers: opts.tiers ?? { quickjs: QUICKJS_TIER, interpreter: INTERPRETER_TIER },
     mode: opts.mode ?? "scoped",
     manifest: opts.manifest ?? null,
+    expectedFiles: opts.expectedFiles ?? (opts.expectedCount === undefined ? inferredExpectedFiles : null),
+    expectedCount: opts.expectedCount ?? null,
     now: "2026-08-09T00:00:00.000Z",
   });
 }
@@ -347,6 +352,11 @@ describe("gate: net and accepted-residuals", () => {
       ),
     ).toThrow(/can never be accepted/);
     expect(parseAcceptedResiduals("# an issue file with no block").present).toBe(false);
+    const issue = readFileSync(
+      join(import.meta.dirname ?? ".", "..", "plan", "issues", "4242-quickjs-eval-default-flip.md"),
+      "utf8",
+    );
+    expect(parseAcceptedResiduals(issue)).toEqual({ present: false, entries: [] });
   });
 });
 
@@ -420,12 +430,49 @@ describe("gate: input integrity", () => {
     );
     expect(gate.verdict).toBe("BLOCKED");
     expect(gate.reason).toMatch(/not like-with-like/);
+
+    // Equal engine sets are not sufficient: both processes can be killed after
+    // writing the same short prefix. Pin the requested population separately.
+    const expectedFiles = new Set([FILES.a, FILES.b, FILES.c]);
+    for (const sharedRows of [[], [{ file: FILES.a, status: "pass" }]]) {
+      const artifact = artifactOf({
+        quickjs: sharedRows,
+        interpreter: sharedRows,
+        baseline: CLEAN.baseline,
+        expectedFiles,
+      });
+      expect(artifact.set_mismatch.count).toBe(0);
+      expect(artifact.expected_set.complete).toBe(false);
+      const gate = gateOf(artifact);
+      expect(gate.verdict).toBe("BLOCKED");
+      expect(gate.reasons.some((reason: string) => reason.includes("requested files set"))).toBe(true);
+    }
+
+    const expectationless = buildParityArtifact({
+      quickjs: results(CLEAN.quickjs, "q.jsonl"),
+      interpreter: results(CLEAN.interpreter, "i.jsonl"),
+      baseline: results(CLEAN.baseline, "b.jsonl"),
+      tiers: { quickjs: QUICKJS_TIER, interpreter: INTERPRETER_TIER },
+      now: "2026-08-09T00:00:00.000Z",
+    });
+    expect(gateOf(expectationless).reason).toMatch(/no valid expected measurement set\/count was recorded/);
   });
 
   it("BLOCKS when no baseline cross-check was supplied", () => {
     const gate = gateOf(artifactOf({ quickjs: CLEAN.quickjs, interpreter: CLEAN.interpreter }));
     expect(gate.verdict).toBe("BLOCKED");
     expect(gate.reason).toMatch(/no standalone baseline supplied/);
+
+    // A partial baseline cannot cross-check the rows it does not contain.
+    const artifact = artifactOf({
+      quickjs: CLEAN.quickjs,
+      interpreter: CLEAN.interpreter,
+      baseline: CLEAN.baseline.slice(0, 2),
+    });
+    expect(artifact.sanity.baseline_missing_files).toBe(1);
+    const partialGate = gateOf(artifact);
+    expect(partialGate.verdict).toBe("BLOCKED");
+    expect(partialGate.reason).toMatch(/baseline is missing 1 measured file/);
   });
 
   it("BLOCKS when the interpreter run drifts too far from the promoted baseline", () => {
@@ -436,6 +483,7 @@ describe("gate: input integrity", () => {
       interpreter: results(passing, "i.jsonl"),
       baseline: results(rows(Array.from({ length: 12 }, () => "fail")), "b.jsonl"),
       tiers: { quickjs: QUICKJS_TIER, interpreter: INTERPRETER_TIER },
+      expectedFiles: new Set(passing.map((row) => row.file)),
       now: "2026-08-09T00:00:00.000Z",
     });
     expect(artifact.sanity.interpreter_vs_baseline_flips).toBe(12);
@@ -513,6 +561,7 @@ describe("CLI", () => {
   const quickjsPath = write("quickjs.jsonl", jsonl(CLEAN.quickjs));
   const interpreterPath = write("interpreter.jsonl", jsonl(CLEAN.interpreter));
   const baselinePath = write("baseline.jsonl", jsonl(CLEAN.baseline));
+  const expectedPath = write("expected.txt", `${CLEAN.quickjs.map((row) => row.file).join("\n")}\n`);
   const emptyIssue = write("issue.md", "# no accepted-residuals block here\n");
 
   const run = (args: string[]) => {
@@ -529,6 +578,8 @@ describe("CLI", () => {
     interpreterPath,
     "--baseline",
     baselinePath,
+    "--expected-files",
+    expectedPath,
     "--issue",
     emptyIssue,
     "--now",
@@ -547,6 +598,7 @@ describe("CLI", () => {
     expect(artifact.gate.verdict).toBe("PROCEED");
     expect(artifact.gate.accepted_residuals.present).toBe(false);
     expect(artifact.schema_version).toBe(1);
+    expect(run([...baseArgs.slice(0, 6), "--expected-count", "3", ...baseArgs.slice(8), "--gate"]).code).toBe(0);
   });
 
   it("exits 1 with the blocking reason as the last line for a refusal-tier diff", () => {
@@ -570,6 +622,8 @@ describe("CLI", () => {
       "--gate",
       "--baseline",
       baselinePath,
+      "--expected-files",
+      expectedPath,
     ]);
     expect(noTier.code).toBe(2);
     expect(noTier.lastErrLine).toMatch(/REFUSED — missing tier provenance for the quickjs run/);
@@ -577,6 +631,13 @@ describe("CLI", () => {
     expect(run([...baseArgs, "--json", "--markdown"]).lastErrLine).toMatch(/REFUSED — --json and --markdown/);
     expect(run(["--quickjs", quickjsPath, "--gate"]).lastErrLine).toMatch(/REFUSED — --interpreter/);
     expect(run([...baseArgs, "--gate", "--drift-tolerance", "lots"]).code).toBe(2);
+    expect(run([...baseArgs, "--gate", "--expected-count", "3"]).lastErrLine).toMatch(
+      /REFUSED — pass only one of --expected-files \/ --expected-count/,
+    );
+    expect(run([...baseArgs.slice(0, 6), ...baseArgs.slice(8), "--gate"]).lastErrLine).toMatch(
+      /REFUSED — --gate requires --expected-files/,
+    );
+    expect(run([...baseArgs.slice(0, 6), "--expected-count", "0", ...baseArgs.slice(8), "--gate"]).code).toBe(2);
     expect(run([]).code).toBe(2);
   });
 
@@ -613,5 +674,114 @@ describe("CLI", () => {
     const blocked = stderrOf([...baseArgs.slice(0, -1), REFUSAL_TIER.raw, "--gate"]);
     expect(blocked.code).toBe(1);
     expect(blocked.stderr.trimEnd().split("\n").pop()).toMatch(/^eval-engine-parity: BLOCKED — tier-pinning/);
+  });
+});
+
+// ── provider-cache handoff ──────────────────────────────────────────────────
+
+describe("QuickJS provider cache-only handoff", () => {
+  it("refuses a missing artifact without trying to build or mutating its directory", () => {
+    const emptyArtifactDir = mkdtempSync(join(tmpdir(), "quickjs-require-cache-empty-"));
+    const script = join(import.meta.dirname ?? ".", "..", "scripts", "build-quickjs-eval-provider.mjs");
+
+    let status: number | null | undefined;
+    let stderr = "";
+    try {
+      execFileSync(process.execPath, [script, "--require-cache"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          JS2WASM_QUICKJS_ARTIFACT_DIR: emptyArtifactDir,
+        },
+        stdio: "pipe",
+      });
+    } catch (err) {
+      const failure = err as { status?: number | null; stderr?: string };
+      status = failure.status;
+      stderr = failure.stderr ?? "";
+    }
+
+    expect(status).toBe(1);
+    expect(stderr).toMatch(/required quickjs artifact cache entry is missing/);
+    expect(stderr).not.toMatch(/artifact cache MISS|building \(key/);
+    expect(readdirSync(emptyArtifactDir)).toEqual([]);
+  });
+});
+
+// ── default-engine CI plumbing ──────────────────────────────────────────────
+
+describe("QuickJS default-readiness CI wiring", () => {
+  const root = join(import.meta.dirname ?? ".", "..");
+  const sharded = readFileSync(join(root, ".github", "workflows", "test262-sharded.yml"), "utf8");
+  const scheduled = readFileSync(join(root, ".github", "workflows", "quickjs-wasi-artifact.yml"), "utf8");
+  const refresh = readFileSync(join(root, ".github", "workflows", "refresh-baseline.yml"), "utf8");
+  const interpreterLane = readFileSync(join(root, ".github", "workflows", "eval-interpreter-lane.yml"), "utf8");
+  const issueTests = readFileSync(join(root, ".github", "workflows", "issue-tests.yml"), "utf8");
+  const interpreterFloor = JSON.parse(
+    readFileSync(join(root, "benchmarks", "results", "eval-interpreter-lane-floor.json"), "utf8"),
+  ) as { pass: number; total: number; tolerance: number };
+  const runner = readFileSync(join(root, "scripts", "run-test262-vitest.sh"), "utf8");
+
+  it("makes QuickJS the default while exposing the kept interpreter selector", () => {
+    expect(sharded).toMatch(/eval_engine:\n(?:.*\n){0,5}\s+default: quickjs\n\s+type: choice/);
+    expect(sharded).toContain("JS2WASM_EVAL_ENGINE: ${{ inputs.eval_engine || 'quickjs' }}");
+    expect(runner).toContain('EVAL_ENGINE="${JS2WASM_EVAL_ENGINE:-quickjs}"');
+    expect(sharded).toContain("- interpreter");
+  });
+
+  it("distributes and cache-only verifies exactly the selected full provider", () => {
+    expect(sharded).toContain("quickjs-wasi-${{ steps.quickjs-key.outputs.cache_hash }}");
+    expect(sharded).toContain(".test262-cache/quickjs-artifact-*/");
+    expect(sharded).toContain(".test262-cache/quickjs-eval-adapter-*.wasm");
+    expect(sharded.match(/build-quickjs-eval-provider\.mjs --require-cache/g)).toHaveLength(2);
+    expect(sharded.match(/build-runtime-eval-provider\.mjs --require-full-cache/g)).toHaveLength(2);
+  });
+
+  it("keeps explicit interpreter dispatches measurement-only after the flip", () => {
+    expect(sharded).toContain("inputs.eval_engine == 'interpreter'");
+    expect(sharded).toMatch(/promote-baseline:[\s\S]*inputs\.eval_engine == 'interpreter'/);
+  });
+
+  it("runs scheduled baseline refreshes on the same QuickJS default", () => {
+    expect(refresh).toContain("JS2WASM_EVAL_ENGINE: quickjs");
+    expect(refresh).toContain("build-quickjs-eval-provider.mjs");
+    expect(refresh).toContain("build-quickjs-eval-provider.mjs --require-cache");
+    expect(refresh).toContain(".test262-cache/quickjs-eval-adapter-*.wasm");
+    expect(refresh).not.toContain("build-runtime-eval-provider.mjs --require-full-cache");
+  });
+
+  it("keeps a weekly native-interpreter anti-rot lane with a bounded floor", () => {
+    expect(interpreterLane).toContain("JS2WASM_EVAL_ENGINE: interpreter");
+    expect(interpreterLane).toContain('TEST262_FULL_RUNTIME_EVAL: "1"');
+    expect(interpreterLane).toContain("TEST262_PATH_FILTER: language/eval-code/");
+    expect(interpreterLane).toContain("tests/issue-4242-no-removal.test.ts");
+    expect(interpreterFloor).toMatchObject({ pass: 782, total: 816, tolerance: 3 });
+  });
+
+  it("pins the broad toolchain-light root-test detector to the kept interpreter", () => {
+    expect(issueTests).toMatch(/shard:\n[\s\S]*?JS2WASM_EVAL_ENGINE: interpreter/);
+  });
+
+  it("provisions submodules and runs all QuickJS engine suites in the scheduled lane", () => {
+    expect(scheduled).toMatch(/pull_request:\n\s+paths:/);
+    for (const path of [
+      "scripts/quickjs-eval-provider.mjs",
+      "scripts/runtime-eval-provider.mjs",
+      "tests/quickjs-eval-membrane.test.ts",
+      ".github/workflows/quickjs-wasi-artifact.yml",
+    ]) {
+      expect(scheduled).toContain(`- "${path}"`);
+    }
+    expect(scheduled.match(/submodules: recursive/g)).toHaveLength(2);
+    for (const suite of [
+      "tests/quickjs-eval-provider.test.ts",
+      "tests/quickjs-eval-membrane.test.ts",
+      "tests/issue-4307-closure-carrier-wrap.test.ts",
+    ]) {
+      expect(scheduled).toContain(suite);
+    }
+    expect(scheduled).toContain("quickjsArtifactCacheKey");
+    expect(scheduled).toContain("build-quickjs-eval-provider.mjs --require-cache");
+    expect(scheduled).toMatch(/\.tmp\/quickjs-artifact[\s\S]*include-hidden-files: true/);
   });
 });

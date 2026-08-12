@@ -4358,6 +4358,28 @@ function flattenStaticArrayElements(arr: ts.ArrayLiteralExpression): ts.Expressi
   return out;
 }
 
+/**
+ * Return the materialized arguments-object identifier behind transparent
+ * syntax such as `arguments as any`.  The local-map check distinguishes the
+ * real per-call arguments vec from an unrelated top-level binding with the
+ * same spelling.
+ */
+function materializedArgumentsVector(fctx: FunctionContext, expression: ts.Expression): ts.Identifier | undefined {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isIdentifier(current) && current.text === "arguments" && fctx.localMap.has("arguments")
+    ? current
+    : undefined;
+}
+
 function isNullishPromiseThenCallbackArg(expr: ts.Expression | undefined): boolean {
   if (expr === undefined) return true;
   let cur = expr;
@@ -6347,7 +6369,7 @@ function compileCallExpression(
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
@@ -6964,6 +6986,62 @@ function compileCallExpression(
           ts.setTextRange(directCall, expr);
           (directCall as { parent?: ts.Node }).parent = expr.parent;
           return compileCallExpression(ctx, fctx, directCall as ts.CallExpression);
+        }
+      }
+
+      // Dynamic `.apply(thisArg, arguments)` forwarding.  The materialized
+      // arguments object is a runtime-length WasmGC vec, so treating it as one
+      // positional value (the old generic fallthrough) loses every forwarded
+      // argument.  Route the vec through the shared closure-application bridge:
+      // it reads the real length, installs `thisArg`, widens under-application,
+      // and preserves the exact argc/extras protocol used by the callee's own
+      // `arguments` object.  This is the common UMD forwarding shape used by
+      // Moment's `hooks -> hookCallback.apply(null, arguments)` entry point.
+      //
+      // Keep the arm deliberately exact: only a materialized arguments vec and
+      // a compiler-known identifier can enter.  Arbitrary array-likes and host
+      // functions retain their existing paths.
+      if (!isCall && expr.arguments.length === 2 && ts.isIdentifier(innerExpr)) {
+        const argumentsVector = materializedArgumentsVector(fctx, expr.arguments[1]!);
+        const calleeName = innerExpr.text;
+        const knownCompiledCallee =
+          fctx.localMap.has(calleeName) ||
+          ctx.moduleGlobals.has(calleeName) ||
+          ctx.closureMap.has(calleeName) ||
+          ctx.funcMap.has(calleeName);
+        if (argumentsVector !== undefined && knownCompiledCallee) {
+          reserveApplyClosure(ctx);
+
+          const calleeType = compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
+          if (calleeType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else if (calleeType.kind !== "externref") {
+            coerceType(ctx, fctx, calleeType, { kind: "externref" });
+          }
+
+          const receiverType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+          if (receiverType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else if (receiverType.kind !== "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "externref" });
+          }
+
+          const vectorType = compileExpression(ctx, fctx, argumentsVector, { kind: "externref" });
+          if (vectorType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else if (vectorType.kind !== "externref") {
+            coerceType(ctx, fctx, vectorType, { kind: "externref" });
+          }
+
+          const applyIdx = ctx.funcMap.get("__apply_closure");
+          if (applyIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: applyIdx });
+            return { kind: "externref" };
+          }
+          // Reservation is expected to succeed; keep a balanced fallback if a
+          // future runtime configuration declines it after operands were built.
+          fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+          return { kind: "externref" };
         }
       }
 

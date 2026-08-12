@@ -31,6 +31,7 @@ import {
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
 import { adjustRethrowDepth } from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+import { emitUndefined } from "../expressions/late-imports.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -362,7 +363,7 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     if (fctx.returnType.kind === "f64") fctx.body.push({ op: "f64.const", value: 0 });
     else if (fctx.returnType.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
     else if (fctx.returnType.kind === "i64") fctx.body.push({ op: "i64.const", value: 0n });
-    else if (fctx.returnType.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
+    else if (fctx.returnType.kind === "externref") emitUndefined(ctx, fctx);
     else if (fctx.returnType.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
     else if (fctx.returnType.kind === "ref") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
   }

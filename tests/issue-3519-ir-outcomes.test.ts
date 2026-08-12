@@ -175,9 +175,14 @@ export function value(): number { return new Dog(4).age; }
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const constructorOutcome = terminal(result).find((outcome) => outcome.displayName === "Dog_new");
-    expect(constructorOutcome).toMatchObject({ kind: "emitted", stage: "patch", irBodyEmitted: true });
+    expect(constructorOutcome).toMatchObject({
+      kind: "emitted",
+      stage: "patch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
     expect(constructorOutcome && evaluateIrOutcomePolicy([constructorOutcome], "hybrid").ready).toBe(true);
-    expect(constructorOutcome && evaluateIrOutcomePolicy([constructorOutcome], "ir-only").ready).toBe(false);
+    expect(constructorOutcome && evaluateIrOutcomePolicy([constructorOutcome], "ir-only").ready).toBe(true);
   });
 
   it("accounts class members and a non-empty module initializer exactly once", async () => {
@@ -199,9 +204,10 @@ export function readSeed(): number { return seed; }
     expect(outcomes.filter((outcome) => outcome.unitKind === "module-init")).toHaveLength(1);
     expect(outcomes.filter((outcome) => outcome.unitKind === "class-member")).toHaveLength(3);
     expect(outcomes.find((outcome) => outcome.displayName === "Counter_zero")).toMatchObject({
-      kind: "unsupported",
-      code: "static-class-member",
-      stage: "build",
+      kind: "emitted",
+      stage: "patch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
     expect(new Set(outcomes.map((outcome) => outcome.key)).size).toBe(outcomes.length);
   });
@@ -239,8 +245,9 @@ export function answer(): number { return 42; }
       expect.objectContaining({ kind: "unsupported", code: "static-class-initialization" }),
     ]);
     expect(outcomes.find((outcome) => outcome.displayName === "Counter_new")).toMatchObject({
-      kind: "unsupported",
-      code: "implicit-class-initializer",
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
   });
 

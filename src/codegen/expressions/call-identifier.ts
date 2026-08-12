@@ -51,6 +51,7 @@ import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../st
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
+import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -134,6 +135,27 @@ function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name
     ctx.runtimeEvalGlobalFunctionBindings ||
     (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
   return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
+/**
+ * Dispatch standalone carriers whose runtime representation must win over the
+ * checker-inferred call signature. A `.bind(...)` initializer stores the
+ * canonical `$__bound_fn`, not an ordinary funcref-wrapper struct. Casting it
+ * through the typed path can therefore null the value—or trap while coercing
+ * an argument—before the existing bound arm of the native callable ladder can
+ * reach `__apply_closure`.
+ */
+function tryCompileStoredStandaloneCarrierCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  isKnownVariable: boolean,
+): InnerResult | undefined {
+  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+  const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
+  if (storedObjectCall !== undefined) return storedObjectCall;
+  if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
+  return tryEmitInlineDynamicCall(ctx, fctx, expr, true) ?? undefined;
 }
 
 /**
@@ -305,19 +327,10 @@ export function compileIdentifierCall(
 
   // Handle global isNaN(n) / isFinite(n) / parseInt / parseFloat — inline wasm
   if (ts.isIdentifier(expr.expression)) {
-    // Resolve aliases like `var freeParseInt = parseInt; freeParseInt(...)` (#1109)
-    let funcName = expr.expression.text;
-    const _knownGlobalFuncs = new Set(["parseInt", "parseFloat", "isNaN", "isFinite"]);
-    if (!_knownGlobalFuncs.has(funcName)) {
-      const sym = ctx.checker.getSymbolAtLocation(expr.expression);
-      const decl = sym?.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer && ts.isIdentifier(decl.initializer)) {
-        const initName = decl.initializer.text;
-        if (_knownGlobalFuncs.has(initName)) {
-          funcName = initName;
-        }
-      }
-    }
+    // Preserve source identity for parseInt/parseFloat aliases. A package can
+    // legitimately export a different function with the same spelling.
+    const globalParseBuiltin = resolveGlobalParseBuiltin(expr.expression, ctx.oracle);
+    const funcName = globalParseBuiltin ?? expr.expression.text;
 
     if (funcName === "isNaN" && expr.arguments.length >= 1) {
       // isNaN(n) → n !== n
@@ -346,8 +359,8 @@ export function compileIdentifierCall(
     }
 
     // parseInt(s, radix?) and parseFloat(s) — host imports
-    if ((funcName === "parseInt" || funcName === "parseFloat") && expr.arguments.length >= 1) {
-      const importFuncIdx = ctx.funcMap.get(funcName);
+    if (globalParseBuiltin !== undefined && expr.arguments.length >= 1) {
+      const importFuncIdx = ctx.ambientBuiltinFuncMap.get(globalParseBuiltin) ?? ctx.funcMap.get(globalParseBuiltin);
       if (importFuncIdx !== undefined) {
         const arg0 = expr.arguments[0]!;
         // (#2652) §19.2.5 step 1 / §19.2.4 step 1: ToString(argument) BEFORE
@@ -1144,10 +1157,8 @@ export function compileIdentifierCall(
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
       }
-      if (isKnownVariable && (ctx.standalone || noJsHost(ctx))) {
-        const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
-        if (storedObjectCall !== undefined) return storedObjectCall;
-      }
+      const storedCarrierCall = tryCompileStoredStandaloneCarrierCall(ctx, fctx, expr, isKnownVariable);
+      if (storedCarrierCall !== undefined) return storedCarrierCall;
       // `%Function%` is represented by the linked provider's structural
       // callable marker. Calling an alias through the checker-derived
       // FunctionConstructor signature first would compile native-string

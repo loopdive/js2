@@ -10,7 +10,16 @@
  * memory reclaim of the vitest process itself.
  */
 import { createHash } from "crypto";
-import { closeSync, existsSync, mkdirSync, readFileSync, writeSync as fdWrite, fsyncSync, openSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  writeSync as fdWrite,
+  fsyncSync,
+  openSync,
+} from "fs";
 import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
@@ -239,6 +248,13 @@ const RUN_TIMESTAMP =
   process.env.RUN_TIMESTAMP || new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "").slice(0, 15);
 const RESULT_PREFIX = process.env.TEST262_RESULT_PREFIX || (TEST262_TARGET ? `test262-${TEST262_TARGET}` : "test262");
 const JSONL_PATH = join(RESULTS_DIR, `${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl`);
+// A JSONL can exist even when the Vitest fork dies halfway through a shard.
+// The workflow accepts exit code 1 because baseline conformance failures are
+// ordinary test results, so process death cannot be inferred from the exit
+// code alone. Write this marker only from afterAll, once Vitest has settled
+// every registered test and the result fd has been closed. Shard jobs require
+// the marker before accepting/uploading their evidence.
+const SHARD_COMPLETION_PATH = `${JSONL_PATH}.complete.json`;
 
 // Open results JSONL — each chunk appends independently
 const jsonlFd = openSync(JSONL_PATH, "a");
@@ -599,6 +615,21 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
     if (poisonRetriesUsed > 0) {
       console.log(`Poison-error retries (#1862): ${poisonRetriesUsed} used`);
     }
+
+    writeFileSync(
+      SHARD_COMPLETION_PATH,
+      JSON.stringify(
+        {
+          chunkIndex,
+          chunkTotal: totalChunks,
+          registeredTests: myTests.length,
+          recordedRows: summary.total,
+          target: TEST262_TARGET ?? "gc",
+        },
+        null,
+        2,
+      ) + "\n",
+    );
   });
 
   for (const [category, files] of byCategory) {
