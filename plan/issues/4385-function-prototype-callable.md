@@ -1,7 +1,7 @@
 ---
 id: 4385
 title: "Standalone ES5: Function.prototype itself is not callable"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-12
 updated: 2026-08-12
@@ -72,11 +72,35 @@ point on the IR path rather than adding a legacy-only exception.
 
 ## Acceptance criteria
 
-- [ ] The four named ES5 Test262 files change from compile error to pass in the
+- [x] The four named ES5 Test262 files change from compile error to pass in the
       standalone lane.
-- [ ] A direct call accepts zero or multiple arguments, evaluates them for
+- [x] A direct call accepts zero or multiple arguments, evaluates them for
       effects, and returns real `undefined`.
-- [ ] The exact call is genuinely IR-emitted with no post-claim demotion.
-- [ ] A shadowing local named `Function` is not intercepted.
-- [ ] The standalone module remains valid and has zero host imports.
-- [ ] The reachable ES5 `Function/prototype` control set has zero regressions.
+- [x] The exact call is genuinely IR-emitted with no post-claim demotion.
+- [x] A shadowing local named `Function` is not intercepted.
+- [x] The standalone module remains valid and has zero host imports.
+- [x] The reachable ES5 `Function/prototype` control set has zero regressions.
+
+## Validation
+
+Baseline commit `8c9f889680730001c08d0290bc40234514277505` and candidate
+`a3fcafc959fdb2e` were compared with the authoritative standalone Test262
+runner. A causal ablation of the new exact-call branch reproduced the baseline
+`env::__get_builtin` compile error for all four files; enabling it changed all
+four to pass. The runner used the local refusal runtime-eval provider, which is
+not CI-comparable for dynamic-code tests, but these four sources do not invoke
+eval or the Function constructor.
+
+The full 19-file reachable ES5 `Function/prototype` failure control set had
+zero regressions: five files advanced in phase (the four target files reached
+pass) and fourteen retained their prior status. The exact executable ES5
+`Function.prototype(...)` trigger population is the four target files.
+
+Focused validation:
+
+- `pnpm exec vitest run tests/issue-4385-function-prototype-callable.test.ts`
+  — 3/3 pass
+- `pnpm exec tsc --noEmit --pretty false` — pass
+- `pnpm run check:ir-fallbacks` — pass, no fallback or post-claim increases
+- `pnpm run check:loc-budget` — pass with issue-scoped allowances
+- `pnpm run check:func-budget` — pass with issue-scoped allowances
