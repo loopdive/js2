@@ -21,7 +21,12 @@ var $262 = {
   gc: function () {},
   detachArrayBuffer: function (buffer) {
     if (typeof structuredClone !== "function") {
-      throw new Error("$262.detachArrayBuffer is unsupported by this host");
+      // Standalone/WASI have no host `structuredClone`. Their native
+      // ArrayBuffer representation observes this marker as a detached backing
+      // store (`tryCompileStandaloneDetachedWrite`), so the literal Test262
+      // harness can exercise detached-buffer semantics without a JS host.
+      buffer.__detached__ = true;
+      return;
     }
     structuredClone(buffer, { transfer: [buffer] });
   },

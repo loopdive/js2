@@ -1256,6 +1256,7 @@ function compileInlinedEvalStatements(
         preHoistedLetConstSlots: fctx.preHoistedLetConstSlots,
         annexBCancelled: fctx.annexBCancelled,
         annexBOuterBindings: fctx.annexBOuterBindings,
+        annexBRepeatedOuterBindings: fctx.annexBRepeatedOuterBindings,
       }
     : undefined;
 
@@ -1267,6 +1268,7 @@ function compileInlinedEvalStatements(
     fctx.preHoistedLetConstSlots = undefined;
     fctx.annexBCancelled = undefined;
     fctx.annexBOuterBindings = undefined;
+    fctx.annexBRepeatedOuterBindings = undefined;
   }
 
   try {
@@ -1317,6 +1319,7 @@ function compileInlinedEvalStatements(
       fctx.preHoistedLetConstSlots = savedBindingState.preHoistedLetConstSlots;
       fctx.annexBCancelled = savedBindingState.annexBCancelled;
       fctx.annexBOuterBindings = savedBindingState.annexBOuterBindings;
+      fctx.annexBRepeatedOuterBindings = savedBindingState.annexBRepeatedOuterBindings;
     }
   }
 }

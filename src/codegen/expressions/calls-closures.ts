@@ -135,6 +135,30 @@ export function sourceDefinesFunctionMember(sf: ts.SourceFile, name: string): bo
 type FuncCandidate = { funcTypeIdx: number; structTypeIdx: number; returnType: ValType | null };
 
 /**
+ * TypeScript gives an unannotated JavaScript function that reads `arguments`
+ * a synthetic trailing rest symbol in its checker signature. That symbol is
+ * not a source formal and is not present in the lifted Wasm closure ABI: the
+ * real overflow values travel through `__argc` / `__extras_argv` instead.
+ *
+ * Use the source declaration's smaller arity when it proves that the final
+ * checker symbols are synthetic. Real source rest parameters remain present
+ * in `declaration.parameters`, and declaration-file signatures keep their
+ * checker-authored parameter list unchanged.
+ */
+function runtimeSignatureParameters(sig: ts.Signature): readonly ts.Symbol[] {
+  const declaration = sig.getDeclaration();
+  if (
+    declaration !== undefined &&
+    ts.isFunctionLike(declaration) &&
+    !declaration.getSourceFile().isDeclarationFile &&
+    declaration.parameters.length < sig.parameters.length
+  ) {
+    return sig.parameters.slice(0, declaration.parameters.length);
+  }
+  return sig.parameters;
+}
+
+/**
  * (#3205) Build the funcref-type candidate set for a callable-property dispatch.
  *
  * A closure stored in an object field / array element may have a DIFFERENT
@@ -229,6 +253,7 @@ function collectPropertyCallArgLocals(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   paramTypes: ValType[],
+  evaluateOverflow = true,
 ): number[] {
   const argLocals: number[] = [];
   const paramCount = paramTypes.length;
@@ -238,10 +263,14 @@ function collectPropertyCallArgLocals(
     fctx.body.push({ op: "local.set", index: al });
     argLocals.push(al);
   }
-  // Excess args: evaluate for side effects, drop.
-  for (let i = paramCount; i < expr.arguments.length; i++) {
-    const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
-    if (extraType !== null) fctx.body.push({ op: "drop" });
+  // Some callers preserve excess values through the canonical arguments
+  // protocol after this helper returns. The legacy element-call path still
+  // evaluates and drops them here until it adopts that protocol too.
+  if (evaluateOverflow) {
+    for (let i = paramCount; i < expr.arguments.length; i++) {
+      const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+      if (extraType !== null) fctx.body.push({ op: "drop" });
+    }
   }
   // Pad missing args with defaults.
   for (let i = expr.arguments.length; i < paramCount; i++) {
@@ -848,13 +877,24 @@ export function compileObjectPrototypeFallback(
   receiverClassName: string,
   methodName: string,
 ): InnerResult | undefined {
+  const compileReceiverAsExternref = (): void => {
+    const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+    if (receiverType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") {
+      coerceType(ctx, fctx, receiverType, { kind: "externref" });
+    }
+  };
+
   // toString: coerce receiver to externref and call __extern_toString
   if (methodName === "toString") {
     const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      // A nominal class expression can be loaded through dynamic storage and
+      // therefore emit externref. Convert the actual compiled representation
+      // rather than blindly assuming a WasmGC class ref (#3999).
+      compileReceiverAsExternref();
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -866,8 +906,7 @@ export function compileObjectPrototypeFallback(
     const toStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     if (toStrIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       return { kind: "externref" };
     }
@@ -876,8 +915,7 @@ export function compileObjectPrototypeFallback(
 
   // valueOf: return the receiver itself (Object.prototype.valueOf returns this)
   if (methodName === "valueOf") {
-    compileExpression(ctx, fctx, propAccess.expression);
-    fctx.body.push({ op: "extern.convert_any" });
+    compileReceiverAsExternref();
     return { kind: "externref" };
   }
 
@@ -891,10 +929,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (hopIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -914,10 +951,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (pieIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -937,10 +973,9 @@ export function compileObjectPrototypeFallback(
     );
     flushLateImportShifts(ctx, fctx);
     if (ipIdx !== undefined) {
-      compileExpression(ctx, fctx, propAccess.expression);
-      fctx.body.push({ op: "extern.convert_any" });
+      compileReceiverAsExternref();
       if (expr.arguments.length > 0) {
-        compileExpression(ctx, fctx, expr.arguments[0]!);
+        compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
@@ -1111,12 +1146,13 @@ export function compileCallablePropertyCall(
   }
 
   const sig = callSigs[0]!;
-  const sigParamCount = sig.parameters.length;
+  const sigParameters = runtimeSignatureParameters(sig);
+  const sigParamCount = sigParameters.length;
   const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
   const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
-    const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+    const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
     sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
   }
 
@@ -1309,11 +1345,30 @@ export function compileCallablePropertyCall(
       fctx.body.push({ op: "drop" });
 
       // Save args to locals so each dispatch arm can re-push them.
-      const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, matchedClosureInfo.paramTypes);
+      const argLocals = collectPropertyCallArgLocals(ctx, fctx, expr, matchedClosureInfo.paramTypes, false);
+
+      // (#4373) A property value can be a lower-arity JavaScript closure whose
+      // body reads `arguments`. Preserve every overflow value and the exact
+      // call-site count instead of dropping the values before the funcref
+      // ladder. All candidates in this ladder share the declared formal arity,
+      // so one setup is valid for every arm.
+      emitClosureCallArgcExtras(ctx, fctx, expr.arguments, matchedClosureInfo.paramTypes.length);
 
       // After the args (they may read the caller's `this`), before the ladder.
       if (bind) emitObjectLiteralMethodThisInstall(ctx, fctx, bind);
       emitRootFuncrefDispatch(ctx, fctx, closureLocal, rootIdx, funcCandidates, argLocals, expectedReturn);
+
+      // A target that does not itself read `arguments` leaves the module
+      // globals untouched. Clear them after the indirect call while preserving
+      // its result on the stack.
+      if (expectedReturn === null) {
+        emitResetArgcExtras(ctx, fctx);
+      } else {
+        const returnLocal = allocLocal(fctx, `__cp_ret_${fctx.locals.length}`, expectedReturn);
+        fctx.body.push({ op: "local.set", index: returnLocal });
+        emitResetArgcExtras(ctx, fctx);
+        fctx.body.push({ op: "local.get", index: returnLocal });
+      }
       return finishObjectLiteralMethodCall(ctx, fctx, bind, expectedReturn ?? VOID_RESULT);
     }
   }

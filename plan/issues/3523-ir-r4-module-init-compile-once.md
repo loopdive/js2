@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-12
 priority: critical
 horizon: xl
 complexity: XL
@@ -30,21 +30,44 @@ files:
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - src/ir/integration.ts
+  - src/ir/array-element-lowering.ts
+  - src/ir/passes/batch-string-concat.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/context/types.ts
   - tests/issue-3523-ir-module-init-compile-once.test.ts
+  - tests/issue-3523-ir-calendar-retirement.test.ts
+  - tests/issue-2766.test.ts
+  - tests/issue-2856-nonterminating-if-guard.test.ts
+  - tests/issue-3734-i32-array-elements.test.ts
+  - tests/issue-4110-ir-fetch-all-parallel.test.ts
+  - tests/ir/passes.test.ts
 loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/declarations.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/context/types.ts
+  - src/ir/builder.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/runtime.ts
 func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
   - src/codegen/declarations.ts::compileDeclarations
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/lower.ts::lowerIrFunctionBody
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/runtime.ts::resolveImport
 ---
 
 # #3523 — IR-only R4: typed ordered module-init compile-once ownership
@@ -344,6 +367,161 @@ outside it and must remain untouched. Publish one ready PR, freeze it once
 queued, and run full Test262 only through the merge queue. Do not start the
 Calendar production branch until this checkpoint lands or is explicitly
 withdrawn.
+
+### Calendar retirement oracle and resumable handover (2026-08-09)
+
+The final family in the five-entry single-host playground lane has a disjoint test-only checkpoint on branch
+`codex/3523-calendar-test-oracle`:
+
+- `c3384c7748302ecfcff65f8bbc16176e711a7349` adds the deterministic runtime,
+  DOM, `Date`, callback, and direct-codegen optimization reference;
+- `7eef50559a2bcaaf54df50138b8eec68c389bf01` hardens the disabled production
+  contract around the exact ten-row IR-only outcome, seventeen emitted
+  artifacts, nine function skips, callback retirement, numeric Program-ABI
+  global access, relative body/binary ceilings, and mutation-free collision
+  fallback.
+
+The original active portion passed **4/4** and the **7** final retirement tests remain
+intentionally skipped until production satisfies them. The oracle exercises
+twelve renders; December/January navigation; hover and selection isolation;
+the exact `2300`/`2800`/`2550 EUR` totals; clear/save behavior; fourteen ordered
+`Date` snapshots; 1,120 callback registrations; and the seven exact statically
+lifted callback owners. The final gates reject every legacy `__cb_N` body and
+require the direct fallback artifact to remain byte/import/runtime-identical
+after a preflight collision.
+
+The Calendar 10 → 0 implementation is ready once the Algorithms PR lands. It
+is a prepared-transaction problem, not a request for new IR instruction
+lowering:
+
+1. Generalize the exact-`Map` module-init selector into a capability-based
+   ordinary-host lexical-initializer selector. Require exact source/module
+   identity, Wasm-start/exactly-once invocation, one-to-one plan
+   binding/evaluation order, and exact global/TDZ Program-ABI IDs. Keep
+   `var`, destructuring, missing/multiple initializers, executable/class
+   statements, deferred startup, and incompatible modes fail-closed.
+2. Extend only the R2 prepared-free-function selector to admit arrows named by
+   `plan.hostVoidCallbacks`, with exact owner and contiguous ordinal. Walk the
+   admitted callback bodies and reject every unplanned nested function/class;
+   do not relax the stricter class/Promise nested-executable rule.
+3. Before any TDZ/global/import/callable mutation, preflight the callback maker,
+   every required `Date` import, and exact uncontested typed-DOM providers. Any
+   loss rejects all ten terminals with one typed unsupported reason and zero
+   prepared skips. The `Document_createElement` collision is a known-red
+   contract until this provider check exists.
+4. After `prepareIrBodies`, require exactly ten patched terminal owners, one
+   non-empty component, seventeen artifacts with correct owners, no errors or
+   deferred/preserved bodies, and the exact nine function plus one module-init
+   skip projection. A mismatch after successful preflight is an invariant and
+   must abort compilation; partial direct fallback is forbidden.
+
+Optimization parity is part of the transaction, not follow-up cleanup:
+
+- elide module-binding TDZ guards only for exact post-Wasm-start function
+  owners proven non-escaping; module init, class bodies, deferred/standalone/
+  WASI paths, unknown escapes, and stale evidence retain guards;
+- lower a constant nonterminating `if` without `else` directly into its body
+  without lowering/evaluating the condition twice;
+- use the IR's native `i32` vector length in the two safe Calendar reads,
+  preserving unsigned bounds checks and array reads while removing the
+  `f64` conversion/truncation pairs;
+- coalesce adjacent literal concat leaves only with single-use/provenance
+  proof, canonical deep nested-buffer string preparation, and refreshed
+  allocation/encoding metadata. The required Calendar shape is
+  `__concat_8: 1 → 0`, `__concat_7: 0 → 1` with unchanged leaf order.
+
+Current landing and handover sequence:
+
+1. The isolated Calendar production worktree, checkpoint recovery, generic
+   transaction, optimization parity work, and checked legacy-body reduction
+   **10 → 0** are complete.
+2. Open one ready PR from `codex/3523-calendar-retirement`, run the full CI and
+   merge-queue gates, and freeze the exact head once queued.
+3. After landing, continue the repository-wide retirement families tracked by
+   #3518: broader classes/methods, closures/cross-owner calls, generic module
+   initialization, and runtime/linear-memory helpers. Do not reopen the bounded
+   Calendar implementation unless a regression gate fails.
+
+#### Calendar playground final parity checkpoint (2026-08-12)
+
+The live production branch is `codex/3523-calendar-retirement` in isolated
+worktree `/private/tmp/ts2wasm-3523-calendar-retirement`, rebased onto
+`origin/main` `81ff7c4b1daa83`. The dirty root checkout
+remains untouched.
+
+The bounded Calendar transaction is now implemented and focused-green:
+
+- all **10/10** terminals seal in one prepared component;
+- all **9** source functions and the source-qualified module initializer emit
+  through IR with `legacyBodyEmitted: false`;
+- the seven exact callback plans produce seven owner-qualified derived
+  closures and no legacy `__cb_N` artifacts;
+- the bounded playground shadow is **5/5 entries, 37/37 targeted terminals,
+  zero legacy bodies, zero Unsupported, and zero Invariant**;
+- the independent twelve-render DOM/Date oracle, 1,120 callback registrations,
+  direct-body poison controls, and real plus injected import-collision controls
+  pass; and
+- focused Calendar acceptance is **14/14**; the complete changed-root hook is
+  **194/194** across the eleven affected suites after the final rebase.
+
+The production selector remains intentionally bounded. It accepts only a
+gap-free sequence of initialized top-level `let`/`const` declarations with
+exact source, binding, TDZ, evaluation-order, and ordinary Wasm-start parity.
+It rejects destructuring, `var`, missing/multiple initializers, deferred and
+host-free modes, Promise/source-import preparation, and any initializer that
+can execute a same-source function or class before lexical initialization.
+The exact post-start TDZ certificate is projected only to selected function
+UnitIds and exact binding IDs; the module initializer and rejected/unselected
+owners retain their checks.
+
+Preparation is atomic before mutation. The component proves the current env
+function-import occupants, callback-maker ABI, and every required Date import
+before allocating TDZ globals or publishing Program ABI state. A collision
+withdraws all ten terminals with one typed `late-preparation-unsupported`
+reason and leaves an import- and byte-identical direct artifact. Tests cover
+both untouched-source injected failures and real source declarations that
+occupy `__make_callback` or `Document_createElement`.
+
+Optimization and artifact evidence is explicit:
+
+- the direct build is byte-identical to `origin/main` (SHA-256
+  `53895828283af9a34d20c21353dd1a858a195447de351e901b9985accb31b911`)
+  at **12,895 raw / 4,795 gzip / 74,663 WAT / 28 defined functions**;
+- current all-IR (SHA-256
+  `9e31fb9fba6bc7840f8284fb562596f90ead95f21e3b4ae4f5a3dcbf53ae92c6`)
+  is **12,493 raw / 4,742 gzip / 70,034 WAT / 31 defined functions**;
+- against direct, IR is now **3.12% smaller raw, 1.11% smaller gzip, and
+  6.20% smaller in WAT**, with only three additional defined functions. The
+  acceptance test rejects any future raw/gzip/WAT growth above the direct
+  artifact rather than preserving the former positive gap;
+- deterministic repeat builds, raw/gzip/WAT/function/import ceilings, and the
+  exact direct arithmetic, bounds, concat, formatting, DOM, Date, and TDZ
+  helper shapes are enforced in the acceptance test; and
+- `renderCal` is **71 locals / 14,998 WAT bytes** versus direct's
+  **63 / 19,112**; `main` is **24 / 5,776** versus **35 / 6,962**; and the
+  aggregate Calendar bodies are **133 / 39,909** versus **142 / 46,750**.
+  Generic nested-region stackification also preserves the pre-existing i32
+  vector read shape and removes the `fetchAllParallel` Promise-result spill.
+  The fail-closed ceilings are now **72 / 135** locals for `renderCal` /
+  aggregate, with all three body-size comparisons bounded at direct or better.
+
+The final exact production-clock runtime protocol is valid: direct/direct
+ratios were **0.967 / 1.026 / 1.000** (median **1.000**, every round within the
+predeclared 20% bound), while IR/direct ratios were **1.059 / 1.020 / 0.923**
+(median **1.020**). The final IR candidate is therefore on par with direct to
+within **2.0%** on the full 12-render / 1,120-callback workload. A prior valid
+five-round run of the same hot bodies measured IR/direct **0.896**; the final
+handover uses the more conservative post-rebase 1.020 result.
+
+This closes only the bounded single-host playground census. It does not make
+generic R4 complete or prove repository-wide IR-only readiness. Wider
+class/method and closure ownership, generic ordered module init, multi-source
+ownership, runtime intents, async-plan removal, shared linear IR, R9 default
+selection, and R10 direct-root deletion remain tracked by #3518 and the
+adjacent family issues.
+
+Do not create a GitHub Issue for this work. This Markdown record remains the
+source of truth for ownership, acceptance, and handover.
 
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 

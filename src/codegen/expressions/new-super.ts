@@ -13,6 +13,7 @@ import {
   isOwnParamName,
 } from "../closures.js";
 import { installFrameTrap } from "../frame-trap.js";
+import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js"; // (#3486) fnctor ctor-closure singleton
 import {
   provablyNonConstructableStatically,
@@ -1576,6 +1577,10 @@ function compileNewFunctionDeclaration(
     labelMap: new Map(),
     savedBodies: [],
   };
+  // The synthesized fnctor body is still the source function's activation for
+  // legacy Function#caller. Register it before any prologue/body emission so
+  // outgoing calls carry the constructor source's strictness.
+  initializeFunctionPoisonPillContext(ctx, ctorFctx, funcDecl);
 
   // Set up param locals
   installFrameTrap(ctorFctx, ctorName);
@@ -1840,6 +1845,9 @@ function compileNewFunctionExpression(
     labelMap: new Map(),
     savedBodies: [],
   };
+  // `new (function () { ... })` lowers to a synthetic lifted function, but its
+  // body keeps the function expression's source strictness.
+  initializeFunctionPoisonPillContext(ctx, liftedFctx, funcExpr);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -3150,11 +3158,6 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // outer allocation degrades to the union layout (fat, never narrow).
   maybeEmitLayoutHint(ctx, fctx, expr);
 
-  // Handle `new function() { ... }(args)` — constructor with function expression
-  if (ts.isFunctionExpression(expr.expression)) {
-    return compileNewFunctionExpression(ctx, fctx, expr, expr.expression);
-  }
-
   // (#1528b) Unwrap parens AND `as`/`!`/type-assertion wrappers so the static
   // non-constructor guards below still fire on `new ((() => {}) as any)()` etc.
   // — the bare paren-only unwrap let cast arrows slip through to the dynamic
@@ -3177,6 +3180,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
     return cur;
   };
+
+  // Handle `new function() { ... }(args)` and the canonical parenthesized
+  // `new (function() { ... })(args)` spelling through the same source-body
+  // constructor path. The paren-only form previously fell through to a null
+  // placeholder without evaluating the constructor body at all.
+  const unwrappedLiteralCtor = unwrapNewTarget(expr.expression);
+  if (ts.isFunctionExpression(unwrappedLiteralCtor)) {
+    return compileNewFunctionExpression(ctx, fctx, expr, unwrappedLiteralCtor);
+  }
 
   // TextEncoder/TextDecoder are standard Web/Node classes, but standalone and
   // WASI builds cannot depend on host `env.TextEncoder_*` imports. The instance

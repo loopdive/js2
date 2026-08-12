@@ -378,6 +378,7 @@ describe("#3520 structural overlay finalization", () => {
     expect(applyIrFinalContextFunctionRetention(selection, new Set(["retained"]), true)).toEqual({
       funcs: new Set(["retained"]),
       classMembers: new Set(),
+      classMemberUnitIds: new Set(),
       moduleInit: undefined,
     });
     expect(applyIrFinalContextFunctionRetention(selection, new Set(selection.funcs), false)).toEqual(selection);

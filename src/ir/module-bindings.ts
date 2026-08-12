@@ -6,6 +6,7 @@
 
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
+import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
@@ -796,7 +797,12 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
   // source-owned capability.
   if (!ts.isExternalModule(sourceFile)) return undefined;
   const declaredType = checker.getTypeAtLocation(declaration.name);
-  if ((declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0) return undefined;
+  if (
+    (declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0 &&
+    !updateRetypesModuleBinding(checker, declaration)
+  ) {
+    return undefined;
+  }
   const sameSourceDeclarations = new Set(
     candidates.filter(
       (candidate): candidate is ts.Declaration =>
@@ -1186,8 +1192,16 @@ function writeValueMatches(
   targetKind: IrModuleBindingValueKind,
   value: ts.Expression,
   options: IrModuleBindingResolverOptions,
+  classifyPrimitiveExpression: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined,
 ): boolean {
   const valueExpr = unwrapParens(value);
+  if (targetKind.kind === "dynamic") {
+    // The current IR boxing producer accepts exactly the three primitive
+    // families. Object/wrapper initializers still receive the same widened
+    // compatibility slot but cause module-init selection to demote until IR
+    // has an object-to-dynamic materializer.
+    return classifyPrimitiveExpression(valueExpr) !== undefined;
+  }
   if (targetKind.kind === "extern") {
     if (moduleExternValueNeedsLegacy(valueExpr)) return false;
     if (valueExpr.kind === ts.SyntaxKind.NullKeyword) return true;
@@ -1800,6 +1814,7 @@ export function makeIrLegacyModuleBindingResolver(
   options: IrModuleBindingResolverOptions,
 ): IrLegacyModuleBindingResolver {
   const isAmbientBinding = makeIrAmbientBindingPredicate(checker);
+  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(checker);
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
     const declaration = directTopLevelDeclaration(node, checker);
@@ -1822,7 +1837,15 @@ export function makeIrLegacyModuleBindingResolver(
     if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration };
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
-    let valueKind = scalarKind(declaredType, options);
+    // #4208 S2 — a non-fast update target whose initializer representation
+    // cannot hold the Number written by `++` / `--` uses the IR dynamic
+    // carrier. Fast mode has a `$AnyValue` dynamic carrier while compatibility
+    // allocation currently widens these globals to externref, so it stays on
+    // direct codegen until that ABI is unified.
+    let valueKind =
+      options.numberStorage === "f64" && updateRetypesModuleBinding(checker, declaration)
+        ? ({ kind: "dynamic" } as const)
+        : scalarKind(declaredType, options);
     if (!valueKind && !isModuleVar && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
@@ -1830,7 +1853,10 @@ export function makeIrLegacyModuleBindingResolver(
       }
     }
     if (!valueKind) return { kind: "unsupported", declaration };
-    if (writeValue !== undefined && !writeValueMatches(checker, declaredType, valueKind, writeValue, options)) {
+    if (
+      writeValue !== undefined &&
+      !writeValueMatches(checker, declaredType, valueKind, writeValue, options, classifyPrimitiveExpression)
+    ) {
       return { kind: "unsupported", declaration };
     }
     return { kind: "supported", identity: { declaration, mutable, valueKind } };
@@ -1946,7 +1972,14 @@ export function makeIrLegacyModuleBindingResolver(
         const identity = resolve(node);
         if (!identity) return false;
         const declaredType = checker.getTypeAtLocation(identity.declaration.name);
-        return writeValueMatches(checker, declaredType, identity.valueKind, value, options);
+        return writeValueMatches(
+          checker,
+          declaredType,
+          identity.valueKind,
+          value,
+          options,
+          classifyPrimitiveExpression,
+        );
       } catch {
         return false;
       }

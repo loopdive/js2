@@ -1,73 +1,111 @@
 ---
 id: 3999
-title: "wasm emission: preserve local reference types in styled-components"
-status: ready
-sprint: Backlog
+title: "wasm emission: preserve local and call operand types in styled-components"
+status: done
 created: 2026-07-30
-updated: 2026-08-09
+updated: 2026-08-11
+completed: 2026-08-11
 priority: medium
-horizon: m
 feasibility: medium
 reasoning_effort: high
-task_type: bug
+task_type: bugfix
 area: codegen
 language_feature: n/a
 goal: dogfood
-related: []
+sprint: current
+horizon: m
+related: [3995]
+loc-budget-allow:
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForStatement
 ---
-
-# wasm emission: preserve local reference types in styled-components
+# Preserve local and call operand types in styled-components
 
 ## Problem
 
-styled-components 6.4.4 dist/styled-components.esm.js emits invalid Wasm: WebAssembly.Module(): Compiling function #212: nt failed: local.tee[0] expected type (ref null 205), found local.get of type i32.
-
-Preserve local type consistency across reference and scalar lowering.
-
-Reproduce: pnpm run dogfood:styled-components.
-
-## Current measurement and suspended handoff (2026-08-09)
-
-The current canonical tarball still compiles, but the 272,881-byte binary does
-not validate:
+styled-components 6.4.4's published `dist/styled-components.esm.js` compiled,
+but the emitted Wasm did not validate. The first failure was:
 
 ```text
 WebAssembly.Module(): Compiling function #222:"nt" failed:
-local.tee[0] expected type (ref null 227), found local.get of type i32 @+115835
+local.tee[0] expected type (ref null 227), found local.get of type i32
 ```
 
-Direct reproduction (the package script can hit a sandbox-only `tsx` IPC
-`EPERM`, while this invokes the identical harness without that transport):
+Fixing that exposed two later validation failures in the same unchanged package:
+an out-of-order omitted-argument vector in `Rt -> Ye`, followed by an invalid
+`extern.convert_any` in `__closure_54`.
+
+Reproduce with:
 
 ```bash
 node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs \
   --package styled-components
 ```
 
-The measured compile took 8.559 seconds. WAT for `nt` contains captured cell
-locals such as `__boxed_s`, `__boxed_n`, `__boxed_r`, `__boxed_a` and
-`__boxed_e` with `(ref null 227)`, while two generated locals named `$e` have
-different types (`externref` and later `i32`). This strongly localizes the
-failure to local identity/type lowering selecting an `i32` slot for a captured
-reference cell, but the exact offending `local.tee` has not yet been mapped to
-its source binding.
+## Root causes and fixes
 
-The suspended investigation worktree `/private/tmp/js2-styled-local-tee` on
-`codex/4303-styled-local-tee` is clean at `7a50f7fd9a34fd`; it has no edits or
-commits. Resume by enumerating the `local.tee`s targeting `(ref null 227)` in
-`nt`, tracing the `i32` producer through binding-to-slot allocation, reducing
-that binding pattern, and then rerunning both the reduction and this unchanged
-package harness.
+### 1. A loop shadow retained the outer capture box
+
+`nt` contains an outer destructured binding named `e` that is captured by a
+closure, then a lexical `for (let e = 0; ...)` that shadows it. The loop lowering
+saved and replaced `localMap[e]`, but left `boxedCaptures[e]` pointing at the
+outer ref cell. Reads of the inner i32 loop counter therefore emitted ref-cell
+operations and fed an i32 to a ref-typed `local.tee`.
+
+Lexical loop-head setup now hides the complete outer storage descriptor,
+including `boxedCaptures`, and restores it on loop exit. The per-iteration box
+path preserves that original saved entry instead of overwriting it.
+
+### 2. Missing parameters were emitted in the wrong order
+
+`Rt` calls `Ye` with one argument. `Ye` has four ordinary parameters followed
+by a defaulted array parameter. The caller used two passes: it emitted optional
+defaults first, then padded ordinary gaps by count. The array vec intended for
+parameter five consequently landed in parameter two's `externref` slot.
+
+Direct named calls now emit every missing source parameter in formal order,
+mapping each source position to its expanded Wasm parameter position before
+choosing the optional sentinel or ordinary default.
+
+### 3. Object-prototype fallback assumed every nominal class value was a GC ref
+
+`Ut` stores its `instance` dynamically. Although TypeScript still describes the
+loaded value as a class instance, the dynamic read produces `externref`.
+`compileObjectPrototypeFallback` unconditionally appended
+`extern.convert_any` before `toString`, which is invalid on a value that is
+already `externref`.
+
+The fallback now converts the actual compiled representation. The same rule is
+used for `toString`, `toLocaleString`, `valueOf`, `hasOwnProperty`,
+`propertyIsEnumerable`, and `isPrototypeOf`.
+
+## Verification
+
+Measured on 2026-08-11 against the pinned `styled-components@6.4.4` tarball:
+
+- compile succeeds in about 3.36 seconds;
+- the emitted binary is 272,297 bytes;
+- `WebAssembly.Module` accepts it;
+- the catalog still has no runtime differential workload, so runtime
+  correctness remains unverified and is not implied by this issue's closure.
+
+Permanent reductions in `tests/issue-3999-parameter-padding.test.ts` cover the
+shadowed capture, ordered missing parameters, and dynamically loaded class
+receiver. `tests/issue-3978-dynamic-logical-property.test.ts` covers the sibling
+dynamic-property logical-assignment failure found while clearing the npm lane.
+
+## Acceptance criteria
+
+- [x] The original `nt` ref/i32 mismatch has a reduced regression.
+- [x] Every subsequently exposed validation failure has a stated root cause.
+- [x] The unchanged pinned package emits a valid Wasm module.
+- [x] No runtime-correctness or performance claim is inferred from validation.
 
 ## Provenance
 
-Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)
-that was created by an agent in error — this project tracks work as markdown
-under `plan/issues/`, not as GitHub issues. The GitHub issue has been closed and
-points here. **No content was dropped:** the Problem section above is the
-original issue body verbatim.
-
-Metadata below the title is newly assigned and is a **starting estimate, not a
-measurement** — `priority`, `horizon` and `feasibility` were not stated in the
-original and have not been validated against the corpus. Re-derive before
-scheduling.
+Migrated on 2026-08-01 from a GitHub issue that was created by an agent in
+error. This project tracks work as markdown under `plan/issues/`; the GitHub
+issue was closed and redirected here.

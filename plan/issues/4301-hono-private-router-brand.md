@@ -4,7 +4,7 @@ title: "Hono router methods lose the private #routes brand at runtime"
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-11
 priority: high
 horizon: m
 feasibility: medium
@@ -67,6 +67,30 @@ router instance carries the wrong class tag/struct representation.
 Resume by reducing `App.router -> Router.match -> this.#routes`, then add one
 nested `SmartRouter`/`RegExpRouter` case. Inspect the emitted method receiver
 and runtime class tag before changing the brand predicate.
+
+## Implementation checkpoint (2026-08-11)
+
+The failure was receiver identity, not the private-brand predicate. A
+variable-bound class expression has both a source-binding carrier and a
+declaration-identity carrier. Structural method selection could choose the
+former while the method body and its captured `this` expected the latter. A
+private method was also allowed to enter inheritance/virtual-candidate lookup,
+although private names are lexically bound and cannot be overridden.
+
+Receiver resolution now canonicalizes public class-expression carriers, keeps
+private methods tied to their lexical declaration, and selects a duplicate
+captured-`this` alias only when both the receiver struct and method self ABI
+match exactly. Ambiguous matches are rejected rather than guessed. Five focused
+runtime cases cover anonymous-class fields, structural calls, private methods,
+captured `this`, and same-spelled private methods in a subclass; the focused and
+adjacent suites pass 30/30.
+
+The unchanged Hono workload still compiles and validates, and it now advances
+past the `#routes` TypeError. It reaches a distinct `illegal cast` in
+`__closure_156` while evaluating the dynamic `r[method]` path inside
+`#buildMatcher`. That next compiler defect is being tracked separately; this
+issue remains open until the complete pinned route-matching differential can be
+rerun.
 
 ## Acceptance criteria
 

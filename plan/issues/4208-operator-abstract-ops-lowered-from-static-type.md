@@ -2,10 +2,10 @@
 id: 4208
 title: "Operator abstract-ops are lowered from the STATIC type: ToNumber / ToPrimitive / Type() are skipped for string, wrapper and `{valueOf}` operands — 59 ES5 files, `1 === true` answers true"
 status: in-progress
-completed_slice: "S1 (Type() for ===/!==, Number ⊥ Boolean) — 2026-08-07"
+completed_slice: "S1 (Type() for ===/!==) and S2 (update-expression ToNumber) — 2026-08-11"
 sprint: current
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-11
 priority: high
 horizon: xl
 feasibility: hard
@@ -16,7 +16,26 @@ es_edition: 5
 language_feature: abstract-operations, value-representation
 goal: es5
 related: [3055, 4183, 4173, 2733, 3216, 3397, 4205, 4204]
-assignee: ttraenkler/W27
+assignee: ttraenkler/codex-4208
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/variables.ts
+  - src/ir/integration.ts
+  - src/ir/module-bindings.ts
+  - src/ir/select.ts
+  - src/codegen/binary-ops-typed-dispatch.ts
+  - src/ir/from-ast.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/literals.ts::compileObjectLiteral
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/runtime.ts::resolveImport
 origin: "2026-08-07 W23 census of the ES5 standalone failing residue. #3055 covers only `any === any` on boxed numbers; nothing covers ToNumber/ToPrimitive in update, compound-assignment and relational operators."
 ---
 
@@ -121,7 +140,7 @@ they are strictly narrower.
       the two lanes do not double-count the same files.
 - [x] **S1 (`Type()` for `===`/`!==`) — DONE.** Scoped by measurement to
       Number ⊥ Boolean, the only broken pair; see the W27 notes below.
-- [ ] **S2 must DELETE `isUpdateRetypedBoolean` from
+- [x] **S2 must DELETE `isUpdateRetypedBoolean` from
       `src/codegen/strict-eq-type-disjoint.ts` in the same PR.** S1 left that
       guard in place so a Boolean binding that is a `++`/`--` target does not
       get its `Type()` folded, because the binding's `i32` slot still holds a
@@ -423,3 +442,157 @@ never stores it, so it cannot be fixed inside the update operator.
 
 Session-wide context, including the census-reliability record that bears on this
 issue's own file counts: `plan/agent-context/session-2026-08-07-lead-handoff.md`.
+
+---
+
+## S2 closure — 2026-08-11
+
+Base: `origin/main@70d531bcccc8a608da45b90998a2f6f2d4efb73e`, fetched from
+`loopdive/js2wasm` and checked out in an isolated worktree.
+
+S2 is no longer blocked. Update-retyped top-level `var` bindings now use a
+single checker-identity analysis shared by IR selection and compatibility
+allocation. Primitive initializers are represented by the IR dynamic carrier,
+the module initializer boxes them through the existing IR producer, and
+`++`/`--` calls the canonical ToNumber lowering before storing the resulting
+Number. Object and wrapper initializers retain the same widened global but
+conservatively demote module initialization until IR has a general
+object-to-dynamic materializer; the update itself still uses the canonical
+coercion path.
+
+The original S2 population was eight files. Six were red on current main; the
+two Boolean cases were green only because `isUpdateRetypedBoolean` suppressed
+the strict-equality optimization after the update stored the wrong logical
+type. The implementation deletes that workaround and proves those cases now
+pass because the binding actually contains Number `0`.
+
+Sloppy duplicate `var` declarations need one extra compatibility rule because
+Test262 redeclares the same module binding. The analysis marks every declaration
+sharing that symbol, and equality dispatch recognizes the widened module slot
+instead of trusting the stale initializer type. A simple non-redeclared source
+probe separately proves that `<module-init>` is emitted through IR with no
+post-claim error; duplicate-declaration harness shapes remain on the conservative
+compatibility path.
+
+### Maintained-runner measurement
+
+Node 25.9.0, Test262 `b363f29d3c43c626dc852744ad64a0b48a003693`,
+maintained `pnpm run test:262` runner, exact six-file current-red filter:
+
+| lane | before | after | run id |
+| --- | ---: | ---: | --- |
+| host GC | 0 / 6 | **6 / 6** | `20260811-194844` |
+| standalone | 0 / 6 | **6 / 6** | `20260811-194926` |
+
+The six are the prefix/postfix increment/decrement string cases plus the two
+Boolean-wrapper increment cases. The Boolean-primitive correctness proof and
+sloppy-redeclaration coverage live in the focused unit suite.
+
+The same implementation also closes the update-expression overlap with S3.
+Four object-operand files previously catalogued as red now exercise user
+`valueOf` through the canonical coercion path and pass in both lanes:
+
+- `postfix-decrement/S11.3.2_A2.2_T1.js`
+- `postfix-increment/S11.3.1_A2.2_T1.js`
+- `prefix-decrement/S11.4.5_A2.2_T1.js`
+- `prefix-increment/S11.4.4_A2.2_T1.js`
+
+| lane | after | run id |
+| --- | ---: | --- |
+| host GC | **4 / 4** | `20260811-201901` |
+| standalone | **4 / 4** | `20260811-202024` |
+
+That makes ten previously-red update-expression files verified green in both
+lanes. The remaining S3 population covers other operators and stays open.
+
+### Verification
+
+- `issue-4208-update-to-number-ir`, `issue-4208-strict-eq-type-disjoint`,
+  `issue-4204-module-var-widening`, and `issue-1379`: **58 / 58** tests.
+- `pnpm run typecheck`: pass.
+- `pnpm run check:ir-fallbacks`: pass; no unintended, post-claim, or
+  module-level fallback increase.
+
+Fresh whole-suite baselines contain 9,029 ES5 tests: standalone is 8,052 pass,
+880 fail, 93 compile-error and 4 timeout; host GC is 7,218 pass, 1,760 fail and
+51 compile-error. This change removes a verified ten-file update-expression
+slice from that residue; this issue remains open for the rest of S3–S7 rather
+than claiming the overall ES5 goal complete.
+
+---
+
+## S3/S7 first OrdinaryToPrimitive slice — 2026-08-11
+
+Continued from the ready #4377 head on `origin/main@6c1117f8767e9b43ab9eefa0bd0084bf9c980a7d`,
+fetched from the renamed canonical repository `loopdive/js2wasm` in the same
+isolated worktree.
+
+The first five S3/S7 crash cases shared a representation failure, not five
+operator bugs. Test262's wrapper repeatedly declares one function-scoped
+`var object` with different anonymous object shapes. Each declaration denotes
+the same JS binding, but legacy allocation selected a different closed WasmGC
+struct for every initializer; a later guarded assignment stored null when the
+shapes disagreed, and unary/bitwise coercion dereferenced it.
+
+The compatibility prepass now groups declarations by exact checker symbol and
+widens only the bounded shape where all repeated initializers are method-only
+`valueOf`/`toString` function literals and the binding has a coercive numeric
+use. Those exact declarations and literals share the open object carrier. The
+host bridge also treats its exact `__is_closure` classifier as authoritative
+and wraps OrdinaryToPrimitive methods with the zero-argument dispatcher before
+storing them.
+
+### IR ownership boundary
+
+The real Test262 wrapper is still deliberately legacy-owned: duplicate `var`
+bindings are outside the current IR declaration model, and its unannotated JS
+function expressions are outside the typed closure surface. It is therefore
+reported as a selector rejection rather than falsely counted as IR coverage.
+
+A focused typed source is genuinely IR-emitted in both lanes:
+
+```ts
+export function probe(): number {
+  const object = { valueOf: function (): number { return 1; } };
+  return +object;
+}
+```
+
+The selector admits only zero-argument, explicitly typed `valueOf`/`toString`
+function properties. From-AST lowering builds an open object through symbolic
+`__new_plain_object`/`__extern_set` calls, packs the closure through the
+canonical callable ABI, and lowers unary ToNumber as
+`__to_primitive(value, null)` followed by `__unbox_number`. Runtime providers
+are preregistered before Phase 3 for both host imports and the standalone native
+object runtime. Mixed method/data objects remain a pre-claim rejection.
+
+### Maintained-runner measurement
+
+Node 25.9.0, Test262 `b363f29d3c43c626dc852744ad64a0b48a003693`,
+maintained `pnpm run test:262` runner:
+
+| lane | before | after | after run id |
+| --- | ---: | ---: | --- |
+| host GC | 0 / 5 | **5 / 5** | `20260811-205948` |
+| standalone | 0 / 5 | **5 / 5** | `20260811-210129` |
+
+The five previously crashing files are:
+
+- `unary-plus/S11.4.6_A2.2_T1.js`
+- `unary-minus/S11.4.7_A2.2_T1.js`
+- `bitwise-not/S11.4.8_A2.2_T1.js`
+- `bitwise-not/S9.5_A3.1_T4.js`
+- `unsigned-right-shift/S9.6_A3.1_T4.js`
+
+### Verification
+
+- Focused host/standalone IR ownership, repeated-`var`, and selector-boundary
+  suite: **6 / 6**.
+- Related #4208 and object-method suites: **41 / 41**.
+- `pnpm run typecheck`: pass.
+- `pnpm run check:ir-fallbacks`: pass; no unintended, post-claim, or
+  module-level fallback increase.
+
+This is a five-file slice, not closure of S3/S7 or the ES5 goal. Relational,
+addition, abstract-equality, Date/function operands, and wider
+OrdinaryToPrimitive shapes remain to be measured and implemented.

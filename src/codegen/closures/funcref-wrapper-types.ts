@@ -14,6 +14,13 @@ import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint
 import { addFuncType } from "../index.js";
 import { closureArityField, closureBagField } from "./closure-header-layout.js";
 
+export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";
+
+function observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void {
+  if (mode === "ordinary") info.hostOneShotOnly = false;
+  else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
+}
+
 /**
  * (#3673/#4241) Closure representation constants and header field factories.
  *
@@ -66,6 +73,7 @@ export function getOrCreateFuncRefWrapperTypes(
   ctx: CodegenContext,
   userParams: ValType[],
   resultTypes: ValType[],
+  allocationMode: ClosureAllocationMode = "ordinary",
 ): {
   structTypeIdx: number;
   liftedFuncTypeIdx: number;
@@ -77,6 +85,7 @@ export function getOrCreateFuncRefWrapperTypes(
 
   const cached = ctx.funcRefWrapperCache.get(sigKey);
   if (cached) {
+    observeAllocation(cached, allocationMode);
     return {
       structTypeIdx: cached.structTypeIdx,
       liftedFuncTypeIdx: cached.funcTypeIdx,
@@ -122,6 +131,7 @@ export function getOrCreateFuncRefWrapperTypes(
     returnType: resultTypes.length > 0 ? resultTypes[0]! : null,
     paramTypes: userParams,
   };
+  observeAllocation(closureInfo, allocationMode);
   ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
   ctx.funcRefWrapperCache.set(sigKey, closureInfo);
 

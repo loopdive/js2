@@ -22,6 +22,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
+import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
@@ -33,6 +34,7 @@ import {
 } from "../iterator-native.js"; // (#2169c) native Array.from drain / (#3146) Iterator-statics intrinsics / (#3206) native Array.from(src, mapFn)
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
+import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js"; // (#2903 R3b) flatMap closure-path exemption
@@ -158,6 +160,7 @@ import {
 } from "../shared.js";
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
+  ensureArrayBufferNativeProtoGlue,
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
@@ -191,6 +194,7 @@ import {
 } from "../builtin-static-gopd.js"; // (#2984 Phase 3 + bucket-1 alias receivers + arg-2 name coercion + @@species)
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import {
+  emitDefaultParamInit,
   emitSetExtrasArgv,
   ensureArgcGlobal,
   ensureExtrasArgvGlobal,
@@ -1066,6 +1070,8 @@ function tryEmitNativeProtoReflectiveCall(
     brand = ensureStringNativeProtoGlue(ctx); // (#2875)
   else if (ifaceName === "DataView")
     brand = ensureDataViewNativeProtoGlue(ctx); // (#3173)
+  else if (ifaceName === "ArrayBuffer")
+    brand = ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
   else if (ifaceName === "Date") brand = ensureDateNativeProtoGlue(ctx); // (#3219)
   if (brand === undefined) return undefined;
 
@@ -1180,6 +1186,13 @@ function emitReflectiveNativeProtoClosureCall(
   fctx.body.push({ op: "local.get", index: closureLocal });
 
   const paramTypes = closureInfo.paramTypes; // excludes the self param
+  // ArrayBufferCopyAndDetach must distinguish an omitted/undefined newLength
+  // from explicit null. This native-proto call surface normally pads optional
+  // externrefs with null, so use the canonical standalone undefined singleton
+  // for ArrayBuffer members; their shared helper applies the corresponding
+  // runtime predicate. Other builtin families retain their existing ABI.
+  const arrayBufferUndefinedPad =
+    getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (i < userArgs.length) {
@@ -1188,7 +1201,7 @@ function emitReflectiveNativeProtoClosureCall(
         coerceType(ctx, fctx, aType, pType);
       }
     } else if (pType.kind === "externref") {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...(arrayBufferUndefinedPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
     }
@@ -2764,6 +2777,12 @@ export function emitWrapperDynamicMethodCall(
   methodName: string,
   callExpr?: ts.CallExpression,
 ): ValType | null {
+  // (#4373) The host wrapper can only preserve arguments that have a matching
+  // `__call_fn_method_N` dispatcher. Record the real dynamic call-site width
+  // before module finalization; otherwise modules whose declared closures are
+  // all narrower retain the historical five-argument cap and truncate extras.
+  if (callExpr) observeHostDynamicMethodCallArity(ctx, callExpr.arguments);
+
   // (#1888 Slice 2) Standalone routes __extern_method_call native, which reads
   // its args over a $ObjVec — build the (empty) args list with the native
   // $ObjVec builder, not the host __js_array_new. JS-host keeps the host import.
@@ -6326,9 +6345,11 @@ function compileCallExpression(
         evalKind === "direct"
           ? directEvalRunsAtScriptGlobal(expr, ctx)
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
-            : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+            : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : undefined
+              : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+                ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
+                : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone
@@ -8600,6 +8621,9 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     labelMap: new Map(),
     savedBodies: [],
   };
+  // This fallback emits a real Wasm function instead of using the inline-IIFE
+  // fast path, so register its source strictness like every other source body.
+  initializeFunctionPoisonPillContext(ctx, liftedFctx, funcExpr);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -8632,6 +8656,13 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
   if (savedFunc) ctx.funcStack.push(savedFunc);
   ctx.currentFunc = liftedFctx;
+
+  // A lifted IIFE is a real function activation. Its parameter defaults must
+  // run in the synthesized callee before the body, just like defaults on a
+  // source FunctionDeclaration. The old path only padded missing numeric
+  // arguments with NaN and entered the body directly, so `function (x = 1)`
+  // observed NaN whenever the call omitted `x`.
+  emitDefaultParamInit(ctx, liftedFctx, funcExpr, paramTypes, captures.length);
 
   if (ts.isBlock(body)) {
     // Hoist var declarations and let/const with TDZ flags (#790)
@@ -8732,6 +8763,15 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     else if (pt.kind === "i32") fctx.body.push({ op: "i32.const", value: 0 });
     else if (pt.kind === "externref") fctx.body.push({ op: "ref.null.extern" });
     else if (pt.kind === "ref" || pt.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: pt.typeIdx });
+  }
+
+  // Numeric defaults use the exact call-site argc rather than treating an
+  // arbitrary NaN payload as the missing-argument sentinel. The synthesized
+  // callee consumes this value once and resets the shared carrier to -1.
+  if (funcExpr.parameters.some((param) => param.initializer)) {
+    const argcGlobalIdx = ensureArgcGlobal(ctx);
+    fctx.body.push({ op: "i32.const", value: Math.min(flatIIFEArgs.length, paramCount) });
+    fctx.body.push({ op: "global.set", index: argcGlobalIdx });
   }
 
   // Re-lookup in case addUnionImports shifted indices

@@ -17,6 +17,8 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../../src/index.js";
+import { ALLOC_NAMESPACES, AllocSiteRegistry } from "../../src/ir/alloc-registry.js";
+import { asAsyncStateId, canonicalPromiseAbi, type IrAsyncPlan } from "../../src/ir/async-plan.js";
 import { irIntrinsicFuncRef } from "../../src/ir/callable-bindings.js";
 import {
   asAllocSiteId,
@@ -35,6 +37,7 @@ import { batchStringConcat } from "../../src/ir/passes/batch-string-concat.js";
 import { deadCode } from "../../src/ir/passes/dead-code.js";
 import { simplifyCFG } from "../../src/ir/passes/simplify-cfg.js";
 import { parseIrStringConcatManyArity } from "../../src/ir/string-runtime.js";
+import { assertAllocProvenance } from "../../src/ir/verify-alloc.js";
 import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
 const irIdentities = createTestIrFunctionIdentityFactory("ir/passes");
@@ -498,6 +501,277 @@ describe("#3523 — batchStringConcat", () => {
       instr.kind === "call" && instr.target.binding.kind === "intrinsic" ? [instr.target.binding.symbol] : [],
     );
     expect(targets).toEqual(["operand-a", "operand-b", "operand-c", fused.target.binding.symbol]);
+    expect(verifyIrFunction(cleaned)).toEqual([]);
+  });
+
+  it("coalesces adjacent literals between dynamic operands without changing call order", () => {
+    const left = irIntrinsicFuncRef("left");
+    const right = irIntrinsicFuncRef("right");
+    const fn: IrFunction = {
+      ...irIdentities.next("adjacentLiterals"),
+      params: [],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            { kind: "call", target: left, args: [], result: id(0), resultType: STRING },
+            { kind: "string.const", value: "a", result: id(1), resultType: STRING },
+            { kind: "string.const", value: "b", result: id(2), resultType: STRING },
+            { kind: "call", target: right, args: [], result: id(3), resultType: STRING },
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(4), resultType: STRING },
+            { kind: "string.concat", lhs: id(4), rhs: id(2), result: id(5), resultType: STRING },
+            { kind: "string.concat", lhs: id(5), rhs: id(3), result: id(6), resultType: STRING },
+          ],
+          terminator: { kind: "return", values: [id(6)] },
+        },
+      ],
+      exported: false,
+      valueCount: 7,
+    };
+
+    const batched = batchStringConcat(fn);
+    const survivor = batched.blocks[0]!.instrs.find((instr) => instr.result === id(1));
+    expect(survivor).toMatchObject({ kind: "string.const", value: "ab" });
+    const fused = batched.blocks[0]!.instrs.find((instr) => instr.result === id(6));
+    expect(fused).toMatchObject({ kind: "call", args: [id(0), id(1), id(3)] });
+    if (fused?.kind !== "call" || fused.target.binding.kind !== "intrinsic") return;
+    expect(parseIrStringConcatManyArity(fused.target.binding.symbol)).toBe(3);
+
+    const cleaned = deadCode(batched);
+    expect(
+      cleaned.blocks[0]!.instrs.flatMap((instr) =>
+        instr.kind === "call" && instr.target.binding.kind === "intrinsic" ? [instr.target.binding.symbol] : [],
+      ),
+    ).toEqual(["left", "right", fused.target.binding.symbol]);
+    expect(verifyIrFunction(cleaned)).toEqual([]);
+  });
+
+  it("keeps an ordinary binary concat when literal coalescing leaves two operands", () => {
+    const fn: IrFunction = {
+      ...irIdentities.next("binaryAfterLiteralFold"),
+      params: [{ value: id(0), type: STRING, name: "dynamic" }],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            { kind: "string.const", value: "a", result: id(1), resultType: STRING },
+            { kind: "string.const", value: "b", result: id(2), resultType: STRING },
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(3), resultType: STRING },
+            { kind: "string.concat", lhs: id(3), rhs: id(2), result: id(4), resultType: STRING },
+          ],
+          terminator: { kind: "return", values: [id(4)] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    };
+
+    const batched = batchStringConcat(fn);
+    expect(batched.blocks[0]!.instrs.find((instr) => instr.result === id(1))).toMatchObject({
+      kind: "string.const",
+      value: "ab",
+    });
+    expect(batched.blocks[0]!.instrs.find((instr) => instr.result === id(4))).toMatchObject({
+      kind: "string.concat",
+      lhs: id(0),
+      rhs: id(1),
+    });
+    expect(
+      batched.blocks[0]!.instrs.some(
+        (instr) =>
+          instr.kind === "call" &&
+          instr.target.binding.kind === "intrinsic" &&
+          parseIrStringConcatManyArity(instr.target.binding.symbol) !== null,
+      ),
+    ).toBe(false);
+    expect(verifyIrFunction(deadCode(batched))).toEqual([]);
+  });
+
+  it("treats shared and prepared literals as coalescing barriers", () => {
+    const preparedLiteral = irIntrinsicFuncRef("prepared-literal");
+    const fn: IrFunction = {
+      ...irIdentities.next("literalBarriers"),
+      params: [{ value: id(0), type: STRING, name: "dynamic" }],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            { kind: "string.const", value: "shared", result: id(1), resultType: STRING },
+            {
+              kind: "string.const",
+              value: "prepared",
+              materializer: preparedLiteral,
+              result: id(2),
+              resultType: STRING,
+            },
+            { kind: "string.eq", lhs: id(1), rhs: id(0), negate: false, result: id(3), resultType: BOOL },
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(4), resultType: STRING },
+            { kind: "string.concat", lhs: id(4), rhs: id(2), result: id(5), resultType: STRING },
+          ],
+          terminator: { kind: "return", values: [id(5)] },
+        },
+      ],
+      exported: false,
+      valueCount: 6,
+    };
+
+    const batched = batchStringConcat(fn);
+    expect(batched.blocks[0]!.instrs.find((instr) => instr.result === id(1))).toMatchObject({ value: "shared" });
+    expect(batched.blocks[0]!.instrs.find((instr) => instr.result === id(2))).toMatchObject({ value: "prepared" });
+    const fused = batched.blocks[0]!.instrs.find((instr) => instr.result === id(5));
+    expect(fused).toMatchObject({ kind: "call", args: [id(0), id(1), id(2)] });
+  });
+
+  it("does not fuse provider-backed or owned-append concat trees", () => {
+    const makeFn = (root: "provider" | "owned"): IrFunction => {
+      const fn: IrFunction = {
+        ...irIdentities.next(`concat-${root}`),
+        params: [{ value: id(0), type: STRING, name: "dynamic" }],
+        resultTypes: [STRING],
+        blocks: [
+          {
+            id: asBlockId(0),
+            blockArgs: [],
+            blockArgTypes: [],
+            instrs: [
+              { kind: "string.const", value: "a", result: id(1), resultType: STRING },
+              { kind: "string.const", value: "b", result: id(2), resultType: STRING },
+              { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(3), resultType: STRING },
+              {
+                kind: "string.concat",
+                lhs: id(3),
+                rhs: id(2),
+                result: id(4),
+                resultType: STRING,
+                ...(root === "provider"
+                  ? { provider: irIntrinsicFuncRef("selected-concat-provider") }
+                  : { concatMode: "owned-append" as const }),
+              },
+            ],
+            terminator: { kind: "return", values: [id(4)] },
+          },
+        ],
+        exported: false,
+        valueCount: 5,
+      };
+      return fn;
+    };
+
+    const provider = makeFn("provider");
+    const owned = makeFn("owned");
+    expect(batchStringConcat(provider)).toBe(provider);
+    expect(batchStringConcat(owned)).toBe(owned);
+  });
+
+  it("batches string concat trees inside async state bodies", () => {
+    const identity = irIdentities.next("asyncConcat");
+    const stateId = asAsyncStateId(0);
+    const asyncPlan: IrAsyncPlan = {
+      schemaVersion: 1,
+      ownerUnitId: identity.unitId,
+      kind: "async-function",
+      abi: canonicalPromiseAbi(STRING),
+      entry: stateId,
+      params: [{ value: id(0), type: STRING }],
+      values: [0, 1, 2, 3, 4].map((value) => ({ value: id(value), type: STRING })),
+      spills: [],
+      states: [
+        {
+          id: stateId,
+          body: [
+            { kind: "string.const", value: "a", result: id(1), resultType: STRING },
+            { kind: "string.const", value: "b", result: id(2), resultType: STRING },
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(3), resultType: STRING },
+            { kind: "string.concat", lhs: id(3), rhs: id(2), result: id(4), resultType: STRING },
+          ],
+          terminator: { kind: "resolve", value: id(4) },
+        },
+      ],
+      handlers: [],
+      runtimeIntents: [],
+    };
+    const fn: IrFunction = {
+      ...identity,
+      params: [{ value: id(0), type: STRING, name: "dynamic" }],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [],
+          terminator: { kind: "unreachable" },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+      funcKind: "async",
+      asyncPlan,
+    };
+
+    const batched = batchStringConcat(fn);
+    expect(batched.blocks).toBe(fn.blocks);
+    expect(batched.asyncPlan).not.toBe(asyncPlan);
+    expect(batched.asyncPlan!.states[0]!.body.find((instr) => instr.result === id(1))).toMatchObject({
+      kind: "string.const",
+      value: "ab",
+    });
+    expect(batched.asyncPlan!.states[0]!.body.find((instr) => instr.result === id(4))).toMatchObject({
+      kind: "string.concat",
+      lhs: id(0),
+      rhs: id(1),
+    });
+  });
+
+  it("keeps literal allocation aliases and refreshed encoding metadata through DCE", () => {
+    const registry = new AllocSiteRegistry();
+    const first = registry.fresh("string", STRING);
+    const second = registry.fresh("string", STRING);
+    const inner = registry.fresh("string", STRING);
+    const root = registry.fresh("string", STRING);
+    registry.annotate(first, ALLOC_NAMESPACES.encoding, "ascii");
+    registry.annotate(second, ALLOC_NAMESPACES.encoding, "utf8-guaranteed");
+    const fn: IrFunction = {
+      ...irIdentities.next("literalAllocFusion"),
+      params: [{ value: id(0), type: STRING, name: "dynamic" }],
+      resultTypes: [STRING],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            { kind: "string.const", value: "A", result: id(1), resultType: STRING, alloc: first },
+            { kind: "string.const", value: "é", result: id(2), resultType: STRING, alloc: second },
+            { kind: "string.concat", lhs: id(0), rhs: id(1), result: id(3), resultType: STRING, alloc: inner },
+            { kind: "string.concat", lhs: id(3), rhs: id(2), result: id(4), resultType: STRING, alloc: root },
+          ],
+          terminator: { kind: "return", values: [id(4)] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    };
+
+    const batched = batchStringConcat(fn, registry);
+    const removedLiteral = batched.blocks[0]!.instrs.find((instr) => instr.result === id(2));
+    expect(removedLiteral).not.toHaveProperty("alloc");
+    expect(registry.resolve(second)?.id).toBe(first);
+    expect(registry.read(first, ALLOC_NAMESPACES.encoding)).toBe("utf8-guaranteed");
+
+    const cleaned = deadCode(batched, registry);
+    expect(registry.resolve(second)?.id).toBe(first);
+    expect(registry.resolve(inner)).toBeNull();
+    assertAllocProvenance(cleaned, registry);
     expect(verifyIrFunction(cleaned)).toEqual([]);
   });
 });

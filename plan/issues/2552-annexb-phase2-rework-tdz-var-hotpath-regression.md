@@ -13,6 +13,11 @@ language_feature: annex-b, block-functions
 goal: es5
 parent: 2200
 related: [2200, 1764]
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/eval-inline.ts
 origin: "2026-06-19 — #2200 Phase 2 (PR #1769) failed the full test262-regression gate -1180; parked Phase-1-only. This is the rework follow-up."
 ---
 
@@ -243,3 +248,61 @@ read/assignment-read and the mutable-binding read/`f = 123` value semantics
 
 Expected merge_group delta: the -10 recovered, no new regressions → **net ≥ 0**.
 On landing, `#2200` closes (both Annex B phases complete).
+
+## Repeated declaration-object slice (2026-08-11, standalone refresh)
+
+The latest forced standalone baseline (`2026-08-11 19:17`, oracle v13,
+48,661 raw rows) does not contain the historical “91” as an exact maintained
+population. Rebuilding the repository report's first-match
+`annex-b-function-eval` heuristic yields **122** non-passing rows: **89 ES5**,
+20 ES2015, and 13 ES2027. The ES5 89 is the reproducible selector/denominator
+for this work; it is a mixed Annex-B/eval bucket rather than one mechanism.
+
+The highest-yield coherent mechanism inside it was the generated function-scope
+`*-existing-block-fn-update.js` family. The current Test262 checkout has eight
+such function-code rows, all failing on main because the second declaration
+stored the first declaration's function object again. The fresh maintained
+baseline contains seven of those rows; the eighth
+(`if-decl-else-decl-b-func-existing-block-fn-update.js`) arrived after that
+baseline snapshot and was therefore measured from the current corpus rather
+than silently dropped.
+
+**Root cause.** Function-scope Annex B correctly has a live, flag-gated outer
+binding, but `ctx.funcMap` and capture metadata are keyed by bare function name.
+The hoist pass therefore compiled only one body for multiple same-named block
+declarations. Every declaration-site assignment fetched that same `funcMap`
+entry, and a direct call bypassed the live outer binding entirely. This is an
+AST-hoist/codegen binding-identity defect, not an IR-selection defect; adding a
+new IR route would not restore declaration identity.
+
+**Implementation boundary.** Multiple eligible, capture-free, zero-parameter
+ordinary declarations now compile declaration-specific function objects. Their
+name is recorded as a repeated Annex B outer binding, and direct calls dispatch
+through the live local so a skipped branch cannot pin the statically last body.
+The eligibility scan includes block, Annex-B `if`, and switch declaration
+positions, while excluding inner same-named block functions whose `var`
+substitution would be an early error. Lone declarations keep the existing
+direct-call path. Capturing/parameterized/async/generator duplicates remain
+parked because capture metadata is still name-keyed; widening this slice without
+per-declaration capture records produced an illegal/null closure path in the
+local canary.
+
+**Maintained A/B.** With the full standalone interpreter provider and one worker,
+the exact 40-row selector (eight function-code targets plus 32 already-passing
+global/eval controls) moved **32/40 → 40/40**. The final candidate also passed
+the two broader-sweep canaries for the nested-cancellation and lone-catch cases
+(**42/42** combined). A full current function-code sweep is **120/159** (38
+runtime failures, one compile error). Against the 155 overlapping fresh-baseline
+rows it is **110 → 117 pass**, with seven baseline failures recovered and **zero
+pass-to-nonpass regressions**; three of four newly added corpus rows pass,
+including the eighth target. Focused unit coverage passes on both GC and
+standalone (15/15).
+
+**Residuals.** The fresh ES5 report selector retains **82/89** baseline rows
+outside this slice. In the narrower current function-code directory, **39/159**
+remain non-passing: default-parameter skip (8), binding init (8), catch/try
+no-skip (7), existing-function update (5), existing-function no-init (3),
+mutable block scoping (3), early-error skip (3), `arguments` (1), and switch
+redeclaration diagnostics (1). The next repeated-declaration slice must first
+make capture/signature metadata declaration-keyed; it must not broaden the
+capture-free gate opportunistically.

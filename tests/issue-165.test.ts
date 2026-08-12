@@ -108,6 +108,18 @@ describe("Issue #165: function statement hoisting and edge cases", () => {
     expect(result).toBe(7);
   });
 
+  it("IIFE applies a numeric default when the argument is omitted", async () => {
+    const result = await run(
+      `
+      export function test(): number {
+        return (function(value: number = 123): number { return value; })();
+      }
+      `,
+      "test",
+    );
+    expect(result).toBe(123);
+  });
+
   it("arrow IIFE (concise body)", async () => {
     const result = await run(
       `
@@ -264,7 +276,7 @@ describe("Issue #165: function statement hoisting and edge cases", () => {
     expect(result).toBe(42);
   });
 
-  it("IIFE with fewer arguments than params (defaults to 0)", async () => {
+  it("IIFE with fewer arguments leaves an omitted plain parameter undefined", async () => {
     const result = await run(
       `
       export function test(): number {
@@ -273,8 +285,9 @@ describe("Issue #165: function statement hoisting and edge cases", () => {
       `,
       "test",
     );
-    // b defaults to 0 when not provided
-    expect(result).toBe(5);
+    // `b` has no initializer, so ordinary JS leaves it undefined and the
+    // numeric addition produces NaN. This is distinct from a defaulted param.
+    expect(result).toBeNaN();
   });
 
   it("function hoisting order: later declaration shadows earlier in same scope", async () => {

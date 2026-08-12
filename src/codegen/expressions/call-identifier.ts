@@ -128,6 +128,14 @@ function localBindingShadowsCapturingFunction(
   return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
 }
 
+function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
+  if (fctx.annexBRepeatedOuterBindings?.has(name)) return true;
+  const hasModuleBinding =
+    ctx.runtimeEvalGlobalFunctionBindings ||
+    (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);
+  return hasModuleBinding && ctx.liveFuncBindingGlobals?.has(name) === true;
+}
+
 /**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
  * compileCallExpression. Handles the cases where the call target is a bare
@@ -984,15 +992,13 @@ export function compileIdentifierCall(
     // interpreted closure. Such a binding must call its live externref global
     // through the generic apply bridge; a direct call to the declaration's
     // immutable funcIdx would ignore the replacement entirely.
-    // (#4182) A module-scope Annex B B.3.3.2 block-fn binding is live the same
-    // way: the value a call must invoke is whatever the last-evaluated
-    // declaration stored in the global (a direct funcMap call would pin the
-    // GDI winner forever). Locally-shadowed names keep their local resolution.
-    if (
-      (ctx.runtimeEvalGlobalFunctionBindings ||
-        (ctx.annexBModuleBindings?.has(funcName) === true && fctx.localMap.get(funcName) === undefined)) &&
-      ctx.liveFuncBindingGlobals?.has(funcName)
-    ) {
+    // (#4182/#2552) Annex B block-fn bindings are live the same way: the value
+    // a call must invoke is whatever declaration most recently evaluated. At
+    // module scope that value lives in a global; inside a function it lives in
+    // the flag-gated outer-binding local. A direct funcMap call would instead
+    // pin whichever declaration happened to compile last, even when its branch
+    // did not execute. Locally-shadowed names keep their local resolution.
+    if (hasLiveFunctionBinding(ctx, fctx, funcName)) {
       const liveCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (liveCall !== null) return liveCall;
     }
@@ -2352,7 +2358,6 @@ export function compileIdentifierCall(
             ? paramTypes.length - captureCount
             : expr.arguments.length;
       const calleeReadsArgsDirect = ctx.funcUsesArguments.has(funcName);
-      let pushedUserWasmArgCount = 0;
       for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
         if (hasLinearParamsForCall && linearParamsForCall.has(i)) {
           const arg = expr.arguments[i]!;
@@ -2369,7 +2374,6 @@ export function compileIdentifierCall(
             fctx.body.push({ op: "local.get", index: buf.ptrLocalIdx });
             fctx.body.push({ op: "local.get", index: buf.lenLocalIdx });
           }
-          pushedUserWasmArgCount += 2;
           continue;
         }
         const wasmParamIndex =
@@ -2377,7 +2381,6 @@ export function compileIdentifierCall(
             ? wasmParamIndexForSourceParam(i, linearParamsForCall, captureCount)
             : i + captureCount;
         compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[wasmParamIndex]);
-        pushedUserWasmArgCount++;
       }
       if (expr.arguments.length > paramCount) {
         if (calleeReadsArgsDirect) {
@@ -2392,30 +2395,33 @@ export function compileIdentifierCall(
         }
       }
 
-      // Supply defaults for missing optional params
       const optInfo = ctx.funcOptionalParams.get(funcName);
-      if (optInfo) {
-        const numProvided = expr.arguments.length;
-        for (const opt of optInfo) {
-          if (opt.index >= numProvided) {
-            pushParamSentinel(fctx, opt.type, ctx, opt);
-          }
-        }
-      }
-
-      // Pad any remaining missing arguments with defaults
-      // (handles arity mismatch: calling f(a, b) with just f(1))
       if (paramTypes) {
-        // Count how many args were actually pushed: provided args (capped at paramCount)
-        // plus optional param defaults already pushed
-        // plus capture params already pushed by nestedCaptures loop above
-        const providedCount =
-          (hasLinearParamsForCall ? pushedUserWasmArgCount : Math.min(expr.arguments.length, paramCount)) +
-          captureCount;
-        const optFilledCount = optInfo ? optInfo.filter((o) => o.index >= expr.arguments.length).length : 0;
-        const totalPushed = providedCount + optFilledCount;
-        for (let i = totalPushed; i < paramTypes.length; i++) {
-          pushDefaultValue(fctx, paramTypes[i]!, ctx);
+        // Missing arguments must be emitted in formal-parameter order. The old
+        // two-pass lowering emitted every optional/defaulted parameter first,
+        // then filled ordinary gaps by count. For `f(a, b, c, d, e = [])`,
+        // `f(x)` therefore put e's vec sentinel in b's externref slot and
+        // produced invalid Wasm (#3999, styled-components Rt -> Ye).
+        const firstMissingSourceParam = Math.min(expr.arguments.length, paramCount);
+        for (let sourceIndex = firstMissingSourceParam; sourceIndex < paramCount; sourceIndex++) {
+          const firstWasmIndex =
+            hasLinearParamsForCall && linearParamsForCall
+              ? wasmParamIndexForSourceParam(sourceIndex, linearParamsForCall, captureCount)
+              : sourceIndex + captureCount;
+          const nextWasmIndex =
+            hasLinearParamsForCall && linearParamsForCall
+              ? sourceIndex + 1 < paramCount
+                ? wasmParamIndexForSourceParam(sourceIndex + 1, linearParamsForCall, captureCount)
+                : paramTypes.length
+              : firstWasmIndex + 1;
+          const opt = optInfo?.find((candidate) => candidate.index === sourceIndex);
+          for (let wasmIndex = firstWasmIndex; wasmIndex < nextWasmIndex; wasmIndex++) {
+            if (wasmIndex === firstWasmIndex && opt) {
+              pushParamSentinel(fctx, paramTypes[wasmIndex]!, ctx, opt);
+            } else {
+              pushDefaultValue(fctx, paramTypes[wasmIndex]!, ctx);
+            }
+          }
         }
       }
       // Set __argc before the call so the callee knows the actual arg count

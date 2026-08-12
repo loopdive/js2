@@ -1,10 +1,11 @@
 ---
 id: 3975
-title: "standalone: `$262.detachArrayBuffer` unsupported — 206 tests refuse, 80 of them already pass in the host lane"
-status: ready
+title: "standalone: route `$262.detachArrayBuffer` through the native detached-buffer marker (77/89 pass)"
+status: done
+completed: 2026-08-11
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-11
 priority: medium
 horizon: m
 feasibility: medium
@@ -18,6 +19,83 @@ origin: "2026-08-01 /harvest-errors of loopdive/js2wasm-baselines test262-standa
 ---
 
 # #3975 — standalone lane has no `$262.detachArrayBuffer`
+
+## Resolution (2026-08-11)
+
+The buffer-side native implementation was already present. The literal Test262
+runtime in `scripts/test262-fyi-runtime.js` stopped before reaching it: when a
+standalone module observed that `structuredClone` was absent, the shim threw the
+uniform "unsupported by this host" error. The adapted diagnostic harness had
+already used the correct native marker for months, which is why focused
+DataView tests were green while the maintained original-harness baseline was
+not.
+
+The shim now writes `buffer.__detached__ = true` and returns when no host
+`structuredClone` exists. In standalone/WASI, the existing assignment lowering
+in `tryCompileStandaloneDetachedWrite` converts that write into the native
+ArrayBuffer detached state (`length = -1`). The GC/host lane still calls real
+`structuredClone(buffer, { transfer: [buffer] })` and is unchanged.
+
+### Fresh measurement
+
+Source: maintained `loopdive/js2wasm-baselines`
+`test262-standalone-current.jsonl`, baseline commit
+`2ca8c9422f41937caf6d6c27ee9ed5a964ebc206`, rows timestamped
+2026-08-11 19:17, oracle v13. The report contains 43,548 official rows and
+29,165 standalone passes. The branch is based on canonical
+`loopdive/js2wasm` `main` at `beb8e4e7180a32e1fbd89e549b692328981479b4`;
+the Test262 gitlink is `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+The old 206-row estimate had shrunk before this implementation:
+
+| category | fresh uniform-refusal rows |
+| --- | ---: |
+| `built-ins/DataView` | 78 |
+| `built-ins/ArrayBuffer` | 8 |
+| `built-ins/Uint8Array` | 3 |
+| **total** | **89** |
+
+Authoritative `runTest262File(..., "standalone")` A/B:
+
+| | baseline | branch |
+| --- | ---: | ---: |
+| pass | 0 / 89 | **77 / 89** |
+| `$262.detachArrayBuffer is unsupported by this host` | **89 / 89** | **0 / 89** |
+| honest downstream residual | 0 / 89 | 12 / 89 |
+
+The maintained host JSONL passes 38 of the 89 files. The branch's larger
+77-file standalone gain is real: the native DataView detached-buffer path is
+ahead of the host lane on 39 additional files. A representative maintained-
+runner control,
+`DataView/prototype/getUint32/detached-buffer-after-toindex-byteoffset.js`,
+moved from the exact baseline refusal to pass when run alone.
+
+The 12 residuals are no longer harness capability failures:
+
+| residual mechanism | files |
+| --- | ---: |
+| ArrayBuffer detached getters return the internal `-1`/numeric sentinel instead of `0`/`false` (`byteLength`, `maxByteLength`, `resizable`) | 3 |
+| ArrayBuffer detached operations do not throw the required TypeError (`transfer`, `transferToFixedLength`, `resize`, `sliceToImmutable`, `transferToImmutable`) | 5 |
+| Uint8Array base64/hex operations omit detached-view validation (`toHex`, `setFromHex`, `setFromBase64`) | 3 |
+| `new DataView(detachedBuffer)` omits its TypeError | 1 |
+| **total** | **12** |
+
+Two baseline files were absent from the shared Test262 checkout; both were
+re-run from a detached checkout of the repository's pinned Test262 gitlink and
+are included in the 12 residuals above. No row was silently dropped.
+
+Focused verification is 41/41 green: the new four-case GC+standalone suite and
+the 37 DataView plus literal-harness/import cases in `issue-3173.test.ts` and
+`issue-3418.test.ts`. The new controls prove that
+standalone emits zero host imports and observes the native detached state,
+while GC still retains the real `structuredClone` import and transfer call.
+The maintained runner also reproduced **12/12** currently-passing
+DataView/ArrayBuffer/Uint8Array control rows from the same fresh baseline.
+
+`$262.createRealm` is present in the literal runtime but remains the existing
+identity-only realm shim. `$262.agent` is absent. The fresh standalone JSONL
+has no failure text naming either capability; agent/SharedArrayBuffer semantics
+remain the separate Atomics backlog and were not expanded into this fix.
 
 ## TL;DR
 
@@ -91,10 +169,10 @@ if they are.
 
 ## Acceptance criteria
 
-- [ ] `$262.detachArrayBuffer(buf)` works in `--target standalone`.
-- [ ] The 206-record `detachArrayBuffer is unsupported by this host` bucket
-      drops to ~0 in a fresh standalone harvest.
-- [ ] Standalone official pass count rises by roughly +80 (the cross-lane
-      recoverable set); report the actual delta.
-- [ ] No host-lane regression — this must not disturb the #1523 host path.
-- [ ] `createRealm` / `agent` standalone availability is checked and recorded.
+- [x] `$262.detachArrayBuffer(buf)` works in `--target standalone`.
+- [x] The fresh 89-record `detachArrayBuffer is unsupported by this host`
+      bucket drops to 0.
+- [x] Targeted standalone pass count rises by **77/89**, with all 12 residuals
+      explicitly bucketed above.
+- [x] No host-lane regression — the #1523 `structuredClone` path stays live.
+- [x] `createRealm` / `agent` standalone availability is checked and recorded.

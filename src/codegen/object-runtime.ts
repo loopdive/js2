@@ -121,6 +121,7 @@ import { ensureSymbolCarrier } from "./symbol-native.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
+  protoIndexForInPushInstrs,
   protoIndexGetIdxMissInstrs,
   protoIndexHasIdxInstrs,
   protoIndexRecvGetMissInstrs,
@@ -8040,6 +8041,19 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   );
 }
 
+function buildVecEnumerationTail(ctx: CodegenContext, forIn: boolean, vecLocal: number): Instr[] {
+  const tail = buildOverlayPushKeys(ctx, { vecLocal, includeNonEnum: false });
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  if (!forIn || newPlainObjectIdx === undefined) return tail;
+  // `__object_keys_forin` owns scratch local 8 for its ordinary-path shadow set.
+  return [
+    ...tail,
+    { op: "call", funcIdx: newPlainObjectIdx },
+    { op: "local.set", index: 8 },
+    ...protoIndexForInPushInstrs(ctx, 0, vecLocal, 8),
+  ];
+}
+
 export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return; // host imports own the dynamic path
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
@@ -8177,7 +8191,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           // tail replace `bagKeysTail` so the overlay push lands INSIDE the
           // arm rather than after its `return`.
           ...buildBagPushKeys(ctx, { vecLocal: kVec, includeNonEnum: false }),
-          ...buildOverlayPushKeys(ctx, { vecLocal: kVec, includeNonEnum: false }),
+          ...buildVecEnumerationTail(ctx, keysFn.name === "__object_keys_forin", kVec),
           { op: "local.get", index: kVec },
           { op: "return" },
         ],

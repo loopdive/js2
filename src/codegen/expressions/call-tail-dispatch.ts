@@ -40,6 +40,7 @@ import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } f
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { isStaticUndefinedArg } from "../string-ops.js";
+import { isStrictFunction } from "../helpers/is-strict-function.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -154,6 +155,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
       ? new Map(Array.from(fctx.annexBCancelled, ([name, ranges]) => [name, ranges.map((range) => ({ ...range }))]))
       : undefined,
     annexBOuterBindings: cloneNameSet(fctx.annexBOuterBindings),
+    annexBRepeatedOuterBindings: cloneNameSet(fctx.annexBRepeatedOuterBindings),
     moduleBindingShadowLocals: cloneNameMap(fctx.moduleBindingShadowLocals),
   };
 
@@ -179,6 +181,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.fnctorWidenedLocals?.delete(name);
     fctx.annexBCancelled?.delete(name);
     fctx.annexBOuterBindings?.delete(name);
+    fctx.annexBRepeatedOuterBindings?.delete(name);
     fctx.moduleBindingShadowLocals?.delete(name);
   }
 
@@ -220,6 +223,11 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.fnctorWidenedLocals = restoreNameSet(fctx.fnctorWidenedLocals, snapshot.fnctorWidenedLocals, names);
     fctx.annexBCancelled = restoreNameMap(fctx.annexBCancelled, snapshot.annexBCancelled, names);
     fctx.annexBOuterBindings = restoreNameSet(fctx.annexBOuterBindings, snapshot.annexBOuterBindings, names);
+    fctx.annexBRepeatedOuterBindings = restoreNameSet(
+      fctx.annexBRepeatedOuterBindings,
+      snapshot.annexBRepeatedOuterBindings,
+      names,
+    );
     fctx.moduleBindingShadowLocals = restoreNameMap(
       fctx.moduleBindingShadowLocals,
       snapshot.moduleBindingShadowLocals,
@@ -500,6 +508,16 @@ export function compileTailDispatch(
               const savedBody = fctx.body;
               fctx.savedBodies.push(savedBody);
               const blockBody: Instr[] = [];
+              // (#3017) An inlined IIFE has no Wasm FunctionContext of its own,
+              // but it remains a source function boundary for legacy
+              // Function#caller semantics. Preserve the region's strictness so
+              // the final call-site pass does not inherit the containing Wasm
+              // function's bit (for example, a strict IIFE inside a sloppy
+              // Test262 wrapper).
+              ctx.sourceFunctionStrictnessByBody.set(
+                blockBody,
+                isStrictFunction(callee, ctx.inferModuleStrictArguments),
+              );
               fctx.body = blockBody;
 
               // Save and override returnType so that return statements inside the
@@ -581,6 +599,12 @@ export function compileTailDispatch(
               const savedBody = fctx.body;
               fctx.savedBodies.push(savedBody);
               const blockBody: Instr[] = [];
+              // Keep the source-level boundary even though the IIFE is inlined;
+              // see the returning arm above.
+              ctx.sourceFunctionStrictnessByBody.set(
+                blockBody,
+                isStrictFunction(callee, ctx.inferModuleStrictArguments),
+              );
               fctx.body = blockBody;
 
               // Save and override returnType: void IIFE has no return value,

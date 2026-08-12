@@ -246,6 +246,12 @@ const ES_BASE_LIB_NAMES = [
   "lib.es2023.collection.d.ts",
   "lib.es2023.intl.d.ts",
   // ES2024
+  // ArrayBuffer resize/transfer + maxByteLength/resizable/detached. Keeping the
+  // checker aware of these built-ins is semantic, not merely diagnostic: the
+  // return type of `buffer.transfer()` must remain ArrayBuffer so downstream
+  // native buffer getters and TypedArray-on-buffer construction stay on their
+  // canonical typed paths instead of widening to the generic `any` MOP.
+  "lib.es2024.arraybuffer.d.ts",
   "lib.es2024.collection.d.ts",
   // ES2024 String.prototype.isWellFormed / toWellFormed (#3068) — required so
   // the checker types these methods' results as boolean/string (else `X === y`

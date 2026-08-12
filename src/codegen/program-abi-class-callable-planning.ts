@@ -397,6 +397,61 @@ export class ProgramAbiClassCallableRegistry {
     return handle;
   }
 
+  /** Plan one exact non-terminal implicit-constructor `_init` support unit. */
+  prepareImplicitConstructorUnit(
+    unitId: IrUnitId,
+    contract: {
+      readonly selfParamIndex: number;
+      readonly parent?: { readonly unitId: IrUnitId; readonly funcIdx: FuncHandle };
+    },
+  ): FuncHandle {
+    this.assertOpen(unitId);
+    const unit = this.identityContext.unitByUnitId.get(unitId);
+    const canonical = this.units
+      .get(unitId)
+      ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
+      .at(-1);
+    const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
+    if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null || !canonical || !func) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `implicit constructor support ${unitId} has no exact live non-terminal allocator`,
+      );
+    }
+    if (contract.parent && this.handleForUnit(contract.parent.unitId) !== contract.parent.funcIdx) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `implicit constructor support ${canonical.displayName} lost its exact parent init allocator`,
+      );
+    }
+    this.session.recordPreparedImplicitConstructorSupport(unitId, {
+      selfParamIndex: contract.selfParamIndex,
+      ...(contract.parent ? { parentInitFuncIdx: contract.parent.funcIdx } : {}),
+    });
+    const expectedBindingId = irUnitCallableBindingId(unitId);
+    if (this.session.hasPlan(expectedBindingId)) {
+      if (!this.session.hasLocator(expectedBindingId, func)) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          `implicit constructor support ${canonical.displayName} is not the exact allocator owned by ${expectedBindingId}`,
+        );
+      }
+    } else {
+      const bindingId = planProgramAbiUnitCallable(this.ctx, {
+        ref: irUnitFuncRef({ unitId, name: canonical.displayName }),
+        signature: functionSignature(this.ctx, func),
+        func,
+      });
+      if (bindingId !== expectedBindingId) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          `implicit constructor support ${canonical.displayName} was not accepted for ${unitId}`,
+        );
+      }
+    }
+    return canonical.funcIdx;
+  }
+
   /** Resolve one exact class source unit to its current stable allocator handle. */
   handleForUnit(unitId: IrUnitId): FuncHandle | undefined {
     const canonical = this.units

@@ -90,18 +90,14 @@ describe("#4208 S1 — === decides Type() before the f64 slot merges Number and 
     expect(await evalStandalone("var __r = (0 != false);")).toBe(FALSE);
   });
 
-  it("keeps-update-retyped-boolean — a `++`/`--` target's Boolean static type is stale", async () => {
+  it("stores a Number when `++`/`--` updates a Boolean-initialized binding", async () => {
     // §13.4: `x--` is `x = ToNumeric(x) - 1`, so `x` holds a Number afterwards
-    // however TypeScript typed the initializer. The compiler still keeps it in
-    // the initializer-derived i32 boolean slot (#4208 S2, blocked on #4204), so
-    // the representation-agreement argument does not hold and the fold must
-    // decline. Found by A/B, not by reasoning: without this guard
-    // `postfix-decrement/S11.3.2_A3_T1.js` and `prefix-decrement/S11.4.5_A3_T1.js`
-    // flip pass→fail.
+    // however TypeScript typed the initializer. #4208 S2 therefore gives the
+    // binding dynamic storage; strict equality now observes the real Number
+    // rather than relying on a Boolean-only fold suppression.
     expect(await evalStandalone("var x = true; x--; var __r = (x !== 0);")).toBe(FALSE);
     expect(await evalStandalone("var x = true; --x; var __r = (x === 1 - 1);")).toBe(TRUE);
-    // The suppression is scoped to the retyped binding — an unrelated Boolean
-    // in the same scope still folds.
+    // An unrelated Boolean in the same scope still folds against Number.
     expect(await evalStandalone("var x = true; x--; var b = false; var n = 0; var __r = (b === n);")).toBe(FALSE);
   });
 

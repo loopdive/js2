@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import { compileToWasm } from "./equivalence/helpers.js";
 
 /**
@@ -29,6 +30,24 @@ async function runString(src: string): Promise<unknown> {
 async function runNumber(src: string): Promise<number> {
   const exports = await compileToWasm(src);
   return (exports.test as () => number)();
+}
+
+async function runForTarget(src: string, target: "gc" | "standalone"): Promise<number> {
+  const result = await compile(src, {
+    target,
+    fileName: "/issue-2552-repeated-blockfn.js",
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+    inferModuleStrictArguments: false,
+  });
+  expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const imports = target === "standalone" ? {} : buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  if ("setExports" in imports && typeof imports.setExports === "function") {
+    imports.setExports(instance.exports);
+  }
+  return (instance.exports.test as () => number)();
 }
 
 describe("#2552 Phase 2 — case-B outer-binding lifecycle (observed)", () => {
@@ -74,6 +93,39 @@ describe("#2552 Phase 2 — case-B outer-binding lifecycle (observed)", () => {
         let r: any; { function f() { return 1; } } r = f;
         return typeof r; }`),
     ).toBe("function");
+  });
+});
+
+describe("#2552 Phase 2 — repeated block declarations update the live outer binding", () => {
+  it.each(["gc", "standalone"] as const)("%s: each declaration contributes its own function object", async (target) => {
+    const value = await runForTarget(
+      `export function test() {
+        let score = 0;
+
+        { function f1() { return 1; } }
+        { function f1() { return 2; } }
+        if (f1() === 2) score += 1;
+        const f1Value = f1;
+        if (f1Value() === 2) score += 2;
+
+        { function f2() { return 1; } }
+        if (false) { function f2() { return 2; } }
+        if (f2() === 1) score += 4;
+
+        function nestedCancellation() {
+          {
+            function f3() { return 1; }
+            { function f3() { return 2; } }
+          }
+          return f3();
+        }
+        if (nestedCancellation() === 1) score += 8;
+
+        return score;
+      }`,
+      target,
+    );
+    expect(value).toBe(15);
   });
 });
 

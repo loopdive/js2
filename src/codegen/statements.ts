@@ -15,9 +15,15 @@
  *   - statements/shared.ts         — utilities shared across all sub-modules
  */
 import { ts } from "../ts-api.js";
-import { annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
+import {
+  annexBDeclaringRange,
+  annexBUpdatesExistingVarBinding,
+  enclosingVarScope,
+  hasInterveningLexicalBinder,
+} from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
-import { emitCachedFuncClosureAccess } from "./closures.js";
+import { addFunctionOwnLocals } from "./binding-info.js";
+import { collectReferencedIdentifiers, emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
@@ -77,6 +83,100 @@ function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.S
   if (pos && fctx.body.length > bodyLenBefore) {
     attachSourcePos(fctx.body[bodyLenBefore]!, pos);
   }
+}
+
+/**
+ * Can a repeated Annex B declaration safely claim its own funcMap slot without
+ * changing the capture layout? The current closure metadata is keyed by bare
+ * function name, so compiling a second CAPTURING declaration would replace the
+ * first declaration's capture record. Keep this slice on zero-parameter,
+ * capture-free ordinary functions; the generated B.3.3 `existing-block-fn-
+ * update` family is exactly that shape. Other declarations retain the previous
+ * valid (but first-body) behavior until capture metadata becomes per-decl.
+ */
+function canCompileDistinctAnnexBFunction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+): boolean {
+  if (stmt.parameters.length > 0 || stmt.asteriskToken) return false;
+  if (stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false;
+  if (!stmt.body) return false;
+
+  const ownLocals = new Set<string>();
+  addFunctionOwnLocals(stmt, ownLocals);
+  const referenced = new Set<string>();
+  for (const bodyStmt of stmt.body.statements) {
+    collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+  }
+  for (const name of referenced) {
+    if (name === "eval" || fctx.localMap.has(name) || (ctx.nestedFuncCaptures.get(name)?.length ?? 0) > 0) return false;
+  }
+  return true;
+}
+
+/**
+ * Which eligible declarations share this declaration's Annex B outer binding
+ * in the same function/script scope? A name-only test is not
+ * enough: a deeper same-named block declaration can be cancelled by Annex B's
+ * early-error substitution rule, and a lone declaration may temporarily lose
+ * funcMap ownership while its surrounding catch/block is lowered. Neither case
+ * should claim a declaration-specific slot.
+ */
+function eligibleAnnexBOuterBindingDeclarations(stmt: ts.FunctionDeclaration): ts.FunctionDeclaration[] {
+  const name = stmt.name?.text;
+  if (!name || !isEligibleAnnexBOuterBindingDeclaration(stmt, name)) return [];
+
+  let scope: ts.Node = stmt.parent;
+  while (!ts.isSourceFile(scope) && !ts.isFunctionLike(scope)) {
+    if (!scope.parent) return [];
+    scope = scope.parent;
+  }
+  const scanRoot = ts.isSourceFile(scope) ? scope : (scope as ts.FunctionLikeDeclarationBase).body;
+  if (!scanRoot) return [];
+
+  const declarations: ts.FunctionDeclaration[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === name &&
+      isEligibleAnnexBOuterBindingDeclaration(node, name)
+    ) {
+      declarations.push(node);
+    }
+    if (ts.isFunctionLike(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(scanRoot, visit);
+  return declarations;
+}
+
+function isEligibleAnnexBOuterBindingDeclaration(stmt: ts.FunctionDeclaration, name: string): boolean {
+  if (annexBDeclaringRange(stmt) === null || hasInterveningSameNameBlockFunction(stmt, name)) return false;
+  const scope = enclosingVarScope(stmt);
+  return scope !== null && !hasInterveningLexicalBinder(stmt.parent, name, scope);
+}
+
+/**
+ * Replacing an inner block function with `var name` is an early error when an
+ * enclosing block already lexically declares a same-named function. Such an
+ * inner declaration is block-local only, even though the legacy name-keyed
+ * hoist analysis conservatively associates it with the outer Annex B name.
+ */
+function hasInterveningSameNameBlockFunction(stmt: ts.FunctionDeclaration, name: string): boolean {
+  let node: ts.Node | undefined = stmt.parent.parent;
+  while (node && !ts.isSourceFile(node) && !ts.isFunctionLike(node)) {
+    if (
+      ts.isBlock(node) &&
+      node.statements.some(
+        (candidate) => candidate !== stmt && ts.isFunctionDeclaration(candidate) && candidate.name?.text === name,
+      )
+    ) {
+      return true;
+    }
+    node = node.parent;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +337,26 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     if (funcName && fctx.annexBOuterBindings?.has(funcName)) {
       const outerLocal = fctx.localMap.get(funcName);
       const flagLocal = fctx.tdzFlagLocals?.get(funcName);
+      const repeatedDeclarations = eligibleAnnexBOuterBindingDeclarations(stmt);
+      const repeatedSafe =
+        repeatedDeclarations.length > 1 &&
+        repeatedDeclarations.every((declaration) => canCompileDistinctAnnexBFunction(ctx, fctx, declaration));
+      if (repeatedSafe) {
+        if (!fctx.annexBRepeatedOuterBindings) fctx.annexBRepeatedOuterBindings = new Set();
+        fctx.annexBRepeatedOuterBindings.add(funcName);
+      }
+      // (#2552) `funcMap` is keyed by bare name, so the hoist pre-pass keeps
+      // only one body for multiple same-named block declarations. Annex B
+      // requires EACH declaration to produce its own function object when its
+      // statement evaluates: a later block must replace the outer binding with
+      // its own body, not store the first block's closure again. Compile this
+      // exact declaration when another node currently owns the name. The
+      // declaration compiler updates funcMap/owner atomically, and the closure
+      // singleton is target-index-aware, so later declarations receive distinct
+      // cached wrappers while the single-declaration hot path is unchanged.
+      if (ctx.funcMapOwnerDecl.get(funcName) !== stmt && repeatedSafe) {
+        compileNestedFunctionDeclaration(ctx, fctx, stmt);
+      }
       const fnIdx = ctx.funcMap.get(funcName);
       if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
         const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);

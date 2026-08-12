@@ -14,6 +14,7 @@ import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
 import { exactPreparedAccessorSyntaxKey, isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import {
+  assessIrImplicitConstructorSubject,
   assessIrStructuralSelectorSubject,
   assessModuleInit,
   buildLocalCallGraph,
@@ -105,6 +106,56 @@ interface IndexedFunction {
 interface IndexedClass {
   readonly classId: IrClassId;
   readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+}
+
+interface ImplicitConstructorSelectionContext {
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly options: IrIdentitySelectionOptions;
+  readonly localClasses: ReadonlySet<string>;
+  readonly trackFallbacks: boolean;
+  readonly classClaims: Map<IrUnitId, IrIdentityClassMemberClaim>;
+  readonly reasons: Map<IrUnitId, IrFallbackReason>;
+  readonly details: Map<IrUnitId, string>;
+}
+
+function selectImplicitConstructorClaim(
+  context: ImplicitConstructorSelectionContext,
+  indexed: IndexedClass,
+  nestedClass: boolean,
+  sameNameCandidateCount: number,
+): void {
+  const { declaration, classId } = indexed;
+  const unitId = context.identityContext.unitIdByDeclaration.get(declaration);
+  const terminal = unitId ? context.identityContext.terminalByUnitId.get(unitId) : undefined;
+  if (terminal?.kind !== "class-implicit-constructor") return;
+
+  const unit = classMemberUnit(terminal, classId);
+  const assessment = assessIrImplicitConstructorSubject(declaration, context.localClasses);
+  const exactClassShape = context.options.projectedClassShapesById?.get(classId);
+  const className = exactClassShape?.className ?? declaration.name?.text ?? "<anonymous>";
+  const projectionGap = !nestedClass && localClassHasKnownProjectionGap(className);
+  const hasParent = declaration.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword) ?? false;
+  const parentName = extendsParentName(declaration);
+  const parentIsLocal = parentName !== null && context.localClasses.has(parentName);
+  const topLevelSourceClass =
+    !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === declaration.getSourceFile();
+  if (
+    topLevelSourceClass &&
+    sameNameCandidateCount === 1 &&
+    !projectionGap &&
+    exactClassShape !== undefined &&
+    (!hasParent || parentIsLocal) &&
+    assessment.reason === null
+  ) {
+    context.classClaims.set(unit.unitId, unit);
+    return;
+  }
+  if (!context.trackFallbacks) return;
+  context.reasons.set(
+    unit.unitId,
+    assessment.reason ?? (projectionGap ? "class-projection-unsupported" : "class-member-unsupported"),
+  );
+  if (assessment.detail !== undefined) context.details.set(unit.unitId, assessment.detail);
 }
 
 function boundedNestedAccessorAbiEvidence(
@@ -594,7 +645,6 @@ export function planIrCompilationByIdentity(
   );
   const { recursiveTypeEvidence: _recursiveTypeEvidence, ...runtimeOptions } = options;
   configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
-
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
@@ -620,8 +670,8 @@ export function planIrCompilationByIdentity(
       if (assessment.detail !== undefined) details.set(indexed.unit.unitId, assessment.detail);
     }
   }
-
   const classClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
+  const implicitSelection = { identityContext, options, localClasses, trackFallbacks, classClaims, reasons, details };
   const nestedClasses = classes.filter(({ classId }) =>
     identityContext.inventory.terminalUnits.some(
       (terminal) => terminal.lexicalOwnerId === classId && terminal.containingTerminalOwnerId !== undefined,
@@ -645,6 +695,7 @@ export function planIrCompilationByIdentity(
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
       const exactAccessorClass = nestedClass || boundedTopLevelAccessorClass;
+      selectImplicitConstructorClaim(implicitSelection, { classId, declaration }, nestedClass, candidates.length);
       const markExactAccessorClassFallback = (): void => {
         if (!trackFallbacks) return;
         for (const member of declaration.members) {

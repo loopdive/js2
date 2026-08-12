@@ -1535,9 +1535,11 @@ const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
 const _wasmAccessorGetterReturnWrappers = new WeakSet<Function>();
 const _wasmGetterCallbackWrappers = new WeakSet<Function>();
-// #3214 B2 — `__make_callback(-1, closure)` bridges a canonical void IR
-// closure without minting a legacy `__cb_N` export. Cache the non-constructible
-// JS arrow per raw closure so repeated boundary conversion preserves identity.
+// #3214 B2 — `__make_callback(-1, closure)` bridges a reusable canonical void
+// IR closure without minting a legacy `__cb_N` export. Cache the
+// non-constructible JS arrow per raw closure so repeated boundary conversion
+// preserves identity. The compiler-owned -2 sentinel proves an inline closure
+// is consumed once and intentionally bypasses this cache.
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
@@ -2059,6 +2061,10 @@ function _maybeWrapCallable(
           const wrapped = _wrapWasmClosure(val, arity, callbackState);
           return wrapped ?? val;
         }
+        // The exact runtime classifier is authoritative. Falling through to
+        // the opaque-struct heuristic would turn an ordinary data struct into
+        // a callable merely because it is an object.
+        return val;
       } catch {
         // Fall through to the older opaque-struct heuristic below.
       }
@@ -2072,23 +2078,47 @@ function _maybeWrapCallable(
 function _wrapVoidHostCallback(
   closure: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
+  preserveIdentity = true,
 ): any {
   if (!_canBeWeakKey(closure)) return closure;
-  const cached = _wasmVoidHostCallbackCache.get(closure as object);
-  if (cached) return cached;
-  const dispatch = _maybeWrapCallable(closure, 0, callbackState);
-  if (typeof dispatch !== "function") return dispatch;
-
-  // Arrow functions have no [[Construct]], matching the source arrow. The
-  // block intentionally discards the Wasm dispatcher's result so a `void`
-  // callback observes JavaScript `undefined` even though the generic
-  // `__call_fn_0` bridge itself has an externref result carrier.
-  const wrapped = (..._args: any[]): void => {
-    dispatch();
-  };
+  if (preserveIdentity) {
+    const cached = _wasmVoidHostCallbackCache.get(closure as object);
+    if (cached) return cached;
+  }
+  let wrapped: (...args: any[]) => void;
+  if (typeof closure === "object" && callbackState) {
+    // The -1 callback-maker sentinel is emitted only for a TypedAST-certified
+    // zero-argument void IR closure. Dispatch that exact carrier directly:
+    // routing it through `_maybeWrapCallable` first allocated a generic
+    // closure wrapper, an arity Map, and then this second void wrapper for
+    // every DOM listener. Resolve exports at call time so callbacks created
+    // during Wasm start retain the established lazy-wiring contract.
+    wrapped = (..._args: any[]): void => {
+      const callFn = callbackState.getExports()?.__call_fn_0;
+      if (typeof callFn !== "function") {
+        throw new TypeError("wasm closure dispatcher __call_fn_0 is not available");
+      }
+      try {
+        callFn(closure);
+      } catch (error) {
+        throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+      }
+    };
+  } else {
+    const dispatch = _maybeWrapCallable(closure, 0, callbackState);
+    if (typeof dispatch !== "function") return dispatch;
+    // Arrow functions have no [[Construct]], matching the source arrow. The
+    // block intentionally discards the dispatcher's result so a `void`
+    // callback observes JavaScript `undefined`.
+    wrapped = (..._args: any[]): void => {
+      dispatch();
+    };
+  }
   installNativeFunctionSourceFacade(wrapped);
-  _wasmVoidHostCallbackCache.set(closure as object, wrapped);
-  _wasmClosureWrapperTargets.set(wrapped, closure as object);
+  if (preserveIdentity) _wasmVoidHostCallbackCache.set(closure as object, wrapped);
+  // Certified void callbacks never need generic wrapper/raw equality
+  // canonicalization. The reusable -1 ABI keeps only its dedicated identity
+  // cache; the compiler-owned one-shot -2 ABI avoids both WeakMap operations.
   return wrapped;
 }
 
@@ -8406,6 +8436,8 @@ function resolveImport(
   // the leading `self` for `extern_class` members. Lets the generic method shim
   // below drop its rest parameter. Undefined when unknown → rest form kept.
   paramCount?: number,
+  dynamicCode: DynamicCodePolicy = "compat",
+  dynamicCodeEvaluator?: DynamicCodeEvaluator,
 ): Function {
   switch (intent.type) {
     case "string_literal":
@@ -9128,6 +9160,9 @@ function resolveImport(
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         );
         return makeFixedExternMethodCall(fixedMethodArity, canonical);
       }
@@ -9324,7 +9359,108 @@ function resolveImport(
           const root: any = { "": unfiltered };
           return _internalizeJSONProperty(root, "", reviver, callbackState);
         };
+      if (name === "__extern_direct_eval") {
+        const bindingByCell = new WeakMap<object, DynamicCodeBinding>();
+        return (
+          src: any,
+          _globalObject: any,
+          _thisArg: any,
+          _activationState: any,
+          activationNames: any,
+          activationSlots: any,
+          lexicalNames: any,
+          lexicalSlots: any,
+          outerNames: any,
+          outerSlots: any,
+          callerStrict: number,
+          _mappedParamNames: any,
+        ): any => {
+          if (typeof src !== "string") return src;
+          if (dynamicCode === "deny") throw new EvalError("dynamic code generation is disabled by the host");
+          if (dynamicCode !== "evaluator" || !dynamicCodeEvaluator) {
+            throw new EvalError(
+              'reified host direct eval requires buildImports(..., { dynamicCode: "evaluator", dynamicCodeEvaluator })',
+            );
+          }
+          const exports = callbackState?.getExports();
+          const vecLen = exports?.__runtime_eval_vec_len;
+          const vecGet = exports?.__runtime_eval_vec_get;
+          const cellGet = exports?.__runtime_eval_cell_get;
+          const cellSet = exports?.__runtime_eval_cell_set;
+          if (
+            typeof vecLen !== "function" ||
+            typeof vecGet !== "function" ||
+            typeof cellGet !== "function" ||
+            typeof cellSet !== "function"
+          ) {
+            throw new EvalError("reified host direct-eval bridge exports are unavailable on the AOT instance");
+          }
+
+          const bindings: DynamicCodeBinding[] = [];
+          const appendLayer = (names: any, slots: any): void => {
+            if (names == null || slots == null) return;
+            const count = vecLen(names) >>> 0;
+            if (count !== vecLen(slots) >>> 0) {
+              throw new EvalError("reified host direct-eval binding vectors are misaligned");
+            }
+            for (let index = 0; index < count; index++) {
+              const bindingName = String(vecGet(names, index));
+              if (bindingName === "__js2wasm_eval_nonglobal__") continue;
+              const cell = vecGet(slots, index);
+              if ((typeof cell !== "object" || cell === null) && typeof cell !== "function") {
+                throw new EvalError(`reified host direct-eval binding '${bindingName}' has no canonical cell`);
+              }
+              let binding = bindingByCell.get(cell as object);
+              if (!binding) {
+                binding = {
+                  name: bindingName,
+                  get: () => cellGet(cell),
+                  set: (value: unknown) => cellSet(cell, value),
+                };
+                bindingByCell.set(cell as object, binding);
+              }
+              bindings.push(binding);
+            }
+          };
+
+          // Environment lookup is inner-to-outer. Build the list outer-first;
+          // the evaluator's later duplicate wins for a lexical shadow.
+          appendLayer(outerNames, outerSlots);
+          appendLayer(activationNames, activationSlots);
+          appendLayer(lexicalNames, lexicalSlots);
+          return dynamicCodeEvaluator.evaluate(src, {
+            direct: true,
+            strict: callerStrict !== 0,
+            bindings,
+          });
+        };
+      }
       if (name === "__extern_eval") {
+        if (dynamicCode === "deny") {
+          return (src: any) => {
+            if (typeof src !== "string") return src;
+            throw new EvalError("dynamic code generation is disabled by the host");
+          };
+        }
+        if (dynamicCode === "native") {
+          return (src: any) => {
+            if (typeof src !== "string") return src;
+            // A Wasm host-import boundary cannot carry the caller's lexical
+            // environment, so this is necessarily indirect eval. When the
+            // module is hosted in a Worker, the global below is the Worker
+            // realm rather than the main page/process realm.
+            // biome-ignore lint/style/noCommaOperator: (0, eval) forces indirect eval
+            // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+            return (0, eval)(src);
+          };
+        }
+        if (dynamicCode === "evaluator") {
+          return (src: any, isDirect: number = 0) => {
+            if (typeof src !== "string") return src;
+            if (!dynamicCodeEvaluator) throw new EvalError("no dynamic-code evaluator was supplied by the host");
+            return dynamicCodeEvaluator.evaluate(src, { direct: isDirect !== 0 });
+          };
+        }
         // #1164: dynamic eval via Wasm module compilation.  The primary
         // path compiles the eval string through js2wasm and instantiates
         // it as a fresh Wasm module via the JS Wasm API — no `(0, eval)`,
@@ -9516,6 +9652,21 @@ assert._isSameValue = isSameValue;
         }
       }
       if (name === "__extern_new_function") {
+        if (dynamicCode === "deny") {
+          return () => {
+            throw new EvalError("dynamic code generation is disabled by the host");
+          };
+        }
+        if (dynamicCode === "native") {
+          // biome-ignore lint/security/noGlobalEval: explicit opt-in host-eval engine
+          return (params: any, body: any) => new Function(String(params ?? ""), String(body ?? ""));
+        }
+        if (dynamicCode === "evaluator") {
+          return (params: any, body: any) => {
+            if (!dynamicCodeEvaluator) throw new EvalError("no dynamic-code evaluator was supplied by the host");
+            return dynamicCodeEvaluator.createFunction(String(params ?? ""), String(body ?? ""));
+          };
+        }
         // (#2960) Dynamic `new Function(params, body)` — meta-circular
         // construction via js2wasm's own compiler (see createNewFunctionShim).
         // Returns a real JS-callable function the parent module can invoke.
@@ -9675,7 +9826,13 @@ assert._isSameValue = isSameValue;
           // struct — `p1.then = fn; Promise.race([p1])` traps with
           // "object is not a function". Wrap it via __call_fn_<arity> so
           // host-driven invocation reaches the closure body.
-          let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          // OrdinaryToPrimitive methods have a fixed zero-argument call shape.
+          // Prefer the exact dispatcher so a method-only object literal does
+          // not depend on the broader unknown-arity export family being live.
+          let wrappedVal =
+            key === "valueOf" || key === "toString"
+              ? _maybeWrapCallable(val, 0, callbackState)
+              : _maybeWrapCallableUnknownArity(val, callbackState);
           // (#3051) `regexp.exec = fn` override: the native RegExp protocol
           // (@@replace/@@split/@@match/@@search) calls this and reads the
           // returned match-result object via Get + ToXxx. A compiled result
@@ -9699,7 +9856,10 @@ assert._isSameValue = isSameValue;
       // throw catchable by the user's try/catch.
       if (name === "__extern_set_strict")
         return (obj: any, key: any, val: any) => {
-          let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+          let wrappedVal =
+            key === "valueOf" || key === "toString"
+              ? _maybeWrapCallable(val, 0, callbackState)
+              : _maybeWrapCallableUnknownArity(val, callbackState);
           // (#3051) See __extern_set: wrap a `regexp.exec` override's return so
           // the native RegExp protocol can read the compiled result object.
           // (Slice 3) Widened to any object receiver — see __extern_set.
@@ -10017,6 +10177,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (o: any, k: any) => number;
         const getProp = resolveImport(
           { type: "extern_get" } as ImportIntent,
@@ -10024,6 +10187,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (o: any, k: any) => any;
         const toBool = resolveImport(
           { type: "builtin", name: "__to_boolean" } as ImportIntent,
@@ -10031,6 +10197,9 @@ assert._isSameValue = isSameValue;
           callbackState,
           globalSandbox,
           instanceState,
+          undefined,
+          dynamicCode,
+          dynamicCodeEvaluator,
         ) as (v: any) => number;
         return (obj: any, key: any): number => {
           // (1)+(2) value-independent HasProperty.
@@ -10342,6 +10511,18 @@ assert._isSameValue = isSameValue;
           if (classObj == null || typeof classObj !== "object") return;
           const names = typeof csv === "string" && csv.length > 0 ? csv.split(",") : [];
           _staticMethodNames.set(classObj, names);
+        };
+      if (name === "__register_class_static_method")
+        return function registerClassStaticMethod(classObj: any, methodName: any, closure: any): void {
+          // (#4371) Pair the class object's existing name allowlist with the
+          // actual compiled closure. Keeping the value in the descriptor-aware
+          // sidecar preserves the WasmGC class singleton/type (dynamic `new`
+          // relies on it), while `_wrapForHost` already knows how to turn this
+          // raw closure struct into a callable JavaScript function on read.
+          if (classObj == null || typeof classObj !== "object") return;
+          if (typeof methodName !== "string" || methodName.length === 0) return;
+          _sidecarSet(classObj, methodName, closure);
+          _getSidecarDescs(classObj).set(methodName, _SC_DEFINED | _SC_WRITABLE | _SC_CONFIGURABLE);
         };
       if (name === "__unbox_string")
         return (s: any): any => {
@@ -11331,7 +11512,30 @@ assert._isSameValue = isSameValue;
           }
           // (#1629 S1) WasmGC struct: single canonical read-back path, shared
           // with Object.getOwnPropertyDescriptors.
-          return _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          const desc = _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          // (#4371) A declared class static is stored as its raw Wasm closure
+          // so compiled reads/calls stay in the existing closure ABI. A
+          // descriptor object, however, is an ordinary host object; expose its
+          // `value` with the same callable JS wrapper a normal property read
+          // would produce. This preserves the public `typeof desc.value ===
+          // "function"` contract without replacing the canonical sidecar
+          // value (which the in-Wasm extracted-call path needs).
+          if (desc && "value" in desc) {
+            const staticMethods = _staticMethodNames.get(obj);
+            if (staticMethods?.includes(String(prop))) {
+              // Reuse the canonical class-object proxy read. Besides the
+              // generic __is_closure route, it has the per-name
+              // `__call_<method>` bridge needed by modules whose only closure
+              // value is this static and therefore do not export a generic
+              // closure discriminator.
+              const wrapped = _wrapForHost(obj, callbackState?.getExports());
+              const callable = wrapped?.[prop];
+              desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(prop));
+            } else {
+              desc.value = _maybeWrapCallableUnknownArity(desc.value, callbackState);
+            }
+          }
+          return desc;
         };
       if (name === "__getOwnPropertyNames")
         return (obj: any) => {
@@ -12258,6 +12462,16 @@ assert._isSameValue = isSameValue;
           for (const key of _ownStructKeys(obj, exports)) {
             const desc = _readOwnDescriptor(obj, key, exports);
             if (desc !== undefined) {
+              if ("value" in desc) {
+                const staticMethods = _staticMethodNames.get(obj);
+                if (staticMethods?.includes(String(key))) {
+                  const wrapped = _wrapForHost(obj, exports);
+                  const callable = wrapped?.[key];
+                  desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(key));
+                } else {
+                  desc.value = _maybeWrapCallableUnknownArity(desc.value, callbackState);
+                }
+              }
               // Per spec, the result is an ordinary object whose own
               // properties are enumerable, writable, configurable data
               // properties holding each descriptor object. Plain assignment
@@ -15090,9 +15304,10 @@ assert._isSameValue = isSameValue;
     }
     case "callback_maker":
       return (id: number, cap: any) => {
-        // #3214 B2 reserves -1 for an already-materialised canonical IR
-        // closure. Legacy callbacks keep their non-negative `__cb_N` ids and
-        // therefore remain byte-for-byte on the existing dispatch path.
+        // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
+        // the checker-proven one-shot inline form. Legacy callbacks keep their
+        // non-negative `__cb_N` ids and remain on the existing dispatch path.
+        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
         return createNativeFunctionCallbackBridge(id, cap, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
       };
@@ -15398,7 +15613,10 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any, val: any) => {
         // (#860) Wrap closure-as-value before storing — see __extern_set
         // binding above. Mirrors the by-name path.
-        let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal =
+          key === "valueOf" || key === "toString"
+            ? _maybeWrapCallable(val, 0, callbackState)
+            : _maybeWrapCallableUnknownArity(val, callbackState);
         // (#3051) `regexp.exec = fn` override — wrap the return so the native
         // RegExp protocol (@@replace/@@split/@@match/@@search) can read the
         // compiled match-result object (a WasmGC struct) via Get + ToXxx.
@@ -15414,7 +15632,10 @@ assert._isSameValue = isSameValue;
       // `obj.k = v` accessor writes here (ESM is always strict); the throw is
       // catchable in the user's try/catch via the host-import exception bridge.
       return (obj: any, key: any, val: any) => {
-        let wrappedVal = _maybeWrapCallableUnknownArity(val, callbackState);
+        let wrappedVal =
+          key === "valueOf" || key === "toString"
+            ? _maybeWrapCallable(val, 0, callbackState)
+            : _maybeWrapCallableUnknownArity(val, callbackState);
         // (#3051) See extern_set — wrap a `regexp.exec` override's return so the
         // native RegExp protocol can read the compiled result object.
         if (typeof wrappedVal === "function" && key === "exec" && obj instanceof RegExp) {
@@ -15977,11 +16198,47 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
+export interface BuildImportsOptions {
+  domRoot?: Element | ShadowRoot;
+  globalSandbox?: Record<string, any>;
+  /**
+   * Runtime implementation for dynamic eval and new Function.
+   *
+   * `compat` preserves the existing meta-circular-first path and its native
+   * fallback. `native` delegates directly to the current realm's eval/Function.
+   * `evaluator` delegates to the explicit evaluator below. `deny` fails closed.
+   */
+  dynamicCode?: DynamicCodePolicy;
+  /** Synchronous evaluator used only when `dynamicCode` is `evaluator`. */
+  dynamicCodeEvaluator?: DynamicCodeEvaluator;
+}
+
+export type DynamicCodePolicy = "compat" | "native" | "evaluator" | "deny";
+
+/** Live caller binding retained by the AOT module's host realm. */
+export interface DynamicCodeBinding {
+  readonly name: string;
+  get(): unknown;
+  set(value: unknown): void;
+}
+
+export interface DynamicCodeEvaluationContext {
+  direct: boolean;
+  strict?: boolean;
+  /** Present only for `CompileOptions.directEval: "reified-host"`. */
+  bindings?: readonly DynamicCodeBinding[];
+}
+
+export interface DynamicCodeEvaluator {
+  evaluate(source: string, context: DynamicCodeEvaluationContext): unknown;
+  createFunction(parameters: string, body: string): Function;
+}
+
 export function buildImports(
   manifest: ImportDescriptor[],
   deps?: Record<string, any>,
   stringPool?: string[],
-  options?: { domRoot?: Element | ShadowRoot; globalSandbox?: Record<string, any> },
+  options?: BuildImportsOptions,
 ): {
   env: Record<string, Function>;
   "wasm:js-string": typeof jsString;
@@ -16068,7 +16325,16 @@ export function buildImports(
       continue;
     }
 
-    fn = resolveImport(imp.intent, deps, callbackState, options?.globalSandbox, instanceState, imp.paramCount);
+    fn = resolveImport(
+      imp.intent,
+      deps,
+      callbackState,
+      options?.globalSandbox,
+      instanceState,
+      imp.paramCount,
+      options?.dynamicCode,
+      options?.dynamicCodeEvaluator,
+    );
 
     // DOM containment wrapping
     if (options?.domRoot) {

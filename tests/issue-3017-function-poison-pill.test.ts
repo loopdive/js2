@@ -64,6 +64,81 @@ const IMMEDIATE_CALLER_STRICTNESS = `
   }
 `;
 
+const STRICT_FUNCTION_EXPRESSION_CALLER = `
+  export function test(): number {
+    function probe(): number {
+      try {
+        (probe as any).caller;
+        return 0;
+      } catch (error) {
+        return 1;
+      }
+    }
+
+    return (function(): number {
+      "use strict";
+      return probe();
+    })();
+  }
+`;
+
+const STRICT_CONSTRUCTOR_CALLER = `
+  export function test(): number {
+    function probe(): void {
+      (probe as any).caller;
+    }
+    function StrictConstructor(): void {
+      "use strict";
+      probe();
+    }
+
+    try {
+      new StrictConstructor();
+      return 0;
+    } catch (error) {
+      return 1;
+    }
+  }
+`;
+
+const STRICT_ANONYMOUS_CONSTRUCTOR_CALLER = `
+  export function test(): number {
+    function probe(): void {
+      (probe as any).caller;
+    }
+
+    try {
+      new (function(): void {
+        "use strict";
+        probe();
+      })();
+      return 0;
+    } catch (error) {
+      return 1;
+    }
+  }
+`;
+
+const INHERITED_STRICT_FUNCTION_EXPRESSION_CALLER = `
+  export function test(): number {
+    function probe(): number {
+      try {
+        (probe as any).caller;
+        return 0;
+      } catch (error) {
+        return 1;
+      }
+    }
+
+    return (function(): number {
+      "use strict";
+      return (function(): number {
+        return probe();
+      })();
+    })();
+  }
+`;
+
 describe("#3017 — Function poison-pill semantics", () => {
   for (const target of [undefined, "standalone"] as const) {
     const lane = target ?? "host";
@@ -74,6 +149,22 @@ describe("#3017 — Function poison-pill semantics", () => {
 
     it(`${lane}: only the immediate strict caller poisons a sloppy self-read`, async () => {
       expect(await run(IMMEDIATE_CALLER_STRICTNESS, target)).toBe(10);
+    });
+
+    it(`${lane}: a strict anonymous function expression poisons its sloppy callee`, async () => {
+      expect(await run(STRICT_FUNCTION_EXPRESSION_CALLER, target)).toBe(1);
+    });
+
+    it(`${lane}: a strict constructor poisons its sloppy callee`, async () => {
+      expect(await run(STRICT_CONSTRUCTOR_CALLER, target)).toBe(1);
+    });
+
+    it(`${lane}: a strict anonymous constructor poisons its sloppy callee`, async () => {
+      expect(await run(STRICT_ANONYMOUS_CONSTRUCTOR_CALLER, target)).toBe(1);
+    });
+
+    it(`${lane}: a function expression inherits strictness from its enclosing function`, async () => {
+      expect(await run(INHERITED_STRICT_FUNCTION_EXPRESSION_CALLER, target)).toBe(1);
     });
   }
 

@@ -4,7 +4,7 @@ title: "Async CPS: support the await-inside-try shapes used by Prettier, Axios, 
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-11
 priority: high
 horizon: m
 feasibility: hard
@@ -14,6 +14,9 @@ area: codegen
 language_feature: async, promises, try-catch
 goal: npm-library-support
 related: [1032, 1034, 3587, 4000]
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/compiler.ts
 ---
 
 # Support residual package `await`-inside-`try` shapes
@@ -31,9 +34,30 @@ additional generic CFG shape, not a package rewrite or a suppressed diagnostic.
 | Axios | `node tests/dogfood/npm-compat-catalog-harness.mjs --package axios --json` | 13.617 s; one #3587 diagnostic; no binary |
 | Stylelint | `node tests/dogfood/npm-compat-catalog-harness.mjs --package stylelint --json` | 82.319 s; five #3587 diagnostics plus the separate #4303 TDZ error; no binary |
 
-A direct Axios `compileProject` probe located its reported await at line 219,
-column 32. The current codegen diagnostic drops the source filename, so the
-three rejected declarations are not yet all mapped precisely.
+The original direct Axios `compileProject` probe located only line 219, column
+32 because backend diagnostics dropped the source filename. The diagnostic
+provenance slice below closes that observability gap and maps the declarations.
+
+## Diagnostic provenance slice (2026-08-11)
+
+The first implementation slice carries the source filename from `CodegenError`
+through `CompileError` and preserves filename, line, column, and severity in the
+out-of-process package probe. This is diagnostic-only: it does not weaken the
+#3587 refusal or change executable behavior.
+
+The exact current package sites are now visible:
+
+| package | rejected source sites |
+| --- | --- |
+| Prettier 3.8.1 | bundled `standalone.mjs:21:121` (`await u.parse(...)` in `try/catch`) and `standalone.mjs:22:472` (`await c(...)` in a loop-nested `try/catch`) |
+| Axios 1.16.1 | `lib/adapters/fetch.js:219:32` (`const outboundLength = await resolveBodyLength(...)` inside an `if` nested in the adapter's `try/catch`) |
+| Jest | `@jest/core/build/index.js:1562:7` (`runWatch`, `await` inside an `if` nested in `try/catch`) |
+| Stylelint | `@sindresorhus/merge-streams/index.js:97:3`, `:135:3`; `globby/utilities.js:244:18`; `globby/ignore.js:645:13`, `:700:51` |
+
+The two `merge-streams` sites are canonical top-level `try/finally` awaits.
+The remaining sites exercise awaits below conditions/loops or nested in return
+and assignment expressions. This split gives the lowering work a generic,
+small first target while keeping the more complex residuals loud.
 
 ## Suspended handoff (2026-08-09)
 
@@ -52,7 +76,7 @@ refusal for everything still outside the machine.
 
 ## Acceptance criteria
 
-- [ ] Every rejected suspension point reports its source file and location.
+- [x] Every rejected suspension point reports its source file and location.
 - [ ] Reduced tests cover the shared package shape and rejection delivery
       through `catch`/`finally` on the host lane.
 - [ ] Prettier, Axios, and Stylelint advance beyond this refusal without source

@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import type { IrClassId, IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -63,9 +64,10 @@ import {
   type IrAsyncSelectionOptions,
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
-import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
@@ -156,7 +158,7 @@ export type IrFallbackReason =
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
   | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
-  | "deferred-feature"; // permanently excluded (eval, with, import(), Proxy)
+  | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 
 export interface IrFallback {
   readonly name: string;
@@ -1140,6 +1142,56 @@ export function constructorHasIrSafeReceiverSemantics(declaration: ts.Constructo
   return (!isDerived || superCalls === 1) && !hasReceiverDerivedCall && !hasReceiverCallableMemberAccess;
 }
 
+function constructorFieldInitializersAreIrSafe(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const initializers = collectIrClassInstanceInitializers(owner);
+  if (initializers === undefined) return shapeNo("constructor-field-name-unsupported", owner);
+  for (const initializer of initializers) {
+    if (!isPhase1Expr(initializer.expression, scope, localClasses)) return false;
+  }
+  return true;
+}
+
+/** Exact selector entry for a synthesized constructor owned by its class. */
+export function assessIrImplicitConstructorSubject(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  localClasses: ReadonlySet<string>,
+): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  currentSubjectIsModuleInit = false;
+  currentDynMemberEqualitySubject = null;
+  currentDynEqualityBoxableParamNames = new Set<string>();
+  currentMutableSlotNames = new Set<string>();
+  currentStableFunctionCallSubject = null;
+  currentStableDynamicRootNames = new Set<string>();
+  currentNumericParamNames = new Set<string>();
+  currentSubjectFunctionName = null;
+  currentSubjectReturnsBoolean = false;
+  typedShapeRejectReason = null;
+  currentClaimClassName = owner.name?.text ?? null;
+  currentClassBindings = new Map<string, string>();
+  currentCallableArities = new Map<string, number>();
+  currentCallableReturnClasses = new Map<string, string>();
+  currentNestedFunctionNames = new Set<string>();
+  currentLexicalValueBindingNames = new Set<string>();
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 1;
+  forInitLeakedNames = new Set<string>();
+  currentFnIsGenerator = false;
+  currentFnIsVoidReturn = false;
+  currentFnIsAsync = false;
+  if (SHAPE_DIAG_ON) shapeRejectDetail = null;
+  const accepted = constructorFieldInitializersAreIrSafe(owner, new Set(["this"]), localClasses);
+  const reason = accepted ? null : (typedShapeRejectReason ?? "body-shape-rejected");
+  const detail =
+    reason === "body-shape-rejected" && SHAPE_DIAG_ON
+      ? (takeShapeRejectDetail() ?? "unattributed-arm:implicit-constructor-field")
+      : undefined;
+  return detail === undefined ? { reason } : { reason, detail };
+}
+
 /**
  * Variant of `isIrClaimable` that returns the rejection reason instead of a
  * boolean. Returns null on accept. Used by `planIrCompilation` when
@@ -1693,21 +1745,11 @@ function whyNotIrClaimable(
   // covers `this.field = expr;`, `this.method(...)`, and bare calls. This
   // mirrors how try/catch/finally bodies are checked (see `isPhase1TryStatement`).
   if (ts.isConstructorDeclaration(fn)) {
-    // #3000-C: the IR constructor lowering (`lowerFunctionAstToIr` Phase C)
-    // runs ONLY the constructor body statements — it allocates the instance
-    // with each struct field at its default, then replays the body's
-    // `this.field = …` writes. It does NOT execute two other construction-time
-    // effects the legacy path handles:
-    //   (a) parameter properties (`constructor(private name: string)`) — the
-    //       param both declares AND assigns a field; the IR path treats it as
-    //       a plain param and drops the field write.
-    //   (b) PropertyDeclaration initialisers (`age = 5;`) — these run at
-    //       construction; the IR path leaves the field at its struct default.
-    // A class using either would silently mis-construct (the typeIdx-parity
-    // guard can't catch it — same signature). Reject to legacy so construction
-    // stays correct. Flat classes whose fields are declared without an
-    // initialiser and assigned in the body (the common shape, e.g. classes.ts's
-    // `Animal`) are unaffected.
+    // #3000-C / #3522: parameter properties remain direct because they imply
+    // a field write not represented by a PropertyDeclaration initializer.
+    // Ordinary instance fields are now collected as one exact source-order
+    // constructor plan below; a dynamic name or unsupported initializer
+    // rejects the complete constructor before any body is emitted.
     if (!constructorHasIrSafeReceiverSemantics(fn)) return "body-shape-rejected";
     for (const p of fn.parameters) {
       const isParamProperty = p.modifiers?.some(
@@ -1720,10 +1762,12 @@ function whyNotIrClaimable(
       if (isParamProperty) return "body-shape-rejected";
     }
     const parent = fn.parent;
-    if (parent && (ts.isClassDeclaration(parent) || ts.isClassExpression(parent))) {
-      for (const m of parent.members) {
-        if (ts.isPropertyDeclaration(m) && m.initializer) return "body-shape-rejected";
-      }
+    if (
+      parent &&
+      (ts.isClassDeclaration(parent) || ts.isClassExpression(parent)) &&
+      !constructorFieldInitializersAreIrSafe(parent, new Set(scope), localClasses)
+    ) {
+      return typedShapeRejectReason ?? "body-shape-rejected";
     }
     const ctorScope = new Set(scope);
     // (#2856 C1) Constructor bodies never take the early-return arm — their
@@ -3142,6 +3186,10 @@ function isPhase1StatementListInScope(
         return shapeNo("nontail-if-then-guard", s.thenStatement);
       continue;
     }
+    if (ts.isWithStatement(s)) {
+      if (!isPhase1WithStatement(s, scope, localClasses)) return false;
+      continue;
+    }
     // Slice 6 part 2 (#1181) — for-of statement (always non-tail). The
     // body is itself shape-checked. The bridge in `from-ast.ts` lowers
     // the iterable expression and dispatches to the vec fast path when
@@ -3864,6 +3912,65 @@ function isPhase1ForInStatement(
 }
 
 /**
+ * #4206 first IR `with` slice. Selection is deliberately exact:
+ *
+ * - a closed inline object literal target (therefore every binding is a known
+ *   object field and needs no runtime HasBinding fallback),
+ * - a block body containing at least one ordinary synchronous function
+ *   expression selected by `ir/with-environment`,
+ * - no body declaration may collide with a target field in this slice.
+ *
+ * The field names join the nested selector scope so a function expression can
+ * capture them. AST→IR lowering captures the receiver reference and restores
+ * each property as an invocation-time `object.get`/`object.set` binding.
+ */
+function isPhase1WithStatement(
+  stmt: ts.WithStatement,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+  inLoop: boolean = false,
+  labels: ReadonlySet<string> = NO_LABELS,
+  breaks: BreakScope = NO_BREAKS,
+): boolean {
+  if (!ts.isObjectLiteralExpression(stmt.expression)) return shapeNo("with-target-not-objectlit", stmt.expression);
+  if (!ts.isBlock(stmt.statement)) return shapeNo("with-body-not-block", stmt.statement);
+  const body = stmt.statement;
+  const selection = selectWithEnvironmentClosures(body);
+  if (!selection.ok) return shapeNo("with-closure-boundary", body);
+  if (selection.closureCount === 0) return shapeNo("with-no-closure", stmt.statement);
+  if (!isPhase1ObjectLiteral(stmt.expression, scope, localClasses))
+    return shapeNo("with-target-shape", stmt.expression);
+
+  const fieldNames = new Set<string>();
+  for (const property of stmt.expression.properties) {
+    const name =
+      ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)
+        ? phase1PropertyName(property.name)
+        : null;
+    if (name === null) return shapeNo("with-target-field", property);
+    fieldNames.add(name);
+  }
+  for (const bodyStatement of body.statements) {
+    if (!ts.isVariableStatement(bodyStatement)) continue;
+    for (const declaration of bodyStatement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name)) return shapeNo("with-declaration-pattern", declaration.name);
+      if (fieldNames.has(declaration.name.text)) return shapeNo("with-field-shadow", declaration.name);
+    }
+  }
+
+  return withProjectionEvidenceScope(() =>
+    withLexicalValueBindingScope(body.statements, () => {
+      const bodyScope = new Set(scope);
+      for (const name of fieldNames) bodyScope.add(name);
+      for (const bodyStatement of body.statements) {
+        if (!isPhase1BodyStatement(bodyStatement, bodyScope, localClasses, inLoop, labels, breaks)) return false;
+      }
+      return true;
+    }),
+  );
+}
+
+/**
  * Slice 6 part 2 (#1181): recogniser for body statements inside a for-of
  * loop. Narrower than `isPhase1StatementList` — no nested closures, no
  * nested function decls, no fall-through if/else patterns. Accepts:
@@ -3905,6 +4012,9 @@ function isPhase1BodyStatement(
   }
   if (ts.isVariableStatement(stmt)) {
     return isPhase1VarDecl(stmt, scope, localClasses);
+  }
+  if (ts.isWithStatement(stmt)) {
+    return isPhase1WithStatement(stmt, scope, localClasses, inLoop, labels, breaks);
   }
   if (ts.isExpressionStatement(stmt)) {
     if (ts.isCallExpression(stmt.expression)) {
@@ -4978,6 +5088,11 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
   if (binding?.valueKind.kind === "f64") return "f64";
   if (binding?.valueKind.kind === "i32") return "boolean";
   if (binding?.valueKind.kind === "extern") return "extern";
+  // A #4208 update-retyped module binding has deliberately stale checker
+  // evidence: after `value--`, a Boolean/string initializer now holds a
+  // Number. Do not fall through to scalarExpressionFamily and resurrect the
+  // initializer's static family after the binding resolver chose dynamic.
+  if (binding?.valueKind.kind === "dynamic") return undefined;
   const scalarAlias = moduleScalarAliasFamily(candidate);
   if (scalarAlias) return scalarAlias;
   if (isModuleMapGetAlias(candidate)) return "extern";
@@ -7205,6 +7320,38 @@ function isPhase1ObjectLiteral(
   // overrides pass would skip them when shape resolution failed.
   if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
 
+  // Function-valued data properties have no general closed-object IR
+  // representation. The one certified exception is the exact #4208
+  // OrdinaryToPrimitive shape; require EVERY property to belong to it so a
+  // mixed `{ valueOf: function... , data: 1 }` literal is rejected before
+  // claim instead of claimed and demoted by lowerObjectLiteral.
+  if (
+    expr.properties.some(
+      (property) => ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer),
+    )
+  ) {
+    const seenMethods = new Set<string>();
+    for (const property of expr.properties) {
+      if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) {
+        return shapeNo("objectlit-ordinary-to-primitive-mixed", property);
+      }
+      const name = phase1PropertyName(property.name);
+      if (
+        (name !== "valueOf" && name !== "toString") ||
+        seenMethods.has(name) ||
+        property.initializer.parameters.length !== 0 ||
+        (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
+          property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
+          property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword) ||
+        !isPhase1ClosureLiteral(property.initializer, scope, localClasses)
+      ) {
+        return shapeNo("objectlit-ordinary-to-primitive-method", property.initializer);
+      }
+      seenMethods.add(name);
+    }
+    return true;
+  }
+
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
@@ -7379,7 +7526,28 @@ export function assessModuleInit(
   currentDynMemberEqualitySubject = null;
   currentStableFunctionCallSubject = null;
   currentStableDynamicRootNames = new Set<string>();
-  currentIrSafeVarDeclarationLists = new Set();
+  // #4208 S2 opens the direct top-level `var` gate only for a source that
+  // genuinely contains an update-retyped module binding. The exact binding
+  // resolver rejects same-named locals and ordinary narrow module globals, so
+  // unrelated modules retain the existing conservative `var` demotion.
+  let hasDynamicModuleUpdate = false;
+  const findDynamicModuleUpdate = (node: ts.Node): void => {
+    if (hasDynamicModuleUpdate) return;
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand) &&
+      currentModuleBindingResolver?.(node.operand)?.valueKind.kind === "dynamic"
+    ) {
+      hasDynamicModuleUpdate = true;
+      return;
+    }
+    forEachChild(node, findDynamicModuleUpdate);
+  };
+  findDynamicModuleUpdate(sourceFile);
+  currentIrSafeVarDeclarationLists = hasDynamicModuleUpdate
+    ? collectIrSafeModuleVarDeclarationLists(population)
+    : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

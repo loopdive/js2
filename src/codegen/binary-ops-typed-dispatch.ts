@@ -16,6 +16,7 @@ import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpe
 import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
@@ -30,6 +31,13 @@ import {
   compileI64BinaryOp,
   compileNumericBinaryOp,
 } from "./binary-ops.js";
+
+function equalityOperandHasStaleStaticType(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  return (
+    ts.isIdentifier(expr) &&
+    (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))
+  );
+}
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -549,18 +557,18 @@ export function compileTypedBinaryDispatch(
   if ((leftType.kind === "externref" || rightType.kind === "externref") && (isEqOp || isNeqOp)) {
     const isStrict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
     const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    // A function-scoped var used as a bare for-in target is dynamically a
-    // property-key string during the loop even when a later initializer makes
-    // TypeScript report `number` at every use. Do not constant-fold equality
-    // from that stale static type; compare the actual boxed value.
-    const leftIsDynamicForIn = ts.isIdentifier(expr.left) && fctx.forInIdentifierVars?.has(expr.left.text) === true;
-    const rightIsDynamicForIn = ts.isIdentifier(expr.right) && fctx.forInIdentifierVars?.has(expr.right.text) === true;
-    const leftIsString = !leftIsDynamicForIn && isStringType(leftTsType);
-    const rightIsString = !rightIsDynamicForIn && isStringType(rightTsType);
-    const leftIsNumber = !leftIsDynamicForIn && isNumberType(leftTsType);
-    const rightIsNumber = !rightIsDynamicForIn && isNumberType(rightTsType);
-    const leftIsBool = !leftIsDynamicForIn && isBooleanType(leftTsType);
-    const rightIsBool = !rightIsDynamicForIn && isBooleanType(rightTsType);
+    // A for-in target and a representation-widened module binding both carry
+    // runtime tags that can disagree with TypeScript's initializer-derived
+    // type. Do not constant-fold equality from that stale type; compare the
+    // actual boxed value.
+    const leftHasStaleType = equalityOperandHasStaleStaticType(ctx, fctx, expr.left);
+    const rightHasStaleType = equalityOperandHasStaleStaticType(ctx, fctx, expr.right);
+    const leftIsString = !leftHasStaleType && isStringType(leftTsType);
+    const rightIsString = !rightHasStaleType && isStringType(rightTsType);
+    const leftIsNumber = !leftHasStaleType && isNumberType(leftTsType);
+    const rightIsNumber = !rightHasStaleType && isNumberType(rightTsType);
+    const leftIsBool = !leftHasStaleType && isBooleanType(leftTsType);
+    const rightIsBool = !rightHasStaleType && isBooleanType(rightTsType);
 
     // #1776: standalone / WASI (no-JS-host) dynamic equality.
     //
@@ -1064,7 +1072,7 @@ export function compileTypedBinaryDispatch(
       return { kind: "i32" };
     }
 
-    if (!noJsHost && (leftIsDynamicForIn || rightIsDynamicForIn)) {
+    if (!noJsHost && (leftHasStaleType || rightHasStaleType)) {
       return emitHostEqualityFromStack(ctx, fctx, leftType, rightType, isStrict, isNeqOp);
     }
 

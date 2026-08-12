@@ -1,0 +1,19 @@
+{
+  "name": "moment",
+  "repo": "https://github.com/moment/moment.git",
+  "tag": "2.30.1",
+  "commit": "485d9a7d709bd5f3869a7ad24630cf0746d072dc",
+  "inventoryDirectory": "src/test",
+  "testFileCount": 190,
+  "testFilePathSha256": "c7cd0182f129c80970f7944cd75cbbe629a90139960495933696f535c3d747ce",
+  "registrationSites": 2638,
+  "selectedFiles": [
+    "src/test/moment/days_in_year.js",
+    "src/test/moment/is_date.js",
+    "src/test/moment/is_moment.js",
+    "src/test/moment/min_max.js",
+    "src/test/moment/mutable.js",
+    "src/test/moment/normalize_units.js"
+  ],
+  "_note": "The verified inventory covers all Moment core and locale unit files while excluding only QUnit runner/helpers. The initial adapter executes every callback in six synchronous core files against the published moment.js; 184 files remain explicitly deferred. registrationSites is the measured test() call-site count across the verified inventory."
+}

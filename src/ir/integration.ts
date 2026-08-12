@@ -35,6 +35,7 @@ import {
   resolveIrDynamicCarrierType,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic
 import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
+import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   IR_DYN_ADD_FN,
@@ -114,6 +115,7 @@ import {
   closureArityField,
   closureBagField,
   getOrCreateFuncRefWrapperTypes,
+  type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import {
@@ -127,12 +129,16 @@ import {
 import {
   IR_STRING_COMPARE_FN,
   lowerFunctionAstToIr,
+  lowerImplicitConstructorAstToIr,
   STRING_METHOD_TABLE,
+  type AstToIrOptions,
   type IrFromAstResolver,
   type LoweredFunctionResult,
   type ModuleBindingGlobal,
 } from "./from-ast.js";
+import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { prepareSuspendingIrFunction } from "./async-prepare.js";
+import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
@@ -1217,7 +1223,11 @@ export function compileIrPathFunctions(
   // Phase 3 once the registries exist; both share the same underlying
   // logic for the methods both expose.
   // -------------------------------------------------------------------------
-  const fromAstResolver = makeFromAstResolver(ctx, moduleBindingResolver);
+  const fromAstResolver = makeFromAstResolver(
+    ctx,
+    moduleBindingResolver,
+    loweringPlans?.postWasmStartTdzSafeBindingsByOwnerUnitId,
+  );
 
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
@@ -1286,6 +1296,8 @@ export function compileIrPathFunctions(
         importedCalls: loweringPlans?.importedCalls,
         topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+        hostDateGetters: loweringPlans?.hostDateGetters,
         promiseDelays: loweringPlans?.promiseDelays,
         classShapes,
         // Slice 6 part 4 refactor (#1185): thread the from-ast subset
@@ -1374,13 +1386,19 @@ export function compileIrPathFunctions(
       const terminal = moduleBindingIdentityContext.terminalByUnitId.get(selectedUnitId);
       if (
         !member ||
-        (!ts.isConstructorDeclaration(member) &&
+        (!ts.isClassDeclaration(member) &&
+          !ts.isClassExpression(member) &&
+          !ts.isConstructorDeclaration(member) &&
           !ts.isMethodDeclaration(member) &&
           !ts.isGetAccessorDeclaration(member) &&
           !ts.isSetAccessorDeclaration(member)) ||
-        !member.body ||
         !terminal ||
-        terminal.observedKind !== "class-member"
+        terminal.observedKind !== "class-member" ||
+        ((ts.isConstructorDeclaration(member) ||
+          ts.isMethodDeclaration(member) ||
+          ts.isGetAccessorDeclaration(member) ||
+          ts.isSetAccessorDeclaration(member)) &&
+          !member.body)
       ) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -1388,7 +1406,8 @@ export function compileIrPathFunctions(
           `ir/integration: exact class member ${selectedUnitId} has no callable terminal declaration`,
         );
       }
-      const classDeclaration = member.parent;
+      const isImplicitCtorMember = terminal.kind === "class-implicit-constructor";
+      const classDeclaration = isImplicitCtorMember ? member : member.parent;
       if (!ts.isClassDeclaration(classDeclaration) && !ts.isClassExpression(classDeclaration)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -1405,7 +1424,7 @@ export function compileIrPathFunctions(
           `ir/integration: exact class member ${selectedUnitId} has no exact projected class shape`,
         );
       }
-      const isCtorMember = ts.isConstructorDeclaration(member);
+      const isCtorMember = ts.isConstructorDeclaration(member) || isImplicitCtorMember;
       const isStatic = terminal.staticClassMember;
       const descriptorKind = ts.isMethodDeclaration(member)
         ? isStatic
@@ -1456,13 +1475,34 @@ export function compileIrPathFunctions(
             `ir/integration: ${semanticName} artifact ${ownerUnitId} does not match exact owner ${selectedUnitId}`,
           );
         }
-        const result = lowerFunctionAstToIr(member, {
+        const constructorFieldInitializers = isCtorMember
+          ? collectIrClassInstanceInitializers(classDeclaration)
+          : undefined;
+        if (isCtorMember && constructorFieldInitializers === undefined) {
+          throw new IrUnsupportedError(
+            "class-member-unsupported",
+            "build",
+            `ir/integration: ${semanticName} has a dynamically computed instance field name`,
+          );
+        }
+        if (!isImplicitCtorMember) directCallsFor(member, ownerUnitId);
+        for (const initializer of constructorFieldInitializers ?? []) {
+          directCallsFor(initializer.expression, ownerUnitId);
+        }
+        const loweringOptions: AstToIrOptions = {
           exported: false,
           funcName: semanticName,
           ownerUnitId,
-          directCalls: directCallsFor(member, ownerUnitId),
+          directCalls: preparedDirectCalls,
           ...(isCtorMember
-            ? { constructorInitClassShape: classShape, paramTypeOverrides }
+            ? {
+                constructorInitClassShape: classShape,
+                paramTypeOverrides,
+                constructorFieldInitializers,
+                ...(isImplicitCtorMember && classShape.parent
+                  ? { implicitConstructorParentShape: classShape.parent }
+                  : {}),
+              }
             : terminal.kind === "class-static-method"
               ? { paramTypeOverrides, returnTypeOverride }
               : {
@@ -1476,12 +1516,37 @@ export function compileIrPathFunctions(
           importedCalls: loweringPlans?.importedCalls,
           topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+          hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+          hostDateGetters: loweringPlans?.hostDateGetters,
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
           checker: ctx.checker,
-          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        });
+          numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
+        };
+        let result: LoweredFunctionResult;
+        if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
+          if (!isImplicitCtorMember) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "build",
+              `ir/integration: non-implicit member ${semanticName} resolves to a class declaration`,
+            );
+          }
+          result = lowerImplicitConstructorAstToIr(member, {
+            ...loweringOptions,
+            constructorInitClassShape: classShape,
+          });
+        } else {
+          if (isImplicitCtorMember) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "build",
+              `ir/integration: implicit constructor ${semanticName} lost its class declaration`,
+            );
+          }
+          result = lowerFunctionAstToIr(member, loweringOptions);
+        }
         if (result.main.unitId !== selectedUnitId) {
           throw new IrInvariantError(
             "selection-preparation-mismatch",
@@ -1647,6 +1712,8 @@ export function compileIrPathFunctions(
             importedCalls: loweringPlans?.importedCalls,
             topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
             hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+            hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+            hostDateGetters: loweringPlans?.hostDateGetters,
             classShapes,
             resolver: fromAstResolver,
             allocRegistry,
@@ -1797,6 +1864,8 @@ export function compileIrPathFunctions(
         importedCalls: loweringPlans?.importedCalls,
         topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
+        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
+        hostDateGetters: loweringPlans?.hostDateGetters,
         classShapes,
         resolver: fromAstResolver,
         allocRegistry,
@@ -2277,7 +2346,7 @@ export function compileIrPathFunctions(
       // Final synchronous parity pass: fuse only after mono/TU has settled.
       const batched =
         !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
-          ? batchStringConcat(hygienic)
+          ? batchStringConcat(hygienic, allocRegistry)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
@@ -2846,7 +2915,8 @@ export function compileIrPathFunctions(
       preparedClosure?.registry ??
       new ClosureStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<closure-registry>"));
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
-    deferredCl.resolveSubtype = (sig, fields) => closureRegistry.resolveSubtype(sig, fields);
+    deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
+      closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
     const refCellRegistry = new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
@@ -3287,7 +3357,11 @@ function bodyContainsReturnClassOp(body: readonly Instr[]): boolean {
 }
 
 /** Resolve a checker-owned module declaration to its exact structural/legacy slot pair. */
-function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindingIdentity): ModuleBindingGlobal {
+function resolveModuleBindingGlobal(
+  ctx: CodegenContext,
+  identity: IrModuleBindingIdentity,
+  postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+): ModuleBindingGlobal {
   const declaration = identity.declaration;
   if (!ts.isIdentifier(declaration.name)) {
     throw new IrInvariantError(
@@ -3424,6 +3498,9 @@ function resolveModuleBindingGlobal(ctx: CodegenContext, identity: IrModuleBindi
     globalName,
     tdzGlobalName,
     type,
+    ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
+      ? { omitTdzReadCheck: true as const }
+      : {}),
   };
 }
 
@@ -3578,7 +3655,11 @@ interface DeferredObjectResolver {
 
 interface DeferredClosureResolver {
   resolveBase: (sig: IrClosureSignature) => IrClosureLowering | null;
-  resolveSubtype: (sig: IrClosureSignature, fields: readonly IrType[]) => IrClosureLowering | null;
+  resolveSubtype: (
+    sig: IrClosureSignature,
+    fields: readonly IrType[],
+    hostOneShot?: boolean,
+  ) => IrClosureLowering | null;
 }
 
 interface DeferredRefCellResolver {
@@ -3628,6 +3709,33 @@ function resolveVecForElementImpl(
   return {
     valueType: { kind: "ref", typeIdx: vecStructTypeIdx },
     vecStructTypeIdx,
+    lengthFieldIdx: 0,
+    dataFieldIdx: 1,
+    arrayTypeIdx,
+    elementValType: arrayDef.element,
+  };
+}
+
+/** Recover the exact registered vec layout behind a physical ref carrier. */
+function resolvePhysicalVecImpl(ctx: CodegenContext, valueType: ValType): import("./lower.js").IrVecLowering | null {
+  if (valueType.kind !== "ref" && valueType.kind !== "ref_null") return null;
+  const typeIdx = valueType.typeIdx;
+  // A coincidental `{ length: i32, data: ref array }` user struct is not a
+  // vector. Only allocator objects registered by the canonical vec registry
+  // may cross the prepared boundary as logical `IrType.vec` values.
+  if (![...ctx.vecTypeMap.values()].includes(typeIdx)) return null;
+  const vecDef = ctx.mod.types[typeIdx];
+  if (!vecDef || vecDef.kind !== "struct" || vecDef.fields.length < 2) return null;
+  const lengthField = vecDef.fields[0]!;
+  const dataField = vecDef.fields[1]!;
+  if (lengthField.type.kind !== "i32") return null;
+  if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
+  const arrayTypeIdx = dataField.type.typeIdx;
+  const arrayDef = ctx.mod.types[arrayTypeIdx];
+  if (!arrayDef || arrayDef.kind !== "array") return null;
+  return {
+    valueType,
+    vecStructTypeIdx: typeIdx,
     lengthFieldIdx: 0,
     dataFieldIdx: 1,
     arrayTypeIdx,
@@ -3849,7 +3957,11 @@ function resolveStaticNumericArrayGlobal(
   return { globalRef, type: expected };
 }
 
-function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModuleBindingResolver): IrFromAstResolver {
+function makeFromAstResolver(
+  ctx: CodegenContext,
+  moduleBindingResolver?: IrModuleBindingResolver,
+  postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"],
+): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(
@@ -4147,7 +4259,9 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     // only then map it to the legacy slot and retain the logical extern brand.
     resolveModuleBinding(node: ts.Identifier, writeValue?: ts.Expression) {
       const identity = moduleBindingResolver?.(node, writeValue);
-      return identity ? resolveModuleBindingGlobal(ctx, identity) : undefined;
+      return identity
+        ? resolveModuleBindingGlobal(ctx, identity, postWasmStartTdzSafeBindingsByOwnerUnitId)
+        : undefined;
     },
     isDirectModuleBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isDirectModuleBinding(node) === true;
@@ -4213,26 +4327,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     // ref_null) $vec_*` ValType. See the corresponding doc on
     // `IrLowerResolver.resolveVec` for the contract.
     resolveVec(valType: ValType) {
-      if (valType.kind !== "ref" && valType.kind !== "ref_null") return null;
-      const typeIdx = (valType as { typeIdx: number }).typeIdx;
-      const vecDef = ctx.mod.types[typeIdx];
-      if (!vecDef || vecDef.kind !== "struct") return null;
-      if (vecDef.fields.length < 2) return null;
-      const lengthField = vecDef.fields[0]!;
-      const dataField = vecDef.fields[1]!;
-      if (lengthField.type.kind !== "i32") return null;
-      if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
-      const arrayTypeIdx = (dataField.type as { typeIdx: number }).typeIdx;
-      const arrayDef = ctx.mod.types[arrayTypeIdx];
-      if (!arrayDef || arrayDef.kind !== "array") return null;
-      return {
-        valueType: valType,
-        vecStructTypeIdx: typeIdx,
-        lengthFieldIdx: 0,
-        dataFieldIdx: 1,
-        arrayTypeIdx,
-        elementValType: arrayDef.element,
-      };
+      return resolvePhysicalVecImpl(ctx, valType);
     },
     // #1804 — register-or-recover the vec struct for an element ValType, for
     // `vec.new_fixed` construction. See `resolveVecForElementImpl`.
@@ -4375,6 +4470,8 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
+  } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
+    index = ensureDateCivilHelper(ctx);
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -4561,8 +4658,12 @@ function makeResolver(
     resolveClosureRoot(): number | null {
       return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
     },
-    resolveClosureSubtype(sig: IrClosureSignature, fields: readonly IrType[]): IrClosureLowering | null {
-      return closureResolver.resolveSubtype(sig, fields);
+    resolveClosureSubtype(
+      sig: IrClosureSignature,
+      fields: readonly IrType[],
+      hostOneShot?: boolean,
+    ): IrClosureLowering | null {
+      return closureResolver.resolveSubtype(sig, fields, hostOneShot);
     },
     resolveRefCell(inner: ValType): IrRefCellLowering | null {
       return refCellResolver.resolve(inner);
@@ -4586,26 +4687,7 @@ function makeResolver(
     // should have rejected the function).
     // -------------------------------------------------------------------
     resolveVec(valType: ValType): import("./lower.js").IrVecLowering | null {
-      if (valType.kind !== "ref" && valType.kind !== "ref_null") return null;
-      const typeIdx = (valType as { typeIdx: number }).typeIdx;
-      const vecDef = ctx.mod.types[typeIdx];
-      if (!vecDef || vecDef.kind !== "struct") return null;
-      if (vecDef.fields.length < 2) return null;
-      const lengthField = vecDef.fields[0]!;
-      const dataField = vecDef.fields[1]!;
-      if (lengthField.type.kind !== "i32") return null;
-      if (dataField.type.kind !== "ref" && dataField.type.kind !== "ref_null") return null;
-      const arrayTypeIdx = (dataField.type as { typeIdx: number }).typeIdx;
-      const arrayDef = ctx.mod.types[arrayTypeIdx];
-      if (!arrayDef || arrayDef.kind !== "array") return null;
-      return {
-        valueType: valType,
-        vecStructTypeIdx: typeIdx,
-        lengthFieldIdx: 0,
-        dataFieldIdx: 1,
-        arrayTypeIdx,
-        elementValType: arrayDef.element,
-      };
+      return resolvePhysicalVecImpl(ctx, valType);
     },
     // #1804 — register-or-recover the vec struct for an element ValType, for
     // `vec.new_fixed` construction. See `resolveVecForElementImpl`.
@@ -4894,10 +4976,7 @@ interface HostDateImportSpec {
 }
 
 const HOST_DATE_IMPORTS = new Map<string, HostDateImportSpec>([
-  ["Date_new", { name: "Date_new", params: [], results: [{ kind: "externref" }] }],
-  ["Date_getDate", { name: "Date_getDate", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getMonth", { name: "Date_getMonth", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
-  ["Date_getFullYear", { name: "Date_getFullYear", params: [{ kind: "externref" }], results: [{ kind: "f64" }] }],
+  ["__date_now", { name: "__date_now", params: [], results: [{ kind: "f64" }] }],
 ]);
 
 function exactHostDateImport(ctx: CodegenContext, spec: HostDateImportSpec): boolean {
@@ -4931,9 +5010,13 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     for (const block of entry.fn.blocks) {
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
-          if (nested.kind === "extern.new" && nested.className === "Date") needed.add("Date_new");
-          if (nested.kind === "extern.call" && nested.className === "Date") {
-            needed.add(`Date_${nested.method}`);
+          if (
+            nested.kind === "call" &&
+            nested.target.binding.kind === "import" &&
+            nested.target.binding.module === "env" &&
+            nested.target.binding.field === "__date_now"
+          ) {
+            needed.add("__date_now");
           }
         });
       }
@@ -4979,13 +5062,14 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // Slice 10 (#1169i): the `extern.regex` instr lowers to two `string.const`
   // ops (pattern + flags). We collect them here too so the host-strings
   // backend pre-registers their `string_constants.<value>` globals before
-  // Phase 3 emission. `forof.*` body instrs also need walking — slice 6
-  // body buffers may contain string ops nested inside the for-of.
+  // Phase 3 emission. Walk every nested instruction buffer through the
+  // canonical IR visitor: loop bodies, condition arms, try regions, and
+  // future structured instructions can all contain otherwise-hidden strings.
   const literals = new Set<string>();
   let usesStringOp = false;
   let usesStringLen = false;
   let usesStringCharAt = false;
-  const walk = (instr: IrInstr): void => {
+  const visit = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
     if (instr.kind === "string.len") usesStringLen = true;
@@ -5022,25 +5106,14 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
       literals.add(instr.pattern);
       literals.add(instr.flags);
     }
-    if (instr.kind === "forof.vec" || instr.kind === "forof.iter" || instr.kind === "forof.string") {
-      for (const sub of instr.body) walk(sub);
-    }
-    // (#3156) Value-producing if/else arms and try bodies are nested instr
-    // buffers too — a `s.charCodeAt(i)` (or any string op) inside a ternary
-    // arm or try block would otherwise escape pre-registration.
-    if (instr.kind === "if") {
-      for (const sub of instr.then) walk(sub);
-      for (const sub of instr.else) walk(sub);
-    }
-    if (instr.kind === "try") {
-      for (const sub of instr.body) walk(sub);
-      if (instr.catchClause) for (const sub of instr.catchClause.body) walk(sub);
-      if (instr.finallyBody) for (const sub of instr.finallyBody) walk(sub);
-    }
   };
   for (const entry of fns) {
-    for (const block of entry.fn.blocks) {
-      for (const instr of block.instrs) walk(instr);
+    const instructionBuffers = [
+      ...entry.fn.blocks.map((block) => block.instrs),
+      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const buffer of instructionBuffers) {
+      for (const instr of buffer) forEachInstrDeep(instr, visit);
     }
   }
   if (usesStringOp && !ctx.nativeStrings) {
@@ -5144,6 +5217,7 @@ function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     ctx,
     entries: fns,
     resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
+    resolvePhysicalVec: (value) => resolvePhysicalVecImpl(ctx, value),
     typeKey: irTypeKey,
   });
 }
@@ -5522,6 +5596,13 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // that legacy registers on demand via `ensureLateImport` — another
   // dual-compile side effect IR-first skips. Detect + register the same way.
   let usesExternIsUndefined = false;
+  // #4208 S3/S7 — explicit runtime refs emitted for the IR-owned open
+  // OrdinaryToPrimitive literal. These providers must exist before Phase 3:
+  // host mode registers late imports, while standalone/wasi materialize the
+  // native object runtime. `__unbox_number` comes from the union family in
+  // every lane.
+  let usesOrdinaryToPrimitiveObjectRuntime = false;
+  let usesRuntimeUnboxNumber = false;
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
@@ -5538,6 +5619,14 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
+              case "__new_plain_object":
+              case "__extern_set":
+              case "__to_primitive":
+                usesOrdinaryToPrimitiveObjectRuntime = true;
+                break;
+              case "__unbox_number":
+                usesRuntimeUnboxNumber = true;
+                break;
               case IR_DYN_ADD_FN:
                 dynamicRuntimeNeeds.add("add");
                 break;
@@ -5568,6 +5657,17 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
       }
     }
   }
+  if (usesOrdinaryToPrimitiveObjectRuntime) {
+    if (ctx.standalone || ctx.wasi) {
+      ensureObjectRuntime(ctx);
+    } else {
+      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+      ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
+      ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
+  if (usesRuntimeUnboxNumber) addUnionImports(ctx);
   // (#3143) A named union-import call needs the host/native import family
   // registered even when no `dyn.*` op is present (the boxing-coercion path).
   // `addUnionImports` covers host (env imports) AND wasi/standalone (native
@@ -6187,10 +6287,20 @@ class ClosureStructRegistry {
     private readonly resolveValType: (t: IrType) => ValType,
   ) {}
 
-  resolveBase(sig: IrClosureSignature): IrClosureLowering | null {
+  private observe(typeIdx: number, mode: ClosureAllocationMode): void {
+    const info = this.ctx.closureInfoByTypeIdx.get(typeIdx);
+    if (!info) return;
+    if (mode === "ordinary") info.hostOneShotOnly = false;
+    else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
+  }
+
+  resolveBase(sig: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
     const key = sigKey(sig);
     const cached = this.baseCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.observe(cached.structTypeIdx, mode);
+      return cached;
+    }
 
     // Resolve the source signature first, then delegate both the allocation
     // wrapper and lifted func type to the canonical legacy registry. This is
@@ -6204,7 +6314,7 @@ class ClosureStructRegistry {
     } catch {
       return null;
     }
-    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes);
+    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes, mode);
     if (!wrapper) return null;
 
     const lowering: IrClosureLowering = {
@@ -6219,17 +6329,24 @@ class ClosureStructRegistry {
     return lowering;
   }
 
-  resolveSubtype(sig: IrClosureSignature, captureFieldTypes: readonly IrType[]): IrClosureLowering | null {
+  resolveSubtype(
+    sig: IrClosureSignature,
+    captureFieldTypes: readonly IrType[],
+    mode: ClosureAllocationMode = "support",
+  ): IrClosureLowering | null {
     // A no-capture closure allocates the signature wrapper directly. Creating
     // a redundant empty subtype would add an unnecessary RTT; invocation reads
     // every wrapper through the root and discriminates on the funcref type.
-    if (captureFieldTypes.length === 0) return this.resolveBase(sig);
+    if (captureFieldTypes.length === 0) return this.resolveBase(sig, mode);
 
     const key = `${sigKey(sig)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
     const cached = this.subCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      this.observe(cached.structTypeIdx, mode);
+      return cached;
+    }
 
-    const base = this.resolveBase(sig);
+    const base = this.resolveBase(sig, mode);
     if (!base) return null;
 
     const fields: FieldDef[] = [
@@ -6278,6 +6395,7 @@ class ClosureStructRegistry {
       paramTypes: [...baseInfo.paramTypes],
       returnType: baseInfo.returnType,
       hasCaptures: true,
+      ...(mode === "host-one-shot" ? { hostOneShotOnly: true } : mode === "ordinary" ? { hostOneShotOnly: false } : {}),
     });
 
     const fieldIdxByCap = new Map<number, number>();

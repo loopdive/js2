@@ -14,7 +14,6 @@ export type IrPreparationStage = "select" | "resolve" | "build" | "verify" | "lo
 export type IrUnsupportedCode =
   | IrFallbackReason
   | "anonymous-class"
-  | "implicit-class-initializer"
   | "static-class-initialization"
   | "void-call-expression"
   | "array-representation-unsupported"

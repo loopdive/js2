@@ -33,7 +33,7 @@ import {
 } from "./native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
-import { emitDataViewProtoMemberBody } from "./dataview-native.js"; // (#3173) reflective DataView member bodies
+import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
@@ -1906,16 +1906,21 @@ export function ensureArrayBufferNativeProtoGlue(ctx: CodegenContext): number | 
   const brand = getBuiltinBrand(ctx, "ArrayBuffer");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(
-      ctx,
-      makeGlueWithGetters(
-        brand,
-        "ArrayBuffer",
-        ARRAYBUFFER_PROTO_METHODS,
-        ARRAYBUFFER_PROTO_GETTERS,
-        ARRAYBUFFER_PROTO_METHOD_LENGTH,
-      ),
+    const glue = makeGlueWithGetters(
+      brand,
+      "ArrayBuffer",
+      ARRAYBUFFER_PROTO_METHODS,
+      ARRAYBUFFER_PROTO_GETTERS,
+      ARRAYBUFFER_PROTO_METHOD_LENGTH,
     );
+    // (#1595) `transfer` and `transferToFixedLength` have an optional
+    // newLength parameter even though their spec `.length` is 0. Give the
+    // reflective closure a real argument slot, then delegate its body to the
+    // same native ArrayBufferCopyAndDetach helper used by direct calls.
+    glue.memberParamSlots = (member) =>
+      member === "transfer" || member === "transferToFixedLength" ? 1 : member === "slice" ? 2 : 0;
+    glue.emitMemberBody = (c, fctx, member) => emitArrayBufferProtoMemberBody(c, fctx, member);
+    registerNativeProtoBuiltin(ctx, glue);
   }
   return brand;
 }

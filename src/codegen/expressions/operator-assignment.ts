@@ -372,9 +372,11 @@ function compilePropertyLogicalAssignment(
 
   const fieldIdx = fields.findIndex((f) => f.name === propName);
   if (fieldIdx === -1) {
-    // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
-    fctx.body.push({ op: "f64.const", value: NaN });
-    return { kind: "f64" };
+    // A class may acquire a property dynamically (including through ??=/||=/&&=).
+    // Treating an uncollected field as a numeric `undefined` sentinel drops the
+    // required GetValue/PutValue and can feed that f64 into a reference-typed
+    // receiver slot. Route through the ordinary dynamic property path instead.
+    return compilePropertyLogicalAssignmentExternref(ctx, fctx, target, rhs, op, propName);
   }
 
   const fieldType = fields[fieldIdx]!.type;

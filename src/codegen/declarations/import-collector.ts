@@ -17,6 +17,7 @@ import { ensureWrapperTypes } from "../any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "../async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
 import {
   functionBodyReferencesThis,
   genBodyReferencesSuper,
@@ -2018,6 +2019,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
  * they are widened like data descriptors so the property appears in for-in and hasOwnProperty
  * (matching baseline behavior where all Object.defineProperty targets are widened). (#929) */
 function isAccessorDescriptor(descArg: ts.Expression): boolean {
+  descArg = unwrapTransparentExpression(descArg);
   if (!ts.isObjectLiteralExpression(descArg)) return false;
   for (const prop of descArg.properties) {
     // Method shorthand: get() {...} or set(v) {...} — always a real accessor

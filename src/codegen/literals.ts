@@ -1653,6 +1653,16 @@ export function compileObjectLiteral(
     // fall through to the struct path if the $Object builder declined.
   }
 
+  // (#4208) A checker-identical `var` binding repeatedly initialized with
+  // different valueOf/toString-only literal shapes cannot use a closed struct:
+  // the sibling shape fails the guarded store and the next coercion sees null.
+  // The pre-pass pins only the exact initializer nodes, so unrelated locals
+  // named `object` retain their existing representation.
+  if (ctx.ordinaryToPrimitiveObjectLiterals.has(expr)) {
+    const ordinaryObject = compileObjectLiteralAsExternref(ctx, fctx, expr);
+    if (ordinaryObject) return ordinaryObject;
+  }
+
   // (#2837) A NON-EMPTY object literal initializing a variable that the detection
   // pre-pass (collectGrowableObjectLiterals) marked growable — i.e. it later
   // receives an OUT-OF-SHAPE property write (direct unknown key, or a nested

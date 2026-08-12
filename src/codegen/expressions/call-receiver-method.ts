@@ -49,6 +49,7 @@ import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
+  emitArrayBufferTransfer,
   emitDataViewAccessor,
   ensureDvAccessorHelper,
   ensureTaDynCopyWithinHelper,
@@ -121,12 +122,14 @@ import { compileExternMethodCall } from "./extern.js";
 import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
+  canonicalClassExpressionName,
   emitThrowTypeError,
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
   maybeStampCompiledFunctionArgName,
   noJsHost,
+  resolveReceiverMethodClassName,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -687,6 +690,25 @@ export function compileReceiverMethodCall(
     }
   }
 
+  // (#1595) Direct-call adapter to the canonical native
+  // ArrayBufferCopyAndDetach helper. The operation itself is shared with the
+  // reflective ArrayBuffer.prototype member closures; this surface only
+  // compiles the receiver/argument expressions into that common ABI.
+  if (noJsHost(ctx) && (propAccess.name.text === "transfer" || propAccess.name.text === "transferToFixedLength")) {
+    const recvSym = receiverType.getSymbol()?.name;
+    if (recvSym === "ArrayBuffer") {
+      const transferResult = emitArrayBufferTransfer(
+        ctx,
+        fctx,
+        propAccess.name.text,
+        propAccess.expression,
+        expr.arguments,
+        (e, hint) => compileExpression(ctx, fctx, e, hint),
+      );
+      if (transferResult) return transferResult;
+    }
+  }
+
   if (isExternalDeclaredClass(receiverType, ctx.checker)) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
@@ -1127,12 +1149,8 @@ export function compileReceiverMethodCall(
     }
   }
 
-  // Check if receiver is a local class instance
-  let receiverClassName = receiverType.getSymbol()?.name;
-  // Map class expression symbol names to their synthetic names
-  if (receiverClassName && !ctx.classSet.has(receiverClassName)) {
-    receiverClassName = ctx.classExprNameMap.get(receiverClassName) ?? receiverClassName;
-  }
+  // Check if receiver is a local class instance.
+  let receiverClassName = resolveReceiverMethodClassName(ctx, fctx, propAccess, receiverType);
   // Fallback for union types, interfaces, abstract classes:
   // When the direct symbol name is not a known class, try to resolve via
   // union members, apparent type, or base types.
@@ -1143,10 +1161,7 @@ export function compileReceiverMethodCall(
     // Try union type members: for `A | B`, check each member for a known class
     if (receiverType.isUnion()) {
       for (const memberType of (receiverType as ts.UnionType).types) {
-        let memberName = memberType.getSymbol()?.name;
-        if (memberName && !ctx.classSet.has(memberName)) {
-          memberName = ctx.classExprNameMap.get(memberName) ?? memberName;
-        }
+        const memberName = canonicalClassExpressionName(ctx, memberType.getSymbol()?.name);
         if (memberName && ctx.classSet.has(memberName)) {
           const fullName = `${memberName}_${methodName}`;
           if (ctx.funcMap.has(fullName)) {
@@ -1170,10 +1185,7 @@ export function compileReceiverMethodCall(
     if (!receiverClassName || !ctx.classSet.has(receiverClassName)) {
       const apparentType = ctx.checker.getApparentType(receiverType);
       if (apparentType !== receiverType) {
-        let apparentName = apparentType.getSymbol()?.name;
-        if (apparentName && !ctx.classSet.has(apparentName)) {
-          apparentName = ctx.classExprNameMap.get(apparentName) ?? apparentName;
-        }
+        const apparentName = canonicalClassExpressionName(ctx, apparentType.getSymbol()?.name);
         if (apparentName && ctx.classSet.has(apparentName) && ctx.funcMap.has(`${apparentName}_${methodName}`)) {
           receiverClassName = apparentName;
         }
@@ -1184,10 +1196,7 @@ export function compileReceiverMethodCall(
       const baseTypes = receiverType.getBaseTypes?.();
       if (baseTypes) {
         for (const baseType of baseTypes) {
-          let baseName = baseType.getSymbol()?.name;
-          if (baseName && !ctx.classSet.has(baseName)) {
-            baseName = ctx.classExprNameMap.get(baseName) ?? baseName;
-          }
+          const baseName = canonicalClassExpressionName(ctx, baseType.getSymbol()?.name);
           if (baseName && ctx.classSet.has(baseName) && ctx.funcMap.has(`${baseName}_${methodName}`)) {
             receiverClassName = baseName;
             break;
@@ -1197,7 +1206,7 @@ export function compileReceiverMethodCall(
     }
     // Try struct name from the receiver's wasm type
     if (!receiverClassName || !ctx.classSet.has(receiverClassName)) {
-      const structName = resolveStructName(ctx, receiverType);
+      const structName = canonicalClassExpressionName(ctx, resolveStructName(ctx, receiverType));
       if (structName && ctx.classSet.has(structName) && ctx.funcMap.has(`${structName}_${methodName}`)) {
         receiverClassName = structName;
       }
@@ -1216,7 +1225,10 @@ export function compileReceiverMethodCall(
       // dynamic so their runtime identity selects the method.
       const canInferClass =
         recvProps.length > 0 && (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
-      for (const className of canInferClass ? ctx.classSet : []) {
+      const canonicalClasses = canInferClass
+        ? new Set([...ctx.classSet].map((name) => canonicalClassExpressionName(ctx, name) ?? name))
+        : [];
+      for (const className of canonicalClasses) {
         if (!ctx.funcMap.has(`${className}_${methodName}`)) continue;
         // (#3123) Never INFER a fnctor-subclass (`class C extends F`, F a
         // top-level plain function) for an any/unknown-typed receiver: the
@@ -1283,7 +1295,7 @@ export function compileReceiverMethodCall(
     let fullName = `${receiverClassName}_${methodName}`;
     let funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)); // (#1983)
     // Walk inheritance chain to find the method in a parent class
-    if (funcIdx === undefined) {
+    if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
       while (ancestor && funcIdx === undefined) {
         fullName = `${ancestor}_${methodName}`;
@@ -1297,7 +1309,7 @@ export function compileReceiverMethodCall(
     // exists. Without this, a base-typed receiver would unconditionally
     // call the first subclass's method regardless of runtime type.
     let virtualCandidates: { className: string; funcIdx: number; classTag: number }[] | undefined;
-    if (funcIdx === undefined) {
+    if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       const candidates: { className: string; funcIdx: number; classTag: number }[] = [];
       const baseClass = fullName.split("_")[0];
       for (const [childClass, parentClass] of ctx.classParentMap) {
@@ -1318,7 +1330,10 @@ export function compileReceiverMethodCall(
         fullName = `${candidates[0]!.className}_${methodName}`;
         funcIdx = candidates[0]!.funcIdx;
       }
-    } else {
+    } else if (funcIdx !== undefined && !ts.isPrivateIdentifier(propAccess.name)) {
+      // Private names are lexically bound and cannot be overridden. Dispatch
+      // exactly to their declaring body; treating a same-spelled private name
+      // on a subclass as an override violates both the brand and self ABI.
       // Method exists on receiver class — also check for subclass overrides.
       const candidates: { className: string; funcIdx: number; classTag: number }[] = [];
       const recvTag = ctx.classTagMap.get(receiverClassName);

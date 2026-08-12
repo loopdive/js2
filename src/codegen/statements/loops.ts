@@ -308,6 +308,14 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       savedForConstBindings.set(name, fctx.constBindings?.has(name) ?? false);
       fctx.constBindings?.delete(name);
 
+      // A lexical loop-head binding shadows the complete outer storage
+      // descriptor, not just its localMap entry. If the outer name was boxed
+      // for a closure, leaving boxedCaptures active makes reads of the fresh
+      // scalar loop slot perform ref-cell operations on that scalar.
+      if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
+      savedForBoxedCaptures.set(name, fctx.boxedCaptures?.get(name));
+      fctx.boxedCaptures?.delete(name);
+
       const existing = fctx.localMap.get(name);
       if (existing !== undefined) {
         if (!savedForScope) savedForScope = new Map();
@@ -512,7 +520,9 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
       // loop exit — nested for-loops with the same name would otherwise
       // permanently overwrite the outer binding.
       if (!savedForBoxedCaptures) savedForBoxedCaptures = new Map();
-      savedForBoxedCaptures.set(name, fctx.boxedCaptures?.get(name));
+      if (!savedForBoxedCaptures.has(name)) {
+        savedForBoxedCaptures.set(name, fctx.boxedCaptures?.get(name));
+      }
 
       // Re-aim localMap to the boxed local and register the boxed-capture
       // metadata so subsequent identifier reads/writes (condition body,

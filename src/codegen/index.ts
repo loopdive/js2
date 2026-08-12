@@ -62,6 +62,9 @@ import {
   type IrSelection,
 } from "../ir/select.js";
 import type {
+  IrHostDateGetterLoweringPlan,
+  IrHostDateSnapshotLoweringPlan,
+  IrHostDateSnapshotGetter,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
   IrTopLevelFunctionValueLoweringPlan,
@@ -83,6 +86,7 @@ import {
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
+  type IrBindingId,
   type IrClassId,
   type IrUnitKind,
   type IrUnitId,
@@ -119,7 +123,10 @@ import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_R
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import { planIrImportedCalls, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
 import {
+  canPrepareHostDateSnapshotLoweringByIdentity,
   closeIrBlockedComponentByIdentity,
+  hasExactCurrentEnvFunctionImportManifest,
+  hasExactHostVoidCallbackMakerImport,
   prepareHostVoidCallbackLoweringByIdentity,
   preparePromiseDelayLoweringByIdentity,
   type IrHostDateSnapshotImportPlan,
@@ -162,7 +169,7 @@ import {
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
   prepareIrBodies,
-  selectR2PreparedFreeFunctions,
+  selectR2PreparedOwnerComponents,
   selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMemberUnitIds,
   type PreparedIrClassMemberBodies,
@@ -1338,6 +1345,13 @@ function buildIrClassShapes(
         }
         constructorParams.push(ir);
       }
+    } else if (parentShape) {
+      // A derived class with no source constructor has the spec-synthesized
+      // `constructor(...args) { super(...args); }`. The direct backend already
+      // clones the nearest user-parent constructor ABI for this support body;
+      // project the same exact ABI so `new Derived(args)` can be prepared
+      // instead of being rejected as an apparent zero-arity call.
+      constructorParams.push(...parentShape.constructorParams);
     }
     if (!ctorOk) continue;
     const constructorInitTarget = callableTarget(
@@ -1884,6 +1898,9 @@ interface IrOverlayPlan {
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   /** Exact ambient addEventListener void arrows admitted by B2/Calendar. */
   readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  /** Exact ambient Date snapshot constructors and getter uses admitted by Calendar. */
+  readonly hostDateSnapshots: Map<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
+  readonly hostDateGetters: Map<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** Synthetic host-Date ABI labels keyed by each exact certified terminal owner. */
   readonly hostDateImportsByOwnerUnitId: ReadonlyMap<IrUnitId, IrHostDateSnapshotImportPlan>;
   /** Exact Promise-delay plans, keyed separately by each owned AST call. */
@@ -2566,6 +2583,8 @@ function planIrOverlay(
     resolvePositionType: (node, mapped, classShapes) => resolvePositionType(node, mapped, ctx, classShapes),
   });
   const hostVoidCallbacks = new Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>();
+  const hostDateSnapshots = new Map<ts.NewExpression, IrHostDateSnapshotLoweringPlan>();
+  const hostDateGetters = new Map<ts.CallExpression, IrHostDateGetterLoweringPlan>();
   const hostDateImportsByOwnerUnitId = new Map<
     IrUnitId,
     { ownerUnitId: IrUnitId; ownerName: string; importNames: Set<string> }
@@ -2601,6 +2620,19 @@ function planIrOverlay(
         if (ts.isNewExpression(node)) {
           const certified = resolveHostDateSnapshot(node);
           if (certified) {
+            const snapshotPlan = { ownerUnitId, ownerName } satisfies IrHostDateSnapshotLoweringPlan;
+            const existingSnapshot = hostDateSnapshots.get(node);
+            if (
+              existingSnapshot &&
+              (existingSnapshot.ownerUnitId !== ownerUnitId || existingSnapshot.ownerName !== ownerName)
+            ) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                `host-Date snapshot changed owner from ${existingSnapshot.ownerUnitId} to ${ownerUnitId}`,
+              );
+            }
+            hostDateSnapshots.set(node, snapshotPlan);
             let plan = hostDateImportsByOwnerUnitId.get(ownerUnitId);
             if (!plan) {
               plan = { ownerUnitId, ownerName, importNames: new Set() };
@@ -2612,10 +2644,39 @@ function planIrOverlay(
                 `host-Date owner ${ownerUnitId} has conflicting legacy labels ${plan.ownerName} / ${ownerName}`,
               );
             }
-            plan.importNames.add("Date_new");
+            plan.importNames.add("__date_now");
             for (const call of certified.getterCalls) {
               const access = call.expression;
-              if (ts.isPropertyAccessExpression(access)) plan.importNames.add(`Date_${access.name.text}`);
+              if (!ts.isPropertyAccessExpression(access)) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date getter in ${ownerName} lost its property-access identity`,
+                );
+              }
+              const getter = access.name.text as IrHostDateSnapshotGetter;
+              if (getter !== "getDate" && getter !== "getMonth" && getter !== "getFullYear") {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date snapshot in ${ownerName} gained unsupported getter ${getter}`,
+                );
+              }
+              const getterPlan = { ...snapshotPlan, snapshot: node, getter } satisfies IrHostDateGetterLoweringPlan;
+              const existingGetter = hostDateGetters.get(call);
+              if (
+                existingGetter &&
+                (existingGetter.ownerUnitId !== getterPlan.ownerUnitId ||
+                  existingGetter.snapshot !== getterPlan.snapshot ||
+                  existingGetter.getter !== getterPlan.getter)
+              ) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "resolve",
+                  `host-Date getter in ${ownerName} has conflicting exact plans`,
+                );
+              }
+              hostDateGetters.set(call, getterPlan);
             }
           }
         }
@@ -2661,6 +2722,8 @@ function planIrOverlay(
     importedCalls,
     topLevelFunctionValues,
     hostVoidCallbacks,
+    hostDateSnapshots,
+    hostDateGetters,
     hostDateImportsByOwnerUnitId,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
@@ -3412,6 +3475,7 @@ interface IrFirstBodyRouting {
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
   readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
   readonly skipBodies?: ReadonlySet<string>;
@@ -3419,16 +3483,23 @@ interface IrFirstBodyRouting {
 }
 
 /**
- * R4's intentionally bounded first module-init owner: one exact top-level
- * `const x = new Map<K, V>()`. The selector supplies the ambient-binding and
- * storage proof; the semantic plan supplies gap/order/invocation parity.
+ * R4's intentionally bounded module-init owner: an ordered sequence of
+ * initialized top-level lexical declarations. The selector proves a one-to-one
+ * Program ABI projection while the semantic plan proves exact source order,
+ * binding identity, TDZ intent, and Wasm-start invocation parity.
  */
-function isPreparedExactMapModuleInit(
+interface PreparedLexicalModuleInitEvidence {
+  readonly unitId: IrUnitId;
+  readonly globalBindingIds: ReadonlySet<IrBindingId>;
+}
+
+function preparedExactLexicalModuleInit(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   selection: Pick<IrSelection, "moduleInit">,
   planning: IrModuleInitPlanningEvidence | undefined,
-): boolean {
+  identityContext: IrPlanningIdentityContext,
+): PreparedLexicalModuleInitEvidence | undefined {
   if (
     ctx.fast ||
     ctx.nativeStrings ||
@@ -3436,32 +3507,229 @@ function isPreparedExactMapModuleInit(
     ctx.wasi ||
     ctx.strictNoHostImports ||
     selection.moduleInit?.reason !== null ||
-    selection.moduleInit.stmtCount !== 1 ||
+    selection.moduleInit.stmtCount === 0 ||
     !planning?.plan.executable ||
     planning.plan.gaps.length !== 0 ||
     !planning.parity.aligned ||
-    planning.plan.invocation.kind !== "wasm-start"
+    planning.plan.invocation.target !== "host" ||
+    planning.plan.invocation.kind !== "wasm-start" ||
+    !planning.plan.invocation.exactlyOnce ||
+    planning.plan.liveSeeds.length !== 0
   ) {
-    return false;
+    return undefined;
   }
+
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+  const moduleInitUnitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  if (
+    planning.plan.sourceId !== sourceId ||
+    planning.plan.unitId === null ||
+    planning.plan.unitId !== moduleInitUnitId ||
+    identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitUnitId
+  ) {
+    return undefined;
+  }
+
   const population = collectModuleInitPopulation(sourceFile);
-  if (population.length !== 1) return false;
-  const statement = population[0];
-  if (!statement || !ts.isVariableStatement(statement)) return false;
-  const declarations = statement.declarationList.declarations;
-  if (!(statement.declarationList.flags & ts.NodeFlags.Const) || declarations.length !== 1) return false;
-  const declaration = declarations[0];
-  const initializer = declaration?.initializer;
-  return (
-    !!declaration &&
-    ts.isIdentifier(declaration.name) &&
-    !!initializer &&
-    ts.isNewExpression(initializer) &&
-    ts.isIdentifier(initializer.expression) &&
-    initializer.expression.text === "Map" &&
-    initializer.typeArguments?.length === 2 &&
-    (initializer.arguments?.length ?? 0) === 0
+  if (
+    population.length === 0 ||
+    selection.moduleInit.stmtCount !== population.length ||
+    planning.plan.bindings.length !== population.length ||
+    planning.plan.evaluations.length !== population.length ||
+    planning.parity.plannedEntryCount !== population.length ||
+    planning.parity.legacyEntryCount !== population.length
+  ) {
+    return undefined;
+  }
+
+  const sourceExecutableDeclarations = new Set<ts.Declaration>(
+    sourceFile.statements.filter(
+      (statement): statement is ts.FunctionDeclaration | ts.ClassDeclaration =>
+        (ts.isFunctionDeclaration(statement) && !!statement.body) || ts.isClassDeclaration(statement),
+    ),
   );
+  const globalBindingIds = new Set<IrBindingId>();
+  for (let ordinal = 0; ordinal < population.length; ordinal++) {
+    const statement = population[ordinal];
+    const binding = planning.plan.bindings[ordinal];
+    const evaluation = planning.plan.evaluations[ordinal];
+    if (!statement || !binding || !evaluation || !ts.isVariableStatement(statement)) return undefined;
+    const declarations = statement.declarationList.declarations;
+    const declaration = declarations[0];
+    const declarationKind =
+      statement.declarationList.flags & ts.NodeFlags.Const
+        ? "const"
+        : statement.declarationList.flags & ts.NodeFlags.Let
+          ? "let"
+          : undefined;
+    if (
+      !declarationKind ||
+      declarations.length !== 1 ||
+      !declaration ||
+      !ts.isIdentifier(declaration.name) ||
+      !declaration.initializer ||
+      binding.declarationOrdinal !== ordinal ||
+      binding.names.length !== 1 ||
+      binding.names[0] !== declaration.name.text ||
+      binding.declarationKind !== declarationKind ||
+      binding.mutable !== (declarationKind === "let") ||
+      binding.initialization !== "tdz" ||
+      binding.globalBindingId === null ||
+      binding.tdzBindingId === null ||
+      binding.start !== declaration.getStart(sourceFile) ||
+      binding.end !== declaration.end ||
+      evaluation.kind !== "variable-initializer" ||
+      evaluation.sourceOrdinal !== ordinal ||
+      evaluation.statementOrdinal !== sourceFile.statements.indexOf(statement) ||
+      evaluation.nestedOrdinal !== 0 ||
+      evaluation.start !== statement.getStart(sourceFile) ||
+      evaluation.end !== statement.end ||
+      evaluation.classId !== null ||
+      evaluation.bindingIds.length !== 1 ||
+      evaluation.bindingIds[0] !== binding.globalBindingId
+    ) {
+      return undefined;
+    }
+    globalBindingIds.add(binding.globalBindingId);
+
+    let reachesSourceFunction = false;
+    const visitInitializer = (node: ts.Node): void => {
+      if (reachesSourceFunction) return;
+      if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        reachesSourceFunction = true;
+        return;
+      }
+      if (ts.isIdentifier(node)) {
+        if (ctx.oracle.declarationsOf(node).some((declaration) => sourceExecutableDeclarations.has(declaration))) {
+          reachesSourceFunction = true;
+          return;
+        }
+      }
+      ts.forEachChild(node, visitInitializer);
+    };
+    visitInitializer(declaration.initializer);
+    if (reachesSourceFunction) return undefined;
+  }
+  return { unitId: planning.plan.unitId, globalBindingIds };
+}
+
+function preparedLexicalComponentPreflightFailure(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+  preliminaryR2Names: ReadonlySet<string>,
+  moduleInit: PreparedLexicalModuleInitEvidence,
+): string | undefined {
+  // The bounded lexical transaction does not yet own source-unit imports or
+  // Promise-delay registration. Keep those families on their existing route
+  // until their aggregate preparation can be proven without mutation.
+  if (plan.importedCalls.size > 0 || plan.promiseDelays.constructions.size > 0) {
+    return "the exact lexical component still depends on a separately prepared import or Promise-delay family";
+  }
+  if (!hasExactCurrentEnvFunctionImportManifest(ctx)) {
+    return "the final env function-import manifest contains an occupied compatibility slot";
+  }
+  if (plan.hostVoidCallbacks.size > 0 && !hasExactHostVoidCallbackMakerImport(ctx)) {
+    return "the exact host callback maker ABI is unavailable in the final module context";
+  }
+  const retainedFunctionUnitIds = new Set(
+    [...preliminaryR2Names].map((legacyName) =>
+      irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+    ),
+  );
+  const supportsHostDateSnapshots = supportsIrBackendTargetCapability(
+    {
+      backend: "wasmgc",
+      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
+      allowHostImports: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+      fast: ctx.fast,
+    },
+    "host-date-snapshot",
+  );
+  if (
+    !canPrepareHostDateSnapshotLoweringByIdentity(
+      ctx,
+      sourceFile,
+      plan.hostDateImportsByOwnerUnitId,
+      retainedFunctionUnitIds,
+      moduleInit.unitId,
+      plan.identityPlan.identityContext,
+      { supportsHostDateSnapshots },
+    )
+  ) {
+    return "the exact host Date provider ABI is unavailable in the final module context";
+  }
+  return undefined;
+}
+
+function rejectPreparedLexicalComponentBeforeMutation(
+  plan: IrOverlayPlan,
+  preliminaryR2Names: ReadonlySet<string>,
+  moduleInit: PreparedLexicalModuleInitEvidence,
+  detail: string,
+): void {
+  const failure: IrPreparationFailure = {
+    kind: "unsupported",
+    code: "late-preparation-unsupported",
+    stage: "resolve",
+    detail,
+  };
+  for (const legacyName of preliminaryR2Names) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName);
+    if (!plan.preparationFailuresByUnitId.has(unitId)) plan.preparationFailuresByUnitId.set(unitId, failure);
+    plan.safeSelection.funcs.delete(legacyName);
+    irOverlayIdentity.dropIrSafeFunctionByLegacyName(plan.identityPlan, legacyName);
+  }
+  if (!plan.preparationFailuresByUnitId.has(moduleInit.unitId)) {
+    plan.preparationFailuresByUnitId.set(moduleInit.unitId, failure);
+  }
+  plan.safeSelection.moduleInit = undefined;
+}
+
+/**
+ * A class member admitted by the selector may still leave the prepared owner
+ * fixed point when one of its exact local callees is not preparable. Class
+ * bodies cannot use the old post-direct overlay as a retry path: doing so
+ * compiles the legacy body first and then rebuilds the rejected member against
+ * a target population that deliberately excludes its callee. Withdraw the
+ * exact structural member before final-context integration and retain one
+ * typed reason for the terminal ledger.
+ */
+function withdrawClassMembersOutsidePreparedOwnerClosure(
+  plan: IrOverlayPlan,
+  consideredUnitIds: ReadonlySet<IrUnitId>,
+  retainedUnitIds: ReadonlySet<IrUnitId>,
+): void {
+  const rejectedUnitIds = new Set([...consideredUnitIds].filter((unitId) => !retainedUnitIds.has(unitId)));
+  if (rejectedUnitIds.size === 0) return;
+
+  const retainedSelectionUnitIds = new Set(
+    [...(plan.safeSelection.classMemberUnitIds ?? [])].filter((unitId) => !rejectedUnitIds.has(unitId)),
+  );
+  const retainedLegacyNames = new Set<string>();
+  for (const unitId of retainedSelectionUnitIds) {
+    const claim = plan.identityPlan.identitySelection.classMembers?.get(unitId);
+    if (!claim) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `retained prepared class member ${unitId} has no exact structural claim`,
+      );
+    }
+    retainedLegacyNames.add(claim.legacyMatchName);
+  }
+  for (const unitId of rejectedUnitIds) {
+    if (!plan.preparationFailuresByUnitId.has(unitId)) {
+      plan.preparationFailuresByUnitId.set(unitId, {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: "the class member's exact local call graph crosses the final prepared owner population",
+      });
+    }
+  }
+  plan.safeSelection.classMemberUnitIds = retainedSelectionUnitIds;
+  plan.safeSelection.classMembers = retainedLegacyNames;
 }
 
 function planIrFirstBodyRouting(
@@ -3491,19 +3759,13 @@ function planIrFirstBodyRouting(
     plan.hostVoidCallbacks.size > 0 ||
     plan.hostDateImportsByOwnerUnitId.size > 0 ||
     plan.promiseDelays.constructions.size > 0;
-  const preliminaryModuleInit = isPreparedExactMapModuleInit(ctx, sourceFile, preliminarySelection, moduleInitPlanning);
-  const preliminaryR2Names =
-    !hasLateFeaturePreparation || preliminaryModuleInit
-      ? selectR2PreparedFreeFunctions({
-          ctx,
-          sourceFile,
-          selectedLegacyNames: preliminarySelection.funcs,
-          baselineLegacyNames: new Set(),
-          identityPlan: plan.identityPlan,
-          claimsByUnitId: plan.functionClaimsByUnitId,
-          overridesByUnitId: plan.overrideMapByUnitId,
-        })
-      : new Set<string>();
+  const preliminaryModuleInit = preparedExactLexicalModuleInit(
+    ctx,
+    sourceFile,
+    preliminarySelection,
+    moduleInitPlanning,
+    plan.identityPlan.identityContext,
+  );
   const selectedPreliminaryClassMemberUnitIds = selectPreparedClassMemberUnitIds(
     ctx,
     preliminarySelection,
@@ -3513,7 +3775,7 @@ function planIrFirstBodyRouting(
   // constructors. Only exact selected accessor UnitIds are an
   // independently sealed component that may prepare beside host/import/date/
   // promise work in the surrounding Test262 harness.
-  const preliminaryClassMemberUnitIds = new Set(
+  const eligiblePreliminaryClassMemberUnitIds = new Set(
     [...selectedPreliminaryClassMemberUnitIds].filter((unitId) => {
       if (!hasLateFeaturePreparation) return true;
       const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(unitId);
@@ -3526,26 +3788,72 @@ function planIrFirstBodyRouting(
       );
     }),
   );
+  const preliminaryOwnerPopulation =
+    !hasLateFeaturePreparation || preliminaryModuleInit
+      ? selectR2PreparedOwnerComponents({
+          ctx,
+          sourceFile,
+          selectedLegacyNames: preliminarySelection.funcs,
+          baselineLegacyNames: new Set(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+          identityPlan: plan.identityPlan,
+          claimsByUnitId: plan.functionClaimsByUnitId,
+          overridesByUnitId: plan.overrideMapByUnitId,
+          hostVoidCallbacks: plan.hostVoidCallbacks,
+        })
+      : {
+          freeFunctionNames: new Set<string>(),
+          classMemberUnitIds: eligiblePreliminaryClassMemberUnitIds,
+        };
+  const preliminaryR2Names = preliminaryOwnerPopulation.freeFunctionNames;
+  const preliminaryClassMemberUnitIds = preliminaryOwnerPopulation.classMemberUnitIds;
+  withdrawClassMembersOutsidePreparedOwnerClosure(
+    plan,
+    eligiblePreliminaryClassMemberUnitIds,
+    preliminaryClassMemberUnitIds,
+  );
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
   // preparation transaction. Constructor `_new` wrappers remain AST-free
   // support. The exact prepared Map initializer may join that transaction;
   // every other module-init shape remains direct.
-  // selectR2PreparedFreeFunctions closes candidates over exact local call
-  // edges, so any callable edge that crosses into one of those owners removes
-  // the complete affected free-function component before preparation.
+  // selectR2PreparedOwnerComponents closes candidates over exact local call
+  // edges, so any callable edge that crosses into those owners removes the
+  // complete affected free/class component before preparation.
   const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
   const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
     preliminaryR2Names.size > 0 ||
-    preliminaryModuleInit ||
+    preliminaryModuleInit !== undefined ||
     preliminaryClassMemberUnitIds.size > 0 ||
     hasPromiseDelayComponent ||
     hasSuspendingAsyncComponent;
   let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit"> | undefined;
 
   if (usePreparedRouting) {
+    if (preliminaryModuleInit !== undefined && preliminaryR2Names.size > 0) {
+      const preflightFailure = preparedLexicalComponentPreflightFailure(
+        ctx,
+        sourceFile,
+        plan,
+        preliminaryR2Names,
+        preliminaryModuleInit,
+      );
+      if (preflightFailure !== undefined) {
+        rejectPreparedLexicalComponentBeforeMutation(plan, preliminaryR2Names, preliminaryModuleInit, preflightFailure);
+        const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
+        const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
+          requestedSkipUnitIds,
+          plan.functionClaimsByUnitId,
+        );
+        return {
+          requestedSkipProjection,
+          preparedSelection: plan.safeSelection,
+          skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+        };
+      }
+    }
     // TDZ globals are part of the frozen Program ABI and may be read while
     // the IR program is prepared. The exact Promise-delay route also settles
     // its late runtime imports here, before any direct body can bake funcIdxs.
@@ -3585,13 +3893,41 @@ function planIrFirstBodyRouting(
       classMemberUnitIds: finalClassMemberUnitIds,
       freeFunctionNames: preparedFreeFunctionNames,
     } = preparedPopulation;
-    const prepareModuleInit =
-      preliminaryModuleInit && isPreparedExactMapModuleInit(ctx, sourceFile, preparedSelection, moduleInitPlanning);
+    const finalModuleInit =
+      preliminaryModuleInit === undefined
+        ? undefined
+        : preparedExactLexicalModuleInit(
+            ctx,
+            sourceFile,
+            preparedSelection,
+            moduleInitPlanning,
+            plan.identityPlan.identityContext,
+          );
+    const prepareModuleInit = finalModuleInit !== undefined;
     if (preparedFreeFunctionNames.size === 0 && finalClassMemberNames.size === 0 && !prepareModuleInit) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
       if (prepareModuleInit) preallocateModuleInitCallable(ctx, sourceFile);
+      const postWasmStartTdzSafeBindingsByOwnerUnitId = prepareModuleInit
+        ? new Map(
+            [...preparedFreeFunctionNames].map(
+              (legacyName) =>
+                [
+                  irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+                  finalModuleInit.globalBindingIds,
+                ] as const,
+            ),
+          )
+        : undefined;
+      const projectLoweringPlans = (selection: IrSelection) =>
+        irOverlayIdentity.projectIrIntegrationLoweringPlans(
+          {
+            ...plan,
+            ...(postWasmStartTdzSafeBindingsByOwnerUnitId ? { postWasmStartTdzSafeBindingsByOwnerUnitId } : {}),
+          },
+          selection,
+        );
       const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
@@ -3606,11 +3942,12 @@ function planIrFirstBodyRouting(
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,
         classShapesById: plan.classShapesById,
-        projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+        projectLoweringPlans,
       });
       const preparedFreeFunctions = preparedBodies.freeFunctions;
       const preparedClassMembers = preparedBodies.classMembers;
       const preparedModuleInit = preparedBodies.moduleInit;
+      const preparedImplicitConstructorUnitIds = preparedBodies.implicitConstructorUnitIds;
       const preparedReport = preparedBodies.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
@@ -3625,6 +3962,7 @@ function planIrFirstBodyRouting(
         preparedFreeFunctions,
         ...(preparedClassMembers ? { preparedClassMembers } : {}),
         ...(preparedModuleInit ? { preparedModuleInit } : {}),
+        ...(preparedImplicitConstructorUnitIds.size > 0 ? { preparedImplicitConstructorUnitIds } : {}),
         preparedReport,
         preparedSelection,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
@@ -3655,6 +3993,66 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   const keepOpenTypeIdxs = callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
+}
+
+function compileIrRoutedDeclarations(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly preparedClassMembers?: PreparedIrClassMemberBodies;
+  readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  readonly preparedModuleInit?: PreparedIrModuleInitBody;
+  readonly irSkipBodies?: ReadonlySet<string>;
+  readonly irPreserveBodies?: ReadonlySet<string>;
+}): {
+  readonly actuallySkipped?: string[];
+  readonly classMemberUnitIds: readonly IrUnitId[];
+  readonly implicitConstructorUnitIds: readonly IrUnitId[];
+  readonly moduleInitNames: readonly string[];
+} {
+  const classMemberNames: string[] = [];
+  const classMemberUnitIds: IrUnitId[] = [];
+  const implicitConstructorUnitIds: IrUnitId[] = [];
+  const moduleInitNames: string[] = [];
+  const classBodyRouting =
+    input.preparedClassMembers || (input.preparedImplicitConstructorUnitIds?.size ?? 0) > 0
+      ? {
+          skipBodies: input.preparedClassMembers?.skipBodies ?? new Set<string>(),
+          preserveSkippedBodies: input.preparedClassMembers?.preserveBodies ?? new Set<string>(),
+          skippedNames: classMemberNames,
+          skipBodyUnitIds: input.preparedClassMembers?.skipBodyUnitIds ?? new Set<IrUnitId>(),
+          preserveSkippedBodyUnitIds: input.preparedClassMembers?.preserveBodyUnitIds ?? new Set<IrUnitId>(),
+          skippedUnitIds: classMemberUnitIds,
+          skipImplicitConstructorUnitIds: input.preparedImplicitConstructorUnitIds ?? new Set<IrUnitId>(),
+          skippedImplicitConstructorUnitIds: implicitConstructorUnitIds,
+        }
+      : undefined;
+  const moduleInitBodyRouting = input.preparedModuleInit
+    ? {
+        skipBody: input.preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
+        preserveSkippedBody: input.preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
+        skippedNames: moduleInitNames,
+      }
+    : undefined;
+  const previousClassBodyRouting = input.ctx.irClassBodyRouting;
+  try {
+    input.ctx.irClassBodyRouting = classBodyRouting;
+    return {
+      actuallySkipped: compileDeclarations(
+        input.ctx,
+        input.sourceFile,
+        input.irSkipBodies,
+        input.irPreserveBodies,
+        classBodyRouting,
+        "full",
+        moduleInitBodyRouting,
+      ),
+      classMemberUnitIds,
+      implicitConstructorUnitIds,
+      moduleInitNames,
+    };
+  } finally {
+    input.ctx.irClassBodyRouting = previousClassBodyRouting;
+  }
 }
 
 /** Compile a typed AST into a WasmModule IR */
@@ -3992,6 +4390,21 @@ export function generateModule(
       // registered up-front so `emitLazyClassObjectGet` finds it in funcMap.
       const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
       addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
+      // (#4371) A name-only class-object registration can make reflection
+      // report a static method, but it cannot invoke that method after the
+      // class value crosses an `any`/host boundary. Register the real compiled
+      // closure on the singleton as well. This import is host-only for the same
+      // reason as __register_class_object; standalone/wasi keep their zero-host
+      // class representation and direct in-Wasm calls.
+      const regStaticMethodTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_static_method", {
+        kind: "func",
+        typeIdx: regStaticMethodTypeIdx,
+      });
     }
 
     // #1677 — reconcile native-string helper func indices before emitting more
@@ -4184,6 +4597,7 @@ export function generateModule(
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
     let preparedClassMembers: PreparedIrClassMemberBodies | undefined;
     let preparedModuleInit: PreparedIrModuleInitBody | undefined;
+    let preparedImplicitConstructorUnitIds: ReadonlySet<IrUnitId> | undefined;
     let preparedReport: IrIntegrationReport | undefined;
     let preparedSelection:
       | Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">
@@ -4200,6 +4614,7 @@ export function generateModule(
       preparedFreeFunctions = routing.preparedFreeFunctions;
       preparedClassMembers = routing.preparedClassMembers;
       preparedModuleInit = routing.preparedModuleInit;
+      preparedImplicitConstructorUnitIds = routing.preparedImplicitConstructorUnitIds;
       preparedReport = routing.preparedReport;
       preparedSelection = routing.preparedSelection;
       irSkipBodies = routing.skipBodies;
@@ -4207,50 +4622,20 @@ export function generateModule(
     }
 
     // Third pass: compile function bodies
-    const actuallySkippedClassMembers: string[] = [];
-    const actuallySkippedClassMemberUnitIds: IrUnitId[] = [];
-    const actuallySkippedModuleInit: string[] = [];
-    const classBodyRouting = preparedClassMembers
-      ? {
-          skipBodies: preparedClassMembers.skipBodies,
-          preserveSkippedBodies: preparedClassMembers.preserveBodies,
-          skippedNames: actuallySkippedClassMembers,
-          skipBodyUnitIds: preparedClassMembers.skipBodyUnitIds,
-          preserveSkippedBodyUnitIds: preparedClassMembers.preserveBodyUnitIds,
-          skippedUnitIds: actuallySkippedClassMemberUnitIds,
-        }
-      : undefined;
-    const moduleInitBodyRouting = preparedModuleInit
-      ? {
-          skipBody: preparedModuleInit.skipBodies.has(MODULE_INIT_UNIT_NAME),
-          preserveSkippedBody: preparedModuleInit.preserveBodies.has(MODULE_INIT_UNIT_NAME),
-          skippedNames: actuallySkippedModuleInit,
-        }
-      : undefined;
-    const previousClassBodyRouting = ctx.irClassBodyRouting;
-    let actuallySkipped: string[] | undefined;
-    try {
-      if (classBodyRouting) {
-        ctx.irClassBodyRouting = classBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-      actuallySkipped = compileDeclarations(
-        ctx,
-        ast.sourceFile,
-        irSkipBodies,
-        irPreserveBodies,
-        classBodyRouting,
-        "full",
-        moduleInitBodyRouting,
-      );
-    } finally {
-      if (previousClassBodyRouting) {
-        ctx.irClassBodyRouting = previousClassBodyRouting;
-      } else {
-        ctx.irClassBodyRouting = undefined;
-      }
-    }
+    const {
+      actuallySkipped,
+      classMemberUnitIds: actuallySkippedClassMemberUnitIds,
+      implicitConstructorUnitIds: actuallySkippedImplicitConstructorUnitIds,
+      moduleInitNames: actuallySkippedModuleInit,
+    } = compileIrRoutedDeclarations({
+      ctx,
+      sourceFile: ast.sourceFile,
+      preparedClassMembers,
+      preparedImplicitConstructorUnitIds,
+      preparedModuleInit,
+      irSkipBodies,
+      irPreserveBodies,
+    });
     if (irFirst) {
       const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
@@ -4268,6 +4653,13 @@ export function generateModule(
           preparedClassMembers.skipBodyUnitIds,
           actuallySkippedClassMemberUnitIds,
           "class member",
+        );
+      }
+      if (preparedImplicitConstructorUnitIds && preparedImplicitConstructorUnitIds.size > 0) {
+        correlateIrSkippedBodyUnitIds(
+          preparedImplicitConstructorUnitIds,
+          actuallySkippedImplicitConstructorUnitIds,
+          "implicit constructor support",
         );
       }
       if (preparedModuleInit) {
@@ -9068,6 +9460,9 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     // resolveStructNameForExpr sees the override at every later access.
     let initForcesExternref = false;
     if (decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+      if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
+        initForcesExternref = true;
+      }
       // (#802 Slice A) A proto-receiver object literal is built as an open
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
@@ -9769,7 +10164,12 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
-        const initForcesExternref = initIsAccessorLiteral || initIsHostSpreadLiteral || initIsProtoReceiverLiteral;
+        const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
+        const initForcesExternref =
+          initIsAccessorLiteral ||
+          initIsHostSpreadLiteral ||
+          initIsOrdinaryToPrimitiveObjectLiteral ||
+          initIsProtoReceiverLiteral;
         if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);
         }

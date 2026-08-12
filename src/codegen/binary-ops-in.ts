@@ -10,7 +10,7 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
-import type { Instr, ValType } from "../ir/types.js";
+import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -41,6 +41,19 @@ function buildThrowTypeErrorBranch(ctx: CodegenContext, fctx: FunctionContext, m
   const throwInstrs = fctx.body;
   popBody(fctx, saved);
   return throwInstrs;
+}
+
+/**
+ * Keep a dynamic `key in value` comparison on the JavaScript property surface.
+ * Physical structs also contain compiler-only fields such as `__tag`; unlike
+ * public TypeScript properties, the import collector intentionally has no
+ * string constant for those fields.
+ */
+function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): string[] {
+  const publicPropertyNames = new Set(rightType.getProperties().map((property) => property.name));
+  return fields
+    .map((field) => field.name)
+    .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
 }
 
 /**
@@ -201,7 +214,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         isVecType = true;
         vecTypeIdx = typeIdx;
       } else {
-        structFieldNames = structDef.fields.map((f) => f.name).filter((n): n is string => n !== undefined);
+        structFieldNames = publicPhysicalFieldNames(rightType, structDef.fields);
         structWasm = rightWasm;
       }
     }
@@ -444,10 +457,9 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         // Start with false (0)
         fctx.body.push({ op: "i32.const", value: 0 });
         for (const fieldName of structFieldNames) {
-          // Load the key and the field name string, compare
-          fctx.body.push({ op: "local.get", index: keyLocal });
           const strGlobal = ctx.stringGlobalMap.get(fieldName);
           if (strGlobal !== undefined) {
+            fctx.body.push({ op: "local.get", index: keyLocal });
             fctx.body.push({ op: "global.get", index: strGlobal });
             fctx.body.push({ op: "call", funcIdx: eqFunc });
             fctx.body.push({ op: "i32.or" }); // OR with accumulated result

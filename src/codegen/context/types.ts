@@ -20,6 +20,8 @@ export interface CodegenError {
   message: string;
   line: number;
   column: number;
+  /** Source file that owns the diagnostic node, when one is available. */
+  file?: string;
   /**
    * #1921 — the compile-failure gate keys on this field, not on a magic
    * `"Codegen error:"` message prefix.
@@ -113,6 +115,8 @@ export interface CodegenOptions {
    *  `__unbox_string` JS-host string imports. Used so the compiled module is
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
+  /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
+  directEval?: "legacy" | "reified-host";
   /**
    * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
    * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
@@ -323,6 +327,13 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /**
+   * True only while every concrete allocation of this wrapper/subtype is a
+   * checker-certified one-shot host callback. Such values are consumed by
+   * `__make_callback(-2, closure)` immediately and never enter the generic
+   * callable/property/method bridges. An ordinary allocation clears the bit.
+   */
+  hostOneShotOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
@@ -892,6 +903,8 @@ export interface FunctionContext {
         // into a local; bare names matching a field route to direct struct
         // get/set.
         kind: "static";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         structTypeIdx: number;
         fields: FieldDef[];
@@ -903,6 +916,8 @@ export interface FunctionContext {
         // HasBinding gate (`__extern_has`) + `Get` (`emitDynGet`), falling back
         // to the outer lexical lowering when absent.
         kind: "dynamic";
+        /** Hidden by-reference closure capture selected by ir/with-environment. */
+        captureName: string;
         localIdx: number;
         blockedNames: Set<string>;
       }
@@ -949,6 +964,14 @@ export interface FunctionContext {
    * so non-Annex-B function decls are byte-identical.
    */
   annexBOuterBindings?: Set<string>;
+  /**
+   * Subset of `annexBOuterBindings` whose name is shared by multiple eligible,
+   * capture-free declaration sites in the same var scope. Direct calls for
+   * these names must dispatch through the live outer-binding local because the
+   * executed branch, rather than the name-keyed funcMap winner, determines the
+   * callee.
+   */
+  annexBRepeatedOuterBindings?: Set<string>;
   /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
@@ -2167,7 +2190,7 @@ export interface CodegenContext {
   callerStrictGlobalIdx: number;
   /** Source function name → source strictness, consumed by the final call-site pass. */
   sourceFunctionStrictness: Map<string, boolean>;
-  /** Root source-function body → strictness; avoids collisions between shadowed names. */
+  /** Source-function or inlined-IIFE instruction region → strictness. */
   sourceFunctionStrictnessByBody: Map<Instr[], boolean>;
   /** Idempotence guard for the final call-site instrumentation pass. */
   functionPoisonPillCallsFinalized?: boolean;
@@ -2923,6 +2946,19 @@ export interface CodegenContext {
    */
   growableObjectLiteralVars: Set<string>;
   /**
+   * (#4208) Exact declarations whose shared `var` binding is repeatedly
+   * initialized with different OrdinaryToPrimitive method shapes. These
+   * literals must use the open `$Object` carrier: a closed anonymous struct
+   * cannot safely receive a later sibling shape, and the guarded reassignment
+   * otherwise stores null before `valueOf` / `toString` can run.
+   *
+   * Declaration identity is intentional. A bare-name set would poison every
+   * unrelated local named `object` in the same compilation unit.
+   */
+  ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
+  /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
+  ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
    * objects (via `__new_plain_object` + `__defineProperty_accessor`) and
@@ -3153,6 +3189,10 @@ export interface CodegenContext {
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
+  /** Resolved JS-host direct-eval lowering. */
+  directEvalMode: "legacy" | "reified-host";
+  /** Private externref-array carrier used only by reified JS-host direct eval. */
+  hostRuntimeEvalVecTypeIdx?: number;
   /** (#2141 S1) Honest generic `any` boxing regime flag — see the
    *  `CodegenOptions.honestAnyBoxing` doc. Default false (legacy tag-5
    *  box-the-externref ABI, byte-identical). */

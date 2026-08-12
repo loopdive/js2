@@ -98,6 +98,38 @@ describe("#3734 — i32 array elements (shape)", () => {
     });
   });
 
+  it("a SAFE narrowed read uses i32 length directly and widens only the in-bounds element", async () => {
+    const source = `export function read(index: number): number {
+      const arr: number[] = [];
+      for (let i = 0; i < 8; i++) arr.push(i);
+      return arr[index];
+    }`;
+    const r = await compile(source, { emitWat: true, trackIrOutcomes: true });
+    expect(r.success, r.errors.map(({ message }) => message).join("\n")).toBe(true);
+    expect(hasI32ElementVector(r.wat)).toBe(true);
+    const body = funcBody(r.wat, "read");
+    expect(body).toContain("i32.lt_u");
+    expect(body).toContain("array.get");
+    // The two remaining truncations ground the incoming `number` parameter
+    // and consume it as an index. The two widens are the loop carrier and
+    // in-bounds element. The removed vec-length round-trip would make these
+    // counts three and three.
+    expect(body.match(/i32\.trunc_sat_f64_s/g) ?? []).toHaveLength(2);
+    expect(body.match(/f64\.convert_i32_s/g) ?? []).toHaveLength(2);
+    expect(r.irOutcomes?.find((outcome) => outcome.displayName === "read")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    const imports = buildImports(r.imports, undefined, r.stringPool);
+    const { instance } = await WebAssembly.instantiate(r.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const read = instance.exports.read as (index: number) => number;
+    expect(read(3)).toBe(3);
+    expect(read(99)).toBeNaN();
+  });
+
   it("a narrowed store costs one conversion FEWER per iteration than the f64 layout", async () => {
     // A fill-only loop isolates the store side: the narrowed build hands the
     // i32-promoted counter straight to `__vec_elem_set_*`, while the f64 build
