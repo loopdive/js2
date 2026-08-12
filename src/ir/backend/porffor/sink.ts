@@ -727,6 +727,14 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
       case "f64.convert_i32_s":
         out.push(convertExpr("f64", value, 1));
         return;
+      case "i64.trunc_f64_s":
+        // This trapping conversion is emitted only in an AOT-proven arm or
+        // behind explicit finite/integral/signed-i64 bounds checks.
+        out.push(convertExpr("i64", value, 3));
+        return;
+      case "f64.convert_i64_s":
+        out.push(convertExpr("f64", value, 1));
+        return;
       case "f64.abs":
       case "f64.sqrt":
       case "f64.floor":
@@ -1218,6 +1226,10 @@ function binaryOp(op: IrBinop): {
       return { op: "*", comparison: false, operandType: "f64" };
     case "f64.div":
       return { op: "/", comparison: false, operandType: "f64" };
+    case "f64.copysign":
+      return { op: "copysign", comparison: false, operandType: "f64" };
+    case "i64.rem_s":
+      return { op: "%", comparison: false, operandType: "i64" };
     case "i32.and":
       return { op: "&", comparison: false, operandType: "i32" };
     case "i32.or":

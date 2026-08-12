@@ -32,7 +32,6 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
-import { ensureFmod } from "./fmod.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNewTargetClassId, getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
@@ -58,6 +57,8 @@ import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+import { compileModulo } from "./remainder.js";
+export { emitModulo } from "./remainder.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
 
@@ -3193,28 +3194,6 @@ function compileBitwiseBinaryOp(
   fctx.body.push({ op: i32op });
   fctx.body.push({ op: unsigned ? "f64.convert_i32_u" : "f64.convert_i32_s" });
   return { kind: "f64" };
-}
-
-function compileModulo(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
-  emitModulo(ctx, fctx);
-  return { kind: "f64" };
-}
-
-/**
- * Emit JS remainder (`a % b`) on f64 operands as a call to the Wasm-native
- * `__fmod` helper, which computes the *exact* IEEE-754 remainder
- * ([Number::remainder §6.1.6.1.6](https://tc39.es/ecma262/#sec-numeric-types-number-remainder)).
- * Stack: [a_f64, b_f64] -> [result_f64].
- *
- * The previous inline formula `a - trunc(a/b)*b` (+ copysign) was not fmod: it
- * drifted by ULPs, collapsed to 0 for large `a/b`, and overflowed to ±Infinity
- * when `a/b` exceeded f64 range. `__fmod` handles all of those plus the #216
- * edge cases (`x % Inf`, `-0 % x`, `Inf % x`, `x % 0`, `NaN % x`) internally.
- * See `fmod.ts` for the algorithm and correctness notes (#2056).
- */
-export function emitModulo(ctx: CodegenContext, fctx: FunctionContext): void {
-  const fmodIdx = ensureFmod(ctx);
-  fctx.body.push({ op: "call", funcIdx: fmodIdx });
 }
 
 /**

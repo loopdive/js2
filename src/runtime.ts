@@ -28,6 +28,7 @@ import {
   _getAsyncGeneratorInstancePrototype,
   _getAsyncGeneratorFunctionPrototype,
   _installIteratorHelperPolyfills,
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
@@ -36,6 +37,7 @@ import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
+export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 import {
   compiledClosureNativeSource,
   createNativeFunctionCallbackBridge,

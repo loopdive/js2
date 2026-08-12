@@ -38,6 +38,8 @@
 // `.length` descriptors too (see FN_SUBPROP_SNAPSHOTS below), and add the
 // Date/TypedArray/DataView entries the original 12-proto list omitted.
 
+import { _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "../src/runtime.js";
+
 const PROTOS: ReadonlyArray<[string, object]> = [
   ["Object.prototype", Object.prototype],
   ["Array.prototype", Array.prototype],
@@ -191,6 +193,12 @@ function restoreFnSubProp(
  * in-process compiles as unreliable.
  */
 export function restoreHostBuiltins(): boolean {
+  // Compiler-owned generator/iterator intrinsics are module-level caches, not
+  // host built-ins listed below. A configurable descriptor probe can delete a
+  // property from the sloppy variant and otherwise leak it into the strict
+  // rerun. Drop that synthetic realm before restoring the host realm.
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation();
+
   let clean = true;
   for (const snap of SNAPSHOTS) {
     const { proto, ownKeys, ownSymbols, values, descs } = snap;

@@ -751,6 +751,7 @@ export type IrBinop =
   | "f64.sub"
   | "f64.mul"
   | "f64.div"
+  | "f64.copysign"
   // f64 comparison → i32 (bool)
   | "f64.eq"
   | "f64.ne"
@@ -793,6 +794,10 @@ export type IrBinop =
   | "i32.add"
   | "i32.sub"
   | "i32.mul"
+  // Guarded JS Number remainder fast path. The AST-to-IR lowerer emits this
+  // only after proving or checking that both f64 operands are exact signed-i64
+  // integers, the divisor is non-zero, and INT64_MIN / -1 is excluded.
+  | "i64.rem_s"
   // #1126 Stage 3 — native i32 magnitude compares. Emitted by the
   // AST→IR lowerer when both operands of `<`, `<=`, `>`, `>=` are
   // i32-typed (a bool, a comparison result, or an i32-domain value
@@ -842,12 +847,15 @@ export type IrUnop =
   | "f64.reinterpret_i64"
   | "i32.eqz"
   | "i32.trunc_sat_f64_s"
+  // Trapping conversion used only inside the proven/guarded remainder arm.
+  | "i64.trunc_f64_s"
   // (#3168) boolean → f64 ToNumber for unary `+`/`-` (§7.1.4: false/true →
   // 0/1). Same pass-through footprint as the #1371 Math family below: the
   // WasmGC/linear emitters push the op tag verbatim (a valid `Instr` op); the
   // bytecode backend's `unopToOpcode` throws loudly for it (not in the #1584
   // production subset), exactly like `f64.abs` et al.
   | "f64.convert_i32_s"
+  | "f64.convert_i64_s"
   // (#1371) Math.* unary ops that map 1:1 to a Wasm f64 instruction.
   // The IR's `case "unary"` lowerer already passes the `op` tag through
   // verbatim (lower.ts line 770), so we only need to extend the type

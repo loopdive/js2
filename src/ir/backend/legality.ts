@@ -326,6 +326,7 @@ function porfforBinopLegal(op: IrBinop): boolean {
     case "f64.sub":
     case "f64.mul":
     case "f64.div":
+    case "f64.copysign":
     case "f64.eq":
     case "f64.ne":
     case "f64.lt":
@@ -350,6 +351,7 @@ function porfforBinopLegal(op: IrBinop): boolean {
     case "i32.add":
     case "i32.sub":
     case "i32.mul":
+    case "i64.rem_s":
     // #3499: lower.ts expands these through backend-neutral typed scalar
     // primitives (ToInt32, native i32 bitwise op, and signed/unsigned result
     // conversion). No raw Wasm instruction reaches the Porffor sink.

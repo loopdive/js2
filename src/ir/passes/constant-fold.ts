@@ -281,6 +281,9 @@ const BINARY_FOLD_TABLE: Readonly<Record<IrBinop, BinaryFolder>> = {
   "f64.sub": (l, r) => f64Arith(l, r, (a, b) => a - b),
   "f64.mul": (l, r) => f64Arith(l, r, (a, b) => a * b),
   "f64.div": (l, r) => f64Arith(l, r, (a, b) => a / b),
+  // Preserve the sign bit of NaN as well as ordinary numbers. The constant
+  // lattice does not retain NaN payload/sign bits, so leave this to Wasm.
+  "f64.copysign": () => null,
   // f64 comparison → bool. JS comparison returns the right values for NaN
   // (always false) except for f64.ne, which must be true for NaN != NaN.
   "f64.eq": (l, r) => f64Cmp(l, r, (a, b) => a === b),
@@ -302,6 +305,11 @@ const BINARY_FOLD_TABLE: Readonly<Record<IrBinop, BinaryFolder>> = {
   "i32.add": (l, r) => i32Arith(l, r, (a, b) => a + b),
   "i32.sub": (l, r) => i32Arith(l, r, (a, b) => a - b),
   "i32.mul": (l, r) => i32Arith(l, r, (a, b) => a * b),
+  "i64.rem_s": (l, r) => {
+    if (l.kind !== "i64" || r.kind !== "i64" || r.value === 0n) return null;
+    if (l.value === -(1n << 63n) && r.value === -1n) return null;
+    return { kind: "i64", value: l.value % r.value };
+  },
   // #1126 Stage 3 — i32 magnitude compares. Signed ops compare values as
   // signed 32-bit integers; unsigned ops as unsigned. We coerce constants
   // to i32 first then compare in the appropriate domain. JS `>>>0` gives
@@ -355,6 +363,13 @@ function foldUnary(op: IrUnop, rand: IrConst): IrConst | null {
       if (v <= -2147483648) return { kind: "i32", value: -2147483648 };
       return { kind: "i32", value: Math.trunc(v) };
     }
+    case "i64.trunc_f64_s":
+      if (rand.kind !== "f64" || !Number.isFinite(rand.value) || !Number.isInteger(rand.value)) return null;
+      if (rand.value < -(2 ** 63) || rand.value >= 2 ** 63) return null;
+      return { kind: "i64", value: BigInt(rand.value) };
+    case "f64.convert_i64_s":
+      if (rand.kind !== "i64") return null;
+      return { kind: "f64", value: Number(rand.value) };
     // (#1392) `ref.is_null` is non-foldable — we don't track ref-typed
     // constants in the IrConst lattice, so we can't statically decide
     // whether a Wasm reference is null at compile time. The runtime
