@@ -2,6 +2,7 @@
 id: 4387
 title: "ES5: retain Array-valued live fnctor prototypes across `$Object` reconstruction"
 status: ready
+pr: 4423
 assignee: ttraenkler/codex-es5-array-cluster
 sprint: current
 created: 2026-08-12
