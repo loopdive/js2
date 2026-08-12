@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-es5-defineproperty",
   "requested_by": "ttraenkler/codex-es5-defineproperty",
   "status": "in-progress",
-  "branch": "codex/es5-defineproperty-cluster-20260812",
-  "reserved_at": "2026-08-12T21:41:17Z",
-  "claimed_at": "2026-08-12T21:41:17Z",
-  "updated_at": "2026-08-12T21:41:17Z",
-  "write_id": "79293-yn35nsoj",
-  "pr_scan": "ok"
+  "branch": "codex/4392-accessor-underapplication",
+  "claimed_at": "2026-08-12T21:42:16Z",
+  "updated_at": "2026-08-12T21:42:16Z",
+  "write_id": "80754-gzdgkitq"
 }
