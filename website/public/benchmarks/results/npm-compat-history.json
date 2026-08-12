@@ -4206,6 +4206,46 @@
           },
           "standalone": {}
         }
+      },
+      "recordedIn": "c1acaabcf7cb633f00c01388e1a9365b9ed25a1f"
+    },
+    {
+      "generatedAt": "2026-08-12T18:24:17.973Z",
+      "sourceRevision": "c1acaabcf7cb633f00c01388e1a9365b9ed25a1f",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0037948760783570626
+          },
+          "standalone": {
+            "static": 79929.97849532674,
+            "dynamic": 0.1609410519823575
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0017127237177649332
+          },
+          "standalone": {
+            "static": 504.7863299501373,
+            "dynamic": 0.2607787839036704
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.11178662870878371
+          },
+          "standalone": {
+            "static": 18.715294756361157,
+            "dynamic": 0.18003688664581372
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.010752505731117532
+          },
+          "standalone": {}
+        }
       }
     }
   ]
