@@ -66,6 +66,7 @@ import {
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
   compileStatement,
+  hoistFunctionDeclarations,
 } from "./statements.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import {
@@ -130,9 +131,9 @@ import {
   isJsonReviverArgument,
 } from "./closures/callback-classification.js";
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
-import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
-export { emitFuncRefAsClosure };
+export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
   ctx: CodegenContext,
@@ -2248,6 +2249,20 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
+  // This body runs in a different Wasm frame from the source expression's
+  // declaring function. Calls to lifted sibling declarations must therefore
+  // source their synthetic capture prefix from the closure's extracted locals,
+  // never from the declaring frame's numeric slot indexes. FunctionDeclaration
+  // bodies already mark their leading captures this way; function expressions
+  // and arrows need the same cross-frame identity after their struct prologue
+  // installs the captures in localMap.
+  liftedFctx.liftedCaptureNames = new Set(captures.map((capture) => capture.name));
+  liftedFctx.liftedCaptureSlots = new Map(
+    captures.flatMap((capture) => {
+      const slot = liftedFctx.localMap.get(capture.name);
+      return slot === undefined ? [] : [[capture.name, slot] as const];
+    }),
+  );
 
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
@@ -2523,6 +2538,13 @@ export function compileLiftedClosureBody(
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
     reifyCurrentDirectEvalBindings(ctx, liftedFctx);
+    // FunctionDeclarationInstantiation makes every declaration in the body
+    // callable before its textual position. Function expressions and arrows
+    // use this lifted-closure compiler rather than function-body.ts; without
+    // the same function-declaration hoist, a forward sibling call was lowered
+    // as an unknown callable (ref.null.extern). Moment's createFromConfig ->
+    // prepareConfig edge is one real-world instance of the generic shape.
+    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -3485,6 +3507,7 @@ export function compileArrowAsCallback(
   // from the callback frame.
   const captureWorklist = [...referencedNames];
   const visitedCaptureFunctions = new Set<string>();
+  const transitivelyRequiredNames = new Set<string>();
   while (captureWorklist.length > 0) {
     const referencedName = captureWorklist.pop()!;
     if (visitedCaptureFunctions.has(referencedName)) continue;
@@ -3493,6 +3516,7 @@ export function compileArrowAsCallback(
     if (!transitiveCaptures) continue;
     for (const capture of transitiveCaptures) {
       if (ownLocals.has(capture.name)) continue;
+      transitivelyRequiredNames.add(capture.name);
       if (!referencedNames.has(capture.name)) {
         referencedNames.add(capture.name);
         captureWorklist.push(capture.name);
@@ -3520,7 +3544,10 @@ export function compileArrowAsCallback(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       directReferencedNames.has(name) &&
-      isCallbackFunctionDeclaration(bindingDeclaration)
+      isCallbackFunctionDeclaration(bindingDeclaration) &&
+      !ts.isVariableDeclaration(bindingDeclaration) &&
+      !transitivelyRequiredNames.has(name) &&
+      !fctx.hoistedFunctionValueBindings?.has(name)
     ) {
       continue;
     }
@@ -3760,6 +3787,7 @@ export function compileArrowAsCallback(
   // Pre-hoist let/const with TDZ flags for the callback body (#790)
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, cbFctx, body.statements);
+    hoistFunctionDeclarations(ctx, cbFctx, body.statements);
   }
 
   let exprBodyHasReturnValue = false;

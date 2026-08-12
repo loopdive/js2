@@ -124,6 +124,53 @@ function restoreNameSet(
 }
 
 /**
+ * Call an externref receiver's runtime-computed member through the fixed host
+ * bridge. This is the computed-key twin of the property-access host path:
+ * `obj[key](arg)` must preserve `obj` as `this` and invoke the value selected
+ * by the runtime key. The historical tail fallback only evaluated and dropped
+ * all operands, which made dispatch tables such as Moment's
+ * `moments[i]["isBefore"](res)` silently return null.
+ */
+function tryEmitDynamicElementHostMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  elemAccess: ts.ElementAccessExpression,
+): InnerResult | undefined {
+  if (
+    noJsHost(ctx) ||
+    elemAccess.argumentExpression === undefined ||
+    expr.arguments.length > 4 ||
+    expr.arguments.some((arg) => ts.isSpreadElement(arg))
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const importName = `__extern_method_call_${expr.arguments.length}`;
+  const callIdx = ensureLateImport(
+    ctx,
+    importName,
+    Array.from({ length: 2 + expr.arguments.length }, () => externref),
+    [externref],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (callIdx === undefined) return undefined;
+
+  const pushExtern = (value: ts.Expression): void => {
+    const type = compileExpression(ctx, fctx, value, externref);
+    if (type === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+  };
+
+  pushExtern(elemAccess.expression);
+  pushExtern(elemAccess.argumentExpression);
+  for (const arg of expr.arguments) pushExtern(arg);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? callIdx });
+  return externref;
+}
+
+/**
  * The inline-IIFE fast path shares a Wasm FunctionContext with its caller, but
  * it must not share the caller's source-level binding namespace. Snapshot and
  * temporarily hide only names declared by the IIFE. Changes to every other
@@ -1450,6 +1497,11 @@ export function compileTailDispatch(
         if (dyn !== null) return dyn;
       }
 
+      {
+        const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
+        if (dynamicHostCall !== undefined) return dynamicHostCall;
+      }
+
       // Fallback for resolved element access calls that didn't match any known method:
       // compile receiver, discard; compile each argument for side effects; return externref.
       {
@@ -1499,6 +1551,11 @@ export function compileTailDispatch(
       // (#4269) With a receiver — see the resolved-key twin above.
       const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
+    }
+
+    {
+      const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
+      if (dynamicHostCall !== undefined) return dynamicHostCall;
     }
 
     // Fallback for element access calls where the key couldn't be resolved statically:

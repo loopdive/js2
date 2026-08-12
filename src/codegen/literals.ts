@@ -3773,6 +3773,7 @@ export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ArrayLiteralExpression,
+  forcedElementType?: ValType,
 ): ValType | null {
   // (#3366) A destructuring assignment gives its RHS array literal the
   // assignment pattern's contextual tuple type. That context describes the
@@ -4336,6 +4337,7 @@ export function compileArrayLiteral(
     const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
     elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
+  if (forcedElementType !== undefined) elemWasm = forcedElementType;
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an
   // inner `[undefined]` / `[hole]` array down to a numeric vec (the leaf

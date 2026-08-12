@@ -42,8 +42,8 @@ describe("fixed-arity JS-host method calls", () => {
     expect((exports.invoke as (receiver: unknown) => number)(receiver)).toBe(723);
   });
 
-  it("supports arities zero through three through the canonical dispatcher", () => {
-    const descriptors: ImportDescriptor[] = [0, 1, 2, 3].map((arity) => ({
+  it("supports arities zero through four through the canonical dispatcher", () => {
+    const descriptors: ImportDescriptor[] = [0, 1, 2, 3, 4].map((arity) => ({
       module: "env",
       name: `__extern_method_call_${arity}`,
       kind: "func",
@@ -65,11 +65,15 @@ describe("fixed-arity JS-host method calls", () => {
       m3(a: number, b: number, c: number): number {
         return this.base + a * 100 + b * 10 + c;
       },
+      m4(a: number, b: number, c: number, d: number): number {
+        return this.base * 10000 + a * 1000 + b * 100 + c * 10 + d;
+      },
     };
     expect(built.env.__extern_method_call_0!(receiver, "m0")).toBe(5);
     expect(built.env.__extern_method_call_1!(receiver, "m1", 2)).toBe(7);
     expect(built.env.__extern_method_call_2!(receiver, "m2", 2, 3)).toBe(28);
     expect(built.env.__extern_method_call_3!(receiver, "m3", 2, 3, 4)).toBe(239);
+    expect(built.env.__extern_method_call_4!(receiver, "m4", 2, 3, 4, 5)).toBe(52345);
   });
 
   it("uses a fresh fallback pack when a host callback re-enters the same fixed import", () => {

@@ -2922,9 +2922,9 @@ export function buildArgcExtrasSetupFromLocals(
   fctx: FunctionContext,
   paramCount: number,
   extrasLocals: number[],
+  actualArgCount = paramCount + extrasLocals.length,
 ): Instr[] {
   const out: Instr[] = [];
-  const callArgCount = paramCount + extrasLocals.length;
   if (extrasLocals.length > 0) {
     const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTi } = ensureExtrasArgvGlobal(ctx);
     const extrasArrTi = getArrTypeIdxFromVec(ctx, extrasVecTi);
@@ -2940,7 +2940,7 @@ export function buildArgcExtrasSetupFromLocals(
     out.push({ op: "global.set", index: extrasGlobalIdx });
   }
   const argcGlobalIdx = ensureArgcGlobal(ctx);
-  out.push({ op: "i32.const", value: Math.min(callArgCount, paramCount) });
+  out.push({ op: "i32.const", value: Math.min(actualArgCount, paramCount) });
   out.push({ op: "global.set", index: argcGlobalIdx });
   return out;
 }
@@ -3985,6 +3985,22 @@ export function tryEmitInlineDynamicCall(
 
     const callBody: Instr[] = [];
 
+    // A dynamic binding's checker-visible type need not describe the runtime
+    // closure body. In particular, CommonJS/default-export factories often
+    // expose a zero-formal function that consumes every supplied value through
+    // `arguments` (Moment's public `hooks` function). Seed the shared
+    // argc/extras protocol for the candidate that actually matched, preserving
+    // all call-site values beyond that candidate's formal prefix.
+    callBody.push(
+      ...buildArgcExtrasSetupFromLocals(
+        ctx,
+        fctx,
+        cand.info.paramTypes.length,
+        argLocals.slice(cand.info.paramTypes.length),
+        arity,
+      ),
+    );
+
     // Self arg: anyref → the concrete struct type this funcref expects.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -4055,6 +4071,10 @@ export function tryEmitInlineDynamicCall(
     // answer `0` instead of `false` and `verifyProperty` report
     // "<p> descriptor should (not) be configurable".
     callBody.push(...buildClosureResultBoxing(ctx, cand.info.returnType, boxNumberIdx));
+    const dynamicCallResultLocal = allocLocal(fctx, `__dyn_result_${fctx.locals.length}`, { kind: "externref" });
+    callBody.push({ op: "local.set", index: dynamicCallResultLocal });
+    callBody.push(...buildArgcResetNoLazyExtras(ctx));
+    callBody.push({ op: "local.get", index: dynamicCallResultLocal });
 
     // (#820/#1543) Discriminate by the *funcref* signature, not the struct
     // type. Every `__fn_wrap_*` struct subtypes the single root wrapper, so
@@ -7010,6 +7030,17 @@ function compileCallExpression(
           ctx.closureMap.has(calleeName) ||
           ctx.funcMap.has(calleeName);
         if (argumentsVector !== undefined && knownCompiledCallee) {
+          // The arity bridge widens a short arguments vector to the target
+          // closure's formal count. In a JS host build those missing slots
+          // must carry the host's real `undefined`, not the standalone
+          // `$undefined` carrier: the callee may compare an `any` parameter
+          // with `undefined` through a host predicate. Register the import
+          // before reserving/filling the bridge so finalize only reads an
+          // already-stable function index.
+          if (!ctx.standalone && !ctx.wasi) {
+            ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+            flushLateImportShifts(ctx, fctx);
+          }
           reserveApplyClosure(ctx);
 
           const calleeType = compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
@@ -7026,9 +7057,18 @@ function compileCallExpression(
             coerceType(ctx, fctx, receiverType, { kind: "externref" });
           }
 
-          const vectorType = compileExpression(ctx, fctx, argumentsVector, { kind: "externref" });
-          if (vectorType === null) {
-            fctx.body.push({ op: "ref.null.extern" });
+          // Compile the native arguments vec in its own representation first.
+          // Supplying an externref expectation here routes array-like values
+          // through `__make_iterable`; that host wrapper hides the WasmGC vec
+          // from `__apply_closure`, so the bridge sees length 0 and pads every
+          // target formal with undefined. Convert the raw vec only after the
+          // identifier read, preserving its carrier for the bridge's direct
+          // length/index fast path.
+          const vectorLocalIdx = fctx.localMap.get(argumentsVector.text)!;
+          const vectorType = getLocalType(fctx, vectorLocalIdx)!;
+          fctx.body.push({ op: "local.get", index: vectorLocalIdx });
+          if (vectorType.kind === "ref" || vectorType.kind === "ref_null") {
+            fctx.body.push({ op: "extern.convert_any" });
           } else if (vectorType.kind !== "externref") {
             coerceType(ctx, fctx, vectorType, { kind: "externref" });
           }
@@ -7951,9 +7991,19 @@ function compileCallExpression(
             [{ kind: "externref" }],
             [{ kind: "externref" }],
           );
+          let preservedVecLocal: number | undefined;
+          let preservedVecType: ValType | null = null;
           if (expr.arguments.length >= 1) {
             const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
             if (argType?.kind === "ref" || argType?.kind === "ref_null") {
+              // Web Crypto returns the exact view it was given. Keep the typed
+              // Wasm vec live across the host mutation instead of accepting
+              // the import's necessarily-externref result: the latter loses
+              // the vec's static carrier at a linked-module return boundary
+              // (`uuid`'s rng() then observed length 0).
+              preservedVecType = argType;
+              preservedVecLocal = allocLocal(fctx, `__crypto_vec_${fctx.locals.length}`, argType);
+              fctx.body.push({ op: "local.tee", index: preservedVecLocal });
               fctx.body.push({ op: "extern.convert_any" });
             } else if (argType && argType.kind !== "externref") {
               // Fall back to the standard coerce for non-ref result types.
@@ -7965,12 +8015,16 @@ function compileCallExpression(
           flushLateImportShifts(ctx, fctx);
           if (idx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: idx });
+            if (preservedVecLocal !== undefined && preservedVecType !== null) {
+              fctx.body.push({ op: "drop" });
+              fctx.body.push({ op: "local.get", index: preservedVecLocal });
+            }
           } else {
             // Fallback: pop the arg and push null so the stack stays balanced.
             fctx.body.push({ op: "drop" });
             fctx.body.push({ op: "ref.null.extern" });
           }
-          return { kind: "externref" };
+          return preservedVecType ?? { kind: "externref" };
         }
       }
     }

@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import { ts } from "../../ts-api.js";
+import type { ValType } from "../../ir/types.js";
+import { getLocalType } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { getArrTypeIdxFromVec } from "../registry/types.js";
+import { compilePropertyAccessForNullishObservation } from "../property-access.js";
+import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
+
+/**
+ * Compile an argument for a call that stays inside the generated module.
+ *
+ * In JS-host mode, the general vec-to-externref coercion deliberately creates
+ * a real JS Array mirror so native host APIs can iterate it. That is the wrong
+ * boundary for a compiled-function call: an `any`-typed callee mutates the
+ * mirror while the caller still owns the original WasmGC vec. Preserve the raw
+ * vec identity for locally-typed array arguments so indexed writes and strict
+ * identity remain visible across the internal call (#4383).
+ */
+export function compileInternalCallArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+  expectedType: ValType | undefined,
+): ValType | null {
+  if (expectedType?.kind !== "externref" || ctx.standalone || ctx.wasi) {
+    return compileExpression(ctx, fctx, expression, expectedType);
+  }
+
+  let carrier = expression;
+  while (
+    ts.isParenthesizedExpression(carrier) ||
+    ts.isAsExpression(carrier) ||
+    ts.isTypeAssertionExpression(carrier) ||
+    ts.isNonNullExpression(carrier)
+  ) {
+    carrier = carrier.expression;
+  }
+  // An externref parameter deliberately preserves the full JavaScript value.
+  // Compile a property argument through the boxed dynamic reader so a missing
+  // numeric-looking field remains `undefined` instead of being narrowed to
+  // f64 NaN and then re-boxed. This is the `v1(options) -> v1Bytes(...)`
+  // nullish-default path in uuid (#4383).
+  if (ts.isPropertyAccessExpression(carrier)) {
+    return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
+  }
+  if (!ts.isIdentifier(carrier)) {
+    return compileExpression(ctx, fctx, expression, expectedType);
+  }
+
+  const localIdx = fctx.localMap.get(carrier.text);
+  const localType = localIdx === undefined ? undefined : getLocalType(fctx, localIdx);
+  if (
+    !localType ||
+    (localType.kind !== "ref" && localType.kind !== "ref_null") ||
+    getArrTypeIdxFromVec(ctx, localType.typeIdx) < 0
+  ) {
+    return compileExpression(ctx, fctx, expression, expectedType);
+  }
+
+  const actualType = compileExpression(ctx, fctx, expression);
+  if (
+    actualType &&
+    (actualType.kind === "ref" || actualType.kind === "ref_null") &&
+    getArrTypeIdxFromVec(ctx, actualType.typeIdx) >= 0
+  ) {
+    fctx.body.push({ op: "extern.convert_any" });
+    return expectedType;
+  }
+  if (actualType && !valTypesMatch(actualType, expectedType)) {
+    coerceType(ctx, fctx, actualType, expectedType);
+    return expectedType;
+  }
+  return actualType;
+}

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-export function fixedExternMethodCallArity(name: string): 0 | 1 | 2 | 3 | undefined {
-  const match = /^__extern_method_call_([0-3])$/.exec(name);
-  return match ? (Number(match[1]) as 0 | 1 | 2 | 3) : undefined;
+export function fixedExternMethodCallArity(name: string): 0 | 1 | 2 | 3 | 4 | undefined {
+  const match = /^__extern_method_call_([0-4])$/.exec(name);
+  return match ? (Number(match[1]) as 0 | 1 | 2 | 3 | 4) : undefined;
 }
 
 /**
@@ -13,7 +13,7 @@ export function fixedExternMethodCallArity(name: string): 0 | 1 | 2 | 3 | undefi
  * dispatch completes. Clearing retained values keeps object lifetimes equal to
  * the allocating path.
  */
-export function makeFixedExternMethodCall(arity: 0 | 1 | 2 | 3, call: Function): Function {
+export function makeFixedExternMethodCall(arity: 0 | 1 | 2 | 3 | 4, call: Function): Function {
   if (arity === 0) {
     const args: unknown[] = [];
     return (obj: unknown, method: string): unknown => call(obj, method, args);
@@ -43,11 +43,20 @@ export function makeFixedExternMethodCall(arity: 0 | 1 | 2 | 3, call: Function):
       reusableArgs[1] = b;
       return invokeReusable(obj, method);
     };
-  return (obj: unknown, method: string, a: unknown, b: unknown, c: unknown): unknown => {
-    if (active) return call(obj, method, [a, b, c]);
+  if (arity === 3)
+    return (obj: unknown, method: string, a: unknown, b: unknown, c: unknown): unknown => {
+      if (active) return call(obj, method, [a, b, c]);
+      reusableArgs[0] = a;
+      reusableArgs[1] = b;
+      reusableArgs[2] = c;
+      return invokeReusable(obj, method);
+    };
+  return (obj: unknown, method: string, a: unknown, b: unknown, c: unknown, d: unknown): unknown => {
+    if (active) return call(obj, method, [a, b, c, d]);
     reusableArgs[0] = a;
     reusableArgs[1] = b;
     reusableArgs[2] = c;
+    reusableArgs[3] = d;
     return invokeReusable(obj, method);
   };
 }

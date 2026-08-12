@@ -619,6 +619,8 @@ export interface FunctionContext {
    * localMap rather than reusing the declaring frame's outerLocalIdx.
    */
   liftedCaptureNames?: Set<string>;
+  /** Stable frame slots for leading captures, retained when a body-local shadows the same name. */
+  liftedCaptureSlots?: Map<string, number>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
@@ -698,6 +700,10 @@ export interface FunctionContext {
    * dynamic reference, exactly where the old per-site build copied them.
    */
   nestedFnClosureMemos?: Map<string, number>;
+  /** Function-declaration bindings materialized once because their Function identity is observable. */
+  hoistedFunctionValueBindings?: Set<string>;
+  /** Hoisted Function bindings whose singleton closure has been emitted in this frame. */
+  materializedHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
   /** Whether this constructor belongs to a class declared with `extends`. Spec §10.2.1.3
@@ -2454,6 +2460,10 @@ export interface CodegenContext {
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
+  /** Runtime storage for `export default <expression>` in linked modules.
+   * Identifier/function defaults use their existing binding; expression
+   * defaults need a stable cell that default imports can alias. */
+  defaultExpressionGlobals?: WeakMap<ts.ExportAssignment, { bindingName: string; type: ValType }>;
   /** Module-level variable initializers (compiled into __module_init) */
   moduleInitStatements: ts.Statement[];
   /**
@@ -3126,14 +3136,13 @@ export interface CodegenContext {
   anonStructHash: Map<string, string>;
   /**
    * (#2009) Result of the same-structural-shape collision-resolution post-pass:
-   * anon struct name → its shape-id. Populated ONLY for structs that genuinely
-   * collide (a different-named struct shares the same field TYPES, making them
-   * runtime-indistinguishable under WasmGC iso-recursive canonicalization). Such
-   * structs get a hidden trailing `$shape` i32 field retro-stamped per-instance;
-   * the host `__struct_field_names`/`__sset_*` exports read it to recover the
-   * instance's real field names by VALUE. Non-colliding structs are absent here
-   * and keep their original layout (zero blast radius — the common case, incl.
-   * all IR-path construction, is byte-identical to main).
+   * anon struct name → its nonzero shape-id. Populated ONLY for structs that
+   * genuinely collide (a different-named struct shares the same field TYPES,
+   * making them runtime-indistinguishable under WasmGC iso-recursive
+   * canonicalization). Such structs get a hidden trailing `$shape` i32 field
+   * retro-stamped per-instance; host reflection and dynamic dispatch read it to
+   * recover the JavaScript shape by value. Shape id zero is reserved as an
+   * invalid/miss value. Non-colliding structs remain absent and unchanged.
    */
   shapeIdByStructName: Map<string, number>;
   /** (#2009) shape-id → ordered field-name CSV, for the host name export. */

@@ -33,6 +33,8 @@ import type { FunctionContext } from "../context/types.js";
  * with 35 locals.
  */
 export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; outerLocalIdx: number }): number {
+  const capturedSlot = fctx.liftedCaptureSlots?.get(cap.name);
+  if (capturedSlot !== undefined) return capturedSlot;
   const inFrameIdx = fctx.localMap.get(cap.name);
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 

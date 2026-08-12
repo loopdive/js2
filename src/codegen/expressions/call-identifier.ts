@@ -73,6 +73,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -123,10 +124,16 @@ function localBindingShadowsCapturingFunction(
   callee: ts.Identifier,
 ): boolean {
   const name = callee.text;
-  if (!fctx.localMap.has(name) || !ctx.nestedFuncCaptures.has(name)) return false;
-  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
+  if (!fctx.localMap.has(name)) return false;
+  if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
   const declaration = ctx.oracle.valueDeclarationOf(callee);
-  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
+  // A real local binding always wins over a same-named lifted declaration.
+  // Do not require a checker call signature here: JavaScript locals commonly
+  // infer as `any` (Moment's `var format = ...`), yet call syntax still invokes
+  // that live value. Falling through to bare-name funcMap in that case calls an
+  // unrelated capturing declaration and reads its declaring-frame indexes from
+  // the current function, producing invalid Wasm or silently wrong dispatch.
+  return declaration !== undefined;
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
@@ -1096,7 +1103,19 @@ export function compileIdentifierCall(
     // sibling reached another module's `const equal = function equal(...)` and
     // the enclosing function silently returned 0.
     const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
-    let closureInfo = isLocallyShadowed || nestedBindingVisible ? undefined : ctx.closureMap.get(funcName);
+    const hasVisibleClosureStorage =
+      fctx.localMap.has(funcName) || ctx.moduleGlobals.has(funcName) || ctx.capturedGlobals.has(funcName);
+    // `closureMap` is keyed by a bare identifier across the complete linked
+    // source graph. A local arrow in an importer can therefore reuse the name
+    // of a dependency's function and overwrite this metadata even though its
+    // value slot is not visible in the dependency. Prefer the real direct
+    // function binding whenever there is no lexical/module storage from which
+    // this closure could actually be loaded. uuid exposed this as its local
+    // test callback `rng` replacing the imported package `rng()` inside v1.
+    let closureInfo =
+      isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
+        ? undefined
+        : ctx.closureMap.get(funcName);
 
     if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
@@ -1388,6 +1407,13 @@ export function compileIdentifierCall(
           // Compile call arguments with type coercion (only up to declared param count)
           // Save them to locals so they can be re-pushed in each dispatch branch.
           const argLocals: number[] = [];
+          // Keep an externref view of every real call-site argument. A linked
+          // value can have a declaration signature that differs from the
+          // closure body selected at runtime (Moment's declaration accepts
+          // arguments while its exported `hooks` body declares none and reads
+          // `arguments`). Per-candidate dispatch below needs the complete
+          // values in order to classify that candidate's overflow arguments.
+          const actualArgExternLocals: number[] = [];
           const cpParamCnt = matchedClosureInfo.paramTypes.length;
           // (#1511) Save overflow args to externref locals so we can pack them
           // into __extras_argv right before the call (whichever dispatch arm
@@ -1397,10 +1423,15 @@ export function compileIdentifierCall(
           // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
             for (let i = 0; i < Math.min(expr.arguments.length, cpParamCnt); i++) {
-              compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
+              fctx.body.push({ op: "local.get", index: argLocal });
+              coerceType(ctx, fctx, matchedClosureInfo.paramTypes[i]!, { kind: "externref" });
+              const externLocal = allocLocal(fctx, `__carg_extern_${fctx.locals.length}`, { kind: "externref" });
+              fctx.body.push({ op: "local.set", index: externLocal });
+              actualArgExternLocals.push(externLocal);
             }
             for (let i = cpParamCnt; i < expr.arguments.length; i++) {
               const extraType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
@@ -1429,6 +1460,7 @@ export function compileIdentifierCall(
               const extraLocal = allocLocal(fctx, `__cextra_${fctx.locals.length}`, { kind: "externref" });
               fctx.body.push({ op: "local.set", index: extraLocal });
               cpExtrasLocals.push(extraLocal);
+              actualArgExternLocals.push(extraLocal);
             }
           }
 
@@ -1619,7 +1651,13 @@ export function compileIdentifierCall(
               fctx.body.push({ op: "local.get", index: al });
             }
             // (#1511) Set __extras_argv from saved overflow locals + __argc
-            for (const ins of buildArgcExtrasSetupFromLocals(ctx, fctx, cpParamCnt, cpExtrasLocals)) {
+            for (const ins of buildArgcExtrasSetupFromLocals(
+              ctx,
+              fctx,
+              cpParamCnt,
+              cpExtrasLocals,
+              expr.arguments.length,
+            )) {
               fctx.body.push(ins);
             }
             // Push funcref back, guarded cast, call
@@ -1746,6 +1784,20 @@ export function compileIdentifierCall(
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
               const fcCallBody: Instr[] = [];
+              // The runtime closure can declare fewer parameters than the
+              // imported/checker signature. Build `arguments` relative to the
+              // selected closure, not the declaration used to type the call.
+              // Otherwise the declaration's first formal is lost when a
+              // zero-formal implementation reads `arguments`.
+              fcCallBody.push(
+                ...buildArgcExtrasSetupFromLocals(
+                  ctx,
+                  fctx,
+                  fc.paramTypes.length,
+                  actualArgExternLocals.slice(fc.paramTypes.length),
+                  expr.arguments.length,
+                ),
+              );
               // Shared func types use canonical-root self. A private/named
               // closure func type still names its concrete self, so its arm
               // needs a concrete cast to remain statically call_ref-valid.
@@ -1832,21 +1884,13 @@ export function compileIdentifierCall(
               ];
             }
 
-            // (#2704) Set __argc / __extras_argv ONCE around the funcref-type
-            // dispatch so the callee's `arguments` object observes the TRUE
-            // call-site arg count. The single-funcref arm above already does
-            // this (via buildArgcExtrasSetupFromLocals); this multi-funcref arm
-            // previously omitted it, so an aliased / indirect method call —
+            // (#2704) Each funcref-type arm sets __argc / __extras_argv for its
+            // own formal count so the callee's `arguments` object observes the
+            // TRUE call-site arguments. An aliased / indirect method call —
             // `var ref = obj.m; ref(42)` — left __argc at its -1 sentinel and
             // the callee fell back to its formal-param count: `arguments.length`
             // came back 0 for a 0-formal method that reads `arguments` (the
             // async-gen-meth / static-async-gen test262 forms in #2704). The
-            // dispatch chain below is pure ref.test/if with no intervening
-            // calls and exactly ONE arm runs, so a single set-before /
-            // reset-after is correct.
-            for (const ins of buildArgcExtrasSetupFromLocals(ctx, fctx, cpParamCnt, cpExtrasLocals)) {
-              fctx.body.push(ins);
-            }
             fctx.body.push(...funcDispatch);
             // (#2704) Reset __argc to its sentinel after the dispatch so a stale
             // count can't leak into a subsequent callee that reads `arguments`
@@ -1925,7 +1969,7 @@ export function compileIdentifierCall(
       const argLocals: number[] = [];
       for (let i = 0; i < inlineInfo.paramCount; i++) {
         if (i < expr.arguments.length) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, inlineInfo.paramTypes[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, inlineInfo.paramTypes[i]);
         } else {
           // #1658: a missing optional param must receive its default — either the
           // inlined constant (callee prologue is skipped for constant defaults) or
@@ -2300,7 +2344,7 @@ export function compileIdentifierCall(
       // Compile non-rest arguments
       for (let i = 0; i < restInfo.restIndex; i++) {
         if (i < expr.arguments.length) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
         } else {
           pushDefaultValue(fctx, paramTypes?.[i] ?? { kind: "f64" }, ctx);
         }
@@ -2391,7 +2435,7 @@ export function compileIdentifierCall(
           hasLinearParamsForCall && paramTypes
             ? wasmParamIndexForSourceParam(i, linearParamsForCall, captureCount)
             : i + captureCount;
-        compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[wasmParamIndex]);
+        compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[wasmParamIndex]);
       }
       if (expr.arguments.length > paramCount) {
         if (calleeReadsArgsDirect) {

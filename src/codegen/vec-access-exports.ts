@@ -498,6 +498,12 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     })();
     const f64ScratchIdx = holeMapInVecGet ? 4 : 3;
     let usedF64Scratch = false;
+    const oobUndefinedInstrs: Instr[] = (() => {
+      const singleton = undefinedExternInstrs(ctx);
+      if (singleton !== undefined) return singleton.map((instr) => ({ ...instr }));
+      const getUndefinedIdx = ctx.funcMap.get("__get_undefined");
+      return getUndefinedIdx === undefined ? [{ op: "ref.null.extern" }] : [{ op: "call", funcIdx: getUndefinedIdx }];
+    })();
     for (let i = vecEntries.length - 1; i >= 0; i--) {
       const [elemKey, vecTypeIdx] = vecEntries[i]!;
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
@@ -607,8 +613,8 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       } else {
         boxInstrs = [{ op: "extern.convert_any" }];
       }
-      const thenBranch: Instr[] = [
-        // ref.cast to vec type, struct.get data array, then array.get with index
+      const elementRead: Instr[] = [
+        // ref.cast to vec type, struct.get data array, then array.get with index.
         { op: "local.get", index: 2 },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
@@ -624,6 +630,23 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
           typeIdx: arrTypeIdx,
         },
         ...boxInstrs,
+      ];
+      const thenBranch: Instr[] = [
+        // JavaScript array reads outside [0, length) produce undefined. This
+        // bridge is used by host and dynamic element access, so allowing the
+        // underlying Wasm `array.get` to see an OOB index turns an ordinary JS
+        // read into an uncatchable runtime trap.
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "i32.lt_u" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: elementRead,
+          else: oobUndefinedInstrs.map((instr) => ({ ...instr })),
+        },
         { op: "return" },
       ];
       current = [

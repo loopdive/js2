@@ -369,6 +369,21 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     if (g.init) shiftGlobalIndices(g.init);
   }
 
+  // Export descriptors use the same absolute global index space as
+  // global.get/global.set. A string constant imported after a module global
+  // has been exported shifts every defined global by one; leaving the export
+  // descriptor untouched exposes the preceding imported externref instead.
+  // This is especially damaging for the closure/data host-bridge manifests:
+  // their immutable i32 globals become null externref exports, authentication
+  // fails, and the runtime hides otherwise genuine closure dispatch helpers.
+  const shiftedGlobalExportDescs = new WeakSet<object>();
+  for (const entry of ctx.mod.exports) {
+    if (entry.desc.kind === "global" && !shiftedGlobalExportDescs.has(entry.desc) && entry.desc.index >= threshold) {
+      shiftedGlobalExportDescs.add(entry.desc);
+      entry.desc.index += delta;
+    }
+  }
+
   function shiftMap(map: Map<string, number>): void {
     for (const [key, idx] of map) {
       if (idx >= threshold) {

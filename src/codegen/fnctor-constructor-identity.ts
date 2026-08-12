@@ -46,14 +46,14 @@ export function fnctorCaptureLayout(ctx: CodegenContext, funcName: string): Fnct
   };
 }
 
-/** Add leading captures and the exact runtime callee as the hidden trailing constructor parameter. */
+/** Add leading captures and, where runtime identity exists, the exact callee as the hidden trailing parameter. */
 export function fnctorConstructorParams(
   ctx: CodegenContext,
   userParams: ValType[],
   captureParamTypes: readonly ValType[] = [],
 ): ValType[] {
   const params = [...captureParamTypes, ...userParams];
-  return ctx.standalone ? [...params, { kind: "externref" }] : params;
+  return ctx.wasi ? params : [...params, { kind: "externref" }];
 }
 
 /** Recover the user-visible constructor parameters from a cached ctor signature. */
@@ -64,13 +64,13 @@ export function fnctorUserParamTypes(
 ): ValType[] | undefined {
   if (!allParamTypes) return undefined;
   const firstUser = captureLayout.allParamTypes.length;
-  const end = ctx.standalone ? -1 : undefined;
+  const end = ctx.wasi ? undefined : -1;
   return allParamTypes.slice(firstUser, end);
 }
 
 /** Add the hidden parameter definition without shifting user parameter indices. */
 export function appendFnctorConstructorParam(ctx: CodegenContext, params: { name: string; type: ValType }[]): void {
-  if (ctx.standalone) params.push({ name: "__constructor_identity", type: { kind: "externref" } });
+  if (!ctx.wasi) params.push({ name: "__constructor_identity", type: { kind: "externref" } });
 }
 
 /** Register synthesized ctor capture params as the body-visible bindings. */
@@ -81,6 +81,12 @@ export function registerFnctorCaptureParams(
 ): void {
   if (layout.captures.length === 0) return;
   fctx.liftedCaptureNames = new Set(layout.captures.map((capture) => capture.name));
+  fctx.liftedCaptureSlots = new Map(
+    layout.captures.flatMap((capture) => {
+      const slot = fctx.localMap.get(capture.name);
+      return slot === undefined ? [] : [[capture.name, slot] as const];
+    }),
+  );
   for (let i = 0; i < layout.captures.length; i++) {
     const capture = layout.captures[i]!;
     if (!capture.mutable) {
@@ -234,7 +240,7 @@ export function emitFnctorConstructorArguments(
   userParamTypes: ValType[] | undefined,
 ): void {
   let constructorIdentityLocal: number | undefined;
-  if (ctx.standalone) {
+  if (!ctx.wasi) {
     const valueType = compileExpression(ctx, fctx, callee, { kind: "externref" });
     if (!valueType) {
       fctx.body.push({ op: "ref.null.extern" });
@@ -255,7 +261,7 @@ export function emitFnctorConstructorArguments(
   }
 
   for (let i = 0; i < args.length; i++) {
-    compileExpression(ctx, fctx, args[i]!, userParamTypes?.[i]);
+    const actual = compileExpression(ctx, fctx, args[i]!, userParamTypes?.[i]);
   }
   for (let i = args.length; i < (userParamTypes?.length ?? 0); i++) {
     pushDefaultValue(fctx, userParamTypes![i]!, ctx);

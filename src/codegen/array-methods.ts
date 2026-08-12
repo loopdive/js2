@@ -1629,7 +1629,9 @@ export function compileArrayMethodCall(
       result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
-      result = compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = receiverIsExternref
+        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "reverse")
+        : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
       result = compileArrayPush(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -1644,7 +1646,9 @@ export function compileArrayMethodCall(
       result = compileArrayUnshift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "slice":
-      result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = receiverIsExternref
+        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "slice")
+        : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "concat":
       // Host methods such as String.prototype.split return ordinary JavaScript
@@ -4022,6 +4026,17 @@ function compileArraySortExtern(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
+  return compileArrayMethodExtern(ctx, fctx, propAccess, callExpr, "sort");
+}
+
+/** Invoke an Array method on a real host-owned Array carried as externref. */
+function compileArrayMethodExtern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: string,
+): ValType | null {
   const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
   const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
   const methodCallIdx = ensureLateImport(
@@ -4030,18 +4045,18 @@ function compileArraySortExtern(
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [{ kind: "externref" }],
   );
-  addStringConstantGlobal(ctx, "sort");
+  addStringConstantGlobal(ctx, methodName);
   flushLateImportShifts(ctx, fctx);
   if (arrNewIdx === undefined || arrPushIdx === undefined || methodCallIdx === undefined) return null;
 
-  const recvLocal = allocLocal(fctx, `__sort_ext_recv_${fctx.locals.length}`, { kind: "externref" });
+  const recvLocal = allocLocal(fctx, `__array_ext_recv_${fctx.locals.length}`, { kind: "externref" });
   const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
   if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
   else if (recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: recvLocal });
 
   fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-  const argsLocal = allocLocal(fctx, `__sort_ext_args_${fctx.locals.length}`, { kind: "externref" });
+  const argsLocal = allocLocal(fctx, `__array_ext_args_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: argsLocal });
   for (const arg of callExpr.arguments) {
     fctx.body.push({ op: "local.get", index: argsLocal });
@@ -4052,7 +4067,7 @@ function compileArraySortExtern(
   }
 
   fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, "sort"));
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
   fctx.body.push({ op: "local.get", index: argsLocal });
   fctx.body.push({ op: "call", funcIdx: methodCallIdx });
   return { kind: "externref" };
@@ -7647,10 +7662,13 @@ function compileArrayFill(
  * place. Native WasmGC lowering so `--target wasi`/standalone modules don't fall
  * through to the generic `__extern_get`/`__extern_length` host-import path.
  *
- * `source` may be an array literal or another typed array; both compile to a
- * vec struct. When source and receiver share the same element wasm type we use
- * `array.copy`; otherwise we element-wise copy through an f64 bridge so that
- * e.g. `Float64Array.set([1,2,3])` (i32-typed literal) writes correct values.
+ * `source` may be an array literal, another typed array, or an `any`/externref
+ * array carrier. Statically-known arrays compile directly to their vec struct;
+ * erased sources are read through the generic length/index operations without
+ * casting them to a concrete vec type. When source and receiver share the same
+ * element wasm type we use `array.copy`; otherwise we element-wise copy through
+ * a conversion bridge so that e.g. `Float64Array.set([1,2,3])` writes correct
+ * values.
  * Returns VOID_RESULT (set returns undefined) or null to bail to the fallback.
  */
 function compileTypedArraySet(
@@ -7667,17 +7685,38 @@ function compileTypedArraySet(
     return null;
   }
 
-  // The source argument must be a known WasmGC array (vec struct). If it isn't
-  // (e.g. `any`), bail to the generic externref dispatch (returns undefined so
-  // the caller continues to the host-import path).
+  // Prefer the source's concrete vec representation. An erased source still
+  // needs the native TypedArray.set lane: routing it through a host method call
+  // presents the WasmGC receiver as an ordinary Array view, which has no
+  // TypedArray `set` method and silently leaves the destination unchanged
+  // (uuid's SHA-1 input copy, #4383).
   const srcNode = callExpr.arguments[0]!;
   const srcTsType = ctx.checker.getTypeAtLocation(srcNode);
   const srcArrInfo = resolveArrayInfoForExpression(ctx, fctx, srcNode, srcTsType);
-  if (!srcArrInfo) return null;
-
-  const srcVecTypeIdx = srcArrInfo.vecTypeIdx;
-  const srcArrTypeIdx = srcArrInfo.arrTypeIdx;
-  const srcElemType = srcArrInfo.elemType;
+  const srcVecTypeIdx = srcArrInfo?.vecTypeIdx ?? vecTypeIdx;
+  const srcArrTypeIdx = srcArrInfo?.arrTypeIdx ?? arrTypeIdx;
+  const srcElemType = srcArrInfo?.elemType ?? elemType;
+  const dstCarrier = inferExpressionWasmType(ctx, fctx, propAccess.expression, false);
+  let externLenIdx: number | undefined;
+  let externGetIdx: number | undefined;
+  let unwrapForWasmIdx: number | undefined;
+  let srcExtern: number | undefined;
+  if (dstCarrier?.kind === "externref") {
+    unwrapForWasmIdx = ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
+  }
+  if (!srcArrInfo) {
+    addUnionImports(ctx);
+    externLenIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+    externGetIdx = ensureLateImport(
+      ctx,
+      "__extern_get_idx",
+      [{ kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+  }
+  flushLateImportShifts(ctx, fctx);
+  if (dstCarrier?.kind === "externref" && unwrapForWasmIdx === undefined) return null;
+  if (!srcArrInfo && (externLenIdx === undefined || externGetIdx === undefined)) return null;
 
   const dstVec = allocLocal(fctx, `__ta_set_dvec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dstData = allocLocal(fctx, `__ta_set_ddata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
@@ -7692,7 +7731,14 @@ function compileTypedArraySet(
   const iTmp = allocLocal(fctx, `__ta_set_i_${fctx.locals.length}`, { kind: "i32" });
 
   // Receiver -> vec ref, extract length (field 0) + data array (field 1).
-  compileExpression(ctx, fctx, propAccess.expression);
+  if (dstCarrier?.kind === "externref") {
+    compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: unwrapForWasmIdx! });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx, nullable: true });
+  } else {
+    compileExpression(ctx, fctx, propAccess.expression);
+  }
   fctx.body.push({ op: "local.tee", index: dstVec });
   emitReceiverNullGuard(ctx, fctx, dstVec);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -7701,14 +7747,25 @@ function compileTypedArraySet(
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.set", index: dstData });
 
-  // Source -> vec ref, extract length + data array.
-  compileExpression(ctx, fctx, srcNode);
-  fctx.body.push({ op: "local.tee", index: srcVec });
-  fctx.body.push({ op: "struct.get", typeIdx: srcVecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: srcLen });
-  fctx.body.push({ op: "local.get", index: srcVec });
-  fctx.body.push({ op: "struct.get", typeIdx: srcVecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.set", index: srcData });
+  // Source -> vec ref, extract length + data array. For an externref source,
+  // preserve an already-boxed matching vec and otherwise copy array-like
+  // values through __extern_length/__extern_get_idx.
+  if (srcArrInfo) {
+    compileExpression(ctx, fctx, srcNode);
+    fctx.body.push({ op: "local.tee", index: srcVec });
+    fctx.body.push({ op: "struct.get", typeIdx: srcVecTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: srcLen });
+    fctx.body.push({ op: "local.get", index: srcVec });
+    fctx.body.push({ op: "struct.get", typeIdx: srcVecTypeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "local.set", index: srcData });
+  } else {
+    srcExtern = allocLocal(fctx, `__ta_set_sext_${fctx.locals.length}`, { kind: "externref" });
+    compileExpression(ctx, fctx, srcNode, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: srcExtern });
+    fctx.body.push({ op: "call", funcIdx: externLenIdx! });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: srcLen });
+  }
 
   // offset (default 0).
   if (callExpr.arguments.length >= 2) {
@@ -7729,7 +7786,43 @@ function compileTypedArraySet(
   // inline block.
   emitTypedArraySetBoundsCheck(ctx, fctx, offsetTmp, srcLen, dstLen);
 
-  if (srcArrTypeIdx === arrTypeIdx) {
+  if (!srcArrInfo) {
+    if (srcExtern === undefined) return null;
+    const elemCoerce = coercionInstrs(ctx, { kind: "externref" }, elemType, fctx);
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iTmp });
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: iTmp },
+            { op: "local.get", index: srcLen },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: dstData },
+            { op: "local.get", index: offsetTmp },
+            { op: "local.get", index: iTmp },
+            { op: "i32.add" },
+            { op: "local.get", index: srcExtern },
+            { op: "local.get", index: iTmp },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: externGetIdx! },
+            ...elemCoerce,
+            { op: "array.set", typeIdx: arrTypeIdx },
+            { op: "local.get", index: iTmp },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: iTmp },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    });
+  } else if (srcArrTypeIdx === arrTypeIdx) {
     // Same backing array type — bulk array.copy dstData[offset..] = srcData[0..srcLen].
     emitArrayCopy(fctx, arrTypeIdx, dstData, offsetTmp, srcData, null, srcLen);
   } else {

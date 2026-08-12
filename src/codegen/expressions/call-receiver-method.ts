@@ -2957,13 +2957,23 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver (#4201).
-  if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
-  }
-
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
   if (lateFnctorCall !== undefined) return lateFnctorCall;
+
+  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver
+  // (#4201). Keep this after late fnctor dispatch: a compiled class can
+  // override Object.prototype.valueOf, and returning the receiver here would
+  // silently skip that user method (for example Moment's timestamp valueOf).
+  if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
+    const receiverFact = ctx.oracle.typeFactOf(propAccess.expression).kind;
+    const dynamicReceiver = receiverFact === "any" || receiverFact === "unknown";
+    if (ctx.standalone || !dynamicReceiver) {
+      return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
+    }
+    // In JS-host mode an any-typed receiver can be a compiled fnctor with a
+    // user-defined valueOf. Let the generic method dispatcher below perform
+    // the live prototype lookup rather than assuming Object.prototype.valueOf.
+  }
 
   // Generic dynamic fallback; the native tail reuses this receiver resolution.
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);

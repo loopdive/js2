@@ -5505,6 +5505,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
+  const getUndefinedIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__get_undefined") : undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -5537,11 +5538,16 @@ export function fillApplyClosure(ctx: CodegenContext): void {
           { op: "f64.const", value: k },
           { op: "call", funcIdx: externGetIdxArr! },
         ]
-      : (undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }]);
+      : getUndefinedIdx !== undefined
+        ? [{ op: "call", funcIdx: getUndefinedIdx }]
+        : (undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }]);
     // OOB (an under-applied call widened up by the #3592 selector widening
     // reads k >= len) answers the undefined sentinel — exactly what the
     // generic `__extern_get_idx` returns for an out-of-bounds index.
-    const oob: Instr[] = undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
+    const oob: Instr[] =
+      getUndefinedIdx !== undefined
+        ? [{ op: "call", funcIdx: getUndefinedIdx }]
+        : (undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }]);
     const fastRead = (dataLocal: number, lenLocal: number, arrTypeIdx: number, prior: Instr[]): Instr[] => [
       { op: "local.get", index: dataLocal },
       { op: "ref.is_null" },
@@ -5571,7 +5577,22 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     if (fastDirectArgs) {
       fallback = fastRead(directArgDataLocal, directArgLenLocal, directVecArrTypeIdx, fallback);
     }
-    return fallback;
+    // A materialized zero-length `arguments` object uses null as its compact
+    // carrier (and Function.prototype.apply also treats null/undefined as an
+    // empty argument list). When arity widening subsequently asks for a
+    // missing formal, produce JavaScript `undefined`; falling into the generic
+    // index reader would preserve the null carrier and make `x === undefined`
+    // false in the callee.
+    return [
+      { op: "local.get", index: 2 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: oob,
+        else: fallback,
+      },
+    ];
   };
 
   const buildArm = (n: number): Instr[] => {

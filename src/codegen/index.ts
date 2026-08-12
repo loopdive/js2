@@ -365,7 +365,7 @@ import {
   unifiedVisitNode,
 } from "./declarations.js";
 import type { ModuleInitMode } from "./declarations.js";
-import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
   destructureParamArray,
@@ -423,6 +423,7 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import { emitDateHostBridge } from "./date-host-bridge.js";
 import {
   emitStructFieldGetters,
   emitStructFieldBooleanMarkers,
@@ -4976,6 +4977,7 @@ export function generateModule(
     // closures of arity ≤ N; lower-arity closures see extra args dropped.
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // #1636-S1 — emit __call_fn_method_N exports (N=0..2) for calling Wasm
     // closures from JS with a host-supplied `this`-value. Same dispatch
@@ -6879,6 +6881,13 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
     if (!target) return;
     const decl = target.valueDeclaration ?? target.declarations?.[0];
     if (!decl) return;
+    if (ts.isExportAssignment(decl)) {
+      const expressionGlobal = ctx.defaultExpressionGlobals?.get(decl);
+      if (expressionGlobal && !ctx.moduleGlobals.has(localName)) {
+        ctx.moduleGlobals.set(localName, ctx.moduleGlobals.get(expressionGlobal.bindingName)!);
+      }
+      return;
+    }
     // The name the target was registered under in funcMap/moduleGlobals/closureMap.
     let targetName: string | undefined;
     const declName = (decl as { name?: ts.Node }).name;
@@ -6928,6 +6937,48 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       }
       // Namespace import (`import * as ns`) resolves to a module object, not a
       // single function/global binding — nothing to alias here.
+    }
+  }
+}
+
+/**
+ * Give a linked module's `export default <expression>` a real runtime binding.
+ * Function/identifier defaults already alias an existing declaration, while a
+ * literal, regexp, class expression, or call result otherwise had no name for
+ * registerImportBindingAliases to copy and every default import read as null.
+ */
+function registerDefaultExpressionGlobals(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+  const globals = (ctx.defaultExpressionGlobals ??= new WeakMap());
+  let ordinal = 0;
+  for (const sourceFile of sourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      if (
+        !ts.isExportAssignment(stmt) ||
+        stmt.isExportEquals ||
+        ts.isIdentifier(stmt.expression) ||
+        ts.isFunctionExpression(stmt.expression)
+      ) {
+        continue;
+      }
+      if (globals.has(stmt)) continue;
+      const bindingName = `__default_expr_${ordinal++}`;
+      if (ts.isStringLiteralLike(stmt.expression) && !ctx.nativeStrings) {
+        addStringConstantGlobal(ctx, stmt.expression.text);
+        const stringGlobalIdx = ctx.stringGlobalMap.get(stmt.expression.text)!;
+        const globalIdx = nextModuleGlobalIdx(ctx);
+        ctx.mod.globals.push({
+          name: `__mod_${bindingName}`,
+          type: { kind: "externref" },
+          mutable: false,
+          init: [{ op: "global.get", index: stringGlobalIdx }],
+        });
+        ctx.moduleGlobals.set(bindingName, globalIdx);
+        globals.set(stmt, { bindingName, type: { kind: "externref" } });
+        continue;
+      }
+      registerModuleGlobal(ctx, bindingName, { kind: "externref" });
+      globals.set(stmt, { bindingName, type: { kind: "externref" } });
+      if (!ctx.moduleInitStatements.includes(stmt)) ctx.moduleInitStatements.push(stmt);
     }
   }
 }
@@ -7268,6 +7319,33 @@ export function generateMultiModule(
     // site above). Runs before aliasing/bodies for the same reason as #2931.
     registerAnnexBGlobalLiveBindings(ctx, multiAst.sourceFiles);
 
+    registerDefaultExpressionGlobals(ctx, multiAst.sourceFiles);
+
+    // The linked source list is dependency-first, but some module-init work is
+    // discovered only after declaration collection (notably `export default
+    // <expression>` above). Appending that late work made an importer's earlier
+    // variable initializer run before the dependency's default expression. A
+    // top-level `const bytes = parse(uuid)` could therefore call `validate`
+    // before its imported RegExp default had been initialized and throw during
+    // instantiation. Restore ESM evaluation order over the complete init set:
+    // dependencies before importers, and source order within each module.
+    {
+      const sourceOrder = new Map(multiAst.sourceFiles.map((sourceFile, index) => [sourceFile, index] as const));
+      const discoveryOrder = new Map(ctx.moduleInitStatements.map((statement, index) => [statement, index] as const));
+      ctx.moduleInitStatements.sort((left, right) => {
+        const leftSource = sourceOrder.get(left.getSourceFile());
+        const rightSource = sourceOrder.get(right.getSourceFile());
+        if (leftSource !== undefined && rightSource !== undefined && leftSource !== rightSource) {
+          return leftSource - rightSource;
+        }
+        if (leftSource === rightSource) {
+          const position = left.getStart() - right.getStart();
+          if (position !== 0) return position;
+        }
+        return (discoveryOrder.get(left) ?? 0) - (discoveryOrder.get(right) ?? 0);
+      });
+    }
+
     // (#2930) Register import-binding aliases (default / renamed / anonymous-default
     // imports whose LOCAL name differs from the imported target's declaration name)
     // so their reads and calls resolve to the target instead of the graceful-null
@@ -7472,13 +7550,6 @@ export function generateMultiModule(
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);
 
-    // (#3371/#3496) Constructible function-expression wrappers are nominal
-    // subtypes of the ordinary closure wrapper. Multi-source harness methods
-    // route those values through `__apply_closure`, so rebuild that reserved
-    // bridge only after every source has registered its complete closure-type
-    // set. Leaving the placeholder untouched traps valid `assert.*` calls.
-    fillApplyClosure(ctx);
-
     // (#3496) A multi-source entry can reserve a closed method dispatcher just
     // like a single source can. The literal Test262 harness does so for
     // `assert.compareArray(...)`: the property assignment registers a closure
@@ -7570,6 +7641,12 @@ export function generateMultiModule(
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
+    // Multi-source parity for Web Crypto: `crypto.getRandomValues(vec)` passes
+    // the Wasm vec to the host, which fills it through this write-back export.
+    // Without it linked packages (uuid's rng module) always rejected their
+    // otherwise valid Uint8Array carrier as a non-typed-array.
+    emitVecSetByteExport(ctx);
+
     // Emit __dv_byte_{len,get,set} exports for DataView host runtime.
     emitDataViewByteExports(ctx);
 
@@ -7597,6 +7674,7 @@ export function generateMultiModule(
     emitClosureCallExport2(ctx);
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // Mirror the single-source receiver bridge over the complete multi-source
     // closure registry. Include native-construction demand in the cap so its
@@ -7618,6 +7696,20 @@ export function generateMultiModule(
     // Unknown-arity host wrappers use this classifier to choose a dispatcher
     // wide enough for the closure's declared parameters.
     emitClosureArityExport(ctx);
+
+    // Multi-source fnctor constructors can call a prototype method while the
+    // module start function is still running. Those sites reserve the same
+    // private in-Wasm drivers as the single-source path; fill them only after
+    // the complete closure method/arity tables above exist. Leaving the
+    // placeholders untouched made constructor-time calls trap at their
+    // `unreachable` body (Moment's Locale -> this.set(config)).
+    fillHostFnctorMethodDrivers(ctx);
+
+    // (#4384) Multi-source closures can route through Function.prototype.apply
+    // (Moment installs its public `hooks` function this way). Fill the reserved
+    // bridge only after every `__call_fn_method_N` dispatcher above exists;
+    // filling it earlier permanently baked null fallbacks into every arity arm.
+    fillApplyClosure(ctx);
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);

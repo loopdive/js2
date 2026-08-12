@@ -2053,6 +2053,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // If so, compile without an externref hint to preserve the closure ref type.
       const callSigs = varType.getCallSignatures?.();
       const isCallable = callSigs && callSigs.length > 0 && wasmType.kind === "externref";
+      const boxedCallableSlot = fctx.boxedCaptures?.get(name);
       let stackType: ValType = wasmType;
       if (isCallable) {
         // Compile without type hint to get the actual closure/ref type
@@ -2064,7 +2065,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           (closureType.kind === "ref" || closureType.kind === "ref_null") &&
           ctx.closureInfoByTypeIdx.has((closureType as { typeIdx: number }).typeIdx)
         ) {
-          if (localIdx >= fctx.params.length) {
+          if (!boxedCallableSlot && localIdx >= fctx.params.length) {
             const localSlot = fctx.locals[localIdx - fctx.params.length];
             if (localSlot && localSlot.type.kind !== "externref") localSlot.type = closureType;
           }
@@ -2080,7 +2081,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           // closure struct (the JS function isn't a struct; the cast would
           // trap and null the binding). Calling it dispatches through the
           // host externref-callee path.
-          if (localIdx >= fctx.params.length) {
+          if (!boxedCallableSlot && localIdx >= fctx.params.length) {
             const localSlot = fctx.locals[localIdx - fctx.params.length];
             if (localSlot) localSlot.type = { kind: "externref" };
           }
@@ -2170,7 +2171,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
             fctx.body.push({ op: "any.convert_extern" });
             emitGuardedRefCast(fctx, matchedClosureInfo.structTypeIdx);
             const castType: ValType = { kind: "ref_null", typeIdx: matchedClosureInfo.structTypeIdx };
-            if (localIdx >= fctx.params.length) {
+            if (!boxedCallableSlot && localIdx >= fctx.params.length) {
               const localSlot = fctx.locals[localIdx - fctx.params.length];
               // Do NOT narrow externref → ref (#962)
               if (localSlot && localSlot.type.kind !== "externref") localSlot.type = castType;

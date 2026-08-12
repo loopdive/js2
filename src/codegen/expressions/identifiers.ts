@@ -15,7 +15,11 @@ import {
   type NullablePrimitiveKind,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
+import {
+  emitCachedFuncClosureAccess,
+  emitFuncRefAsClosure,
+  materializeHoistedFunctionValueBinding,
+} from "../closures.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -669,6 +673,13 @@ function compileIdentifierCore(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
+    if (
+      fctx.hoistedFunctionValueBindings?.has(name) &&
+      !fctx.liftedCaptureNames?.has(name) &&
+      !fctx.materializedHoistedFunctionValueBindings?.has(name)
+    ) {
+      materializeHoistedFunctionValueBinding(ctx, fctx, name);
+    }
     // TDZ check for function-local let/const variables
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
@@ -917,6 +928,34 @@ function compileIdentifierCore(
   if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
     const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
     if (builtinObject) return builtinObject;
+  }
+
+  // Web Crypto is an ambient namespace value, not a constructor. Direct
+  // `crypto.randomUUID()` / `crypto.getRandomValues()` calls have dedicated
+  // imports, but ordinary reads still matter: libraries feature-test
+  // `crypto.randomUUID`, pass `crypto` to a mocking helper, and then make the
+  // direct call. Materialize the real host namespace so those reads and writes
+  // observe the same object as the dedicated call imports. Lexical/module
+  // bindings have already returned above, so a user-defined `crypto` wins.
+  if (!ctx.standalone && !ctx.wasi && name === "crypto") {
+    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (gtFuncIdx !== undefined && getIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
+      addStringConstantGlobal(ctx, name);
+      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      fctx.body.push(
+        strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+      );
+      fctx.body.push({ op: "call", funcIdx: getIdx });
+      return { kind: "externref" };
+    }
   }
 
   // Host/gc: an ambient extern constructor used as a VALUE must resolve to the
@@ -1904,6 +1943,77 @@ function emitNativeInstanceOfMembership(
 }
 
 /**
+ * In the JS-host lane, values constructed by compiled code can still be native
+ * WasmGC builtin structs.  The host's `instanceof` predicate cannot see through
+ * an externref wrapping such a struct, while a genuine host-owned object still
+ * needs the host predicate.  Test the native representation first and fall back
+ * to the existing host check for every non-native value.
+ */
+function emitHostOrNativeBuiltinInstanceOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  ctorName: string,
+  typeIdxs: number[],
+): ValType | null {
+  if (noJsHost(ctx) || typeIdxs.length === 0) return null;
+
+  const instanceofIdx = ensureLateImport(
+    ctx,
+    "__instanceof",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
+  if (instanceofIdx === undefined) return null;
+  addStringConstantGlobal(ctx, ctorName);
+  flushLateImportShifts(ctx, fctx);
+
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (!leftType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (leftType.kind === "i32" || leftType.kind === "f64" || leftType.kind === "i64") {
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  } else if (leftType.kind !== "externref") {
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+  }
+
+  const valueLocal = allocLocal(fctx, `__io_host_native_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+  const nativeAnyLocal = allocLocal(fctx, `__io_host_native_any_${fctx.locals.length}`, {
+    kind: "anyref",
+  } as ValType);
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "local.set", index: nativeAnyLocal });
+
+  const nativeTest: Instr[] = [
+    { op: "local.get", index: nativeAnyLocal },
+    { op: "ref.test", typeIdx: typeIdxs[0]! },
+  ];
+  for (let i = 1; i < typeIdxs.length; i++) {
+    nativeTest.push(
+      { op: "local.get", index: nativeAnyLocal },
+      { op: "ref.test", typeIdx: typeIdxs[i]! },
+      { op: "i32.or" },
+    );
+  }
+  fctx.body.push(...nativeTest);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: 1 }],
+    else: [
+      { op: "local.get", index: valueLocal },
+      ...stringConstantExternrefInstrs(ctx, ctorName),
+      { op: "call", funcIdx: instanceofIdx },
+    ],
+  });
+  return { kind: "i32" };
+}
+
+/**
  * Compile `expr instanceof RHS` using a host import when the RHS class is not
  * in our struct system (e.g., TypeError, Array, Function, Promise). (#738)
  * Passes the value as externref and the constructor name as a string constant,
@@ -1982,6 +2092,22 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   const staticResult = tryStaticInstanceOf(ctx, expr, ctorName);
   if (staticResult !== undefined) {
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
+  }
+
+  // Native Date values also exist in the JS-host lane. The host cannot identify
+  // their WasmGC struct, so use a native brand check first and retain the host
+  // predicate as the fallback for host-owned instances. RegExp remains
+  // host-backed in this lane; force-registering its standalone-only struct
+  // would create native-string fields without a host-mode type.
+  if (!noJsHost(ctx) && ctorName === "Date") {
+    const hybrid = emitHostOrNativeBuiltinInstanceOf(
+      ctx,
+      fctx,
+      expr,
+      ctorName,
+      nativeBuiltinInstanceOfTypeIdxs(ctx, ctorName) ?? [],
+    );
+    if (hybrid) return hybrid;
   }
 
   // (#1536c) Standalone / WASI: `instance instanceof MyError` where

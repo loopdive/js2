@@ -39,6 +39,7 @@ import {
 } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   buildArgcExtrasSetupFromLocals,
   emitFnctorSubclassDynamicMethodCall,
@@ -81,6 +82,7 @@ import {
  * general for names the user demonstrably owns.
  */
 const _userFunctionMemberNamesCache = new WeakMap<ts.SourceFile, Set<string>>();
+const _userAliasedFunctionMembersCache = new WeakMap<ts.SourceFile, Map<string, Set<string>>>();
 function getUserFunctionMemberNames(sf: ts.SourceFile): Set<string> {
   const cached = _userFunctionMemberNamesCache.get(sf);
   if (cached) return cached;
@@ -96,9 +98,7 @@ function getUserFunctionMemberNames(sf: ts.SourceFile): Set<string> {
     ) {
       // Identifier RHS is included conservatively (`pp.parseIdent = parseIdent`
       // aliasing); it can only widen the refusal set, never mis-bind.
-      if (ts.isFunctionExpression(node.right) || ts.isArrowFunction(node.right)) {
-        names.add(node.left.name.text);
-      }
+      names.add(node.left.name.text);
     } else if (ts.isObjectLiteralExpression(node)) {
       for (const prop of node.properties) {
         if (ts.isMethodDeclaration(prop) && ts.isIdentifier(prop.name)) {
@@ -121,6 +121,31 @@ function getUserFunctionMemberNames(sf: ts.SourceFile): Set<string> {
   visit(sf);
   _userFunctionMemberNamesCache.set(sf, names);
   return names;
+}
+
+function sourceAssignsAliasedFunctionMember(sf: ts.SourceFile, receiver: ts.Expression, name: string): boolean {
+  if (!ts.isIdentifier(receiver)) return false;
+  let members = _userAliasedFunctionMembersCache.get(sf);
+  if (!members) {
+    members = new Map<string, Set<string>>();
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isPropertyAccessExpression(node.left) &&
+        ts.isIdentifier(node.left.expression) &&
+        ts.isIdentifier(node.right)
+      ) {
+        const receivers = members!.get(node.left.name.text) ?? new Set<string>();
+        receivers.add(node.left.expression.text);
+        members!.set(node.left.name.text, receivers);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    _userAliasedFunctionMembersCache.set(sf, members);
+  }
+  return members.get(name)?.has(receiver.text) === true;
 }
 
 export function sourceDefinesFunctionMember(sf: ts.SourceFile, name: string): boolean {
@@ -258,7 +283,7 @@ function collectPropertyCallArgLocals(
   const argLocals: number[] = [];
   const paramCount = paramTypes.length;
   for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
-    compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes[i]);
+    compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes[i]);
     const al = allocLocal(fctx, `__cparg_${fctx.locals.length}`, paramTypes[i]!);
     fctx.body.push({ op: "local.set", index: al });
     argLocals.push(al);
@@ -401,7 +426,7 @@ function compileRestClosureArguments(
     if (vecInfo === null) return null;
 
     for (let i = 0; i < dynamicSpreadIndex; i++) {
-      compileExpression(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
+      compileInternalCallArgument(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
     }
 
     const spread = callArgs[dynamicSpreadIndex]!;
@@ -477,7 +502,7 @@ function compileRestClosureArguments(
   }
 
   for (let i = 0; i < Math.min(callArgs.length, fixedParamCount); i++) {
-    compileExpression(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
+    compileInternalCallArgument(ctx, fctx, callArgs[i]!, info.paramTypes[i]);
   }
   for (let i = callArgs.length; i < fixedParamCount; i++) {
     pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
@@ -655,7 +680,7 @@ export function compileClosureCall(
   const restArgs = compileRestClosureArguments(ctx, fctx, expr, info);
   if (restArgs === null) {
     for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, info.paramTypes[i]);
+      compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, info.paramTypes[i]);
     }
     for (let i = expr.arguments.length; i < paramCount; i++) {
       pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
@@ -815,7 +840,7 @@ export function compileGetterCallable(
     const selfOffset = isStatic ? 0 : 1;
     const methodParamCount = paramTypes ? Math.max(0, paramTypes.length - selfOffset) : expr.arguments.length;
     for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + selfOffset]);
+      compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + selfOffset]);
     }
     // Pad missing arguments
     if (paramTypes) {
@@ -1198,7 +1223,7 @@ export function compileCallablePropertyCall(
         // Push call arguments (only up to declared param count)
         const cpParamCount = closureInfo.paramTypes.length;
         for (let i = 0; i < Math.min(expr.arguments.length, cpParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
         }
         // Drop excess arguments beyond param count (side effects only)
         for (let i = cpParamCount; i < expr.arguments.length; i++) {
@@ -1286,7 +1311,7 @@ export function compileCallablePropertyCall(
         {
           const wpParamCount = matchedClosureInfo.paramTypes.length;
           for (let i = 0; i < Math.min(expr.arguments.length, wpParamCount); i++) {
-            compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
           }
           for (let i = wpParamCount; i < expr.arguments.length; i++) {
             const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
@@ -1425,7 +1450,7 @@ export function compileCallablePropertyCall(
       {
         const cpRefParamCount = matchedClosureInfo.paramTypes.length;
         for (let i = 0; i < Math.min(expr.arguments.length, cpRefParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
         }
         for (let i = cpRefParamCount; i < expr.arguments.length; i++) {
           const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
@@ -1577,7 +1602,7 @@ export function compileCallableElementAccessCall(
     //    compileCallablePropertyCall)
     const cpParamCount = closureInfo.paramTypes.length;
     for (let i = 0; i < Math.min(expr.arguments.length, cpParamCount); i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
+      compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, closureInfo.paramTypes[i]);
     }
     for (let i = cpParamCount; i < expr.arguments.length; i++) {
       const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
@@ -1674,7 +1699,7 @@ export function tryExternClassMethodOnAny(
   // refuse extern-class dispatch entirely and let the regular String/Array
   // code path handle it — other ambiguous methods (forEach, indexOf, etc.)
   // keep the historical first-match behavior.
-  if (methodName === "slice") return null;
+  if (methodName === "slice" || methodName === "valueOf") return null;
 
   // (#1712) `replace` / `replaceAll` are core String.prototype methods, but
   // SEVERAL DOM extern classes also declare a `replace` (CSSStyleSheet.replace
@@ -1812,7 +1837,12 @@ export function tryExternClassMethodOnAny(
   // FontFaceSet_check; parseIdent/finishToken shadow DOM names too). Refuse and
   // let the generic dynamic dispatch resolve by runtime identity — which also
   // handles genuine extern receivers correctly host-side.
-  if (sourceDefinesFunctionMember(expr.getSourceFile(), methodName)) return null;
+  if (
+    sourceDefinesFunctionMember(expr.getSourceFile(), methodName) ||
+    sourceAssignsAliasedFunctionMember(expr.getSourceFile(), propAccess.expression, methodName)
+  ) {
+    return null;
+  }
 
   // (#1283) The dispatch below emits `externref` hints for every arg and
   // assumes the call's params are all-externref. When iterating in
