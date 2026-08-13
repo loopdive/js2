@@ -60,6 +60,7 @@ files:
   - tests/issue-4394-mixed-array-literal-host.test.ts
   - src/codegen/host-dyn-valueof.ts
   - tests/issue-4394-host-dynamic-valueof.test.ts
+  - tests/test262-runner.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -344,12 +345,38 @@ sites still use `__box_number`, and that mismatch already regressed the host
 #2610 symbol-as-any value-rep pass. This issue contributes the reproducer and
 the validation failure as evidence for it.
 
-## Remaining buckets (GC lane, 24 fail)
+## Root cause 7 (1 test) — the runner exposed `$DONE` unconditionally
+
+`_buildFreshSandbox` set `sandbox.$DONE = () => {}` for EVERY test (#3428), so
+`asyncHelpers.js`'s guard
+`Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` could never observe
+its own absence — and `asyncHelpers-asyncTest-without-async-flag.js` asserts
+exactly that absence before checking that `asyncTest` refuses to run.
+
+Withholding it unconditionally is equally wrong: a JS engine exposes `$DONE`
+because a SCRIPT's top-level declarations become global own-properties, and
+`asyncHelpers-asyncTest-return-not-thenable.js` declares its own
+`function $DONE(error)` with no `async` flag. (Measured: gating on the flag
+alone traded one pass for one fail.)
+
+### Fix
+
+Expose the own-property exactly when the script declares one — the `async` flag
+(which is what pulls `doneprintHandle.js` into the prefix) **or** a top-level
+`$DONE` declaration in the test body. Defaults to the old behaviour for the
+legacy `wrapTest` lane and the shared `getTestSandbox()`.
+
+### Measured
+
+92 → **93** pass, 0 lost. A 400-file sample of `flags: [async]` tests across the
+suite: **0** status changes.
+
+## Remaining buckets (GC lane, 23 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
 | `deepEqual` (residual) | 1 | deep structural compare of nested objects/arrays |
-| asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
+| asyncHelpers / `asyncTest` / `throwsAsync` | 7 | an async function EXPRESSION compiles as a plain sync function (the Promise wrap is call-site-driven and an indirect call never gets it); plus one null-deref trap |
 | propertyHelper, symbol-keyed | 3 | root cause 6 above — blocked on the #2610 symbol value-rep pass |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
 | singletons | 9 | `isConstructor`, `testTypedArray`, `wellKnownIntrinsicObjects`, `fnGlobalObject`, `detachArrayBuffer` ×2, `assert-throws-native`, `assert-throws-custom-typeerror`, `verifyProperty-value`, `verifyProperty-desc-is-not-object` |

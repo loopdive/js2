@@ -82,7 +82,7 @@ const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
   ["WeakSet", "prototype", "add"],
 ];
 
-function _buildFreshSandbox(consoleProxy?: Console): Record<string, any> {
+function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
   // Create a context, then pull each global name out of it via
   // runInContext so the sandbox object exposes them by property name.
   const sandbox = Object.create(null) as Record<string, any>;
@@ -118,13 +118,33 @@ function _buildFreshSandbox(consoleProxy?: Console): Record<string, any> {
   // real, module-local `$DONE` (lexically in scope inside `asyncTest`) still
   // drives the completion callback that emits the `Test262:AsyncTestComplete`
   // marker.
-  sandbox.$DONE = () => {};
+  //
+  // (#4394) ONLY for a test that carries the `async` flag. A JS engine exposes
+  // `$DONE` because `doneprintHandle.js` is in the prefix, and that include is
+  // itself flag-gated — so a NON-async test must not see the own-property
+  // either. `test/harness/asyncHelpers-asyncTest-without-async-flag.js` asserts
+  // exactly that (`!Object.hasOwn(globalThis, "$DONE")`) before checking that
+  // `asyncTest` refuses to run, and the unconditional stub made the guard it is
+  // testing unobservable. Defaults to `true` so the legacy `wrapTest` lane and
+  // the shared `getTestSandbox()` are unchanged.
+  if (exposeDone) sandbox.$DONE = () => {};
   return sandbox;
 }
 
+/**
+ * (#4394) Does the test body declare its own top-level `$DONE`? A script's
+ * top-level `function` / `var` declarations become own properties of the global
+ * object, which is what `asyncHelpers.js`'s
+ * `Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` guard observes.
+ * A compiled MODULE keeps them module-local, so the sandbox has to mirror it.
+ */
+function declaresTopLevelDone(body: string): boolean {
+  return /^[ \t]*(?:function[ \t]+\$DONE\b|(?:var|let|const)[ \t]+\$DONE\b)/m.test(body);
+}
+
 /** A fresh realm for literal-harness execution; never reused across variants. */
-export function createTestSandbox(consoleProxy?: Console): Record<string, any> {
-  return _buildFreshSandbox(consoleProxy);
+export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Record<string, any> {
+  return _buildFreshSandbox(consoleProxy, exposeDone);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -4269,7 +4289,18 @@ async function runOriginalHarnessVariant(
     };
 
     try {
-      const sandbox = createTestSandbox(consoleProxy);
+      // (#4394) `$DONE` is an own property of the global exactly when the
+      // SCRIPT declares one — either because the `async` flag pulled
+      // `doneprintHandle.js` into the prefix, or because the test body declares
+      // its own top-level `$DONE` (which a JS engine also exposes as a global
+      // own-property, and which `asyncTest` then calls). Exposing it
+      // unconditionally made `asyncHelpers-asyncTest-without-async-flag`'s
+      // guard unobservable; withholding it unconditionally broke
+      // `asyncHelpers-asyncTest-return-not-thenable`, which declares its own.
+      const sandbox = createTestSandbox(
+        consoleProxy,
+        meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
+      );
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;
