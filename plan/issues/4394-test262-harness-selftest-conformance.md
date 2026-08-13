@@ -13,6 +13,10 @@ loc-budget-allow:
   # belong to the runtime's import-resolution table, which lives here; there is
   # no separate host-error subsystem module to add them to.
   - src/runtime.ts
+  # +18 lines: one more arm in the top-level-statement keep ladder, which lives
+  # here next to the #2671 / #3666 / #2660 arms it mirrors. Splitting a single
+  # arm out would separate it from the ladder whose order is load-bearing.
+  - src/codegen/declarations.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -21,6 +25,9 @@ func-budget-allow:
   # +5 lines: the new arm's body lives in its own module
   # (expressions/test262-error-ctor.ts); what remains here is the guarded call.
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  # +18 lines: one more arm in this function's top-level-statement keep ladder,
+  # whose arm ORDER is load-bearing (each `continue`s past the later ones).
+  - src/codegen/declarations.ts::collectDeclarations
 files:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler/import-manifest.ts
@@ -113,7 +120,35 @@ Regression check — zero status changes on both samples:
 - 205-file stratified sample of the 1,841 suite tests that call
   `assert.throws(Test262Error, …)`: 146 pass / 58 fail / 1 skip, **0 diffs**
 
-## Remaining buckets (GC lane, 36 fail)
+## Root cause 2 (7 tests) — the second-level function-static write is dropped
+
+`collectDeclarations` drops a top-level assignment whose root identifier is not
+a module global. #2671 added a keep for `F.<prop> = …` with a **bare identifier**
+receiver, and #3666 added the nested-receiver keep — but **for standalone only**.
+
+So in the host/GC lane
+
+```js
+assert.deepEqual._compare = (function () { … })();   // deepEqual.js:142
+```
+
+compiled to **nothing**. `_compare` silently never existed; `typeof` still
+answered `"function"` from a static inference, and the actual read returned
+null, so the whole family failed with `TypeError: _compare is not a function`.
+
+### Fix
+
+Give the host/GC arm the same nested-receiver keep, gated identically to the
+standalone one (`isTopLevelFunctionPropertyReceiver` — the root must be a
+top-level function and the oracle must prove the receiver itself callable, which
+excludes `F.prototype.m` and ordinary object-valued chains).
+
+### Measured
+
+80 → **84** pass. All 76 suite tests that include `deepEqual.js`: 4 fail → pass,
+0 regressions; `built-ins/Object/defineProperty` first 400: 0 diffs.
+
+## Remaining buckets (GC lane, 32 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |

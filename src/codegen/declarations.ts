@@ -2260,6 +2260,24 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+          // (#4394) Host/GC counterpart of the standalone #3666 keep above:
+          // the receiver is itself a function-valued own property of a
+          // top-level function — `assert.deepEqual._compare = (function(){…})()`,
+          // the literal harness's deepEqual.js. The bare-identifier gate above
+          // does not match, so the statement was dropped and compiled to
+          // NOTHING: `_compare` silently never existed and the whole deepEqual
+          // family failed with `_compare is not a function`. Gated exactly like
+          // the standalone arm — the oracle must prove the receiver CALLABLE,
+          // which excludes `F.prototype.m` and ordinary object-valued chains.
+          if (
+            !ts.isPrivateIdentifier(expr.left.name) &&
+            !STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(expr.left.name.text) &&
+            !ts.isIdentifier(receiver) &&
+            isTopLevelFunctionPropertyReceiver(ctx, receiver)
+          ) {
+            ctx.moduleInitStatements.push(stmt);
+            continue;
+          }
           // (#2623 P-7b) `Promise.<prop> = …` — a top-level static patch on the
           // BUILTIN Promise (the test262 observable-resolve shape
           // `Promise.resolve = function(){…}`, `all/race invoke-resolve.js`).
