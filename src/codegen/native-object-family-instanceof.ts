@@ -60,23 +60,18 @@
  *   `__typeof_object` does not exclude the `$Symbol` carrier. We subtract it
  *   explicitly when the module registered one.
  *
- * ## Measured and deliberately REVERTED: force-registering the wrapper structs
+ * ## Primitive wrappers use an internal-slot predicate, not this type list
  *
- * The snapshot hazard (2) also afflicts `Number` / `String` / `Boolean`, whose
- * `ctx.wrapper*TypeIdx` is `-1` until `ensureWrapperTypes` runs — so those RHS
- * names answered a hard `false` before the module's first `new Number(…)` was
- * lowered. Calling `ensureWrapperTypes` at the dispatch site (the same
- * idempotent, type-only discipline as `ensureDateStruct`) fixes that in
- * isolation, and was implemented and measured. It is NOT kept, because over the
- * ≤ES5 wrapper-instanceof population it flipped **0 tests to pass and 1 to
- * fail**: `built-ins/Function/prototype/call/15.3.4.4-3-s.js` (`fun.call(false)`
- * with `return this instanceof Boolean`, `onlyStrict`). The registration does
- * not cause that failure — it UNMASKS a separate defect: `Function.prototype
- * .call` boxes a primitive `this` into a `$WrapperBoolean` even in strict mode,
- * where §10.4.3 requires the primitive to be passed through unchanged. With the
- * wrapper type unregistered the membership list was empty and the wrong `true`
- * could not be observed. Re-land this together with the strict-mode
- * this-binding fix, not before.
+ * A historical experiment force-registered `$WrapperNumber` / `$WrapperString`
+ * / `$WrapperBoolean` and regressed strict `fun.call(false)`. The corrected
+ * diagnosis is representation-level: standalone constructors allocate a
+ * `$Object` branded by the FLAG_INTERNAL `[[PrimitiveValue]]` slot, while strict
+ * primitive receivers use native one-field box carriers. WasmGC structural type
+ * equivalence made the obsolete `$WrapperBoolean` membership test match that
+ * primitive carrier. The #4276 wrapper follow-up therefore lives in
+ * `object-runtime.ts`: it requires the real `$Object` plus internal slot and
+ * classifies the slot value. No phantom wrapper type is registered, so strict
+ * primitive `this` remains false while real wrapper objects answer true.
  *
  * ## Why this cannot regress a passing test
  *

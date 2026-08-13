@@ -515,6 +515,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-object-define-property"
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
+      | "standalone-wrapper-instanceof"
       | "legacy-numeric-array-global",
   ) => boolean;
   /**
@@ -2547,6 +2548,19 @@ function dynamicUsesAreMoveOnly(
       const leftIsDyn = isDynShaped(e.left);
       const rightIsDyn = isDynShaped(e.right);
       const op = e.operatorToken.kind;
+      // (#4276) Exact host-free wrapper-brand predicate. Its result is a
+      // concrete boolean and its LHS may be the fast boxed-dynamic carrier;
+      // the from-ast producer tag-tests/unboxes that carrier before calling
+      // the native `$Object` internal-slot predicate.
+      if (
+        op === ts.SyntaxKind.InstanceOfKeyword &&
+        !expectDyn &&
+        leftIsDyn &&
+        ts.isIdentifier(e.right) &&
+        selectorSupportsStandaloneWrapperInstanceOf(e.right)
+      ) {
+        return scanExpr(e.left, true);
+      }
       // #3797 — statement-position stores used by Acorn's stable
       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
       // checker-backed stable-call plan is the authority for exposing ambient
@@ -5395,6 +5409,18 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
   );
 }
 
+function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
+  if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
+  return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+}
+
+function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boolean {
+  return (
+    selectorSeesAmbientWrapperConstructor(node) &&
+    currentSelectionOptions?.supportsBackendCapability?.("standalone-wrapper-instanceof") === true
+  );
+}
+
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
@@ -6555,6 +6581,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (localClassHasKnownProjectionGap(expr.right.text)) {
         return capabilityNo("class-projection-unsupported", "expr-instanceof-class-shape", expr.right);
       }
+      return isPhase1Expr(expr.left, scope, localClasses);
+    }
+    // (#4276) Fast standalone owns a native wrapper-brand predicate over the
+    // real `$Object.[[PrimitiveValue]]` representation. Admit only an exact
+    // ambient wrapper constructor; source/local shadows keep legacy semantics.
+    if (
+      binOp === ts.SyntaxKind.InstanceOfKeyword &&
+      ts.isIdentifier(expr.right) &&
+      selectorSupportsStandaloneWrapperInstanceOf(expr.right)
+    ) {
       return isPhase1Expr(expr.left, scope, localClasses);
     }
     if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
