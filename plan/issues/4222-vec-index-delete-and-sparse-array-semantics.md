@@ -2,6 +2,7 @@
 id: 4222
 title: "Standalone array semantics: `delete arr[k]` never makes the index absent, `new Array(n)` fills `undefined` instead of holes"
 status: in-review
+pr: 4450
 sprint: current
 created: 2026-08-08
 updated: 2026-08-13
