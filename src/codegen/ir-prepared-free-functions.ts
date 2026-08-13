@@ -1129,7 +1129,7 @@ function prepareIrClassMemberPopulation(input: {
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
     const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
-      owner !== undefined && ts.isClassDeclaration(owner)
+      owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
         : undefined;
     const shape = classId === undefined ? undefined : shapeByClassId.get(classId);

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { boundedPreparedNestedOrdinaryClassBindingName } from "../ir/class-accessor-safety.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrClassId, IrSourceId, IrUnitKind } from "../ir/identity.js";
@@ -451,6 +452,24 @@ export function createIrClassShapeSidecar(
   const legacyProjection = new Map<string, IrClassShape>();
   for (const entry of byClassId.values()) {
     if (occurrences.get(entry.legacyName) === 1) legacyProjection.set(entry.legacyName, entry.shape);
+  }
+  // A bounded nested class expression keeps its synthetic legacy callable and
+  // struct label, but source expressions address it through the exact const
+  // binding. Publish that binding as a selector/lowerer alias only when it is
+  // unique and cannot shadow an existing class label.
+  const boundedExpressionAliases = new Map<string, IrClassShapeEntry[]>();
+  for (const entry of byClassId.values()) {
+    if (!ts.isClassExpression(entry.declaration)) continue;
+    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(entry.declaration);
+    if (bindingName === undefined) continue;
+    const candidates = boundedExpressionAliases.get(bindingName) ?? [];
+    candidates.push(entry);
+    boundedExpressionAliases.set(bindingName, candidates);
+  }
+  for (const [bindingName, candidates] of boundedExpressionAliases) {
+    if (candidates.length === 1 && !legacyProjection.has(bindingName)) {
+      legacyProjection.set(bindingName, candidates[0]!.shape);
+    }
   }
   return { identityContext: context, byClassId, legacyProjection };
 }

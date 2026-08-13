@@ -2692,6 +2692,38 @@ export function compileDeclarations(
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             if (insideFunction) {
+              const preparedBodyUnits = decl.initializer.members
+                .filter(
+                  (
+                    member,
+                  ): member is
+                    | ts.ConstructorDeclaration
+                    | ts.MethodDeclaration
+                    | ts.GetAccessorDeclaration
+                    | ts.SetAccessorDeclaration =>
+                    (ts.isConstructorDeclaration(member) ||
+                      ts.isMethodDeclaration(member) ||
+                      ts.isGetAccessorDeclaration(member) ||
+                      ts.isSetAccessorDeclaration(member)) &&
+                    member.body !== undefined,
+                )
+                .map((member) => ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(member));
+              const fullyPrepared =
+                preparedBodyUnits.length > 0 &&
+                preparedBodyUnits.every(
+                  (unitId) => unitId !== undefined && classBodyRouting?.skipBodyUnitIds?.has(unitId) === true,
+                );
+              if (fullyPrepared) {
+                const syntheticName = ctx.anonClassExprNames.get(decl.initializer);
+                compileClassBodies(
+                  ctx,
+                  decl.initializer,
+                  funcByName,
+                  syntheticName ?? decl.name.text,
+                  classBodyRouting,
+                );
+                continue;
+              }
               // (#3045 Bug 2) Defer the class-expression BODY compilation to the
               // in-scope variable path so its constructor/method bodies can
               // capture the enclosing function scope — call enclosing functions
