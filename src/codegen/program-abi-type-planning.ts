@@ -30,6 +30,7 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   closureCapturedSubtype: 7,
   dynamicCarrier: 8,
   exceptionTagType: 9,
+  refCell: 10,
   classLayout: 0,
 } as const);
 
@@ -58,6 +59,21 @@ export interface ProgramAbiClosureSupportLayout {
   readonly allocationWrapperRef: IrTypeRef;
   readonly liftedFuncRef: IrTypeRef;
   readonly capturedSubtypeRef: IrTypeRef;
+}
+
+export interface ProgramAbiRefCellSupportRequest {
+  readonly innerType: IrType;
+  readonly cellType: StructTypeDef;
+}
+
+export interface ProgramAbiRefCellSupport {
+  readonly semanticInnerTypeKey: string;
+  readonly cellTypeRef: IrTypeRef;
+}
+
+interface ObservedRefCellSupport {
+  readonly request: ProgramAbiRefCellSupportRequest;
+  readonly support: ProgramAbiRefCellSupport;
 }
 
 interface ObservedClosureSupportLayout {
@@ -165,6 +181,11 @@ export function canonicalProgramAbiClosureLayoutKey(
   });
 }
 
+/** Backend-neutral semantic key for one mutable-capture cell payload. */
+export function canonicalProgramAbiRefCellKey(innerType: IrType): string {
+  return JSON.stringify(canonicalClosureSupportIrType(innerType, new Set<object>()));
+}
+
 interface ProgramAbiClassLayoutObservation {
   readonly classId: IrClassId;
   readonly displayName: string;
@@ -230,6 +251,7 @@ export class ProgramAbiTypeRegistry {
     }
   >();
   private readonly closureSupportLayouts = new Map<string, ObservedClosureSupportLayout>();
+  private readonly refCellSupport = new Map<string, ObservedRefCellSupport>();
   private dynamicCarrierSupport?: {
     readonly support: ProgramAbiDynamicCarrierSupport;
     readonly type?: TypeDef;
@@ -237,6 +259,7 @@ export class ProgramAbiTypeRegistry {
   };
   private exceptionTagTypeRefValue?: IrTypeRef;
   private closureSupportBatchPlanned = false;
+  private refCellSupportBatchPlanned = false;
   private planned = false;
 
   constructor(
@@ -719,6 +742,90 @@ export class ProgramAbiTypeRegistry {
     }
     this.closureSupportBatchPlanned = true;
     return canonical.map(({ layoutKey }) => resultByLayout.get(layoutKey)!);
+  }
+
+  /**
+   * Plan the canonical physical ref-cell structs used by mutable IR captures.
+   * Semantic payload keys are sorted before ordinals are assigned so nested
+   * function traversal cannot perturb the Program ABI.
+   */
+  prepareRefCellSupportTypes(
+    requests: readonly ProgramAbiRefCellSupportRequest[],
+  ): readonly ProgramAbiRefCellSupport[] {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare ref-cell support after retained planning");
+    }
+    if (requests.length === 0) return [];
+
+    const canonical = requests.map((request) => {
+      const semanticInnerTypeKey = canonicalProgramAbiRefCellKey(request.innerType);
+      const index = this.requireUniqueAllocatedType(request.cellType, `ref-cell ${semanticInnerTypeKey}`);
+      const field = request.cellType.fields[0];
+      if (
+        request.cellType.fields.length !== 1 ||
+        field?.name !== "value" ||
+        field.mutable !== true ||
+        request.cellType.superTypeIdx !== undefined ||
+        index < 0
+      ) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `ref-cell ${semanticInnerTypeKey} does not use the canonical mutable value-field layout`,
+        );
+      }
+      return { request, semanticInnerTypeKey };
+    });
+
+    if (this.refCellSupportBatchPlanned) {
+      return canonical.map(({ request, semanticInnerTypeKey }) => {
+        const observed = this.refCellSupport.get(semanticInnerTypeKey);
+        if (!observed) {
+          throw new ProgramAbiInvariantError(
+            "planning-sealed",
+            `ref-cell support ${semanticInnerTypeKey} was requested after the canonical batch was planned`,
+          );
+        }
+        if (observed.request.cellType !== request.cellType) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `ref-cell support ${semanticInnerTypeKey} maps to different physical type objects`,
+          );
+        }
+        return observed.support;
+      });
+    }
+
+    const byKey = new Map<string, ProgramAbiRefCellSupportRequest>();
+    for (const { request, semanticInnerTypeKey } of canonical) {
+      const previous = byKey.get(semanticInnerTypeKey);
+      if (previous && previous.cellType !== request.cellType) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `ref-cell support ${semanticInnerTypeKey} maps to different physical type objects`,
+        );
+      }
+      byKey.set(semanticInnerTypeKey, request);
+    }
+
+    const supportByKey = new Map<string, ProgramAbiRefCellSupport>();
+    [...byKey]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .forEach(([semanticInnerTypeKey, request], ordinal) => {
+        const entrySourceId = canonicalEntrySource(this.session);
+        const cellTypeRef = irSupportTypeRef(
+          entrySourceId,
+          `ref-cell:${semanticInnerTypeKey}`,
+          `__ir_ref_cell_${ordinal}`,
+          ordinal,
+        );
+        const cell = this.session.typeCellFor(request.cellType) ?? this.session.createTypeCell(request.cellType);
+        this.planPreparedSupportType(cellTypeRef, request.cellType, cell, PROGRAM_ABI_TYPE_ROLE.refCell, ordinal);
+        const support = Object.freeze({ semanticInnerTypeKey, cellTypeRef });
+        this.refCellSupport.set(semanticInnerTypeKey, Object.freeze({ request, support }));
+        supportByKey.set(semanticInnerTypeKey, support);
+      });
+    this.refCellSupportBatchPlanned = true;
+    return canonical.map(({ semanticInnerTypeKey }) => supportByKey.get(semanticInnerTypeKey)!);
   }
 
   /** Plan all source classes plus every retained allocator type after DCE. */

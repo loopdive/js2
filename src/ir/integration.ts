@@ -459,6 +459,7 @@ interface BuiltFn {
 
 interface PreparedClosureTransaction {
   readonly registry: ClosureStructRegistry;
+  readonly refCells: RefCellRegistry;
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
   bindLowerResolver(resolver: IrLowerResolver): void;
@@ -610,9 +611,10 @@ function prepareClosureTransaction(input: {
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): PreparedClosureTransaction {
-  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type);
+  const refCells = new RefCellRegistry(input.ctx);
+  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
-  const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry);
+  const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry, refCells);
   const freshSlots = allocatePreparedDerivedCallableSlots(
     input.ctx,
     input.entries,
@@ -631,6 +633,7 @@ function prepareClosureTransaction(input: {
   });
   return {
     registry,
+    refCells,
     freshSlots,
     componentIds,
     bindLowerResolver: (resolver) => {
@@ -2957,7 +2960,7 @@ export function compileIrPathFunctions(
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
     deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
       closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
-    const refCellRegistry = new RefCellRegistry(ctx);
+    const refCellRegistry = preparedClosure?.refCells ?? new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
     // legacy class-collection state — `ctx.structMap`, `ctx.structFields`,
@@ -6579,7 +6582,11 @@ class ClosureStructRegistry {
     } as StructTypeDef);
     this.ctx.structMap.set(subName, subIdx);
     this.ctx.typeIdxToStructName.set(subIdx, subName);
-    this.ctx.structFields.set(subName, fields);
+    // Closure subtypes are private callable carriers, not user-visible data
+    // structs. Keep them out of structFields just like legacy captured
+    // closures: registering them there makes finalize emit __sget_capN,
+    // __struct_field_names, and __is_data_struct, both bloating the module and
+    // misclassifying an IR closure as an object at the host boundary.
 
     const baseInfo = this.ctx.closureInfoByTypeIdx.get(base.structTypeIdx);
     if (!baseInfo) {
@@ -6631,6 +6638,10 @@ class RefCellRegistry {
   resolve(inner: ValType): IrRefCellLowering | null {
     const typeIdx = getOrRegisterRefCellType(this.ctx, inner);
     return { typeIdx, fieldIdx: 0 };
+  }
+
+  resolveIr(inner: IrType): IrRefCellLowering | null {
+    return this.resolve(lowerPreparedClosureSupportType(this.ctx, inner, this));
   }
 }
 
