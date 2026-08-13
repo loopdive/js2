@@ -75,6 +75,7 @@ import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
 import { compileArrayMethodExtern } from "./array-method-host.js";
+import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -1329,6 +1330,10 @@ function emitDynViewMethodTwoArm(
   return { kind: "externref" };
 }
 
+function shouldUseHostArrayMethod(ctx: CodegenContext, receiverIsExternref: boolean): boolean {
+  return receiverIsExternref && !ctx.standalone && !ctx.wasi;
+}
+
 /**
  * Compile array method calls to inline Wasm instructions.
  * Returns undefined if the call is not an array method (caller should continue).
@@ -1630,7 +1635,7 @@ export function compileArrayMethodCall(
       result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
-      result = receiverIsExternref
+      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
         ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "reverse")
         : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
@@ -1647,7 +1652,7 @@ export function compileArrayMethodCall(
       result = compileArrayUnshift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "slice":
-      result = receiverIsExternref
+      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
         ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "slice")
         : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
@@ -5048,10 +5053,18 @@ function setupArrayCallback(
   thisArgIndex?: number,
 ): ArrayCallbackSetup | null {
   const cbArg = callExpr.arguments[0]!;
+  const hoistedCallback =
+    ts.isIdentifier(cbArg) && fctx.hoistedFunctionValueBindings?.has(cbArg.text)
+      ? (() => {
+          const funcIdx = ctx.funcMap.get(cbArg.text);
+          return funcIdx === undefined ? undefined : emitFuncRefAsClosure(ctx, fctx, cbArg.text, funcIdx);
+        })()
+      : undefined;
   const cbResult =
-    ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
+    hoistedCallback ??
+    (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
-      : compileExpression(ctx, fctx, cbArg);
+      : compileExpression(ctx, fctx, cbArg));
 
   let closureInfo: ClosureInfo | undefined;
   let closureTypeIdx: number | undefined;

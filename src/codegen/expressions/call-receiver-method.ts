@@ -2957,11 +2957,11 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
-  if (lateFnctorCall !== undefined) return lateFnctorCall;
-
   const valueOfFallback = tryEmitValueOfFallback(ctx, fctx, expr, propAccess);
   if (valueOfFallback !== undefined) return valueOfFallback;
+
+  const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
+  if (lateFnctorCall !== undefined) return lateFnctorCall;
 
   // Generic dynamic fallback; the native tail reuses this receiver resolution.
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);

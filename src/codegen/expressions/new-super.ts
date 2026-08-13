@@ -1548,15 +1548,12 @@ function compileNewFunctionDeclaration(
     continueStack: [],
     labelMap: new Map(),
     savedBodies: [],
-    // The synthesized constructor executes the source function with `this`
-    // bound to the freshly allocated fnctor struct. Preserve that concrete
-    // receiver fact while compiling the body so `this.m(...)` can use the
-    // in-Wasm prototype-method driver. Without it, a constructor-time call
-    // (Moment's `Locale` calls `this.set(config)`) falls through to the host
-    // dispatcher while the module start function is still running; exports
-    // are not available yet, so the raw Wasm closure stored on the prototype
-    // cannot be made callable.
-    thisStructName: structName,
+    // The JS-host constructor executes with a concrete fnctor receiver, which
+    // lets constructor-time prototype calls use the in-Wasm driver before
+    // exports are available. Standalone keeps the historical dynamic `this`
+    // representation: forcing the struct fact there bypasses prototype
+    // overrides used by generic String methods on custom constructors.
+    ...(!ctx.standalone && !ctx.wasi ? { thisStructName: structName } : {}),
   };
   // The synthesized fnctor body is still the source function's activation for
   // legacy Function#caller. Register it before any prologue/body emission so

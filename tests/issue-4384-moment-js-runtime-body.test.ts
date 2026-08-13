@@ -206,6 +206,156 @@ export function test(): number { return factory(); }
     expect((instance.exports.test as () => number)()).toBe(42);
   });
 
+  it("does not treat a duplicate var binding as a function-value read", async () => {
+    const result = await compile(
+      `var increment, observed;
+function increment(value) { value++; }
+var value = 41;
+increment(value);
+observed = value + 1;
+export function test() { return observed; }
+`,
+      { fileName: "duplicate-var-function-binding.js", allowJs: true, skipSemanticDiagnostics: true, target: "gc" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const instance = await instantiate(result.binary, imports);
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
+  it("keeps ordinary local and named self calls off sibling-shadow dispatch", async () => {
+    const result = await compile(
+      `var completed = 0;
+(function recurse(depth) {
+  if (depth === 0) { completed = 39; return; }
+  return recurse(depth - 1);
+}(100));
+var count = (...values) => values.length;
+export function test() { return completed + count(1, 2, 3); }
+`,
+      {
+        fileName: "local-and-self-call-routing.js",
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    const instance = await instantiate(result.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
+  it("resolves dynamic valueOf before late prototype-method dispatch", async () => {
+    const result = await compile(
+      `var accessed = false;
+function callback(value) {
+  accessed = true;
+  return this.valueOf() === false;
+}
+export function test() {
+  var selected = [11].filter(callback, false);
+  return accessed && selected[0] === 11 ? 42 : 0;
+}
+`,
+      {
+        fileName: "dynamic-valueof-array-thisarg.js",
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    const instance = await instantiate(result.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
+  it("keeps standalone custom constructors dynamic for generic String methods", async () => {
+    const result = await compile(
+      `function Factory() {
+  this.toString = function () { return "wizard"; };
+}
+Factory.prototype.charAt = String.prototype.charAt;
+var instance = new Factory();
+export function test() { return instance.charAt(1, true, null, {}) === "i" ? 42 : 0; }
+`,
+      {
+        fileName: "standalone-generic-string-fnctor.js",
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    const instance = await instantiate(result.binary, {});
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
+  it("passes a hoisted function declaration to host array callbacks as a closure", async () => {
+    const result = await compile(
+      `var observed = 0;
+(function () {
+  this.callbackFlag = false;
+  function callback() { return this.callbackFlag; }
+  observed = [1].filter(callback).length === 0 ? 42 : 0;
+}());
+export function test() { return observed; }
+`,
+      { fileName: "host-hoisted-array-callback.js", allowJs: true, skipSemanticDiagnostics: true, target: "gc" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const instance = await instantiate(result.binary, imports);
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
+  it("keeps dynamic standalone slice and reverse on the native path", async () => {
+    const result = await compile(
+      `function copy(values) { return values.slice(0).reverse(); }
+export function test() { return copy([1, 41])[0] + 1; }
+`,
+      {
+        fileName: "standalone-dynamic-slice-reverse.js",
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    await instantiate(result.binary, {});
+  });
+
+  it("does not route borrowed host array methods around compiled sidecar properties", async () => {
+    const result = await compile(
+      `var receiver = {};
+receiver.length = Symbol(1);
+export function test() {
+  try {
+    [].copyWithin.call(receiver, 0, 0);
+  } catch (error) {
+    return error instanceof TypeError ? 42 : 1;
+  }
+  return 0;
+}
+`,
+      { fileName: "host-borrowed-array-sidecar.js", allowJs: true, skipSemanticDiagnostics: true, target: "gc" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const instance = await instantiate(result.binary, imports);
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
   it("lets an any-typed local callable shadow a capturing sibling name", async () => {
     const result = await compile(
       `const factory = function (): number {

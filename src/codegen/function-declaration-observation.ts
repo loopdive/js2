@@ -175,6 +175,27 @@ export function observesOnlyHoistedFunctionValue(
   return observesHoistedFunctionValueBinding(fctx, stmt, name) && !functionDeclarationInvokesBinding(stmt, name);
 }
 
+/** Whether a source local shadows a same-named lifted capturing function. */
+export function localBindingShadowsCapturingFunction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callee: ts.Identifier,
+): boolean {
+  const name = callee.text;
+  if (!fctx.localMap.has(name) || !ctx.funcMap.has(name)) return false;
+  if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(callee);
+  if (
+    declaration &&
+    (ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration)) &&
+    declaration.name?.text === name
+  ) {
+    return false;
+  }
+  // JavaScript locals inferred as `any` still shadow same-named lifted bodies.
+  return declaration !== undefined;
+}
+
 /** Allocate stable lexical storage for identity-observed FunctionDeclarations. */
 export function prepareHoistedFunctionValueBindings(
   ctx: CodegenContext,
@@ -246,7 +267,12 @@ function declarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclar
   let observed = false;
   const visit = (node: ts.Node): void => {
     if (observed) return;
-    if (ts.isIdentifier(node) && node !== decl.name && ctx.oracle.valueDeclarationOf(node) === decl) {
+    if (
+      ts.isIdentifier(node) &&
+      node !== decl.name &&
+      isRuntimeIdentifierReference(node) &&
+      ctx.oracle.valueDeclarationOf(node) === decl
+    ) {
       const parent = node.parent;
       if (!(ts.isCallExpression(parent) && parent.expression === node)) observed = true;
     }
@@ -254,4 +280,34 @@ function declarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclar
   };
   visit(ts.isBlock(decl.parent) || ts.isSourceFile(decl.parent) ? decl.parent : decl.getSourceFile());
   return observed;
+}
+
+/** Exclude binding/member-name syntax that does not read the function value. */
+function isRuntimeIdentifierReference(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (!parent) return true;
+  if (
+    ((ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent)) &&
+      parent.name === node) ||
+    ((ts.isPropertyAccessExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)) &&
+      parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.propertyName === node) ||
+    (ts.isQualifiedName(parent) && parent.right === node) ||
+    ((ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) &&
+      parent.label === node)
+  ) {
+    return false;
+  }
+  return true;
 }

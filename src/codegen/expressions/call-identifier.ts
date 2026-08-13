@@ -52,6 +52,7 @@ import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
+import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -119,19 +120,6 @@ function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContex
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
   }
   return { kind: "externref" };
-}
-
-function localBindingShadowsCapturingFunction(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  callee: ts.Identifier,
-): boolean {
-  const name = callee.text;
-  if (!fctx.localMap.has(name)) return false;
-  if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  // JavaScript locals inferred as `any` still shadow same-named lifted bodies.
-  return declaration !== undefined;
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {

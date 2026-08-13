@@ -4,7 +4,7 @@ title: "Moment runtime import resolves to adjacent declaration instead of JavaSc
 status: in-progress
 sprint: current
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 priority: high
 horizon: m
 feasibility: medium
@@ -98,3 +98,27 @@ Validation:
   admitted original tests pass in Wasm; 10/10 pass in Node.
 - focused compiler/runtime regressions cover explicit `.js` resolution,
   lifted-function capture shadowing, Date behavior, and host method arity four.
+
+## Merge-queue regression remediation
+
+The first merge-group attempts exposed broad function-value, callback receiver,
+and borrowed-array regressions that the pull-request stub does not execute. The
+follow-up keeps local/named self calls on their direct path, excludes declaration
+syntax from function-value observation, preserves dynamic `valueOf` and custom
+constructor dispatch, and passes hoisted callbacks as real closures.
+
+The JS-host vector prototype bridge is deliberately limited to reflective
+`slice.call(arguments, ...)`. Exposing the whole native `Array.prototype`
+bypassed compiled sidecar properties; the exact Test262
+`copyWithin/return-abrupt-from-this-length-as-symbol.js` canary now throws as
+required while Moment's original `min`/`max` callbacks remain green.
+
+Validation after the remediation:
+
+- Moment pinned upstream slice: 10/10 Node, 10/10 Wasm; six of six modules
+  compile and validate.
+- Focused compiler/runtime suite: 49/49 before the final bridge narrowing; the
+  expanded Moment file is 23/23 afterward.
+- Exact Test262 canaries: JS-host `S13_A3_T1`, array `filter` callback routing,
+  and symbolic-length `copyWithin`; standalone tail-call and array `every`
+  receiver routing all pass.
