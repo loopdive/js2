@@ -5653,6 +5653,8 @@ function lowerNestedFuncCall(
 function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const promiseDelay = tryLowerPromiseDelayConstruction(expr, cx.promiseDelays, () => makePromiseDelayLoweringHost(cx));
   if (promiseDelay !== undefined) return promiseDelay;
+  const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
+  if (primitiveWrapper !== null) return primitiveWrapper.value;
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
   }
@@ -5737,6 +5739,80 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     args.push(argVal);
   }
   return cx.builder.emitClassNew(shape, args);
+}
+
+type PrimitiveWrapperConstructorName = "Boolean" | "Number" | "String";
+
+interface LoweredPrimitiveWrapper {
+  readonly kind: PrimitiveWrapperConstructorName;
+  readonly value: IrValueId;
+}
+
+/**
+ * #4208 S4 — checker-identity-backed ambient primitive-wrapper constructor.
+ * Selection admits this only as one operand of the bounded loose-equality
+ * producer; keeping the recognizer here exact prevents a textual shadow from
+ * being routed to the runtime wrapper family.
+ */
+function primitiveWrapperConstructorName(
+  expression: ts.Expression,
+  cx: LowerCtx,
+): PrimitiveWrapperConstructorName | null {
+  const candidate = peelParensExpr(expression);
+  if (!ts.isNewExpression(candidate) || !ts.isIdentifier(candidate.expression)) return null;
+  const name = candidate.expression.text;
+  if (name !== "Boolean" && name !== "Number" && name !== "String") return null;
+  const ambient =
+    name === "String"
+      ? cx.resolver?.isAmbientStringBinding?.(candidate.expression) === true
+      : cx.resolver?.isAmbientBinding?.(candidate.expression) === true;
+  return ambient ? name : null;
+}
+
+/**
+ * Materialize the real wrapper object through the existing host/native
+ * constructor provider. The result stays branded `extern:Object`: loose
+ * equality must still run the canonical `__to_primitive` protocol and may not
+ * substitute the constructor argument as an AST shortcut.
+ */
+function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx): LoweredPrimitiveWrapper | null {
+  const kind = primitiveWrapperConstructorName(expr, cx);
+  if (kind === null) return null;
+  const args = expr.arguments ?? [];
+  if (args.length !== 1 || ts.isSpreadElement(args[0]!)) {
+    throw new IrUnsupportedError(
+      "constructor-arity-unsupported",
+      "build",
+      `ir/from-ast: primitive wrapper ${kind} requires one exact primitive argument in ${cx.funcName}`,
+    );
+  }
+
+  let argument: IrValueId;
+  if (kind === "Number") {
+    argument = lowerExpr(args[0]!, cx, irVal({ kind: "f64" }));
+    if (asVal(cx.builder.typeOf(argument))?.kind !== "f64") {
+      throw new Error(`ir/from-ast: new Number argument is not f64 in ${cx.funcName}`);
+    }
+  } else if (kind === "Boolean") {
+    const boolean = lowerExpr(args[0]!, cx, irVal({ kind: "i32", boolean: true }));
+    if (asVal(cx.builder.typeOf(boolean))?.kind !== "i32") {
+      throw new Error(`ir/from-ast: new Boolean argument is not i32 in ${cx.funcName}`);
+    }
+    argument = cx.builder.emitUnary("f64.convert_i32_s", boolean, irVal({ kind: "f64" }));
+  } else {
+    const string = lowerExpr(args[0]!, cx, { kind: "string" });
+    if (cx.builder.typeOf(string).kind !== "string") {
+      throw new Error(`ir/from-ast: new String argument is not string in ${cx.funcName}`);
+    }
+    argument = cx.builder.emitCoerceToExternref(string);
+  }
+
+  const resultType: IrType = { kind: "extern", className: "Object" };
+  const value = cx.builder.emitCall(irRuntimeFuncRef(`__new_${kind}`), [argument], resultType);
+  if (value === null) {
+    throw new Error(`ir/from-ast: __new_${kind} produced no value in ${cx.funcName}`);
+  }
+  return { kind, value };
 }
 
 /**
@@ -9776,9 +9852,11 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // path below (a `dyn === "s"` mixes dynamic + string). The payload-less
   // STRICT `dyn === null`/`dyn === undefined` cases were already handled by
   // `tryFoldNullCompare`/`tryLowerUndefinedCompare`'s dynamic arms (cheaper
-  // exact `tag.test`), so they never reach here. Reachable only once the S5.P
-  // selector scan admits dynamic-eq bodies; today the move-only gate rejects
-  // them, so this arm is byte-inert.
+  // exact `tag.test`), so they never reach here. The generic dynamic-operand
+  // arm stays byte-inert until S5.P opens its selector; #4208's focused
+  // fresh-wrapper producer shares this dispatcher after canonical ToPrimitive.
+  const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx);
+  if (dynEq !== null) return dynEq;
   if (lt.kind === "dynamic" || rt.kind === "dynamic") {
     if (op === ts.SyntaxKind.PlusToken) {
       const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
@@ -9789,8 +9867,6 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
         return added;
       }
     }
-    const dynEq = tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx);
-    if (dynEq !== null) return dynEq;
     // #2949 S5.3 — dynamic relational: `<`/`>`/`<=`/`>=` where either operand
     // is a boxed-any carrier. Each dynamic operand is ToNumber'd to f64 via
     // `dyn.to_number` (routing to the CANONICAL `__any_to_f64` gc /
@@ -10441,15 +10517,10 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
 }
 
 /**
- * #2949 S5.2 — lower `dyn === x` / `dyn !== x` / `dyn == x` / `dyn != x` (either
- * or both operands dynamic) to a `dyn.eq` node. Boxes the concrete operand into
- * the boxed-any carrier (refining the box tag from a literal's kind where
- * known) and leaves the dyn operand as-is, so `dyn.eq` sees two carriers — the
- * `(ref null $AnyValue, ref null $AnyValue)` shape the canonical
- * `__any_strict_eq`/`__any_eq` helpers take. Returns `null` (clean demote) for a
- * concrete operand this slice cannot soundly box into the carrier (union / ref /
- * an un-refinable non-literal `i32` whose number-vs-boolean brand is ambiguous),
- * or for a non-equality operator.
+ * #2949 S5.2 / #4208 S4 — lower equality through the canonical dynamic
+ * carrier. The focused wrapper producer first performs Object→ToPrimitive;
+ * otherwise at least one operand must already be dynamic. Returns `null`
+ * (clean demote) for an unboxable concrete operand or non-equality operator.
  */
 function tryLowerDynamicEq(
   expr: ts.BinaryExpression,
@@ -10460,6 +10531,9 @@ function tryLowerDynamicEq(
   rt: IrType,
   cx: LowerCtx,
 ): IrValueId | null {
+  const wrapperLooseEq = tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx);
+  if (wrapperLooseEq !== null) return wrapperLooseEq;
+  if (lt.kind !== "dynamic" && rt.kind !== "dynamic") return null;
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (!loose && !strict) return null;
@@ -10470,6 +10544,67 @@ function tryLowerDynamicEq(
   const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
   if (dynR === null) return null;
   return cx.builder.emitDynEq(dynL, dynR, { loose, negate });
+}
+
+/**
+ * #4208 S4 — lower the selector-certified fresh-wrapper loose equality.
+ * This is intentionally an AST-shape producer for a canonical IR/runtime
+ * sequence, not an AST-computed answer: the wrapper is allocated, then
+ * `__to_primitive` observes its real [[PrimitiveValue]], then `dyn.eq` owns
+ * Boolean/Number/String coercion exactly as it does for other dynamic values.
+ * Both source operands were evaluated in order before this helper runs. The
+ * selector restricts this to the non-fast externref carrier, so the primitive
+ * result crosses `box` without a representation guess; wrapper-vs-wrapper and
+ * wrapper-vs-string retain their legacy paths.
+ */
+function tryLowerPrimitiveWrapperLooseEquality(
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  lhs: IrValueId,
+  rhs: IrValueId,
+  lt: IrType,
+  rt: IrType,
+  cx: LowerCtx,
+): IrValueId | null {
+  if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return null;
+  const leftKind = primitiveWrapperConstructorName(expr.left, cx);
+  const rightKind = primitiveWrapperConstructorName(expr.right, cx);
+  if ((leftKind === null) === (rightKind === null)) return null;
+  if (cx.resolver?.dynamicCarrierIsExternref?.() !== true) {
+    throw new Error(
+      `ir/from-ast: primitive-wrapper loose equality requires the externref dynamic carrier (${cx.funcName})`,
+    );
+  }
+
+  const wrapperOnLeft = leftKind !== null;
+  const wrapperKind = (leftKind ?? rightKind)!;
+  const wrapper = wrapperOnLeft ? lhs : rhs;
+  const wrapperType = wrapperOnLeft ? lt : rt;
+  const primitiveOperand = wrapperOnLeft ? rhs : lhs;
+  const primitiveType = wrapperOnLeft ? rt : lt;
+  const primitiveExpression = wrapperOnLeft ? expr.right : expr.left;
+  if (wrapperType.kind !== "extern" || wrapperType.className !== "Object") {
+    throw new Error(`ir/from-ast: primitive wrapper did not lower to extern:Object in ${cx.funcName}`);
+  }
+
+  const externref = irVal({ kind: "externref" });
+  const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
+  const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [wrapper, hint], externref);
+  if (primitive === null) {
+    throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
+  }
+  const primitiveTag =
+    wrapperKind === "Boolean" ? JsTag.Boolean : wrapperKind === "Number" ? JsTag.NumberF64 : JsTag.String;
+  const wrapperDynamic = cx.builder.emitBox(primitive, irDynamic(primitiveTag));
+  const otherDynamic = boxConcreteToDynamic(primitiveOperand, primitiveType, primitiveExpression, cx);
+  if (otherDynamic === null) {
+    throw new Error(`ir/from-ast: wrapper loose-equality primitive operand was not boxable in ${cx.funcName}`);
+  }
+  return cx.builder.emitDynEq(
+    wrapperOnLeft ? wrapperDynamic : otherDynamic,
+    wrapperOnLeft ? otherDynamic : wrapperDynamic,
+    { loose: true, negate: op === ts.SyntaxKind.ExclamationEqualsToken },
+  );
 }
 
 /**

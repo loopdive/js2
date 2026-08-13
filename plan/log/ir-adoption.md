@@ -139,6 +139,7 @@ and Algorithms' top-level generic Map initializer are both IR-owned.
 | `primitive-method-unsupported`           | unintended | All checker-identified primitive method surfaces and arities have typed IR lowering (#3518)                                                           |
 | `function-invocation-method-unsupported` | unintended | `Function.call` / `Function.apply` receiver and argument semantics are represented in typed IR (#3518)                                                |
 | `logical-value-unsupported`              | unintended | Logical value/result families and JavaScript short-circuit coercions are represented in typed IR (#3518)                                              |
+| `operand-coercion-unsupported`           | unintended | Every supported operand coercion is represented through the canonical typed IR coercion engine (#4208)                                                |
 | `template-substitution-unsupported`      | unintended | Template substitutions support the remaining typed coercion families (#3518)                                                                          |
 | `error-constructor-unsupported`          | unintended | Error-family constructor identity, arity, and runtime intent are represented in typed IR (#3518)                                                      |
 | `typed-array-constructor-unsupported`    | unintended | TypedArray constructor identity, arity, and backend capability are represented in typed IR (#3518)                                                    |

@@ -22,6 +22,7 @@ export type IrBackendTargetCapability =
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
+  | "primitive-wrapper-loose-equality"
   | "legacy-numeric-array-global";
 
 /**
@@ -69,6 +70,18 @@ export function supportsIrBackendTargetCapability(
         profile.target === "standalone" &&
         !profile.allowHostImports &&
         profile.fast === true
+      );
+    case "primitive-wrapper-loose-equality":
+      // #4208 S4 — the focused producer crosses the wrapper object's
+      // externref through the canonical `__to_primitive` runtime boundary,
+      // then boxes that primitive into the dynamic carrier. That boundary is
+      // representation-exact only for the non-fast externref carrier today.
+      // Host gc and host-free standalone/WASI both provide the wrapper ctor +
+      // OrdinaryToPrimitive runtime family; strict-no-host gc does not.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.allowHostImports || profile.target === "standalone" || profile.target === "wasi")
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
