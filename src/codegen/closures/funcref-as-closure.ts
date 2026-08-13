@@ -17,6 +17,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
   closureArityField,
@@ -504,7 +505,16 @@ export function materializeHoistedFunctionValueBinding(
   const funcIdx = ctx.funcMap.get(name);
   if (localIdx === undefined || funcIdx === undefined) return false;
 
-  const valueType = emitFuncRefAsClosure(ctx, fctx, name, funcIdx);
+  // Capture-free declarations share the canonical lazy module singleton used
+  // by ordinary identifier reads. Besides preserving JavaScript identity, the
+  // singleton publishes the exact source-owned trampoline + cache pair to the
+  // Program ABI. Capture-carrying declarations remain activation-local and
+  // continue through the memoized per-frame closure path below.
+  const nestedCaptures = ctx.nestedFuncCaptures.get(name);
+  const valueType =
+    !nestedCaptures || nestedCaptures.length === 0
+      ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx)
+      : emitFuncRefAsClosure(ctx, fctx, name, funcIdx);
   if (!valueType) return false;
   if (valueType.kind !== "externref" && valueType.kind !== "ref_extern") {
     fctx.body.push({ op: "extern.convert_any" });
