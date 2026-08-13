@@ -200,11 +200,61 @@ Regression samples: `built-ins/Object/defineProperty` first 400 → 325→**326*
 changes; the object/property/descriptor slice of `tests/equivalence` (8 files,
 51 cases) passes.
 
+## Root cause 4 (2 tests) — dynamic-receiver `valueOf` — DIAGNOSED, NOT LANDED
+
+`compileReceiverMethodCall` ends with a blanket "`valueOf()` returns the
+receiver". That is `Object.prototype.valueOf`, correct only when nothing
+earlier in the prototype chain overrides it — and a receiver typed `any` (every
+receiver in compiled JavaScript) reaches none of the static arms that resolve
+the overriding cases. #4201 fixed this for `--target standalone` with a native
+`__dyn_valueOf` helper; **the host/GC lane still takes the shortcut**:
+
+```js
+Object("a").valueOf()                              // → the wrapper, must be "a"
+({ valueOf: function () { return 7; } }).valueOf()  // → the object, must be 7
+```
+
+It reads as a value bug rather than a type bug because the wrapper stringifies
+as its primitive: `deepEqual.js`'s `comparePrimitiveEquality` unboxes with
+`a = a.valueOf()` and then compares `typeof`, so the whole boxed-primitive
+family reported unequal (`deepEqual-primitives`, `deepEqual-primitives-bigint`).
+
+**A blanket "fall through to the dynamic host method call" is NOT the fix**, and
+was measured and reverted here rather than landed: routing the call through
+`__extern_method_call` breaks ordinary-object identity —
+
+```js
+function unbox(v) { return v.valueOf(); }
+var o = { a: 1 };
+unbox(o) === o        // becomes FALSE; §20.1.3.7 requires the receiver back
+```
+
+and the breakage is shape-sensitive (it holds when the result is stored in a
+local first, fails when compared inline), so category sampling does not surface
+it: `built-ins/Number` (340), `built-ins/Boolean` (51), `built-ins/Date` (400)
+and `built-ins/Object/defineProperty` (400) all showed **0** status changes with
+the blanket change in place, while the identity contract was broken.
+
+The host-lane fix has to mirror #4201's structure — decide in-module and return
+the ORIGINAL externref for the identity case, never a host round-trip:
+
+```
+recv → local
+local.get recv ; call __dyn_valueOf_is_identity          ;; i32
+if (result externref)
+  then local.get recv                                     ;; identity, no round-trip
+  else local.get recv ; <dynamic "valueOf" method call>
+```
+
+where `__dyn_valueOf_is_identity` answers 1 when the receiver's resolved
+`valueOf` is absent, non-callable, or `Object.prototype.valueOf`.
+
 ## Remaining buckets (GC lane, 28 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
-| `deepEqual` (residual) | 3 | structural compare of primitives / deep objects |
+| `deepEqual` (residual) | 3 | 2 are root cause 4 above (boxed-primitive unbox); 1 is deep structural compare |
+| dynamic-receiver `valueOf` | (2, counted above) | root cause 4 — diagnosed, fix designed, not landed |
 | asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
 | propertyHelper, symbol-keyed | 3 | symbol key reaches the integer-typed property path |
 | `compareArray` | 2 | `arguments` formatting, `assert.throws` inside the comparator |
