@@ -1241,6 +1241,22 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
     "RangeError",
     "SyntaxError",
     "ReferenceError",
+    // (#4394) The remaining NativeError subtypes plus AggregateError. They were
+    // missing here while their five siblings above were listed, so a bare value
+    // use lowered to `ref.null.extern` and every identity comparison against
+    // them silently answered `false` — including the `thrown.constructor !==
+    // expectedErrorConstructor` test at the heart of `assert.throws`, which then
+    // dereferenced the null constructor. `new EvalError()` was always a real
+    // host EvalError; only the bare-identifier read was null.
+    "EvalError",
+    "URIError",
+    "AggregateError",
+    // (#4394) Same omission for the non-Error ambient constructors/namespaces
+    // that also carry native fast paths at their call sites.
+    "BigInt",
+    "Proxy",
+    "SharedArrayBuffer",
+    "Atomics",
     "Date",
     "RegExp",
     "Map",
@@ -1472,6 +1488,17 @@ const LIB_GLOBALS = new Set([
   "RangeError",
   "SyntaxError",
   "ReferenceError",
+  // (#4394) Kept in step with AMBIENT_BUILTIN_CTORS — this gate decides whether
+  // `collectDeclaredGlobals` runs at all, so a name missing here is never even
+  // offered to that loop. A module referencing ONLY `EvalError` skipped the
+  // whole pass and the bare read fell to `ref.null.extern`.
+  "EvalError",
+  "URIError",
+  "AggregateError",
+  "BigInt",
+  "Proxy",
+  "SharedArrayBuffer",
+  "Atomics",
   // #1018 — additional builtins whose .prototype access needs host resolution
   "Promise",
   "Math",

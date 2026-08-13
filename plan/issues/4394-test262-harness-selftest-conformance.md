@@ -24,6 +24,11 @@ loc-budget-allow:
   # +7 lines: the new arm's body lives in its own module
   # (codegen/host-dyn-valueof.ts); what remains here is the guarded call.
   - src/codegen/expressions/call-receiver-method.ts
+  # +27 lines: entries in the two ambient-global registries (`LIB_GLOBALS` and
+  # `AMBIENT_BUILTIN_CTORS`) plus the comments recording why they must stay in
+  # step. Both registries live in this file and are read only from it; moving
+  # seven names to a leaf module would split one gate from the loop it gates.
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -61,6 +66,8 @@ files:
   - src/codegen/host-dyn-valueof.ts
   - tests/issue-4394-host-dynamic-valueof.test.ts
   - tests/test262-runner.ts
+  - src/codegen/extern-declarations.ts
+  - tests/issue-4394-ambient-error-ctor-value-read.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -370,6 +377,44 @@ legacy `wrapTest` lane and the shared `getTestSandbox()`.
 
 92 → **93** pass, 0 lost. A 400-file sample of `flags: [async]` tests across the
 suite: **0** status changes.
+
+## Root cause 8 (1 test) — bare `EvalError` / `URIError` read as `null`
+
+`assert.throws` compares `thrown.constructor !== expectedErrorConstructor` and,
+on mismatch, reads `expectedErrorConstructor.name`. For
+`assert.throws(EvalError, …)` that second step threw
+`Cannot access property on null or undefined` — because the **bare identifier**
+`EvalError` lowered to `ref.null.extern`.
+
+`new EvalError()` was never affected: it routes through the `__new_EvalError`
+host import and yields a genuine host `EvalError`. Only the value read was null,
+which is what makes this quiet — the comparison does not throw, it just answers
+`false`, so every identity check against these constructors silently inverted.
+
+Two registries in `src/codegen/extern-declarations.ts` have to agree, and did
+not. `LIB_GLOBALS` gates whether `collectDeclaredGlobals` runs **at all**;
+`AMBIENT_BUILTIN_CTORS` is the loop inside it that registers
+`env.global_<Name>`. `Error`, `TypeError`, `RangeError`, `SyntaxError` and
+`ReferenceError` were in both. Their siblings `EvalError`, `URIError` and
+`AggregateError` were in neither — as were `BigInt`, `Proxy`,
+`SharedArrayBuffer` and `Atomics`. Measured before the fix, one name per module:
+
+| bare identifier | `X === globalThis.X` |
+| --- | --- |
+| `Error` / `TypeError` / `RangeError` / `ReferenceError` / `SyntaxError` | `true` |
+| `EvalError` / `URIError` / `AggregateError` | **`false`** |
+| `BigInt` / `Proxy` / `SharedArrayBuffer` / `Atomics` | **`false`** |
+| `WeakRef` / `FinalizationRegistry` | `true` (reached via `isExternalDeclaredClass`) |
+
+### Fix
+
+Add the seven missing names to both lists. Standalone/WASI are untouched — the
+registration loop already returns early on `ctx.strictNoHostImports ||
+ctx.standalone`, so the host-free lanes keep their native carrier.
+
+### Measured
+
+93 → **94** pass (`assert-throws-native.js`), 0 lost.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 
