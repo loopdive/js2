@@ -4601,8 +4601,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
-    const returnedCallable = directReturnedCallableSignature(initializer, initializerScope);
-    if (returnedCallable) {
+    const objectMethodValue = isConst ? directObjectMethodValueProjection(initializer, initializerScope) : null;
+    const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
+    if (objectMethodValue) {
+      recordCallableProjection(d.name.text, objectMethodValue.arity, objectMethodValue.returnType);
+    } else if (returnedCallable) {
       currentCallableArities.set(d.name.text, exactCallableArity(returnedCallable.params.length));
     }
     if (!currentSubjectIsModuleInit && isConst && expressionTouchesTrackedModuleValue(initializer)) {
@@ -6565,6 +6568,45 @@ function directReturnedCallableSignature(
   return returnType && ts.isFunctionTypeNode(returnType) ? irClosureSignatureFromFunctionTypeNode(returnType) : null;
 }
 
+type DirectObjectMethodValueProjection = {
+  readonly arity: CallableArityRange;
+  readonly returnType: ts.TypeNode | undefined;
+};
+
+/**
+ * Resolve `const fn = object.method` against one exact preceding const object
+ * literal. The declaration was already fully selector-certified in source
+ * order; requiring the same all-method syntax here keeps this projection
+ * independent of checker type widening and prevents a same-text shadow from
+ * borrowing another object's method signature.
+ */
+function directObjectMethodValueProjection(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectObjectMethodValueProjection | null {
+  const candidate = unwrapProjectionExpression(expression);
+  if (!ts.isPropertyAccessExpression(candidate) || !ts.isIdentifier(candidate.name)) return null;
+  const receiver = unwrapProjectionExpression(candidate.expression);
+  if (!ts.isIdentifier(receiver) || !scope.has(receiver.text)) return null;
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(receiver);
+  if (!declaration || !declaration.initializer) return null;
+  const declarationList = declaration.parent;
+  if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) return null;
+  const object = unwrapProjectionExpression(declaration.initializer);
+  if (!ts.isObjectLiteralExpression(object) || !object.properties.every(ts.isMethodDeclaration)) return null;
+  const method = object.properties.find(
+    (property): property is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(property) &&
+      property.name !== undefined &&
+      phase1PropertyName(property.name) === candidate.name.text,
+  );
+  if (!method) return null;
+  return {
+    arity: exactCallableArity(method.parameters.length),
+    returnType: method.type,
+  };
+}
+
 function directCallParamUsesNumericVecAbi(
   call: ts.CallExpression,
   parameterIndex: number,
@@ -8416,14 +8458,20 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
       for (const d of node.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || !d.initializer) continue;
         const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
+        const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
         // Literal closures retain the existing const-only rule. A direct
         // returned-callable binding already passed the ordinary variable
-        // statement shape walk for var/let as well, so mirror that accepted
-        // population here when closing the local call graph. Otherwise an
-        // accepted `var fn = make(); fn()` is mislabeled as an external call,
-        // leaving only `make` on the post-direct overlay with an unprepared
-        // lifted slot.
-        if ((isConst && literal) || directReturnedCallableSignature(d.initializer, localValueNames) !== null) {
+        // statement shape walk for var/let as well; an exact const
+        // object-method read is the same intra-function callable population.
+        // Mirror both here when closing the local call graph. Otherwise an
+        // accepted `var fn = make(); fn()` or `const fn = object.method;
+        // fn()` is mislabeled as an external call, leaving only its producer
+        // on the post-direct overlay with an unprepared lifted slot.
+        if (
+          (isConst && literal) ||
+          objectMethodValue ||
+          directReturnedCallableSignature(d.initializer, localValueNames) !== null
+        ) {
           names.add(d.name.text);
         }
       }

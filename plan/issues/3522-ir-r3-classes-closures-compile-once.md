@@ -1716,6 +1716,32 @@ currently report the same **6 failures / 11 passes** on this checkpoint and its
 clean parent, so they are recorded as baseline rather than attributed to this
 slice.
 
+### Object-method value checkpoint (2026-08-13)
+
+An exact `const fn = object.method; fn(args)` sequence now retains the method's
+closure signature through selection and call-graph closure. The receiver must
+be a preceding checker-resolved const whose initializer is the already
+certified all-shorthand method object; the alias must also be const. The
+AST-to-IR builder already preserves the closure-valued field on property read,
+so no new runtime representation or generic dispatch is needed.
+
+Direct-body poison proves the terminal and lifted method remain IR-owned in GC
+and standalone, both artifacts validate and return 42, and optimized output
+uses `call_ref` with no `__call_m_*` dispatcher. The GC artifact improves from
+**3,406 to 2,262 bytes**; standalone improves from **6,458 to 5,893 bytes**.
+The focused direct-call/value/boundary suite is **7/7**, and the adjacent
+closure/object/prepared ownership matrix is **85/85 across 11 files**. Full
+equivalence remains **1,645 passing, 24 known failures, 12 baseline cases now
+passing, and zero new regressions**; cross-backend differential coverage is
+**29/29**. Hybrid and strict IR-only shadows remain **37/37 IR bodies, 0
+legacy bodies, 0 Unsupported, and 0 Invariants**. Typecheck, formatting,
+fallback, optimization-retirement, oracle, issue-integrity, LOC-budget, and
+function-budget gates are green.
+
+Mutable aliases remain a typed select-stage refusal; chained aliases,
+callback/cross-owner escapes, receiver-sensitive methods, accessors, and
+open-object method values remain later families.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
