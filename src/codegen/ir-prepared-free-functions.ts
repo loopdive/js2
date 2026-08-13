@@ -395,6 +395,19 @@ function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): b
   const parent = identifier.parent;
   if (!parent) return false;
   if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
+  // The direct owner already lowers an immediately invoked `.call` / `.apply`
+  // without retaining a generic runtime function value. Preparing singleton
+  // support for this receiver alone would keep the JS-string bridge and the
+  // whole generic closure surface alive in an otherwise tiny optimized module.
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    (parent.name.text === "call" || parent.name.text === "apply") &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  ) {
+    return false;
+  }
   if (
     ((ts.isFunctionDeclaration(parent) ||
       ts.isFunctionExpression(parent) ||
@@ -421,8 +434,8 @@ function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): b
 function topLevelFunctionUnitsByName(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
-): ReadonlyMap<string, readonly IrUnitId[]> {
-  const byName = new Map<string, IrUnitId[]>();
+): ReadonlyMap<string, readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]> {
+  const byName = new Map<string, { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]>();
   for (const statement of sourceFile.statements) {
     if (!ts.isFunctionDeclaration(statement) || !statement.body || !statement.name) continue;
     const unitId = identityPlan.identityContext.unitIdByDeclaration.get(statement);
@@ -433,21 +446,55 @@ function topLevelFunctionUnitsByName(
         `top-level function ${statement.name.text} has no exact structural identity`,
       );
     }
-    const ids = byName.get(statement.name.text) ?? [];
-    ids.push(unitId);
-    byName.set(statement.name.text, ids);
+    const units = byName.get(statement.name.text) ?? [];
+    units.push({ declaration: statement, unitId });
+    byName.set(statement.name.text, units);
   }
   return byName;
 }
 
+/**
+ * The checker oracle can retain a declaration node from a sibling Program
+ * snapshot while selection walks the structurally identical current source.
+ * Compare the stable source site as well as object identity so incremental
+ * compilation cannot silently lose an otherwise exact declaration match.
+ */
+function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
+  if (left === right) return true;
+  return (
+    left.kind === right.kind &&
+    left.pos === right.pos &&
+    left.end === right.end &&
+    left.getSourceFile().fileName === right.getSourceFile().fileName
+  );
+}
+
+function identifierResolvesToDeclaration(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  declaration: ts.Declaration,
+): boolean {
+  const resolved = ctx.oracle.valueDeclarationOf(identifier);
+  return resolved !== undefined && sameDeclarationSite(resolved, declaration);
+}
+
 function collectTopLevelFunctionValueTargets(
+  ctx: CodegenContext,
   sourceFile: ts.SourceFile,
-  unitsByName: ReadonlyMap<string, readonly IrUnitId[]>,
+  unitsByName: ReadonlyMap<
+    string,
+    readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
+  >,
 ): ReadonlySet<IrUnitId> {
   const targets = new Set<IrUnitId>();
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      for (const unitId of unitsByName.get(node.text) ?? []) targets.add(unitId);
+      const declaration = ctx.oracle.valueDeclarationOf(node);
+      const exact =
+        declaration === undefined
+          ? undefined
+          : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
+      if (exact) targets.add(exact.unitId);
     }
     ts.forEachChild(node, visit);
   };
@@ -455,15 +502,108 @@ function collectTopLevelFunctionValueTargets(
   return targets;
 }
 
+/**
+ * A source that observes the active `caller` of one of its own functions keeps
+ * every runtime-materialized top-level function direct. The caller-strictness
+ * hand-off is a source-wide call contract: preparing a different callable in
+ * the same script can still change the final direct-call instrumentation and
+ * therefore the observed activation. The observing function is withheld by
+ * its own poison-pill guard below; this gate only withholds the runtime-
+ * materialized sibling population. Unrelated source functions remain eligible.
+ */
+function sourceObservesCurrentFunctionCaller(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  return sourceFile.statements.some(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) &&
+      statement.body !== undefined &&
+      containsCurrentFunctionPoisonPillRead(ctx, statement),
+  );
+}
+
+/** Function-value targets that must stay on the direct caller-activation route. */
+export function collectDirectCallerActivationTargetUnitIds(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlySet<IrUnitId> {
+  if (!sourceObservesCurrentFunctionCaller(ctx, sourceFile)) return new Set<IrUnitId>();
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
+}
+
+/** Exact top-level source callables materialized as runtime values anywhere in this source. */
+export function collectPreparedTopLevelFunctionValueTargetUnitIds(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlySet<IrUnitId> {
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
+}
+
 function containsTopLevelFunctionValueReference(
+  ctx: CodegenContext,
   declaration: ts.FunctionLikeDeclaration,
-  unitsByName: ReadonlyMap<string, readonly IrUnitId[]>,
+  unitsByName: ReadonlyMap<
+    string,
+    readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
+  >,
 ): boolean {
   if (!declaration.body) return false;
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isIdentifier(node) && unitsByName.has(node.text) && identifierIsRuntimeFunctionValueReference(node)) {
+    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
+      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
+      if (
+        valueDeclaration !== undefined &&
+        (unitsByName.get(node.text) ?? []).some((unit) => sameDeclarationSite(unit.declaration, valueDeclaration))
+      ) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return found;
+}
+
+/**
+ * The direct backend currently owns ES5 Function `caller` / `arguments`
+ * activation semantics. In particular, a sloppy function that reads its own
+ * `caller` observes the direct-eval call boundary through the caller-strictness
+ * hand-off. Preparing that body without an equivalent IR activation contract
+ * turns the function-value support added below into a semantic regression.
+ *
+ * Keep only the exact current-function poison-pill shape direct. Unrelated
+ * property reads named `caller` / `arguments` and ordinary function-value
+ * targets remain eligible for Prepared IR.
+ */
+function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration: ts.FunctionLikeDeclaration): boolean {
+  if (!declaration.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    let receiver: ts.Expression | undefined;
+    let name: string | undefined;
+    if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
+      receiver = node.expression;
+      name = node.name.text;
+    } else if (ts.isElementAccessExpression(node)) {
+      const key = node.argumentExpression;
+      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+        receiver = node.expression;
+        name = key.text;
+      }
+    }
+    if (
+      receiver !== undefined &&
+      (name === "caller" || name === "arguments") &&
+      ts.isIdentifier(receiver) &&
+      (identifierResolvesToDeclaration(ctx, receiver, declaration) ||
+        (declaration.name !== undefined &&
+          ts.isIdentifier(declaration.name) &&
+          receiver.text === declaration.name.text))
+    ) {
       found = true;
       return;
     }
@@ -630,7 +770,7 @@ export function selectR3PreparedPromiseDelayFunctions(input: {
   }
 
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
-  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.ctx, input.sourceFile, functionUnitsByName);
   const selected = new Set<string>();
   for (const legacyName of input.selectedLegacyNames) {
     const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
@@ -650,7 +790,7 @@ export function selectR3PreparedPromiseDelayFunctions(input: {
       plan.construction.getSourceFile() !== input.sourceFile ||
       claim.declaration !== plan.construction.parent?.parent?.parent ||
       functionValueTargets.has(unitId) ||
-      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+      containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
       !r3PromiseDelaySignatureMatchesAllocatedSlot(input.ctx, unitId, override)
     ) {
       continue;
@@ -676,7 +816,7 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): ReadonlySet<string> {
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
-  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.ctx, input.sourceFile, functionUnitsByName);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const selected = new Set<string>();
   const prepared = new Set(input.preparedDependencyLegacyNames);
@@ -710,7 +850,7 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
       if (
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
-        containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+        containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
         !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
       ) {
         continue;
@@ -877,7 +1017,11 @@ export function selectR2PreparedOwnerComponents(input: {
   const freeFunctionCandidates = new Set<IrUnitId>();
   const baseline = new Set<IrUnitId>();
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
-  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(
+    input.ctx,
+    input.sourceFile,
+    input.identityPlan,
+  );
   for (const legacyName of input.baselineLegacyNames) {
     baseline.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName));
   }
@@ -902,8 +1046,9 @@ export function selectR2PreparedOwnerComponents(input: {
       isAsync ||
       claim.declaration.asteriskToken ||
       containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
-      functionValueTargets.has(unitId) ||
-      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+      containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
+      directCallerActivationTargets.has(unitId) ||
+      containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
       !override.params.every(r2StableSignatureType) ||
       !r2StableSignatureType(override.returnType) ||
       !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override)
