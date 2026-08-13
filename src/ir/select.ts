@@ -2988,6 +2988,16 @@ function isPhase1StatementListInScope(
       if (!isPhase1NestedFunc(s, scope, localClasses)) return false;
       continue;
     }
+    // #3522 — a strictly bounded nested class has no runtime definition
+    // effects. Exact Program ABI preparation owns its constructor/method
+    // bodies; this statement only introduces the class binding used by later
+    // `new` and method expressions in the enclosing IR body.
+    if (ts.isClassDeclaration(s) && s.name) {
+      const projected = currentLocalClassDeclarations.get(s.name.text);
+      if (projected !== s || !localClasses.has(s.name.text)) return shapeNo("nontail-class-unprepared", s);
+      scope.add(s.name.text);
+      continue;
+    }
     // Slice 3 (#1169c): bare call expression statement (drop the result).
     // Lets `inc(); inc(); inc();` patterns work for closures with side
     // effects through ref-cell captures.
@@ -6146,7 +6156,12 @@ function projectedConstructorArity(className: string): number | undefined {
 }
 
 function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): boolean {
-  return !scope.has(name) && !currentNestedFunctionNames.has(name) && !currentLexicalValueBindingNames.has(name);
+  const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.get(name)?.name !== undefined;
+  return (
+    (!scope.has(name) || exactNestedClassBinding) &&
+    !currentNestedFunctionNames.has(name) &&
+    (!currentLexicalValueBindingNames.has(name) || exactNestedClassBinding)
+  );
 }
 
 function localClassNameForExpression(expression: ts.Expression, scope: ReadonlySet<string>): string | null {

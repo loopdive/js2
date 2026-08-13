@@ -70,16 +70,19 @@ files:
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
+  - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/module-bindings.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
@@ -87,6 +90,8 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
+  - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/select.ts::whyNotIrClaimable
 ---
 
@@ -1196,6 +1201,71 @@ expression owners and the remaining typed fallback policies still consume the
 class collector/body machinery. After publication, the next serial R3 family
 is exact nested/class-expression ownership; shared code is removed only with
 the last proven consumer.
+
+### Bounded nested ordinary-class ownership checkpoint (2026-08-13)
+
+Named ordinary classes declared inside a function can now join the same
+prepare-before-emit transaction as their containing caller. The admitted
+family is deliberately effect-free at class-definition time: no heritage,
+decorators, static elements, computed keys, field initializers, async/generator
+methods, optional/rest/default parameters, or body captures. It has one fixed
+constructor and at least one fixed-name instance method. Those restrictions
+let the IR body treat the declaration as a lexical class binding while Program
+ABI owns every executable member before the containing body lowers.
+
+Identity inventory promotes the nested constructor and methods to exact
+terminal units with their containing function as owner. Selection is atomic:
+the caller, constructor, and every method must all claim with one projected
+class layout and exact callable graph, or the complete component stays direct.
+Prepared dependency sealing may borrow that nested layout only for exact
+members of the same containing owner. Declaration/body routing then visits the
+fully prepared class solely to correlate its skipped slots; neither the
+enclosing direct function compiler nor nested class-body compiler may emit the
+source bodies.
+
+The GC/standalone proof uses `run -> Calculator { constructor, add, scale }`.
+All four terminals share one prepared component and report
+`legacyBodyEmitted:false, irBodyEmitted:true` while both direct function and
+direct class-body poison seams are active. Both targets validate and return
+`715`; the prepared artifact is no larger than the same-source direct artifact.
+The constructor uses typed `struct.set`, both methods use typed `struct.get`,
+and migrated bodies reject extern conversions, casts/tests, `call_ref`, and
+`call_indirect`. A captured outer `offset` is the fail-closed control: the
+caller and every class member remain one Unsupported/direct component and
+return `42`, so a mixed caller/member policy cannot satisfy the test.
+
+The implementation preserves the separate nested-accessor policy. A focused
+audit initially exposed that projecting every nested class changed a TDZ/
+writeback accessor control from typed fallback into a late ABI failure. The
+candidate resolver and structural class-name set now widen only for this
+bounded ordinary family; all **21/21** accessor writeback tests pass, including
+the injected sibling-TDZ rejection, and the existing top-level default-
+parameter class retains its exact `class-projection-unsupported` outcome.
+
+Qualification after the inherited-layout checkpoint landed is green:
+
+- focused R2/R3 ownership matrix: **129/129**;
+- nested ordinary ownership plus accessor audit: **24/24**;
+- cross-backend differential: **29/29**;
+- equivalence: **1,645 passing, 24 known failures, zero new regressions**;
+- hybrid and strict shadows: **37/37 IR bodies, 0 legacy bodies, 0
+  Unsupported, 0 Invariants**;
+- ordinary fallback gate: zero unintended, post-claim, or module-level
+  increases; shape diagnostic: zero attributed body-shape rejections; and
+- typecheck, lint, and formatting pass.
+
+No shared direct implementation is deleted in this checkpoint. Class
+expressions and nested classes with inheritance, static/effectful elements,
+computed keys, initializers, flexible parameters, or captures still consume
+the nested class/body machinery. The remaining serial R3 checklist is:
+
+1. class-expression ownership and the remaining effect-free declaration
+   positions;
+2. closures, object methods/accessors, and cross-owner callable support;
+3. module initialization under #3523;
+4. runtime and linear-memory helpers; and
+5. delete each direct implementation when its final typed consumer reaches
+   zero, then enable IR-only as the default.
 
 ## Exhaustive source-unit census
 

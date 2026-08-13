@@ -815,15 +815,17 @@ function addClassLayout(
     return;
   }
   const terminal = terminalInventoryUnit(inventory, evidence.terminalOwnerUnitId);
-  const borrowsOwnNestedAccessorLayout =
+  const borrowsOwnNestedClassLayout =
     terminalOwner !== null &&
     terminal?.containingTerminalOwnerId === terminalOwner &&
     terminal.lexicalOwnerId === shape.classId &&
-    (terminal.kind === "class-instance-getter" ||
+    (terminal.kind === "class-constructor" ||
+      terminal.kind === "class-instance-method" ||
+      terminal.kind === "class-instance-getter" ||
       terminal.kind === "class-static-getter" ||
       terminal.kind === "class-instance-setter" ||
       terminal.kind === "class-static-setter");
-  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner) && !borrowsOwnNestedAccessorLayout) {
+  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner) && !borrowsOwnNestedClassLayout) {
     addFailure(evidence, {
       code: "foreign-source-class",
       ownerUnitId: evidence.terminalOwnerUnitId,
@@ -839,7 +841,7 @@ function addClassLayout(
     structuralReferenceKey: irTypeBindingKey(ref.binding),
     expected: (intent) => intent.kind === "class" && intent.classId === shape.classId,
   });
-  if (borrowsOwnNestedAccessorLayout && !candidateTerminalUnitIds.has(terminalOwner)) {
+  if (borrowsOwnNestedClassLayout && !candidateTerminalUnitIds.has(terminalOwner)) {
     const key = `class-layout\u0000${ref.binding.bindingId}`;
     const dependency = evidence.abiDependencies.get(key);
     if (dependency) {
