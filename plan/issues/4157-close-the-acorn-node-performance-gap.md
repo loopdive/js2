@@ -2895,3 +2895,49 @@ one answer.** Use counts for the verdict and the profile for attribution.
 the emitted code do less work", which is what an optimisation actually claims.
 Wall clock on this box is not evidence, and bucket share is evidence only when
 the blocks replicate.
+
+## 2026-08-13 (22) — CORRECTION: the inline property cache works; I measured the wrong helper
+
+Entry (21) reported the call-site inline cache as eliminating **zero** calls and
+recommended leaving it off. **That verdict is withdrawn — it was measured wrong,
+twice.**
+
+1. The stack run set `JS2WASM_MEMBER_GET_IC`, **a flag that does not exist**. The
+   real name is `JS2WASM_INLINE_PROP_IC`. The cache was never enabled.
+2. After fixing the name, I checked `__extern_get` — which the cache **does not
+   target**. It speculates ahead of the per-name `__get_member_<name>`
+   dispatchers, and those were not in the census target list at all.
+
+Re-measured with `JS2WASM_EXEC_CENSUS` on the helper it actually targets, acorn
+self-parse, `optimize: 0`, checksum 422 in every row:
+
+| build | binary | `__get_member_*` executed | names | `__extern_get` |
+| --- | ---: | ---: | ---: | ---: |
+| OFF | 2,471,129 | 1,000,011 | 83 | 506,752 |
+| `=1` (default ceiling) | +38,107 | 913,260 (**−86,751**, −8.7 %) | 72 | 506,752 |
+| **`=4`** | +83,897 | **436,668 (−563,343, −56.3 %)** | 51 | 506,752 |
+
+**At ceiling 4 the cache removes 563,343 executed dispatcher calls per parse** —
+comparable to the fused-ToNumber slice's 568,520, which this file has already
+accepted as the session's clearest win.
+
+`__extern_get` really is unchanged at 506,752 in every configuration; that part
+of entry (21) stands. It is simply not the helper this optimisation addresses.
+
+### Two lessons, both about the instrument rather than the optimisation
+
+- **A flag name is part of the measurement.** Nothing in the harness objects to
+  an unrecognised environment variable, so an experiment that sets the wrong one
+  silently measures the baseline against itself and reports a confident null.
+  Assert the mechanism fired — the fire-probe technique of entry (2), or a
+  site/patch counter — before believing any negative.
+- **Measure the helper the change targets, not the one the bucket is named
+  after.** `dynamic-lookup` contains both `__extern_get` and the
+  `__get_member_*` family; the cache moves the second and not the first, and
+  looking only at the bucket's largest frame hid a 56 % reduction.
+
+### The default ceiling is wrong
+
+`=1` costs 38 KB for 8.7 %; `=4` costs 84 KB for 56 %. Whatever ships, the
+ceiling should be chosen on this curve rather than left at 1. Higher ceilings are
+unmeasured.
