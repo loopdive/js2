@@ -82,6 +82,13 @@ export function lazyStrFlattenEnabled(): boolean {
  * `__str_toLowerCase_ascii`, `__str_toUpperCase_ascii`, `__str_replace`,
  * `__str_replaceAll`, `__str_getSubstitution`.
  *
+ * Note `native-strings-basics.ts` documents `__str_equals` as taking
+ * `ref $NativeString`. That is its LOGICAL contract, not its emitted signature
+ * — `native-strings-shared.ts` defines one `strRef` over `anyStrTypeIdx` and
+ * uses it for ALL helper params and results. Reading the comment rather than
+ * the emitter makes eliding a caller-side flatten look like a type error; it is
+ * not.
+ *
  * NOT self-flattening — keep the call site's flatten: `__str_repeat`,
  * `__str_padStart`, `__str_padEnd`, `__str_isWellFormed`,
  * `__str_toWellFormed`, `__str_to_extern`, `__str_from_extern`. Also keep it

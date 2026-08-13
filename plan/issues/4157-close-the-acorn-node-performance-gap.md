@@ -47,6 +47,13 @@ loc-budget-allow:
   # of which must sit where the helper body is built.
   - src/codegen/object-runtime.ts
   - src/codegen/string-ops.ts
+  # (#4157 caller-side flatten elision) +1 line: the import of
+  # `redundantFlattenCall`. The four call sites it replaces are net-zero
+  # (`{ op: "call", ... }` -> `...redundantFlattenCall(...)`, one line each) and
+  # the whole rationale lives in the leaf module `lazy-str-flatten.ts`. One
+  # import line is the irreducible cost of routing a site to a subsystem module,
+  # which is the direction #3102 asks for.
+  - src/codegen/binary-ops-typed-dispatch.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
@@ -3482,3 +3489,42 @@ frame; rewriting to `call`+`br` is semantically right but converts a
 constant-stack tail call into a growing one), `try`/`rethrow`, multi-result
 callees (the wrapper block would need a `[] -> results` functype that may not
 exist), and direct self-recursion.
+
+## 2026-08-13 (26) — the four redundant caller-side flattens, deleted
+
+The lazy-flatten slice reported, but did not build, that **1,664 of the remaining
+`__str_equals` feeders are all emitted by `binary-ops-typed-dispatch.ts`** — the
+equality cascade (~959/962) and the mixed-externref strict-equality arm
+(~261/264) — and that the four `{ op: "call", funcIdx: flattenIdx }` entries
+behind them can be deleted outright. Built now, under the existing
+`JS2WASM_LAZY_STR_FLATTEN` flag via that slice's own `redundantFlattenCall`.
+
+**The claim needed checking before acting, and nearly failed.** The report said
+`__str_equals` "takes `ref $AnyString`", while `native-strings-basics.ts:437`
+documents it as `__str_equals(a: ref $NativeString, b: ref $NativeString)`. If
+the latter were the emitted signature, deleting the flattens would feed an
+`$AnyString` to a `ref $NativeString` parameter — a validation failure.
+
+It is not. `native-strings-shared.ts:69` defines
+`strRef = { kind: "ref", typeIdx: anyStrTypeIdx }` with the comment *"used in
+all helper function signatures (params and results)"*, and
+`wrapBodyWithFlatten` gives each helper its own guarded preamble. The `:437`
+comment is the **logical** contract, not the emitted one. The report was right;
+the documentation is what disagrees.
+
+### Result
+
+| | OFF | lazy-flatten only | **+ this** |
+| --- | ---: | ---: | ---: |
+| `__str_flatten` | 516,717 | 421,019 | **252,367** |
+| `__str_equals` | 254,976 | 254,976 | 254,976 |
+
+**−168,652 further calls, −264,350 against baseline (−51.2 %)**, checksum 422,
+and the binary is **smaller** (2,478,636 vs a 2,537,596 flags-off baseline).
+Byte-identical with the flag unset.
+
+`__str_equals` is unchanged, as expected — this removes flattens, not equality
+calls. The gain is larger than the site count suggests because the preamble
+`wrapBodyWithFlatten` installs sits **above** `__str_equals`'s `ref.eq`, length
+and hash rejects: a pre-flattening caller guarantees the helper never reaches
+the skips it exists to take. Removing the caller-side call restores them.
