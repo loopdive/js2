@@ -13019,6 +13019,35 @@ assert._isSameValue = isSameValue;
           return err;
         };
       }
+      // (#4394) Host-lane `<dynamic>.valueOf()` — the two halves of the
+      // in-module decision emitted by `host-dyn-valueof.ts`. The compiler keeps
+      // the ORIGINAL externref for the ordinary-object answer, so these are
+      // asked ONLY about the overriding cases (a primitive wrapper's intrinsic
+      // slot, or a user `valueOf`); `Object.prototype.valueOf` itself reports
+      // "not an override" and never round-trips the receiver through the host.
+      if (name === "__dyn_valueof_is_override") {
+        return (recv: any): number => {
+          if (recv == null) return 0;
+          if (typeof recv !== "object" && typeof recv !== "function") return 0;
+          try {
+            const resolved = _maybeWrapCallableUnknownArity(_safeGet(recv, "valueOf", callbackState), callbackState);
+            if (typeof resolved !== "function") return 0;
+            return resolved === Object.prototype.valueOf ? 0 : 1;
+          } catch {
+            return 0;
+          }
+        };
+      }
+      if (name === "__dyn_valueof_call") {
+        return (recv: any): any => {
+          const resolved = _maybeWrapCallableUnknownArity(_safeGet(recv, "valueOf", callbackState), callbackState);
+          if (typeof resolved !== "function") return recv;
+          const ret = resolved.call(recv);
+          // Mirror `__extern_method_call`: a method that returns its receiver
+          // hands back the receiver we were given, not a re-wrapped view.
+          return ret === recv ? recv : _unwrapForHost(ret);
+        };
+      }
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =

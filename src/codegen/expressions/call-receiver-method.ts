@@ -120,6 +120,7 @@ import {
 } from "./calls-closures.js";
 import { compileExternMethodCall } from "./extern.js";
 import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
+import { tryEmitHostDynamicValueOf } from "../host-dyn-valueof.js"; // (#4394) host-lane dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -2957,9 +2958,15 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver (#4201).
+  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver
+  // (#4201 standalone / #4394 host — see host-dyn-valueof.ts for why the host
+  // arm cannot simply fall through to the generic dynamic method call).
   if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
+    return (
+      tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ??
+      tryEmitHostDynamicValueOf(ctx, fctx, propAccess) ??
+      compileExpression(ctx, fctx, propAccess.expression)
+    );
   }
 
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);

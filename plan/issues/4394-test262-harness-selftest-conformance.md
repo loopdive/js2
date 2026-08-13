@@ -21,6 +21,9 @@ loc-budget-allow:
   # It belongs next to the #3536 arm it generalizes and to
   # `compileObjectLiteralForStruct`, which it dispatches to; both live here.
   - src/codegen/literals.ts
+  # +7 lines: the new arm's body lives in its own module
+  # (codegen/host-dyn-valueof.ts); what remains here is the guarded call.
+  - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -38,6 +41,8 @@ func-budget-allow:
   # +13 lines: a one-condition change to the existing widening scan plus the
   # comment recording the literal-vs-non-literal divergence it closes.
   - src/codegen/literals.ts::compileArrayLiteral
+  # +6 lines: the new arm is a guarded call into codegen/host-dyn-valueof.ts.
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -53,6 +58,8 @@ files:
   - tests/issue-4394-nested-fn-static-write.test.ts
   - tests/issue-4394-optional-field-literal-arg.test.ts
   - tests/issue-4394-mixed-array-literal-host.test.ts
+  - src/codegen/host-dyn-valueof.ts
+  - tests/issue-4394-host-dynamic-valueof.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -234,7 +241,7 @@ lane treats a string-literal element exactly like the identical non-literal one.
 `language/expressions/array` (52): 0 status changes; the array/vec/tuple/
 destructuring slice of `tests/equivalence` (25 files, 186 cases) is unchanged.
 
-## Root cause 5 (2 tests) — dynamic-receiver `valueOf` — DIAGNOSED, NOT LANDED
+## Root cause 5 (2 tests) — dynamic-receiver `valueOf` in the host lane
 
 `compileReceiverMethodCall` ends with a blanket "`valueOf()` returns the
 receiver". That is `Object.prototype.valueOf`, correct only when nothing
@@ -253,8 +260,8 @@ as its primitive: `deepEqual.js`'s `comparePrimitiveEquality` unboxes with
 `a = a.valueOf()` and then compares `typeof`, so the whole boxed-primitive
 family reported unequal (`deepEqual-primitives`, `deepEqual-primitives-bigint`).
 
-**A blanket "fall through to the dynamic host method call" is NOT the fix**, and
-was measured and reverted here rather than landed: routing the call through
+**A blanket "fall through to the dynamic host method call" is NOT the fix** — it
+was measured and reverted before the real one landed. Routing the call through
 `__extern_method_call` breaks ordinary-object identity —
 
 ```js
@@ -269,25 +276,50 @@ it: `built-ins/Number` (340), `built-ins/Boolean` (51), `built-ins/Date` (400)
 and `built-ins/Object/defineProperty` (400) all showed **0** status changes with
 the blanket change in place, while the identity contract was broken.
 
-The host-lane fix has to mirror #4201's structure — decide in-module and return
-the ORIGINAL externref for the identity case, never a host round-trip:
+### Fix
+
+Mirror #4201's structure in `src/codegen/host-dyn-valueof.ts` — decide
+in-module and return the ORIGINAL externref for the identity case, never a host
+round-trip:
 
 ```
 recv → local
-local.get recv ; call __dyn_valueOf_is_identity          ;; i32
+local.get recv ; call __dyn_valueof_is_override           ;; i32
 if (result externref)
-  then local.get recv                                     ;; identity, no round-trip
-  else local.get recv ; <dynamic "valueOf" method call>
+  then local.get recv ; call __dyn_valueof_call            ;; wrapper slot / user override
+  else local.get recv                                      ;; identity, no round-trip
 ```
 
-where `__dyn_valueOf_is_identity` answers 1 when the receiver's resolved
-`valueOf` is absent, non-callable, or `Object.prototype.valueOf`.
+where `__dyn_valueof_is_override` answers 0 — the identity arm — when the
+receiver's resolved `valueOf` is absent, non-callable, or exactly
+`Object.prototype.valueOf`.
 
-## Remaining buckets (GC lane, 26 fail)
+### Measured
+
+90 → **92** pass (`deepEqual-primitives`, `deepEqual-primitives-bigint`).
+Regression samples, all **0** status changes: `built-ins/Number` (340),
+`built-ins/Boolean` (51), `built-ins/Date` (400),
+`built-ins/Object/defineProperty` (400); plus the wrapper / coercion /
+to-primitive slice of `tests/equivalence` (24 files, 195 cases).
+
+The identity contract is now pinned by
+`tests/issue-4394-host-dynamic-valueof.test.ts`, including the inline-comparison
+spelling that the reverted attempt broke.
+
+### Residual, separate from this
+
+`if (isBoxed(a)) a = a.valueOf();` — the condition spelled as an INLINE call —
+still reads back the wrapper, while hoisting it (`var boxed = isBoxed(a); if
+(boxed) …`) works. The parameter's local carrier is typed from its call sites as
+the String WRAPPER, so storing the unboxed primitive back into it coerces to the
+wrapper again. That is a parameter-carrier bug, not a `valueOf` one; the harness
+does not hit it (its `comparePrimitiveEquality` passes).
+
+## Remaining buckets (GC lane, 24 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
-| `deepEqual` (residual) | 3 | 2 are root cause 5 above (boxed-primitive unbox — diagnosed, fix designed, not landed); 1 is deep structural compare |
+| `deepEqual` (residual) | 1 | deep structural compare of nested objects/arrays |
 | asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
 | propertyHelper, symbol-keyed | 3 | symbol key reaches the integer-typed property path |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
