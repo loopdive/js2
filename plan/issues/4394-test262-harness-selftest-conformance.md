@@ -83,6 +83,8 @@ files:
   - src/codegen/object-ops.ts
   - tests/issue-4394-global-object-define-property.test.ts
   - tests/issue-4394-test262-error-instanceof.test.ts
+  - src/codegen/expressions/shadowed-error-ctor.ts
+  - tests/issue-4394-shadowed-error-ctor.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -557,6 +559,69 @@ NOT flip — there the error crosses into a module-declared `$DONE` through
 `asyncTest`'s callback edge, and arrives already degraded. That is the same
 value-degradation-across-a-callback-boundary defect recorded under the
 `detachArrayBuffer` heading below, not a gap in this repair.
+
+## Root cause 12 (1 test) — `new TypeError()` ignored a user shadow
+
+`tryCompileBuiltinGlobalNew` claims the NativeError names **by name, with no
+scope check**, so
+
+```js
+(function () {
+  function TypeError() {}
+  assert.throws(TypeError, function () { throw new TypeError(); });
+})();
+```
+
+built the INTRINSIC while the `TypeError` identifier read the local one.
+Measured: `e.constructor === TypeError` **false**,
+`e.constructor === intrinsicTypeError` **true** — precisely the collision
+`harness/assert-throws-custom-typeerror.js` exists to detect.
+
+### Fix
+
+`expressions/shadowed-error-ctor.ts` walks the enclosing scope chain from the
+`new` site looking for a user binding of the name; the intrinsic-name arm
+declines when one is found and the ordinary user-constructor path compiles it.
+Purely syntactic — the oracle cannot express "which binding wins here" as a
+`ValType` question, and a raw `getSymbolAtLocation` would trip the ratchet.
+
+`Test262Error` is deliberately EXCLUDED: the harness always declares it, and the
+ctor-carrying lowering (root cause 1) exists to reconcile that rather than
+decline it.
+
+### Measured
+
+97 → **98** pass (`assert-throws-custom-typeerror.js`), 0 lost.
+equivalence-gate, all 8 shards: no new regressions. 194-file sample over
+`built-ins/{Error,NativeErrors}` and `language/statements/try`: 0 regressions.
+
+### Known limitation, pinned by test
+
+A **top-level** `function RangeError() {…}` is claimed by a different `new`
+path before the guarded arm is consulted, so the user's body still never runs.
+`errorCtorNameIsUserShadowed` reports it correctly; the interception order is
+what is wrong. `tests/issue-4394-shadowed-error-ctor.test.ts` asserts the
+current (wrong) answer explicitly, so a later repair has a failing-to-passing
+signal instead of a silent behaviour change. Every harness case that matters
+shadows inside an IIFE, which is fixed.
+
+## Standalone lane (measured 2026-08-13)
+
+The cohort is measured in the GC lane. Standalone is **41 / 116** on the same
+tree, and the gap is dominated by two things that are NOT compiler defects:
+
+| bucket | count | note |
+| --- | ---: | --- |
+| `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` | 37 | container-local missing artifact, not a lane gap |
+| `asyncTest called without async flag` | 15 | standalone's `globalThis` is a native `$Object`, so the harness's `hasOwnProperty(globalThis, "$DONE")` guard cannot see the sandbox own-property that root cause 7 gates |
+| null deref in `toString` | 6 | |
+| `$DONE is not defined` | 4 | |
+| `Function.prototype.toString` renders `[object Object]` | 3 | |
+| singletons (deepEqual array/sparse, TypedArray illegal cast, …) | 10 | |
+
+So the honest standalone figure once the provider is built is ~78/116, and the
+`$DONE` own-property bucket is the single largest real gap — it is the
+standalone counterpart of root cause 7, not a separate defect.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 

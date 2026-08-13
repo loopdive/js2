@@ -29,6 +29,7 @@ import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
+import { errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
 import { coerceType, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -342,16 +343,22 @@ export function tryCompileBuiltinGlobalNew(
   // Standalone fallback: the thrown value is just the message string (as before).
   if (ts.isIdentifier(expr.expression)) {
     const ctorName = expr.expression.text;
-    if (
+    // (#4394) `Test262Error` is deliberately NOT shadow-guarded: the harness
+    // always declares it (sta.js) and the ctor-carrying lowering below exists
+    // precisely to reconcile that. The intrinsic names ARE guarded — claiming
+    // them by name built the INTRINSIC while the identifier read the user's
+    // own binding, so `new TypeError()` under `function TypeError() {}` gave
+    // `e.constructor === intrinsicTypeError`. Declining lets the ordinary
+    // user-constructor path compile it.
+    const isIntrinsicErrorName =
       ctorName === "Error" ||
       ctorName === "TypeError" ||
       ctorName === "RangeError" ||
       ctorName === "SyntaxError" ||
       ctorName === "URIError" ||
       ctorName === "EvalError" ||
-      ctorName === "ReferenceError" ||
-      ctorName === "Test262Error"
-    ) {
+      ctorName === "ReferenceError";
+    if ((isIntrinsicErrorName && !errorCtorNameIsUserShadowed(expr, ctorName)) || ctorName === "Test262Error") {
       const args = expr.arguments ?? [];
       if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Compile the message argument to externref
