@@ -73,6 +73,7 @@ import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
+import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -914,6 +915,8 @@ function compileIdentifierCore(
       if (valueType !== undefined) return valueType;
     }
   }
+  const globalFunction = tryEmitStandaloneGlobalFunctionIdentifier(ctx, fctx, name, id);
+  if (globalFunction) return globalFunction;
   if (ctx.sloppyImplicitGlobals?.has(name)) return emitImplicitGlobalRead(ctx, fctx, name);
   // Standalone built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to

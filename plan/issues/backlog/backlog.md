@@ -2,6 +2,35 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-12 — Compiler capability, diagnostics, and portability hardening
+
+- [#3518](../3518-ir-only-default-and-direct-frontend-retirement.md) and
+  [#3521](../3521-ir-r2-prepared-program-free-function-compile-once.md) — make
+  one versioned, validated, losslessly serializable `PreparedIrProgram` the
+  sole frontend-to-backend handoff; backend inability must fail typed before
+  emission rather than reparse, reselect, or fall back.
+- [#3678](../3678-ir-rejection-diagnostics-error-codes.md) — replace internal
+  reason strings with stable project codes, source frames, typed categories,
+  JSON diagnostics, and actionable remediation shared by compiler and tooling.
+- [#4382](../4382-compiler-capability-manifest-explain-workflow.md) — project
+  production compiler decisions into an explicit capability schema and a
+  coherent `build`/`run`/`explain` workflow, with visible `unknown` results and
+  generated documentation rather than hand-maintained support claims.
+- [#3681](../3681-differential-whole-program-corpus-testing.md) — extend the
+  existing differential harness across JS-host, standalone/WASI, and linear
+  lanes, comparing stdout, stderr, exit/error behavior, and observable exports
+  with explicit denominators and owned divergences.
+- [#2514](../2514-runtime-helpers-as-shared-linkable-module.md) — factor stable
+  runtime families into feature-granular, link-gated core-Wasm providers whose
+  ABI/version and capability requirements are selected by the frozen runtime
+  manifest; keep inline providers until measurements justify promotion.
+
+Recommended dependency order: prepared-program/semantic-manifest ownership
+(#3518/#3521/#3526), stable diagnostics (#3678), public capability projection
+(#4382), target-matrix promotion (#3681), then broader linked-provider rollout
+(#2514). Differential corpus and ABI experiments can proceed in bounded slices
+while the earlier architectural gates remain active.
+
 ## 2026-08-12 — Deno primordials bootstrap
 
 - [#4378](../4378-deno-primordials-array-prototype-iterator.md) — let the
