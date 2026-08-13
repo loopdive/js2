@@ -48,10 +48,6 @@ function targets(): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function execCensusEnabled(): boolean {
-  return targets().length > 0;
-}
-
 /**
  * Install the census. Call LAST in finalize — after every body fill and every
  * index remap — so the increment sits at the head of each function's final
