@@ -18,7 +18,11 @@ export interface IrIntegrationReport {
   readonly terminalEvidence?: readonly IrIntegrationTerminalEvidence[];
   /** Public compiled entries that are exact terminal owners. */
   readonly terminalCompiledOwners?: readonly string[];
-  /** Public compiled entries that are synthetic artifacts, not terminal rows. */
+  /**
+   * Historical compatibility field for every non-terminal compiled artifact.
+   * This includes pass-created units and inventoried nested source bodies;
+   * exact source/synthetic classification lives in compiledArtifactEvidence.
+   */
   readonly syntheticCompiledArtifacts?: readonly string[];
 }
 
