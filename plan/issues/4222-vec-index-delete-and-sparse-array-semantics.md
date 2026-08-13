@@ -1,7 +1,7 @@
 ---
 id: 4222
 title: "Standalone array semantics: `delete arr[k]` never makes the index absent, `new Array(n)` fills `undefined` instead of holes"
-status: in-progress
+status: in-review
 sprint: current
 created: 2026-08-08
 updated: 2026-08-13
@@ -496,3 +496,59 @@ harness in each lane, including eval, `Function`, and `with`:
 - Keep the change proportional. Every touched compiler file must be justified
   by the carrier dataflow above; if the two-row slice still needs broad generic
   rewrites, stop and return an architecture blocker rather than landing it.
+
+## Bounded carrier implementation result — 2026-08-13
+
+Implementation commit `53a2d52f43b35c02f485013d28f03f8e842301c6` was rebased
+onto verified `origin/main`
+`f8d47c3a3cfb38f84e2b9df2a0c21f4ff2287b23` (PR #4447's class-expression
+IR ownership work). It adds the nominal
+`$__holey_array` representation only for a statically proven direct,
+bounded-literal `new Array(n)` binding whose only relevant uses are safe index
+stores and direct `.filter(...)` calls. The allocator and gap-growth path fill
+that carrier with `$Hole`; ordinary vectors, including filter-free numeric
+buffers, stay on their existing representation.
+
+Standalone lowers the selected constructor and filter through the IR runtime
+symbols. The focused IR test confirms the supported function appears in
+`irCompiledFuncs`, has no post-claim errors, and emits `$__holey_array`. The
+host original-harness shape retains its existing legacy emission path while
+using the same nominal carrier and hole-skipping filter semantics.
+
+### Focused verification
+
+- `pnpm run typecheck` passed.
+- `pnpm exec vitest run tests/es5-array-new-filter-holes.test.ts
+  tests/es5-standalone-array-semantics-prescan.test.ts
+  tests/issue-4159-4160-prescan-flags.test.ts --reporter=verbose` passed:
+  **41/41** tests. This includes host/gc and standalone semantics, growth and
+  captured-length behavior, the authentic assembled-harness binding, unsafe
+  prototype/dynamic-code demotions, the f64 control, and standalone IR
+  ownership.
+- `pnpm run check:loc-budget`, `pnpm run check:func-budget`, and
+  `pnpm run check:ir-fallbacks` passed.
+
+### Same-population original-harness A/B
+
+This comparison was refreshed after the `f8d47c3…` rebase. Both arms used
+`scripts/harness-flip-probe.ts`, the pinned Test262 corpus
+`b363f29d3c43c626dc852744ad64a0b48a003693`, and the exact 44-row
+`built-ins/Array/prototype/**` residual list in
+`/private/tmp/array-prototype-es5-residual-44.txt`. In both lanes the probe's
+positive control remained `must-pass → pass` and its negative control remained
+`must-fail → fail`.
+
+| lane | current-main baseline | carrier implementation | transitions |
+| --- | --- | --- | --- |
+| host/gc | 42 fail, 2 error | 40 fail, 2 pass, 2 error | 2 fail → pass; 0 pass → non-pass; 0 other changes |
+| standalone | 34 fail, 10 pass | 32 fail, 12 pass | 2 fail → pass; 0 pass → non-pass; 0 other changes |
+
+The only changed rows in each lane are:
+
+- `test/built-ins/Array/prototype/filter/15.4.4.20-9-5.js`
+- `test/built-ins/Array/prototype/filter/15.4.4.20-9-b-1.js`
+
+All 44 rows were present in both artifacts; 42 were unchanged in each lane.
+The two host error rows and their detail strings were identical between arms.
+This validates the bounded carrier slice, not the still-open general
+sparse-array surfaces listed above.
