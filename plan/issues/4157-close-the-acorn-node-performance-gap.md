@@ -1186,3 +1186,144 @@ slice needs to verify its caller targeting. The per-type census
 Not filed as its own issue: `claim-issue.mjs --allocate` reports the open-PR scan
 DEGRADED in this container (no `gh`), and reserving an id against a degraded
 universe is how #4215 was burned. It should get one when allocation is healthy.
+
+## 2026-08-12 (4) — second null on the same helper: instruction-shaving `__extern_get` is exhausted
+
+A second, independent attempt at `__extern_get`, aimed at the **hit** path this
+time (the previous one only ever reached the 12.76 % that miss).
+
+Two of the ~40 instructions on the hit path are `ref.cast`s that exist **only**
+to make an `anyref` cache field acceptable to `ref.eq` — nothing downstream
+reads a field off either result. Replacing them with the abstract
+`ref.cast_null (ref null eq)` is strictly safe in the direction that matters:
+`ref.eq` is identity, so a value that is not the owner cannot compare equal, and
+a mismatch that used to trap simply misses the cache and takes the slow path.
+The build is **14 bytes smaller** and checksum 422 holds.
+
+Order-reversed **ON → OFF → OFF → ON**:
+
+| block | order | `__extern_get` self | dynamic-lookup |
+| --- | --- | ---: | ---: |
+| onA | 1 | 9.24 % | 20.96 % |
+| offA | 2 | 9.23 % | 21.50 % |
+| offB | 3 | 8.85 % | 20.52 % |
+| onB | 4 | 9.75 % | 20.76 % |
+
+Mean 9.50 % ON vs 9.04 % OFF — trending the *wrong* way, with the ON blocks
+scattering 0.51 pp and the OFF blocks 0.38 pp. This run was noisier than the
+morning's (whose ON blocks replicated to 0.11 pp), so the honest bound here is
+about **±0.5 pp**: null. Reverted, for the same reason as the screen — no
+measured benefit, and the concrete cast at least documents the invariant that
+the cached owner really is a `$Object`.
+
+### What two nulls in a row establish
+
+The first attempt removed 14,770 instructions of provably-dead ladder from the
+miss path. The second removed two RTT checks from the hit path. Neither moved
+the bucket. Taken together they say the same thing:
+
+**`__extern_get`'s 9 % is not made of instructions that can be removed from
+inside it.** At 21.7 ns / ~45 cycles per call it is already tight; what is left
+is call overhead, the pointer-chase through the props array, and branch
+behaviour — none of which shrinks by editing the body. Micro-optimisation of
+this helper is **exhausted at this box's ±0.3–0.5 pp resolution**, and future
+lanes should not spend another A/B cycle on it.
+
+That does **not** retire the bucket — it retires one approach to it. Dynamic
+lookup is still ~25 ms/parse and the largest addressable line in the gap. The
+lever is the one already named above: **remove the CALL**, via site- or
+name-local inline caching, which is a structural change to how reads are emitted
+rather than an edit to the helper. It remains unbuilt, and it is now the only
+priced candidate in this issue above the measurement floor.
+
+Both reverted experiments are described here in enough detail to rebuild without
+rediscovering them; neither is in the tree.
+
+## 2026-08-12 (5) — call dispatch (11.39 %) opened for the first time, and it has ONE root cause worth fixing
+
+Nothing in this umbrella had ever looked inside the second-largest helper bucket.
+Doing so found a single defect that explains three separate things, and it is a
+**correctness** bug with a performance unlock behind it — not a speculative
+optimisation.
+
+### The bucket
+
+| frame family | self % | what it is |
+| --- | ---: | --- |
+| `__call_fn_method_{0,1,7}` | 3.37 % | generic closure-call trampolines by arity |
+| `__dc_Parser_<method>_<arity>[_g]` | **≈ 4.09 %** | #3683 S3 devirtualised direct-call trampolines |
+| `__call_m_<name>_<arity>` | ≈ 1.6 % | method-call dispatchers |
+| `__builtinfn_get_meta` | 0.54 % | builtin-fn metadata |
+| `__named_this_call_*` | 0.54 % | named-`this` call bridge |
+
+**Self time in a trampoline is pure overhead** — a trampoline exists to adapt a
+call, so every cycle in it is a cycle not spent on the callee's work. The
+`__dc_*` family alone is ~4 % of total runtime, spread across ~25 tiny functions.
+
+### The root cause
+
+`typed-this.ts`'s ABI note (the "why the RECEIVER parameter is `externref`, not
+`(ref $__fnctor_F)`" block) documents exactly why that overhead exists. The
+natural signature — receiver already in a typed register at every call site —
+**cannot be used** because of a latent imprecision in `applyRefNullFixups`
+(`src/codegen/fixups.ts`, the backward walk near the end): from a `call`, it
+walks backwards mapping **one instruction per parameter**, special-casing only
+`local.tee`, `struct.new`, `array.new_fixed` and nested `call`. Any argument
+produced by a sequence it does not special-case desynchronises the walk and
+lands a `ref.null.extern` rewrite on the wrong parameter.
+
+So `__dc_*` pays, per the note, "one `extern.convert_any` per call site and one
+`any.convert_extern; ref.cast` per trampoline" purely to keep its signature
+outside the hazard. The note calls that cost "trivial against the bridge being
+removed" — **which was right about the bridge and wrong about the cost**: the
+profile now puts the family at ~4 %.
+
+### The census defect is NOT diagnosed — an earlier draft of this entry got it wrong
+
+A first pass at this write-up asserted that the broken `JS2WASM_ALLOC_CENSUS_CALLS`
+recorded in entry (3) is the **same** walk. That claim does not survive checking
+and is withdrawn:
+
+- The walk's only mutation is `ref.null.extern` → `ref.null <typeIdx>`. It cannot
+  produce the observed error, `call[1] expected type f64, found local.get of type
+  i32` — that says an **i32 local** sits at a parameter expecting **f64**, which
+  is an argument-position shift, not a retyped null.
+- The census splice itself is stack-neutral by inspection: `incrementInstrs` is
+  `global.get` / `i32.const 1` / `i32.add` / `global.set` (net 0), inserted
+  immediately before the `call`, i.e. after every argument is already on the
+  stack. That alone should not desynchronise anything.
+
+So the census defect stands as an **undiagnosed** bug (entry 3), not as evidence
+for this one. Recording the disproof because the wrong version is the more
+attractive story — one root cause explaining two symptoms — and the next lane
+should not inherit it.
+
+The `__dc_*` finding below does **not** depend on it. That one rests on quoted
+source, not inference: `typed-this.ts`'s ABI note states the constraint and names
+the fixup itself.
+
+### Why the fix is tractable
+
+`fixups.ts` **already contains a real stack model**: `instrPopsPushes(instr, mod)`
+(same file, ~line 842) returns exact `{pops, pushes}` for locals, struct/array
+producers, `call` / `call_ref` / `call_indirect` and structured blocks, and
+**returns `null` — refuse to model — for anything unrecognised**. The backward
+walk simply does not use it. Rewriting the walk to accumulate stack effect via
+`instrPopsPushes`, and to leave the fixup unapplied whenever it answers `null`,
+replaces the "one instruction per argument" approximation with the operand-count
+model the ABI note says is missing, and keeps the conservative behaviour on
+anything it cannot model.
+
+The note declined this on the grounds that a shared fixup "would need a real
+operand-count model (and whose current approximations other lowerings may depend
+on)". Half of that objection is now answered — the model exists. The other half
+is real and is what makes this a change needing broad test coverage rather than a
+quick edit: it must be validated against every lowering that reaches the fixup,
+which this container cannot do (the full equivalence suite OOMs here).
+
+**This is the recommended next slice, ahead of the inline-cache one named in
+entry (2).** It is smaller, it is a correctness fix rather than an optimisation,
+and the typed-receiver ABI it enables is worth a cast per call on ~4 % of
+runtime. Its acceptance test is a `__dc_*` trampoline reserved with a
+`(ref $__fnctor_F)` receiver that validates — the case the ABI note says fails
+today with `call[1] expected type externref`.

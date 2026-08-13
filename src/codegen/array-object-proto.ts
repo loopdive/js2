@@ -65,6 +65,7 @@ import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
 import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
+import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -2449,9 +2450,6 @@ export function emitGeneratorFunctionPrototypeSingleton(ctx: CodegenContext, fct
  */
 export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   ensureObjectRuntime(ctx);
-  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
-  if (newObjectIdx === undefined) return null;
-
   const globalName = "__native_globalThis";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
@@ -2465,12 +2463,16 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
-  // Lazy init: `if (global == null) global = __new_plain_object();` then read it.
-  // The init body is nested directly inside the `if` (part of `fctx.body`), so
-  // any later late-import funcIdx shift walks it naturally — no detached-body
-  // (`liveBodies`) registration needed.
+  const objLocal = allocLocal(fctx, `__native_globalThis_obj_${fctx.locals.length}`, { kind: "externref" });
+  const seeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  if (!seeds || newObjectIdx === undefined) return null;
+  // Lazy-init the singleton only after all ES5 function seeds are available.
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: objLocal },
+    ...seeds,
+    { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
   fctx.body.push({ op: "global.get", index: globalIdx });

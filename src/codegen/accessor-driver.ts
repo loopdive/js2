@@ -36,8 +36,10 @@
  */
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 
 /** Reserved name for the accessor-get driver (arity-0 getter wrapper). */
 export const CALL_ACCESSOR_GET = "__call_accessor_get";
@@ -58,6 +60,83 @@ export const CALL_TO_JSON = "__call_to_json";
  * method wrapper: `replacer.call(holder, key, value)`).
  */
 export const CALL_REPLACER = "__call_replacer";
+
+/**
+ * (#4392) Build an accessor call that tolerates fewer supplied arguments than
+ * the accessor declares. `__call_fn_method_N` only contains closures whose
+ * declared arity is <= N, so a getter with one unused formal cannot be sent to
+ * `__call_fn_method_0` and a two-formal setter cannot be sent to
+ * `__call_fn_method_1`.
+ *
+ * Select the dispatcher at `max(actualArity, declaredArity)`, padding omitted
+ * formals with the canonical undefined carrier. Seed `__argc` with the ACTUAL
+ * accessor argument count before dispatch: the closure-method dispatcher then
+ * preserves `arguments.length` while accepting the padded transport signature.
+ * This mirrors the already-proven generic dynamic-call and host-fnctor-driver
+ * under-application rule (#3592 / #1712).
+ */
+function buildAccessorCall(
+  ctx: CodegenContext,
+  actualArity: 0 | 1,
+  receiverLocal: number,
+  callableLocal: number,
+  argumentLocals: readonly number[],
+): { body: Instr[]; locals: WasmFunction["locals"] } {
+  const closureArityIdx = ctx.funcMap.get("__closure_arity");
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  const paramCount = actualArity + 2;
+  const declaredLocal = paramCount;
+
+  const undefinedArg = (): Instr[] =>
+    undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
+
+  const callAtArity = (dispatchArity: number): Instr[] => {
+    const target = ctx.funcMap.get(`__call_fn_method_${dispatchArity}`);
+    if (target === undefined) return [{ op: "ref.null.extern" }];
+    const call: Instr[] = [
+      { op: "local.get", index: receiverLocal },
+      { op: "local.get", index: callableLocal },
+    ];
+    for (let arg = 0; arg < dispatchArity; arg++) {
+      const local = argumentLocals[arg];
+      call.push(...(local === undefined ? undefinedArg() : [{ op: "local.get", index: local } satisfies Instr]));
+    }
+    call.push({ op: "call", funcIdx: target });
+    return call;
+  };
+
+  // Non-closure callables report -1. Preserve the historical actual-arity
+  // dispatcher for them; its runtime-callable front guard remains authoritative.
+  let dispatch = callAtArity(actualArity);
+  for (let declared = 8; declared > actualArity; declared--) {
+    dispatch = [
+      { op: "local.get", index: declaredLocal },
+      { op: "i32.const", value: declared },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: callAtArity(declared),
+        else: dispatch,
+      },
+    ];
+  }
+
+  if (closureArityIdx === undefined) {
+    return { body: callAtArity(actualArity), locals: [] };
+  }
+  return {
+    locals: [{ name: "__declared_arity", type: { kind: "i32" } }],
+    body: [
+      { op: "i32.const", value: actualArity },
+      { op: "global.set", index: argcGlobalIdx },
+      { op: "local.get", index: callableLocal },
+      { op: "call", funcIdx: closureArityIdx },
+      { op: "local.set", index: declaredLocal },
+      ...dispatch,
+    ],
+  };
+}
 
 /**
  * Reserve the `__call_accessor_get` driver placeholder and return its funcIdx.
@@ -237,15 +316,17 @@ export function reserveReplacerDriver(ctx: CodegenContext): number {
 
 /**
  * Fill the reserved accessor driver bodies in post-processing, AFTER
- * `emitClosureMethodCallExportN(0)` / `(1)` have registered
- * `__call_fn_method_0` / `__call_fn_method_1` in `funcMap`. Each driver is a
- * thin wrapper that forwards to the matching closure-method dispatcher, reusing
- * the proven re-entrancy-safe `__current_this` install/restore (#1636-S1)
- * instead of duplicating funcref-type dispatch inside the object runtime:
+ * `emitClosureMethodCallExportN` and `emitClosureArityExport` have registered
+ * the closure-method dispatchers and declared-arity authority. Each driver
+ * selects a dispatcher wide enough for the accessor closure, reusing the proven
+ * re-entrancy-safe `__current_this` install/restore (#1636-S1) instead of
+ * duplicating funcref-type dispatch inside the object runtime:
  *
- *   __call_accessor_get(recv, getter) = return __call_fn_method_0(recv, getter)
+ *   __call_accessor_get(recv, getter) =
+ *       return __call_fn_method_max(0, getter.length)(recv, getter, undefined...)
  *   __call_accessor_set(recv, setter, value) =
- *       __call_fn_method_1(recv, setter, value)  ; drop result
+ *       __call_fn_method_max(1, setter.length)(recv, setter, value, undefined...)
+ *       ; drop result
  *
  * No-op when the corresponding driver was never reserved (no accessor arm
  * needs it). When the driver WAS reserved but the matching dispatcher was never
@@ -260,21 +341,9 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
     if (driverIdx !== undefined) {
       const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
-        const callMethod0 = ctx.funcMap.get("__call_fn_method_0");
-        if (callMethod0 === undefined) {
-          // No arity-0 closure dispatcher — the getter driver is unreachable
-          // from any live accessor arm in that case (no arity-0 closure ⇒ no
-          // getter closure installed), but keep a valid body so the module
-          // verifies: return undefined (null externref).
-          driverFn.body = [{ op: "ref.null.extern" }];
-        } else {
-          driverFn.body = [
-            { op: "local.get", index: 0 }, // recv (bound as `this`)
-            { op: "local.get", index: 1 }, // getter closure
-            { op: "call", funcIdx: callMethod0 },
-            // getter result (externref) stays on the stack as the return value
-          ];
-        }
+        const call = buildAccessorCall(ctx, 0, 0, 1, []);
+        driverFn.locals = call.locals;
+        driverFn.body = call.body;
       }
     }
   }
@@ -284,22 +353,14 @@ export function fillAccessorDrivers(ctx: CodegenContext): void {
     if (driverIdx !== undefined) {
       const driverFn = definedFuncAt(ctx, driverIdx);
       if (driverFn) {
-        const callMethod1 = ctx.funcMap.get("__call_fn_method_1");
-        if (callMethod1 === undefined) {
-          // No arity-1 closure dispatcher — setter driver unreachable; empty
-          // body (bare return via implicit fallthrough) verifies for () result.
-          driverFn.body = [];
-        } else {
-          driverFn.body = [
-            { op: "local.get", index: 0 }, // recv (bound as `this`)
-            { op: "local.get", index: 1 }, // setter closure
-            { op: "local.get", index: 2 }, // value argument
-            { op: "call", funcIdx: callMethod1 },
-            // __call_fn_method_1 returns an externref result; the setter's
-            // return value is discarded per §10.1.5.3 (Set ignores it).
-            { op: "drop" },
-          ];
-        }
+        const call = buildAccessorCall(ctx, 1, 0, 1, [2]);
+        driverFn.locals = call.locals;
+        driverFn.body = [
+          ...call.body,
+          // The closure-method dispatchers return an externref result; the
+          // setter's return value is discarded per §10.1.5.3.
+          { op: "drop" },
+        ];
       }
     }
   }
