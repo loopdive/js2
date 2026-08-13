@@ -107,6 +107,13 @@ function emitMemoizedNestedFnClosure(
       fctx.body.push({ op: "local.get", index: i });
       continue;
     }
+    // An identity-observed FunctionDeclaration has one stable lexical value,
+    // materialized at its first dynamic use. A sibling closure that captures
+    // that binding is itself such a use: reading the preallocated externref
+    // local directly would otherwise snapshot its initial null value. Keep the
+    // lazy timing (important when the function captures later initializers),
+    // but fill the binding immediately before this closure copies it.
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal
@@ -473,4 +480,36 @@ export function emitFuncRefAsClosure(
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+/**
+ * Materialize the stable lexical value of a hoisted FunctionDeclaration at
+ * its first dynamic value use. Returns true when the binding is already ready
+ * or was filled by this call.
+ */
+export function materializeHoistedFunctionValueBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+): boolean {
+  if (
+    !fctx.hoistedFunctionValueBindings?.has(name) ||
+    fctx.liftedCaptureNames?.has(name) ||
+    fctx.materializedHoistedFunctionValueBindings?.has(name)
+  ) {
+    return fctx.materializedHoistedFunctionValueBindings?.has(name) ?? false;
+  }
+
+  const localIdx = fctx.localMap.get(name);
+  const funcIdx = ctx.funcMap.get(name);
+  if (localIdx === undefined || funcIdx === undefined) return false;
+
+  const valueType = emitFuncRefAsClosure(ctx, fctx, name, funcIdx);
+  if (!valueType) return false;
+  if (valueType.kind !== "externref" && valueType.kind !== "ref_extern") {
+    fctx.body.push({ op: "extern.convert_any" });
+  }
+  fctx.body.push({ op: "local.set", index: localIdx });
+  (fctx.materializedHoistedFunctionValueBindings ??= new Set()).add(name);
+  return true;
 }
