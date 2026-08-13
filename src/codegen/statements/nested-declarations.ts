@@ -2266,15 +2266,26 @@ export function hoistFunctionDeclarations(
   const existingDirectFuncNames = _existingDirectFuncNames ?? new Set<string>();
   const valueBindingDecls: ts.FunctionDeclaration[] = [];
   const declarationValueIsObserved = (decl: ts.FunctionDeclaration): boolean => {
+    // Module-level declarations already use the identity-stable cached closure
+    // singleton. Allocating a second lazy lexical value for them bypasses the
+    // known callback wrapper (`array.filter(callbackfn)`) without adding any
+    // identity guarantee. Per-activation storage is needed only for nested
+    // declarations whose captures make the Function object activation-owned.
+    if (ts.isSourceFile(decl.parent)) return false;
     let observed = false;
     const visit = (node: ts.Node): void => {
       if (observed) return;
       if (ts.isIdentifier(node) && node !== decl.name && ctx.oracle.valueDeclarationOf(node) === decl) {
         const parent = node.parent;
-        // Direct calls can keep the lifted function ABI. Property access,
-        // construction, passing/returning, and equality observe the Function
-        // object's identity and therefore require a real lexical binding.
-        if (!(ts.isCallExpression(parent) && parent.expression === node)) {
+        const isDirectCall = ts.isCallExpression(parent) && parent.expression === node;
+        const isPlainCallArgument =
+          (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+          parent.arguments?.some((argument) => argument === node);
+        // Direct calls and ordinary argument passing can keep the lifted,
+        // identity-stable callback wrapper. Property access, construction as
+        // the callee, return, storage, and equality observe the Function value
+        // itself and therefore require a real lexical binding.
+        if (!isDirectCall && !isPlainCallArgument) {
           observed = true;
           return;
         }

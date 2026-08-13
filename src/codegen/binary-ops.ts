@@ -43,6 +43,7 @@ import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-an
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import {
+  canCompilePropertyAccessForNullishObservation,
   compilePropertyAccessForNullishObservation,
   isLogicalAssignNamedEvalNameRead,
   resolveStructNameForExpr,
@@ -683,7 +684,9 @@ export function compileBinaryExpression(
       // bypasses that route for collision-safe dynamic reads and would
       // otherwise resurrect a deleted field.
       const valType =
-        ts.isPropertyAccessExpression(nonNullExpr) && !ctx.moduleUsesDelete
+        ts.isPropertyAccessExpression(nonNullExpr) &&
+        !ctx.moduleUsesDelete &&
+        canCompilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
           ? compilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
           : compileExpression(
               ctx,

@@ -5844,24 +5844,11 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
     const getter = exports[`__sget_${String(key)}`];
     if (typeof getter === "function") {
       try {
-        // (#1712) Treat a nullish result as a MISS, not a hit: the
-        // __sget_<name> per-shape dispatcher yields null/undefined when the
-        // receiver's struct shape doesn't carry the field at all.
-        const v = getter(obj);
-        if (v !== undefined && v !== null) return v;
-        // (#3051 Slice 3) `null` disambiguation: a compiled `null` literal is
-        // stored as ref.null (reads back `null` — same as the dispatcher's
-        // shape-miss), while compiled `undefined` is the distinguished host
-        // undefined. When the receiver's OWN struct shape carries the field,
-        // a `null` read is the REAL stored value, not a miss — e.g. the exec
-        // result `{ groups: null }` must expose `groups === null` so V8's
-        // @@replace step 14.j/l `ToObject(namedCaptures)` throws the
-        // spec-mandated TypeError (result-coerce-groups-err). Shape check only
-        // on the rare null path — the common hit path above is unchanged.
-        if (v === null) {
-          const fieldNames = _getStructFieldNames(obj, exports);
-          if (fieldNames !== null && fieldNames.includes(String(key))) return null;
-        }
+        // Generated getters are shared across unrelated WasmGC shapes. Gate
+        // them with the receiver's authoritative field-name proof so a numeric
+        // getter's zero mismatch cannot masquerade as a real property value.
+        const value = wsh.readField(getter, obj, _structOwnFieldStatus(obj, String(key), exports));
+        if (value !== wsh.NO_GENERATED_FIELD) return value;
       } catch {
         /* not a field of this struct type */
       }
@@ -15618,6 +15605,12 @@ assert._isSameValue = isSameValue;
         } catch {
           return undefined;
         }
+        // A host null-prototype object is still an ordinary host object. Its
+        // own properties were handled by `_safeGet`; an absent property must
+        // remain `undefined`. Generated Wasm struct getters are shared shape
+        // dispatchers and can otherwise return a numeric zero mismatch (named
+        // RegExp groups are the canonical null-prototype host object).
+        if (!_isWasmStruct(obj)) return undefined;
         const sc = _wasmStructProps.get(obj);
         const descs = _wasmPropDescs.get(obj);
         const flags = descs?.get(_normalizeDescKey(key));

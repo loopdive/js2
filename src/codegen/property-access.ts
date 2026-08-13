@@ -3389,11 +3389,33 @@ export function compilePropertyAccess(
  * produce `undefined`; unboxing that miss to 0/false destroys the distinction
  * observed by `value == null` / `value != null`.
  */
+export function canCompilePropertyAccessForNullishObservation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): boolean {
+  if (expr.questionDotToken) return false;
+  const receiver = expr.expression;
+  const receiverIsLocalDynamicValue =
+    receiver.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isIdentifier(receiver) &&
+      (fctx.localMap.has(receiver.text) ||
+        (fctx.boxedCaptures?.has(receiver.text) ?? false) ||
+        ctx.moduleGlobals.has(receiver.text) ||
+        ctx.capturedGlobals.has(receiver.text)));
+  if (!receiverIsLocalDynamicValue) return false;
+  const receiverFact = ctx.oracle.typeFactOf(receiver).kind;
+  return receiverFact === "any" || receiverFact === "unknown";
+}
+
 export function compilePropertyAccessForNullishObservation(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null {
+  if (!canCompilePropertyAccessForNullishObservation(ctx, fctx, expr)) {
+    return compilePropertyAccess(ctx, fctx, expr);
+  }
   if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
 
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;

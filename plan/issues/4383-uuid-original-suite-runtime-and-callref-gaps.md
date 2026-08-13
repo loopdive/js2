@@ -39,6 +39,7 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/literals.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
   - src/runtime.ts::resolveImport
   - src/codegen/index.ts::generateMultiModule
@@ -138,3 +139,20 @@ acceptance target.
 ```bash
 node --import tsx tests/dogfood/uuid-upstream-suite.mjs --json
 ```
+
+## 2026-08-13 merge-group regression handoff
+
+The first merge-group attempt exposed 74 host-lane and 99 standalone
+candidate regressions. The host set now reproduces at **74/74 passing** after
+generic fixes for function-value observation, internal-call arguments,
+nullish property reads, symbol-key widening, optional `super` calls, async
+hoisting, and null-prototype native host objects.
+
+Standalone reruns recovered 82 of the 99 rows. Two additional generic routing
+fixes keep primitive `valueOf()` and constructor-assigned methods on the native
+standalone paths. The 17 locally unresolved rows are not changes introduced by
+this branch: the exact pre-PR source also fails them in the current checkout.
+They cover the unavailable local QuickJS artifact, one absent Test262 harness
+file, and pre-existing module-binding cases. Reconcile this branch with current
+`main` and rerun the authoritative merge-group baseline before removing the
+hold label.

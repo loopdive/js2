@@ -2544,7 +2544,17 @@ export function compileLiftedClosureBody(
     // the same function-declaration hoist, a forward sibling call was lowered
     // as an unknown callable (ref.null.extern). Moment's createFromConfig ->
     // prepareConfig edge is one real-world instance of the generic shape.
-    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
+    // The async/generator emitters own their body initialization and resume
+    // layout. Emitting declaration-hoist instructions into `liftedFctx.body`
+    // before those state machines are built changes observable scheduling
+    // (an async function must begin synchronously) and can drain a nested
+    // generator before its first resume. Keep the new forward-declaration
+    // support on ordinary lifted closures; async/generator declarations stay
+    // on their established state-machine path until that path can absorb the
+    // hoisted bindings explicitly.
+    if (!asyncDecision && !isGenerator) {
+      hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
+    }
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the

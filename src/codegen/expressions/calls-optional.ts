@@ -33,8 +33,14 @@ export function compileOptionalCallExpression(
   // It is a distinct AST shape from `obj?.method(args)`: the question-dot is
   // carried by the CallExpression while the PropertyAccessExpression is plain.
   // Keeping it in the receiver-null path below made `{ }.rng?.()` attempt an
-  // ordinary call and throw "rng is not a function" (uuid v1/v6/v7).
-  if (expr.questionDotToken && !propAccess.questionDotToken) {
+  // ordinary call and throw "rng is not a function" (uuid v1/v6/v7). `super`
+  // remains on the static class-method lane: converting its typed receiver to
+  // a host call loses the instance identity used as the method's `this`.
+  if (
+    expr.questionDotToken &&
+    !propAccess.questionDotToken &&
+    propAccess.expression.kind !== ts.SyntaxKind.SuperKeyword
+  ) {
     return compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess);
   }
   const objType = compileExpression(ctx, fctx, propAccess.expression);

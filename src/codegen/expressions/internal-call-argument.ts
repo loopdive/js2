@@ -5,7 +5,10 @@ import type { ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
-import { compilePropertyAccessForNullishObservation } from "../property-access.js";
+import {
+  canCompilePropertyAccessForNullishObservation,
+  compilePropertyAccessForNullishObservation,
+} from "../property-access.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 
 /**
@@ -42,10 +45,7 @@ export function compileInternalCallArgument(
   // numeric-looking field remains `undefined` instead of being narrowed to
   // f64 NaN and then re-boxed. This is the `v1(options) -> v1Bytes(...)`
   // nullish-default path in uuid (#4383).
-  if (
-    ts.isPropertyAccessExpression(carrier) &&
-    (ctx.checker.getTypeAtLocation(carrier.expression).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
-  ) {
+  if (ts.isPropertyAccessExpression(carrier) && canCompilePropertyAccessForNullishObservation(ctx, fctx, carrier)) {
     return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
   }
   if (!ts.isIdentifier(carrier)) {
@@ -54,7 +54,13 @@ export function compileInternalCallArgument(
 
   const localIdx = fctx.localMap.get(carrier.text);
   const localType = localIdx === undefined ? undefined : getLocalType(fctx, localIdx);
+  const isMaterializedArgumentsObject =
+    carrier.text === "arguments" &&
+    localIdx !== undefined &&
+    localIdx >= fctx.params.length &&
+    fctx.locals[localIdx - fctx.params.length]?.name === "arguments";
   if (
+    isMaterializedArgumentsObject ||
     !localType ||
     (localType.kind !== "ref" && localType.kind !== "ref_null") ||
     getArrTypeIdxFromVec(ctx, localType.typeIdx) < 0

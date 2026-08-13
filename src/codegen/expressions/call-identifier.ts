@@ -127,13 +127,16 @@ function localBindingShadowsCapturingFunction(
   if (!fctx.localMap.has(name)) return false;
   if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
   const declaration = ctx.oracle.valueDeclarationOf(callee);
-  // A real local binding always wins over a same-named lifted declaration.
-  // Do not require a checker call signature here: JavaScript locals commonly
-  // infer as `any` (Moment's `var format = ...`), yet call syntax still invokes
-  // that live value. Falling through to bare-name funcMap in that case calls an
-  // unrelated capturing declaration and reads its declaring-frame indexes from
-  // the current function, producing invalid Wasm or silently wrong dispatch.
-  return declaration !== undefined;
+  // A declaration-backed dynamic local can still shadow a same-named lifted
+  // function even when the checker gives it no call signature (Moment's
+  // `var format = ...`). A local whose value already has closure metadata must
+  // keep the closure route, however: treating a named function-expression self
+  // binding or `var af = (...x) => ...` as an arbitrary dynamic local bypasses
+  // the known wrapper and nulls recursive/rest calls.
+  if (declaration && ts.isVariableDeclaration(declaration) && !ctx.closureMap.has(name)) return true;
+  if (!ctx.nestedFuncCaptures.has(name)) return false;
+  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
+  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {

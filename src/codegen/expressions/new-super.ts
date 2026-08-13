@@ -1556,7 +1556,11 @@ function compileNewFunctionDeclaration(
     // dispatcher while the module start function is still running; exports
     // are not available yet, so the raw Wasm closure stored on the prototype
     // cannot be made callable.
-    thisStructName: structName,
+    // Standalone fnctors still use their dynamic prototype/object runtime for
+    // constructor-assigned methods. Pinning `this` to the closed struct there
+    // bypasses those writes (for example `this.toString = fn`). The host lane
+    // needs the concrete fact for constructor-time prototype dispatch.
+    thisStructName: ctx.standalone ? undefined : structName,
   };
   // The synthesized fnctor body is still the source function's activation for
   // legacy Function#caller. Register it before any prologue/body emission so
