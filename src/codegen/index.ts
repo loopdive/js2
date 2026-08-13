@@ -221,6 +221,7 @@ import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-g
 import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
 import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
 import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
@@ -5261,6 +5262,7 @@ export function generateModule(
     // hits collapse to a bare `struct.get` arm; misses fall back to the
     // generic dispatcher body filled just above.
     fillTypedMemberGetF64Dispatch(ctx);
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
 
     // (#4157) Inline-cache the READ SITES against the arms just filled. Placed
     // HERE so the copied arm and the copy share one type/funcIdx regime — every
@@ -7634,6 +7636,7 @@ export function generateMultiModule(
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
     inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
     inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved

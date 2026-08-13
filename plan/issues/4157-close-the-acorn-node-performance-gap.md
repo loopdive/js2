@@ -54,6 +54,20 @@ loc-budget-allow:
   # import line is the irreducible cost of routing a site to a subsystem module,
   # which is the direction #3102 asks for.
   - src/codegen/binary-ops-typed-dispatch.ts
+  # (#4157 A, JS2WASM_SET_MEMBER_F64) +8 lines: one import plus a two-line
+  # "typed twin first" early-out at each of the TWO dynamic member-write sites
+  # (`compilePropertyAssignmentExternSet`, `tryEmitPinnedStructMemberSet`). The
+  # dispatcher, its reserve/fill and every correctness argument live in a new
+  # leaf module (src/codegen/member-set-f64.ts). The site cost is irreducible:
+  # the decision needs the value's ValType, which exists only where the value
+  # has just been compiled onto the stack.
+  - src/codegen/expressions/assignment.ts
+  # (#4157 B, JS2WASM_RECEIVER_CSE) +4 lines: one import, a two-line cache-hit
+  # early-out, and one line recording the resolved receiver. The cache, the
+  # dominance argument and the relocation guard live in a new leaf module
+  # (src/codegen/receiver-cse.ts); what stays here is the `this` lowering they
+  # bracket, which cannot move.
+  - src/codegen/expressions.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
@@ -74,6 +88,11 @@ func-budget-allow:
   - src/codegen/native-strings-basics.ts::emitStrCompareHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  # (#4157 B receiver CSE) +3 lines seen per-function. `compileExpressionInner` is
+  # the AST-kind switch; a `this` operand is one of its cases and the CSE has to
+  # bracket exactly that case's emission.
+  - src/codegen/expressions.ts::compileExpressionInner
+
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -3739,3 +3758,150 @@ So the flag frontier IS this session's tuned set; there is no forgotten
 performance flag waiting. Combined with entry (29) (maximising the tuned set is
 itself a regression, timeout confound pending), flag-flipping as a strategy is
 exhausted.
+
+## 2026-08-13 (33) — the `compiled` bucket, first two slices: defect B is a call-count win, defect A is a CODE-SIZE win, and B's real finding is why the naive CSE is wrong
+
+First work against the `compiled` residual named in entry (30). Both slices are
+behind flags, DEFAULT OFF; with the flags unset the standalone acorn binary is
+sha256-identical to the pre-change build
+(`d70f9e3a7099d4997fcc5ebb3f7a25fe502c752d3edfc0731b526ef6ea80879c`, 2,487,935 B,
+checksum 422).
+
+The instrument entry (21) introduced (`src/codegen/exec-census.ts`) is not on
+`main`; the function-entry census was rebuilt here inside `alloc-census.ts`
+(`JS2WASM_EXEC_CENSUS=<substr>,…`, one exported counter per matched DEFINED
+function, incremented by a stack-neutral prologue). It reproduces entry (21)'s
+numbers to the call — `__box_number` 489,166, `__unbox_number` 883,318 — and
+entry (30)'s `__set_member_*` 344,601, which is what validates it.
+
+### Slice A — `JS2WASM_SET_MEMBER_F64`, the write-side f64 twin
+
+`__set_member_<name>__f64(recv: externref, v: f64)`, symmetric with #3673's get
+twin: same reserve-then-fill discipline, same candidate list in the same order,
+a direct `struct.set` (plus the #3780 presence bit) for an f64 slot, and the
+generic dispatcher as the delegate for everything else — which is also how the
+#3927 cold-tail / layout / resid arms and the sidecar terminal stay covered
+without re-deriving them. `src/codegen/member-set-f64.ts`.
+
+| | baseline | slice A | Δ |
+| --- | ---: | ---: | ---: |
+| `__box_number` | 489,166 | 401,521 | **−87,645 (−17.9 %)** |
+| `__unbox_number` | 883,318 | 783,197 | **−100,121 (−11.3 %)** |
+| `__set_member_*` (all) | 344,896 | 344,911 | +15 |
+| binary @ `optimize: 0` | 2,487,935 | 2,491,828 | +3,893 (+0.16 %) |
+| binary @ `-O4` | 1,686,619 | 1,688,025 | +1,406 (+0.08 %) |
+
+414 write sites patched, 23 dispatchers, 35 direct f64 arms. **83,780 of the
+executed writes moved to a twin and only 15 delegated** — so the direct arm is
+what runs, not the fallback. `lastTokEnd` and `lastTokStart` (41,890 each)
+convert 100 %; `potentialArrowAt` 3,725, `parenthesizedAssign` 3,519,
+`trailingComma` 3,442, `awaitPos`/`yieldPos` 1,888 each follow.
+
+Two things the numbers say that the plan did not predict:
+
+- **`__unbox_number` falls by MORE than `__box_number`** (100,121 vs 87,645).
+  The extra is the assignment's own RESULT: leaving it as f64 instead of a boxed
+  externref also removes the consumer-side unbox. The twin count
+  (≥103,961) is in turn LARGER than the box reduction, because a
+  constant-valued numeric write (`this.awaitPos = 0`) was already box-free —
+  the const-box hoist of entry (14) had taken it.
+- **`this.end` does NOT convert, and cannot be made to by this slice.** Its
+  32,468 executed writes live in `finishNode`-shaped code where the value is a
+  PARAMETER typed `any`, so it is an externref at the write. The remaining
+  write-side gap is a TYPING problem upstream of the write, not a dispatch
+  problem at it.
+
+### Slice B — `JS2WASM_RECEIVER_CSE`, hoisting the `this` ladder
+
+Reuse a resolved `__current_this` within one straight-line instruction sequence
+instead of re-running the ~15-instruction ladder per member operand.
+`src/codegen/receiver-cse.ts`.
+
+| | baseline | slice B | Δ |
+| --- | ---: | ---: | ---: |
+| binary @ `optimize: 0` | 2,487,935 | 2,404,901 | **−83,034 (−3.34 %)** |
+| binary @ `-O4` | 1,686,619 | 1,645,876 | **−40,743 (−2.42 %)** |
+| executed calls | — | — | **0** |
+
+2,610 ladders emitted, **1,985 reused** — 43 % of the 4,595 `this` operands in
+the standalone build. **This slice is invisible to the executed-call census by
+construction**: the ladder is inline code, not a call, so `JS2WASM_EXEC_CENSUS`
+reports zero change and the honest metric is code size. Anyone extending entry
+(21)'s "counts are the verdict" rule to this class of change will measure
+nothing and wrongly conclude it did nothing.
+
+### The load-bearing finding: `fctx.body` is NOT append-only
+
+The obvious cache key is the instruction ARRAY: a Wasm array is entered at the
+top and flows down, so an earlier instruction dominates every later one in it,
+and an emitter that builds branch arms by swapping `fctx.body` to a detached
+array gets dominance for free with no analysis. **That reasoning is wrong on
+this codebase, and the acorn self-parse proves it: with the naive rule the parse
+throws.**
+
+Bisecting the reuse count (`JS2WASM_RECEIVER_CSE_LIMIT`, `…_TRACE`) localises it
+to exactly one reuse — the 1,412th, in `__closure_528` — whose trace reads
+`gap=-5`: the recorded position is PAST the current end of the array. The array
+had SHRUNK. About eight emitters relocate an already-emitted range out of
+`fctx.body` with `fctx.body.splice(start)` (expressions.ts' async rejection
+wrap, array-methods' guard arms, char-at-transfer's deferred position), which
+moves a `local.tee` into a conditional arm where it no longer dominates what is
+emitted next. The local's default is `ref.null.extern`, so the failure is a
+silent wrong `this`, not a validation error.
+
+The fix is to re-verify the precondition at every lookup: the `tee` instruction
+OBJECT must still be at the index it was left at. A relocation then costs a
+reuse (20 of 2,005 on acorn), never correctness. **Any future value-numbering /
+CSE work in this emitter needs this guard or an equivalent — "same array" is not
+"same basic block" here.**
+
+A second hypothesis was tested and REJECTED on the way: that `__current_this`
+was being clobbered between the two reads. Restricting reuse to pairs with no
+intervening call at all (282 of 2,005) still failed, which rules the clobber out
+and is what pointed at relocation.
+
+### Correctness
+
+Checksum 422 on every configuration (A, B, A+B, both flags off). Poison probes:
+corrupting slice A's fast arm (`v + 7` into the slot) crashes the parse in
+`getLineInfo`; replacing slice B's cached read with `ref.null.extern` throws —
+both mechanisms demonstrably EXECUTE, they are not merely emitted. The 64-name
+per-field differential is clean — 0 hash divergence, 0 presence divergence, 32,506
+nodes — in **both** read paths (`computed`, `named`), at default K and `K=0`, for
+A (4 points), B (4 points) and A+B (2 points). `DOGFOOD_ACORN=1
+tests/dogfood/acorn.test.ts` passes with both flags on (110 sites patched, 2,101
+reuses inside that lane). 31 property/object/numeric/assignment equivalence files
+(192 tests) pass with both flags on.
+
+Wider: the first half of `tests/equivalence/` (106 files, 824 tests) gives
+**3 failed / 818 passed / 3 todo with both flags ON and the identical 3 failed /
+818 passed with both flags OFF** — same three files
+(`arguments-nested-and-loops`, `array-inline-return`, `delete-sentinel`), and
+each also fails with every touched file restored to its `HEAD` blob, so all
+three are **pre-existing on `origin/main`**. So is
+`optional-direct-closure-call.test.ts` (2 tests), from the closure/method
+batch. (Attributed by file copies; `git stash` is a single shared stack across
+worktrees.) The SECOND half OOMs at `maxForks=2`, as this container's notes
+predict — that half is not evidence either way.
+
+Coverage caveat worth stating: the equivalence snippets exercise slice A (twins
+reserved and filled) but reuse **zero** receivers for slice B — its ladders are
+emitted, never shared, because single-statement snippets have no repeated `this`.
+Slice B's correctness evidence is the acorn dogfood (2,101 reuses) and the eight
+per-field differentials, not the equivalence suite.
+
+### Composition, and what to do with these two
+
+A and B compose: A+B is 2,408,806 @ `optimize: 0` and 1,647,274 @ `-O4`, i.e.
+B's size win minus A's size cost, with A's call reductions intact and unchanged
+by B. Per entry (29), a flag set is a SELECTION, not a maximum — B pays no size
+and belongs in any set; A buys 187,766 fewer executed calls for +3.9 KB, which is
+a far better ratio than the arms entry (29) found to be net-negative, but it has
+not been wall-clocked and should not be defaults-flipped on a size argument
+alone.
+
+The three defects of entry (30) are now one measured, one measured, one open: A
+(typed writes) is a call-count win capped by the upstream typing gap `this.end`
+shows; B (receiver re-resolution) is a code-size win with a reusable structural
+lesson; **C (no redundancy elimination between adjacent ICs) is untouched, and B's
+relocation guard is the thing it will need first.**
