@@ -4081,3 +4081,37 @@ and is the bigger remaining population: `__set_member_*` is 344,602 executed
 calls that each re-test the receiver INSIDE the callee, and no inline cache
 exists for it at all. That, not more reuse on the read side, is where the next
 increment of this defect lives.
+
+## 2026-08-13 (36) — PR #4455 parked on a PROVEN flake; and every park is currently blind
+
+The follow-up PR took an `auto-park-bot:merge-group-failure` hold at 17:22Z,
+**before** the defect-C commit and the defaults flip were on it. Shepherd
+diagnosis, verified causally rather than statistically:
+
+- The queued snapshot (head `fe20764`) differs from its content-current
+  merge-base in exactly two places: `plan/issues/4403-*.md` and 14 lines inside
+  `optimizeWithSystemBinary` — code reachable only under `options.optimize`,
+  which the test262 harness never sets (zero matches in `tests/test262*`). The
+  compiler on the validated path is behaviourally identical to baseline.
+- The failure is exactly **1 regression, net −1 (33,031→33,030), category
+  "other", wasm-hash changed** — the same cross-run-nondeterminism class as the
+  360–531 same-SHA canary flips the report itself documents, on a path outside
+  the 932-entry quarantine manifest.
+- The parked snapshot is also moot: it predates the content that will actually
+  merge, so re-validating it as-is answers nothing.
+
+**Plan (per the auto-park protocol's flake determination):** hold stays ON until
+the defaults flip lands on the branch; then remove it ONCE so `auto-enqueue`
+re-admits, and the merge group validates the real final content. No re-enqueue
+loops.
+
+### CI defect worth its own issue when allocation is healthy: parks are BLIND
+
+The regressed test's **path is unrecoverable from the park**: `--quiet`
+suppresses paths in the diff (`scripts/diff-test262.ts:1811`), and the
+detail-report step that would name them **crashes** (`ENOENT open ''` — its
+`$META_ARGS` from a prior step is empty in that step's environment). So every
+auto-park currently tells the shepherd *that* something regressed but not
+*what*, forcing exactly the artifact-archaeology this diagnosis needed. Fixing
+the empty-`META_ARGS` hand-off (or dropping `--quiet` in the park path) makes
+every future park self-describing.
