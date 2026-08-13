@@ -13,6 +13,14 @@ import { describe, expect, it } from "vitest";
 
 import { buildImports } from "../src/runtime.js";
 import { compile, type CompileResult, type ImportDescriptor, type IrObservedOutcome } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) "avoids generic dispatch and direct-body machinery" is asserted as an
+// exact set of emitted function names. The IR inliner (default ON since the
+// tuned-set flip) removes call edges and therefore members of that set, which
+// this file would read as the retirement having failed. Pin it off — the
+// retirement is a property of IR preparation, not of a later inline pass.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 const SOURCE = readFileSync(new URL("../website/playground/examples/js/builtins.ts", import.meta.url), "utf8");
 

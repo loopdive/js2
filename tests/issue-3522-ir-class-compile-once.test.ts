@@ -5,6 +5,15 @@ import { describe, expect, it } from "vitest";
 
 import { isEarlyPreparableClassLayout } from "../src/codegen/program-abi-type-planning.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) "keeps `_new` AST-free" / "prepares a layout exactly once" are
+// asserted as exact opcode sequences and `ref.cast` counts in the emitted body.
+// The IR inliner (default ON since the tuned-set flip) splices callee bodies
+// into those functions, so the sequences grow and the counts rise — the
+// compile-once property is intact, the instrument just cannot see it any more.
+// Pin the inliner off; compile-once is an IR-preparation property.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 import { buildImports } from "../src/runtime.js";
 
 function classMemberOutcome(result: CompileResult, name: string): IrObservedOutcome {

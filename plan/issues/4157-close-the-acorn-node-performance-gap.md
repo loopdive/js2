@@ -4080,3 +4080,71 @@ is what will find it. Local green is not conformance-proven.
 `optimize.ts` is deliberately untouched — its `wasm-opt` timeout fix (entry 31)
 is a separate commit, and `JS2WASM_INLINE_HINTS` reaches it only through
 `inlineHintArgs`, whose OFF position still produces byte-identical argv.
+
+## 2026-08-13 (36) — the default flip's real cost: 37 SHAPE assertions across 14 files, and none of them a wrong answer
+
+A default flip is measured by what it breaks. Swept `tests/` for every file that
+compiles without setting these flags and asserts exact WAT, exact emitted-function
+sets, absolute function indices, or opcode counts (174 + 61 files), then re-ran
+every failing file with all eleven `=0` as the control. **The control is the
+whole method**: this branch already carries pre-existing failures — 24 in
+`tests/equivalence/`, 148 named tests in the WAT set, one OOM — and every one of
+them reproduces identically with the flags off. Without the control, the flip
+would have been blamed for all of them.
+
+**Attributable to the flip: 37 tests in 14 files.** Every single one is a
+*shape* assertion used as a proxy for a *different* feature, and the four
+signatures are worth recording because they are what a default flip does to a
+suite:
+
+| signature | what actually happened |
+| --- | --- |
+| `expected '(func $f …)' to match /\bcall\b/` | the call was INLINED |
+| `expected [] to deeply equal ['Base_init']` | the call EDGE was inlined away |
+| `expected 53 to be 50`, `to contain 'call 66'` | an ABSOLUTE function index shifted |
+| `to match /ref\.is_null[\s\S]*throw/` | the null guard was correctly ELIDED |
+
+Not one is a wrong value. The equivalence suite — 214 files, value assertions,
+run at the default — is clean against its own control.
+
+**Attribution, by bisection**: `JS2WASM_IR_INLINE` accounts for 32 of 37 (it
+removes call edges, and its rule-3 inlines `__dc_*` adapters unconditionally);
+`JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` for 3 (the `ref.is_null … throw`
+marker); the ToNumber slices for 1 (`__unbox_number` is the marker for #3765's
+kill switch, and the fused call replaces it); one #3744 failure is pre-existing.
+
+### The fix is to PIN, not to relax — and pinning has a cost worth naming
+
+`tests/helpers/pin-perf-flags.ts` sets the narrowest interfering flag for a file
+and restores it after. The alternative — loosening each assertion — would leave
+14 files green while proving nothing, which is the exact failure this issue
+records twice (entries 22, 27: a confident null from a mechanism that never
+fired). These assertions ARE the evidence: #3522's "prepared exactly once"
+lists, #1761's "a non-provable length must NOT presize" soundness boundary,
+#4150's "the slow path is still a call".
+
+The cost is real and is stated at the helper: a pinned file no longer exercises
+the shipped default. That is acceptable *only* because these are shape
+assertions and the value-level coverage of the same features lives in
+`tests/equivalence/`, which runs at the default and is clean. Pin the narrowest
+set, never the whole table by reflex.
+
+### Two inversions worth reading twice
+
+- **#1761** asserts a soundness boundary by COUNTING the doubling grow call. The
+  inliner takes the call, the count reads 0, and the assertion flips to
+  "an unsound presize happened" — reporting a correctness failure that did not
+  occur. A count-of-calls instrument is not a proxy for a code path once
+  something is allowed to inline that call.
+- **#4150** asserts the SLOW path is still a `call`. Inlined, `call` vanishes and
+  the test reads "the fast path was taken" — the exact opposite of the truth.
+
+Both are green-when-wrong and wrong-when-green respectively; both were caught
+only because the OFF control existed.
+
+### Environment note, controlled and not ours
+
+The equivalence suite OOMs a vitest worker on this box at 4–6 GB. It OOMs
+**identically with every flag `=0`**, at the same file count, and
+`tests/equivalence/multi-file-compilation.test.ts` OOMs alone at 6 GB in both
+states. Pre-existing; swept around it by running in 20-file chunks.

@@ -16,6 +16,14 @@
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) Both failing cases assert that the SLOW path is still a `call` —
+// "chose the helper", and "the kill switch keeps an exact-helper-only path".
+// The IR inliner (default ON since the tuned-set flip) inlines `__fmod`, so
+// `call` vanishes and the assertions read as "the fast path was taken", the
+// exact opposite of what happened. Pin the inliner off.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 let mod: { m(a: number, b: number): number } | undefined;
 
