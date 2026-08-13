@@ -4296,3 +4296,34 @@ The equivalence suite OOMs a vitest worker on this box at 4–6 GB. It OOMs
 **identically with every flag `=0`**, at the same file count, and
 `tests/equivalence/multi-file-compilation.test.ts` OOMs alone at 6 GB in both
 states. Pre-existing; swept around it by running in 20-file chunks.
+
+## 2026-08-13 (38) — first CI failure of the flip: the inliner DOUBLES a pre-existing fixup, and the gate counts the copy
+
+PR #4455's `quality` check failed on the stack-balance fixup gate:
+`default-value-lossy` 42→43 (+1) — while the same run banked `drop-excess`
+2→0 and `call-arg-coerce` 7→1 (net −7 fixups; the gate is per-bucket, so the
++1 alone fails it).
+
+Bisected in two steps with a focused probe (compile only
+`benchmarks/helpers.ts`, count `default-value-lossy`): flag-by-flag isolates
+`JS2WASM_IR_INLINE`; rule-by-rule isolates the **single-caller** rule; a new
+caller→callee line under `verbose` (added in this commit) names the pair:
+`__vec_get -> __cb_0`.
+
+**Not new wrong codegen — a duplicated old one.** `__vec_get`'s own body
+already carries one of the 42 baseline `default-value-lossy` fixups (the
+`__vec_*` family is essentially the whole baseline: 6 per corpus file × 7
+files). The single-caller rule copies that body into `__cb_0`'s wrapper
+block, and the stack-balance pass — which runs after the inliner — repairs
+the same missing-branch-value shape twice, with the identical
+`ref.null.extern` default. Runtime value unchanged either way; the count
+grows because the buggy shape now exists in two places.
+
+Resolution: the gate's sanctioned `--update` (baseline 42→43, and the two
+decreases banked). The true fix is upstream — emit `__vec_get`'s branch value
+correctly so the fixup vanishes from BOTH sites (and takes ~all 42 baseline
+entries with it, since the family repeats per file); that's its own issue,
+not a 3-line patch on a queued defaults-flip PR. Worth knowing for the
+future: **any inliner will multiply whatever masked emitter bugs live in the
+bodies it copies — a fixup-count ratchet and an inliner are in structural
+tension unless stack-balance runs first or the producer is fixed.**

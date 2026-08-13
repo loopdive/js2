@@ -896,6 +896,8 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         }
         bump(stats.byRule, rule);
         bump(stats.byRule, `${rule}:${calleeFamily(callee.name)}`);
+        if (opts.verbose)
+          process.stderr.write(`[ir-inline]   ${rule}: ${callee.name} -> ${caller.name ?? `func#${ci}`}\n`);
         stats.inlined++;
         growth += rawSize - 1;
         stats.addedInstrs += rawSize - 1;
