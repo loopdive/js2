@@ -10,7 +10,7 @@ import type { WasmModule } from "../../ir/types.js";
 import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
 import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
-import { resolveCompileTargetProfile } from "../../target-profile.js";
+import { resolveCompileTargetProfile, type CompileTargetProfile } from "../../target-profile.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
@@ -24,6 +24,13 @@ import { ProgramAbiModuleInitCallableRegistry } from "../program-abi-module-init
 import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable-planning.js";
 import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
+
+function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
+  return targetProfile.target === "standalone" ||
+    (targetProfile.environment === "javascript" && targetProfile.semanticProviders === "native-first")
+    ? nativeLiteralRegExpEngineConfig()
+    : null;
+}
 
 export function createCodegenContext(
   mod: WasmModule,
@@ -364,11 +371,11 @@ export function createCodegenContext(
     // (#2796) Diff-test-harness fidelity — export __module_init + skip the wasm
     // start section so the host runs top-level code after setExports.
     deferTopLevelInit: options?.deferTopLevelInit ?? false,
-    // #682 — native standalone RegExp engine hook. Standalone mode enables the
-    // reduced literal-substring backend; broader QuickJS libregexp ABI linking
-    // remains the follow-up path for near-JS parity.
-    standaloneRegExpEngine:
-      targetProfile.semanticProviders === "native-first" ? nativeLiteralRegExpEngineConfig() : null,
+    // #682/#4397 — native RegExp engine hook. Standalone and native-first JS
+    // enable the reduced literal-substring backend; WASI retains its existing
+    // narrowed refusals. Broader QuickJS libregexp ABI linking remains the
+    // follow-up path for near-JS parity.
+    standaloneRegExpEngine: selectNativeRegExpEngine(targetProfile),
     // (#1373b C-1) ON by default. The gate is narrow by construction: the IR
     // claims an async fn ONLY when the ONE async engine declines it
     // (`asyncEngineClaims` — sync-pass-through population), it is a top-level

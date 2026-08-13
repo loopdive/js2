@@ -184,7 +184,7 @@ export function hasStandaloneRegExpEngine(state: StandaloneRegExpEngineState): b
 
 /** Whether RegExp semantics are owned by the native provider for this build. */
 export function usesNativeRegExpProvider(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.semanticProviders === "native-first";
+  return hasStandaloneRegExpEngine(ctx);
 }
 
 const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
@@ -3408,7 +3408,10 @@ export function tryCompileStandaloneStringReplace(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!usesNativeRegExpProvider(ctx)) return undefined;
+  // WASI shares the narrowed function-replacer refusal even though it does not
+  // own the native RegExp engine. Native-first JS and standalone continue into
+  // the provider paths below; other host-assisted targets decline normally.
+  if (!ctx.wasi && !usesNativeRegExpProvider(ctx)) return undefined;
   const method = propAccess.name.text;
   if (method !== "replace" && method !== "replaceAll") return undefined;
 

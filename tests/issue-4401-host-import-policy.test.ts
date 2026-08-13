@@ -96,4 +96,37 @@ describe("#4401 host import policy inventory", () => {
       expect.arrayContaining([expect.objectContaining({ name: "__new_Promise", classification: "legacy-semantic" })]),
     );
   });
+
+  it("preserves target-derived standalone compatibility fallbacks until native-first is explicitly selected", async () => {
+    const source = `
+      export function run(): number {
+        const make = function* () { return arguments.length; };
+        return make(1).next().value;
+      }
+    `;
+
+    const compatibility = await compile(source, {
+      fileName: "issue-4401-standalone-generator-fallback.ts",
+      target: "standalone",
+      skipSemanticDiagnostics: true,
+    });
+    expect(compatibility.success, compatibility.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(compatibility.targetProfile?.semanticProviders).toBe("native-first");
+    expect(compatibility.hostImportInventory).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "__create_generator", classification: "legacy-semantic" }),
+      ]),
+    );
+
+    const explicit = await compile(source, {
+      fileName: "issue-4401-explicit-native-generator-refusal.ts",
+      target: "standalone",
+      semanticProviders: "native-first",
+      skipSemanticDiagnostics: true,
+    });
+    expect(explicit.success).toBe(false);
+    expect(explicit.errors.map((error) => error.message).join("; ")).toContain(
+      "Native-first semantic-provider policy rejected",
+    );
+  });
 });

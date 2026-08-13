@@ -1090,20 +1090,23 @@ function runPipeline(input: PipelineInput): CompileResult {
   // type errors.
   widenNonDefaultableTypes(mod);
 
-  // #4401 — Native-first is a semantic-provider contract, not a best-effort
-  // hint. Never publish a module that silently recovered an implicit JS
-  // semantic fallback (or an unclassified import) after a native lowering
-  // declined. Value adapters, lifecycle hooks, explicit platform capabilities,
-  // and named accelerators remain valid imports; only the two policy classes
-  // that cannot justify publication are rejected here.
+  // #4401 — An explicitly selected native-first profile is a
+  // semantic-provider contract, not a best-effort hint. Never publish a module
+  // that silently recovered an implicit JS semantic fallback (or an
+  // unclassified import) after a native lowering declined. Value adapters,
+  // lifecycle hooks, explicit platform capabilities, and named accelerators
+  // remain valid imports; only the two policy classes that cannot justify
+  // publication are rejected here.
   //
   // Run this before binary/WAT/helper emission so an unsupported construct
   // fails as a compile diagnostic rather than becoming a valid-looking module
-  // that depends on the compatibility runtime. The host-assisted profile is
-  // unchanged and remains the explicit migration/rollback path.
+  // that depends on the compatibility runtime. Target-derived standalone/WASI
+  // profiles keep their established fallback/refusal behavior: standalone's
+  // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
+  // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
   const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link);
-  if (targetProfile.semanticProviders === "native-first") {
+  if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
     );
