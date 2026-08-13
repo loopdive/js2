@@ -1536,3 +1536,114 @@ helper must do generically. That is the one thing in this file still worth a
 budget window.
 
 Fourth measured null of the session, and the most useful one.
+
+## 2026-08-12 (10) — implementation spec for the surviving lever
+
+Everything needed to build the call-site inline cache is now measured. This is
+the spec, so the next window starts at code rather than at re-derivation.
+
+### Target and expected value
+
+The **cache-hit prologue of `__extern_get`, 6.38 % of runtime** (entry 9's
+decomposition). Inlining it at a static-name read site removes:
+
+1. the **call** itself (~506 k per parse);
+2. the key `ref.test $HashedString` + `ref.cast` — at a static-name site the key
+   is a compile-time constant, so its type is known;
+3. the hash load / `__obj_hash` fallback — likewise constant-folded;
+4. the receiver re-classification (`ref.null; local.set; ref.test $Object;
+   …; ref.is_null; i32.eqz`), which collapses to one `ref.test $Object`.
+
+What remains inline is the actual validity check — owner `ref.eq`, props
+`ref.eq`, flags test, value read — roughly **10 instructions against a call plus
+~45**.
+
+### Insertion point
+
+`fillMemberGetDispatch` in `src/codegen/member-get-dispatch.ts`, as a **new
+leading arm of `__get_member_<name>`**, ahead of every existing arm, falling
+through unchanged on a miss. Two reasons this beats emitting at each of the 1,812
+raw call sites: the dispatcher is **per NAME (~300)** rather than per site, so
+size grows ~6× less; and the name is fixed inside it, which is what makes (2)
+and (3) above constant-foldable.
+
+**This requires widening dispatcher reservation.** Today `__get_member_<name>`
+is only reserved when some closed struct carries the field — which is exactly why
+acorn's hottest names (`locations`, `ranges`, `ecmaVersion`, `onToken`) have
+none and emit a direct `__extern_get` call instead. Reserve one for any
+static-name read, struct candidates or not.
+
+### The sequence (all indices verified against current source)
+
+```
+;; key: `nativeStringLiteralInstrs(ctx, propName)` — resolves to a `global.get`
+;; of the interned $HashedString (or a materializer call), NOT a fresh string.
+;; That shared identity is what makes the existing per-key cache work at all.
+local.get 0 ; any.convert_extern ; ref.test $Object
+if
+  local.get 0 ; any.convert_extern ; ref.cast $Object ; local.tee $o
+  <key> ; struct.get $HashedString 4          ;; populated flag
+  if
+    <key> ; struct.get $HashedString 5        ;; cacheOwner (anyref)
+    ref.cast_null (ref null eq) ; local.get $o ; ref.eq
+    local.get $o ; struct.get $Object 1       ;; props
+    <key> ; struct.get $HashedString 7        ;; cacheProps (anyref)
+    ref.cast_null (ref null eq) ; ref.eq
+    i32.and
+    if
+      <key> ; struct.get $HashedString 6      ;; cacheEntry
+      ref.cast $PropEntry ; local.tee $e
+      struct.get $PropEntry 2                 ;; flags
+      i32.const (FLAG_TOMBSTONE | FLAG_ACCESSOR) ; i32.and ; i32.eqz
+      if
+        local.get $e ; struct.get $PropEntry 1 ; extern.convert_any ; return
+      end
+    end
+  end
+end
+;; fall through to the existing arms
+```
+
+Field indices: `$HashedString` `{0 len, 1 off, 2 data, 3 hash, 4 cacheGen/
+populated, 5 cacheOwner, 6 cacheEntry, 7 cacheProps}` (`registry/types.ts`);
+`$Object` field 1 = props; `$PropEntry` field 1 = value, field 2 = flags.
+
+**Population stays where it is** — inside `__extern_get`'s own data-property
+branch. The inline arm is read-only, so a miss simply falls through and the
+existing helper populates for next time. Nothing about cache lifetime changes.
+
+### Traps, each already paid for once
+
+- **Size the prologue by TOTAL instructions, not top-level ones.** Entry (9)
+  failed because "four instructions" was four *top-level* ones, one an `if`
+  carrying ~45. Budget the arm at its real depth before assuming anything about
+  `wasm-opt`.
+- **`ref.cast_null (ref null eq)`, not a concrete cast**, on the two `ref.eq`
+  operands (typeIdx `-19`; `-19 /* eq */` is an established idiom in
+  `vec-overlay.ts`). Sound because `ref.eq` is identity: a non-owner cannot
+  compare equal, so a would-be trap becomes a cache miss. Entry (4) measured this
+  as null *on its own* — it is bundled here because the arm is new code, not
+  because it pays by itself.
+- **Do not reorder against the existing arms.** Wrapping rather than reordering
+  is what kept #4424's screen sound, and the same argument applies: a miss must
+  reach the existing ladder in its current order.
+- **Consumer-side narrowing (#1269) is the sharp edge.** #4217's `generator`
+  defect came from a candidate-set vote that silently omitted a carrier. A new
+  arm that answers some reads earlier must not change which reads the Phase-3
+  narrowing sees, or the same class of bug returns — and it presents as one
+  wrong field out of 64, not as a crash.
+
+### Acceptance
+
+- `npx tsx tests/dogfood/cold-tail-census.mjs` → `"checksum":422`.
+- Per-field differential over all 64 ESTree names, **both** read paths — the
+  #4217 lesson is that the defect is invisible to a computed read and uniform in
+  a named one. `tests/dogfood/cold-tail-differential.mjs` is committed.
+- Order-reversed ON/OFF/OFF/ON on `standalone-dynamic`. **Report the bucket, not
+  just the frame** — entry (9) moved 2.33 pp between frames for a net 0.13 pp,
+  and only the bucket total exposed that.
+- Env-gate it, so the A/B is a flag flip rather than file copies.
+
+Predicted movement: a **fall in `dynamic-lookup` as a whole**, since the hit path
+stops being a call. If `__extern_get` drops but the bucket does not, the work was
+relocated again, not removed.
