@@ -515,6 +515,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-object-define-property"
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
+      | "standalone-wrapper-instanceof"
       | "legacy-numeric-array-global",
   ) => boolean;
   /**
@@ -1814,7 +1815,7 @@ function whyNotIrClaimable(
     dynNames.size > 0 ||
     isDynamicReturn ||
     currentStableFunctionCallSubject !== null ||
-    containsRetainedFunctionMethodCall(body)
+    containsReceiverFirstDynamicMethodCall(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
@@ -2314,7 +2315,8 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 }
 
 /**
- * True when the current body contains a #3793 retained method call.
+ * True when the current body contains an exact receiver-first dynamic method
+ * call (#3793 retained function object or #4387 inherited Array HOF).
  *
  * Such calls always use the boxed-dynamic closed-dispatch ABI, so they must
  * run through {@link dynamicUsesAreMoveOnly} even when the enclosing
@@ -2322,12 +2324,19 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
  * result position and every argument bridge before the selector claims the
  * function.
  */
-function containsRetainedFunctionMethodCall(body: ts.Block): boolean {
+function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
+  return (
+    currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
+    currentModuleBindingResolver?.fnctorArrayMethodPlan(call)
+  );
+}
+
+function containsReceiverFirstDynamicMethodCall(body: ts.Block): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
     if (node !== body && isFunctionLike(node)) return;
-    if (ts.isCallExpression(node) && currentModuleBindingResolver?.retainedFunctionMethodPlan(node) !== undefined) {
+    if (ts.isCallExpression(node) && receiverFirstDynamicMethodPlan(node) !== undefined) {
       found = true;
       return;
     }
@@ -2394,7 +2403,7 @@ function dynamicUsesAreMoveOnly(
     if (
       ts.isCallExpression(e) &&
       ts.isPropertyAccessExpression(e.expression) &&
-      currentModuleBindingResolver?.retainedFunctionMethodPlan(e) !== undefined
+      receiverFirstDynamicMethodPlan(e) !== undefined
     ) {
       return true;
     }
@@ -2474,9 +2483,9 @@ function dynamicUsesAreMoveOnly(
       return dynNames.has(e.text) === expectDyn;
     }
     if (ts.isCallExpression(e)) {
-      const retainedMethod = currentModuleBindingResolver?.retainedFunctionMethodPlan(e);
-      if (retainedMethod !== undefined) {
-        if (!expectDyn || e.arguments.length !== retainedMethod.arity) return false;
+      const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
+      if (receiverFirstMethod !== undefined) {
+        if (!expectDyn || e.arguments.length !== receiverFirstMethod.arity) return false;
         for (const argument of e.arguments) {
           if (ts.isSpreadElement(argument)) return false;
           const dynamic = isDynShaped(argument);
@@ -2539,6 +2548,19 @@ function dynamicUsesAreMoveOnly(
       const leftIsDyn = isDynShaped(e.left);
       const rightIsDyn = isDynShaped(e.right);
       const op = e.operatorToken.kind;
+      // (#4276) Exact host-free wrapper-brand predicate. Its result is a
+      // concrete boolean and its LHS may be the fast boxed-dynamic carrier;
+      // the from-ast producer tag-tests/unboxes that carrier before calling
+      // the native `$Object` internal-slot predicate.
+      if (
+        op === ts.SyntaxKind.InstanceOfKeyword &&
+        !expectDyn &&
+        leftIsDyn &&
+        ts.isIdentifier(e.right) &&
+        selectorSupportsStandaloneWrapperInstanceOf(e.right)
+      ) {
+        return scanExpr(e.left, true);
+      }
       // #3797 — statement-position stores used by Acorn's stable
       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
       // checker-backed stable-call plan is the authority for exposing ambient
@@ -5387,6 +5409,18 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
   );
 }
 
+function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
+  if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
+  return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+}
+
+function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boolean {
+  return (
+    selectorSeesAmbientWrapperConstructor(node) &&
+    currentSelectionOptions?.supportsBackendCapability?.("standalone-wrapper-instanceof") === true
+  );
+}
+
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
@@ -6549,6 +6583,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return isPhase1Expr(expr.left, scope, localClasses);
     }
+    // (#4276) Fast standalone owns a native wrapper-brand predicate over the
+    // real `$Object.[[PrimitiveValue]]` representation. Admit only an exact
+    // ambient wrapper constructor; source/local shadows keep legacy semantics.
+    if (
+      binOp === ts.SyntaxKind.InstanceOfKeyword &&
+      ts.isIdentifier(expr.right) &&
+      selectorSupportsStandaloneWrapperInstanceOf(expr.right)
+    ) {
+      return isPhase1Expr(expr.left, scope, localClasses);
+    }
     if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
     return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
   }
@@ -6662,8 +6706,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true &&
         currentSelectionOptions.supportsBackendCapability?.("legacy-numeric-array-global") === true
       ) {
-        const retainedMethod = currentModuleBindingResolver?.retainedFunctionMethodPlan(expr);
-        if (retainedMethod !== undefined) {
+        const receiverFirstMethod = receiverFirstDynamicMethodPlan(expr);
+        if (receiverFirstMethod !== undefined) {
           for (const arg of expr.arguments) {
             if (ts.isSpreadElement(arg) || !isPhase1Expr(arg, scope, localClasses)) return false;
           }

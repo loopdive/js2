@@ -318,6 +318,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
   functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
+   * Resolve the fast-standalone predicate for an exact ambient primitive
+   * wrapper constructor. Null keeps the operation on direct codegen.
+   */
+  standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
+  /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
    *
@@ -597,6 +602,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * receiver-preserving closed method dispatcher.
    */
   retainedFunctionMethodPlan?(
+    call: ts.CallExpression,
+  ): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } | null;
+  /** #4387 — stable fnctor instance inheriting one intrinsic Array prototype. */
+  fnctorArrayMethodPlan?(
     call: ts.CallExpression,
   ): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } | null;
   /** #3791 exact stable module numeric vec at a direct-call boundary. */
@@ -5904,6 +5913,41 @@ function lowerPreparedAsyncDateNow(
   return result;
 }
 
+function lowerReceiverFirstDynamicMethod(
+  expr: ts.CallExpression,
+  cx: LowerCtx,
+  plan: { readonly receiverGlobal: IrGlobalRef; readonly funcName: string },
+  description: string,
+): IrValueId {
+  const receiver = cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }));
+  const args: IrValueId[] = [receiver];
+  for (const argument of expr.arguments) {
+    if (ts.isSpreadElement(argument)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: ${description} spread is unsupported (${cx.funcName})`,
+      );
+    }
+    const value = lowerExpr(argument, cx, irDynamic());
+    const type = cx.builder.typeOf(value);
+    const scalar = asVal(type);
+    const carrier =
+      scalar?.kind === "f64" || scalar?.kind === "i32" ? boxConcreteToDynamic(value, type, argument, cx) : value;
+    if (carrier === null) {
+      throw new IrUnsupportedError(
+        "operand-coercion-unsupported",
+        "build",
+        `ir/from-ast: ${description} scalar argument has no dynamic box (${cx.funcName})`,
+      );
+    }
+    args.push(cx.builder.typeOf(carrier).kind === "dynamic" ? carrier : cx.builder.emitCoerceToExternref(carrier));
+  }
+  const result = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), args, irDynamic());
+  if (result === null) throw new Error(`ir/from-ast: ${description} returned void (${cx.funcName})`);
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -5950,6 +5994,15 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
   if (preparedDateNow !== null) return preparedDateNow;
 
+  // #4387 — a stable `var value = new F()` whose one proven `F.prototype`
+  // write installs an intrinsic Array stays in the legacy raw-fnctor global.
+  // IR owns the call by loading that exact carrier and invoking the same
+  // receiver-first closed dispatcher used by the direct path.
+  const fnctorArrayMethod = cx.resolver?.fnctorArrayMethodPlan?.(expr) ?? null;
+  if (fnctorArrayMethod !== null) {
+    return lowerReceiverFirstDynamicMethod(expr, cx, fnctorArrayMethod, "fnctor Array method");
+  }
+
   // #3793 — Acorn's public wrappers call static properties on the retained
   // `Parser` function object. Load the exact existing module carrier and
   // route through the already-reserved closed method dispatcher. That keeps
@@ -5957,35 +6010,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // does not turn the assigned FunctionExpression into a bare direct call.
   const retainedMethod = cx.resolver?.retainedFunctionMethodPlan?.(expr) ?? null;
   if (retainedMethod !== null) {
-    const receiver = cx.builder.emitGlobalGet(retainedMethod.receiverGlobal, irVal({ kind: "externref" }));
-    const args: IrValueId[] = [receiver];
-    for (const argument of expr.arguments) {
-      if (ts.isSpreadElement(argument)) {
-        throw new IrUnsupportedError(
-          "method-call-unsupported",
-          "build",
-          `ir/from-ast: retained function method spread is unsupported (${cx.funcName})`,
-        );
-      }
-      const value = lowerExpr(argument, cx, irDynamic());
-      const type = cx.builder.typeOf(value);
-      const scalar = asVal(type);
-      const carrier =
-        scalar?.kind === "f64" || scalar?.kind === "i32" ? boxConcreteToDynamic(value, type, argument, cx) : value;
-      if (carrier === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: retained function method scalar argument has no dynamic box (${cx.funcName})`,
-        );
-      }
-      args.push(cx.builder.typeOf(carrier).kind === "dynamic" ? carrier : cx.builder.emitCoerceToExternref(carrier));
-    }
-    const result = cx.builder.emitCall(irRuntimeFuncRef(retainedMethod.funcName), args, irDynamic());
-    if (result === null) {
-      throw new Error(`ir/from-ast: retained function method returned void (${cx.funcName})`);
-    }
-    return result;
+    return lowerReceiverFirstDynamicMethod(expr, cx, retainedMethod, "retained function method");
   }
 
   // #3791 — standalone native RegExp `.test` on one exact, stable top-level
@@ -9433,6 +9458,55 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
     throw new Error(`ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`);
+  }
+  const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
+  if (wrapperPlan) {
+    const lhs = lowerExpr(expr.left, cx, irDynamic());
+    const lt = cx.builder.typeOf(lhs);
+    const resultType = irVal({ kind: "i32" });
+    if (lt.kind === "dynamic") {
+      const isObject = cx.builder.emitTagTest(lhs, JsTag.Object);
+      let whenObject!: IrValueId;
+      const thenBody = cx.builder.collectBodyInstrs(() => {
+        const payload = cx.builder.emitUnbox(lhs, JsTag.Object);
+        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
+        if (result === null) {
+          throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+        }
+        whenObject = result;
+      });
+      let whenNotObject!: IrValueId;
+      const elseBody = cx.builder.collectBodyInstrs(() => {
+        whenNotObject = cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
+      });
+      return cx.builder.emitIfElse({
+        cond: isObject,
+        then: thenBody,
+        thenValue: whenObject,
+        else: elseBody,
+        elseValue: whenNotObject,
+        resultType,
+      });
+    }
+    const lv = asVal(lt);
+    if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {
+      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+      return result;
+    }
+    if (lv?.kind === "anyref" || lv?.kind === "eqref" || lv?.kind === "ref" || lv?.kind === "ref_null") {
+      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+      return result;
+    }
+    if (lv?.kind === "f64" || lv?.kind === "i32" || lv?.kind === "i64") {
+      return cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
+    }
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
+    );
   }
   const targetShape = cx.classShapes?.get(className);
   if (!targetShape) {

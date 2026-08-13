@@ -22,8 +22,7 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
-import { addFunctionOwnLocals } from "./binding-info.js";
-import { collectReferencedIdentifiers, emitCachedFuncClosureAccess } from "./closures.js";
+import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
@@ -49,7 +48,11 @@ import {
   compileForStatement,
   compileWhileStatement,
 } from "./statements/loops.js";
-import { compileNestedClassDeclaration, compileNestedFunctionDeclaration } from "./statements/nested-declarations.js";
+import {
+  canCompileDistinctAnnexBFunction,
+  compileNestedClassDeclaration,
+  compileNestedFunctionDeclaration,
+} from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 
@@ -85,32 +88,96 @@ function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.S
   }
 }
 
+function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {
+  if (hadEntry) map.set(key, value!);
+  else map.delete(key);
+}
+
 /**
- * Can a repeated Annex B declaration safely claim its own funcMap slot without
- * changing the capture layout? The current closure metadata is keyed by bare
- * function name, so compiling a second CAPTURING declaration would replace the
- * first declaration's capture record. Keep this slice on zero-parameter,
- * capture-free ordinary functions; the generated B.3.3 `existing-block-fn-
- * update` family is exactly that shape. Other declarations retain the previous
- * valid (but first-body) behavior until capture metadata becomes per-decl.
+ * Compile a deferred Annex B declaration that replaces an already initialized
+ * direct-function binding. Returning true means this statement belongs to that
+ * lifecycle even when its conservative distinct-body predicate rejects it.
  */
-function canCompileDistinctAnnexBFunction(
+function tryCompileAnnexBExistingDirectFunctionUpdate(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmt: ts.FunctionDeclaration,
+  funcName: string | undefined,
 ): boolean {
-  if (stmt.parameters.length > 0 || stmt.asteriskToken) return false;
-  if (stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false;
-  if (!stmt.body) return false;
-
-  const ownLocals = new Set<string>();
-  addFunctionOwnLocals(stmt, ownLocals);
-  const referenced = new Set<string>();
-  for (const bodyStmt of stmt.body.statements) {
-    collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+  if (
+    !funcName ||
+    !fctx.annexBExistingDirectFunctionBindings?.has(funcName) ||
+    !annexBUpdatesExistingVarBinding(stmt)
+  ) {
+    return false;
   }
-  for (const name of referenced) {
-    if (name === "eval" || fctx.localMap.has(name) || (ctx.nestedFuncCaptures.get(name)?.length ?? 0) > 0) return false;
+
+  const bindingLocal = fctx.localMap.get(funcName);
+  if (bindingLocal === undefined || !canCompileDistinctAnnexBFunction(ctx, fctx, stmt)) return true;
+  const cache = (ctx.annexBDistinctFunctionIndices ??= new WeakMap<ts.FunctionDeclaration, number>());
+  let innerIdx = cache.get(stmt);
+  if (innerIdx === undefined) {
+    const hadFunc = ctx.funcMap.has(funcName);
+    const savedFunc = ctx.funcMap.get(funcName);
+    const hadOwner = ctx.funcMapOwnerDecl.has(funcName);
+    const savedOwner = ctx.funcMapOwnerDecl.get(funcName);
+    const hadCaptures = ctx.nestedFuncCaptures.has(funcName);
+    const savedCaptures = ctx.nestedFuncCaptures.get(funcName);
+    const hadOptional = ctx.funcOptionalParams.has(funcName);
+    const savedOptional = ctx.funcOptionalParams.get(funcName);
+    const hadRest = ctx.funcRestParams.has(funcName);
+    const savedRest = ctx.funcRestParams.get(funcName);
+    const hadClosure = ctx.closureMap.has(funcName);
+    const savedClosure = ctx.closureMap.get(funcName);
+    const hadFunctionName = ctx.functionNameMap.has(funcName);
+    const savedFunctionName = ctx.functionNameMap.get(funcName);
+    const usedArguments = ctx.funcUsesArguments.has(funcName);
+    const wasAsync = ctx.asyncFunctions.has(funcName);
+    const wasGenerator = ctx.generatorFunctions.has(funcName);
+    const wasPreRegistered = ctx.preRegisteredBodyless?.has(funcName) ?? false;
+
+    ctx.funcMap.delete(funcName);
+    ctx.funcMapOwnerDecl.delete(funcName);
+    ctx.nestedFuncCaptures.delete(funcName);
+    ctx.funcOptionalParams.delete(funcName);
+    ctx.funcRestParams.delete(funcName);
+    ctx.closureMap.delete(funcName);
+    ctx.functionNameMap.delete(funcName);
+    ctx.funcUsesArguments.delete(funcName);
+    ctx.asyncFunctions.delete(funcName);
+    ctx.generatorFunctions.delete(funcName);
+    ctx.preRegisteredBodyless?.delete(funcName);
+
+    const errorsBefore = ctx.errors.length;
+    try {
+      compileNestedFunctionDeclaration(ctx, fctx, stmt);
+      innerIdx = ctx.funcMapOwnerDecl.get(funcName) === stmt ? ctx.funcMap.get(funcName) : undefined;
+      if (ctx.errors.length === errorsBefore && innerIdx !== undefined) cache.set(stmt, innerIdx);
+      else innerIdx = undefined;
+    } finally {
+      restoreMapEntry(ctx.funcMap, funcName, hadFunc, savedFunc);
+      restoreMapEntry(ctx.funcMapOwnerDecl, funcName, hadOwner, savedOwner);
+      restoreMapEntry(ctx.nestedFuncCaptures, funcName, hadCaptures, savedCaptures);
+      restoreMapEntry(ctx.funcOptionalParams, funcName, hadOptional, savedOptional);
+      restoreMapEntry(ctx.funcRestParams, funcName, hadRest, savedRest);
+      restoreMapEntry(ctx.closureMap, funcName, hadClosure, savedClosure);
+      restoreMapEntry(ctx.functionNameMap, funcName, hadFunctionName, savedFunctionName);
+      if (usedArguments) ctx.funcUsesArguments.add(funcName);
+      else ctx.funcUsesArguments.delete(funcName);
+      if (wasAsync) ctx.asyncFunctions.add(funcName);
+      else ctx.asyncFunctions.delete(funcName);
+      if (wasGenerator) ctx.generatorFunctions.add(funcName);
+      else ctx.generatorFunctions.delete(funcName);
+      if (wasPreRegistered) (ctx.preRegisteredBodyless ??= new Set()).add(funcName);
+      else ctx.preRegisteredBodyless?.delete(funcName);
+    }
+  }
+  if (innerIdx !== undefined) {
+    const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, innerIdx);
+    if (closureType) {
+      if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: bindingLocal });
+    }
   }
   return true;
 }
@@ -383,6 +450,14 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     if (funcName && tryCompileAnnexBModuleBlockFnEvaluation(ctx, fctx, stmt)) {
       return;
     }
+    // A direct same-name function declaration already instantiated this
+    // binding with its eagerly-hoisted closure. The recursively visited Annex B
+    // declaration was deliberately deferred so it could not steal the global
+    // name-keyed funcMap slot. Compile the exact safe inner declaration now,
+    // store its closure into the initialized live local, then restore every
+    // canonical name-keyed record: compile-time branch traversal must not make
+    // the inner declaration look like the unconditional owner.
+    if (tryCompileAnnexBExistingDirectFunctionUpdate(ctx, fctx, stmt, funcName)) return;
     // (#4131) B.3.3.1 step 3.f on an ALREADY-EXISTING var binding. The branch
     // above covers the case where Annex B CREATES the web-compat binding; when
     // the enclosing var scope already binds the name (`var f = 123` beside a
