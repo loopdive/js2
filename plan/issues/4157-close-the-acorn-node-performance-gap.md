@@ -4089,7 +4089,8 @@ The follow-up PR took an `auto-park-bot:merge-group-failure` hold at 17:22Z,
 diagnosis, verified causally rather than statistically:
 
 - The queued snapshot (head `fe20764`) differs from its content-current
-  merge-base in exactly two places: `plan/issues/4403-*.md` and 14 lines inside
+  merge-base in exactly two places:
+  `plan/issues/4403-function-body-valueof-object-arith-compile-failure.md` and 14 lines inside
   `optimizeWithSystemBinary` — code reachable only under `options.optimize`,
   which the test262 harness never sets (zero matches in `tests/test262*`). The
   compiler on the validated path is behaviourally identical to baseline.
