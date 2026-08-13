@@ -1160,6 +1160,43 @@ inheritance without allowing recursive heritage, then tackles nested/class-
 expression ownership. The obsolete direct implementation is removed in the
 same later transaction that proves its last consumer is gone.
 
+### Inherited class-layout checkpoint (2026-08-13)
+
+Exact forward class fields now remain typed through local user inheritance.
+The physical class collector deliberately shares each parent's `FieldDef`
+objects with its descendants, so the post-collection finalizer updates a
+parent-owned forward slot once and every already-collected subtype observes
+the same `(ref null $Target)` storage. A forward field declared by the child is
+finalized independently. No struct is replaced, no type is reordered, and
+externref-backed, nested, generic, optional, union, or inferred layouts remain
+outside this transaction.
+
+Derived classes now receive the same identity-stable provisional class-shape
+cells as flat classes. Projection adds the exact heritage parent as a
+dependency, guaranteeing that implicit constructor forwarding reads a fully
+populated parent ABI while recursive field edges still use stable cells. The
+existing earlier-parent rule rejects later, foreign, builtin, and unresolved
+heritage, so this does not admit recursive inheritance or widen the supported
+extends surface.
+
+The GC/standalone proof uses an exact three-level hierarchy. `Base.current`
+references later `Value`, `Child.other` references the same target, and
+`Value` itself extends an earlier `Amount`. All six class terminals plus the
+top-level caller record `legacyBodyEmitted:false, irBodyEmitted:true` while
+both direct-body poison seams are active. Direct and IR binaries validate and
+return `13`; the IR artifact is no larger than direct. WAT requires exact typed
+storage in both `Base` and the inherited prefix of `Child`, rejects externref
+and indirect dispatch in migrated bodies, and pins the derived initializer to
+one static parent narrowing plus one direct parent call before its typed
+`struct.set`.
+
+The complete class compile-once file passes **42/42** after the change. This
+checkpoint does not delete a shared direct implementation: nested/class-
+expression owners and the remaining typed fallback policies still consume the
+class collector/body machinery. After publication, the next serial R3 family
+is exact nested/class-expression ownership; shared code is removed only with
+the last proven consumer.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

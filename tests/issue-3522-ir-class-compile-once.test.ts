@@ -1120,34 +1120,120 @@ describe("#3522 instance class-method compile-once ownership", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
-    "keeps forward-field inheritance outside this layout checkpoint in the %s lane",
+    "prepares an inherited forward-field layout exactly once in the %s lane",
     async (target) => {
       const source = `
+        class Amount {
+          amount: number;
+          constructor(amount: number) { this.amount = amount; }
+        }
         class Base {
           current: Value;
           constructor(current: Value) { this.current = current; }
+          read(): number { return this.current.amount; }
         }
-        class Child extends Base {}
-        class Value { amount: number; }
-        export function marker(): number { return 1; }
+        class Child extends Base {
+          other: Value;
+          constructor(current: Value, other: Value) {
+            super(current);
+            this.other = other;
+          }
+          combined(): number { return this.current.amount + this.other.amount; }
+        }
+        class Value extends Amount {
+          constructor(amount: number) { super(amount); }
+        }
+        export function run(): number {
+          const child = new Child(new Value(4), new Value(5));
+          return child.read() + child.combined();
+        }
       `;
-      const result = await compile(source, {
+      const direct = await compile(source, {
         fileName: `forward-class-field-inheritance-${target}.ts`,
-        experimentalIR: true,
-        trackIrOutcomes: true,
+        experimentalIR: false,
         emitWat: true,
         target,
       });
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let result: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY =
+          "Amount_new,Base_new,Base_read,Child_new,Child_combined,Value_new";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        result = await compile(source, {
+          fileName: `forward-class-field-inheritance-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          emitWat: true,
+          target,
+        });
+      } finally {
+        if (previousClassPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        }
+        if (previousFunctionPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+        }
+      }
 
-      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-      expect(WebAssembly.validate(result.binary)).toBe(true);
-      expect(classMemberOutcome(result, "Base_new")).toMatchObject({
-        kind: "unsupported",
-        legacyBodyEmitted: true,
-        irBodyEmitted: false,
+      for (const compiled of [direct, result]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!()).toBe(13);
+      }
+      for (const name of ["Amount_new", "Base_new", "Base_read", "Child_new", "Child_combined", "Value_new"]) {
+        expect(classMemberOutcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+      }
+      expect(functionOutcome(result, "run")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
       });
-      expect(watTypeDefinition(result.wat, "Base")).toContain("(field $current (mut externref))");
-      expect(watTypeDefinition(result.wat, "Child")).toContain("(field $current (mut externref))");
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      expect(result.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+      expect(watTypeDefinition(direct.wat, "Base")).toContain("(field $current (mut externref))");
+      expect(watTypeDefinition(direct.wat, "Child")).toContain("(field $current (mut externref))");
+
+      const valueTypeIdx = watNullableRefResultTypeIndex(watFunctionBody(result.wat, "Value_new"), "Value_new");
+      expect(watTypeDefinition(result.wat, "Base")).toContain(`(field $current (mut (ref null ${valueTypeIdx})))`);
+      expect(watTypeDefinition(result.wat, "Child")).toContain(`(field $current (mut (ref null ${valueTypeIdx})))`);
+      expect(watTypeDefinition(result.wat, "Child")).toContain(`(field $other (mut (ref null ${valueTypeIdx})))`);
+      for (const name of ["Base_init", "Base_read", "Child_combined"]) {
+        expect(watFunctionBody(result.wat, name)).not.toMatch(
+          /externref|any\.convert_extern|extern\.convert_any|call_ref|call_indirect|ref\.(?:test|cast)/,
+        );
+      }
+      // Preserve the direct-super optimization: the derived initializer uses
+      // one static subtype-to-parent narrowing and one direct call, never a
+      // dynamic dispatch ladder or an externref conversion.
+      const childInit = watFunctionBody(result.wat, "Child_init");
+      expect(watInstructionOpcodes(childInit)).toEqual([
+        "local.get",
+        "local.get",
+        "ref.cast",
+        "call",
+        "drop",
+        "local.get",
+        "local.get",
+        "struct.set",
+        "local.get",
+        "return",
+      ]);
+      expect(childInit).not.toMatch(
+        /externref|any\.convert_extern|extern\.convert_any|call_ref|call_indirect|ref\.test/,
+      );
+      const runBody = watFunctionBody(result.wat, "run");
+      expect(runBody).not.toMatch(/externref|any\.convert_extern|extern\.convert_any|call_ref|call_indirect|ref\.test/);
+      expect(runBody.match(/ref\.cast/g) ?? []).toHaveLength(1);
     },
   );
 
