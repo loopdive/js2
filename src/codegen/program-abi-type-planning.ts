@@ -31,6 +31,7 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   dynamicCarrier: 8,
   exceptionTagType: 9,
   refCell: 10,
+  objectLayout: 11,
   classLayout: 0,
 } as const);
 
@@ -69,6 +70,16 @@ export interface ProgramAbiRefCellSupportRequest {
 export interface ProgramAbiRefCellSupport {
   readonly semanticInnerTypeKey: string;
   readonly cellTypeRef: IrTypeRef;
+}
+
+export interface ProgramAbiObjectSupportRequest {
+  readonly objectType: Extract<IrType, { readonly kind: "object" }>;
+  readonly structType: StructTypeDef;
+}
+
+export interface ProgramAbiObjectSupport {
+  readonly semanticShapeKey: string;
+  readonly objectTypeRef: IrTypeRef;
 }
 
 interface ObservedRefCellSupport {
@@ -186,6 +197,11 @@ export function canonicalProgramAbiRefCellKey(innerType: IrType): string {
   return JSON.stringify(canonicalClosureSupportIrType(innerType, new Set<object>()));
 }
 
+/** Backend-neutral semantic key for one closed IR object layout. */
+export function canonicalProgramAbiObjectShapeKey(objectType: Extract<IrType, { readonly kind: "object" }>): string {
+  return JSON.stringify(canonicalClosureSupportIrType(objectType, new Set<object>()));
+}
+
 interface ProgramAbiClassLayoutObservation {
   readonly classId: IrClassId;
   readonly displayName: string;
@@ -252,6 +268,10 @@ export class ProgramAbiTypeRegistry {
   >();
   private readonly closureSupportLayouts = new Map<string, ObservedClosureSupportLayout>();
   private readonly refCellSupport = new Map<string, ObservedRefCellSupport>();
+  private readonly objectSupport = new Map<
+    string,
+    { readonly request: ProgramAbiObjectSupportRequest; readonly support: ProgramAbiObjectSupport }
+  >();
   private dynamicCarrierSupport?: {
     readonly support: ProgramAbiDynamicCarrierSupport;
     readonly type?: TypeDef;
@@ -260,6 +280,7 @@ export class ProgramAbiTypeRegistry {
   private exceptionTagTypeRefValue?: IrTypeRef;
   private closureSupportBatchPlanned = false;
   private refCellSupportBatchPlanned = false;
+  private objectSupportBatchPlanned = false;
   private planned = false;
 
   constructor(
@@ -826,6 +847,82 @@ export class ProgramAbiTypeRegistry {
       });
     this.refCellSupportBatchPlanned = true;
     return canonical.map(({ semanticInnerTypeKey }) => supportByKey.get(semanticInnerTypeKey)!);
+  }
+
+  /** Plan closed object layouts referenced by prepared closure signatures. */
+  prepareObjectSupportTypes(requests: readonly ProgramAbiObjectSupportRequest[]): readonly ProgramAbiObjectSupport[] {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare object support after retained planning");
+    }
+    if (requests.length === 0) return [];
+    const canonical = requests.map((request) => {
+      const semanticShapeKey = canonicalProgramAbiObjectShapeKey(request.objectType);
+      const index = this.requireUniqueAllocatedType(request.structType, `object support ${semanticShapeKey}`);
+      if (index < 0 || request.structType.superTypeIdx !== undefined) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `object support ${semanticShapeKey} is not one root struct layout`,
+        );
+      }
+      return { request, semanticShapeKey };
+    });
+
+    if (this.objectSupportBatchPlanned) {
+      return canonical.map(({ request, semanticShapeKey }) => {
+        const observed = this.objectSupport.get(semanticShapeKey);
+        if (!observed) {
+          throw new ProgramAbiInvariantError(
+            "planning-sealed",
+            `object support ${semanticShapeKey} was requested after the canonical batch was planned`,
+          );
+        }
+        if (observed.request.structType !== request.structType) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `object support ${semanticShapeKey} maps to different physical type objects`,
+          );
+        }
+        return observed.support;
+      });
+    }
+
+    const byKey = new Map<string, ProgramAbiObjectSupportRequest>();
+    for (const { request, semanticShapeKey } of canonical) {
+      const previous = byKey.get(semanticShapeKey);
+      if (previous && previous.structType !== request.structType) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `object support ${semanticShapeKey} maps to different physical type objects`,
+        );
+      }
+      byKey.set(semanticShapeKey, request);
+    }
+
+    const supportByKey = new Map<string, ProgramAbiObjectSupport>();
+    [...byKey]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .forEach(([semanticShapeKey, request], ordinal) => {
+        const entrySourceId = canonicalEntrySource(this.session);
+        const objectTypeRef = irSupportTypeRef(
+          entrySourceId,
+          `object-layout:${semanticShapeKey}`,
+          `__ir_object_layout_${ordinal}`,
+          ordinal,
+        );
+        const cell = this.session.typeCellFor(request.structType) ?? this.session.createTypeCell(request.structType);
+        this.planPreparedSupportType(
+          objectTypeRef,
+          request.structType,
+          cell,
+          PROGRAM_ABI_TYPE_ROLE.objectLayout,
+          ordinal,
+        );
+        const support = Object.freeze({ semanticShapeKey, objectTypeRef });
+        this.objectSupport.set(semanticShapeKey, Object.freeze({ request, support }));
+        supportByKey.set(semanticShapeKey, support);
+      });
+    this.objectSupportBatchPlanned = true;
+    return canonical.map(({ semanticShapeKey }) => supportByKey.get(semanticShapeKey)!);
   }
 
   /** Plan all source classes plus every retained allocator type after DCE. */

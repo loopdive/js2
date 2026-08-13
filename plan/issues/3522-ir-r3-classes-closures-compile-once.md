@@ -1448,6 +1448,300 @@ the final direct-call instrumentation. The checkpoint carries a focused runtime
 parity test for that boundary. Ordinary function-value targets in sources that
 do not observe the legacy activation continue to prepare.
 
+### Returned closure component checkpoint (2026-08-13)
+
+A top-level function may now return an exactly annotated primitive callable
+and seal together with a caller that stores and invokes that returned value.
+The source result uses the same canonical callable/externref ABI already used
+for callable parameters. Inside the producer, a literal remains the optimized
+typed closure carrier until the return seam packs it once; the caller unpacks
+the exact signature for indirect dispatch. This preserves the existing
+closure representation and avoids a dynamic-value round trip.
+
+Preparation now recognizes callable source results as backend-stable. This is
+required for correctness, not just coverage: the inventoried returned arrow
+must receive its source-owned callable slot inside the prepare-before-emit
+transaction. Leaving the producer on the late route exposed an empty legacy
+placeholder with `typeIdx = 0` during Program ABI sealing. The producer and
+caller are closed over the same exact call edge, so neither side can retain a
+legacy body or cross an unplanned ABI.
+
+The anti-vacuity fixture is `make(offset) -> (value) => value + offset`, then
+`run` stores `make(2)` and invokes it. With both direct body emitters poisoned,
+GC and standalone emit `make`, its captured lifted arrow, and `run` through IR,
+record `direct=0, IR=1` for both terminal functions, share one prepared
+component ID, validate, and return `42`. Same-source optimized direct builds
+provide the performance/size oracle; the IR binaries are no larger. A shadowed
+local `make` negative control proves the call-graph exemption does not fall
+through to a same-text top-level factory.
+
+Focused returned/ordinary/lifted closure plus prepared-free-function coverage
+is **45/45**, with typecheck green and zero post-claim errors. The next serial
+R3 families are recursive named/self-bound literals, default/destructured
+closure parameters, object-literal methods/accessors, and wider cross-owner
+callable escapes. No shared direct closure implementation is deleted yet;
+those remaining typed consumers still require it.
+
+The later accumulated closure stack exposed one missed form in the original
+call-graph proof: `var fn = make(10); fn(32)` passed the ordinary statement
+selector but the graph collector recorded returned callables only for `const`.
+That mislabeled the caller as external, split it from `make`, and left the
+lifted arrow on a late placeholder with `typeIdx = 0`. The collector now keeps
+the existing const-only rule for literal closure declarations but recognizes
+an exact direct returned-callable binding under `var`/`let` as well. The
+equivalence regression is now an explicit GC/standalone poison-and-size parity
+test: producer, caller, and lifted arrow share one prepared component, both
+terminal bodies are IR-only, runtime returns 42, and optimized IR stays no
+larger than direct.
+
+### Recursive named function-expression checkpoint (2026-08-13)
+
+A named function expression now binds its lexical self name directly to the
+canonical typed closure carrier inside its lifted IR body. Recursive calls
+therefore reuse the existing `closure.call`/`call_ref` path and pass the exact
+root carrier as `this` without introducing a dynamic lookup, global alias, or
+second closure allocation. Capture analysis excludes the self name while
+retaining ordinary outer captures in their existing sealed order.
+
+The selector mirrors that ownership boundary: the self name exists only in the
+literal's inner scope, carries the literal's exact callable projection while
+the body is checked, and disappears when the projection scope closes. A same-
+named enclosing binding remains deliberately unsupported for this slice rather
+than allowing ambiguous shadow evidence to widen selection.
+
+Anti-vacuity coverage runs both a zero-capture factorial and a recursive
+factorial with independent captured state on GC and standalone. With the
+terminal direct-body emitter poisoned, every prepared build reports
+`direct=0, IR=1`, validates, contains the lifted closure plus `call_ref`, and
+matches the direct runtime result. Optimized IR binaries are no larger than
+their same-source direct binaries. Default/destructured closure parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+the next serial R3 families; the shared direct closure implementation still has
+live typed consumers and is not deleted in this checkpoint.
+
+### Flat destructured closure-parameter checkpoint (2026-08-13)
+
+Closure literals may now receive flat object and numeric-array binding patterns
+through the same prepared component as their terminal owner. The lifted body
+keeps one synthetic parameter carrying the complete aggregate, then reuses the
+ordinary IR binding-pattern lowering to project each leaf. Capture analysis
+records every pattern leaf as locally owned, so renamed fields and elisions do
+not become phantom outer captures.
+
+The admitted object ABI is intentionally checker-independent and bounded to a
+non-empty inline type literal with unique required primitive fields. Numeric
+arrays use the existing nullable vector carrier. Named object types, nested or
+defaulted patterns, optional/rest parameters, and non-numeric arrays remain on
+the direct route until closure signatures receive their planned position-type
+sidecar or the corresponding JavaScript calling convention is prepared.
+
+Closed object layouts used by prepared closure signatures are now allocated
+before sealing and registered under exact, remappable Program ABI type refs.
+Dependency discovery accepts `object.new/get/set` only when the final object
+type identity carries that evidence. A missing ref and a structurally equal but
+distinct type both remain blocked; the physical allocator object may be
+remapped without losing the symbolic binding. The broader sealing diagnostic
+also reports exact dependency failures for ordinary owners instead of hiding
+them behind a generic late artifact error.
+
+Anti-vacuity coverage runs renamed/captured object destructuring and numeric
+array destructuring with an elision in both GC and standalone. Direct-body
+poison proves `run` and its lifted closure are IR-owned, runtime results match
+same-source direct builds, emitted WAT contains the expected `struct.get` or
+`array.get` plus `call_ref`, and each optimized IR binary is no larger than its
+direct oracle. Focused closure-support and dependency coverage is **41/41**.
+Defaulted closure parameters, object-literal methods/accessors, and wider
+cross-owner callable escapes remain the next serial R3 families. The shared
+direct closure implementation still has those live typed consumers, so it is
+not deleted in this checkpoint.
+
+### Numeric defaulted closure-parameter checkpoint (2026-08-13)
+
+A const-bound arrow/function-expression closure may now carry a contiguous
+suffix of explicitly annotated `number` parameters with constant numeric
+defaults. Its logical IR signature records the first defaulted position while
+retaining the complete physical parameter list. Local calls therefore accept
+every JavaScript arity from that first default through the declared parameter
+count, pad omitted positions with the exact legacy expression-default sNaN
+sentinel, and treat an unshadowed explicit `undefined` identically. The lifted
+IR body recognizes the sentinel by exact `i64.reinterpret_f64`/`i64.eq` bits
+and selects the declared constant before any parameter use.
+
+The closure header's `$arity` is the first defaulted position, preserving
+Function `length` metadata without creating a second closure layout or lifted
+function type. String/vec carrier rewrites preserve the logical default
+metadata, while physical Program ABI and wrapper layout reuse remain keyed by
+the full Wasm parameter/result signature. Bytecode and Porffor continue to
+reject the new i64 bit operations through their existing capability gates;
+WasmGC and linear lower them through the shared typed emitter seam.
+
+Anti-vacuity coverage exercises an all-default suffix through omitted,
+explicit-`undefined`, partially supplied, and fully defaulted calls in both GC
+and standalone. Direct-body poison proves `run` and its lifted closure are
+IR-owned, runtime results match same-source direct builds, WAT pins the exact
+bit test plus `call_ref`, and each optimized IR binary is no larger than its
+direct oracle. The focused/default plus adjacent closure-family matrix is
+**26/26**; fallback policy is unchanged and the strict IR-only shadow remains
+**37/37 emitted, 0 legacy, 0 Unsupported, 0 Invariant**.
+
+Effectful or cross-parameter defaults, optional/rest parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+the next serial R3 families. The shared direct closure implementation still
+has those live typed consumers, so it is not deleted in this checkpoint.
+
+### Pure cross-parameter default checkpoint (2026-08-13)
+
+Numeric default suffixes may now derive a default from earlier numeric
+parameters through a bounded pure expression tree: literals, earlier parameter
+reads, unary `+`/`-`, and binary `+`, `-`, `*`, or `/`. Default resolution stays
+in declaration order, so a later default observes the already-resolved value
+of an earlier default. The selector and AST-to-IR builder independently check
+the same subset; self/later references, captures, calls, property reads, and
+all other potentially effectful expressions remain direct.
+
+GC and standalone parity coverage exercises omitted, partially supplied,
+explicit-`undefined`, and fully supplied calls for `(value = 2, bonus = value +
+3)`. Direct-body poison plus the compiled-function census proves both the owner
+and lifted closure are IR-emitted; runtime values match same-source direct
+builds, both binaries validate, and each optimized IR binary is no larger than
+its direct oracle. The focused default suite is **5/5** and the adjacent
+closure/prepared matrix is **60/60**. The fallback ratchet has no increase; the
+strict IR-only shadow remains **37/37 IR, 0 legacy bodies, 0 Unsupported, and 0
+Invariants**. Effectful/captured defaults, optional/rest parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+direct.
+
+### Captured numeric default checkpoint (2026-08-13)
+
+A pure numeric default expression may now read a checker-proven numeric outer
+binding. The AST-to-IR builder independently requires that binding to have an
+`f64` local or boxed-`f64` carrier, and capture discovery includes parameter
+initializers as well as the closure body. A mutable outer therefore uses the
+same ref cell as sibling closures, so its default is read at call time after
+earlier writes rather than frozen when the closure is allocated. An identifier
+matching any current parameter but not an earlier initialized parameter is
+rejected before build, even when a numeric outer binding has the same name;
+this preserves JavaScript's parameter-scope TDZ rather than capturing the
+outer value.
+
+The GC/standalone proof mutates the captured value through one prepared sibling
+closure, then calls the defaulted closure with an omitted and an explicit
+argument. Both prepared bodies and both lifted closures survive direct-body
+poison, validate, match same-source direct results, and keep optimized IR binary
+size no larger than direct. A self-shadowing control proves the selector fails
+closed with no post-claim error. The focused default suite is **8/8** and the
+adjacent closure/prepared matrix is **63/63**. Calls, property reads, and other
+effectful defaults remain direct; optional/rest parameters, object-literal
+methods/accessors, and wider cross-owner callable escapes remain the next R3
+families.
+
+### Numeric object-method ownership checkpoint (2026-08-13)
+
+Selector-certified `valueOf`/`toString` method shorthand with zero parameters,
+an explicit numeric or boolean result, and no receiver-sensitive syntax now
+lowers as an inventoried `object-method` source unit inside its terminal
+owner's prepared transaction. The enclosing function builds a closed object
+whose fields retain their exact closure signatures, then unary ToNumber reads
+and invokes the preferred `valueOf`/`toString` closure directly. This preserves
+the direct backend's static method-dispatch optimization instead of routing the
+IR result through the generic open-object runtime.
+
+Prepared closure support now plans closure-valued object fields against the
+canonical closure root before scope sealing. The two late anonymous-shape
+identity passes report their exact affected type indices back to Program ABI:
+`$shape` stamping may change only the reported trailing i32 field, while
+`$shapeBrand` may change only the reported trailing nullable-ref field and its
+deterministic backward brand chain. The refresh is transactional and still
+rejects removed types, unrelated layout drift, or graph expansion caused by
+the non-reference stamping pass. This keeps the prepared type graph exact
+through leaf finalization and DCE even when two differently named object
+methods have physically colliding layouts.
+
+The anti-vacuity fixture creates a captured numeric `valueOf` method and a
+numeric `toString` fallback on two colliding shapes. Direct-body poison proves
+the terminal and both lifted methods are IR-owned; GC and standalone validate
+and return 43 with zero post-claim errors. The exact optimized binaries improve
+from **3,066 to 2,912 bytes** in GC and from **1,485 to 1,268 bytes** in
+standalone. Focused object-method plus existing #4208 OrdinaryToPrimitive
+coverage is **11/11**.
+
+The complete post-fix adjacent matrix is **83/83 across 11 files**. Full
+equivalence reports **1,645 passing, 24 known failures, 12 baseline cases now
+passing, and zero new regressions**. Cross-backend differential coverage is
+**29/29**. Hybrid and strict IR-only shadows both remain **37/37 IR bodies, 0
+legacy bodies, 0 Unsupported, and 0 Invariants**; typecheck, formatting,
+fallback, optimization-retirement, oracle, issue-integrity, LOC-budget, and
+function-budget gates are green.
+
+String-returning method shorthand remains typed-direct: the current prepared
+route is correct but its generic boxed standalone StringToNumber conversion is
+454 bytes larger than direct in the focused fixture. It must gain a native
+string-to-number IR intrinsic before admission. Property-assigned function
+expressions retain #4208's existing open-object IR protocol; mixed method/data
+and mixed shorthand/function forms remain direct. Object accessors,
+receiver-sensitive methods, parameters, general method reads/calls, and wider
+cross-owner escapes remain later R3 families. No direct object-method emitter
+is deleted yet because those consumers remain live.
+
+### Parameterized object-method call checkpoint (2026-08-13)
+
+Receiver-insensitive method shorthand may now carry fixed number/boolean
+parameters and use an arbitrary stable property name. The closed object keeps
+the exact closure-valued field, and a direct `object.method(args)` expression
+loads that field and emits the existing typed closure call. This preserves the
+direct backend's static target: optimized output contains `call_ref` and no
+generic `__call_m_*` dispatcher.
+
+The GC and standalone anti-vacuity fixture captures an outer numeric offset,
+passes a runtime argument through two methods, validates, and returns 43 in
+both the direct and prepared builds. Direct-body poison proves the terminal
+and both lifted object-method units are IR-owned with zero post-claim errors.
+The optimized GC artifact improves from **2,855 to 2,827 bytes**; standalone
+improves from **6,268 to 6,245 bytes**. The focused checkpoint is **4/4**, and
+the object-method plus exact #4208 OrdinaryToPrimitive subset is **17/17**.
+The adjacent closure/object/prepared ownership matrix is **82/82 across 11
+files**. Full equivalence remains **1,645 passing, 24 known failures, 12
+baseline cases now passing, and zero new regressions**; cross-backend
+differential coverage is **29/29**. Hybrid and strict IR-only shadows remain
+**37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**.
+Typecheck, formatting, and the fallback ratchet are green.
+
+Receiver-sensitive methods remain direct because their call semantics require
+installing the real `this` value. Mixed data/method and mixed
+shorthand/function objects also remain direct until one closed representation
+can preserve their complete property semantics. String-returning shorthand,
+method reads/escapes, object accessors, and the general open-object surface are
+still later R3 families. The two unrelated #4208 module/runtime-support suites
+currently report the same **6 failures / 11 passes** on this checkpoint and its
+clean parent, so they are recorded as baseline rather than attributed to this
+slice.
+
+### Object-method value checkpoint (2026-08-13)
+
+An exact `const fn = object.method; fn(args)` sequence now retains the method's
+closure signature through selection and call-graph closure. The receiver must
+be a preceding checker-resolved const whose initializer is the already
+certified all-shorthand method object; the alias must also be const. The
+AST-to-IR builder already preserves the closure-valued field on property read,
+so no new runtime representation or generic dispatch is needed.
+
+Direct-body poison proves the terminal and lifted method remain IR-owned in GC
+and standalone, both artifacts validate and return 42, and optimized output
+uses `call_ref` with no `__call_m_*` dispatcher. The GC artifact improves from
+**3,406 to 2,262 bytes**; standalone improves from **6,458 to 5,893 bytes**.
+The focused direct-call/value/boundary suite is **7/7**, and the adjacent
+closure/object/prepared ownership matrix is **85/85 across 11 files**. Full
+equivalence remains **1,645 passing, 24 known failures, 12 baseline cases now
+passing, and zero new regressions**; cross-backend differential coverage is
+**29/29**. Hybrid and strict IR-only shadows remain **37/37 IR bodies, 0
+legacy bodies, 0 Unsupported, and 0 Invariants**. Typecheck, formatting,
+fallback, optimization-retirement, oracle, issue-integrity, LOC-budget, and
+function-budget gates are green.
+
+Mutable aliases remain a typed select-stage refusal; chained aliases,
+callback/cross-owner escapes, receiver-sensitive methods, accessors, and
+open-object method values remain later families.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
@@ -1709,3 +2003,106 @@ direct owner. Explicit `call` and `apply` parity fixtures execute the result,
 require zero Wasm imports, and require the optimized IR binary to be no larger
 than its direct-backend control. Both are 43 bytes after the repair, and the
 native-first gate remains at 379 imports without increasing its baseline.
+
+### Chained object-method value checkpoint (2026-08-13)
+
+An exact callable projection now survives immutable local alias chains such as
+`const add = operations.add; const alias = add; const invoke = alias`. The
+selector copies the already-proven arity and return-class projection at each
+`const` link, while the call-graph census recognizes the same source-ordered
+links as intra-function closure values. AST-to-IR already carries the exact
+closure SSA value through identifier reads, so this adds no wrapper, boxing,
+generic dispatch, or new runtime representation.
+
+Direct-body poison proves `run` remains IR-owned with `direct=0, IR=1` in GC
+and standalone, the lifted object method stays in the same prepared component,
+both artifacts validate and return 42, and WAT uses `call_ref` without a
+`__call_m_*` dispatcher. Optimized GC remains **2,262 bytes versus 3,406
+direct**; standalone remains **5,893 versus 6,458 direct**. A mutable link is
+an explicit negative control and remains a select-stage
+`call-resolution-unsupported` direct body. The focused object-method suite is
+**10/10**.
+
+### Callable-alias materialization guard (2026-08-13)
+
+The immutable-alias checkpoint copies only projections whose source already
+has a first-class IR value. A nested `function declaration` is different: its
+selector projection describes a name-only direct-call target, and AST-to-IR
+does not materialize a bare read of that declaration as an SSA closure value.
+Copying that projection through `const alias = nestedFunction` therefore let
+selection succeed before lowering failed with an internal invariant.
+
+The alias gate now refuses that exact name-only source. A regression fixture
+executes `const alias = add; alias(input)` through the direct body, requires a
+typed select-stage `call-resolution-unsupported` outcome, and requires zero
+post-claim errors. The valid object-method alias chain remains IR-owned and
+the focused object-method suite is **11/11**.
+
+The call-graph half now resolves every variable-backed callable by exact
+declaration identity as well. Its former function-wide name set could treat a
+later ambient call as local when an earlier block happened to declare a
+same-named callable alias. The regression fixture combines a block-local
+`parseInt` alias with a later ambient `parseInt("42")` call; the function now
+falls back cleanly at selection and executes through the direct body with zero
+post-claim errors. This keeps lexical scope and graph ownership aligned rather
+than letting a name collision surface as a build invariant.
+
+The closure-family parity fixtures now poison every expected lifted body as
+well as its source owner, so a hidden direct compile followed by an IR patch
+cannot satisfy the tests. They also compare the optimized import surfaces:
+standalone remains zero-import, GC introduces no import absent from the direct
+control (and commonly removes generic call/destructuring bridges), and the WAT
+checks reject `__call_m_*` dispatch. All admitted fixtures retain runtime,
+validation, exact IR ownership, and optimized-size parity.
+
+### Destructured object-method value checkpoint (2026-08-13)
+
+Exact object-method values may now flow through a const object binding pattern,
+including renaming and immutable local alias chains: `const { add: selected } =
+operations; const invoke = selected; invoke(input)`. The module-binding
+resolver exposes the exact same-source value declaration for binding elements,
+parameters, nested declarations, and variables, so the selector and local call
+graph compare lexical identities instead of names. Incremental Programs retain
+the established stable file/position identity fallback; a changed-snapshot
+warm-up followed by fresh and reused target compiles produces byte-identical
+artifacts and does not let a block-local destructured `parseInt` hide the later
+ambient call.
+
+The new projection is fail-closed and atomic. Every destructuring use of the
+exact const all-method receiver must name represented own methods, the receiver
+must be unwritten and unescaped, and each projected value/const-alias chain may
+be used only by direct non-optional calls in the same lexical owner. Mixed or
+inherited fields, sibling unsafe patterns, object aliases, property writes,
+cross-owner captures, callback/value escapes, mutable links, and optional calls
+stay on a typed select-stage direct body with zero post-claim errors. Optional
+invocation is also rejected by the general call selector because AST-to-IR does
+not lower `?.()` yet; a later valid projection can no longer expose that
+pre-existing select/build mismatch.
+
+Direct-body poison proves `run` and its lifted method are IR-owned with
+`direct=0, IR=1` for both admitted patterns. Both optimized artifacts validate,
+execute, use `call_ref`, and contain no `__call_m_*` dispatcher. Exact output
+and import measurements are:
+
+| Pattern | Target | Direct bytes | IR bytes | Direct imports | IR imports |
+| --- | --- | ---: | ---: | --- | --- |
+| `{ add }` | GC | 3,306 | 2,262 | box, throw-type-error, unbox | box, unbox |
+| `{ add }` | standalone | 6,830 | 5,893 | none | none |
+| `{ add: selected }` plus two const aliases | GC | 3,419 | 2,262 | box, generic-call/array, throw-type-error, unbox | box, unbox |
+| `{ add: selected }` plus two const aliases | standalone | 6,830 | 5,893 | none | none |
+
+The focused object-method suite is **24/24** and the adjacent six-file
+closure/object matrix is **46/46**. Hybrid and strict IR-only shadow validation
+remain **37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**;
+cross-backend differential coverage is **29/29**; the fallback ratchet has zero
+unintended, post-claim, or module-level increases; and native-first host-import
+policy remains **379 imports, 0 legacy-semantic, 0 unknown**. Typecheck,
+formatting, LOC/function budgets, oracle, and coercion-site gates are green.
+Full equivalence reports **1,645 passing, 24 known failures, 12 baseline cases
+now passing, and zero new regressions**.
+
+Remaining R3 boundary: cross-owner object-method values and general callable
+escapes still require a planned capture/runtime-value ABI before admission.
+Receiver-sensitive methods, accessors, mixed/open objects, optional calls, and
+mutable callable fields remain explicit later families; their live direct
+implementations cannot be deleted at this checkpoint.

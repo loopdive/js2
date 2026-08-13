@@ -1506,7 +1506,7 @@ function unopResultKind(op: import("./nodes.js").IrUnop): ValType["kind"] | null
     case "i64.trunc_f64_s":
       return "i64";
     default:
-      return null;
+      return op === "i64.reinterpret_f64" ? "i64" : null;
   }
 }
 
@@ -1527,7 +1527,7 @@ function unopOperandKind(op: import("./nodes.js").IrUnop): ValType["kind"] | nul
       return "i64";
     // ref.is_null takes a ref/externref/funcref — not a fixed scalar; skip.
     default:
-      return null;
+      return op === "i64.reinterpret_f64" ? "f64" : null;
   }
 }
 

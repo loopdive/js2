@@ -45,7 +45,9 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
   const mapSignature = (signature: IrClosureSignature): IrClosureSignature => {
     const params = mapArray(signature.params, mapType);
     const returnType = signature.returnType === null ? null : mapType(signature.returnType);
-    return params === signature.params && returnType === signature.returnType ? signature : { params, returnType };
+    return params === signature.params && returnType === signature.returnType
+      ? signature
+      : { ...signature, params, returnType };
   };
 
   const mapObjectShape = (shape: IrObjectShape): IrObjectShape => {

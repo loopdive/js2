@@ -3,7 +3,9 @@
 import { forEachChild, ts } from "../ts-api.js";
 
 /** Conservatively collect writes in the function-like enclosing a lifted closure. */
-export function collectOuterWrites(fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression): Set<string> {
+export function collectOuterWrites(
+  fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration,
+): Set<string> {
   const writes = new Set<string>();
   let outer: ts.Node | undefined = fn.parent;
   while (

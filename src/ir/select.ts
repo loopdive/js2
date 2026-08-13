@@ -1189,7 +1189,7 @@ export function assessIrImplicitConstructorSubject(
   typedShapeRejectReason = null;
   currentClaimClassName = owner.name?.text ?? null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
@@ -1272,7 +1272,12 @@ let currentClaimClassName: string | null = null;
 let currentSubjectFunctionName: string | null = null;
 let currentSubjectReturnsBoolean = false;
 let currentClassBindings = new Map<string, string>();
-let currentCallableArities = new Map<string, number>();
+interface CallableArityRange {
+  readonly min: number;
+  readonly max: number;
+}
+
+let currentCallableArities = new Map<string, CallableArityRange>();
 let currentCallableReturnClasses = new Map<string, string>();
 let currentNestedFunctionNames: ReadonlySet<string> = new Set();
 // TDZ-visible lexical values prevent an earlier use from falling through to a
@@ -1544,7 +1549,7 @@ function whyNotIrClaimable(
         null)
       : null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = fn.body ? collectDirectNestedFunctionNames(fn.body) : new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
@@ -1894,11 +1899,12 @@ function isIrClaimable(
 //     `return;` / fall-through tails. `void` in param position is rejected
 //     (no JS source emits a `void`-typed param value, so there's nothing to
 //     accept).
-// #2859 / #3214 B0 — `closure` selector kind (param only): a FunctionTypeNode annotation whose params
+// #2859 / #3214 B0+B3 — `closure` selector kind: a FunctionTypeNode annotation whose params
 //   and return are all primitive-annotated (the same surface slice-3 closure
-//   literals support). The override lowers the source parameter to
+//   literals support). The override lowers a source parameter or result to
 //   `IrType.callable` / externref; calls unpack it through the canonical wrapper
-//   root. `IrType.closure` remains the compiler-owned local literal carrier.
+//   root. A returned literal is explicitly packed at the return boundary.
+//   `IrType.closure` remains the compiler-owned local literal carrier.
 // #2949 slice 2 — `dynamic`: an UNANNOTATED position whose propagated lattice
 //   type converged to `unknown` (no evidence) or `dynamic` (top). Lowers to
 //   `IrType.dynamic` → the module's boxed-any carrier via
@@ -2171,6 +2177,12 @@ function resolveReturnTypeNode(t: ts.TypeNode): ResolvedKind {
   // (#2949 slice 3b) `any` return IS the dynamic type (same rationale as
   // the param arm — one `any` ABI, move-only-scanned).
   if (t.kind === ts.SyntaxKind.AnyKeyword) return "dynamic";
+  // #3522 returned-closure ownership — exact primitive FunctionTypeNode
+  // results use the same canonical callable/externref ABI already proven for
+  // callable parameters. Inexpressible signatures remain unclaimable.
+  if (ts.isFunctionTypeNode(t)) {
+    return irClosureSignatureFromFunctionTypeNode(t) ? "closure" : null;
+  }
   if (ts.isTypeLiteralNode(t) || ts.isTypeReferenceNode(t) || ts.isArrayTypeNode(t)) return "object";
   return null;
 }
@@ -4483,6 +4495,9 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // back to legacy.
       if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
         return shapeNo("vardecl-dstr-init", d.initializer);
+      if (ts.isObjectBindingPattern(d.name)) {
+        recordDestructuredObjectMethodProjections(d.name, d.initializer, scope);
+      }
       // Pre-add every leaf identifier to scope so subsequent statements
       // see the new names.
       collectPatternNames(d.name, scope);
@@ -4565,10 +4580,14 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // — it's a shape-only signal, not a primitive type. Since the IR doesn't
       // syntactically check the annotation against the body, just accept any
       // annotation (the lowerer enforces semantic match).
-      if (!isPhase1ClosureLiteral(d.initializer, initializerScope, localClasses))
+      if (!isPhase1ClosureLiteral(d.initializer, initializerScope, localClasses, true))
         return shapeNo("vardecl-closure-init", d.initializer);
       scope.add(d.name.text);
-      recordCallableProjection(d.name.text, d.initializer.parameters.length, d.initializer.type);
+      recordCallableProjection(
+        d.name.text,
+        closureLiteralCallableArity(d.initializer, initializerScope),
+        d.initializer.type,
+      );
       continue;
     }
     if (
@@ -4585,6 +4604,26 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
+    const objectMethodValue = isConst ? directObjectMethodValueProjection(initializer, initializerScope) : null;
+    const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
+    const callableAlias =
+      isConst &&
+      ts.isIdentifier(initializer) &&
+      initializerScope.has(initializer.text) &&
+      // Nested function declarations are name-only direct-call targets in
+      // from-ast. They deliberately have no first-class SSA value, so an
+      // alias would pass selection but fail while lowering the bare read.
+      !currentNestedFunctionNames.has(initializer.text) &&
+      currentCallableArities.has(initializer.text)
+        ? initializer.text
+        : null;
+    if (objectMethodValue) {
+      recordCallableProjection(d.name.text, objectMethodValue.arity, objectMethodValue.returnType);
+    } else if (returnedCallable) {
+      currentCallableArities.set(d.name.text, exactCallableArity(returnedCallable.params.length));
+    } else if (callableAlias !== null) {
+      copyCallableProjection(d.name.text, callableAlias);
+    }
     if (!currentSubjectIsModuleInit && isConst && expressionTouchesTrackedModuleValue(initializer)) {
       const family = obviousModuleValueFamily(initializer);
       if (family === "f64" || family === "boolean") {
@@ -4742,12 +4781,105 @@ function isPhase1NestedFunc(
  * Slice 3 (#1169c): shape-check an arrow / function-expression
  * initializer used as a `const` closure binding.
  */
-function isPhase1ClosureLiteral(
+function closureNumericDefaultInitializerIsIrSafe(
+  initializer: ts.Expression,
+  availableParamNames: ReadonlySet<string>,
+  ownParamNames: ReadonlySet<string>,
+  outerScope: ReadonlySet<string>,
+): boolean {
+  const candidate = unwrapProjectionExpression(initializer);
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) {
+    if (availableParamNames.has(candidate.text)) return true;
+    return !ownParamNames.has(candidate.text) && outerScope.has(candidate.text) && expressionIsProvenNumber(candidate);
+  }
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
+  ) {
+    return closureNumericDefaultInitializerIsIrSafe(candidate.operand, availableParamNames, ownParamNames, outerScope);
+  }
+  return (
+    ts.isBinaryExpression(candidate) &&
+    (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
+    closureNumericDefaultInitializerIsIrSafe(candidate.left, availableParamNames, ownParamNames, outerScope) &&
+    closureNumericDefaultInitializerIsIrSafe(candidate.right, availableParamNames, ownParamNames, outerScope)
+  );
+}
+
+function closureLiteralDefaultParamStart(
+  parameters: readonly ts.ParameterDeclaration[],
+  allowNumericDefaultSuffix: boolean,
+  outerScope: ReadonlySet<string>,
+): number | null {
+  let firstDefault = parameters.length;
+  const availableParamNames = new Set<string>();
+  const ownParamNames = new Set<string>();
+  for (const parameter of parameters) {
+    if (ts.isIdentifier(parameter.name)) ownParamNames.add(parameter.name.text);
+    else collectPatternNames(parameter.name, ownParamNames);
+  }
+  for (let index = 0; index < parameters.length; index++) {
+    const parameter = parameters[index]!;
+    if (!parameter.initializer) {
+      if (firstDefault !== parameters.length) return null;
+    } else if (
+      !allowNumericDefaultSuffix ||
+      !ts.isIdentifier(parameter.name) ||
+      parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
+      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerScope)
+    ) {
+      return null;
+    } else if (firstDefault === parameters.length) {
+      firstDefault = index;
+    }
+    if (ts.isIdentifier(parameter.name) && parameter.type?.kind === ts.SyntaxKind.NumberKeyword) {
+      availableParamNames.add(parameter.name.text);
+    }
+  }
+  return firstDefault;
+}
+
+function exactCallableArity(arity: number): CallableArityRange {
+  return { min: arity, max: arity };
+}
+
+function closureLiteralCallableArity(
   expr: ts.ArrowFunction | ts.FunctionExpression,
+  outerScope: ReadonlySet<string>,
+): CallableArityRange {
+  const min = closureLiteralDefaultParamStart(expr.parameters, true, outerScope);
+  if (min === null) return exactCallableArity(expr.parameters.length);
+  return { min, max: expr.parameters.length };
+}
+
+function isDefaultedCallableUndefinedArgument(
+  argument: ts.Expression,
+  parameterIndex: number,
+  arity: CallableArityRange | undefined,
+  scope: ReadonlySet<string>,
+): boolean {
+  return (
+    arity !== undefined &&
+    parameterIndex >= arity.min &&
+    parameterIndex < arity.max &&
+    isUnshadowedUndefinedIdentifier(argument, scope)
+  );
+}
+
+type Phase1ClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
+
+function isPhase1ClosureLiteral(
+  expr: Phase1ClosureLiteral,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
+  allowNumericDefaultSuffix = false,
 ): boolean {
-  if (ts.isFunctionExpression(expr) && expr.name) return shapeNo("closure-named-fnexpr", expr.name); // named func expr — defer
+  const body = expr.body;
+  if (!body) return shapeNo("closure-body-missing", expr);
   if ("asteriskToken" in expr && expr.asteriskToken) return shapeNo("closure-generator", expr); // generator
   if (expr.modifiers && expr.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
     return shapeNo("closure-async", expr);
@@ -4757,15 +4889,28 @@ function isPhase1ClosureLiteral(
     return shapeNo("closure-return-type", expr.type ?? expr);
 
   const inner = new Set(scope);
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    if (inner.has(expr.name.text)) return shapeNo("closure-name-shadow", expr.name);
+    inner.add(expr.name.text);
+  }
+  const defaultParamStart = closureLiteralDefaultParamStart(expr.parameters, allowNumericDefaultSuffix, scope);
+  if (defaultParamStart === null) return shapeNo("closure-param-default", expr);
   for (const p of expr.parameters) {
-    if (!ts.isIdentifier(p.name)) return shapeNo("closure-param-name", p.name);
-    if (p.questionToken || p.dotDotDotToken || p.initializer) return shapeNo("closure-param-shape", p);
-    if (!p.type || annotationToResolvedKind(p.type) === null) return shapeNo("closure-param-type", p.type ?? p);
-    if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
-    inner.add(p.name.text);
+    if (p.questionToken || p.dotDotDotToken) return shapeNo("closure-param-shape", p);
+    if (!p.type || !isPhase1ClosureParameterTypeNode(p.type)) return shapeNo("closure-param-type", p.type ?? p);
+    if (ts.isIdentifier(p.name)) {
+      if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
+      inner.add(p.name.text);
+      continue;
+    }
+    if (!isPhase1BindingPattern(p.name, inner)) return shapeNo("closure-param-name", p.name);
+    collectPatternNames(p.name, inner);
   }
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    recordCallableProjection(expr.name.text, { min: defaultParamStart, max: expr.parameters.length }, expr.type);
+  }
   const outerMutableSlotNames = currentMutableSlotNames;
   currentMutableSlotNames = new Set();
 
@@ -4773,15 +4918,60 @@ function isPhase1ClosureLiteral(
   // ArrowFunction / FunctionExpression with block body: Phase-1 tail
   // statement list.
   try {
-    if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
-      return isPhase1Expr(expr.body, inner, localClasses) || shapeNo("closure-concise-body", expr.body);
+    if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
+      return isPhase1Expr(body, inner, localClasses) || shapeNo("closure-concise-body", body);
     }
-    if (!ts.isBlock(expr.body)) return shapeNo("closure-body-kind", expr.body);
-    return isPhase1StatementList(expr.body.statements, inner, localClasses) || shapeNo("closure-body", expr.body);
+    if (!ts.isBlock(body)) return shapeNo("closure-body-kind", body);
+    return isPhase1StatementList(body.statements, inner, localClasses) || shapeNo("closure-body", body);
   } finally {
     currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
+}
+
+/**
+ * A literal may be returned through an exact FunctionTypeNode boundary. Local
+ * declaration initializers retain their dedicated const-only/projection rules.
+ */
+function isPhase1ReturnedClosureLiteral(
+  expr: ts.ArrowFunction | ts.FunctionExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return isPhase1ClosureLiteral(expr, scope, localClasses);
+}
+
+/**
+ * Closure signatures are resolved inside AST-to-IR rather than through the
+ * top-level position-type planner. Keep the widened parameter family limited
+ * to shapes that can therefore be reconstructed without checker state.
+ */
+function isPhase1ClosureParameterTypeNode(node: ts.TypeNode): boolean {
+  const primitive = annotationToResolvedKind(node);
+  if (primitive === "f64" || primitive === "bool" || primitive === "string") return true;
+  if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
+  if (!ts.isTypeLiteralNode(node) || node.members.length === 0) return false;
+  const names = new Set<string>();
+  for (const member of node.members) {
+    if (
+      !ts.isPropertySignature(member) ||
+      member.questionToken ||
+      !member.type ||
+      (member.type.kind !== ts.SyntaxKind.NumberKeyword &&
+        member.type.kind !== ts.SyntaxKind.BooleanKeyword &&
+        member.type.kind !== ts.SyntaxKind.StringKeyword)
+    ) {
+      return false;
+    }
+    const name = ts.isIdentifier(member.name)
+      ? member.name.text
+      : ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+        ? member.name.text
+        : null;
+    if (name === null || names.has(name)) return false;
+    names.add(name);
+  }
+  return true;
 }
 
 /**
@@ -4790,6 +4980,17 @@ function isPhase1ClosureLiteral(
  * the closure shape checks; mirrors `resolveParamType`'s annotation
  * arm but without the propagation-fallback path.
  */
+function isPhase1PreparedLiteral(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  if (ts.isObjectLiteralExpression(expr)) return isPhase1ObjectLiteral(expr, scope, localClasses);
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr))
+    return isPhase1ReturnedClosureLiteral(expr, scope, localClasses);
+  return undefined;
+}
+
 function annotationToResolvedKind(node: ts.TypeNode): ResolvedKind {
   if (node.kind === ts.SyntaxKind.NumberKeyword) return "f64";
   if (node.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
@@ -5138,6 +5339,15 @@ function isOptionalModuleExternCall(expr: ts.CallExpression): boolean {
     expr.expression.questionDotToken !== undefined &&
     expressionIsModuleExternAccessChain(expr.expression.expression)
   );
+}
+
+function phase1CallPreambleIsBuildable(expr: ts.CallExpression): boolean {
+  // AST-to-IR deliberately treats optional invocation as a hard invariant.
+  if (expr.questionDotToken) return shapeNo("expr-optional-call", expr);
+  if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
+    return shapeNo("expr-module-extern-call-brand", expr);
+  }
+  return !isOptionalModuleExternCall(expr) || shapeNo("expr-module-extern-optional-call", expr);
 }
 
 /** True when a method-call receiver ultimately comes from a module extern. */
@@ -5689,7 +5899,7 @@ function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
   return currentLocalClassDeclarations.has(typeNode.typeName.text) ? typeNode.typeName.text : null;
 }
 
-type ProjectionBindingSnapshot = readonly [Map<string, string>, Map<string, number>, Map<string, string>];
+type ProjectionBindingSnapshot = readonly [Map<string, string>, Map<string, CallableArityRange>, Map<string, string>];
 
 function hasProjectionBinding(name: string): boolean {
   return currentClassBindings.has(name) || currentCallableArities.has(name) || currentCallableReturnClasses.has(name);
@@ -5707,11 +5917,25 @@ function clearProjectionBinding(name: string): void {
   currentCallableReturnClasses.delete(name);
 }
 
-function recordCallableProjection(name: string, arity: number, returnType: ts.TypeNode | undefined): void {
+function recordCallableProjection(
+  name: string,
+  arity: number | CallableArityRange,
+  returnType: ts.TypeNode | undefined,
+): void {
   clearProjectionBinding(name);
-  currentCallableArities.set(name, arity);
+  currentCallableArities.set(name, typeof arity === "number" ? exactCallableArity(arity) : arity);
   const returnClass = returnType ? localClassNameFromTypeNode(returnType) : null;
   if (returnClass !== null) currentCallableReturnClasses.set(name, returnClass);
+}
+
+/** Preserve one exact immutable callable projection through `const alias = source`. */
+function copyCallableProjection(target: string, source: string): void {
+  const arity = currentCallableArities.get(source);
+  if (!arity) return;
+  clearProjectionBinding(target);
+  currentCallableArities.set(target, arity);
+  const returnClass = currentCallableReturnClasses.get(source);
+  if (returnClass !== undefined) currentCallableReturnClasses.set(target, returnClass);
 }
 
 function projectionBindingSnapshot(): ProjectionBindingSnapshot {
@@ -6325,10 +6549,12 @@ function localClassNameForExpression(expression: ts.Expression, scope: ReadonlyS
   return null;
 }
 
-function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string>): number | undefined {
+function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string>): CallableArityRange | undefined {
   const candidate = unwrapProjectionExpression(expression);
   if (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) {
-    return hasFixedIrParameters(candidate.parameters) ? candidate.parameters.length : undefined;
+    if (hasFixedIrParameters(candidate.parameters)) return exactCallableArity(candidate.parameters.length);
+    const firstDefault = closureLiteralDefaultParamStart(candidate.parameters, true, scope);
+    return firstDefault === null ? undefined : { min: firstDefault, max: candidate.parameters.length };
   }
   if (!ts.isIdentifier(candidate)) return undefined;
   if (scope.has(candidate.text)) {
@@ -6337,7 +6563,7 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   if (currentNestedFunctionNames.has(candidate.text) || currentLexicalValueBindingNames.has(candidate.text))
     return undefined;
   const topLevel = currentDynScanDecls?.get(candidate.text);
-  if (topLevel && hasFixedIrParameters(topLevel.parameters)) return topLevel.parameters.length;
+  if (topLevel && hasFixedIrParameters(topLevel.parameters)) return exactCallableArity(topLevel.parameters.length);
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
   if (!declaration) return undefined;
   if (
@@ -6345,14 +6571,324 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
     (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))
   ) {
     return hasFixedIrParameters(declaration.initializer.parameters)
-      ? declaration.initializer.parameters.length
+      ? exactCallableArity(declaration.initializer.parameters.length)
       : undefined;
   }
   if (declaration.type && ts.isFunctionTypeNode(declaration.type)) {
     const signature = irClosureSignatureFromFunctionTypeNode(declaration.type);
-    return signature?.params.length;
+    return signature ? exactCallableArity(signature.params.length) : undefined;
   }
   return undefined;
+}
+
+/**
+ * Resolve the exact callable returned by a direct same-source function call.
+ * This is intentionally narrower than checker inference: only an unshadowed
+ * top-level declaration with an expressible FunctionTypeNode result can seed a
+ * local callable binding. The AST-to-IR direct-call plan independently carries
+ * and rechecks the same signature.
+ */
+function directReturnedCallableSignature(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+): IrClosureSignature | null {
+  const candidate = unwrapProjectionExpression(expression);
+  if (!ts.isCallExpression(candidate) || !ts.isIdentifier(candidate.expression)) return null;
+  const name = candidate.expression.text;
+  if (scope.has(name) || currentNestedFunctionNames.has(name) || currentLexicalValueBindingNames.has(name)) {
+    return null;
+  }
+  const declaration = currentDynScanDecls?.get(name);
+  const returnType = declaration ? effectiveIrReturnTypeNode(declaration) : undefined;
+  return returnType && ts.isFunctionTypeNode(returnType) ? irClosureSignatureFromFunctionTypeNode(returnType) : null;
+}
+
+type DirectObjectMethodValueProjection = {
+  readonly arity: CallableArityRange;
+  readonly returnType: ts.TypeNode | undefined;
+};
+
+type DirectObjectMethodReceiver = {
+  readonly declaration: ts.VariableDeclaration;
+  readonly object: ts.ObjectLiteralExpression;
+};
+
+type DirectDestructuredObjectMethodProjection = {
+  readonly element: ts.BindingElement & { readonly name: ts.Identifier };
+  readonly method: ts.MethodDeclaration;
+};
+
+/**
+ * Resolve `const fn = object.method` against one exact preceding const object
+ * literal. The declaration was already fully selector-certified in source
+ * order; requiring the same all-method syntax here keeps this projection
+ * independent of checker type widening and prevents a same-text shadow from
+ * borrowing another object's method signature.
+ */
+function directObjectMethodValueProjection(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectObjectMethodValueProjection | null {
+  const candidate = unwrapProjectionExpression(expression);
+  if (!ts.isPropertyAccessExpression(candidate) || !ts.isIdentifier(candidate.name)) return null;
+  const method = directObjectMethodDeclaration(candidate.expression, candidate.name.text, scope);
+  if (!method) return null;
+  return {
+    arity: exactCallableArity(method.parameters.length),
+    returnType: method.type,
+  };
+}
+
+/** Resolve one method on an exact preceding const all-shorthand-method object. */
+function directObjectMethodDeclaration(
+  receiverExpression: ts.Expression,
+  propertyName: string,
+  scope: ReadonlySet<string>,
+): ts.MethodDeclaration | null {
+  const resolved = directObjectMethodReceiver(receiverExpression, scope);
+  if (!resolved) return null;
+  const method = resolved.object.properties.find(
+    (property): property is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(property) &&
+      property.name !== undefined &&
+      phase1PropertyName(property.name) === propertyName,
+  );
+  return method ?? null;
+}
+
+function directObjectMethodReceiver(
+  receiverExpression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectObjectMethodReceiver | null {
+  const receiver = unwrapProjectionExpression(receiverExpression);
+  if (!ts.isIdentifier(receiver) || !scope.has(receiver.text)) return null;
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(receiver);
+  if (!declaration || !declaration.initializer) return null;
+  const declarationList = declaration.parent;
+  if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) return null;
+  const object = unwrapProjectionExpression(declaration.initializer);
+  if (!ts.isObjectLiteralExpression(object) || !object.properties.every(ts.isMethodDeclaration)) return null;
+  return { declaration, object };
+}
+
+function localDeclarationsMatch(left: ts.Declaration, right: ts.Declaration): boolean {
+  return (
+    left === right ||
+    (left.pos === right.pos &&
+      left.end === right.end &&
+      left.getSourceFile().fileName === right.getSourceFile().fileName)
+  );
+}
+
+function enclosingProjectionOwner(node: ts.Node): ts.Node | undefined {
+  for (let current = node.parent; current; current = current.parent) {
+    if (isFunctionLike(current)) return current;
+  }
+  return undefined;
+}
+
+function propertyAccessIsWriteTarget(expression: ts.PropertyAccessExpression): boolean {
+  const parent = expression.parent;
+  return (
+    (ts.isBinaryExpression(parent) &&
+      parent.left === expression &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) && parent.operand === expression) ||
+    (ts.isDeleteExpression(parent) && parent.expression === expression) ||
+    ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === expression)
+  );
+}
+
+function objectBindingPatternReadsOnlyOwnMethods(
+  pattern: ts.ObjectBindingPattern,
+  ownMethodNames: ReadonlySet<string>,
+): boolean {
+  return pattern.elements.every((element) => {
+    if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) return false;
+    const propertyName = element.propertyName
+      ? ts.isIdentifier(element.propertyName) || ts.isStringLiteral(element.propertyName)
+        ? element.propertyName.text
+        : null
+      : element.name.text;
+    return propertyName !== null && ownMethodNames.has(propertyName);
+  });
+}
+
+/**
+ * The destructuring projection is sound only while the exact object binding
+ * remains local and immutable. Permit own-method reads and direct object
+ * destructuring; aliases, escapes, computed access, nested-owner uses, and
+ * writes all keep this new surface on the direct path.
+ */
+function directObjectMethodReceiverUsesAreStable(receiver: DirectObjectMethodReceiver): boolean {
+  const bindingName = receiver.declaration.name;
+  if (!ts.isIdentifier(bindingName)) return false;
+  const owner = enclosingProjectionOwner(receiver.declaration);
+  if (!owner) return false;
+  const ownMethodNames = new Set(
+    receiver.object.properties
+      .filter(ts.isMethodDeclaration)
+      .map((method) => (method.name ? phase1PropertyName(method.name) : null))
+      .filter((name): name is string => name !== null),
+  );
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (ts.isIdentifier(node) && node !== bindingName && node.text === bindingName.text) {
+      if (!identifierIsValueReference(node)) return;
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        stable = false;
+        return;
+      }
+      if (!localDeclarationsMatch(receiver.declaration, declaration)) return;
+      if (enclosingProjectionOwner(node) !== owner) {
+        stable = false;
+        return;
+      }
+      const parent = node.parent;
+      if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        ownMethodNames.has(parent.name.text) &&
+        !propertyAccessIsWriteTarget(parent)
+      ) {
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        ts.isObjectBindingPattern(parent.name) &&
+        objectBindingPatternReadsOnlyOwnMethods(parent.name, ownMethodNames)
+      ) {
+        return;
+      }
+      stable = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(owner, visit);
+  return stable;
+}
+
+/**
+ * Bound this new callable surface to immutable aliases and direct calls inside
+ * the declaring function. This excludes cross-owner capture, return/pass
+ * escapes, and mutation while still preserving same-owner const alias chains.
+ */
+function destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element: ts.BindingElement): boolean {
+  if (!ts.isIdentifier(element.name)) return false;
+  const owner = enclosingProjectionOwner(element);
+  if (!owner || !currentModuleBindingResolver) return false;
+  const declarations = new Set<ts.Declaration>([element]);
+  const declarationNames = new Set<string>([element.name.text]);
+  let proofFailed = false;
+
+  let changed = true;
+  while (changed && !proofFailed) {
+    changed = false;
+    const collectAliases = (node: ts.Node): void => {
+      if (proofFailed) return;
+      if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+        const source = currentModuleBindingResolver?.localValueDeclaration(node);
+        if (!source) {
+          proofFailed = true;
+          return;
+        }
+        if (source && localClosureDeclarationsContain(declarations, source)) {
+          const declaration = node.parent;
+          const list = ts.isVariableDeclaration(declaration) ? declaration.parent : undefined;
+          if (
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer === node &&
+            ts.isIdentifier(declaration.name) &&
+            list !== undefined &&
+            ts.isVariableDeclarationList(list) &&
+            !!(list.flags & ts.NodeFlags.Const) &&
+            !localClosureDeclarationsContain(declarations, declaration)
+          ) {
+            declarations.add(declaration);
+            declarationNames.add(declaration.name.text);
+            changed = true;
+          }
+        }
+      }
+      forEachChild(node, collectAliases);
+    };
+    forEachChild(owner, collectAliases);
+  }
+  if (proofFailed) return false;
+
+  let accepted = true;
+  const validateUses = (node: ts.Node): void => {
+    if (!accepted) return;
+    if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        accepted = false;
+        return;
+      }
+      if (localClosureDeclarationsContain(declarations, declaration)) {
+        if (enclosingProjectionOwner(node) !== owner) {
+          accepted = false;
+          return;
+        }
+        const parent = node.parent;
+        if (
+          (ts.isVariableDeclaration(parent) &&
+            parent.initializer === node &&
+            localClosureDeclarationsContain(declarations, parent)) ||
+          (ts.isCallExpression(parent) && parent.expression === node && parent.questionDotToken === undefined)
+        ) {
+          return;
+        }
+        accepted = false;
+        return;
+      }
+    }
+    forEachChild(node, validateUses);
+  };
+  forEachChild(owner, validateUses);
+  return accepted;
+}
+
+/** Certify the entire pattern before exposing any callable projection. */
+function directDestructuredObjectMethodProjections(
+  pattern: ts.ObjectBindingPattern,
+  initializer: ts.Expression,
+  scope: ReadonlySet<string>,
+): readonly DirectDestructuredObjectMethodProjection[] | null {
+  const receiver = directObjectMethodReceiver(initializer, scope);
+  if (!receiver || !directObjectMethodReceiverUsesAreStable(receiver)) return null;
+  const projections: DirectDestructuredObjectMethodProjection[] = [];
+  for (const element of pattern.elements) {
+    if (!ts.isIdentifier(element.name)) return null;
+    const propertyName = element.propertyName
+      ? ts.isIdentifier(element.propertyName) || ts.isStringLiteral(element.propertyName)
+        ? element.propertyName.text
+        : null
+      : element.name.text;
+    if (propertyName === null || !destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element)) return null;
+    const method = directObjectMethodDeclaration(initializer, propertyName, scope);
+    if (!method) return null;
+    projections.push({ element: element as ts.BindingElement & { readonly name: ts.Identifier }, method });
+  }
+  return projections.length > 0 ? projections : null;
+}
+
+/** Carry exact method signatures through `const { method: local } = object`. */
+function recordDestructuredObjectMethodProjections(
+  pattern: ts.ObjectBindingPattern,
+  initializer: ts.Expression,
+  scope: ReadonlySet<string>,
+): void {
+  const projections = directDestructuredObjectMethodProjections(pattern, initializer, scope);
+  if (!projections) return;
+  for (const { element, method } of projections) {
+    recordCallableProjection(element.name.text, method.parameters.length, method.type);
+  }
 }
 
 function directCallParamUsesNumericVecAbi(
@@ -6781,12 +7317,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
-    if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-      return shapeNo("expr-module-extern-call-brand", expr);
-    }
-    if (isOptionalModuleExternCall(expr)) {
-      return shapeNo("expr-module-extern-optional-call", expr);
-    }
+    if (!phase1CallPreambleIsBuildable(expr)) return false;
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
       const certified = certifiedHostIndirectEval(expr, scope);
@@ -7194,12 +7725,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
+    let localCallableArity: CallableArityRange | undefined;
     if (scope.has(calleeName)) {
-      const expectedArity = knownCallableArity(expr.expression, scope);
-      if (expectedArity === undefined) {
+      localCallableArity = knownCallableArity(expr.expression, scope);
+      if (localCallableArity === undefined) {
         return capabilityNo("call-resolution-unsupported", "expr-local-call-target", expr.expression);
       }
-      if (actualArity !== null && actualArity !== expectedArity) {
+      if (actualArity !== null && (actualArity < localCallableArity.min || actualArity > localCallableArity.max)) {
         return capabilityNo("call-arity-unsupported", "expr-local-call-arity", expr);
       }
     } else {
@@ -7221,7 +7753,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     for (const arg of expr.arguments) {
       // Slice 8a (#1169g): accept `f(...source)` where the spread source
       // is an ArrayLiteralExpression with no nested spread. The lowerer
-      // expands this at compile time into individual call arguments
       // (matches the legacy `expandSpreadCallArgs` fast path). Spread
       // sources of dynamic length (e.g. an arbitrary identifier of vec
       // type) are deferred — they'd require runtime arity expansion
@@ -7235,6 +7766,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         continue;
       }
       const currentParameterIndex = parameterIndex++;
+      if (isDefaultedCallableUndefinedArgument(arg, currentParameterIndex, localCallableArity, scope)) continue;
       // #3791 follow-up dependency — an exact stable top-level numeric array
       // may cross only a direct-call boundary. The callee's planned vec ABI
       // remains authoritative; the builder rechecks its real global ValType.
@@ -7408,9 +7940,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // helper rejects spread, methods, getters/setters, computed keys,
   // and duplicate keys. Initializers must themselves be Phase-1
   // claimable, so nested objects compose recursively.
-  if (ts.isObjectLiteralExpression(expr)) {
-    return isPhase1ObjectLiteral(expr, scope, localClasses);
-  }
+  const preparedLiteral = isPhase1PreparedLiteral(expr, scope, localClasses);
+  if (preparedLiteral !== undefined) return preparedLiteral;
   // Slices 1+2 — property access. Slice 1 accepts `<string>.length`
   // syntactically; slice 2 broadens to any Identifier-named property,
   // with the lowerer enforcing receiver IrType (string→.length only,
@@ -7596,32 +8127,59 @@ function isPhase1ObjectLiteral(
   // overrides pass would skip them when shape resolution failed.
   if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
 
-  // Function-valued data properties have no general closed-object IR
-  // representation. The one certified exception is the exact #4208
-  // OrdinaryToPrimitive shape; require EVERY property to belong to it so a
-  // mixed `{ valueOf: function... , data: 1 }` literal is rejected before
-  // claim instead of claimed and demoted by lowerObjectLiteral.
+  // Function-valued data properties still have no general closed-object IR
+  // representation. Selector-certified method shorthand, however, is an
+  // exact closure-valued field: every method has a fixed primitive signature
+  // and a receiver-insensitive Phase-1 body. Require EVERY property to use one
+  // form so mixed data/method or shorthand/function semantics cannot cross the
+  // closed-object boundary accidentally.
   if (
     expr.properties.some(
-      (property) => ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer),
+      (property) =>
+        ts.isMethodDeclaration(property) ||
+        (ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)),
     )
   ) {
     const seenMethods = new Set<string>();
+    let literalForm: "method" | "function" | undefined;
     for (const property of expr.properties) {
-      if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) {
+      const method = ts.isMethodDeclaration(property)
+        ? property
+        : ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)
+          ? property.initializer
+          : null;
+      if (method === null) {
         return shapeNo("objectlit-ordinary-to-primitive-mixed", property);
       }
+      const propertyForm = ts.isMethodDeclaration(method) ? "method" : "function";
+      if (literalForm !== undefined && literalForm !== propertyForm) {
+        return shapeNo("objectlit-ordinary-to-primitive-mixed-form", property);
+      }
+      literalForm = propertyForm;
+      if (!property.name) return shapeNo("objectlit-ordinary-to-primitive-name", property);
       const name = phase1PropertyName(property.name);
+      const primitiveReturn = method.type?.kind;
+      const hasPreparedParityReturn =
+        primitiveReturn === ts.SyntaxKind.NumberKeyword ||
+        primitiveReturn === ts.SyntaxKind.BooleanKeyword ||
+        (ts.isFunctionExpression(method) && primitiveReturn === ts.SyntaxKind.StringKeyword);
       if (
-        (name !== "valueOf" && name !== "toString") ||
+        name === null ||
         seenMethods.has(name) ||
-        property.initializer.parameters.length !== 0 ||
-        (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
-          property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
-          property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword) ||
-        !isPhase1ClosureLiteral(property.initializer, scope, localClasses)
+        !hasPreparedParityReturn ||
+        !isPhase1ClosureLiteral(method, scope, localClasses)
       ) {
-        return shapeNo("objectlit-ordinary-to-primitive-method", property.initializer);
+        return shapeNo("objectlit-ordinary-to-primitive-method", method);
+      }
+      // Property-assigned function expressions retain #4208's exact
+      // zero-argument OrdinaryToPrimitive protocol. General method names and
+      // parameters are admitted only for shorthand declarations, whose direct
+      // call lowering consumes the closure field without an ambient receiver.
+      if (
+        ts.isFunctionExpression(method) &&
+        ((name !== "valueOf" && name !== "toString") || method.parameters.length !== 0)
+      ) {
+        return shapeNo("objectlit-function-property-surface", method);
       }
       seenMethods.add(name);
     }
@@ -7788,7 +8346,7 @@ export function assessModuleInit(
   typedShapeRejectReason = null;
   currentClaimClassName = null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
@@ -7945,12 +8503,19 @@ export function buildLocalCallGraph(
             return;
           }
           const callee = node.expression.text;
-          if (decls.has(callee)) {
+          const localDeclaration = currentModuleBindingResolver?.localValueDeclaration(node.expression);
+          if (
+            (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
+            (localDeclaration !== undefined &&
+              localClosureDeclarationsContain(localBindings.declarations, localDeclaration))
+          ) {
+            // Slice 3: closure / nested-fn binding within this outer.
+            // Variable-backed callables use checker-resolved declaration
+            // identity so a block-local alias cannot hide an ambient or
+            // top-level call with the same text elsewhere in the function.
+          } else if (decls.has(callee)) {
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
-          } else if (localBindings.has(callee)) {
-            // Slice 3: closure / nested-fn binding within this outer.
-            // Intra-function call, dispatched by the IR lowerer.
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&
@@ -8131,9 +8696,25 @@ function collectLocalClassDeclarations(
  * Walks only the OUTER body — nested closures' own bindings are
  * captured at lift time, not visible here.
  */
-function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
+function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
+  readonly names: Set<string>;
+  readonly declarations: Set<ts.Declaration>;
+} {
   const names = new Set<string>();
-  if (!fn.body) return names;
+  const materializableNames = new Set<string>();
+  const declarations = new Set<ts.Declaration>();
+  if (!fn.body) return { names, declarations };
+  const localValueNames = new Set<string>();
+  for (const parameter of fn.parameters) collectBindingNameTexts(parameter.name, localValueNames);
+  const collectLocalValueName = (node: ts.Node): void => {
+    if (node !== fn && isFunctionLike(node)) {
+      if (ts.isFunctionDeclaration(node) && node.name) localValueNames.add(node.name.text);
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) collectBindingNameTexts(node.name, localValueNames);
+    forEachChild(node, collectLocalValueName);
+  };
+  forEachChild(fn.body, collectLocalValueName);
   // #2859 / #3214 B0 — function-typed params (`fn: () => number`). A call
   // through such a param dispatches via the IR callable/root machinery — it is
   // NOT an external call. Only
@@ -8148,6 +8729,8 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
       irClosureSignatureFromFunctionTypeNode(p.type)
     ) {
       names.add(p.name.text);
+      materializableNames.add(p.name.text);
+      declarations.add(p);
     }
   }
   // Top-level walk: only direct children of the outer body. Nested
@@ -8160,27 +8743,83 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node) && node !== fn && node.name) {
       names.add(node.name.text);
+      declarations.add(node);
       return;
     }
     if (node !== fn && isFunctionLike(node)) return;
     if (ts.isVariableStatement(node)) {
       const isConst = !!(node.declarationList.flags & ts.NodeFlags.Const);
-      if (isConst) {
-        for (const d of node.declarationList.declarations) {
-          if (
-            ts.isIdentifier(d.name) &&
-            d.initializer &&
-            (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))
-          ) {
-            names.add(d.name.text);
+      for (const d of node.declarationList.declarations) {
+        if (!d.initializer) continue;
+        if (ts.isObjectBindingPattern(d.name) && isConst) {
+          const projections = directDestructuredObjectMethodProjections(d.name, d.initializer, localValueNames);
+          if (projections) {
+            for (const { element } of projections) {
+              names.add(element.name.text);
+              materializableNames.add(element.name.text);
+              declarations.add(element);
+            }
           }
+          continue;
+        }
+        if (!ts.isIdentifier(d.name)) continue;
+        const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
+        const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
+        const aliasInitializer = unwrapProjectionExpression(d.initializer);
+        const aliasDeclaration = ts.isIdentifier(aliasInitializer)
+          ? currentModuleBindingResolver?.localValueDeclaration(aliasInitializer)
+          : undefined;
+        const callableAlias =
+          isConst &&
+          ts.isIdentifier(aliasInitializer) &&
+          ((aliasDeclaration !== undefined && localClosureDeclarationsContain(declarations, aliasDeclaration)) ||
+            (currentModuleBindingResolver === null && materializableNames.has(aliasInitializer.text)));
+        // Literal closures retain the existing const-only rule. A direct
+        // returned-callable binding already passed the ordinary variable
+        // statement shape walk for var/let as well; an exact const
+        // object-method read is the same intra-function callable population.
+        // Mirror both here when closing the local call graph. Otherwise an
+        // accepted `var fn = make(); fn()` or `const fn = object.method;
+        // fn()` is mislabeled as an external call, leaving only its producer
+        // on the post-direct overlay with an unprepared lifted slot.
+        if (
+          (isConst && literal) ||
+          objectMethodValue ||
+          callableAlias ||
+          directReturnedCallableSignature(d.initializer, localValueNames) !== null
+        ) {
+          names.add(d.name.text);
+          materializableNames.add(d.name.text);
+          declarations.add(d);
         }
       }
     }
     forEachChild(node, visit);
   };
   forEachChild(fn.body, visit);
-  return names;
+  return { names, declarations };
+}
+
+/**
+ * Incremental TypeScript Programs may retain an equivalent declaration node
+ * from a prior snapshot. Match the stable source site as well as object
+ * identity, while still excluding unrelated same-text bindings.
+ */
+function localClosureDeclarationsContain(
+  declarations: ReadonlySet<ts.Declaration>,
+  candidate: ts.Declaration,
+): boolean {
+  for (const declaration of declarations) {
+    if (declaration === candidate) return true;
+    if (
+      declaration.pos === candidate.pos &&
+      declaration.end === candidate.end &&
+      declaration.getSourceFile().fileName === candidate.getSourceFile().fileName
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isFunctionLike(node: ts.Node): boolean {

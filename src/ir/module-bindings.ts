@@ -699,6 +699,8 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly isAmbientBinding: (node: ts.Identifier) => boolean;
   /** Resolve a local variable use to its exact declaration for alias tracking. */
   readonly localVariableDeclaration: (node: ts.Identifier) => ts.VariableDeclaration | undefined;
+  /** Resolve any same-source local value use to its exact lexical declaration. */
+  readonly localValueDeclaration: (node: ts.Identifier) => ts.Declaration | undefined;
   /** Module extern arguments must keep their exact branded parameter ABI. */
   readonly externCallArgumentsMatch: (call: ts.CallExpression | ts.NewExpression) => boolean;
   /** True when a value can cross an extern member boundary without GC-ref boxing. */
@@ -843,6 +845,24 @@ function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker):
   return candidates.find(
     (candidate): candidate is ts.VariableDeclaration =>
       candidate !== undefined && ts.isVariableDeclaration(candidate) && candidate.getSourceFile() === sourceFile,
+  );
+}
+
+function localValueDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.Declaration | undefined {
+  const symbol = checker.getSymbolAtLocation(node);
+  if (!symbol) return undefined;
+  const sourceFile = node.getSourceFile();
+  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  return candidates.find(
+    (
+      candidate,
+    ): candidate is ts.VariableDeclaration | ts.BindingElement | ts.ParameterDeclaration | ts.FunctionDeclaration =>
+      candidate !== undefined &&
+      candidate.getSourceFile() === sourceFile &&
+      (ts.isVariableDeclaration(candidate) ||
+        ts.isBindingElement(candidate) ||
+        ts.isParameter(candidate) ||
+        ts.isFunctionDeclaration(candidate)),
   );
 }
 
@@ -1911,6 +1931,13 @@ export function makeIrLegacyModuleBindingResolver(
         return undefined;
       }
     },
+    localValueDeclaration(node: ts.Identifier): ts.Declaration | undefined {
+      try {
+        return localValueDeclaration(node, checker);
+      } catch {
+        return undefined;
+      }
+    },
     externCallArgumentsMatch(call: ts.CallExpression | ts.NewExpression): boolean {
       try {
         const containsModuleExtern = (node: ts.Node): boolean => {
@@ -2194,6 +2221,10 @@ export function makeIrModuleBindingResolver(
       ownerAt(node);
       return legacy.localVariableDeclaration(node);
     },
+    localValueDeclaration(node: ts.Identifier): ts.Declaration | undefined {
+      ownerAt(node);
+      return legacy.localValueDeclaration(node);
+    },
     externCallArgumentsMatch(call: ts.CallExpression | ts.NewExpression): boolean {
       ownerAt(call);
       return legacy.externCallArgumentsMatch(call);
@@ -2319,6 +2350,7 @@ export function projectIrModuleBindingResolverToLegacy(
     isDirectModuleBinding: (node: ts.Identifier) => resolver.isDirectModuleBinding(node),
     isAmbientBinding: (node: ts.Identifier) => resolver.isAmbientBinding(node),
     localVariableDeclaration: (node: ts.Identifier) => resolver.localVariableDeclaration(node),
+    localValueDeclaration: (node: ts.Identifier) => resolver.localValueDeclaration(node),
     externCallArgumentsMatch: (call: ts.CallExpression | ts.NewExpression) => resolver.externCallArgumentsMatch(call),
     externValueIsPassable: (value: ts.Expression) => resolver.externValueIsPassable(value),
     scalarExpressionFamily: (expr: ts.Expression) => resolver.scalarExpressionFamily(expr),

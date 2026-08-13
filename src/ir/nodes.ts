@@ -191,6 +191,12 @@ export interface IrObjectShape {
  */
 export interface IrClosureSignature {
   readonly params: readonly IrType[];
+  /**
+   * First caller-visible parameter with an expression default. The physical
+   * closure ABI still carries every entry in `params`; callers pad an omitted
+   * numeric suffix with the reserved legacy missing-argument sentinel.
+   */
+  readonly defaultParamStart?: number;
   /** `null` is the canonical zero-result / JavaScript `void` signature. */
   readonly returnType: IrType | null;
 }
@@ -541,6 +547,7 @@ export function classShapeEquals(a: IrClassShape, b: IrClassShape): boolean {
  */
 export function closureSignatureEquals(a: IrClosureSignature, b: IrClosureSignature): boolean {
   if (a.params.length !== b.params.length) return false;
+  if ((a.defaultParamStart ?? a.params.length) !== (b.defaultParamStart ?? b.params.length)) return false;
   for (let i = 0; i < a.params.length; i++) {
     if (!irTypeEquals(a.params[i]!, b.params[i]!)) return false;
   }
@@ -773,6 +780,8 @@ export type IrBinop =
   // i32 logical (for bool && / || — operands assumed 0|1)
   | "i32.and"
   | "i32.or"
+  // Exact-bit comparison used by the numeric default-parameter sentinel.
+  | "i64.eq"
   // (#3758) Native i32 arithmetic — WRAPS modulo 2^32 on overflow, matching
   // ECMA-262 ToInt32's wrap semantics exactly (unlike `i32.trunc_sat_f64_s`,
   // which SATURATES to INT32_MIN/MAX instead — the distinction that made a
@@ -853,6 +862,8 @@ export type IrUnop =
   | "f64.neg"
   // (#3214 A) Bit-exact caller-side sNaN sentinel for expression defaults.
   | "f64.reinterpret_i64"
+  // Reverse bit-cast used by a lifted closure to recognize that sentinel.
+  | "i64.reinterpret_f64"
   | "i32.eqz"
   | "i32.trunc_sat_f64_s"
   // Trapping conversion used only inside the proven/guarded remainder arm.
