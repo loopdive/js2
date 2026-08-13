@@ -42,9 +42,11 @@ export function masksField(
 export function readField(
   getter: unknown,
   receiver: unknown,
-  hasBackingField: boolean,
+  hasBackingField: boolean | undefined,
 ): unknown | typeof NO_GENERATED_FIELD {
-  if (typeof getter !== "function") return NO_GENERATED_FIELD;
+  // A known field-name miss must not probe a getter shared by structurally
+  // compatible shapes. Unknown legacy/prepared shapes retain the old probe.
+  if (hasBackingField === false || typeof getter !== "function") return NO_GENERATED_FIELD;
   const value = getter(receiver);
   return value !== undefined && value !== null ? value : hasBackingField ? value : NO_GENERATED_FIELD;
 }

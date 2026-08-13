@@ -1,7 +1,7 @@
 ---
 id: 671
 title: "ES5 `with`: complete Object Environment Record semantics on the IR path"
-status: ready
+status: in-progress
 created: 2026-03-20
 updated: 2026-08-13
 priority: high
@@ -11,6 +11,19 @@ task_type: feature
 area: ir, codegen, runtime
 es_edition: 5
 language_feature: with-statement
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/literals.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/property-access.ts
+func-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/literals.ts::compileObjectLiteral
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/context/create-context.ts::createCodegenContext
 goal: es5
 sprint: current
 test262_fail: 67
@@ -21,14 +34,101 @@ related: [1387, 2663, 3025, 4179, 4206, 4231, 4264, 1472]
 
 ## Status
 
-Ready for staged implementation. This is the live umbrella for finishing
-`with`; it supersedes the original “~272 tests / compile-time `if`” stub and the
-stale limitations in #1387 and #4206. It does **not** close until every direct
+W1 is in progress. This is the live umbrella for finishing `with`; it
+supersedes the original “~272 tests / compile-time `if`” stub and the stale
+limitations in #1387 and #4206. It does **not** close until every direct
 `WithStatement` row passes in both lanes and the unpartitioned ES5 goal reaches
 9,029/9,029 in each lane.
 
 This implementation plan was re-grounded by a Sol/max architecture pass on
 `origin/main@c26670fdc0d567203d95b68553d9393279608a96`.
+
+### W1 implementation evidence — 2026-08-13
+
+W1 now has one IR-owned direct-`DeleteBinding` target plan, a
+declaration-identity pre-claim, and one canonical open-object carrier. The
+property selector is also declaration-keyed: all public direct member reads,
+writes, and callable-member calls on the selected target consume the raw
+open-object MOP value rather than the stale checker-derived field type. A
+same-named binding in another scope remains on its existing representation.
+
+The final measured manifest was the exact 21-file slice below, comparing a
+fresh detached base at
+`origin/main@8a2baecf3bc39d7ac5de16ea0c65361e3b73aca9` with candidate tree
+`746fc27287e535cc4e39e8f03c3761639de8ed9a`. The compiler-bearing W1 commit is
+`d664215b9256d77ba5772439a751c848c9ef8ccd`; every later W1 commit through the
+measured candidate changes only this issue's evidence. This remeasurement
+therefore includes both the merged #4447 class-expression ownership changes
+and #4443 runtime-eval/compiler-IR changes in both arms instead of extrapolating
+from either earlier main. Both arms used
+`scripts/harness-flip-probe.ts`, demonstrated its mandatory must-pass and
+must-fail controls, and produced all 21 rows with no entered or missing files.
+The manifest SHA-256 is
+`386db0dde30a647a81965c673ab4f635c70da74e39a49ce6c733499502e0c4be`; the
+test262 corpus is `b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+| lane | base | head | gained | lost | net |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JS host | 21 fail | 6 pass / 15 fail | 6 | 0 | **+6** |
+| standalone | 21 pass | 21 pass | 0 | 0 | **0** |
+
+The host gains are `S12.10_A1.2_T{1,2,4}` and
+`S12.10_A1.3_T{1,2,4}`. The focused regression test covers host and standalone
+direct readback, post-`with` direct writes, function-valued member identity and
+arguments, deferred module initialization, capture refusal, a `for-in`
+consumer refusal, and one authentic gained host control.
+
+The 15 unchanged host rows are intentionally not folded into W1's claim:
+
+- twelve stop at assertion #18 (`value === undefined`, observed `null`), which
+  is `var` / VariableEnvironment declaration routing rather than target
+  representation and belongs to W4;
+- `S12.10_A1.5_T{1,2,4}` remains at the old deleted-`p3` observation because
+  its `for-in` target consumer fails W1's pre-allocation safety proof. W1 does
+  not widen that consumer without an explicit open-object iteration contract.
+
+The standalone pair has no transitions and remains 21/21 passing. Both arms
+freshly built their compiler and runtime bundles, then compiled and
+canary-verified a matching real-QuickJS adapter before the population ran:
+
+| artifact | base | candidate |
+| --- | --- | --- |
+| compiler bundle SHA-256 | `c60f2481bbc8e454ea3c6f91c5c1ade1bc111c4d77f42b72e3d162a82ce66875` | `cb7a02b9e00e900e6c6d0a33047fc9857a202ba9f2067f59c3f713de51781720` |
+| runtime bundle SHA-256 | `015635d37dcfb16467ff846857a1dab3589838d4232f9eb982d167add120d011` | `e1d1d8bac4917fd5e8584f4404145a48414bb58657ec3d861eda57620087ee2b` |
+| QuickJS adapter key | `d9b6dcbecd8aab90` | `3f69394285448486` |
+
+Both adapters have SHA-256
+`ce3688616ca764f82990b4792bd7f10b46a7ed4eadc4d4745fc330c908391b08`;
+their distinct keys prove each was selected against its arm's bundle. Both use
+the immutable QuickJS artifact
+`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`.
+Each runtime banner confirmed the corresponding key before the 21 rows ran.
+An earlier candidate-only run that reported 21 failures was discarded because
+its worktree lacked that provider. Provider availability must match across
+both arms. W2/W4 retain the remaining environment and declaration work outside
+this exact W1 family.
+
+Root review caught and fixed one pre-publication carrier leak: the first W1
+candidate also inserted the target's bare spelling into the legacy
+`growableObjectLiteralVars` / `externrefAccessorVars` sets. A separate
+same-named local passed to a concrete struct parameter then trapped instead of
+returning `7`. W1 now uses its declaration key for the literal route as well as
+member operations and does not populate those name-wide sets. The compiled
+dual-lane regression returns `17` (the W1 mutation contributes `10`, the
+unrelated closed struct contributes `7`).
+
+## Test Results
+
+- `pnpm exec vitest run tests/issue-671-with-w1.test.ts` — 14/14 passed.
+- `pnpm run typecheck` — passed.
+- `pnpm run check:issues` — passed.
+- `pnpm run check:loc-budget` and `pnpm run check:func-budget` — passed with
+  the W1 allowances above.
+- `pnpm run check:ir-fallbacks` and `pnpm run check:ir-adoption` — passed.
+- Exact same-current-main harness A/B controls passed in both lanes. Host was
+  21 fail on base versus 6 pass / 15 fail on W1; standalone was 21 pass in both
+  arms. Both partitions verified `21 == 21`, with no other status changes,
+  entered rows, or missing rows.
 
 ## Exact current population
 
@@ -232,6 +332,22 @@ machinery; IR must expose it without snapshotting the with-object.
 
 This is the first implementation handoff. Keep it bounded to the exact
 bare-identifier-delete trigger and its representation consequences.
+
+#### LOC budget allowance
+
+`src/codegen/declarations/object-shape-widening.ts` receives a narrowly scoped
+allowance for W1's declaration-identity, open-carrier, and
+concrete-struct-consumer safety boundary. The matching keyed selector lives in
+`property-access.ts`, with one small selection arm each in assignment and call
+codegen plus its context registration. Those paths are required to consume the
+same carrier for direct reads, writes, and callable members; they do not widen
+unrelated objects or add a runtime store.
+
+The corresponding function allowances cover only that atomic selection path:
+planner result, declaration identity, consumer-ABI refusal, pre-allocation
+carrier choice, and use-site MOP selection. Extracting only a helper would
+separate those interdependent decisions without shrinking the proof surface;
+broader shape analysis remains explicitly refused.
 
 **File: `src/ir/with-environment.ts` (lines ~18–110)**
 

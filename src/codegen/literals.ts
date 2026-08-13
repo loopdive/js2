@@ -1689,7 +1689,8 @@ export function compileObjectLiteral(
     expr.properties.length > 0 &&
     ts.isVariableDeclaration(expr.parent) &&
     ts.isIdentifier(expr.parent.name) &&
-    ctx.growableObjectLiteralVars.has(expr.parent.name.text)
+    (ctx.growableObjectLiteralVars.has(expr.parent.name.text) ||
+      ctx.irWithOpenObjectTargetKeys.has(widenedVarKeyFromDecl(expr.parent.name)))
   ) {
     const growableResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (growableResult) return growableResult;
@@ -3773,6 +3774,7 @@ export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ArrayLiteralExpression,
+  forcedElementType?: ValType,
 ): ValType | null {
   // (#3366) A destructuring assignment gives its RHS array literal the
   // assignment pattern's contextual tuple type. That context describes the
@@ -4351,6 +4353,7 @@ export function compileArrayLiteral(
     const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
     elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
+  if (forcedElementType !== undefined) elemWasm = forcedElementType;
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an
   // inner `[undefined]` / `[hole]` array down to a numeric vec (the leaf

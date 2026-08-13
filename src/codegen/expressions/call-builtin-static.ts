@@ -11,6 +11,7 @@
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
+import { emitToInt32 } from "../binary-ops.js";
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
@@ -66,7 +67,7 @@ import {
 } from "../index.js";
 import { ensureNativeArrayFromMapped, ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { ensureUint8FromBase64, ensureUint8FromHex } from "../uint8-codec.js";
-import { compileArrayConstructorCall, compileObjectLiteralAsExternref } from "../literals.js";
+import { compileArrayConstructorCall, compileArrayLiteral, compileObjectLiteralAsExternref } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
 import {
   emitBrandCheckTypeError,
@@ -879,10 +880,9 @@ export function compileBuiltinStaticCall(
   // Integer element-width wrapping (Uint8Array.of(300) → 44) is deferred to
   // #2593 — this slice matches `new TA([...])` element fidelity (length/order).
   if (
-    noJsHost(ctx) &&
     ts.isIdentifier(propAccess.expression) &&
     TYPED_ARRAY_NAMES.has(propAccess.expression.text) &&
-    (propAccess.name.text === "of" || propAccess.name.text === "from")
+    (propAccess.name.text === "of" || (noJsHost(ctx) && propAccess.name.text === "from"))
   ) {
     const taName = propAccess.expression.text;
     const factory = propAccess.name.text;
@@ -908,6 +908,19 @@ export function compileBuiltinStaticCall(
           for (const arg of expr.arguments) {
             const at = compileExpression(ctx, fctx, arg, storeWasm);
             if (at && !valTypesMatch(at, storeWasm)) coerceType(ctx, fctx, at, storeWasm);
+            // Host/gc keeps Uint8Array elements in an f64 vec, so the packed
+            // array store cannot perform the view's ToUint8 conversion for us.
+            // Apply it at the factory boundary just like an indexed
+            // Uint8Array write: ToInt32, mask to the low byte, widen back to
+            // the f64 carrier. This matters for signed shift results such as
+            // SHA-1's `H[0] >> 24`, and is the ordinary Uint8Array.of contract
+            // for every caller rather than a UUID-specific rewrite.
+            if (taName === "Uint8Array" && elemWasm.kind === "f64") {
+              emitToInt32(fctx);
+              fctx.body.push({ op: "i32.const", value: 0xff });
+              fctx.body.push({ op: "i32.and" });
+              fctx.body.push({ op: "f64.convert_i32_u" });
+            }
           }
           fctx.body.push({ op: "array.new_fixed", typeIdx: taArrTypeIdx, length: expr.arguments.length });
           const ofData = allocLocal(fctx, `__taof_data_${fctx.locals.length}`, {
@@ -920,7 +933,15 @@ export function compileBuiltinStaticCall(
           fctx.body.push({ op: "struct.new", typeIdx: taVecTypeIdx });
           return { kind: "ref_null", typeIdx: taVecTypeIdx };
         }
-        // Spread arg → known standalone gap (orthogonal); fall through.
+        // A spread-bearing `TA.of(a, ...xs)` has the same dense element list as
+        // the synthetic array literal `[a, ...xs]`. Reuse the array literal's
+        // runtime spread loop while forcing the typed-array storage type, so a
+        // vec spread contributes each element instead of being passed as one
+        // opaque argument (uuid builds its 16-byte v1 fixture this way).
+        const synthetic = ts.factory.createArrayLiteralExpression(expr.arguments);
+        (synthetic as unknown as { parent: ts.Node }).parent = expr.parent;
+        const spreadResult = compileArrayLiteral(ctx, fctx, synthetic, storeWasm);
+        if (spreadResult !== null) return spreadResult;
       }
 
       // --- TA.from(src [, mapFn]) — array-like / vec source (§23.2.2.1). ---

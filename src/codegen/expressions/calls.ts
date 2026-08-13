@@ -149,6 +149,7 @@ import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
+  isIrWithOpenObjectTargetReceiver,
   receiverIsCaughtErrorStringRead,
   receiverIsNativeStringValType,
   receiverMayBeNativeStringAtRuntime,
@@ -6646,6 +6647,16 @@ function compileCallExpression(
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const propAccess = expr.expression;
 
+    // (#671 W1) A callable field on the planner-selected open `with` target
+    // is runtime state just like a data field. Use the canonical open-object
+    // method provider instead of resolving the literal's stale static method;
+    // this retains both post-with replacement, repeated-read identity, and
+    // the full argument list in both lanes.
+    if (!ts.isPrivateIdentifier(propAccess.name) && isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression)) {
+      const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
+      if (openTargetCall !== undefined) return openTargetCall;
+    }
+
     // (#2838 L6) Dynamic-`this` method-call dispatch. When the receiver is `this`
     // and the runtime `this` is DYNAMIC (the fctx `this` local is not a concrete
     // struct ref — e.g. inside a runtime-installed accessor getter whose body runs
@@ -7864,9 +7875,19 @@ function compileCallExpression(
             [{ kind: "externref" }],
             [{ kind: "externref" }],
           );
+          let preservedVecLocal: number | undefined;
+          let preservedVecType: ValType | null = null;
           if (expr.arguments.length >= 1) {
             const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
             if (argType?.kind === "ref" || argType?.kind === "ref_null") {
+              // Web Crypto returns the exact view it was given. Keep the typed
+              // Wasm vec live across the host mutation instead of accepting
+              // the import's necessarily-externref result: the latter loses
+              // the vec's static carrier at a linked-module return boundary
+              // (`uuid`'s rng() then observed length 0).
+              preservedVecType = argType;
+              preservedVecLocal = allocLocal(fctx, `__crypto_vec_${fctx.locals.length}`, argType);
+              fctx.body.push({ op: "local.tee", index: preservedVecLocal });
               fctx.body.push({ op: "extern.convert_any" });
             } else if (argType && argType.kind !== "externref") {
               // Fall back to the standard coerce for non-ref result types.
@@ -7878,12 +7899,16 @@ function compileCallExpression(
           flushLateImportShifts(ctx, fctx);
           if (idx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: idx });
+            if (preservedVecLocal !== undefined && preservedVecType !== null) {
+              fctx.body.push({ op: "drop" });
+              fctx.body.push({ op: "local.get", index: preservedVecLocal });
+            }
           } else {
             // Fallback: pop the arg and push null so the stack stays balanced.
             fctx.body.push({ op: "drop" });
             fctx.body.push({ op: "ref.null.extern" });
           }
-          return { kind: "externref" };
+          return preservedVecType ?? { kind: "externref" };
         }
       }
     }

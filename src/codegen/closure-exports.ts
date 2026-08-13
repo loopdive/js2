@@ -356,6 +356,28 @@ function externToClosureF64(argLocalIdx: number, unboxIdx: number, isUndefinedId
   ];
 }
 
+/** Lower a host argument into the closure's native i64 carrier. */
+function externToClosureI64(
+  ctx: CodegenContext,
+  argLocalIdx: number,
+  paramType: Extract<ValType, { kind: "i64" }>,
+): Instr[] {
+  if (paramType.bigint === true) {
+    const toBigintIdx = ctx.funcMap.get("__to_bigint");
+    if (toBigintIdx !== undefined) {
+      return [
+        { op: "local.get", index: argLocalIdx },
+        { op: "call", funcIdx: toBigintIdx },
+      ];
+    }
+  }
+  const unboxIdx = ctx.funcMap.get("__unbox_number");
+  if (unboxIdx !== undefined) {
+    return [{ op: "local.get", index: argLocalIdx }, { op: "call", funcIdx: unboxIdx }, { op: "i64.trunc_sat_f64_s" }];
+  }
+  return [{ op: "i64.const", value: 0n }];
+}
+
 /**
  * Number of positional host arguments consumed before a source rest
  * parameter. The lifted Wasm function still has one additional vec formal for
@@ -537,6 +559,8 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
             ops.push({ op: "call", funcIdx: unboxIdx });
             ops.push({ op: "i32.trunc_sat_f64_s" });
           }
+        } else if (paramType.kind === "i64") {
+          return externToClosureI64(ctx, argLocalIdx, paramType);
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // The host-facing param is `externref`, but the closure funcref
           // declares this reference param as a non-extern ref type (anyref or
@@ -919,6 +943,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
             ops.push({ op: "call", funcIdx: unboxIdx });
             ops.push({ op: "i32.trunc_sat_f64_s" });
           }
+        } else if (paramType.kind === "i64") {
+          return externToClosureI64(ctx, argLocalIdx, paramType);
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // See emitClosureCallExportN: a non-extern reference param (anyref /
           // WasmGC struct ref, e.g. a native-strings `string`) needs the host
