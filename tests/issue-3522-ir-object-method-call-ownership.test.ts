@@ -118,6 +118,94 @@ function importLabels(result: CompileResult): string[] {
   return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
 }
 
+function watFunctionBody(wat: string | undefined, name: string): string {
+  expect(wat).toBeDefined();
+  const start = wat!.indexOf(`(func $${name}`);
+  expect(start, `missing WAT body for ${name}`).toBeGreaterThanOrEqual(0);
+  const next = wat!.indexOf("\n  (func $", start + 1);
+  return wat!.slice(start, next < 0 ? undefined : next);
+}
+
+function watTypeLines(wat: string): string[] {
+  return wat
+    .split("\n")
+    .map((line) => line.trimStart())
+    .filter((line) => line.startsWith("(type "));
+}
+
+function expectCanonicalCapturedMethodAbi(wat: string): void {
+  const types = watTypeLines(wat);
+  const rootStructs = types.filter((line) => /\$__fn_wrap_\d+_struct \(sub \(struct/.test(line));
+  expect(rootStructs, "expected one canonical callable wrapper root").toHaveLength(1);
+  const rootStruct = rootStructs[0]!;
+  expect(rootStruct).not.toContain("(sub final");
+
+  const rootSuffix = rootStruct.match(/\$__fn_wrap_(\d+)_struct/)?.[1];
+  expect(rootSuffix, "canonical callable wrapper root has no suffix").toBeDefined();
+  const rootLifted = types.find((line) => line.includes(`$__fn_wrap_${rootSuffix}_type`));
+  expect(rootLifted, "canonical callable wrapper root has no lifted function type").toBeDefined();
+  expect(rootLifted).toContain("(result i32)");
+  const rootIdxText = rootLifted!.match(/\(ref(?: null)? (\d+)\)/)?.[1];
+  expect(rootIdxText, "canonical callable wrapper root has no self type").toBeDefined();
+  const rootIdx = Number(rootIdxText);
+
+  const exactFuncType = types.find((line) =>
+    new RegExp(
+      `\\$__fn_wrap_(\\d+)_type \\(func \\(param \\(ref(?: null)? ${rootIdx}\\) f64\\) \\(result f64\\)\\)`,
+    ).test(line),
+  );
+  expect(exactFuncType, "number method wrapper has no exact lifted function type").toBeDefined();
+  const exactSuffix = exactFuncType!.match(/\$__fn_wrap_(\d+)_type/)?.[1];
+  expect(exactSuffix).toBeDefined();
+  const exactWrapper = types.find((line) => line.includes(`$__fn_wrap_${exactSuffix}_struct`));
+  expect(exactWrapper, "number method wrapper has no allocation type").toBeDefined();
+  expect(exactWrapper).toContain(`(sub $type${rootIdx}`);
+
+  const capturedTypes = types.filter((line) => line.includes("(type $__ir_closure_"));
+  expect(capturedTypes, "only invoke should need an IR capture subtype").toHaveLength(1);
+  const invokeSubtype = capturedTypes[0]!;
+  const exactWrapperIdx = Number(invokeSubtype.match(/\(sub final \$type(\d+)/)?.[1]);
+  expect(exactWrapperIdx, "fixture did not force a non-root number wrapper").not.toBe(rootIdx);
+  expect(invokeSubtype).toMatch(new RegExp(`\\(field \\$cap0 \\(ref(?: null)? ${rootIdx}\\)\\)`));
+  expect(invokeSubtype).not.toMatch(new RegExp(`\\(field \\$cap0 \\(ref(?: null)? ${exactWrapperIdx}\\)\\)`));
+
+  const invokeBody = watFunctionBody(wat, "run__closure_2");
+  expect(invokeBody).toMatch(/ref\.cast \(ref (\d+)\)\s+struct\.get \1 3/);
+  expect(invokeBody).toMatch(
+    new RegExp(`struct\\.get ${rootIdx} 0\\s+ref\\.cast \\(ref (\\d+)\\)\\s+(?:return_)?call_ref \\1`),
+  );
+  expect(invokeBody).not.toMatch(
+    /any\.convert_extern|extern\.convert_any|ref\.test|call_indirect|__call_m_|__call_function|\bcall \d+/,
+  );
+}
+
+function expectCanonicalMultiCapturedMethodAbi(wat: string): void {
+  const types = watTypeLines(wat);
+  const rootStructs = types.filter((line) => /\$__fn_wrap_\d+_struct \(sub \(struct/.test(line));
+  expect(rootStructs, "expected one canonical callable wrapper root").toHaveLength(1);
+  const rootSuffix = rootStructs[0]!.match(/\$__fn_wrap_(\d+)_struct/)?.[1];
+  expect(rootSuffix).toBeDefined();
+  const rootLifted = types.find((line) => line.includes(`$__fn_wrap_${rootSuffix}_type`));
+  const rootIdxText = rootLifted?.match(/\(ref(?: null)? (\d+)\)/)?.[1];
+  expect(rootIdxText, "canonical callable wrapper root has no self type").toBeDefined();
+  const rootIdx = Number(rootIdxText);
+
+  const capturedTypes = types.filter((line) => line.includes("(type $__ir_closure_"));
+  expect(capturedTypes, "only invoke should need an IR capture subtype").toHaveLength(1);
+  const invokeSubtype = capturedTypes[0]!;
+  expect(invokeSubtype).toMatch(new RegExp(`\\(field \\$cap0 \\(ref(?: null)? ${rootIdx}\\)\\)`));
+  expect(invokeSubtype).toMatch(new RegExp(`\\(field \\$cap1 \\(ref(?: null)? ${rootIdx}\\)\\)`));
+
+  const invokeBody = watFunctionBody(wat, "run__closure_2");
+  expect(invokeBody).toMatch(/struct\.get \d+ 3/);
+  expect(invokeBody).toMatch(/struct\.get \d+ 4/);
+  expect((invokeBody.match(new RegExp(`struct\\.get ${rootIdx} 0`, "g")) ?? []).length).toBeGreaterThanOrEqual(2);
+  expect((invokeBody.match(/call_ref \d+/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  expect(invokeBody).not.toMatch(
+    /any\.convert_extern|extern\.convert_any|ref\.test|call_indirect|__call_m_|__call_function|\bcall \d+/,
+  );
+}
+
 function expectNoImportRegression(
   direct: CompileResult,
   prepared: CompileResult,
@@ -1011,24 +1099,85 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps destructured method values captured by nested closures on the direct path", async () => {
+  it.each(TARGETS)("prepares a captured direct-property method alias chain in the %s lane", async (target) => {
+    const source = `export function run(input: number): number {
+      const operations = {
+        add(value: number): number { return value + 2; }
+      };
+      const add = operations.add;
+      const selected = add;
+      const invoke = (value: number): number => selected(value);
+      return invoke(input);
+    }`;
+    const direct = await compile(source, {
+      fileName: `object-method-value-property-alias-captured-direct-${target}.ts`,
+      emitWat: true,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
+      prepared = await compile(source, {
+        fileName: `object-method-value-property-alias-captured-prepared-${target}.ts`,
+        emitWat: true,
+        experimentalIR: true,
+        optimize: true,
+        target,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(42);
+    }
+    expect(outcome(prepared)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]));
+
+    const invokeBody = watFunctionBody(prepared.wat, "run__closure_1");
+    expect(invokeBody).toMatch(/struct\.get \d+ 3[\s\S]*struct\.get \d+ 0[\s\S]*call_ref \d+/);
+    expect(invokeBody).not.toMatch(/any\.convert_extern|extern\.convert_any|call_indirect|\bcall \d+/);
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
+    expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
+  it("keeps a direct-property method capture two closure owners deep on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
-        const { add } = operations;
-        const invoke = (value: number): number => add(value);
-        return invoke(input);
+        const add = operations.add;
+        const outer = (value: number): number => {
+          const inner = (nested: number): number => add(nested);
+          return inner(value);
+        };
+        return outer(input);
       }`,
       {
-        fileName: "object-method-value-destructured-captured-direct.ts",
+        fileName: "object-method-value-property-two-owner-depth-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
     expect((await instantiate(result)).run!(40)).toBe(42);
     expect(outcome(result)).toMatchObject({
       kind: "unsupported",
@@ -1039,9 +1188,191 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps captured destructured method alias chains on the direct path", async () => {
+  it("keeps a direct-property method captured by two sibling closures on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const add = operations.add;
+        const first = (value: number): number => add(value);
+        const second = (value: number): number => add(value);
+        return first(input) + second(0) - 2;
+      }`,
+      {
+        fileName: "object-method-value-property-two-capture-owners-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an escaped direct-property method capture closure on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const add = operations.add;
+        const invoke = (value: number): number => add(value);
+        const escaped = { invoke };
+        return escaped.invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-property-capture-escape-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it.each(TARGETS)(
+    "prepares a destructured method value captured by a nested closure in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        return invoke(input);
+      }`;
+      const direct = await compile(source, {
+        fileName: `object-method-value-destructured-captured-direct-${target}.ts`,
+        emitWat: true,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
+        prepared = await compile(source, {
+          fileName: `object-method-value-destructured-captured-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(
+        expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]),
+      );
+
+      const runBody = watFunctionBody(prepared.wat, "run");
+      const invokeBody = watFunctionBody(prepared.wat, "run__closure_1");
+      expect((runBody.match(/\bstruct\.new\b/g) ?? []).length).toBeGreaterThanOrEqual(2);
+      expect(invokeBody).toMatch(/struct\.get \d+ 3[\s\S]*struct\.get \d+ 0[\s\S]*call_ref \d+/);
+      expect(invokeBody).not.toMatch(/any\.convert_extern|extern\.convert_any|call_indirect|\bcall \d+/);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it("keeps a mutable destructured method capture on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        let { add } = operations;
+        const invoke = (value: number): number => add(value);
+        add = (value: number): number => value + 3;
+        return invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-mutable-capture-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(43);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("does not confuse a shadowing callable parameter with the destructured method declaration", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (add: (value: number) => number, value: number): number => add(value);
+        return invoke((value: number): number => value + 3, input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-capture-shadow-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(43);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it.each(TARGETS)("prepares a captured destructured method alias chain in the %s lane", async (target) => {
+    const source = `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
@@ -1049,15 +1380,75 @@ describe("#3522 object-method call ownership", () => {
         const selected = add;
         const invoke = (value: number): number => selected(value);
         return invoke(input);
+      }`;
+    const direct = await compile(source, {
+      fileName: `object-method-value-destructured-alias-captured-direct-${target}.ts`,
+      emitWat: true,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
+      prepared = await compile(source, {
+        fileName: `object-method-value-destructured-alias-captured-prepared-${target}.ts`,
+        emitWat: true,
+        experimentalIR: true,
+        optimize: true,
+        target,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(42);
+    }
+    expect(outcome(prepared)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]));
+
+    const invokeBody = watFunctionBody(prepared.wat, "run__closure_1");
+    expect(invokeBody).toMatch(/struct\.get \d+ 3[\s\S]*struct\.get \d+ 0[\s\S]*call_ref \d+/);
+    expect(invokeBody).not.toMatch(/any\.convert_extern|extern\.convert_any|call_indirect|\bcall \d+/);
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
+    expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
+  it("keeps one captured method alias shared by two nested closure owners on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const selected = add;
+        const first = (value: number): number => selected(value);
+        const second = (value: number): number => selected(value);
+        return first(input) + second(0) - 2;
       }`,
       {
-        fileName: "object-method-value-destructured-alias-captured-direct.ts",
+        fileName: "object-method-value-destructured-two-capture-owners-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
     expect((await instantiate(result)).run!(40)).toBe(42);
     expect(outcome(result)).toMatchObject({
       kind: "unsupported",
@@ -1067,6 +1458,286 @@ describe("#3522 object-method call ownership", () => {
     });
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
+
+  it("keeps one destructuring pattern captured by two nested closure owners on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; },
+          positive(value: number): boolean { return value > 0; }
+        };
+        const { add, positive } = operations;
+        const invokeAdd = (value: number): number => add(value);
+        const invokePositive = (value: number): boolean => positive(value);
+        return invokeAdd(input) + (invokePositive(input) ? 0 : 1);
+      }`,
+      {
+        fileName: "object-method-value-destructured-pattern-two-capture-owners-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a captured method closure that escapes through object storage on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        const escaped = { invoke };
+        return escaped.invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-capture-escape-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a captured method closure passed as a value on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        const consume = (fn: (value: number) => number, value: number): number => fn(value);
+        return consume(invoke, input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-capture-passed-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a method call captured two nested closure owners deep on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const outer = (value: number): number => {
+          const inner = (next: number): number => add(next);
+          return inner(value);
+        };
+        return outer(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-two-owner-depth-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an optional call through a captured method closure on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        invoke?.(input);
+        return 42;
+      }`,
+      {
+        fileName: "object-method-value-destructured-captured-optional-call-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it.each(TARGETS)(
+    "captures heterogeneous destructured methods in one canonical closure in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; },
+          positive(value: number): boolean { return value > 0; }
+        };
+        const { add, positive } = operations;
+        const invoke = (value: number): number => add(value) + (positive(value) ? 0 : 1);
+        return invoke(input);
+      }`;
+      const direct = await compile(source, {
+        fileName: `object-method-value-multi-capture-direct-${target}.ts`,
+        emitWat: true,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1,run__closure_2";
+        prepared = await compile(source, {
+          fileName: `object-method-value-multi-capture-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(
+        expect.arrayContaining(["run", "run__closure_0", "run__closure_1", "run__closure_2"]),
+      );
+      expectCanonicalMultiCapturedMethodAbi(prepared.wat!);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(
+        target === "gc" ? ["env::__box_boolean", "env::__box_number", "env::__unbox_number"] : [],
+      );
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it.each(TARGETS)(
+    "captures a method through the canonical wrapper root when another signature is registered first in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
+        const checks = {
+          positive(value: number): boolean { return value > 0; }
+        };
+        const allowed = checks.positive(input);
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        return invoke(input) + (allowed ? 0 : 0);
+      }`;
+      const direct = await compile(source, {
+        fileName: `object-method-value-canonical-capture-direct-${target}.ts`,
+        emitWat: true,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1,run__closure_2";
+        prepared = await compile(source, {
+          fileName: `object-method-value-canonical-capture-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(
+        expect.arrayContaining(["run", "run__closure_0", "run__closure_1", "run__closure_2"]),
+      );
+      expectCanonicalCapturedMethodAbi(prepared.wat!);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(
+        target === "gc" ? ["env::__box_boolean", "env::__box_number", "env::__unbox_number"] : [],
+      );
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
 
   it("keeps reassigned method fields destructured later on the direct path", async () => {
     const result = await compile(

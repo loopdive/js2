@@ -4604,7 +4604,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
-    const objectMethodValue = isConst ? directObjectMethodValueProjection(initializer, initializerScope) : null;
+    const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
     const callableAlias =
       isConst &&
@@ -6631,13 +6631,15 @@ type DirectDestructuredObjectMethodProjection = {
  * borrowing another object's method signature.
  */
 function directObjectMethodValueProjection(
+  declaration: ts.VariableDeclaration,
   expression: ts.Expression,
   scope: ReadonlySet<string>,
 ): DirectObjectMethodValueProjection | null {
+  if (!ts.isIdentifier(declaration.name)) return null;
   const candidate = unwrapProjectionExpression(expression);
   if (!ts.isPropertyAccessExpression(candidate) || !ts.isIdentifier(candidate.name)) return null;
   const method = directObjectMethodDeclaration(candidate.expression, candidate.name.text, scope);
-  if (!method) return null;
+  if (!method || !methodValueAliasChainHasOnlyBoundedDirectCalls(declaration, new Set())) return null;
   return {
     arity: exactCallableArity(method.parameters.length),
     returnType: method.type,
@@ -6898,16 +6900,20 @@ function directDestructuredObjectMethodReceiverUsesAreStable(
 }
 
 /**
- * Bound this new callable surface to immutable aliases and direct calls inside
- * the declaring function. This excludes cross-owner capture, return/pass
- * escapes, and mutation while still preserving same-owner const alias chains.
+ * Bound this callable surface to immutable aliases and direct calls. One
+ * immediately nested, directly-called const closure may capture the value;
+ * broader cross-owner flow, return/pass escapes, and mutation remain direct.
  */
-function destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element: ts.BindingElement): boolean {
-  if (!ts.isIdentifier(element.name)) return false;
-  const owner = enclosingProjectionOwner(element);
+function methodValueAliasChainHasOnlyBoundedDirectCalls(
+  seed: ts.VariableDeclaration | ts.BindingElement,
+  projectionCaptureOwners: Set<ts.Node>,
+): boolean {
+  if (!ts.isIdentifier(seed.name)) return false;
+  const owner = enclosingProjectionOwner(seed);
   if (!owner || !currentModuleBindingResolver) return false;
-  const declarations = new Set<ts.Declaration>([element]);
-  const declarationNames = new Set<string>([element.name.text]);
+  const declarations = new Set<ts.Declaration>([seed]);
+  const declarationNames = new Set<string>([seed.name.text]);
+  const capturedCallOwners = new Set<ts.Node>();
   let proofFailed = false;
 
   let changed = true;
@@ -6955,8 +6961,20 @@ function destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element: ts.Binding
         return;
       }
       if (localClosureDeclarationsContain(declarations, declaration)) {
-        if (enclosingProjectionOwner(node) !== owner) {
-          accepted = false;
+        const useOwner = enclosingProjectionOwner(node);
+        if (useOwner !== owner) {
+          const parent = node.parent;
+          if (
+            !useOwner ||
+            enclosingProjectionOwner(useOwner) !== owner ||
+            !ts.isCallExpression(parent) ||
+            parent.expression !== node ||
+            parent.questionDotToken !== undefined
+          ) {
+            accepted = false;
+            return;
+          }
+          capturedCallOwners.add(useOwner);
           return;
         }
         const parent = node.parent;
@@ -6975,7 +6993,67 @@ function destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element: ts.Binding
     forEachChild(node, validateUses);
   };
   forEachChild(owner, validateUses);
-  return accepted;
+  for (const capturedOwner of capturedCallOwners) projectionCaptureOwners.add(capturedOwner);
+  return (
+    accepted &&
+    capturedCallOwners.size <= 1 &&
+    projectionCaptureOwners.size <= 1 &&
+    [...capturedCallOwners].every((capturedOwner) => capturingClosureHasOnlyOuterDirectCalls(capturedOwner, owner))
+  );
+}
+
+/** Keep the new capture surface inside one immediately-invoked local closure. */
+function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOwner: ts.Node): boolean {
+  if (!ts.isArrowFunction(capturedOwner) && !ts.isFunctionExpression(capturedOwner)) return false;
+  const declaration = capturedOwner.parent;
+  const declarationList = ts.isVariableDeclaration(declaration) ? declaration.parent : undefined;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer !== capturedOwner ||
+    !ts.isIdentifier(declaration.name) ||
+    !declarationList ||
+    !ts.isVariableDeclarationList(declarationList) ||
+    !(declarationList.flags & ts.NodeFlags.Const) ||
+    enclosingProjectionOwner(declaration) !== outerOwner
+  ) {
+    return false;
+  }
+  const declarationName = declaration.name;
+  let accepted = true;
+  let observedCall = false;
+  const visit = (node: ts.Node): void => {
+    if (!accepted) return;
+    if (
+      ts.isIdentifier(node) &&
+      node !== declarationName &&
+      node.text === declarationName.text &&
+      identifierIsValueReference(node)
+    ) {
+      if (ts.isBindingElement(node.parent) && node.parent.propertyName === node) return;
+      const resolved = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!resolved) {
+        accepted = false;
+        return;
+      }
+      if (!localDeclarationsMatch(declaration, resolved)) return;
+      const parent = node.parent;
+      if (
+        enclosingProjectionOwner(node) === outerOwner &&
+        declaration.end <= node.pos &&
+        ts.isCallExpression(parent) &&
+        parent.expression === node &&
+        parent.questionDotToken === undefined
+      ) {
+        observedCall = true;
+        return;
+      }
+      accepted = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(outerOwner, visit);
+  return accepted && observedCall;
 }
 
 /** Certify the entire pattern before exposing any callable projection. */
@@ -6987,6 +7065,7 @@ function directDestructuredObjectMethodProjections(
   const receiver = directDestructuredObjectMethodReceiver(initializer, scope);
   if (!receiver || !directDestructuredObjectMethodReceiverUsesAreStable(receiver)) return null;
   const projections: DirectDestructuredObjectMethodProjection[] = [];
+  const captureOwners = new Set<ts.Node>();
   for (const element of pattern.elements) {
     if (!ts.isIdentifier(element.name)) return null;
     const propertyName = element.propertyName
@@ -6994,7 +7073,9 @@ function directDestructuredObjectMethodProjections(
         ? element.propertyName.text
         : null
       : element.name.text;
-    if (propertyName === null || !destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element)) return null;
+    if (propertyName === null || !methodValueAliasChainHasOnlyBoundedDirectCalls(element, captureOwners)) {
+      return null;
+    }
     const method = receiver.root.object.properties.find(
       (property): property is ts.MethodDeclaration =>
         ts.isMethodDeclaration(property) &&
@@ -8893,7 +8974,8 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
         }
         if (!ts.isIdentifier(d.name)) continue;
         const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
-        const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
+        const objectMethodValue =
+          isConst && directObjectMethodValueProjection(d, d.initializer, localValueNames) !== null;
         const aliasInitializer = unwrapProjectionExpression(d.initializer);
         const aliasDeclaration = ts.isIdentifier(aliasInitializer)
           ? currentModuleBindingResolver?.localValueDeclaration(aliasInitializer)

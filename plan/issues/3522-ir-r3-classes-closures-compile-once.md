@@ -2163,3 +2163,83 @@ from legacy to IR. Bare nested-function values, receiver-sensitive methods,
 accessors, mutable callable slots, optional calls, and broader escapes remain
 later families. No shared direct implementation has zero consumers at this
 checkpoint, so none is deleted here.
+
+### Captured object-method-value checkpoint (2026-08-14)
+
+An exact object-method value, read either as `const add = operations.add` or
+through destructuring, may now flow through an immutable local alias chain and
+be captured by one immediately nested local closure. Both the method and the
+capturing closure remain in the same Prepared component, and the outer
+function may call that closure directly without retaining any legacy body.
+
+The selector keeps this surface deliberately narrow. The capturing closure
+must be an exact `const` arrow or function-expression initializer in the
+destructuring owner's lexical scope, it must be called directly and
+non-optionally after its declaration, and neither the method-value chain nor
+the capture closure may escape. The whole binding pattern is limited to one
+capture owner, not merely each projected method. Mutation, shadowing, two
+capture owners, deeper nesting, callback passing, return or object-storage
+escape, optional invocation, and mutable ref-cell capture all remain typed
+select-stage fallbacks with zero post-claim failures. Direct-property and
+destructured projections share this exact declaration/alias/owner proof, so a
+deeper direct-property capture cannot pass selection and then fail during IR
+planning. One admitted closure may capture multiple represented methods from
+the same binding pattern, but distinct capture owners remain deferred.
+
+`prepareClosureTransaction` now resolves closure-valued capture fields through
+the transaction's existing `ClosureStructRegistry`. This is a bootstrap of the
+already canonical registry, not a second type family: a capture field stores
+the canonical wrapper-root reference, while the exact method wrapper remains
+its allocation subtype. A deliberately non-vacuous fixture registers a live
+boolean method family before the captured numeric method, poisons all four
+direct bodies, and inspects WAT to prove that the numeric capture uses the
+canonical root rather than the distinct numeric child wrapper. A second
+heterogeneous fixture captures numeric and boolean methods in one closure and
+proves that both capture fields use that same canonical root. Invocation is
+still a typed `call_ref`; there is no generic dispatcher, `call_indirect`,
+extern/any conversion, or new import surface.
+
+The focused object-method suite is **58/58** and the adjacent eight-file
+closure/object matrix is **96/96**. Both GC and standalone artifacts validate
+and return 42. For the basic captured-method fixture, optimized GC is **2,262
+bytes versus 3,423 direct** and optimized standalone is **5,893 versus 6,951
+direct**. GC keeps exactly the number box/unbox imports; standalone remains
+zero-import. The live wrapper-order fixture also requires optimized IR to be
+no larger than direct and produces **3,053 bytes GC** and **6,223 bytes
+standalone**. The two-field heterogeneous capture produces **2,964 bytes GC**
+and **6,385 bytes standalone**, remains no larger than its direct controls,
+and adds no imports beyond boolean/number boxing and numeric unboxing in GC;
+standalone remains zero-import.
+
+Hybrid and strict IR-only shadow validation remain **37/37 IR bodies, 0
+legacy bodies, 0 Unsupported, and 0 Invariants**. The fallback ratchet has
+zero unintended, post-claim, or module-level increases; cross-backend
+differential coverage is **29/29**; and native-first host-import policy remains
+**379 imports, 0 legacy-semantic, and 0 unknown**. Full equivalence reports
+**1,645 passing, 24 known failures, 12 baseline cases now passing, and zero new
+regressions**. Typecheck, lint, formatting, LOC/function budgets, oracle,
+coercion-site, issue-integrity, IR-adoption, and optimization-retirement gates
+are green.
+
+Remaining boundary: multiple immediate capture owners, deeper cross-owner
+flow, closure escapes, mutable captured callable cells, receiver-sensitive
+methods, accessors, open or mutable method objects, and optional calls remain
+direct. A pre-existing Program-ABI defect was exposed by an unused top-level
+callable-parameter function: preparation can require an allocation wrapper
+that DCE later removes even though only its call/carrier role is live. It does
+not affect the physically used capture fixture and is not caused by this
+slice. The size-preserving follow-up is usage-sensitive closure-support roles
+(carrier, invoke, and allocate), not pinning every speculative prepared type.
+No shared direct implementation has zero consumers here, so none is deleted in
+this checkpoint.
+
+Next resumable R3 slice: admit bounded sibling capture fan-out. Remove only the
+one-owner cardinality limits while retaining the exact immediate-owner,
+declaration-before-call, direct non-optional invocation, and no-escape proof
+for every sibling. Promote both a shared numeric method captured by two local
+closures and heterogeneous destructured methods captured by distinct local
+closures, with every owner/method body poisoned and canonical-root, import,
+runtime, and optimized-size parity in GC and standalone. The unused
+callable-child-wrapper defect does not block that allocation-backed slice; it
+must be repaired with usage-sensitive closure-support roles before
+carrier/invoke-only callable passing is admitted.
