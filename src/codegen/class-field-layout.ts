@@ -23,7 +23,7 @@ function fixedFieldName(name: ts.PropertyName): string | undefined {
 }
 
 function isFlatClass(declaration: ts.ClassDeclaration): boolean {
-  return declaration.heritageClauses === undefined || declaration.heritageClauses.length === 0;
+  return declaration.heritageClauses?.every((clause) => clause.token !== ts.SyntaxKind.ExtendsKeyword) ?? true;
 }
 
 function exactLocalClassReference(
@@ -51,27 +51,6 @@ function exactLocalClassReference(
   return classId !== undefined && identity.declarationByClassId.get(classId) === declaration ? declaration : undefined;
 }
 
-function fieldDependencies(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  declarations: readonly ts.ClassDeclaration[],
-): ReadonlyMap<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>> {
-  const local = new Set(declarations);
-  const dependencies = new Map<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>>();
-  for (const declaration of declarations) {
-    const required = new Set<ts.ClassDeclaration>();
-    for (const member of declaration.members) {
-      if (!ts.isPropertyDeclaration(member) || hasStaticModifier(member) || fixedFieldName(member.name) === undefined) {
-        continue;
-      }
-      const target = exactLocalClassReference(ctx, sourceFile, member.type);
-      if (target && local.has(target)) required.add(target);
-    }
-    dependencies.set(declaration, required);
-  }
-  return dependencies;
-}
-
 function inheritanceParticipants(
   ctx: CodegenContext,
   declarations: readonly ts.ClassDeclaration[],
@@ -91,21 +70,6 @@ function inheritanceParticipants(
     }
   }
   return participants;
-}
-
-function reachesClass(
-  dependencies: ReadonlyMap<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>>,
-  start: ts.ClassDeclaration,
-  expected: ts.ClassDeclaration,
-  visited = new Set<ts.ClassDeclaration>(),
-): boolean {
-  if (start === expected) return true;
-  if (visited.has(start)) return false;
-  visited.add(start);
-  for (const dependency of dependencies.get(start) ?? []) {
-    if (reachesClass(dependencies, dependency, expected, visited)) return true;
-  }
-  return false;
 }
 
 function requireCommittedField(
@@ -134,10 +98,10 @@ function requireCommittedField(
 }
 
 /**
- * Commit exact, acyclic references from flat top-level fields to later local
+ * Commit exact references from flat top-level fields to later local
  * classes without replacing an observed StructTypeDef or changing type order.
  *
- * Recursive, inherited, nested, generic, union, optional, inferred, and
+ * Inherited, nested, generic, union, optional, inferred, and
  * externref-backed layouts deliberately remain on the typed direct route.
  */
 export function finalizeForwardClassFieldLayouts(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -150,7 +114,6 @@ export function finalizeForwardClassFieldLayouts(ctx: CodegenContext, sourceFile
     const name = declaration.name!.text;
     nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
   }
-  const dependencies = fieldDependencies(ctx, sourceFile, declarations);
   const inherited = inheritanceParticipants(ctx, declarations);
 
   for (const owner of declarations) {
@@ -182,8 +145,7 @@ export function finalizeForwardClassFieldLayouts(ctx: CodegenContext, sourceFile
         !isFlatClass(target) ||
         inherited.has(target) ||
         nameCounts.get(target.name.text) !== 1 ||
-        ctx.classExternrefBackedSet.has(target.name.text) ||
-        reachesClass(dependencies, target, owner)
+        ctx.classExternrefBackedSet.has(target.name.text)
       ) {
         continue;
       }
