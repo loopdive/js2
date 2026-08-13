@@ -151,6 +151,7 @@ import {
   type IrLiftedFunctionArtifactIdentity,
   type IrUnitId,
 } from "./identity.js";
+import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import {
   computeI32PureNames,
   type I32PureNames,
@@ -717,6 +718,8 @@ export interface AstToIrOptions {
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** (#2856) Exact Promise-delay construction/timer/resolve node plans. */
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  /** Exact source-unit identities for nested executable declarations. */
+  readonly identityContext?: IrPlanningIdentityContext;
   /**
    * Slice 4 (#1169d): map from class name to that class's IR shape
    * (fields + methods + constructor signature). Consulted when lowering
@@ -1120,6 +1123,7 @@ export function lowerFunctionAstToIr(
     hostDateSnapshots: options.hostDateSnapshots,
     hostDateGetters: options.hostDateGetters,
     promiseDelays: options.promiseDelays,
+    identityContext: options.identityContext,
     classShapes: options.classShapes,
     resolver: options.resolver,
     lifted,
@@ -2018,6 +2022,7 @@ interface LowerCtx {
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  readonly identityContext?: IrPlanningIdentityContext;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
   /**
@@ -10873,7 +10878,39 @@ function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, 
     parentId: identity.parentId,
     role: identity.role,
     ordinal: identity.ordinal,
+    ...(identity.sourceUnit ? { sourceUnit: true } : {}),
   });
+}
+
+function allocateLoweredLiftedFunctionArtifact(
+  declaration: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  cx: LowerCtx,
+  displayNameForOrdinal: (ordinal: number) => string,
+): IrLiftedFunctionArtifactIdentity {
+  const sourceUnitId = ts.isFunctionDeclaration(declaration)
+    ? cx.identityContext?.unitIdByDeclaration.get(declaration)
+    : undefined;
+  const sourceUnit = sourceUnitId ? cx.identityContext?.unitByUnitId.get(sourceUnitId) : undefined;
+  if (sourceUnitId && sourceUnit) {
+    if (
+      sourceUnit.kind !== "nested-function" ||
+      sourceUnit.terminalOwnerId !== cx.ownerUnitId ||
+      sourceUnit.lexicalOwnerId === null ||
+      !cx.identityContext?.unitByUnitId.has(sourceUnit.lexicalOwnerId as IrUnitId)
+    ) {
+      throw new Error(`ir/from-ast: lifted source identity diverged (${cx.funcName})`);
+    }
+    const displayOrdinal = cx.liftedCounter.value++;
+    return {
+      unitId: sourceUnitId,
+      name: displayNameForOrdinal(displayOrdinal),
+      parentId: sourceUnit.lexicalOwnerId as IrUnitId,
+      role: "lifted-closure",
+      ordinal: sourceUnit.ordinal,
+      sourceUnit: true,
+    };
+  }
+  return allocateLiftedFunctionArtifact(cx, displayNameForOrdinal);
 }
 
 /**
@@ -10957,7 +10994,7 @@ function lowerClosureExpressionWithSignature(
     }
   }
 
-  const liftedIdentity = allocateLiftedFunctionArtifact(cx, (ordinal) =>
+  const liftedIdentity = allocateLoweredLiftedFunctionArtifact(expr, cx, (ordinal) =>
     exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
   );
   recordLiftedUnitProvenance(liftedIdentity, cx);
@@ -11067,7 +11104,8 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
   const signature: IrClosureSignature = { params, returnType };
 
   const captures = analyseCaptures(fn, cx);
-  const liftedIdentity = allocateLiftedFunctionArtifact(
+  const liftedIdentity = allocateLoweredLiftedFunctionArtifact(
+    fn,
     cx,
     (ordinal) => `${cx.funcName}__nested_${innerName}_${ordinal}`,
   );
@@ -11132,6 +11170,7 @@ function liftNestedFunction(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,
@@ -11241,6 +11280,7 @@ function liftClosureBody(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,

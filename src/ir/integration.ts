@@ -907,7 +907,7 @@ export function compileIrPathFunctions(
     }
     const records = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
     for (const provenance of result.liftedUnitProvenance) {
-      if (provenance.parentId !== parentUnitId || !isLiftedExecutableRole(provenance.role)) {
+      if (!isLiftedExecutableRole(provenance.role)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -920,6 +920,30 @@ export function compileIrPathFunctions(
           "selection-preparation-mismatch",
           "build",
           `ir/integration: lifted unit ${provenance.id} has no exact inventory parent and terminal owner`,
+        );
+      }
+      if ("sourceUnit" in provenance) {
+        const sourceUnit = inventoryUnitById.get(provenance.id);
+        if (
+          !sourceUnit ||
+          sourceUnit.terminal ||
+          sourceUnit.lexicalOwnerId !== provenance.parentId ||
+          sourceUnit.terminalOwnerId !== terminalOwnerId ||
+          sourceUnit.ordinal !== provenance.ordinal
+        ) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: lifted source unit ${provenance.id} has inconsistent inventory provenance`,
+          );
+        }
+        continue;
+      }
+      if (provenance.parentId !== parentUnitId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: derived lifted unit ${provenance.id} has an unexpected parent`,
         );
       }
       if (records.has(provenance.id)) {
@@ -936,7 +960,8 @@ export function compileIrPathFunctions(
       });
     }
     for (const lifted of result.lifted) {
-      if (!records.has(lifted.unitId)) {
+      const sourceUnit = inventoryUnitById.get(lifted.unitId);
+      if (!records.has(lifted.unitId) && (!sourceUnit || sourceUnit.terminalOwnerId !== terminalOwnerId)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -1310,6 +1335,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: loweringPlans?.hostDateSnapshots,
         hostDateGetters: loweringPlans?.hostDateGetters,
         promiseDelays: loweringPlans?.promiseDelays,
+        identityContext: moduleBindingIdentityContext,
         classShapes,
         // Slice 6 part 4 refactor (#1185): thread the from-ast subset
         // of the IR resolver. Replaces the per-feature `nativeStrings:
@@ -1360,7 +1386,7 @@ export function compileIrPathFunctions(
           name: lifted.name,
           ownerName: owner.legacyName,
           fn: lifted,
-          derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+          derivedUnit: liftedAbiRecords.get(lifted.unitId),
           synthesized: true,
         });
       }
@@ -1529,6 +1555,7 @@ export function compileIrPathFunctions(
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
           hostDateSnapshots: loweringPlans?.hostDateSnapshots,
           hostDateGetters: loweringPlans?.hostDateGetters,
+          identityContext: moduleBindingIdentityContext,
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
@@ -1597,7 +1624,7 @@ export function compileIrPathFunctions(
             name: lifted.name,
             ownerName: owner.legacyName,
             fn: lifted,
-            derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+            derivedUnit: liftedAbiRecords.get(lifted.unitId),
             synthesized: true,
           });
         }
@@ -1725,6 +1752,7 @@ export function compileIrPathFunctions(
             hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
             hostDateSnapshots: loweringPlans?.hostDateSnapshots,
             hostDateGetters: loweringPlans?.hostDateGetters,
+            identityContext: moduleBindingIdentityContext,
             classShapes,
             resolver: fromAstResolver,
             allocRegistry,
@@ -1773,7 +1801,7 @@ export function compileIrPathFunctions(
               name: lifted.name,
               ownerName: owner.legacyName,
               fn: lifted,
-              derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+              derivedUnit: liftedAbiRecords.get(lifted.unitId),
               synthesized: true,
             });
           }
@@ -1877,6 +1905,7 @@ export function compileIrPathFunctions(
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
         hostDateSnapshots: loweringPlans?.hostDateSnapshots,
         hostDateGetters: loweringPlans?.hostDateGetters,
+        identityContext: moduleBindingIdentityContext,
         classShapes,
         resolver: fromAstResolver,
         allocRegistry,
@@ -1918,7 +1947,7 @@ export function compileIrPathFunctions(
               name: lifted.name,
               ownerName: moduleInitOwner.legacyName,
               fn: lifted,
-              derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+              derivedUnit: liftedAbiRecords.get(lifted.unitId),
               synthesized: true,
             });
           }
