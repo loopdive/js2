@@ -1558,9 +1558,18 @@ export function compileNamespaceStaticCall(
 
     // Reflect.construct(C, args, [newTarget]) — returns externref.
     // Passing ref.null.extern for omitted newTarget lets the host wrapper default to `C`.
+    //
+    // (#4394) …which makes an OMITTED newTarget indistinguishable from an
+    // explicit `null` one at the fixed-arity wasm boundary, and §26.1.2 step 3
+    // treats them oppositely: absent ⇒ default to the target, PRESENT and not a
+    // constructor ⇒ TypeError. The shim collapsed both to the 2-argument form,
+    // so `Reflect.construct(fn, [], null)` quietly constructed instead of
+    // throwing. Encode presence in the import NAME — the boundary cannot carry
+    // it any other way, and the arity is a compile-time fact.
     if (reflectMethod === "construct" && expr.arguments.length >= 2) {
       emitReflectArgs(3);
-      const funcIdx = ensureLateImport(ctx, "__reflect_construct", [externRef, externRef, externRef], [externRef]);
+      const constructImport = expr.arguments.length >= 3 ? "__reflect_construct_newtarget" : "__reflect_construct";
+      const funcIdx = ensureLateImport(ctx, constructImport, [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
