@@ -1,60 +1,51 @@
 ---
 name: project_es5_standalone_goal_restated_ex_dynamic_code
-description: "Project-lead ruling 2026-08-01: the ES5+untagged standalone goal is ~95.4% EX-DYNAMIC-CODE, not 100%. The 317 dynamic-code files are out of scope, not failures."
-metadata: 
+description: "Superseded boundary: as of 2026-08-13 the ES5 test262 goal is 100% in both host and standalone, including eval, Function, and with."
+metadata:
   node_type: memory
   type: project
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-08-01T20:54:07.705Z
+  modified: 2026-08-13T00:00:00.000Z
 ---
 
-**Stakeholder ruling, project lead, 2026-08-01 — option (b), "b for now"**
-(revisitable, not permanent).
+# ES5 completion scope includes dynamic code and `with`
 
-The goal **"100% test262 standalone pass rate for ES5 and untagged tests" is
-arithmetically unreachable** and has been restated as:
+**Current stakeholder ruling, project lead, 2026-08-13 — supersedes the
+temporary 2026-08-01 carveout below.**
 
-> **~95.4%, ex-dynamic-code** — target **8,150 of 8,545** reachable
-> (6,176 passing + 1,974 non-dynamic failures).
+The goal is **100% test262 conformance for the complete ES5-and-earlier corpus
+in both execution lanes**. At the current pinned corpus that means:
 
-## The 317 excluded files are DECLINE-BY-DEPENDENCY, not failures
+- host lane: **9,029 / 9,029 pass**;
+- standalone lane: **9,029 / 9,029 pass**;
+- zero failures, compile errors, compile timeouts, or skips in that population.
 
-| blocker | files | needs |
-|---|---:|---|
-| eval / `Function` | ~144 | real eval — the Acorn interpreter provider (#2928); minutes to compile, unaffordable per shard. A **packaging** problem (#2527) as much as semantics. |
-| `with` — object environment records with first-class Reference identity | ~162 | a **front-end substrate**, same weight class as the 795-file descriptor MOP |
-
-Near-disjoint; 13 files need both. **Funding eval does NOT deliver `with`** — the
-census originally filed `with` as "blocked on #2928", which was wrong and has
-been corrected on `main`.
+`eval`, indirect eval, the `Function` constructor, and `with` are all inside
+the completion boundary. They are implementation work, not exclusions.
 
 ## Operational consequences
 
-- **Do not dispatch agents at the 317.**
-- **Do not measure progress against 8,545, and do not report "100%".** A run at
-  95.4% is **success**, not a 4.6% shortfall.
-- **95.4% is an UPPER BOUND, not a forecast** — 202 files remain unpriced, and
-  diffuse usually means expensive per file.
+- Dispatch and prioritize `eval`, `Function`, and `with` defects normally.
+- Count every one of the 9,029 ES5-and-earlier rows in both lanes when reporting
+  completion.
+- Dynamic-source and `with` cohorts may be used as diagnostic partitions, but
+  never as denominator exclusions or a substitute completion target.
+- Do not report the former ~95.4% ex-dynamic-code target as current.
 
-## Why the exclusion is sound (this is the load-bearing control)
+## Superseded historical ruling
 
-A **non-circularity control**: the same detector run over the 6,176 goal-scope
-**passes** finds **248 files that use `eval`/`with`/`Function` and pass anyway**.
-So "dynamic code is fatal" was never assumed — the 317 were identified by
-**engine refusal**, not by mentioning the feature.
+On 2026-08-01 the goal was temporarily described as approximately 95.4%, with
+317 dynamic-code/`with` files excluded because the then-current eval packaging
+and object-environment-record substrate were considered too expensive. That was
+explicitly revisitable and is now obsolete. Its measurements remain useful as
+historical routing evidence only; they no longer define scope.
 
-Also: `with` is **168 of 175 host-lane too**, so it is shared front-end
-scope-analysis work, not a standalone-gap item. The agent that measured it
-recommended against funding it as a conformance lever at all.
+Historical provenance:
+`plan/log/analysis-2026-08-01-es5-untagged-tail-census.md`, baseline
+`d8c30f3b7df0`, js2 main `bc54c09da`.
 
-## Revisit trigger
+Current goal source: `plan/goals/es5.md`.
 
-Reopen option (a) if #2527 packaging ever makes real eval affordable per shard —
-that is the gate on the 144.
-
-Provenance: `plan/log/analysis-2026-08-01-es5-untagged-tail-census.md`, baselines
-`d8c30f3b7df0` (2026-08-01T17:14:04Z), js2 main `bc54c09da`.
-
-Related: [[reference_cached_baseline_jsonl_goes_stale_within_hours]],
+Related: [[project_test262_lane_parity_program]],
 [[feedback_measure_never_extrapolate]],
 [[feedback_file_defects_as_issue_markdown_not_tasklist]].

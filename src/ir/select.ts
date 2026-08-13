@@ -135,6 +135,7 @@ export type IrFallbackReason =
   | "primitive-method-unsupported"
   | "function-invocation-method-unsupported"
   | "logical-value-unsupported"
+  | "operand-coercion-unsupported"
   | "template-substitution-unsupported"
   | "error-constructor-unsupported"
   | "typed-array-constructor-unsupported"
@@ -516,6 +517,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
+      | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global",
   ) => boolean;
   /**
@@ -5421,6 +5423,59 @@ function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boole
   );
 }
 
+/**
+ * #4208 S4 — recognize only the ambient primitive-wrapper constructions used
+ * by the residual ES5 abstract-equality family. The constructor argument must
+ * already have the exact primitive family consumed by the legacy wrapper ABI;
+ * general constructor coercion remains legacy-owned.
+ */
+function selectorPrimitiveWrapperConstruction(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): ts.NewExpression | null {
+  const candidate = unwrapPhase1Parens(expression);
+  if (
+    !ts.isNewExpression(candidate) ||
+    !ts.isIdentifier(candidate.expression) ||
+    !selectorSeesAmbientWrapperConstructor(candidate.expression) ||
+    candidate.arguments?.length !== 1 ||
+    ts.isSpreadElement(candidate.arguments[0]!)
+  ) {
+    return null;
+  }
+  const argument = candidate.arguments[0]!;
+  const expectedFamily =
+    candidate.expression.text === "Boolean" ? "boolean" : candidate.expression.text === "Number" ? "number" : "string";
+  if (obviousSelectorValueFamily(argument, scope) !== expectedFamily) return null;
+  return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
+}
+
+/** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
+function selectorPrimitiveWrapperOrGenericBinary(
+  expr: ts.BinaryExpression,
+  binOp: ts.SyntaxKind,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (binOp === ts.SyntaxKind.EqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsToken) {
+    const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses);
+    const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses);
+    if ((leftWrapper === null) !== (rightWrapper === null)) {
+      const primitive = leftWrapper === null ? expr.left : expr.right;
+      const family = obviousSelectorValueFamily(primitive, scope);
+      if (family === "boolean" || family === "number") {
+        if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") !== true) {
+          return capabilityNo("operand-coercion-unsupported", "expr-wrapper-loose-equality-target", expr);
+        }
+        return isPhase1Expr(primitive, scope, localClasses);
+      }
+    }
+  }
+  if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+  return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+}
+
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
@@ -6593,8 +6648,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return isPhase1Expr(expr.left, scope, localClasses);
     }
-    if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-    return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+    return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
   if (ts.isConditionalExpression(expr)) {
     if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
@@ -7688,7 +7742,9 @@ export function buildLocalCallGraph(
           (localClasses.has(node.expression.text) ||
             (isKnownExternClass(node.expression.text) &&
               (currentModuleBindingResolver === null ||
-                currentModuleBindingResolver.isAmbientBinding(node.expression))))
+                currentModuleBindingResolver.isAmbientBinding(node.expression))) ||
+            (selectorSeesAmbientWrapperConstructor(node.expression) &&
+              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") === true))
         ) {
           // Slice 4: local class — `<Class>_new` has a stable signature.
           // Slice 10 (#1169i): known extern class — `<Class>_new` is

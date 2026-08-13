@@ -110,7 +110,7 @@ function expectPlanningError(run: () => unknown, code: IrPlanningIdentityInvaria
 }
 
 describe("#3520 exact class-shape identity", () => {
-  it("orders acyclic forward class-position dependencies by exact identity and leaves cycles stable", () => {
+  it("orders acyclic forward dependencies and keeps recursive-cell groups stable by exact identity", () => {
     const graph = fixture({
       "/repo/a.ts": `
         class Holder {

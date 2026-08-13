@@ -1105,6 +1105,98 @@ recursive class-layout cells for self and mutually recursive class fields;
 after that, extend the same proof to inheritance participants before nested and
 multi-source owners.
 
+### Recursive class-layout cell checkpoint (2026-08-13)
+
+Self and mutually recursive flat class graphs now cross the same prepare-before-
+emit boundary. `buildIrClassShapes` allocates compiler-branded, identity-stable
+descriptor cells for every eligible exact class before projecting constructor,
+field, and method positions. It fills those cells once, removes any incomplete
+cell plus every transitive consumer before publication, and preserves source
+order in the public sidecar. Selection can therefore resolve `Node.next: Node`
+and `Left.right: Right -> Right.left: Left` without a name fallback or a late
+body-time ABI repair.
+
+The physical layout finalizer now admits the same exact recursive field edges.
+It mutates only the pre-existing field object after every struct is registered,
+so WasmGC forms the required recursive type group without replacing a Program
+ABI type cell or changing type order. Inheritance participants, nested/class-
+expression owners, optional/union/generic annotations, inferred constructor
+fields, externref-backed targets, and multi-source graphs remain excluded.
+
+Prepared ownership remains fail-closed. Recursive shape cells carry a private
+compiler symbol; the immutable prepared-data copier may preserve a back-edge
+only through a structurally valid branded class shape. Arbitrary object, map,
+set, and class-lookalike cycles still raise `invalid-prepared-data`. Backend
+legality and linear-memory layout discovery now track visited exact shape
+objects, so a valid class cycle terminates while visiting every nominal class
+once. A unit test proves the linear planner interns two distinct layouts for a
+mutual cycle; linear legality continues to reject the unsupported `class` atom
+with finite, stable diagnostics rather than recursing.
+
+The executable GC/standalone matrix covers both a mutual cycle and a self
+cycle. The mutual fixture prepares **six** terminal source bodies (`Left_new`,
+`Left_attach`, `Left_value`, `Right_new`, `Right_attach`, and `run`) with
+`direct=0, IR=1`; the self fixture prepares **four** (`Node_new`, `Node_link`,
+`Node_sum`, and `run`) with the same counters. Direct class/function poison is
+active, both binaries validate, and runtime returns `14` and `7`. Exact WAT
+assertions require nullable nominal field refs plus typed `struct.get`/
+`struct.set` and direct calls; the migrated bodies reject extern conversions,
+casts/tests, and indirect calls. The mutual-cycle IR artifact is no larger than
+the same-source direct artifact in either target.
+
+The focused R2/R3 completion matrix is green at **126/126**. The complete class
+file is **42/42**, exact shape/program ownership suites are **29/29**, and the
+hybrid plus strict shadows remain **37/37 IR, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. Ordinary and shape-diagnostic fallback gates report zero
+unintended/post-claim/module-level increases and zero attributed body-shape
+rejections. Typecheck, changed-file lint, and formatting pass. Wider
+equivalence, cross-backend, optimization-retirement, integrity, adoption,
+oracle, and budget gates remain required before publication.
+
+No shared direct implementation is deleted in this checkpoint. Inheritance
+participants and the other excluded class families still consume it. The next
+serial R3 transaction extends exact field-layout finalization through local
+inheritance without allowing recursive heritage, then tackles nested/class-
+expression ownership. The obsolete direct implementation is removed in the
+same later transaction that proves its last consumer is gone.
+
+### Inherited class-layout checkpoint (2026-08-13)
+
+Exact forward class fields now remain typed through local user inheritance.
+The physical class collector deliberately shares each parent's `FieldDef`
+objects with its descendants, so the post-collection finalizer updates a
+parent-owned forward slot once and every already-collected subtype observes
+the same `(ref null $Target)` storage. A forward field declared by the child is
+finalized independently. No struct is replaced, no type is reordered, and
+externref-backed, nested, generic, optional, union, or inferred layouts remain
+outside this transaction.
+
+Derived classes now receive the same identity-stable provisional class-shape
+cells as flat classes. Projection adds the exact heritage parent as a
+dependency, guaranteeing that implicit constructor forwarding reads a fully
+populated parent ABI while recursive field edges still use stable cells. The
+existing earlier-parent rule rejects later, foreign, builtin, and unresolved
+heritage, so this does not admit recursive inheritance or widen the supported
+extends surface.
+
+The GC/standalone proof uses an exact three-level hierarchy. `Base.current`
+references later `Value`, `Child.other` references the same target, and
+`Value` itself extends an earlier `Amount`. All six class terminals plus the
+top-level caller record `legacyBodyEmitted:false, irBodyEmitted:true` while
+both direct-body poison seams are active. Direct and IR binaries validate and
+return `13`; the IR artifact is no larger than direct. WAT requires exact typed
+storage in both `Base` and the inherited prefix of `Child`, rejects externref
+and indirect dispatch in migrated bodies, and pins the derived initializer to
+one static parent narrowing plus one direct parent call before its typed
+`struct.set`.
+
+The complete class compile-once file passes **42/42** after the change. This
+checkpoint does not delete a shared direct implementation: nested/class-
+expression owners and the remaining typed fallback policies still consume the
+class collector/body machinery. After publication, the next serial R3 family
+is exact nested/class-expression ownership; shared code is removed only with
+the last proven consumer.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

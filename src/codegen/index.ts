@@ -38,6 +38,7 @@ import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
+  IR_CLASS_SHAPE_CELL,
   irDynamic,
   isDynamic,
   irVal,
@@ -1297,6 +1298,37 @@ function buildIrClassShapes(
     declarationsInCollectionOrder,
     identityContext,
   );
+  // Local classes are allocated as identity-stable descriptor cells
+  // before any member type is projected. TypeScript permits self-recursive and
+  // mutually recursive annotations, so a later class must be resolvable while
+  // its descriptor is still being filled. The cells are planning-only: only
+  // completely populated dependency-closed shapes are published below.
+  const provisionalEntries = new Map<IrClassId, IrClassShapeEntry>();
+  const populatedProvisionalIds = new Set<IrClassId>();
+  for (const { classId, declaration } of declarationsInCollectionOrder) {
+    if (!ts.isClassDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
+      continue;
+    }
+    const className = declaration.name.text;
+    if (
+      !ctx.classSet.has(className) ||
+      !ctx.structFields.has(className) ||
+      ctx.classExternrefBackedSet.has(className)
+    ) {
+      continue;
+    }
+    const shape: import("../ir/nodes.js").IrClassShape = {
+      [IR_CLASS_SHAPE_CELL]: true,
+      classId,
+      className,
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    };
+    const entry = { classId, legacyName: className, declaration, shape };
+    provisionalEntries.set(classId, entry);
+    out.set(classId, entry);
+  }
   for (const { classId, declaration: stmt } of declarations) {
     const className = ts.isClassExpression(stmt) ? ctx.anonClassExprNames.get(stmt) : stmt.name?.text;
     if (!className) continue;
@@ -1670,7 +1702,70 @@ function buildIrClassShapes(
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
-    out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
+    const provisional = provisionalEntries.get(classId);
+    if (provisional) {
+      Object.assign(provisional.shape, shape);
+      populatedProvisionalIds.add(classId);
+    } else {
+      out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
+    }
+  }
+  for (const classId of provisionalEntries.keys()) {
+    if (!populatedProvisionalIds.has(classId)) out.delete(classId);
+  }
+
+  // A provisional target can fail after another descriptor already consumed
+  // its cell. Remove that owner as well; publishing a dangling class identity
+  // would turn an atomic typed fallback into a late lowering invariant.
+  const directShapeDependencies = (shape: import("../ir/nodes.js").IrClassShape): ReadonlySet<IrClassId> => {
+    const dependencies = new Set<IrClassId>();
+    const seen = new Set<IrType>();
+    const addType = (type: IrType): void => {
+      if (seen.has(type)) return;
+      seen.add(type);
+      switch (type.kind) {
+        case "class":
+          dependencies.add(type.shape.classId);
+          return;
+        case "object":
+          for (const field of type.shape.fields) addType(field.type);
+          return;
+        case "vec":
+          addType(type.elementType);
+          return;
+        case "closure":
+        case "callable":
+          for (const parameter of type.signature.params) addType(parameter);
+          if (type.signature.returnType) addType(type.signature.returnType);
+          return;
+        case "union":
+          for (const member of type.members) addType(member);
+          return;
+        case "boxed":
+          addType(type.inner);
+          return;
+        default:
+          return;
+      }
+    };
+    for (const field of shape.fields) addType(field.type);
+    for (const parameter of shape.constructorParams) addType(parameter);
+    for (const method of shape.methods) {
+      for (const parameter of method.params) addType(parameter);
+      if (method.returnType) addType(method.returnType);
+    }
+    if (shape.parent) dependencies.add(shape.parent.classId);
+    return dependencies;
+  };
+  let removedDanglingShape = true;
+  while (removedDanglingShape) {
+    removedDanglingShape = false;
+    for (const [classId, entry] of out) {
+      if ([...directShapeDependencies(entry.shape)].some((dependency) => !out.has(dependency))) {
+        out.delete(classId);
+        removedDanglingShape = true;
+      }
+    }
   }
   // Dependency construction order is an internal planning detail. Publish the
   // registry in the authoritative collection order so type/global planning and
