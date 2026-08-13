@@ -1560,6 +1560,21 @@ class _HostTest262Error extends Error {
 }
 _test262ErrorConstructors.add(_HostTest262Error);
 
+/**
+ * (#4394) Every module-declared `Test262Error` carrier that has actually
+ * constructed an error through `__new_Test262Error_ctor`.
+ *
+ * The constructed value is a real host `_HostTest262Error` — that is what makes
+ * `String(err)`, `.stack` and the exception bridge work — so its prototype
+ * chain can never reach the module's own compiled closure, and
+ * `err instanceof Test262Error` answered `false` for an error that plainly is
+ * one. Recording the carrier the construction was attributed to lets
+ * `_instanceofResult` close exactly that gap and nothing wider: an unrelated
+ * closure is not in the set, and a value that is not a `_HostTest262Error` is
+ * still decided by the ordinary prototype walk.
+ */
+const _test262ErrorModuleCarriers = new WeakSet<object>();
+
 // (#3369) Callback bridges must remain usable while the evaluated program has
 // installed non-writable numeric properties on Array.prototype. `[].push(x)`
 // and direct indexed assignment perform [[Set]] and can be rejected by such an
@@ -2427,6 +2442,19 @@ function _instanceofResult(
       }
       return 0;
     }
+  }
+
+  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier. The
+  // error is a host `_HostTest262Error`, so the prototype walk below can never
+  // reach a compiled closure; the carrier set records exactly which closures
+  // have minted one. See `_test262ErrorModuleCarriers`.
+  if (
+    v instanceof _HostTest262Error &&
+    rawTarget !== null &&
+    (typeof rawTarget === "object" || typeof rawTarget === "function") &&
+    _test262ErrorModuleCarriers.has(rawTarget as object)
+  ) {
+    return 1;
   }
 
   try {
@@ -13005,6 +13033,15 @@ assert._isSameValue = isSameValue;
         return (msg: any, ctor: any): any => {
           const err = new _HostTest262Error(msg == null ? undefined : String(msg));
           if (ctor != null) {
+            // (#4394) Remember the carrier so `err instanceof Test262Error`
+            // can resolve against it — see `_test262ErrorModuleCarriers`.
+            if (typeof ctor === "object" || typeof ctor === "function") {
+              try {
+                _test262ErrorModuleCarriers.add(ctor as object);
+              } catch {
+                /* a non-weakly-holdable carrier simply keeps the old answer */
+              }
+            }
             try {
               Object.defineProperty(err, "constructor", {
                 value: ctor,
@@ -14966,6 +15003,15 @@ assert._isSameValue = isSameValue;
             }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
+            // (#4394) `err instanceof Test262Error` where the module DECLARES
+            // its own `function Test262Error` (sta.js — i.e. every assembled
+            // test262 module). The value is a real host `_HostTest262Error`
+            // (that is what makes `String(err)` and the exception bridge work),
+            // so its prototype chain can never reach the module's compiled
+            // closure. Neither the subclass registry nor `globalThis` nor
+            // `_userClassTags` knows about it, so the check answered `false` for
+            // an error that IS a Test262Error. Recognise the host class by name.
+            if (ctorName === "Test262Error" && v instanceof _HostTest262Error) return 1;
           } catch {
             /* fall through to user-class tag check */
           }

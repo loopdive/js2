@@ -85,6 +85,10 @@ files:
   - src/codegen/closures.ts
   - src/runtime/native-function-source.ts
   - tests/issue-4394-callback-bridge-constructible.test.ts
+  - src/codegen/global-environment.ts
+  - src/codegen/object-ops.ts
+  - tests/issue-4394-global-object-define-property.test.ts
+  - tests/issue-4394-test262-error-instanceof.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -527,6 +531,41 @@ module, it is not the global object.
 94 → **96** pass (`verifyProperty-configurable-object.js`,
 `propertyhelper-verifyconfigurable-configurable-object.js`), 0 lost.
 equivalence-gate, all 8 shards: no new regressions.
+
+## Root cause 11 (1 test) — `instanceof` against a module-declared `Test262Error`
+
+Root cause 1 fixed `err.constructor === Test262Error`, but `instanceof` walks
+the PROTOTYPE CHAIN, not `.constructor` — and the constructed value is
+deliberately a real host `Error` subclass (that is what makes `String(err)`,
+`.stack` and the exception bridge work), so its chain can never reach the
+module's compiled closure.
+
+`__instanceof`'s three existing resolutions all miss it: the subclass registry
+does not know the host class, the sandbox `globalThis` has no `Test262Error`,
+and `_userClassTags` only covers compiled class instances. `assert(error
+instanceof Test262Error)` therefore answered `false` for an error that plainly
+is one.
+
+### Fix
+
+`__new_Test262Error_ctor` already receives the module's own carrier (that is how
+the `.constructor` stamp works). It now also records the carrier in a WeakSet,
+and `_instanceofResult` answers `true` when the value is a host
+`_HostTest262Error` **and** the RHS is a carrier that has actually minted one.
+Both halves are required, which is what keeps it narrow — an unrelated compiled
+constructor is not in the set, and a non-`_HostTest262Error` value is still
+decided by the ordinary prototype walk.
+
+### Measured
+
+96 → **97** pass (`asyncHelpers-asyncTest-func-throws-sync.js`), 0 lost.
+equivalence-gate, all 8 shards: no new regressions.
+
+`asyncHelpers-asyncTest-rejects-non-callable.js` has the same assertion and did
+NOT flip — there the error crosses into a module-declared `$DONE` through
+`asyncTest`'s callback edge, and arrives already degraded. That is the same
+value-degradation-across-a-callback-boundary defect recorded under the
+`detachArrayBuffer` heading below, not a gap in this repair.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 
