@@ -2819,3 +2819,79 @@ would. Worth taking even if the cascade work slips.
 - Two chunks OOM-killed (exit 137) on the first attempt at
   `maxForks=2` with other agents live; re-run one file at a time they pass in
   **both** flag positions, so the kill is container memory, not the change.
+
+## 2026-08-13 (21) — MEASURED: the stack removes 28.6 % of executed helper calls
+
+The first non-null in this issue since #4217, and it is measured with a new
+instrument that does not depend on the machine being quiet.
+
+### Why a new instrument
+
+Every verdict in this file rests on profile bucket share with order-reversed
+blocks. Share is a RATIO, so it survives a uniformly slower box — but contention
+is **not** uniform (it perturbs memory-bound code and GC timing more than
+compute-bound code), and during this very run the same 300-iteration workload
+took **36 s, 46 s, 50 s and 71 s**. "More robust than wall clock" was being
+treated as "sound", and it is not.
+
+`src/codegen/exec-census.ts` (`JS2WASM_EXEC_CENSUS=<substr>,…`) counts **executed
+calls** instead. Exact, identical every run, immune to load. It reads
+`__extern_get` at **506,752 calls/parse**, matching the independent per-key cache
+census in entry (12) to the call — which is what validates it.
+
+**Why the existing `JS2WASM_ALLOC_CENSUS_CALLS` is broken, now diagnosed** (entry
+16 left this open and withdrew a wrong guess): it splices its increment **at each
+call site**, landing inside the callee's argument sequence. `applyRefNullFixups`
+walks backwards from a `call` mapping ~one instruction per parameter, so four
+extra instructions desynchronise it and it retypes a `ref.null.extern` against
+the wrong parameter. **Incrementing at FUNCTION ENTRY is not adjacent to any
+call**, so no argument sequence is disturbed. That is the whole design
+difference, and it is the fix for the older census too.
+
+### The result — all five flags on, acorn self-parse, checksum 422 both sides
+
+| helper | OFF | ON | Δ |
+| --- | ---: | ---: | ---: |
+| `__to_primitive` | 568,788 | **268** | **−100.0 %** |
+| `__unbox_number` | 883,318 | 314,798 | −64.4 % |
+| `__str_flatten` | 516,717 | 421,019 | −18.5 % |
+| `__is_truthy` | 997,454 | 997,454 | 0 |
+| `__extern_get` | 506,752 | 506,752 | 0 |
+| `__box_number` | 489,166 | 489,166 | 0 |
+| `__str_equals` | 254,976 | 254,976 | 0 |
+| **total** | **4,312,736** | **3,079,998** | **−1,232,738 (−28.6 %)** |
+
+Binary 2,459,686 → 2,452,499.
+
+`__to_primitive` and `__unbox_number` fall by **exactly 568,520 each** — proof
+they were a paired round trip, which entry (15) predicted statically and the
+profile could only hint at.
+
+### It cross-validates the profile rather than replacing it
+
+The order-reversed profile of the same stack put `cast-convert` at **2.13 % ON vs
+3.94 % / 3.96 % OFF (−1.83 pp)**, with the two OFF blocks agreeing to 0.02 pp,
+and `string-runtime` at **3.10 % vs 3.56 % / 3.84 % (−0.60 pp)**. Since
+`__to_primitive`'s 568,788 calls were 1.84 % of runtime, removing them predicts
+almost exactly the observed cast-convert drop. **Two independent instruments,
+one answer.** Use counts for the verdict and the profile for attribution.
+
+### What it proves negatively, and exactly
+
+- **`__extern_get` unchanged at 506,752.** The call-site inline cache patched
+  1,497 sites and eliminated **zero** calls — it speculates ahead of
+  `__get_member_<name>`, not `__extern_get`. That is the sixth null on this
+  bucket and the first one that is exact rather than inferred.
+- **`__box_number` unchanged.** The i31 slice guards an *operand*; it does not
+  reduce boxing.
+- **`__is_truthy` unchanged at 997,454 — the largest single number on the
+  board**, and nothing in this session touched it. It is the unowned
+  `dynamic-eq` bucket from entry (17), and it is now the clearest target in the
+  program.
+
+### Standing method change
+
+**Counts are the verdict; the profile is for attribution.** A count answers "does
+the emitted code do less work", which is what an optimisation actually claims.
+Wall clock on this box is not evidence, and bucket share is evidence only when
+the blocks replicate.
