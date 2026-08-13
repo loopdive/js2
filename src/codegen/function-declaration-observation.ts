@@ -203,9 +203,10 @@ export function localBindingShadowsCapturingFunction(
     if (initializer && ts.isFunctionExpression(initializer) && initializer.name?.text === name) return false;
     return true;
   }
-  if (!ctx.nestedFuncCaptures.has(name)) return false;
-  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
-  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
+  // Call syntax already proves the local is being invoked. Redirect only when
+  // the conflicting direct body would also prepend captures, which is the
+  // cross-frame corruption this predicate guards against.
+  return ctx.nestedFuncCaptures.has(name) || (declaration !== undefined && ts.isParameter(declaration));
 }
 
 /** Allocate stable lexical storage for identity-observed FunctionDeclarations. */
