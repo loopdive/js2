@@ -22,7 +22,7 @@ import {
   type IrTypeRef,
 } from "./nodes.js";
 import type { IrClosureLowering, IrRefCellLowering } from "./lower.js";
-import type { FuncTypeDef, StructTypeDef, ValType, WasmFunction } from "./types.js";
+import type { FieldDef, FuncTypeDef, StructTypeDef, ValType, WasmFunction } from "./types.js";
 
 export interface PreparedClosureRegistry {
   resolveBase(signature: IrClosureSignature, mode?: ClosureAllocationMode): IrClosureLowering | null;
@@ -35,6 +35,48 @@ export interface PreparedClosureRegistry {
 
 export interface PreparedRefCellRegistry {
   resolveIr(inner: IrType): IrRefCellLowering | null;
+}
+
+function preparedObjectLegacyKey(fields: readonly FieldDef[]): string {
+  return fields
+    .map(({ name, type }) =>
+      type.kind === "ref" || type.kind === "ref_null" ? `${name}:${type.kind}:${type.typeIdx}` : `${name}:${type.kind}`,
+    )
+    .join("|");
+}
+
+/**
+ * Allocate a closed object layout before closure signatures are frozen. This
+ * mirrors ObjectStructRegistry's anonymous-struct contract, including nullable
+ * reference fields and legacy hash deduplication, but is intentionally reached
+ * only from prepare-time closure type resolution.
+ */
+function prepareClosureObjectType(
+  ctx: CodegenContext,
+  type: Extract<IrType, { readonly kind: "object" }>,
+  refCells?: PreparedRefCellRegistry,
+): ValType {
+  const fields: FieldDef[] = type.shape.fields.map((field) => {
+    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells);
+    if (physical.kind === "ref") physical = { kind: "ref_null", typeIdx: physical.typeIdx };
+    return { name: field.name, type: physical, mutable: true };
+  });
+  const key = preparedObjectLegacyKey(fields);
+  const existingName = ctx.anonStructHash.get(key);
+  if (existingName !== undefined) {
+    const existingIdx = ctx.structMap.get(existingName);
+    if (existingIdx === undefined) throw new Error("prepared closure object hash lost its struct allocation");
+    return { kind: "ref", typeIdx: existingIdx };
+  }
+
+  const name = `__anon_${ctx.anonTypeCounter++}`;
+  const typeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({ kind: "struct", name, fields } as StructTypeDef);
+  ctx.structMap.set(name, typeIdx);
+  ctx.typeIdxToStructName.set(typeIdx, name);
+  ctx.structFields.set(name, fields);
+  ctx.anonStructHash.set(key, name);
+  return { kind: "ref", typeIdx };
 }
 
 export function lowerPreparedClosureSupportType(
@@ -71,6 +113,7 @@ export function lowerPreparedClosureSupportType(
       ),
     };
   }
+  if (type.kind === "object") return prepareClosureObjectType(ctx, type, refCells);
   if (type.kind === "boxed" && refCells) {
     const cell = refCells.resolveIr(type.inner);
     if (cell) return { kind: "ref", typeIdx: cell.typeIdx };
@@ -199,6 +242,90 @@ export function prepareDependencyCompleteClosureSupport(
     readonly request: ProgramAbiRefCellSupportRequest;
     readonly publish: (refs: readonly IrTypeRef[]) => void;
   }> = [];
+
+  const objectTypes = new Map<Extract<IrType, { readonly kind: "object" }>, StructTypeDef>();
+  const seenObjectSupportTypes = new Set<IrType>();
+  const collectObjectSupport = (type: IrType): void => {
+    if (seenObjectSupportTypes.has(type)) return;
+    seenObjectSupportTypes.add(type);
+    switch (type.kind) {
+      case "object": {
+        for (const field of type.shape.fields) collectObjectSupport(field.type);
+        const physical = prepareClosureObjectType(ctx, type, refCells);
+        if (physical.kind !== "ref" && physical.kind !== "ref_null") {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "resolve",
+            "prepared closure object support did not produce a reference type",
+          );
+        }
+        const struct = ctx.mod.types[physical.typeIdx];
+        if (!struct || struct.kind !== "struct") {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "resolve",
+            "prepared closure object support allocated no exact struct layout",
+          );
+        }
+        objectTypes.set(type, struct);
+        return;
+      }
+      case "closure":
+      case "callable":
+        for (const param of type.signature.params) collectObjectSupport(param);
+        if (type.signature.returnType) collectObjectSupport(type.signature.returnType);
+        return;
+      case "vec":
+        collectObjectSupport(type.elementType);
+        return;
+      case "boxed":
+        collectObjectSupport(type.inner);
+        return;
+      case "union":
+        for (const member of type.members) collectObjectSupport(member);
+        return;
+      case "val":
+      case "string":
+      case "class":
+      case "extern":
+      case "dynamic":
+        return;
+    }
+  };
+
+  for (const { fn } of entries) {
+    for (const param of fn.params) collectObjectSupport(param.type);
+    for (const result of fn.resultTypes) collectObjectSupport(result);
+    for (const capture of fn.closureSubtype?.captureFieldTypes ?? []) collectObjectSupport(capture);
+    for (const block of fn.blocks) {
+      for (const type of block.blockArgTypes) collectObjectSupport(type);
+      for (const instr of block.instrs) {
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.resultType) collectObjectSupport(nested.resultType);
+          if (nested.kind === "closure.new") {
+            for (const param of nested.signature.params) collectObjectSupport(param);
+            if (nested.signature.returnType) collectObjectSupport(nested.signature.returnType);
+            for (const capture of nested.captureFieldTypes) collectObjectSupport(capture);
+          }
+        });
+      }
+    }
+  }
+
+  if (objectTypes.size > 0) {
+    const programAbiTypes = ctx.programAbiTypes;
+    if (!programAbiTypes) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared object support requires one canonical Program ABI type registry",
+      );
+    }
+    const requests = [...objectTypes].map(([objectType, structType]) => ({ objectType, structType }));
+    const support = programAbiTypes.prepareObjectSupportTypes(requests);
+    support.forEach((entry, index) => typeRefs.set(requests[index]!.objectType, [entry.objectTypeRef]));
+  }
+
   const scheduleRefCell = (
     boxedType: Extract<IrType, { readonly kind: "boxed" }>,
     publish: (refs: readonly IrTypeRef[]) => void,

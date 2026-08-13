@@ -1507,6 +1507,42 @@ object-literal methods/accessors, and wider cross-owner callable escapes remain
 the next serial R3 families; the shared direct closure implementation still has
 live typed consumers and is not deleted in this checkpoint.
 
+### Flat destructured closure-parameter checkpoint (2026-08-13)
+
+Closure literals may now receive flat object and numeric-array binding patterns
+through the same prepared component as their terminal owner. The lifted body
+keeps one synthetic parameter carrying the complete aggregate, then reuses the
+ordinary IR binding-pattern lowering to project each leaf. Capture analysis
+records every pattern leaf as locally owned, so renamed fields and elisions do
+not become phantom outer captures.
+
+The admitted object ABI is intentionally checker-independent and bounded to a
+non-empty inline type literal with unique required primitive fields. Numeric
+arrays use the existing nullable vector carrier. Named object types, nested or
+defaulted patterns, optional/rest parameters, and non-numeric arrays remain on
+the direct route until closure signatures receive their planned position-type
+sidecar or the corresponding JavaScript calling convention is prepared.
+
+Closed object layouts used by prepared closure signatures are now allocated
+before sealing and registered under exact, remappable Program ABI type refs.
+Dependency discovery accepts `object.new/get/set` only when the final object
+type identity carries that evidence. A missing ref and a structurally equal but
+distinct type both remain blocked; the physical allocator object may be
+remapped without losing the symbolic binding. The broader sealing diagnostic
+also reports exact dependency failures for ordinary owners instead of hiding
+them behind a generic late artifact error.
+
+Anti-vacuity coverage runs renamed/captured object destructuring and numeric
+array destructuring with an elision in both GC and standalone. Direct-body
+poison proves `run` and its lifted closure are IR-owned, runtime results match
+same-source direct builds, emitted WAT contains the expected `struct.get` or
+`array.get` plus `call_ref`, and each optimized IR binary is no larger than its
+direct oracle. Focused closure-support and dependency coverage is **41/41**.
+Defaulted closure parameters, object-literal methods/accessors, and wider
+cross-owner callable escapes remain the next serial R3 families. The shared
+direct closure implementation still has those live typed consumers, so it is
+not deleted in this checkpoint.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

@@ -5646,7 +5646,7 @@ function lowerClosureCall(
   for (let i = 0; i < argExprs.length; i++) {
     const expected = signature.params[i]!;
     const argVal = lowerExpr(argExprs[i]!, cx, expected);
-    if (!irTypeEquals(cx.builder.typeOf(argVal), expected)) {
+    if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       throw new Error(
         `ir/from-ast: closure arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
       );
@@ -11124,8 +11124,8 @@ function allocateLoweredLiftedFunctionArtifact(
  */
 function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, cx: LowerCtx): IrValueId {
   const params: IrType[] = expr.parameters.map((p) => {
-    if (!ts.isIdentifier(p.name) || !p.type) {
-      throw new Error(`ir/from-ast: closure params must be Identifier-named with annotations (${cx.funcName})`);
+    if (!p.type) {
+      throw new Error(`ir/from-ast: closure params must have annotations (${cx.funcName})`);
     }
     // #2713 — rest (`...xs`), default (`x = 5`) and optional (`x?`) params keep
     // an Identifier name, so the gate above lets them through and the lowering
@@ -11137,7 +11137,8 @@ function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, 
     if (p.questionToken || p.dotDotDotToken || p.initializer) {
       throw new Error(`ir/from-ast: closure rest/default/optional param not in IR scope (${cx.funcName})`);
     }
-    return typeNodeToIr(p.type, `param ${p.name.text} of ${cx.funcName}.<closure>`);
+    const description = ts.isIdentifier(p.name) ? p.name.text : "<pattern>";
+    return closureParameterTypeToIr(p.type, cx, `param ${description} of ${cx.funcName}.<closure>`);
   });
   if (!expr.type) {
     throw new Error(`ir/from-ast: closure must have a return type annotation (${cx.funcName})`);
@@ -11146,6 +11147,45 @@ function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, 
   const signature: IrClosureSignature = { params, returnType };
 
   return lowerClosureExpressionWithSignature(expr, signature, undefined, cx);
+}
+
+/**
+ * Resolve the checker-independent closure-parameter surface admitted by the
+ * selector. Named interfaces/classes remain on the planned direct route until
+ * lifted closures receive the top-level position-type sidecar.
+ */
+function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string): IrType {
+  if (isPrimitiveTypeNode(node)) return typeNodeToIr(node, where);
+  if (ts.isArrayTypeNode(node) && node.elementType.kind === ts.SyntaxKind.NumberKeyword) {
+    const elementValType: ValType = { kind: "f64" };
+    const elementType = irVal(elementValType);
+    if (!cx.resolver?.resolveVecForElement?.(elementValType)) {
+      throw new Error(`ir/from-ast: resolver cannot register numeric closure parameter vec (${where})`);
+    }
+    return irVec(elementType, true);
+  }
+  if (ts.isTypeLiteralNode(node) && node.members.length > 0) {
+    const fields: { name: string; type: IrType }[] = [];
+    const seen = new Set<string>();
+    for (const member of node.members) {
+      if (!ts.isPropertySignature(member) || member.questionToken || !member.type) {
+        throw new Error(`ir/from-ast: unsupported closure object parameter member (${where})`);
+      }
+      const name = ts.isIdentifier(member.name)
+        ? member.name.text
+        : ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+          ? member.name.text
+          : null;
+      if (name === null || seen.has(name) || !isPrimitiveTypeNode(member.type)) {
+        throw new Error(`ir/from-ast: unsupported closure object parameter shape (${where})`);
+      }
+      seen.add(name);
+      fields.push({ name, type: typeNodeToIr(member.type, `${where}.${name}`) });
+    }
+    fields.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+    return { kind: "object", shape: { fields } };
+  }
+  throw new Error(`ir/from-ast: unsupported closure parameter type (${where})`);
 }
 
 /**
@@ -11445,12 +11485,14 @@ function liftClosureBody(
     scope.set(expr.name.text, { kind: "local", value: selfV, type: selfType });
   }
 
+  const pendingDestructures: { pattern: ts.BindingPattern; value: IrValueId }[] = [];
   for (let i = 0; i < expr.parameters.length; i++) {
     const p = expr.parameters[i]!;
-    const name = (p.name as ts.Identifier).text;
     const t = signature.params[i]!;
+    const name = ts.isIdentifier(p.name) ? p.name.text : `__pattern_param_${i}`;
     const v = builder.addParam(name, t);
-    scope.set(name, { kind: "local", value: v, type: t });
+    if (ts.isIdentifier(p.name)) scope.set(name, { kind: "local", value: v, type: t });
+    else pendingDestructures.push({ pattern: p.name, value: v });
   }
 
   builder.openBlock();
@@ -11516,6 +11558,10 @@ function liftClosureBody(
     allocRegistry: cx.allocRegistry,
   };
 
+  for (const pending of pendingDestructures) {
+    lowerBindingPattern(pending.pattern, pending.value, innerCx);
+  }
+
   if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
     if (signature.returnType === null) {
       if (!allowConciseVoidBody) {
@@ -11571,7 +11617,7 @@ function analyseCaptures(
   const ownParams = new Set<string>();
   if (ts.isFunctionExpression(fn) && fn.name) ownParams.add(fn.name.text);
   for (const p of fn.parameters) {
-    if (ts.isIdentifier(p.name)) ownParams.add(p.name.text);
+    collectBindingNames(p.name, ownParams);
   }
 
   const visit = (node: ts.Node): void => {
@@ -11663,6 +11709,17 @@ function analyseCaptures(
     });
   }
   return captures;
+}
+
+/** Collect every identifier leaf owned by one parameter binding. */
+function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, out);
+  }
 }
 
 // ---------------------------------------------------------------------------

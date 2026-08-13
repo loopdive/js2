@@ -4772,11 +4772,15 @@ function isPhase1ClosureLiteral(
     inner.add(expr.name.text);
   }
   for (const p of expr.parameters) {
-    if (!ts.isIdentifier(p.name)) return shapeNo("closure-param-name", p.name);
     if (p.questionToken || p.dotDotDotToken || p.initializer) return shapeNo("closure-param-shape", p);
-    if (!p.type || annotationToResolvedKind(p.type) === null) return shapeNo("closure-param-type", p.type ?? p);
-    if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
-    inner.add(p.name.text);
+    if (!p.type || !isPhase1ClosureParameterTypeNode(p.type)) return shapeNo("closure-param-type", p.type ?? p);
+    if (ts.isIdentifier(p.name)) {
+      if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
+      inner.add(p.name.text);
+      continue;
+    }
+    if (!isPhase1BindingPattern(p.name, inner)) return shapeNo("closure-param-name", p.name);
+    collectPatternNames(p.name, inner);
   }
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
@@ -4811,6 +4815,39 @@ function isPhase1ReturnedClosureLiteral(
   localClasses: ReadonlySet<string>,
 ): boolean {
   return isPhase1ClosureLiteral(expr, scope, localClasses);
+}
+
+/**
+ * Closure signatures are resolved inside AST-to-IR rather than through the
+ * top-level position-type planner. Keep the widened parameter family limited
+ * to shapes that can therefore be reconstructed without checker state.
+ */
+function isPhase1ClosureParameterTypeNode(node: ts.TypeNode): boolean {
+  const primitive = annotationToResolvedKind(node);
+  if (primitive === "f64" || primitive === "bool" || primitive === "string") return true;
+  if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
+  if (!ts.isTypeLiteralNode(node) || node.members.length === 0) return false;
+  const names = new Set<string>();
+  for (const member of node.members) {
+    if (
+      !ts.isPropertySignature(member) ||
+      member.questionToken ||
+      !member.type ||
+      (member.type.kind !== ts.SyntaxKind.NumberKeyword &&
+        member.type.kind !== ts.SyntaxKind.BooleanKeyword &&
+        member.type.kind !== ts.SyntaxKind.StringKeyword)
+    ) {
+      return false;
+    }
+    const name = ts.isIdentifier(member.name)
+      ? member.name.text
+      : ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+        ? member.name.text
+        : null;
+    if (name === null || names.has(name)) return false;
+    names.add(name);
+  }
+  return true;
 }
 
 /**
