@@ -742,8 +742,11 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       function answer() {
         return 42;
       }
+      function directOnly() {
+        return 1;
+      }
       const callable = answer;
-      if (callable() !== 42) throw new Error("function value changed");
+      if (callable() + directOnly() !== 43) throw new Error("function value changed");
     `;
     const direct = await compile(source, {
       allowJs: true,
@@ -773,6 +776,10 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(outcome(result, "answer")).toMatchObject({
       legacyBodyEmitted: true,
       irBodyEmitted: false,
+    });
+    expect(outcome(result, "directOnly")).toMatchObject({
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
     });
   });
 

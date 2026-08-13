@@ -1675,9 +1675,19 @@ The next merge-group rerun exposed the complementary only-strict row
 same-named declaration from a different prior source shape, so even structural
 source-position comparison is not sufficient for the current function's
 syntactic self-read. The guard now recognizes a same-name self receiver
-conservatively and, for the rare source that observes this legacy activation,
-keeps every top-level function direct. This avoids relying on stale checker
-identity for either the observing function or a sibling value target. Focused
-incremental coverage now pins both complementary semantics: a strict eval in a
-sloppy script exposes its non-strict caller without throwing, while an
-inherited-strict eval callback must throw when the callee reads `caller`.
+conservatively. The observing function stays direct through that exact guard;
+runtime-materialized sibling targets also stay direct because they share the
+caller-activation hand-off, while unrelated direct-call-only functions remain
+eligible for the ordinary IR overlay. This avoids relying on stale checker
+identity without changing unrelated Test262 harness bodies. Focused incremental coverage pins
+both complementary semantics: a strict eval in a sloppy script exposes its
+non-strict caller without throwing, while an inherited-strict eval callback
+must throw when the callee reads `caller`.
+
+The broader every-top-level-function withdrawal was tried after the `11gs`
+queue failure and removed after the next merged-state run regressed
+`built-ins/Function/15.3.5.4_2-12gs.js`: it changed the Wasm for unrelated
+harness callables and made the sloppy caller appear strict. The focused parity
+fixture therefore carries a direct-call-only sibling and requires it to stay
+IR-emitted beside the direct observing function and direct function-value
+target; it is not withdrawn by the source-wide activation boundary.
