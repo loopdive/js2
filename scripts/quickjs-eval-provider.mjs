@@ -1462,6 +1462,14 @@ function qjsIsAdapterPrivateName(name: string): boolean {
   return true;
 }
 
+/** The caller and QuickJS realms already own the same three immutable ES5
+ *  global value properties. Mirroring them is both redundant and unsafe:
+ *  the pull side assigns through the caller carrier, which correctly throws
+ *  for these non-writable properties once #4388 reifies their descriptors. */
+function qjsIsImmutableGlobalValueName(name: string): boolean {
+  return name === "NaN" || name === "Infinity" || name === "undefined";
+}
+
 /** Membership test over an \`any\`-typed name vector (Object.keys' result). */
 function qjsAnyListHas(list: any, name: string): boolean {
   if (list === undefined || list === null) return false;
@@ -1566,7 +1574,7 @@ function qjsPushGlobals(c: number, globalObject: any): void {
   const all: any = Object.getOwnPropertyNames(globalObject);
   for (let i = 0; i < (all.length as number); i += 1) {
     const key: string = all[i] as string;
-    if (qjsIsAdapterPrivateName(key)) continue;
+    if (qjsIsAdapterPrivateName(key) || qjsIsImmutableGlobalValueName(key)) continue;
     const value: any = __runtime_eval_unwrap_result(globalObject[key]);
     // Primitives cross by copy; objects and functions cross as LIVE membrane
     // wrappers (#4245 slice 1) — that is what makes the caller's own top-level
