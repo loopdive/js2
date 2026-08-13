@@ -55,6 +55,15 @@ function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
   return isUnboxedPrimitiveCarrier(type) && (tsType.flags & sentinelFlags) === 0;
 }
 
+/** Preserve semantic brands that are erased by the numeric Wasm carrier. */
+function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValType {
+  const type = resolveWasmType(ctx, tsType);
+  if (type.kind === "i32" && (tsType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+    return { ...type, symbol: true };
+  }
+  return type;
+}
+
 /**
  * Record properties that receive object-shaped or dynamically typed values.
  * Closed anonymous structs are shape-specific, while JavaScript properties can
@@ -1476,7 +1485,7 @@ function recordDefinePropertyWiden(
       for (const prop of descArg.properties) {
         if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === "value") {
           const rhsType = checker.getTypeAtLocation(prop.initializer);
-          wasmType = resolveWasmType(ctx, rhsType);
+          wasmType = resolveWidenedPropertyType(ctx, rhsType);
           primitiveSeed = isRuntimePrimitiveSeed(wasmType, rhsType);
           break;
         }
@@ -1512,7 +1521,7 @@ export function collectPropsFromStatements(
         const propName = bin.left.name.text;
         // Infer wasm type from the RHS
         const rhsType = checker.getTypeAtLocation(bin.right);
-        const wasmType = resolveWasmType(ctx, rhsType);
+        const wasmType = resolveWidenedPropertyType(ctx, rhsType);
         if (!seenProps.has(propName)) {
           seenProps.add(propName);
           extraProps.push({

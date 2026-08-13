@@ -74,6 +74,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -1090,7 +1091,19 @@ export function compileIdentifierCall(
     // sibling reached another module's `const equal = function equal(...)` and
     // the enclosing function silently returned 0.
     const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
-    let closureInfo = isLocallyShadowed || nestedBindingVisible ? undefined : ctx.closureMap.get(funcName);
+    const hasVisibleClosureStorage =
+      fctx.localMap.has(funcName) || ctx.moduleGlobals.has(funcName) || ctx.capturedGlobals.has(funcName);
+    // `closureMap` is keyed by a bare identifier across the complete linked
+    // source graph. A local arrow in an importer can therefore reuse the name
+    // of a dependency's function and overwrite this metadata even though its
+    // value slot is not visible in the dependency. Prefer the real direct
+    // function binding whenever there is no lexical/module storage from which
+    // this closure could actually be loaded. uuid exposed this as its local
+    // test callback `rng` replacing the imported package `rng()` inside v1.
+    let closureInfo =
+      isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
+        ? undefined
+        : ctx.closureMap.get(funcName);
 
     if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
@@ -1382,6 +1395,12 @@ export function compileIdentifierCall(
           // Compile call arguments with type coercion (only up to declared param count)
           // Save them to locals so they can be re-pushed in each dispatch branch.
           const argLocals: number[] = [];
+          // Keep an externref view of every real call-site argument. A linked
+          // value can have a declaration signature that differs from the
+          // closure body selected at runtime (Moment's declaration accepts
+          // arguments while its exported `hooks` body declares none and reads
+          // `arguments`). Per-candidate dispatch below needs the complete
+          // values in order to classify that candidate's overflow arguments.
           const actualArgExternLocals: number[] = [];
           const cpParamCnt = matchedClosureInfo.paramTypes.length;
           // (#1511) Save overflow args to externref locals so we can pack them
@@ -1392,7 +1411,7 @@ export function compileIdentifierCall(
           // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
             for (let i = 0; i < Math.min(expr.arguments.length, cpParamCnt); i++) {
-              compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
@@ -1914,7 +1933,7 @@ export function compileIdentifierCall(
       const argLocals: number[] = [];
       for (let i = 0; i < inlineInfo.paramCount; i++) {
         if (i < expr.arguments.length) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, inlineInfo.paramTypes[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, inlineInfo.paramTypes[i]);
         } else {
           // #1658: a missing optional param must receive its default — either the
           // inlined constant (callee prologue is skipped for constant defaults) or
@@ -2289,7 +2308,7 @@ export function compileIdentifierCall(
       // Compile non-rest arguments
       for (let i = 0; i < restInfo.restIndex; i++) {
         if (i < expr.arguments.length) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
         } else {
           pushDefaultValue(fctx, paramTypes?.[i] ?? { kind: "f64" }, ctx);
         }
@@ -2380,7 +2399,7 @@ export function compileIdentifierCall(
           hasLinearParamsForCall && paramTypes
             ? wasmParamIndexForSourceParam(i, linearParamsForCall, captureCount)
             : i + captureCount;
-        compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[wasmParamIndex]);
+        compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[wasmParamIndex]);
       }
       if (expr.arguments.length > paramCount) {
         if (calleeReadsArgsDirect) {

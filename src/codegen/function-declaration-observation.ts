@@ -184,16 +184,29 @@ export function localBindingShadowsCapturingFunction(
   const name = callee.text;
   if (!fctx.localMap.has(name) || !ctx.funcMap.has(name)) return false;
   if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
+  // A lifted frame's recorded capture slot is a proven lexical binding in
+  // this activation; it must outrank any same-named bare funcMap entry.
+  if (fctx.liftedCaptureSlots?.has(name)) return true;
   const declaration = ctx.oracle.valueDeclarationOf(callee);
-  if (
-    declaration &&
-    (ts.isFunctionDeclaration(declaration) || ts.isFunctionExpression(declaration)) &&
-    declaration.name?.text === name
-  ) {
-    return false;
+  // A declaration-backed dynamic local can shadow a same-named lifted body,
+  // while a local with closure metadata must retain its wrapper path for
+  // recursive/rest calls.
+  if (declaration && ts.isVariableDeclaration(declaration)) {
+    const initializer = declaration.initializer;
+    if (
+      initializer &&
+      (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)) &&
+      initializer.parameters.some((param) => param.dotDotDotToken !== undefined)
+    ) {
+      return false;
+    }
+    if (initializer && ts.isFunctionExpression(initializer) && initializer.name?.text === name) return false;
+    return true;
   }
-  // JavaScript locals inferred as `any` still shadow same-named lifted bodies.
-  return declaration !== undefined;
+  // Call syntax already proves the local is being invoked. Redirect only when
+  // the conflicting direct body would also prepend captures, which is the
+  // cross-frame corruption this predicate guards against.
+  return ctx.nestedFuncCaptures.has(name) || (declaration !== undefined && ts.isParameter(declaration));
 }
 
 /** Allocate stable lexical storage for identity-observed FunctionDeclarations. */
