@@ -29,6 +29,10 @@ loc-budget-allow:
   # step. Both registries live in this file and are read only from it; moving
   # seven names to a leaf module would split one gate from the loop it gates.
   - src/codegen/extern-declarations.ts
+  # +3 lines: an import line and a two-line pointer. The decision itself lives
+  # in the new leaf module codegen/callback-ctor-bridge.ts; what remains here is
+  # the call that replaced the inline ternary.
+  - src/codegen/closures.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -48,6 +52,9 @@ func-budget-allow:
   - src/codegen/literals.ts::compileArrayLiteral
   # +6 lines: the new arm is a guarded call into codegen/host-dyn-valueof.ts.
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  # +2 lines: a two-line pointer above the call that replaced the inline
+  # maker-name ternary. The decision lives in codegen/callback-ctor-bridge.ts.
+  - src/codegen/closures.ts::compileArrowAsCallback
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -68,6 +75,9 @@ files:
   - tests/test262-runner.ts
   - src/codegen/extern-declarations.ts
   - tests/issue-4394-ambient-error-ctor-value-read.test.ts
+  - src/codegen/closures.ts
+  - src/runtime/native-function-source.ts
+  - tests/issue-4394-callback-bridge-constructible.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -415,6 +425,53 @@ ctx.standalone`, so the host-free lanes keep their native carrier.
 ### Measured
 
 93 → **94** pass (`assert-throws-native.js`), 0 lost.
+
+## Root cause 9 (0 harness tests, +29 in a 400-file sample) — the callback bridge is an arrow
+
+`__make_callback`'s host bridge
+(`createNativeFunctionCallbackBridge`) is an **arrow**, and an arrow has no
+[[Construct]]. So every compiled callable handed to a host API was rejected by
+`Reflect.construct` / `new`, whatever it was written as.
+
+The harness's `isConstructor` is
+`Reflect.construct(function () {}, [], f)` — its **target** is an inline
+function expression, so the probe threw before it ever looked at `f`, the
+`catch` swallowed it, and the helper answered `false` for **everything**. That
+is not one wrong answer, it is a silently inverted predicate in all **644**
+test262 files that include `isConstructor.js`.
+
+### Fix
+
+An ordinary function definition has [[Construct]] (§15.2.4); an arrow,
+generator, async function or method does not. The compiler now picks a sibling
+import `__make_callback_ctor` for the first case, and its runtime bridge is a
+plain `function` instead of an arrow. Everything else keeps the arrow bridge, so
+the repair cannot widen into "every compiled callable is a constructor" — the
+regression test pins `Reflect.construct(() => {}, [])` still refusing.
+
+Neither bridge shape reads `this`: the compiled body reaches its receiver
+through the `__current_this` protocol, so constructibility is the only
+observable difference.
+
+### Measured
+
+- 400-file sample of `isConstructor.js` consumers: **+29 pass, 0 regressions**
+- equivalence-gate, all 8 shards: no new regressions
+- harness cohort unchanged at 94 — `isConstructor.js` itself still fails, on the
+  separate defect below
+
+### Still failing — a compiled closure as a `Reflect.construct` ARGUMENT
+
+`isConstructor.js` additionally asserts `isConstructor(function () {}) === true`
+and `isConstructor(() => {}) === false`. There the callable is an *argument* to
+a compiled function, so it stays a raw WasmGC closure struct and reaches
+`__reflect_construct` unbridged — the host reports
+`[object Object] is not a constructor` for both. Bridging it with
+`_maybeWrapCallableUnknownArity` would make BOTH answer `true`, since the
+dynamic bridge is constructible for any closure; getting it right needs the
+closure's kind at runtime, which today has no discriminator export (the
+`closure-exports.ts` bit registry would need a new entry). Recorded rather than
+half-fixed.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 

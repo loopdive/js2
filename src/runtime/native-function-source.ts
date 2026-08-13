@@ -100,9 +100,10 @@ export function createNativeFunctionCallbackBridge(
   cap: any,
   callbackState?: CallbackState,
   exceptionPolicy?: AsyncCallbackExceptionPolicy,
+  constructible = false,
 ): (...args: any[]) => any {
   const dispatch = (args: any[]): any => invokeNativeFunctionCallback(id, cap, args, callbackState, exceptionPolicy);
-  return installNativeFunctionSourceFacade((...args: any[]) => {
+  const body = (args: any[]): any => {
     const exports = callbackState?.getExports();
     if (exports === undefined && callbackState?.deferToExports) {
       callbackState.deferToExports(() => {
@@ -111,5 +112,22 @@ export function createNativeFunctionCallbackBridge(
       return undefined;
     }
     return dispatch(args);
-  });
+  };
+  // (#4394) The bridge's [[Construct]] must mirror the compiled callable's.
+  // An arrow has none, so every compiled function that crossed to the host was
+  // rejected by `Reflect.construct` / `new` — which is what made the harness's
+  // `isConstructor` answer `false` for a plain `function () {}`. A function
+  // EXPRESSION carries [[Construct]]; the arrow stays the default so arrows,
+  // generators, async functions and methods keep refusing construction.
+  //
+  // Neither form reads `this`: the compiled body reaches its receiver through
+  // the `__current_this` protocol, not the bridge's binding, so the only
+  // observable difference is constructibility.
+  return installNativeFunctionSourceFacade(
+    constructible
+      ? function nativeFunctionCallbackBridge(...args: any[]): any {
+          return body(args);
+        }
+      : (...args: any[]): any => body(args),
+  );
 }

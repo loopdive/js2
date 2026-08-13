@@ -81,6 +81,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
   // Callback maker
   if (name === "__make_callback") return { type: "callback_maker" };
+  // (#4394) Same maker, constructible bridge — see closures.ts.
+  if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
   if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
 
   // Async/await

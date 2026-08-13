@@ -15371,15 +15371,27 @@ assert._isSameValue = isSameValue;
       // non-harness contexts is a possible follow-up.)
       return () => {};
     }
-    case "callback_maker":
+    case "callback_maker": {
+      // (#4394) `constructible` is set only by `__make_callback_ctor`, which
+      // the compiler picks for an ordinary function definition — the one
+      // callable form that has [[Construct]]. Everything else keeps the arrow
+      // bridge and stays correctly non-constructible.
+      const constructible = intent.constructible === true;
       return (id: number, cap: any) => {
         // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
         // the checker-proven one-shot inline form. Legacy callbacks keep their
         // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+        return createNativeFunctionCallbackBridge(
+          id,
+          cap,
+          callbackState,
+          ASYNC_CALLBACK_EXCEPTION_POLICY,
+          constructible,
+        );
       };
+    }
     case "getter_callback_maker":
       return (id: number, cap: any) => {
         // Regular function (not arrow) so 'this' is bound to the receiver;
