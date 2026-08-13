@@ -2017,3 +2017,63 @@ including the binary-op path that the in-flight `inlining` workstream owns
 (`binary-ops.ts` / `binary-ops-typed-dispatch.ts`, entry 16). Opening a fifth
 concurrent edit into shared emission would risk a conflict worth more than the
 delay. This is the next dispatch once one of the four lands.
+
+## 2026-08-13 (18) — the inliner question is backwards: the IR knows more than `wasm-opt`
+
+Everything in this file so far has asked *"how do we get under binaryen's size
+threshold"* — entries (2), (4), (9), (13) and (14) are all variations on it, and
+all measured null or worse. The premise deserves challenging.
+
+Two facts, verified:
+
+- **`src/optimize.ts` passes no inlining configuration at all** — only
+  `setOptimizeLevel` and `--all-features`. Binaryen has been running default
+  heuristics with zero guidance for the entire programme.
+- **There is no IR-level inliner.** All inlining is delegated to a pass that sees
+  a flat module with the type facts already erased.
+
+### What the IR knows that a flat wasm module cannot express
+
+1. **Which functions are adapters.** The `__dc_*` family is ~25 tiny functions
+   carrying **~4 % of runtime in pure self-time**; a trampoline's whole body is
+   overhead *by construction*. Binaryen sees ordinary functions and applies a
+   size heuristic. The IR knows what they are.
+2. **Types — and this is the load-bearing one.** Binaryen inlines *then*
+   optimises, over generic code, against a size budget. The IR can inline *with*
+   semantics: inline `__get_member_<name>` at a site whose receiver struct type
+   is already known, and the `ref.test` folds to a constant, the fallback arm
+   goes dead, and what remains is a `struct.get`. **The inlined result is smaller
+   than the callee** — so the cliff that blocked every attempt above does not
+   apply in the same way. `wasm-opt` cannot reach this: the facts are gone by the
+   time it runs.
+3. **Structural hotness.** Loop nesting depth is free in the IR and invisible to
+   a size heuristic — a call in the tokenizer loop versus one on a throw path.
+4. **Cold-by-construction callees.** The 3,917 `__new_TypeError` paths should
+   never be inlined, and arguably should not count against a caller's budget at
+   all.
+
+### Why this reframes the whole programme
+
+The recorded failures share a shape: each tried to shrink a *generic* helper
+until a *generic* inliner would take it. Point 2 says that is the wrong axis.
+Specialising at the inline site makes the code smaller **because** it is
+inlined — the opposite of the trade every attempt above was making.
+
+**Order of work** (dispatched to the in-flight inlining workstream):
+
+1. **Cheap and decisive first:** find what this binaryen version actually exposes
+   (inlining thresholds, always-inline, `--inline-functions-with-loops`) and pass
+   it from `optimize.ts`. If a threshold bump alone inlines the hot helpers, that
+   is a two-line change and must be measured before anything is built.
+2. **Then IR-level inlining as the primary design**, not a fallback. Even a
+   narrow cut — `__dc_*` trampolines only, or monomorphic-by-type helper calls
+   where the inlined form constant-folds — tests the "specialise while inlining"
+   claim, which is the part that would make it strictly better than a threshold
+   bump.
+3. **Keep the stacked-nulls slice as the control.** If IR inlining works, the
+   residual-instruction-count question stops mattering; if it does not, that
+   slice bounds the approach.
+
+Credit where due: this reframing came from the project lead, not from the
+measurements. The measurements had been circling the same premise for five
+attempts without questioning it.
