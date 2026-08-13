@@ -2077,3 +2077,53 @@ inlined — the opposite of the trade every attempt above was making.
 Credit where due: this reframing came from the project lead, not from the
 measurements. The measurements had been circling the same premise for five
 attempts without questioning it.
+
+## 2026-08-13 (19) — decision: we own the inlining heuristics, `wasm-opt` is the fallback
+
+Project-lead decision, following entry (18). Not "help binaryen decide better" —
+**the inlining cost model moves into the IR, and `wasm-opt`'s inliner handles
+only what we do not decide.**
+
+### The cost model, and where its inputs come from
+
+| input | why the IR has it and a flat module does not |
+| --- | --- |
+| **call-site frequency from loop nesting depth** | the standard AOT substitute for V8's runtime call counts (LLVM's `BlockFrequencyInfo` weights ~10× per loop level). A call in acorn's tokenizer `while` is structurally hotter than one on a throw path. |
+| **specialisation delta** | the size of the inlined result *after* site facts fold — not the callee's size in isolation. |
+| **adapter classification** | `__dc_*` trampolines are overhead by construction (~25 functions, ~4 % of runtime in pure self-time). No size heuristic should get a vote. |
+| **cold-by-construction** | the 3,917 `__new_TypeError` paths inflate every enclosing function and thereby block *its* inlining. Outline or discount them; do not weigh them as body mass. |
+
+### Why loop depth is admissible here when observed frequency was not
+
+#3927 §7 had to abandon frequency-based field ranking: observed instance counts
+are a property of the **corpus**, so a compiler cannot use them without becoming
+input-specific, and six corpus-independent proxies were scored against ground
+truth with none beating ~25 %.
+
+**Loop nesting depth is not that.** It is derived from the source being compiled,
+so it is a property of the **program** and stays valid for any input. This
+distinction is load-bearing and should be stated wherever the heuristic appears —
+a reviewer who knows #3927 will reach for that objection first, and it does not
+apply.
+
+### The case binaryen structurally cannot see
+
+The other four inlining attempts in this file all asked "is the callee small
+enough". The IR can ask a better question: **how big is the result after the
+site's facts fold?** A monomorphic-by-type member-get inlines to a `struct.get` —
+**smaller than the call it replaces**. Negative-cost inlining is invisible to a
+generic size heuristic, and it is where the value is.
+
+### The obligation this creates
+
+If we inline in the IR and binaryen then re-inlines on its defaults, the two
+compound into bloat and our specialised result gets duplicated at every site.
+**"We own inlining" is only true if binaryen is not silently re-deciding
+underneath us**, so constraining its inlining pass — while keeping the peephole
+and DCE passes we do want — is part of the work, not an afterthought. Note
+`src/optimize.ts` currently passes no inlining configuration at all, so today
+binaryen's defaults are unconstrained.
+
+Order: binaryen's own flags first (two lines, bounds the cheap path), then the IR
+inliner narrow — adapters plus negative-cost specialisation sites — then the
+stacked-nulls slice as the control.
