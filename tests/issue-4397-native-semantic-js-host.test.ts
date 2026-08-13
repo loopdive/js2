@@ -2,7 +2,9 @@
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { sourceMayContainRuntimeEvalBoundary } from "../src/ir/runtime-eval-boundary-plan.js";
 import { buildCompiledAdapterImports, buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
+import { ts } from "../src/ts-api.js";
 
 function wasmImports(binary: Uint8Array): WebAssembly.ModuleImportDescriptor[] {
   return WebAssembly.Module.imports(new WebAssembly.Module(binary));
@@ -21,6 +23,15 @@ async function instantiate(source: string, semanticProviders?: "native-first") {
 }
 
 describe("#4397 native semantics in a JavaScript environment", () => {
+  it("skips runtime-eval planning for definitely irrelevant source while retaining ambiguous spellings", () => {
+    const source = (text: string) => ts.createSourceFile("runtime-eval-gate.ts", text, ts.ScriptTarget.Latest, true);
+    expect(sourceMayContainRuntimeEvalBoundary(source("export const value = 1;"))).toBe(false);
+    expect(sourceMayContainRuntimeEvalBoundary(source("export const value = eval('1');"))).toBe(true);
+    expect(sourceMayContainRuntimeEvalBoundary(source("export const value = new Function('return 1');"))).toBe(true);
+    expect(sourceMayContainRuntimeEvalBoundary(source("function __runtime_direct_eval() {}"))).toBe(true);
+    expect(sourceMayContainRuntimeEvalBoundary(source(String.raw`export const value = \u0065val;`))).toBe(true);
+  });
+
   it("builds native-first imports without installing compatibility semantics into ambient intrinsics", async () => {
     const native = await compile(`export function value(): number { return 1; }`, {
       fileName: "issue-4397-no-ambient-compat.ts",

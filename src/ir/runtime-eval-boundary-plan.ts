@@ -66,6 +66,18 @@ function stableSourceId(sourceFile: ts.SourceFile, index: number): string {
   return `source:${index}:${normalized.slice(normalized.lastIndexOf("/") + 1)}`;
 }
 
+/**
+ * Cheap, sound negative gate for the runtime-eval inventory walk. Most source
+ * files contain none of the boundary spellings, and walking their full AST is
+ * pure compile work. A Unicode escape keeps the answer conservatively true:
+ * escaped identifier characters can spell `eval`, `Function`, or a provider
+ * name without those literal substrings appearing in the raw source.
+ */
+export function sourceMayContainRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
+  const text = sourceFile.text;
+  return text.includes("eval") || text.includes("Function") || text.includes("__runtime_") || text.includes("\\u");
+}
+
 function stringArguments(args: readonly ts.Expression[] | undefined): { literalSource?: string; unknown: boolean } {
   if (!args || args.length === 0) return { unknown: false };
   if (!args.every(ts.isStringLiteralLike)) return { unknown: true };
@@ -121,6 +133,7 @@ export function buildIrRuntimeEvalBoundaryPlan(
   };
 
   sourceFiles.forEach((sourceFile, index) => {
+    if (!sourceMayContainRuntimeEvalBoundary(sourceFile)) return;
     const id = stableSourceId(sourceFile, index);
     for (const statement of sourceFile.statements) {
       if (ts.isFunctionDeclaration(statement) && isRuntimeEvalBoundaryProviderName(statement.name?.text)) {
