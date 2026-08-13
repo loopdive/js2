@@ -4495,6 +4495,9 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // back to legacy.
       if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
         return shapeNo("vardecl-dstr-init", d.initializer);
+      if (ts.isObjectBindingPattern(d.name)) {
+        recordDestructuredObjectMethodProjections(d.name, d.initializer, scope);
+      }
       // Pre-add every leaf identifier to scope so subsequent statements
       // see the new names.
       collectPatternNames(d.name, scope);
@@ -5336,6 +5339,15 @@ function isOptionalModuleExternCall(expr: ts.CallExpression): boolean {
     expr.expression.questionDotToken !== undefined &&
     expressionIsModuleExternAccessChain(expr.expression.expression)
   );
+}
+
+function phase1CallPreambleIsBuildable(expr: ts.CallExpression): boolean {
+  // AST-to-IR deliberately treats optional invocation as a hard invariant.
+  if (expr.questionDotToken) return shapeNo("expr-optional-call", expr);
+  if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
+    return shapeNo("expr-module-extern-call-brand", expr);
+  }
+  return !isOptionalModuleExternCall(expr) || shapeNo("expr-module-extern-optional-call", expr);
 }
 
 /** True when a method-call receiver ultimately comes from a module extern. */
@@ -6596,6 +6608,21 @@ type DirectObjectMethodValueProjection = {
   readonly returnType: ts.TypeNode | undefined;
 };
 
+type DirectObjectMethodReceiver = {
+  readonly declaration: ts.VariableDeclaration;
+  readonly object: ts.ObjectLiteralExpression;
+};
+
+type DirectDestructuredObjectMethodReceiver = {
+  readonly root: DirectObjectMethodReceiver;
+  readonly alias: ts.VariableDeclaration | null;
+};
+
+type DirectDestructuredObjectMethodProjection = {
+  readonly element: ts.BindingElement & { readonly name: ts.Identifier };
+  readonly method: ts.MethodDeclaration;
+};
+
 /**
  * Resolve `const fn = object.method` against one exact preceding const object
  * literal. The declaration was already fully selector-certified in source
@@ -6609,7 +6636,36 @@ function directObjectMethodValueProjection(
 ): DirectObjectMethodValueProjection | null {
   const candidate = unwrapProjectionExpression(expression);
   if (!ts.isPropertyAccessExpression(candidate) || !ts.isIdentifier(candidate.name)) return null;
-  const receiver = unwrapProjectionExpression(candidate.expression);
+  const method = directObjectMethodDeclaration(candidate.expression, candidate.name.text, scope);
+  if (!method) return null;
+  return {
+    arity: exactCallableArity(method.parameters.length),
+    returnType: method.type,
+  };
+}
+
+/** Resolve one method on an exact preceding const all-shorthand-method object. */
+function directObjectMethodDeclaration(
+  receiverExpression: ts.Expression,
+  propertyName: string,
+  scope: ReadonlySet<string>,
+): ts.MethodDeclaration | null {
+  const resolved = directObjectMethodReceiver(receiverExpression, scope);
+  if (!resolved) return null;
+  const method = resolved.object.properties.find(
+    (property): property is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(property) &&
+      property.name !== undefined &&
+      phase1PropertyName(property.name) === propertyName,
+  );
+  return method ?? null;
+}
+
+function directObjectMethodReceiver(
+  receiverExpression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectObjectMethodReceiver | null {
+  const receiver = unwrapProjectionExpression(receiverExpression);
   if (!ts.isIdentifier(receiver) || !scope.has(receiver.text)) return null;
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(receiver);
   if (!declaration || !declaration.initializer) return null;
@@ -6617,17 +6673,351 @@ function directObjectMethodValueProjection(
   if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) return null;
   const object = unwrapProjectionExpression(declaration.initializer);
   if (!ts.isObjectLiteralExpression(object) || !object.properties.every(ts.isMethodDeclaration)) return null;
-  const method = object.properties.find(
-    (property): property is ts.MethodDeclaration =>
-      ts.isMethodDeclaration(property) &&
-      property.name !== undefined &&
-      phase1PropertyName(property.name) === candidate.name.text,
+  return { declaration, object };
+}
+
+/**
+ * Resolve the direct receiver used by destructuring, or one exact preceding
+ * `const alias = receiver` edge. Keep this separate from the general receiver
+ * resolver: property reads through object aliases are a wider callable-value
+ * surface and need their own ownership proof.
+ */
+function directDestructuredObjectMethodReceiver(
+  receiverExpression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectDestructuredObjectMethodReceiver | null {
+  const direct = directObjectMethodReceiver(receiverExpression, scope);
+  if (direct) return { root: direct, alias: null };
+
+  const receiver = unwrapProjectionExpression(receiverExpression);
+  if (!ts.isIdentifier(receiver) || !scope.has(receiver.text) || !currentModuleBindingResolver) return null;
+  const alias = currentModuleBindingResolver.localVariableDeclaration(receiver);
+  if (!alias || !ts.isIdentifier(alias.name) || !alias.initializer || !ts.isIdentifier(alias.initializer)) return null;
+  const declarationList = alias.parent;
+  if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) return null;
+  const root = directObjectMethodReceiver(alias.initializer, scope);
+  if (!root) return null;
+  const resolvedRoot = currentModuleBindingResolver.localValueDeclaration(alias.initializer);
+  const resolvedAlias = currentModuleBindingResolver.localValueDeclaration(receiver);
+  if (
+    !resolvedRoot ||
+    !resolvedAlias ||
+    !localDeclarationsMatch(root.declaration, resolvedRoot) ||
+    !localDeclarationsMatch(alias, resolvedAlias)
+  ) {
+    return null;
+  }
+  const owner = enclosingProjectionOwner(root.declaration);
+  if (
+    !owner ||
+    enclosingProjectionOwner(alias) !== owner ||
+    enclosingProjectionOwner(receiver) !== owner ||
+    root.declaration.end > alias.pos ||
+    alias.end > receiver.pos
+  ) {
+    return null;
+  }
+  return { root, alias };
+}
+
+function localDeclarationsMatch(left: ts.Declaration, right: ts.Declaration): boolean {
+  return (
+    left === right ||
+    (left.pos === right.pos &&
+      left.end === right.end &&
+      left.getSourceFile().fileName === right.getSourceFile().fileName)
   );
-  if (!method) return null;
-  return {
-    arity: exactCallableArity(method.parameters.length),
-    returnType: method.type,
+}
+
+function enclosingProjectionOwner(node: ts.Node): ts.Node | undefined {
+  for (let current = node.parent; current; current = current.parent) {
+    if (isFunctionLike(current)) return current;
+  }
+  return undefined;
+}
+
+function propertyAccessIsWriteTarget(expression: ts.PropertyAccessExpression): boolean {
+  const parent = expression.parent;
+  return (
+    (ts.isBinaryExpression(parent) &&
+      parent.left === expression &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) && parent.operand === expression) ||
+    (ts.isDeleteExpression(parent) && parent.expression === expression) ||
+    ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === expression)
+  );
+}
+
+function objectBindingPatternReadsOnlyOwnMethods(
+  pattern: ts.ObjectBindingPattern,
+  ownMethodNames: ReadonlySet<string>,
+): boolean {
+  return pattern.elements.every((element) => {
+    if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) return false;
+    const propertyName = element.propertyName
+      ? ts.isIdentifier(element.propertyName) || ts.isStringLiteral(element.propertyName)
+        ? element.propertyName.text
+        : null
+      : element.name.text;
+    return propertyName !== null && ownMethodNames.has(propertyName);
+  });
+}
+
+/**
+ * The destructuring projection is sound only while the exact object binding
+ * remains local and immutable. Permit own-method reads and direct object
+ * destructuring; aliases, escapes, computed access, nested-owner uses, and
+ * writes all keep this new surface on the direct path.
+ */
+function directObjectMethodReceiverUsesAreStable(receiver: DirectObjectMethodReceiver): boolean {
+  const bindingName = receiver.declaration.name;
+  if (!ts.isIdentifier(bindingName)) return false;
+  const owner = enclosingProjectionOwner(receiver.declaration);
+  if (!owner) return false;
+  const ownMethodNames = new Set(
+    receiver.object.properties
+      .filter(ts.isMethodDeclaration)
+      .map((method) => (method.name ? phase1PropertyName(method.name) : null))
+      .filter((name): name is string => name !== null),
+  );
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (ts.isIdentifier(node) && node !== bindingName && node.text === bindingName.text) {
+      if (!identifierIsValueReference(node)) return;
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        stable = false;
+        return;
+      }
+      if (!localDeclarationsMatch(receiver.declaration, declaration)) return;
+      if (enclosingProjectionOwner(node) !== owner) {
+        stable = false;
+        return;
+      }
+      const parent = node.parent;
+      if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        ownMethodNames.has(parent.name.text) &&
+        !propertyAccessIsWriteTarget(parent)
+      ) {
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        ts.isObjectBindingPattern(parent.name) &&
+        objectBindingPatternReadsOnlyOwnMethods(parent.name, ownMethodNames)
+      ) {
+        return;
+      }
+      stable = false;
+      return;
+    }
+    forEachChild(node, visit);
   };
+  forEachChild(owner, visit);
+  return stable;
+}
+
+/**
+ * Certify a destructuring-only object alias atomically with its root. The root
+ * may have its existing safe own-method reads/destructures plus this one alias
+ * edge; the alias itself may only feed safe own-method destructures. A second
+ * alias, escape, write, computed access, nested-owner capture, or unresolved
+ * checker reference rejects the complete projection family.
+ */
+function directDestructuredObjectMethodReceiverUsesAreStable(
+  receiver: DirectDestructuredObjectMethodReceiver,
+): boolean {
+  if (!receiver.alias) return directObjectMethodReceiverUsesAreStable(receiver.root);
+  const rootName = receiver.root.declaration.name;
+  const aliasName = receiver.alias.name;
+  if (!ts.isIdentifier(rootName) || !ts.isIdentifier(aliasName)) return false;
+  const owner = enclosingProjectionOwner(receiver.root.declaration);
+  if (!owner || enclosingProjectionOwner(receiver.alias) !== owner) return false;
+  const ownMethodNames = new Set(
+    receiver.root.object.properties
+      .filter(ts.isMethodDeclaration)
+      .map((method) => (method.name ? phase1PropertyName(method.name) : null))
+      .filter((name): name is string => name !== null),
+  );
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (
+      ts.isIdentifier(node) &&
+      node !== rootName &&
+      node !== aliasName &&
+      (node.text === rootName.text || node.text === aliasName.text) &&
+      identifierIsValueReference(node)
+    ) {
+      if (ts.isBindingElement(node.parent) && node.parent.propertyName === node) return;
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        stable = false;
+        return;
+      }
+      const isRoot = localDeclarationsMatch(receiver.root.declaration, declaration);
+      const isAlias = localDeclarationsMatch(receiver.alias!, declaration);
+      if (!isRoot && !isAlias) return;
+      if (enclosingProjectionOwner(node) !== owner) {
+        stable = false;
+        return;
+      }
+      const parent = node.parent;
+      if (isRoot && ts.isVariableDeclaration(parent) && parent === receiver.alias && parent.initializer === node) {
+        return;
+      }
+      if (
+        isRoot &&
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        ownMethodNames.has(parent.name.text) &&
+        !propertyAccessIsWriteTarget(parent)
+      ) {
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        ts.isObjectBindingPattern(parent.name) &&
+        objectBindingPatternReadsOnlyOwnMethods(parent.name, ownMethodNames)
+      ) {
+        return;
+      }
+      stable = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(owner, visit);
+  return stable;
+}
+
+/**
+ * Bound this new callable surface to immutable aliases and direct calls inside
+ * the declaring function. This excludes cross-owner capture, return/pass
+ * escapes, and mutation while still preserving same-owner const alias chains.
+ */
+function destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element: ts.BindingElement): boolean {
+  if (!ts.isIdentifier(element.name)) return false;
+  const owner = enclosingProjectionOwner(element);
+  if (!owner || !currentModuleBindingResolver) return false;
+  const declarations = new Set<ts.Declaration>([element]);
+  const declarationNames = new Set<string>([element.name.text]);
+  let proofFailed = false;
+
+  let changed = true;
+  while (changed && !proofFailed) {
+    changed = false;
+    const collectAliases = (node: ts.Node): void => {
+      if (proofFailed) return;
+      if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+        const source = currentModuleBindingResolver?.localValueDeclaration(node);
+        if (!source) {
+          proofFailed = true;
+          return;
+        }
+        if (source && localClosureDeclarationsContain(declarations, source)) {
+          const declaration = node.parent;
+          const list = ts.isVariableDeclaration(declaration) ? declaration.parent : undefined;
+          if (
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer === node &&
+            ts.isIdentifier(declaration.name) &&
+            list !== undefined &&
+            ts.isVariableDeclarationList(list) &&
+            !!(list.flags & ts.NodeFlags.Const) &&
+            !localClosureDeclarationsContain(declarations, declaration)
+          ) {
+            declarations.add(declaration);
+            declarationNames.add(declaration.name.text);
+            changed = true;
+          }
+        }
+      }
+      forEachChild(node, collectAliases);
+    };
+    forEachChild(owner, collectAliases);
+  }
+  if (proofFailed) return false;
+
+  let accepted = true;
+  const validateUses = (node: ts.Node): void => {
+    if (!accepted) return;
+    if (ts.isIdentifier(node) && declarationNames.has(node.text) && identifierIsValueReference(node)) {
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        accepted = false;
+        return;
+      }
+      if (localClosureDeclarationsContain(declarations, declaration)) {
+        if (enclosingProjectionOwner(node) !== owner) {
+          accepted = false;
+          return;
+        }
+        const parent = node.parent;
+        if (
+          (ts.isVariableDeclaration(parent) &&
+            parent.initializer === node &&
+            localClosureDeclarationsContain(declarations, parent)) ||
+          (ts.isCallExpression(parent) && parent.expression === node && parent.questionDotToken === undefined)
+        ) {
+          return;
+        }
+        accepted = false;
+        return;
+      }
+    }
+    forEachChild(node, validateUses);
+  };
+  forEachChild(owner, validateUses);
+  return accepted;
+}
+
+/** Certify the entire pattern before exposing any callable projection. */
+function directDestructuredObjectMethodProjections(
+  pattern: ts.ObjectBindingPattern,
+  initializer: ts.Expression,
+  scope: ReadonlySet<string>,
+): readonly DirectDestructuredObjectMethodProjection[] | null {
+  const receiver = directDestructuredObjectMethodReceiver(initializer, scope);
+  if (!receiver || !directDestructuredObjectMethodReceiverUsesAreStable(receiver)) return null;
+  const projections: DirectDestructuredObjectMethodProjection[] = [];
+  for (const element of pattern.elements) {
+    if (!ts.isIdentifier(element.name)) return null;
+    const propertyName = element.propertyName
+      ? ts.isIdentifier(element.propertyName) || ts.isStringLiteral(element.propertyName)
+        ? element.propertyName.text
+        : null
+      : element.name.text;
+    if (propertyName === null || !destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element)) return null;
+    const method = receiver.root.object.properties.find(
+      (property): property is ts.MethodDeclaration =>
+        ts.isMethodDeclaration(property) &&
+        property.name !== undefined &&
+        phase1PropertyName(property.name) === propertyName,
+    );
+    if (!method) return null;
+    projections.push({ element: element as ts.BindingElement & { readonly name: ts.Identifier }, method });
+  }
+  return projections.length > 0 ? projections : null;
+}
+
+/** Carry exact method signatures through `const { method: local } = object`. */
+function recordDestructuredObjectMethodProjections(
+  pattern: ts.ObjectBindingPattern,
+  initializer: ts.Expression,
+  scope: ReadonlySet<string>,
+): void {
+  const projections = directDestructuredObjectMethodProjections(pattern, initializer, scope);
+  if (!projections) return;
+  for (const { element, method } of projections) {
+    recordCallableProjection(element.name.text, method.parameters.length, method.type);
+  }
 }
 
 function directCallParamUsesNumericVecAbi(
@@ -7056,12 +7446,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
-    if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-      return shapeNo("expr-module-extern-call-brand", expr);
-    }
-    if (isOptionalModuleExternCall(expr)) {
-      return shapeNo("expr-module-extern-optional-call", expr);
-    }
+    if (!phase1CallPreambleIsBuildable(expr)) return false;
     const indirectEvalStatement = exactIndirectEvalStatement(expr);
     if (indirectEvalStatement) {
       const certified = certifiedHostIndirectEval(expr, scope);
@@ -8247,10 +8632,11 @@ export function buildLocalCallGraph(
             return;
           }
           const callee = node.expression.text;
-          const localVariable = currentModuleBindingResolver?.localVariableDeclaration(node.expression);
+          const localDeclaration = currentModuleBindingResolver?.localValueDeclaration(node.expression);
           if (
-            localBindings.names.has(callee) ||
-            (localVariable !== undefined && localClosureDeclarationsContain(localBindings.declarations, localVariable))
+            (currentModuleBindingResolver === null && localBindings.names.has(callee)) ||
+            (localDeclaration !== undefined &&
+              localClosureDeclarationsContain(localBindings.declarations, localDeclaration))
           ) {
             // Slice 3: closure / nested-fn binding within this outer.
             // Variable-backed callables use checker-resolved declaration
@@ -8441,11 +8827,11 @@ function collectLocalClassDeclarations(
  */
 function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
   readonly names: Set<string>;
-  readonly declarations: Set<ts.VariableDeclaration>;
+  readonly declarations: Set<ts.Declaration>;
 } {
   const names = new Set<string>();
   const materializableNames = new Set<string>();
-  const declarations = new Set<ts.VariableDeclaration>();
+  const declarations = new Set<ts.Declaration>();
   if (!fn.body) return { names, declarations };
   const localValueNames = new Set<string>();
   for (const parameter of fn.parameters) collectBindingNameTexts(parameter.name, localValueNames);
@@ -8473,6 +8859,7 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
     ) {
       names.add(p.name.text);
       materializableNames.add(p.name.text);
+      declarations.add(p);
     }
   }
   // Top-level walk: only direct children of the outer body. Nested
@@ -8485,24 +8872,37 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node) && node !== fn && node.name) {
       names.add(node.name.text);
+      declarations.add(node);
       return;
     }
     if (node !== fn && isFunctionLike(node)) return;
     if (ts.isVariableStatement(node)) {
       const isConst = !!(node.declarationList.flags & ts.NodeFlags.Const);
       for (const d of node.declarationList.declarations) {
-        if (!ts.isIdentifier(d.name) || !d.initializer) continue;
+        if (!d.initializer) continue;
+        if (ts.isObjectBindingPattern(d.name) && isConst) {
+          const projections = directDestructuredObjectMethodProjections(d.name, d.initializer, localValueNames);
+          if (projections) {
+            for (const { element } of projections) {
+              names.add(element.name.text);
+              materializableNames.add(element.name.text);
+              declarations.add(element);
+            }
+          }
+          continue;
+        }
+        if (!ts.isIdentifier(d.name)) continue;
         const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
         const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
         const aliasInitializer = unwrapProjectionExpression(d.initializer);
         const aliasDeclaration = ts.isIdentifier(aliasInitializer)
-          ? currentModuleBindingResolver?.localVariableDeclaration(aliasInitializer)
+          ? currentModuleBindingResolver?.localValueDeclaration(aliasInitializer)
           : undefined;
         const callableAlias =
           isConst &&
           ts.isIdentifier(aliasInitializer) &&
           ((aliasDeclaration !== undefined && localClosureDeclarationsContain(declarations, aliasDeclaration)) ||
-            materializableNames.has(aliasInitializer.text));
+            (currentModuleBindingResolver === null && materializableNames.has(aliasInitializer.text)));
         // Literal closures retain the existing const-only rule. A direct
         // returned-callable binding already passed the ordinary variable
         // statement shape walk for var/let as well; an exact const
@@ -8517,6 +8917,8 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
           callableAlias ||
           directReturnedCallableSignature(d.initializer, localValueNames) !== null
         ) {
+          names.add(d.name.text);
+          materializableNames.add(d.name.text);
           declarations.add(d);
         }
       }
@@ -8533,8 +8935,8 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
  * identity, while still excluding unrelated same-text bindings.
  */
 function localClosureDeclarationsContain(
-  declarations: ReadonlySet<ts.VariableDeclaration>,
-  candidate: ts.VariableDeclaration,
+  declarations: ReadonlySet<ts.Declaration>,
+  candidate: ts.Declaration,
 ): boolean {
   for (const declaration of declarations) {
     if (declaration === candidate) return true;

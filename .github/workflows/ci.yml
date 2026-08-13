@@ -150,6 +150,12 @@ jobs:
         run: pnpm run check:ir-fallbacks
 
       - name: Native-first host semantic debt gate (#4401)
+        # The artifact-only guard is load-bearing: the slim path above skips
+        # pnpm setup entirely, so an unguarded pnpm step dies with exit 127 in
+        # the merge_group and auto-parks every npm-compat refresh PR (#4431
+        # was the first, 2026-08-13). An artifact-only diff touches no source,
+        # so the host-import policy has nothing to judge anyway.
+        if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:host-import-policy
 
       - name: IR-only readiness instrumentation (#3519)
