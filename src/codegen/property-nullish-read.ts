@@ -52,6 +52,12 @@ export function compileNullishObservedExpression(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): ValType | null {
-  if (ts.isPropertyAccessExpression(expr)) return compilePropertyAccessForNullishObservation(ctx, fctx, expr);
+  // Modules that use `delete` must retain the ordinary property route so a
+  // receiver's deletion tombstone is observed before its static backing field.
+  // The boxed observation route intentionally bypasses that representation for
+  // collision-safe dynamic reads and would otherwise resurrect deleted values.
+  if (ts.isPropertyAccessExpression(expr) && !ctx.moduleUsesDelete) {
+    return compilePropertyAccessForNullishObservation(ctx, fctx, expr);
+  }
   return compileExpression(ctx, fctx, expr, ts.isElementAccessExpression(expr) ? { kind: "externref" } : undefined);
 }
