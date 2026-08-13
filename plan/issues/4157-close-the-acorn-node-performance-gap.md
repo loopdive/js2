@@ -3717,3 +3717,25 @@ Consequences:
   reduction of the programme (−442,061) is a defensible trade, but per entry
   (29) the wall verdict must be measured with a *completed* `-O4`, not assumed
   from counts.
+
+## 2026-08-13 (32) — flag inventory: there is no dormant stash
+
+Question asked: has anyone ever switched on ALL default-off flags? Answer: no —
+and a full inventory says there is little to switch. Of 104 non-diagnostic
+`JS2WASM_*` flags in `src/`, **51 are kill-switches for features already
+default-ON** — the compiler ships with essentially its whole optimisation
+surface enabled. The genuinely dormant opt-ins beyond this session's eight:
+
+- **`JS2WASM_IR_ESCAPE` / `JS2WASM_IR_OWNERSHIP` / `JS2WASM_IR_I32_DOMAIN`** —
+  measured together just now: **−727 bytes, checksum 422, zero movement on any
+  hot helper count**. Analyses with (almost) no consumers, exactly the #743
+  "derive always; consumers arrive later" story.
+- `JS2WASM_TS7` — alternate TypeScript backend; compile-time, not runtime.
+- `JS2WASM_FNCTOR_PAD_SLOTS` — adds padding; an experiment, not a win.
+- `JS2WASM_FORCE_DYN_*`, `JS2WASM_NO_DYNPROTO`, `JS2WASM_DISABLE_STRING_PRESIZE`
+  — pessimizer/test hooks.
+
+So the flag frontier IS this session's tuned set; there is no forgotten
+performance flag waiting. Combined with entry (29) (maximising the tuned set is
+itself a regression, timeout confound pending), flag-flipping as a strategy is
+exhausted.
