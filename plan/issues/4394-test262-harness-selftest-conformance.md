@@ -35,6 +35,9 @@ func-budget-allow:
   # +29 lines: the new diversion is one guarded call plus the comment that
   # records the failure mode; the body lives in its own helper alongside.
   - src/codegen/literals.ts::compileObjectLiteral
+  # +13 lines: a one-condition change to the existing widening scan plus the
+  # comment recording the literal-vs-non-literal divergence it closes.
+  - src/codegen/literals.ts::compileArrayLiteral
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -49,6 +52,7 @@ files:
   - tests/issue-4394-test262-error-ctor-identity.test.ts
   - tests/issue-4394-nested-fn-static-write.test.ts
   - tests/issue-4394-optional-field-literal-arg.test.ts
+  - tests/issue-4394-mixed-array-literal-host.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -200,7 +204,37 @@ Regression samples: `built-ins/Object/defineProperty` first 400 → 325→**326*
 changes; the object/property/descriptor slice of `tests/equivalence` (8 files,
 51 cases) passes.
 
-## Root cause 4 (2 tests) — dynamic-receiver `valueOf` — DIAGNOSED, NOT LANDED
+## Root cause 4 (2 tests) — a numeric-first array literal drops its string elements
+
+`compileArrayLiteral` picks the vec element type from the FIRST significant
+element, then widens to `externref` when a later element is an object. That
+widening scan deliberately carves out `StringLiteral` elements so the
+native-strings lanes keep the numeric fast path — they have their own
+`hasNativeStringElem` scan. **The JS-host/GC lane has no such scan**, and a
+string is plain `externref` there, so the carve-out made the literal and
+non-literal spellings of the same array disagree:
+
+```js
+var s = "a"; [0, s]   // widened → "a" survives
+[0, "a"]              // NOT widened → f64 vec → reads back NaN
+```
+
+`compareArray.js` therefore saw `[0, 'a', undefined]` as `[0, NaN, NaN]` and
+answered `true` for two arrays differing only in their string elements.
+
+### Fix
+
+Apply the `StringLiteral` carve-out only under `ctx.nativeStrings`, so the host
+lane treats a string-literal element exactly like the identical non-literal one.
+
+### Measured
+
+88 → **90** pass (`compare-array-arguments`, `compare-array-different-elements`).
+`built-ins/Array` first 400: 120 → **121** pass, 0 lost;
+`language/expressions/array` (52): 0 status changes; the array/vec/tuple/
+destructuring slice of `tests/equivalence` (25 files, 186 cases) is unchanged.
+
+## Root cause 5 (2 tests) — dynamic-receiver `valueOf` — DIAGNOSED, NOT LANDED
 
 `compileReceiverMethodCall` ends with a blanket "`valueOf()` returns the
 receiver". That is `Object.prototype.valueOf`, correct only when nothing
@@ -249,15 +283,13 @@ if (result externref)
 where `__dyn_valueOf_is_identity` answers 1 when the receiver's resolved
 `valueOf` is absent, non-callable, or `Object.prototype.valueOf`.
 
-## Remaining buckets (GC lane, 28 fail)
+## Remaining buckets (GC lane, 26 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
-| `deepEqual` (residual) | 3 | 2 are root cause 4 above (boxed-primitive unbox); 1 is deep structural compare |
-| dynamic-receiver `valueOf` | (2, counted above) | root cause 4 — diagnosed, fix designed, not landed |
+| `deepEqual` (residual) | 3 | 2 are root cause 5 above (boxed-primitive unbox — diagnosed, fix designed, not landed); 1 is deep structural compare |
 | asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
 | propertyHelper, symbol-keyed | 3 | symbol key reaches the integer-typed property path |
-| `compareArray` | 2 | `arguments` formatting, `assert.throws` inside the comparator |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
 | singletons | 9 | `isConstructor`, `testTypedArray`, `wellKnownIntrinsicObjects`, `fnGlobalObject`, `detachArrayBuffer` ×2, `assert-throws-native`, `assert-throws-custom-typeerror`, `verifyProperty-value`, `verifyProperty-desc-is-not-object` |
 

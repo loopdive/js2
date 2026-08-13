@@ -4162,7 +4162,20 @@ export function compileArrayLiteral(
         // strings and numbers keep the numeric/native-string fast path.
         const hasObjectElem = expr.elements.some((el) => {
           if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
-          if (el.kind === ts.SyntaxKind.StringLiteral) return false;
+          // (#4394) The StringLiteral carve-out below keeps the numeric fast
+          // path for the native-strings lanes, where a widening decision is
+          // made by the dedicated `hasNativeStringElem` scan further down. In
+          // the JS-host/GC lane there is no such scan and a string element is
+          // plain `externref`, so excluding the LITERAL form made the literal
+          // and non-literal spellings of the same array disagree:
+          //
+          //   var s = "a"; [0, s]    // widened → "a" survives
+          //   [0, "a"]               // NOT widened → f64 vec → reads back NaN
+          //
+          // That is what makes compareArray.js report `[0, 'a', undefined]` as
+          // `[0, NaN, NaN]`, so `compareArray(first, second)` answers `true`
+          // for arrays that differ only in their string elements.
+          if (el.kind === ts.SyntaxKind.StringLiteral && ctx.nativeStrings) return false;
           const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
           return t.kind === "ref" || t.kind === "ref_null" || t.kind === "externref";
         });
