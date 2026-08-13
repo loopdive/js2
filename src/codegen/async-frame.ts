@@ -479,6 +479,11 @@ export function buildAsyncFrameInfo(
   }
   const nestedCaptureTypes =
     decl.body === undefined ? new Map<string, ValType>() : collectCurrentNestedCaptureTypes(ctx, decl.body);
+  const nestedRefsAndAssigns =
+    decl.body === undefined
+      ? { referencedInNested: new Set<string>(), assigned: new Set<string>() }
+      : collectNestedRefsAndAssigns(decl.body);
+  const bodyBindingsByName = collectVarDeclsByName(decl);
   // The function-body hoist has already chosen concrete local/cell
   // representations before async activation. Prefer that exact contract over
   // checker reconstruction for body destructuring (where minified JS often has
@@ -486,8 +491,12 @@ export function buildAsyncFrameInfo(
   for (let i = 0; i < spillNames.length; i++) {
     const name = spillNames[i]!;
     const nestedCaptureType = nestedCaptureTypes.get(name);
-    if (nestedCaptureType !== undefined) {
-      spillTypes[i] = nestedCaptureType;
+    if (nestedCaptureType !== undefined || nestedRefsAndAssigns.referencedInNested.has(name)) {
+      const local = activatingFctx?.localMap.get(name);
+      const liveType =
+        activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      if (liveType !== undefined) spillTypes[i] = liveType;
+      else if (nestedCaptureType !== undefined) spillTypes[i] = nestedCaptureType;
       continue;
     }
     const boxed = activatingFctx?.boxedCaptures?.get(name);
@@ -495,10 +504,13 @@ export function buildAsyncFrameInfo(
       spillTypes[i] = boxed.valType;
       continue;
     }
-    const local = activatingFctx?.localMap.get(name);
-    const liveType =
-      activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
-    if (liveType !== undefined) spillTypes[i] = liveType;
+    const binding = bodyBindingsByName.get(name);
+    if (binding !== undefined && ts.isBindingElement(binding)) {
+      const local = activatingFctx?.localMap.get(name);
+      const liveType =
+        activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      if (liveType !== undefined) spillTypes[i] = liveType;
+    }
   }
 
   // (#2967 phase 3a) Cell-aware fields — FORCE-BOX class-1 hazardous spills.
@@ -524,7 +536,7 @@ export function buildAsyncFrameInfo(
   // machine has its own discipline).
   const spillCellInfo = new Map<number, { refCellTypeIdx: number; valType: ValType }>();
   if (decl.asteriskToken === undefined && decl.body !== undefined && spillNames.length > 0) {
-    const { referencedInNested } = collectNestedRefsAndAssigns(decl.body);
+    const { referencedInNested, assigned } = nestedRefsAndAssigns;
     if (referencedInNested.size > 0) {
       const declByName = collectVarDeclsByName(decl);
       const derivedNames = new Set(derived.map((d) => d.name));
@@ -532,7 +544,23 @@ export function buildAsyncFrameInfo(
         const name = spillNames[i]!;
         if (!referencedInNested.has(name)) continue;
         const isDerived = derivedNames.has(name);
-        if (!declByName.has(name) && !isDerived) continue;
+        const binding = declByName.get(name);
+        if (binding === undefined && !isDerived) continue;
+        // A read-only callable copied from an object property is already a
+        // stable host/Wasm function value. Boxing it changes `.call` from the
+        // host callable path to the ref-cell carrier and can turn an async
+        // built-in rejection into a synchronous throw. Keep that narrow shape
+        // by-value; the remaining nested references retain the cell carrier
+        // required by independently-produced nested/resume layouts.
+        const initializer =
+          binding !== undefined && ts.isVariableDeclaration(binding) ? binding.initializer : undefined;
+        const readOnlyCallableProperty =
+          !assigned.has(name) &&
+          initializer !== undefined &&
+          (ts.isPropertyAccessExpression(initializer) || ts.isElementAccessExpression(initializer)) &&
+          binding !== undefined &&
+          ctx.oracle.typeFactOf(binding.name).kind === "function";
+        if (readOnlyCallableProperty) continue;
         const valType = spillTypes[i]!;
         if (!isDerived && !isSpillSafeType(valType)) continue; // no inert cell default
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, valType);
@@ -1581,6 +1609,12 @@ export function ensureAsyncResumeFunction(
     // routing the lifted body had.
     boxedCaptures: info.boxedCaptures,
     readsCurrentThis: info.readsCurrentThis,
+    // The resume body recompiles `info.decl` in a new frame whose leading
+    // `__frame` parameter shifts every source local. Nested-function metadata
+    // was recorded against the activating frame, so its raw outerLocalIdx
+    // values are not meaningful here; source capture arguments must follow the
+    // live name-to-local mapping built below and by statement compilation.
+    rematerializedCaptureSourceLocals: true,
   };
   const frameLocal = 0;
 

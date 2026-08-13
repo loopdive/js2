@@ -17,6 +17,8 @@ related: [1032, 1034, 3587, 4000]
 loc-budget-allow:
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
+  - src/codegen/closures/capture-source-slot.ts
+  - src/codegen/context/types.ts
   - src/codegen/index.ts
   - src/codegen/literals.ts
   - src/codegen/statements/nested-declarations.ts
@@ -25,6 +27,7 @@ func-budget-allow:
   - src/codegen/async-cps.ts::buildBody
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/closures/capture-source-slot.ts::captureSourceSlot
   - src/codegen/literals.ts::compileArrayLiteral
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
@@ -134,3 +137,22 @@ The same exact-head audit shows the remaining boundary honestly:
 - Axios 1.16.1 still stops at `lib/adapters/fetch.js:219:32`; that nested
   conditional assignment shape remains outside this CFG slice and continues to
   fail loudly as required.
+
+## Merge-group regression follow-up (2026-08-13)
+
+The first merge-group run exposed several frame-representation regressions. Async
+spill inference had reused the activating local type for every binding, even
+though ordinary numeric locals can be retyped while the resume frame retains
+their declared representation. Live local types are now reused only for
+destructuring or names referenced by a nested scope. Nested capture arguments
+also resolve through the synthetic resume frame's live `localMap`, rather than
+slot numbers recorded against the original activation frame. Read-only
+property-derived callables stay by-value so ref-cell boxing does not change
+their host `.call`/rejection behavior.
+
+Assignment awaits that reuse one nested function value across two suspension
+segments remain on the legacy lane. The nested function's memoized closure is
+an activation local and cannot yet survive resume-function reinvocation; moving
+that memo into the async frame is a follow-up. The conservative gate preserves
+the pre-slice behavior instead of manufacturing a second closure or trapping at
+the host constructor boundary.

@@ -109,3 +109,57 @@ it("uses nested-function capture types for destructured async-frame spills", asy
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
 });
+
+it("keeps ordinary numeric async spills on the declared resume representation", async () => {
+  const result = await compile(`
+    export async function test() {
+      let value = 1;
+      await Promise.resolve(0);
+      value = -value;
+      return value;
+    }
+  `);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+});
+
+it("remaps nested-function captures to the synthetic async resume frame", async () => {
+  const result = await compile(`
+    export async function test() {
+      const values: number[] = [];
+      function append() {
+        values.push(1);
+      }
+      append();
+      await Promise.resolve(0);
+      return values.length;
+    }
+  `);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const imports = buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
+  expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(1);
+});
+
+it("keeps reused nested function values off assignment-await frames until their memo is spillable", async () => {
+  const result = await compile(
+    `
+      export function test() {
+        return (async function () {
+          function Factory() {
+            return {};
+          }
+          let value = await Promise.resolve(Factory);
+          value = await Promise.resolve(Factory);
+          return value === Factory;
+        })();
+      }
+    `,
+    { emitWat: true },
+  );
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  expect(result.wat).not.toContain("__async_resume_fanon");
+});

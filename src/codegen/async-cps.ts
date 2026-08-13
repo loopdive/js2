@@ -559,12 +559,51 @@ export function planLinearAwaits(
   // Every await must have been consumed into a segment (defensive; a stray await
   // in a `lead` statement would have made `awaitsHere > 0` and been handled).
   if (st.segments.length !== plan.awaitPoints.length) return null;
+  // A nested function value is memoized in an activation local. Recompiling
+  // the body in the async resume function gives each resume invocation fresh
+  // locals, so reusing that function in a later await would manufacture a new
+  // closure (and can desynchronize the host callable bridge from its capture
+  // struct). Keep the newly-admitted assignment-await form on the legacy lane
+  // for this narrow shape until nested-function memo locals ride the frame.
+  if (
+    st.segments.some((segment) => segment.resumeBinding?.target !== undefined) &&
+    reusesNestedFunctionAcrossAwaitSegments(body, st.segments)
+  ) {
+    return null;
+  }
   return {
     segments: st.segments,
     tail: st.lead,
     tailInTry: st.leadInTry,
     finalizer: st.theFinalizer,
   };
+}
+
+function reusesNestedFunctionAcrossAwaitSegments(body: ts.Block, segments: readonly LinearAwaitSegment[]): boolean {
+  const nestedNames = new Set<string>();
+  for (const statement of body.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      nestedNames.add(statement.name.text);
+    }
+  }
+  if (nestedNames.size === 0) return false;
+
+  const counts = new Map<string, number>();
+  for (const segment of segments) {
+    const seen = new Set<string>();
+    const walk = (node: ts.Node): void => {
+      if (isNestedFunctionScope(node)) return;
+      if (ts.isIdentifier(node) && nestedNames.has(node.text)) seen.add(node.text);
+      forEachChild(node, walk);
+    };
+    walk(segment.awaitedExpr);
+    for (const name of seen) {
+      const count = (counts.get(name) ?? 0) + 1;
+      if (count > 1) return true;
+      counts.set(name, count);
+    }
+  }
+  return false;
 }
 
 /** Mutable accumulator threaded through the recursive linear-await lowering. */

@@ -34,6 +34,7 @@ import type { FunctionContext } from "../context/types.js";
  */
 export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; outerLocalIdx: number }): number {
   const inFrameIdx = fctx.localMap.get(cap.name);
+  if (fctx.rematerializedCaptureSourceLocals && inFrameIdx !== undefined) return inFrameIdx;
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 
   const existsHere = cap.outerLocalIdx < fctx.params.length + fctx.locals.length;

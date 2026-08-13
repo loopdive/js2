@@ -620,6 +620,13 @@ export interface FunctionContext {
    */
   liftedCaptureNames?: Set<string>;
   /**
+   * This synthetic function recompiles a source function in a fresh local
+   * frame (for example an async resume function). Nested-function capture
+   * metadata still carries slot numbers from the original activation frame,
+   * so capture arguments must resolve through this frame's live `localMap`.
+   */
+  rematerializedCaptureSourceLocals?: boolean;
+  /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
    * boxed-cell carrier; functions without this set remain byte-identical.
