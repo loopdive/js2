@@ -1327,3 +1327,68 @@ and the typed-receiver ABI it enables is worth a cast per call on ~4 % of
 runtime. Its acceptance test is a `__dc_*` trampoline reserved with a
 `(ref $__fnctor_F)` receiver that validates — the case the ABI note says fails
 today with `call[1] expected type externref`.
+
+## 2026-08-12 (6) — CORRECTION to entry (5): the fixup walk is not the blocker
+
+Entry (5) above says the `__dc_*` trampolines are stuck on an `externref` ABI
+because `applyRefNullFixups` "walks backwards mapping one instruction per
+parameter", and prescribes rewriting that walk to use `instrPopsPushes`. **That
+prescription is wrong, because the rewrite already exists.** Measured, not
+argued.
+
+`src/codegen/fixups.ts` gained an exact FORWARD stack model in **#4077** —
+`locateCallArgProducers`, which threads `instrPopsPushes` through the
+instruction list and records, per call, exactly which instruction produced each
+argument. The hand-rolled backward walk entry (5) describes is only the
+**fallback** for calls that model could not reach. The ABI note in
+`typed-this.ts` was written for #3683 and predates it.
+
+Instrumenting `locateCallArgProducers` over the standalone acorn build
+(env-gated counters, reverted after measuring; checksum 422 held):
+
+| | count |
+| --- | ---: |
+| calls modelled EXACTLY by the forward model | **48,670** |
+| calls falling through to the legacy backward walk | **672** (1.36 %) |
+| instruction lists abandoned before the end | 12,266 |
+
+And the reason those lists abandon is not a modelling gap — it is **terminators**:
+
+| break-on op | lists |
+| --- | ---: |
+| `return` | 5,812 |
+| `throw` | 4,316 |
+| `br` | 1,445 |
+| `return_call` | 664 |
+| `unreachable` | 16 |
+| `rethrow` | 6 |
+| `local.tee` / `local.set` | 6 |
+| `br_table` | 1 |
+
+Every op above except the six `local.tee`/`local.set` is a **terminator**, after
+which the rest of that flat list is unreachable. Abandoning there is *correct*,
+not a defect, and the calls counted as "lost" are overwhelmingly in dead code —
+where Wasm validation is polymorphic anyway, so a mis-rewrite is inert.
+
+**Consequences:**
+
+1. **Do not "fix the walk".** It is exercised by 1.36 % of calls, nearly all
+   unreachable. Rewriting it is work with no measurable payoff, and entry (5)
+   should not be read as scoping that task.
+2. **The `__dc_*` typed-receiver ABI may already be unblocked.** The note's own
+   worked failure — acorn's
+   `this.parseExprOp(this.parseMaybeUnary(null, false, false, forInit), …)`,
+   where each `false` is two instructions — is exactly what the forward model
+   handles exactly. The cheap experiment is therefore **not** a fixup rewrite: it
+   is to reserve a `__dc_*` trampoline with `(ref $__fnctor_F)` as parameter 0,
+   drop the `extern.convert_any` at the call site and the
+   `any.convert_extern; ref.cast` in the body, and see whether it validates.
+   That is a small, self-contained change with an immediate pass/fail answer.
+3. The ~4 % self-time figure for the `__dc_*` family in entry (5) stands — that
+   was measured from the profile and is unaffected. Only the *diagnosis of what
+   blocks it* was wrong.
+
+Recorded rather than silently amended: entry (5) is published in PR #4429, and a
+prescription that sends the next lane to rewrite a 4,000-line-file hot path for
+1.36 % of calls in dead code is exactly the kind of confident-but-wrong direction
+this file exists to prevent.
