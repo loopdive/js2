@@ -5,7 +5,7 @@ status: done
 completed: 2026-08-08
 sprint: current
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-13
 priority: high
 horizon: l
 feasibility: medium
@@ -239,3 +239,236 @@ worth its own issue.
 
 **`arr.toString()` returns `undefined` in standalone** (gc: `"1,2,3"`). Not
 touched.
+
+## Implementation Plan — 2026-08-13 `new Array(n)` hole carrier
+
+### Architecture verdict
+
+Candidate `19a2cf0fdf86caff3da64bf4d2d7d193d15879e2` must not land as-is. It
+changes 18 files by roughly +830/-45 for exactly two Test262 gains per lane.
+More importantly, it uses module-global `ctx.usesArrayHoles` to change generic
+externref-vector allocation, growth, reads, `HasProperty`, and HOF behavior.
+The scan may identify an exact `new Array(n)` binding, but that identity is
+lost at the generic mutation/runtime boundaries, so unrelated externref vecs
+in the same module inherit sparse-array semantics.
+
+Reimplement this as a carrier-specific slice. If a dedicated holey-array
+identity cannot be preserved through constructor, writes, `HasProperty`,
+`Get`, and `filter`, reject/demote the shape; do not recover correctness by
+arming global vec behavior. The old candidate's A/B is useful provisional
+evidence only: it used base `81125e5...`, not the latest main.
+
+### Root cause
+
+ES5.1 §15.4.2.2 says one numeric `Array` argument sets `length` without
+creating indexed properties. The dense vec representation initializes every
+slot, so it cannot distinguish an absent hole from a present property whose
+value is `undefined`. ES5.1 §15.4.4.20 `filter` captures the initial length,
+then performs `HasProperty(O, Pk)` and only performs `Get`/callback when that
+answer is true. A value-only vector therefore calls the callback for holes.
+
+The representation must also preserve ordinary prototype lookup: an absent
+own slot can be present through `Array.prototype[k]` or an inherited accessor.
+A JS host helper cannot infer that relationship merely from an opaque WasmGC
+vec. Either the carrier/provider models the Array prototype chain explicitly,
+or selection must reject modules whose indexed prototype state can matter.
+
+### Required representation boundary
+
+Introduce a planned **holey Array carrier**, not a module-wide mode:
+
+- `HoleyArrayPlan` records exact constructor and variable-declaration identity,
+  the chosen carrier, supported filter call sites, and unsupported escapes.
+- A dedicated allocator initializes backing slots to the existing `$Hole`
+  sentinel while setting logical length to `n`.
+- A dedicated set/grow provider fills only gaps in this carrier with `$Hole`.
+- Dedicated `HasProperty` and `Get` providers distinguish absent, present
+  `undefined`, overlay/tombstone, and inherited indexed properties.
+- Ordinary `__vec_externref`, numeric-buffer `__vec_f64`, and generic
+  `__extern_get_idx` / `__extern_has_idx` remain byte-for-byte unchanged when
+  no already-landed feature requires them.
+
+An explicit runtime brand/struct type is preferable. If current type plumbing
+cannot support it, a sidecar keyed by exact carrier identity is acceptable
+only with alias-safe lookup and proof that unrelated vecs cannot enter it.
+
+### Changes
+
+**File: `src/codegen/array-holes.ts` — `scanForArrayHoles` (candidate line
+~59)**
+
+- In `scanForArrayHoles`, build the per-site `HoleyArrayPlan` for an ambient,
+  untyped, directly-bound `new Array(n)` and exact `.filter(...)` consumers.
+- Track by `ts.VariableDeclaration`/node identity, not variable spelling.
+- Reject or mark unsupported any alias, reassignment, escape, destructuring,
+  computed method dispatch, shadowed `Array`, or mutation route that cannot
+  preserve carrier identity. Do not set `ctx.usesArrayHoles` merely because
+  this new constructor shape exists.
+
+**Files: `src/codegen/context/types.ts`,
+`src/codegen/context/create-context.ts` — `CodegenContext` hole fields /
+`createCodegenContext` (candidate lines ~1468 / ~130)**
+
+- Store the exact plan and carrier/provider indices. A boolean may gate byte
+  emission, but it must never decide whether an arbitrary externref vec uses
+  hole semantics.
+
+**File: `src/codegen/expressions/new-indexed.ts` —
+`tryCompileIndexedBuiltinNew` (candidate line ~28)**
+
+- In `tryCompileIndexedBuiltinNew`, consult the constructor-node plan and call
+  the dedicated holey allocator only for that site.
+- Validate the ES5 array-length domain before allocation. The initial narrow
+  IR slice may accept an integer literal representable by the current vec and
+  must demote all other lengths; do not imply support for the full uint32
+  range.
+
+**File: `src/codegen/statements/variables.ts` — `inferArrayVecType` (candidate
+line ~526)**
+
+- In `inferArrayVecType`, force externref only for a declaration in the exact
+  holey plan. A filter-free `new Array(n); a[0] = 5` must retain its existing
+  numeric-buffer representation.
+
+**File: `src/codegen/vec-elem-set.ts` — `ensureHoleyExternrefVecNew` /
+`ensureVecElemSet` (candidate lines ~46 / ~161)**
+
+- Keep/create `ensureHoleyExternrefVecNew` for the dedicated allocator.
+- Add a carrier-specific set/grow helper. Remove candidate logic that makes
+  generic `ensureVecElemSet` choose `$Hole` solely from
+  `ctx.usesArrayHoles && elem.kind === "externref"`.
+- On an out-of-bounds write, fill `[oldLength, index)` with `$Hole`, store the
+  value at `index`, and update logical length. Storing JavaScript `undefined`
+  creates a present slot and must never store `$Hole`.
+
+**File: `src/codegen/expressions/assignment.ts` —
+`compileElementAssignment` (candidate line ~4516)**
+
+- Route assignments through the holey set provider only when the receiver is
+  proven to be the planned carrier. Unsupported aliases demote before this
+  point. Remove module-global gap-fill decisions from generic assignments.
+
+**Files: `src/codegen/array-filter-spec-access.ts`,
+`src/codegen/array-methods.ts`, `src/codegen/hof-native.ts` —
+`overlayFilterAccess`, `compileArrayFilter`, `ensureNativeArrayHof` (candidate
+lines ~97 / ~5821 / ~75)**
+
+- Make `compileArrayFilter` and `overlayFilterAccess` consume the same
+  carrier-specific `HasProperty`/`Get` contract.
+- Capture `len` once. For each `k`, call `HasProperty`; call `Get` and the
+  callback only when present. Append selected values densely to a fresh array.
+- If indexed prototype state is dirty, either perform real prototype-aware
+  lookup through the provider or demote. Do not send an opaque WasmGC vec to a
+  JS host helper and call that prototype-correct.
+- `ensureNativeArrayHof("filter")` must resolve the dedicated provider only
+  for the planned carrier. Remove the candidate's global
+  `usesArrayHoles && methodName === "filter"` gate.
+
+**File: `src/codegen/object-runtime.ts` — `spliceExternHasIdxHoleVecArm` /
+`fillExternGetIdxVecArms` (candidate lines ~6468 / ~6546)**
+
+- Do not splice hole arms into generic `fillExternGetIdxVecArms` or
+  `spliceExternHasIdxHoleVecArm` on account of this slice. Add dedicated holey
+  Array `Get`/`HasProperty` helpers, or dispatch on an unambiguous runtime
+  carrier brand before any ordinary vec arm.
+- Preserve existing overlay tombstone semantics from the completed delete
+  portion of this issue.
+
+**Files: `src/ir/select.ts`, `src/ir/from-ast.ts`,
+`src/ir/integration.ts`, `src/ir/vector-runtime.ts` — `isPhase1Expr`,
+`lowerNewExpression`, `lowerMethodCall`, `makeFromAstResolver`, and
+`resolveAndObserveCallableProvider` (candidate lines ~6372 / ~5656 / ~5994 /
+~4065 / ~4498)**
+
+- Selection claims only an exact planned constructor/filter pair, ambient
+  `Array`, one bounded integer literal length, a scope-owned callback, and no
+  unsupported alias/escape/reassignment. Every fact required by lowering and
+  provider resolution must be known before claim.
+- `lowerNewExpression` emits the symbolic holey allocator;
+  `lowerMethodCall` emits the symbolic holey-filter provider. Both carry the
+  planned representation identity rather than rediscovering it by element
+  type.
+- `makeFromAstResolver` / `resolveAndObserveCallableProvider` resolve those
+  symbols to the dedicated providers without mutating generic vec semantics.
+- Host may remain on the legacy top-level/module-initializer emitter until a
+  host IR provider exists, but document that ownership honestly. Standalone
+  supported functions must report `irBodyEmitted: true` and
+  `legacyBodyEmitted: false`.
+
+### Wasm IR pattern
+
+```text
+%array   = call @runtime.holey_array_new(i32.const n)
+call @runtime.holey_array_set(%array, i32.const index, %boxed_value)
+%result  = call @runtime.holey_array_filter(%array, %callback)
+
+;; Inside filter, with len captured before the loop:
+%present = call @runtime.holey_array_has_property(%array, %k)
+if %present
+  %value = call @runtime.holey_array_get(%array, %k)
+  %keep  = call_ref %callback(%value, %k, %array)
+  if %keep
+    call @runtime.holey_array_append_present(%result, %value)
+  end
+end
+```
+
+The providers may inline this sequence, but `HasProperty` and `Get` remain
+separate semantic operations. `$Hole` is internal and must never escape as a
+callback value, property value, or host externref.
+
+### Edge cases and required tests
+
+- Both exact Test262 rows in both lanes:
+  `filter/15.4.4.20-9-5.js` and `filter/15.4.4.20-9-b-1.js`.
+- `new Array(10)` has length 10 and no own index properties; a stored
+  `undefined` is present and visited while untouched slots are skipped.
+- `filter` captures length once; writes beyond captured length are ignored,
+  while creation/deletion of not-yet-visited indices follows `HasProperty` at
+  visit time.
+- An inherited numeric data property and inherited numeric accessor at a hole
+  are observed and visited. Own present `undefined` shadows the prototype.
+- Sparse growth preserves intermediate holes; delete tombstones stay absent.
+- `Array` shadowing, dynamic/unrepresentable lengths, aliases, reassignment,
+  escaped carriers, and computed `filter` access either work through the same
+  provider or visibly demote before IR selection.
+- A filter-free numeric buffer remains `$__vec_f64`. An unrelated externref
+  vec in the same module has identical bytes and behavior. Include a
+  mixed-module test containing both carriers.
+- Run the original Test262 top-level/module-initializer shape, not only an
+  exported-function rewrite; these paths have differed historically.
+
+### Same-population A/B and zero-loss gates
+
+Record the exact latest `origin/main` SHA at implementation start and compare
+it with the exact implementation SHA. Use Test262 corpus gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693`, identical oracle, harness,
+timeouts, target flags, maintained file list, and freshly built bundles in
+both arms.
+
+First run the exact 44-row ES5 `built-ins/Array/prototype/**` residual
+partition used by the candidate, plus the positive/negative controls above.
+Report all status totals and every row transition. Require only the two named
+`fail -> pass` transitions per lane, zero `pass -> non-pass`, identical runner
+errors, and no entered/left/unmeasured rows. Add a carrier-brand kill switch:
+disabling only the dedicated holey provider must remove the two gains without
+changing unrelated vec controls.
+
+Then run all **9,029** `<= ES5` tests through the authoritative original
+harness in each lane, including eval, `Function`, and `with`:
+
+- host/gc: goal closure is 9,029 pass and zero other statuses;
+- standalone: goal closure is 9,029 pass and zero other statuses;
+- an incremental change may land only with zero `pass -> non-pass`, zero new
+  compile errors/timeouts/skips, and exact accounting of every changed row.
+
+### Candidate disposition and Terra implementation handoff
+
+- Rebase/rederive from current main; candidate `19a2cf0f...` is read-only
+  evidence, not a patch to merge wholesale.
+- Reject the module-global `usesArrayHoles` correctness gate and generic vec
+  rewrites. Preserve only pieces that remain valid after carrier identity is
+  explicit (likely the allocator and focused Test262 fixtures).
+- Keep the change proportional. Every touched compiler file must be justified
+  by the carrier dataflow above; if the two-row slice still needs broad generic
+  rewrites, stop and return an architecture blocker rather than landing it.
