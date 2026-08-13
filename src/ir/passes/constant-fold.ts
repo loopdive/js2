@@ -298,6 +298,7 @@ const BINARY_FOLD_TABLE: Readonly<Record<IrBinop, BinaryFolder>> = {
   // i32 logical (bool && / bool ||, operands are 0|1).
   "i32.and": (l, r) => i32Bool(l, r, (a, b) => a !== 0 && b !== 0),
   "i32.or": (l, r) => i32Bool(l, r, (a, b) => a !== 0 || b !== 0),
+  "i64.eq": (l, r) => (l.kind === "i64" && r.kind === "i64" ? { kind: "bool", value: l.value === r.value } : null),
   // (#3758) native i32 arithmetic — only ever emitted (see `ir/from-ast.ts`'s
   // `emitI32PureArithmetic`) for operands already proven int32-range under a
   // guard that keeps the true result f64-exact, so folding via plain JS

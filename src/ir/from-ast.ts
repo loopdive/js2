@@ -2670,6 +2670,8 @@ function isEmptyStringLiteral(expression: ts.Expression): boolean {
 
 const IR_I32: IrType = irVal({ kind: "i32" });
 const IR_F64: IrType = irVal({ kind: "f64" });
+const IR_I64: IrType = irVal({ kind: "i64" });
+const LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS = 0x7ff00000deadc0den;
 
 /** `cx`-bound "is this name an i32-promoted slot right now?" predicate. */
 function promotedI32Probe(cx: LowerCtx): IsPromotedI32 {
@@ -5204,6 +5206,14 @@ function requireSuperParentShape(cx: LowerCtx): IrClassShape {
   return parent;
 }
 
+function emitExpressionDefaultMissingF64(expected: IrType, cx: LowerCtx): IrValueId {
+  if (asVal(expected)?.kind !== "f64") {
+    throw new Error(`ir/from-ast: expression-default sentinel requires an f64 parameter (${cx.funcName})`);
+  }
+  const bits = cx.builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
+  return cx.builder.emitUnary("f64.reinterpret_i64", bits, expected);
+}
+
 function importedMissingArgument(
   expected: IrType,
   optional: IrImportedOptionalParamPlan | undefined,
@@ -5222,8 +5232,7 @@ function importedMissingArgument(
     if (optional?.hasExpressionDefault) {
       // Exact legacy default-expression sentinel. Construct from its bits so
       // JS number canonicalization can never quiet/change the NaN payload.
-      const bits = cx.builder.emitConst({ kind: "i64", value: 0x7ff00000deadc0den }, irVal({ kind: "i64" }));
-      return cx.builder.emitUnary("f64.reinterpret_i64", bits, expected);
+      return emitExpressionDefaultMissingF64(expected, cx);
     }
     return cx.builder.emitConst({ kind: "f64", value: 0 }, expected);
   }
@@ -5629,6 +5638,17 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
  * Boundary callables unpack externref through a root cast on each self use;
  * `collectIrUses`'s double count forces the source SSA value into a local.
  */
+function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boolean {
+  let candidate = expr;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  return (
+    ts.isIdentifier(candidate) &&
+    candidate.text === "undefined" &&
+    !cx.scope.has("undefined") &&
+    cx.resolver?.resolveModuleBinding?.(candidate) === undefined
+  );
+}
+
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
@@ -5639,13 +5659,19 @@ function lowerClosureCall(
   if (signature.returnType === null && !statementPosition) {
     unsupportedVoidCallExpression(`ir/from-ast: void closure calls are not in value position scope (${cx.funcName})`);
   }
-  if (argExprs.length !== signature.params.length) {
+  const expandedArgExprs = expandStaticSpreadArgs(argExprs, cx);
+  const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
+  if (expandedArgExprs.length < defaultParamStart || expandedArgExprs.length > signature.params.length) {
     throw new Error(`ir/from-ast: closure call arity mismatch in ${cx.funcName}`);
   }
   const args: IrValueId[] = [];
-  for (let i = 0; i < argExprs.length; i++) {
+  for (let i = 0; i < signature.params.length; i++) {
     const expected = signature.params[i]!;
-    const argVal = lowerExpr(argExprs[i]!, cx, expected);
+    const argument = expandedArgExprs[i];
+    const argVal =
+      i >= defaultParamStart && (argument === undefined || isUnshadowedUndefinedExpression(argument, cx))
+        ? emitExpressionDefaultMissingF64(expected, cx)
+        : lowerExpr(argument!, cx, expected);
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       throw new Error(
         `ir/from-ast: closure arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
@@ -11122,20 +11148,57 @@ function allocateLoweredLiftedFunctionArtifact(
  * `refcell.get` / `refcell.set` automatically (see the identifier
  * handler in `lowerExpr`).
  */
+function numericClosureDefaultInitializerIsIrSafe(initializer: ts.Expression): boolean {
+  let candidate = initializer;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
+  ) {
+    let operand: ts.Expression = candidate.operand;
+    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+    return ts.isNumericLiteral(operand);
+  }
+  return false;
+}
+
+function closureDefaultParamStart(parameters: readonly ts.ParameterDeclaration[], funcName: string): number {
+  let firstDefault = parameters.length;
+  for (let index = 0; index < parameters.length; index++) {
+    const parameter = parameters[index]!;
+    if (!parameter.initializer) {
+      if (firstDefault !== parameters.length) {
+        throw new Error(`ir/from-ast: closure defaults must form a suffix (${funcName})`);
+      }
+      continue;
+    }
+    if (
+      !ts.isIdentifier(parameter.name) ||
+      parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
+      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer)
+    ) {
+      throw new Error(`ir/from-ast: closure default parameter is outside the numeric constant subset (${funcName})`);
+    }
+    if (firstDefault === parameters.length) firstDefault = index;
+  }
+  return firstDefault;
+}
+
 function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, cx: LowerCtx): IrValueId {
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName);
   const params: IrType[] = expr.parameters.map((p) => {
     if (!p.type) {
       throw new Error(`ir/from-ast: closure params must have annotations (${cx.funcName})`);
     }
-    // #2713 — rest (`...xs`), default (`x = 5`) and optional (`x?`) params keep
+    // #2713 — rest (`...xs`) and optional (`x?`) params keep
     // an Identifier name, so the gate above lets them through and the lowering
-    // below silently drops their arity/defaulting semantics (a regression
+    // below would silently drop their arity semantics (a regression
     // against #1372's intent). Reject them to legacy here, mirroring the
-    // top-level selector gate (`select.ts` param-shape-rejected). Demote-to-
-    // legacy is the documented contract; legacy applies the default initializer
-    // / rest gathering correctly.
-    if (p.questionToken || p.dotDotDotToken || p.initializer) {
-      throw new Error(`ir/from-ast: closure rest/default/optional param not in IR scope (${cx.funcName})`);
+    // top-level selector gate (`select.ts` param-shape-rejected). Numeric
+    // constant defaults are handled below through the exact legacy sentinel.
+    if (p.questionToken || p.dotDotDotToken) {
+      throw new Error(`ir/from-ast: closure rest/optional param not in IR scope (${cx.funcName})`);
     }
     const description = ts.isIdentifier(p.name) ? p.name.text : "<pattern>";
     return closureParameterTypeToIr(p.type, cx, `param ${description} of ${cx.funcName}.<closure>`);
@@ -11144,7 +11207,11 @@ function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, 
     throw new Error(`ir/from-ast: closure must have a return type annotation (${cx.funcName})`);
   }
   const returnType = typeNodeToIr(expr.type, `return type of ${cx.funcName}.<closure>`);
-  const signature: IrClosureSignature = { params, returnType };
+  const signature: IrClosureSignature = {
+    params,
+    returnType,
+    ...(defaultParamStart < params.length ? { defaultParamStart } : {}),
+  };
 
   return lowerClosureExpressionWithSignature(expr, signature, undefined, cx);
 }
@@ -11219,6 +11286,10 @@ function lowerClosureExpressionWithSignature(
   cx: LowerCtx,
   exact?: ExactClosureLoweringOptions,
 ): IrValueId {
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName);
+  if ((signature.defaultParamStart ?? signature.params.length) !== defaultParamStart) {
+    throw new Error(`ir/from-ast: exact closure default-parameter plan diverged (${cx.funcName})`);
+  }
   const captures = analyseCaptures(expr, cx, exact?.orderedReadonlyCaptures);
   if (expectedReadonlyCaptures) {
     const actual = new Set(captures.map((capture) => capture.name));
@@ -11486,12 +11557,21 @@ function liftClosureBody(
   }
 
   const pendingDestructures: { pattern: ts.BindingPattern; value: IrValueId }[] = [];
+  const pendingDefaults: {
+    name: string;
+    rawValue: IrValueId;
+    type: IrType;
+    initializer: ts.Expression;
+  }[] = [];
+  const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
   for (let i = 0; i < expr.parameters.length; i++) {
     const p = expr.parameters[i]!;
     const t = signature.params[i]!;
     const name = ts.isIdentifier(p.name) ? p.name.text : `__pattern_param_${i}`;
     const v = builder.addParam(name, t);
-    if (ts.isIdentifier(p.name)) scope.set(name, { kind: "local", value: v, type: t });
+    if (ts.isIdentifier(p.name) && i >= defaultParamStart && p.initializer) {
+      pendingDefaults.push({ name, rawValue: v, type: t, initializer: p.initializer });
+    } else if (ts.isIdentifier(p.name)) scope.set(name, { kind: "local", value: v, type: t });
     else pendingDestructures.push({ pattern: p.name, value: v });
   }
 
@@ -11557,6 +11637,21 @@ function liftClosureBody(
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };
+
+  for (const pending of pendingDefaults) {
+    if (asVal(pending.type)?.kind !== "f64") {
+      throw new Error(`ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`);
+    }
+    const rawBits = builder.emitUnary("i64.reinterpret_f64", pending.rawValue, IR_I64);
+    const sentinelBits = builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
+    const missing = builder.emitBinary("i64.eq", rawBits, sentinelBits, IR_I32);
+    const fallback = lowerExpr(pending.initializer, innerCx, pending.type);
+    if (!irTypeAssignable(builder.typeOf(fallback), pending.type)) {
+      throw new Error(`ir/from-ast: closure default initializer type mismatch (${liftedName})`);
+    }
+    const resolved = builder.emitSelect(missing, fallback, pending.rawValue, pending.type);
+    scope.set(pending.name, { kind: "local", value: resolved, type: pending.type });
+  }
 
   for (const pending of pendingDestructures) {
     lowerBindingPattern(pending.pattern, pending.value, innerCx);

@@ -1189,7 +1189,7 @@ export function assessIrImplicitConstructorSubject(
   typedShapeRejectReason = null;
   currentClaimClassName = owner.name?.text ?? null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
@@ -1272,7 +1272,12 @@ let currentClaimClassName: string | null = null;
 let currentSubjectFunctionName: string | null = null;
 let currentSubjectReturnsBoolean = false;
 let currentClassBindings = new Map<string, string>();
-let currentCallableArities = new Map<string, number>();
+interface CallableArityRange {
+  readonly min: number;
+  readonly max: number;
+}
+
+let currentCallableArities = new Map<string, CallableArityRange>();
 let currentCallableReturnClasses = new Map<string, string>();
 let currentNestedFunctionNames: ReadonlySet<string> = new Set();
 // TDZ-visible lexical values prevent an earlier use from falling through to a
@@ -1544,7 +1549,7 @@ function whyNotIrClaimable(
         null)
       : null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = fn.body ? collectDirectNestedFunctionNames(fn.body) : new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
@@ -4572,10 +4577,10 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // — it's a shape-only signal, not a primitive type. Since the IR doesn't
       // syntactically check the annotation against the body, just accept any
       // annotation (the lowerer enforces semantic match).
-      if (!isPhase1ClosureLiteral(d.initializer, initializerScope, localClasses))
+      if (!isPhase1ClosureLiteral(d.initializer, initializerScope, localClasses, true))
         return shapeNo("vardecl-closure-init", d.initializer);
       scope.add(d.name.text);
-      recordCallableProjection(d.name.text, d.initializer.parameters.length, d.initializer.type);
+      recordCallableProjection(d.name.text, closureLiteralCallableArity(d.initializer), d.initializer.type);
       continue;
     }
     if (
@@ -4594,7 +4599,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     const initializer = unwrapPhase1Parens(d.initializer);
     const returnedCallable = directReturnedCallableSignature(initializer, initializerScope);
     if (returnedCallable) {
-      currentCallableArities.set(d.name.text, returnedCallable.params.length);
+      currentCallableArities.set(d.name.text, exactCallableArity(returnedCallable.params.length));
     }
     if (!currentSubjectIsModuleInit && isConst && expressionTouchesTrackedModuleValue(initializer)) {
       const family = obviousModuleValueFamily(initializer);
@@ -4753,10 +4758,69 @@ function isPhase1NestedFunc(
  * Slice 3 (#1169c): shape-check an arrow / function-expression
  * initializer used as a `const` closure binding.
  */
+function closureNumericDefaultInitializerIsIrSafe(initializer: ts.Expression): boolean {
+  const candidate = unwrapProjectionExpression(initializer);
+  if (ts.isNumericLiteral(candidate)) return true;
+  return (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken) &&
+    ts.isNumericLiteral(unwrapProjectionExpression(candidate.operand))
+  );
+}
+
+function closureLiteralDefaultParamStart(
+  parameters: readonly ts.ParameterDeclaration[],
+  allowNumericDefaultSuffix: boolean,
+): number | null {
+  let firstDefault = parameters.length;
+  for (let index = 0; index < parameters.length; index++) {
+    const parameter = parameters[index]!;
+    if (!parameter.initializer) {
+      if (firstDefault !== parameters.length) return null;
+      continue;
+    }
+    if (
+      !allowNumericDefaultSuffix ||
+      !ts.isIdentifier(parameter.name) ||
+      parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
+      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer)
+    ) {
+      return null;
+    }
+    if (firstDefault === parameters.length) firstDefault = index;
+  }
+  return firstDefault;
+}
+
+function exactCallableArity(arity: number): CallableArityRange {
+  return { min: arity, max: arity };
+}
+
+function closureLiteralCallableArity(expr: ts.ArrowFunction | ts.FunctionExpression): CallableArityRange {
+  const min = closureLiteralDefaultParamStart(expr.parameters, true);
+  if (min === null) return exactCallableArity(expr.parameters.length);
+  return { min, max: expr.parameters.length };
+}
+
+function isDefaultedCallableUndefinedArgument(
+  argument: ts.Expression,
+  parameterIndex: number,
+  arity: CallableArityRange | undefined,
+  scope: ReadonlySet<string>,
+): boolean {
+  return (
+    arity !== undefined &&
+    parameterIndex >= arity.min &&
+    parameterIndex < arity.max &&
+    isUnshadowedUndefinedIdentifier(argument, scope)
+  );
+}
+
 function isPhase1ClosureLiteral(
   expr: ts.ArrowFunction | ts.FunctionExpression,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
+  allowNumericDefaultSuffix = false,
 ): boolean {
   if ("asteriskToken" in expr && expr.asteriskToken) return shapeNo("closure-generator", expr); // generator
   if (expr.modifiers && expr.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
@@ -4771,8 +4835,10 @@ function isPhase1ClosureLiteral(
     if (inner.has(expr.name.text)) return shapeNo("closure-name-shadow", expr.name);
     inner.add(expr.name.text);
   }
+  const defaultParamStart = closureLiteralDefaultParamStart(expr.parameters, allowNumericDefaultSuffix);
+  if (defaultParamStart === null) return shapeNo("closure-param-default", expr);
   for (const p of expr.parameters) {
-    if (p.questionToken || p.dotDotDotToken || p.initializer) return shapeNo("closure-param-shape", p);
+    if (p.questionToken || p.dotDotDotToken) return shapeNo("closure-param-shape", p);
     if (!p.type || !isPhase1ClosureParameterTypeNode(p.type)) return shapeNo("closure-param-type", p.type ?? p);
     if (ts.isIdentifier(p.name)) {
       if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
@@ -4785,7 +4851,7 @@ function isPhase1ClosureLiteral(
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
   if (ts.isFunctionExpression(expr) && expr.name) {
-    recordCallableProjection(expr.name.text, expr.parameters.length, expr.type);
+    recordCallableProjection(expr.name.text, { min: defaultParamStart, max: expr.parameters.length }, expr.type);
   }
   const outerMutableSlotNames = currentMutableSlotNames;
   currentMutableSlotNames = new Set();
@@ -5766,7 +5832,7 @@ function localClassNameFromTypeNode(node: ts.TypeNode): string | null {
   return currentLocalClassDeclarations.has(typeNode.typeName.text) ? typeNode.typeName.text : null;
 }
 
-type ProjectionBindingSnapshot = readonly [Map<string, string>, Map<string, number>, Map<string, string>];
+type ProjectionBindingSnapshot = readonly [Map<string, string>, Map<string, CallableArityRange>, Map<string, string>];
 
 function hasProjectionBinding(name: string): boolean {
   return currentClassBindings.has(name) || currentCallableArities.has(name) || currentCallableReturnClasses.has(name);
@@ -5784,9 +5850,13 @@ function clearProjectionBinding(name: string): void {
   currentCallableReturnClasses.delete(name);
 }
 
-function recordCallableProjection(name: string, arity: number, returnType: ts.TypeNode | undefined): void {
+function recordCallableProjection(
+  name: string,
+  arity: number | CallableArityRange,
+  returnType: ts.TypeNode | undefined,
+): void {
   clearProjectionBinding(name);
-  currentCallableArities.set(name, arity);
+  currentCallableArities.set(name, typeof arity === "number" ? exactCallableArity(arity) : arity);
   const returnClass = returnType ? localClassNameFromTypeNode(returnType) : null;
   if (returnClass !== null) currentCallableReturnClasses.set(name, returnClass);
 }
@@ -6402,10 +6472,12 @@ function localClassNameForExpression(expression: ts.Expression, scope: ReadonlyS
   return null;
 }
 
-function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string>): number | undefined {
+function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string>): CallableArityRange | undefined {
   const candidate = unwrapProjectionExpression(expression);
   if (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) {
-    return hasFixedIrParameters(candidate.parameters) ? candidate.parameters.length : undefined;
+    if (hasFixedIrParameters(candidate.parameters)) return exactCallableArity(candidate.parameters.length);
+    const firstDefault = closureLiteralDefaultParamStart(candidate.parameters, true);
+    return firstDefault === null ? undefined : { min: firstDefault, max: candidate.parameters.length };
   }
   if (!ts.isIdentifier(candidate)) return undefined;
   if (scope.has(candidate.text)) {
@@ -6414,7 +6486,7 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   if (currentNestedFunctionNames.has(candidate.text) || currentLexicalValueBindingNames.has(candidate.text))
     return undefined;
   const topLevel = currentDynScanDecls?.get(candidate.text);
-  if (topLevel && hasFixedIrParameters(topLevel.parameters)) return topLevel.parameters.length;
+  if (topLevel && hasFixedIrParameters(topLevel.parameters)) return exactCallableArity(topLevel.parameters.length);
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
   if (!declaration) return undefined;
   if (
@@ -6422,12 +6494,12 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
     (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))
   ) {
     return hasFixedIrParameters(declaration.initializer.parameters)
-      ? declaration.initializer.parameters.length
+      ? exactCallableArity(declaration.initializer.parameters.length)
       : undefined;
   }
   if (declaration.type && ts.isFunctionTypeNode(declaration.type)) {
     const signature = irClosureSignatureFromFunctionTypeNode(declaration.type);
-    return signature?.params.length;
+    return signature ? exactCallableArity(signature.params.length) : undefined;
   }
   return undefined;
 }
@@ -7293,12 +7365,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
+    let localCallableArity: CallableArityRange | undefined;
     if (scope.has(calleeName)) {
-      const expectedArity = knownCallableArity(expr.expression, scope);
-      if (expectedArity === undefined) {
+      localCallableArity = knownCallableArity(expr.expression, scope);
+      if (localCallableArity === undefined) {
         return capabilityNo("call-resolution-unsupported", "expr-local-call-target", expr.expression);
       }
-      if (actualArity !== null && actualArity !== expectedArity) {
+      if (actualArity !== null && (actualArity < localCallableArity.min || actualArity > localCallableArity.max)) {
         return capabilityNo("call-arity-unsupported", "expr-local-call-arity", expr);
       }
     } else {
@@ -7320,7 +7393,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     for (const arg of expr.arguments) {
       // Slice 8a (#1169g): accept `f(...source)` where the spread source
       // is an ArrayLiteralExpression with no nested spread. The lowerer
-      // expands this at compile time into individual call arguments
       // (matches the legacy `expandSpreadCallArgs` fast path). Spread
       // sources of dynamic length (e.g. an arbitrary identifier of vec
       // type) are deferred — they'd require runtime arity expansion
@@ -7334,6 +7406,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         continue;
       }
       const currentParameterIndex = parameterIndex++;
+      if (isDefaultedCallableUndefinedArgument(arg, currentParameterIndex, localCallableArity, scope)) continue;
       // #3791 follow-up dependency — an exact stable top-level numeric array
       // may cross only a direct-call boundary. The callee's planned vec ABI
       // remains authoritative; the builder rechecks its real global ValType.
@@ -7886,7 +7959,7 @@ export function assessModuleInit(
   typedShapeRejectReason = null;
   currentClaimClassName = null;
   currentClassBindings = new Map<string, string>();
-  currentCallableArities = new Map<string, number>();
+  currentCallableArities = new Map<string, CallableArityRange>();
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();

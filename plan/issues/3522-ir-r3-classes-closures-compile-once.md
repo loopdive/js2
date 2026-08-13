@@ -1543,6 +1543,40 @@ cross-owner callable escapes remain the next serial R3 families. The shared
 direct closure implementation still has those live typed consumers, so it is
 not deleted in this checkpoint.
 
+### Numeric defaulted closure-parameter checkpoint (2026-08-13)
+
+A const-bound arrow/function-expression closure may now carry a contiguous
+suffix of explicitly annotated `number` parameters with constant numeric
+defaults. Its logical IR signature records the first defaulted position while
+retaining the complete physical parameter list. Local calls therefore accept
+every JavaScript arity from that first default through the declared parameter
+count, pad omitted positions with the exact legacy expression-default sNaN
+sentinel, and treat an unshadowed explicit `undefined` identically. The lifted
+IR body recognizes the sentinel by exact `i64.reinterpret_f64`/`i64.eq` bits
+and selects the declared constant before any parameter use.
+
+The closure header's `$arity` is the first defaulted position, preserving
+Function `length` metadata without creating a second closure layout or lifted
+function type. String/vec carrier rewrites preserve the logical default
+metadata, while physical Program ABI and wrapper layout reuse remain keyed by
+the full Wasm parameter/result signature. Bytecode and Porffor continue to
+reject the new i64 bit operations through their existing capability gates;
+WasmGC and linear lower them through the shared typed emitter seam.
+
+Anti-vacuity coverage exercises an all-default suffix through omitted,
+explicit-`undefined`, partially supplied, and fully defaulted calls in both GC
+and standalone. Direct-body poison proves `run` and its lifted closure are
+IR-owned, runtime results match same-source direct builds, WAT pins the exact
+bit test plus `call_ref`, and each optimized IR binary is no larger than its
+direct oracle. The focused/default plus adjacent closure-family matrix is
+**26/26**; fallback policy is unchanged and the strict IR-only shadow remains
+**37/37 emitted, 0 legacy, 0 Unsupported, 0 Invariant**.
+
+Effectful or cross-parameter defaults, optional/rest parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+the next serial R3 families. The shared direct closure implementation still
+has those live typed consumers, so it is not deleted in this checkpoint.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
