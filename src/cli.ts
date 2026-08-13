@@ -15,6 +15,11 @@ function getCliVersion(): string {
 }
 
 const args = process.argv.slice(2);
+let explainMode: "text" | "json" | undefined;
+if (args[0] === "explain") {
+  args.shift();
+  explainMode = "text";
+}
 
 // `--ts7` swaps the parser/checker frontend to `@typescript/native-preview`
 // (TS7 Go-port preview, #1288). The decision is made by `src/ts-api.ts` at
@@ -24,7 +29,7 @@ if (args.includes("--ts7")) {
   process.env.JS2WASM_TS7 = "1";
 }
 
-const { compile, compileProject, entryHasRelativeImports } = await import("./index.js");
+const { compile, compileProject, entryHasRelativeImports, formatCompileExplanation } = await import("./index.js");
 const { buildDefaultDefines } = await import("./compiler/define-substitution.js");
 
 if (args.includes("--version") || args.includes("-v")) {
@@ -34,6 +39,7 @@ if (args.includes("--version") || args.includes("-v")) {
 
 if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
   console.log(`Usage: js2wasm <input.ts> [options]
+       js2wasm explain <input.ts> [--json] [options]
 
 Compile a TypeScript file to WebAssembly (GC proposal).
 
@@ -73,6 +79,14 @@ Options:
                     __exn_render_*, __stdout_*, ...) are the calling convention
                     a JS host uses to read WasmGC values — and they are GC
                     roots, so wasm-opt cannot strip what they pin.
+  --semantic-providers <m>
+                    Semantic implementation policy (#4397): "auto" (default)
+                    preserves compatibility; "native-first" selects migrated
+                    Wasm-native provider families even under a JS host. This
+                    does not disable JS boundary wrappers or platform APIs.
+  --explain         Print the compiler-owned provider/capability report and do
+                    not write artifacts. Equivalent to the explain subcommand.
+  --explain-json    Print that report as stable schema-versioned JSON.
   --wat             Emit only WAT (no binary)
   --no-wat          Skip WAT output
   --no-dts          Skip .d.ts output
@@ -88,12 +102,13 @@ Options:
                     is ON by default; this restores the pre-#1950 behaviour.
                     (No-op when binaryen/wasm-opt is unavailable — that path
                     already degrades to a one-line note, never a failure.)
-  --link <ns>       (WASI, #2783) Leave the external namespace <ns> as link-time
+  --link <ns>       Leave the external namespace <ns> as link-time
                     imports (repeatable) instead of inline-lowering it. Satisfied
                     at instantiation by a preloaded provider module (e.g.
                     'wasmtime --preload <ns>=provider.wasm'). Any namespace works
-                    (leave-as-import is universal); '--link node:fs' additionally
-                    selects the import-and-link std-IO path: the module imports
+                    (leave-as-import is target-neutral); on WASI,
+                    '--link node:fs' additionally selects the import-and-link
+                    std-IO path: the module imports
                     readSync/writeSync + its memory from node:fs (no
                     wasi_snapshot_preview1 for stream IO) and links node-fs.wasm.
                     console.log / process.std*.write lower to writeSync(1|2, ...),
@@ -145,6 +160,7 @@ let watOnly = false;
 let verbose = false;
 // (#4035) Host-bridge export policy; "auto" resolves per target in codegen.
 let hostBridge: "auto" | "always" | "off" = "auto";
+let semanticProviders: "auto" | "native-first" = "auto";
 // #1950 — default-on optimization for the CLI. Binaryen wasm-opt does
 // materially valuable, safe work the in-compiler passes don't (small-function
 // inlining, array.len-into-local, post-inline null-check cleanup, dead
@@ -252,7 +268,8 @@ for (let i = 0; i < args.length; i++) {
     // as link-time imports for instantiation-time satisfaction instead of
     // inline-lowering. Any external namespace works ("leave-as-import" is
     // universal); `node:fs` additionally selects the import-and-link std-IO
-    // path. WASI only (ignored otherwise).
+    // path on WASI. Other namespaces remain explicit provider imports on every
+    // target.
     const ns = arg.startsWith("--link=") ? arg.slice("--link=".length) : args[++i];
     if (!ns) {
       console.error("--link requires a namespace argument (e.g. --link node:fs)");
@@ -289,6 +306,19 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     hostBridge = value;
+  } else if (arg === "--semantic-providers" || arg.startsWith("--semantic-providers=")) {
+    const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : args[++i];
+    if (value !== "auto" && value !== "native-first") {
+      console.error(`Error: --semantic-providers expects auto | native-first (got ${value ?? "nothing"})`);
+      process.exit(1);
+    }
+    semanticProviders = value;
+  } else if (arg === "--explain") {
+    explainMode = "text";
+  } else if (arg === "--explain-json") {
+    explainMode = "json";
+  } else if (arg === "--json" && explainMode !== undefined) {
+    explainMode = "json";
   } else if (arg === "--verbose" || arg === "-v") {
     verbose = true;
   } else if (arg === "-O" || arg === "--optimize") {
@@ -388,6 +418,7 @@ const compileOptions = {
   // (#4035) Only forward a non-default policy so `--host-bridge auto` stays
   // byte-identical to not passing the flag at all.
   ...(hostBridge !== "auto" ? { hostBridge } : {}),
+  ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
   ...(platform ? { platform } : {}),
@@ -482,6 +513,19 @@ if (!WebAssembly.validate(binaryForValidation)) {
     `${absInput}: error: emitted WebAssembly failed validation and was not written` + (detail ? ` — ${detail}` : ""),
   );
   process.exit(1);
+}
+
+if (explainMode !== undefined) {
+  if (!result.explanation) {
+    console.error(`${absInput}: error: compiler did not produce an explanation record`);
+    process.exit(1);
+  }
+  process.stdout.write(
+    explainMode === "json"
+      ? `${JSON.stringify(result.explanation, null, 2)}\n`
+      : formatCompileExplanation(result.explanation),
+  );
+  process.exit(0);
 }
 
 if (watOnly) {

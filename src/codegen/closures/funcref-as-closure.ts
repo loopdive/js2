@@ -10,6 +10,7 @@
  */
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { ts } from "../../ts-api.js";
 import { captureSourceSlot } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
@@ -17,6 +18,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+import { noJsHost } from "../js-errors.js";
 import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
@@ -510,11 +512,22 @@ export function materializeHoistedFunctionValueBinding(
   // singleton publishes the exact source-owned trampoline + cache pair to the
   // Program ABI. Capture-carrying declarations remain activation-local and
   // continue through the memoized per-frame closure path below.
+  // Preserve the declaration's constructor capability on this eager binding
+  // path too. Ordinary identifier reads make the same distinction; omitting
+  // it here would make a hoisted `function f() {}` callable but report false
+  // from IsConstructor once the stable lexical value had been materialized.
+  const declaration = ctx.funcMapOwnerDecl.get(name) ?? ctx.topLevelFunctionDeclarations.get(name);
+  const constructible =
+    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
+    declaration !== undefined &&
+    ts.isFunctionDeclaration(declaration) &&
+    declaration.asteriskToken === undefined &&
+    !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
   const nestedCaptures = ctx.nestedFuncCaptures.get(name);
   const valueType =
     !nestedCaptures || nestedCaptures.length === 0
-      ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx)
-      : emitFuncRefAsClosure(ctx, fctx, name, funcIdx);
+      ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, constructible)
+      : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, constructible);
   if (!valueType) return false;
   if (valueType.kind !== "externref" && valueType.kind !== "ref_extern") {
     fctx.body.push({ op: "extern.convert_any" });

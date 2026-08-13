@@ -1,14 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #1472 Phase B — Wasm-native open-object runtime for `--target standalone`.
+ * #1472 Phase B / #4397 — Wasm-native open-object semantic provider.
  *
  * Open objects (plain object literals, `any`-typed property access) are the
  * single largest standalone-mode failure cluster (26,880 primary rows). In
- * JS-host mode they route through a family of `env::__extern_*` /
- * `env::__object_*` host imports backed by JS WeakMap sidecars; in standalone
- * there is no JS runtime to satisfy those imports. Phase A refuses such code at
- * compile time. Phase B (this module) replaces the sidecars with a pure-WasmGC
- * open-hash-map so dynamic object semantics work with zero host calls.
+ * Compatibility mode routes them through `env::__extern_*` / `env::__object_*`
+ * imports backed by JS WeakMap sidecars. This provider replaces those sidecars
+ * with a pure-WasmGC open-hash-map, both for host-free targets and for a JS
+ * environment selecting native-first semantics.
  *
  * ## Representation
  *
@@ -43,11 +42,11 @@
  * Internally a `$Object` struct is wrapped to externref via `extern.convert_any`
  * (a no-op at the engine level, same trick `__box_number` uses) and unwrapped
  * via `any.convert_extern` + `ref.cast $Object`. So `ensureLateImport` can route
- * these names here under `ctx.standalone` exactly like the #1471 boxing helpers
+ * these names here under the native provider exactly like the #1471 boxing helpers
  * (`UNION_NATIVE_HELPER_NAMES`), and the call sites are byte-for-byte unchanged.
  *
- * Keys arrive as `externref` holding a `$NativeString` (standalone auto-enables
- * nativeStrings, so a string literal key is `extern.convert_any(ref
+ * Keys arrive as `externref` holding a `$NativeString` (the native provider
+ * requires native strings, so a string literal key is `extern.convert_any(ref
  * $NativeString)`). We `ref.cast $AnyString` + `__str_flatten` to a
  * `$NativeString` for hashing and reuse the existing `__str_equals` for
  * comparison.
@@ -64,6 +63,7 @@ import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.j
 import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import {
   ensureAnyToStringHelper,
+  ensureNativeStringBoundaryBridge,
   ensureNativeStringHelpers,
   nativeStringLiteralHash,
   nativeStringLiteralInstrs,
@@ -73,7 +73,7 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -83,7 +83,7 @@ import {
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
-import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
+import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
@@ -119,7 +119,7 @@ import {
   buildVecOrClosurePropSetMissArm,
   reserveVecPropHelpers,
 } from "./vec-props.js";
-import { ensureSymbolCarrier } from "./symbol-native.js";
+import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
@@ -620,6 +620,143 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // #2039: settle any deferred late-import shift before baking funcIdx values.
   flushLateImportShifts(ctx, null);
 
+  // #4399 — JS-owned objects remain host-backed only after an explicit
+  // native-first export boundary admits them. The native object runtime stays
+  // authoritative for every Wasm-owned value; these two narrow imports are
+  // consulted only by its non-$Object fallback and the runtime rejects objects
+  // that were not admitted by this module instance. Register the pair before
+  // any native helper body captures function indices.
+  const boundaryObjectInterop =
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.targetProfile.environment === "javascript" &&
+    ctx.targetProfile.hostValueInterop !== "off" &&
+    !ctx.strictNoHostImports;
+  if (boundaryObjectInterop) {
+    ensureLateImport(
+      ctx,
+      "__boundary_object_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_set",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    ensureLateImport(ctx, "__boundary_object_has", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(
+      ctx,
+      "__boundary_object_delete",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    ensureLateImport(ctx, "__boundary_object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__boundary_object_call",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_apply",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_construct",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_reflect_get",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_reflect_set",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    ensureLateImport(ctx, "__boundary_object_get_prototype", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__boundary_object_set_prototype",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_get_own_property_descriptor",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_define_property_value",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(
+      ctx,
+      "__boundary_object_define_property_accessor",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(ctx, "__boundary_object_get_own_property_names", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      "__boundary_object_get_own_property_symbols",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    ensureLateImport(ctx, "__boundary_object_own_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__boundary_object_is_admitted", [{ kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(ctx, "__boundary_object_prevent_extensions", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__boundary_object_reflect_prevent_extensions", [{ kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(ctx, "__boundary_object_seal", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__boundary_object_freeze", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__boundary_object_is_extensible", [{ kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(ctx, "__boundary_object_is_sealed", [{ kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(ctx, "__boundary_object_is_frozen", [{ kind: "externref" }], [{ kind: "i32" }]);
+    ensureLateImport(ctx, "__boundary_object_for_in_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
+  const boundaryObjectGetIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_get") : undefined;
+  const boundaryObjectSetIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_set") : undefined;
+  const boundaryObjectHasIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_has") : undefined;
+  const boundaryObjectDeleteIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_delete") : undefined;
+  const boundaryObjectKeysIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_keys") : undefined;
+  const boundaryObjectCallIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_call") : undefined;
+  const boundaryObjectGetPrototypeIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_get_prototype")
+    : undefined;
+  const boundaryObjectSetPrototypeIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_set_prototype")
+    : undefined;
+  const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
+    : undefined;
+  const boundaryObjectDefinePropertyValueIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_define_property_value")
+    : undefined;
+  const boundaryObjectDefinePropertyAccessorIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_define_property_accessor")
+    : undefined;
+  const boundaryObjectGetOwnPropertyNamesIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_get_own_property_names")
+    : undefined;
+  const boundaryObjectGetOwnPropertySymbolsIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_get_own_property_symbols")
+    : undefined;
+  const boundaryObjectForInKeysIdx = boundaryObjectInterop
+    ? ctx.funcMap.get("__boundary_object_for_in_keys")
+    : undefined;
+
   // Dependencies: native string helpers (flatten + equals) and the string type
   // indices they populate.
   ensureNativeStringHelpers(ctx);
@@ -636,7 +773,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // idempotent. Register BEFORE the helper bodies bake their `call` funcIdx.
   // (`number_toString` also upgrades __extern_toString's boxed-number arm from
   // "[object Object]" to the real decimal, which is spec-correct.)
-  const objArrayLikeArms = ctx.standalone;
+  const objArrayLikeArms = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone;
   if (objArrayLikeArms) {
     emitNativeNumberFormat(ctx, new Set(["number_toString"]));
     // (#3183) `__str_to_number` (§7.1.4.1 StringToNumber) is the scanner the
@@ -663,7 +800,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `symbolTypeIdx` stays -1 when not registered, and every symbol branch below
   // is guarded on `symbolKeysEnabled` (idx >= 0) so the string-only key path is
   // byte-unchanged when symbols are absent from the type space.
-  const symbolTypeIdx = ctx.standalone || ctx.wasi ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
   const symbolKeysEnabled = symbolTypeIdx >= 0;
 
   // --- 1. Register the three struct/array types. ---
@@ -820,6 +957,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { name: "ownKeys", type: { kind: "externref" }, mutable: false },
       // (#1355 Slice F) defineProperty — field index 11. §10.5.6 [[DefineOwnProperty]].
       { name: "defineProperty", type: { kind: "externref" }, mutable: false },
+      // (#4397) construct — field index 12. §10.5.13 [[Construct]].
+      { name: "construct", type: { kind: "externref" }, mutable: false },
     ],
   });
 
@@ -833,7 +972,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //   1 ptarget   anyref(mut)   wrapped target (any value)
   //   2 phandler  anyref(mut)   handler object — trap `this` (§10.5.x)
   //   3 ptraps    ref null …    the 4 trap closures
-  //   4 revoked   i32(mut)      revocation bit
+  //   4 revoked       i32(mut)  revocation bit
+  //   5 callable      i32       target had [[Call]] when the Proxy was created
+  //   6 constructible i32       target had [[Construct]] when it was created
   const proxyTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
@@ -844,6 +985,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { name: "phandler", type: { kind: "anyref" }, mutable: true },
       { name: "ptraps", type: { kind: "ref_null", typeIdx: proxyTrapsTypeIdx }, mutable: true },
       { name: "revoked", type: { kind: "i32" }, mutable: true },
+      { name: "callable", type: { kind: "i32" }, mutable: false },
+      { name: "constructible", type: { kind: "i32" }, mutable: false },
     ],
   });
 
@@ -1123,7 +1266,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // addressing resolves any collision via `__key_equals`, so that is benign.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
-      { op: "local.tee", index: 7 },
+      // The standalone Symbol discriminator consumes the value left by tee.
+      // Native-first JS deliberately has no Symbol carrier yet, so store
+      // without leaving an otherwise-unconsumed anyref on the stack. Preserve
+      // the compatibility lane's historical instruction stream exactly.
+      {
+        op: !symbolKeysEnabled && ctx.targetProfile.semanticProviders === "native-first" ? "local.set" : "local.tee",
+        index: 7,
+      },
       ...(symbolKeysEnabled
         ? ([
             { op: "ref.test", typeIdx: symbolTypeIdx },
@@ -1727,6 +1877,25 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   // ── __extern_get(externref obj, externref key) -> externref ──────────────
   //
+  // Reflect.get's optional receiver is threaded through these two private
+  // globals into the otherwise shared __extern_get implementation. The active
+  // bit is consumed at __extern_get entry before an accessor is invoked, so a
+  // nested ordinary property read cannot inherit the outer receiver.
+  const reflectGetReceiverActiveGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__reflect_get_receiver_active",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: 0 }],
+  });
+  const reflectGetReceiverGlobalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__reflect_get_receiver_value",
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  });
+
   // Unwrap obj to $Object (return null on non-object), walk the own-property
   // entry then the prototype chain. Property values are stored as anyref;
   // convert back to externref for the result.
@@ -1756,7 +1925,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // the locals list below so no already-baked index moves. Locals 8/9 are the
     // conditional proto-cache pair.
     const ispScratchLocal = protoCacheEnabled ? 10 : 8;
+    const explicitReceiverLocal = ispScratchLocal + 1;
     const body: Instr[] = [
+      // Consume a one-shot explicit receiver. Ordinary [[Get]] calls select
+      // their target (param 0). Clearing the bit before any accessor call keeps
+      // nested property reads independent.
+      { op: "global.get", index: reflectGetReceiverActiveGlobalIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "global.get", index: reflectGetReceiverGlobalIdx }],
+        else: [{ op: "local.get", index: 0 }],
+      },
+      { op: "local.set", index: explicitReceiverLocal },
+      { op: "i32.const", value: 0 },
+      { op: "global.set", index: reflectGetReceiverActiveGlobalIdx },
       // (#3673 round 9b) The per-key prototype-lookup cache HIT arm is NOT
       // here — it is prepended at FINALIZE by `unshiftExternGetProtoCacheArm`
       // so it lands BEFORE the closed-struct field-ladder arms that the
@@ -1811,6 +1994,27 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : []),
         ],
         else: [
+          // A raw JS object is serviced only when this module's export wrapper
+          // admitted it at the dynamic boundary. The import returns null for
+          // every other receiver, preserving the native instance/vec/closure
+          // fallback below. A present JS property whose value is `undefined`
+          // returns the non-null native undefined carrier, so miss and value do
+          // not alias.
+          ...(boundaryObjectGetIdx !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: boundaryObjectGetIdx },
+                { op: "local.tee", index: 6 },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: 6 }, { op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
           // (#4194) The receiver is not a `$Object`. Consult the instance
           // expando bag FIRST — an own property shadows the prototype chain
           // (§7.3.2), and this position (rather than inside the miss arm below)
@@ -1900,8 +2104,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                         blockType: { kind: "empty" },
                         then: [...getMiss(), { op: "return" }],
                       },
-                      // return __call_accessor_get(obj /*param 0*/, getter)
-                      { op: "local.get", index: 0 },
+                      // Ordinary access selected param 0 above; Reflect.get
+                      // selected its explicit third argument.
+                      { op: "local.get", index: explicitReceiverLocal },
                       { op: "local.get", index: 5 },
                       { op: "call", funcIdx: callAccessorGetIdx },
                       { op: "return" },
@@ -2016,8 +2221,45 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           : []),
         // (#4194) instance-bag consult scratch — LAST, at `ispScratchLocal`.
         { name: "ispv", type: { kind: "externref" } as ValType },
+        { name: "explicitReceiver", type: { kind: "externref" } as ValType },
       ],
       body,
+    );
+  }
+
+  // §28.1.5 Reflect.get(target, key, receiver). Reuse __extern_get's full
+  // lookup/prototype machinery; only accessor `this` differs. Proxy-specific
+  // forwarding is prepended by ensureProxyRuntime below.
+  {
+    const externGetIdx = ctx.funcMap.get("__extern_get")!;
+    registerNative(
+      "__reflect_get_receiver",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+      [
+        { name: "previousActive", type: { kind: "i32" } },
+        { name: "previousReceiver", type: { kind: "externref" } },
+        { name: "result", type: { kind: "externref" } },
+      ],
+      [
+        { op: "global.get", index: reflectGetReceiverActiveGlobalIdx },
+        { op: "local.set", index: 3 },
+        { op: "global.get", index: reflectGetReceiverGlobalIdx },
+        { op: "local.set", index: 4 },
+        { op: "local.get", index: 2 },
+        { op: "global.set", index: reflectGetReceiverGlobalIdx },
+        { op: "i32.const", value: 1 },
+        { op: "global.set", index: reflectGetReceiverActiveGlobalIdx },
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: 5 },
+        { op: "local.get", index: 4 },
+        { op: "global.set", index: reflectGetReceiverGlobalIdx },
+        { op: "local.get", index: 3 },
+        { op: "global.set", index: reflectGetReceiverActiveGlobalIdx },
+        { op: "local.get", index: 5 },
+      ],
     );
   }
 
@@ -2551,10 +2793,29 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // prologue (`fillClosedStructExternSetArms`) missed, so a declared name
         // can never be deposited in the bag — the invariant that structurally
         // excludes the #4055 v1 -684 shape.
-        // (#4098) Native Error values own an open `$props` sidecar. Its arm
-        // precedes the disjoint instance/vec/closure carriers and preserves the
-        // original Error receiver when an accessor is invoked.
-        then: [...buildErrorPropSetArm(ctx), ...buildInstanceOrVecOrClosurePropSetMissArm(ctx)],
+        then: [
+          // Tri-state adapter: 0 means "not an admitted boundary object";
+          // non-zero means the JS-owned receiver handled (or refused) the
+          // write, so it must not fall into a Wasm side table.
+          ...(boundaryObjectSetIdx !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: boundaryObjectSetIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
+          // (#4098) Native Error values own an open `$props` sidecar. Its arm
+          // precedes the disjoint instance/vec/closure carriers and preserves
+          // the original Error receiver when an accessor is invoked.
+          ...buildErrorPropSetArm(ctx),
+          ...buildInstanceOrVecOrClosurePropSetMissArm(ctx),
+        ],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
@@ -2744,7 +3005,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   {
     const reflectSetExternSetIdx = ctx.funcMap.get("__extern_set")!;
     const body: Instr[] = [
-      // any = any.convert_extern(obj); if !ref.test $Object → false
+      // any = any.convert_extern(obj); if !ref.test $Object → ask the
+      // explicit boundary adapter, otherwise false. Adapter result 1 means the
+      // JS [[Set]] succeeded; 0 (unadmitted) and 2 (refused) both map to false.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 3 },
@@ -2753,7 +3016,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        then:
+          boundaryObjectSetIdx === undefined
+            ? [{ op: "i32.const", value: 0 }, { op: "return" }]
+            : [
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: boundaryObjectSetIdx },
+                { op: "i32.const", value: 1 },
+                { op: "i32.eq" },
+                { op: "return" },
+              ],
       },
       // o = cast<$Object>(any); e = __obj_find(o, key)
       { op: "local.get", index: 3 },
@@ -2886,7 +3160,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // module for why the bag consult is tri-state and strictly additive.
     reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
-      ...buildNonObjectDeleteArms(ctx, { bfnDeleteIdx, objectTypeIdx, anyLocal: 2, resultLocal: 5 }),
+      ...buildNonObjectDeleteArms(ctx, {
+        bfnDeleteIdx,
+        boundaryDeleteIdx: boundaryObjectDeleteIdx,
+        objectTypeIdx,
+        anyLocal: 2,
+        resultLocal: 5,
+      }),
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -3279,6 +3559,24 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          ...(boundaryObjectHasIdx !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: boundaryObjectHasIdx },
+                { op: "local.tee", index: 4 },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 4 },
+                    { op: "i32.const", value: 2 },
+                    { op: "i32.eq" },
+                    { op: "return" },
+                  ],
+                },
+              ] satisfies Instr[])
+            : []),
           // own carrier-bag hit → present (1)…
           ...(ctx.funcMap.get("__carrier_bag_has") !== undefined
             ? ([
@@ -3350,6 +3648,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [
         { name: "o", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
+        ...(boundaryObjectHasIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
       ],
       body,
     );
@@ -3780,6 +4079,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objectTypeIdx,
     objRefNull,
     propMapRef,
+    boundaryObjectGetPrototypeIdx,
+    boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
   });
@@ -4489,6 +4790,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
+    boundaryObjectKeysIdx,
+    boundaryObjectForInKeysIdx,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
@@ -4516,6 +4819,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objOrderedIdx,
     objOrderedAllIdx,
     externSetIdx,
+    boundaryObjectGetOwnPropertyDescriptorIdx,
+    boundaryObjectDefinePropertyValueIdx,
+    boundaryObjectDefinePropertyAccessorIdx,
+    boundaryObjectGetOwnPropertyNamesIdx,
+    boundaryObjectGetOwnPropertySymbolsIdx,
     bfnGopdIdx,
     bfnPushOwnNamesIdx,
     NONE_HEAP,
@@ -4848,6 +5156,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { op: "local.get", index: methodLocalIdx },
       ];
     }
+    const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
+    if (boundaryCallResultLocal !== undefined) {
+      methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
+    }
 
     const body: Instr[] = [
       // any = any.convert_extern(recv); if null → return undefined
@@ -4890,7 +5202,25 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // in the side table — mirror the $Object dispatch for it; other brands
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
-        else: buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+        else: [
+          ...(boundaryObjectCallIdx !== undefined && boundaryCallResultLocal !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: boundaryObjectCallIdx },
+                { op: "local.tee", index: boundaryCallResultLocal },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
+          ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+        ],
       },
     ];
     registerNative(
@@ -4928,7 +5258,73 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // immediately instead of recursing.)
   ensureWrapperConstructorCarriers(ctx);
 
+  // Native-first JS keeps this object runtime authoritative but still exposes
+  // objects through the existing identity-cached host proxy. Export only the
+  // narrow MOP surface that proxy needs at the boundary; semantic operations
+  // remain in Wasm and standalone/WASI gain no JS-facing exports or imports.
+  if (
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.targetProfile.environment === "javascript" &&
+    ctx.targetProfile.hostValueInterop !== "off"
+  ) {
+    ensureNativeStringBoundaryBridge(ctx);
+    if (!ctx.funcMap.has("__object_is_native_open")) {
+      registerNative(
+        "__object_is_native_open",
+        [{ kind: "externref" }],
+        [{ kind: "i32" }],
+        [{ name: "any", type: { kind: "anyref" } }],
+        [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: objectTypeIdx }],
+      );
+    }
+    for (const name of [
+      "__object_is_native_open",
+      "__extern_get",
+      "__extern_set",
+      "__extern_has",
+      "__extern_length",
+      "__extern_get_idx",
+      "__objvec_new",
+      "__objvec_push",
+      "__delete_property",
+      "__object_keys",
+      "__typeof_number",
+      "__unbox_number",
+      "__typeof_boolean",
+      "__unbox_boolean",
+      "__typeof_bigint",
+      "__to_bigint",
+    ]) {
+      const funcIdx = ctx.funcMap.get(name);
+      if (funcIdx === undefined) continue;
+      const func = definedFuncAt(ctx, funcIdx);
+      if (func) func.exported = true;
+      if (!ctx.mod.exports.some((entry) => entry.name === name)) {
+        ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+      }
+    }
+  }
+
   return types;
+}
+
+/**
+ * Select the native Proxy carrier and its one construction-time boundary
+ * classifier. Ordinary object-runtime users do not pay for this import: it is
+ * needed only when ProxyCreate may receive an admitted caller-owned JS
+ * function as its target. The target itself stays the same externref identity.
+ */
+export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
+  if (
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.targetProfile.environment === "javascript" &&
+    ctx.targetProfile.hostValueInterop !== "off" &&
+    !ctx.strictNoHostImports
+  ) {
+    ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
+    flushLateImportShifts(ctx, null);
+  }
+  return ensureObjectRuntime(ctx);
 }
 
 /**
@@ -5231,11 +5627,10 @@ export function ensureObjectGroupBy(ctx: CodegenContext): number {
 }
 
 /**
- * (#3223) Native standalone/WASI `__extern_rest_object(obj, excl) -> externref`
- * — the host-free implementation of object-rest destructuring's
- * CopyDataProperties (ES §14.7.4). Under `--target standalone`/`wasi` there is
- * no JS runtime to satisfy the `env.__extern_rest_object` host import, so
- * `{a, ...rest} = o` otherwise fails to instantiate host-free (a leaky pass).
+ * (#3223/#4397) Native-provider `__extern_rest_object(obj, excl) -> externref`
+ * — the Wasm implementation of object-rest destructuring's CopyDataProperties
+ * (ES §14.7.4). It is shared by host-free targets and native-first modules
+ * instantiated by JavaScript.
  *
  * Signature differs from the host import ONLY in the second argument's shape:
  * the host import takes a comma-joined excluded-keys STRING; this native helper
@@ -5686,6 +6081,58 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     );
   }
 
+  // Native-first keeps a caller-owned JavaScript function as that exact
+  // admitted object. Only this positive callable-kind guard crosses the
+  // boundary; every Wasm closure/Proxy/bound-function continues through the
+  // native carrier ladder below.
+  const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
+  const boundaryApplyIdx = ctx.funcMap.get("__boundary_object_apply");
+  if (boundaryCallableKindIdx !== undefined && boundaryApplyIdx !== undefined) {
+    body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: boundaryCallableKindIdx },
+      { op: "i32.const", value: 1 },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: boundaryApplyIdx },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
+  // (#4397) `Proxy.revocable`'s zero-argument revoker is a Wasm-owned callable
+  // carrier rather than a JavaScript closure. Invoke it at the same dynamic
+  // call boundary used for ordinary compiled closures, then return undefined.
+  const proxyRevokerTypeIdx = ctx.structMap.get("__proxy_revoker");
+  const proxyRevokeIdx = ctx.funcMap.get("__proxy_revoke");
+  if (proxyRevokerTypeIdx !== undefined && proxyRevokeIdx !== undefined) {
+    body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyRevokerTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: proxyRevokerTypeIdx },
+          { op: "struct.get", typeIdx: proxyRevokerTypeIdx, fieldIdx: 0 },
+          { op: "call", funcIdx: proxyRevokeIdx },
+          ...undefinedSentinel(),
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
   // (#2928) Cross-module AOT-callable carrier. The provider cannot enumerate
   // the caller module's private closure signatures, so the carrier holds a
   // caller-owned trampoline that accepts the receiver plus argc and eight
@@ -6002,7 +6449,9 @@ export function reserveBindDynHelper(ctx: CodegenContext): number {
  *     thisArg  = __extern_get_idx(args, 0)          // absent → undefined/null
  *     bound    = fresh $ObjVec of args[1..]
  *     return extern($__bound_fn{recv, thisArg, bound})
- *   return __extern_method_call(recv, "bind", args)  // legacy open-object route
+ *   native-first JS: return __extern_method_call(recv, "bind", args)
+ *                    // admitted caller-owned JS function/object boundary
+ *   standalone/WASI: return undefined               // historical fallback
  */
 export function fillBindDynHelper(ctx: CodegenContext): void {
   const helperIdx = ctx.funcMap.get("__bind_dyn");
@@ -6090,7 +6539,11 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     { op: "local.set", index: ANY },
     ...buildClosureRefTestArms(ctx, ANY, mintArm),
   ];
-  if (methodCallIdx !== undefined) {
+  const jsBoundaryFallback =
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.targetProfile.environment === "javascript" &&
+    ctx.targetProfile.hostValueInterop !== "off";
+  if (jsBoundaryFallback && methodCallIdx !== undefined) {
     body.push(
       { op: "local.get", index: 0 },
       ...stringConstantExternrefInstrs(ctx, "bind"),
@@ -6098,7 +6551,7 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
       { op: "call", funcIdx: methodCallIdx },
     );
   } else {
-    body.push({ op: "ref.null.extern" });
+    body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]));
   }
   helperFn.body = body;
   helperFn.locals = [
@@ -7268,11 +7721,12 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
  * index 0 is chosen so the arms sit ahead of the eager `$Object`-only body,
  * which would otherwise return an empty result first.
  *
- * Standalone-only: host mode's JS `__object_keys` sees a real JS object and
- * needs none of this.
+ * Host-assisted mode's JS `__object_keys` sees a real JS object and needs none
+ * of this. Native-first JavaScript builds use the same Wasm object MOP as
+ * standalone, so their dynamically-routed closed structs need these arms too.
  */
 export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone) return;
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;

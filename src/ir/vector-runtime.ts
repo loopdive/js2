@@ -5,6 +5,10 @@ import type { ValType } from "./types.js";
 
 export const IR_VEC_ELEM_SET_PREFIX = "__ir_vec_elem_set_";
 export const IR_VEC_NEW_SIZED_PREFIX = "__ir_vec_new_sized_";
+/** Dedicated sparse `new Array(n)` allocator; never aliases generic vec allocation. */
+export const IR_HOLEY_ARRAY_NEW = "__ir_holey_array_new";
+/** Dedicated grow-and-store provider for the branded sparse carrier. */
+export const IR_HOLEY_ARRAY_ELEM_SET = "__ir_holey_array_elem_set";
 
 export type IrVectorRuntimeElementKind = "f64" | "i32" | "externref";
 

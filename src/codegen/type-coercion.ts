@@ -730,7 +730,15 @@ export function buildVecFromExternref(
   // hosts importing `__array_from_iter` (loopdive/js2#389 / #2311 regression);
   // `ctx.standalone || ctx.wasi` is the established host-free idiom used
   // throughout codegen (and elsewhere in this file). (#2839)
-  const useNativeObjVec = ctx.standalone || ctx.wasi;
+  // Native-first JS can reach this coercion with a typed Wasm vector (for
+  // example the result of `array.map`) as well as an `$ObjVec`. Normalize that
+  // broader iterable set through the native materializer before indexed reads;
+  // the historical standalone/WASI sites already prove their source is an
+  // `$ObjVec` and keep the cheaper direct path.
+  const useNativeMaterializer =
+    ctx.targetProfile.semanticProviders === "native-first" && ctx.targetProfile.environment === "javascript";
+  const useNativeObjVec = useNativeMaterializer || ctx.standalone || ctx.wasi;
+  if (useNativeMaterializer) ensureNativeArrayFromIterN(ctx);
   // #2696 — register EVERY late import (helper) FIRST, flush ONCE, then read the
   // funcIdx values from funcMap. ensureLateImport for a NEW env import shifts the
   // index of every DEFINED helper func (the native `__box_number` /
@@ -766,9 +774,11 @@ export function buildVecFromExternref(
   const getIdx = ctx.funcMap.get("__extern_get");
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   const boxIdx = ctx.funcMap.get("__box_number");
-  const iterIdx = useNativeObjVec
-    ? undefined
-    : ctx.funcMap.get(strictIterator ? "__array_from_iter_strict" : "__array_from_iter");
+  const iterIdx = useNativeMaterializer
+    ? ctx.funcMap.get("__array_from_iter_n")
+    : useNativeObjVec
+      ? undefined
+      : ctx.funcMap.get(strictIterator ? "__array_from_iter_strict" : "__array_from_iter");
   const getIdxIdx = useNativeObjVec ? ctx.funcMap.get("__extern_get_idx") : undefined;
 
   if (lenIdx === undefined || getIdx === undefined) {
@@ -905,6 +915,7 @@ export function buildVecFromExternref(
     iterIdx !== undefined
       ? [
           { op: "local.get", index: externLocal },
+          ...(useNativeMaterializer ? ([{ op: "f64.const", value: -1 }] satisfies Instr[]) : []),
           { op: "call", funcIdx: iterIdx },
           { op: "local.set", index: matLocal },
         ]
@@ -1119,7 +1130,7 @@ function buildTupleFromIterableFallback(
   // `__extern_get_idx`). Host mode keeps the JS-host `__array_from_iter` path
   // unchanged (byte-inert). Mirrors the native ObjVec steering in
   // `buildVecFromExternref`.
-  const useNativeFromIter = ctx.standalone || ctx.wasi;
+  const useNativeFromIter = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
   if (useNativeFromIter) ensureNativeArrayFromIterN(ctx);
   // Register all helpers first so every ensureLateImport shift completes
   // before we freeze funcIdx values — otherwise a later ensureLateImport
@@ -2607,17 +2618,16 @@ export function coerceType(
     // iterable in JS and converting them to a JS array loses the wasmGC
     // struct identity that DataView method dispatch depends on (#1056).
     //
-    // #1539/#1470/#1664: `__make_iterable` is a JS HOST import. In standalone /
-    // WASI mode there is no JS runtime, so attaching it (a) breaks standalone
-    // purity and (b) shifts already-emitted function indices (the late-import
-    // hazard — observed corrupting `__str_flatten`). Standalone keeps the vec as
-    // a WasmGC `$Vec` and the consumer uses the native array ops
-    // (`.length`/index/for-of) that already operate on it directly (this is why
-    // `String.prototype.split` works standalone). So only attach the JS-host
-    // iterable shim in JS-host mode.
+    // #1539/#1470/#1664/#4397: `__make_iterable` is the compatibility JS-host
+    // materializer. Host-free targets and native-first semantics keep the
+    // canonical `$Vec`; native consumers operate on it directly and an actual
+    // JS boundary exposes the identity-cached live array view. Materializing a
+    // detached JS array merely because an internal type widens to externref
+    // would make the embedder a semantic provider again and lose ownership.
     if (
       !ctx.standalone &&
       !ctx.wasi &&
+      ctx.targetProfile.semanticProviders !== "native-first" &&
       getArrTypeIdxFromVec(ctx, typeIdx) >= 0 &&
       ctx.vecTypeMap.get("i32_byte") !== typeIdx
     ) {

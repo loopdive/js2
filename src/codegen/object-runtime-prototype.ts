@@ -35,6 +35,8 @@ export interface ObjectPrototypeHelperState {
   objectTypeIdx: number;
   objRefNull: ValType;
   propMapRef: ValType;
+  boundaryObjectGetPrototypeIdx?: number;
+  boundaryObjectSetPrototypeIdx?: number;
   INITIAL_CAP: number;
   OBJ_FLAG_NONEXTENSIBLE: number;
 }
@@ -48,6 +50,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     objectTypeIdx,
     objRefNull,
     propMapRef,
+    boundaryObjectGetPrototypeIdx,
+    boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
   } = s;
@@ -77,7 +81,13 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
           { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
           { op: "extern.convert_any" },
         ],
-        else: [{ op: "ref.null.extern" }],
+        else:
+          boundaryObjectGetPrototypeIdx === undefined
+            ? [{ op: "ref.null.extern" }]
+            : [
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: boundaryObjectGetPrototypeIdx },
+              ],
       },
     ];
     registerNative(
@@ -184,9 +194,22 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
           { op: "local.set", index: 2 },
         ],
         else: [
-          // non-$Object receiver → no write, return obj unchanged
-          { op: "local.get", index: 0 },
-          { op: "return" },
+          ...(boundaryObjectSetPrototypeIdx === undefined
+            ? ([{ op: "local.get", index: 0 }, { op: "return" }] satisfies Instr[])
+            : ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: boundaryObjectSetPrototypeIdx },
+                { op: "local.tee", index: 6 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: 0 }, { op: "return" }],
+                },
+                { op: "local.get", index: 6 },
+                { op: "return" },
+              ] satisfies Instr[])),
         ],
       },
       // v = (proto is $Object ? cast : null) — non-$Object/null proto ⇒ null
@@ -279,6 +302,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         { name: "v", type: objRefNull },
         { name: "p", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
+        ...(boundaryObjectSetPrototypeIdx !== undefined
+          ? [{ name: "boundaryResult", type: { kind: "externref" } as ValType }]
+          : []),
       ],
       body,
     );

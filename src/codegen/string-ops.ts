@@ -19,7 +19,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, HoistedCharRead } from "./context/types.js";
-import { emitThrowTypeError, getFuncParamTypes, noJsHost } from "./expressions/helpers.js";
+import { emitThrowTypeError, getFuncParamTypes, noJsHost, usesNativeJsErrors } from "./expressions/helpers.js";
 import { addStringImports, flatStringType, nativeStringType, resolveIdentifierType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
@@ -2251,7 +2251,7 @@ function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: str
   addStringConstantGlobal(ctx, msg);
   // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
   // constructor (no `__throw_type_error` host import).
-  if (noJsHost(ctx)) {
+  if (usesNativeJsErrors(ctx)) {
     emitThrowTypeError(ctx, fctx, msg);
     fctx.body.push({ op: "unreachable" });
     return;
@@ -3597,7 +3597,7 @@ export function compileNativeStringMethodCall(
   // #1539 Phase 2c — `String.prototype.split(/re/)` against a backend-created
   // static, non-capturing, non-nullable RegExp routes through the pure-WasmGC
   // matcher and returns the same native string vec shape as string split.
-  if (ctx.standalone && method === "split") {
+  if ((ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") && method === "split") {
     const splitResult = tryCompileStandaloneStringSplit(ctx, fctx, expr, propAccess, receiverOverride);
     if (splitResult !== undefined) return splitResult;
   }

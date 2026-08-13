@@ -49,7 +49,11 @@ import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
 import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262) carrier precedence
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
 import { addStringConstantGlobal } from "./imports.js";
-import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
+import {
+  ensureNativeStringBoundaryBridge,
+  nativeStringLiteralInstrs,
+  stringConstantExternrefInstrs,
+} from "../native-strings.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 
@@ -153,6 +157,46 @@ export function externrefBackedOwnFieldBacking(
  */
 export function emitWasiErrorConstructor(ctx: CodegenContext, errorName: WasiErrorName, argCount: number): void {
   emitErrorStructConstructor(ctx, `__new_${errorName}`, errorName, BUILTIN_TYPE_TAGS[errorName], argCount);
+}
+
+/**
+ * Publish the minimal native-Error value adapter used by a JavaScript boundary.
+ * Error state remains in `$Error_struct`; these functions only identify the
+ * carrier and expose its stored name/message for a real host Error facade.
+ */
+export function emitNativeErrorBoundaryBridge(ctx: CodegenContext): void {
+  if (
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    !ctx.emitHostBridge ||
+    ctx.errorStructTypeIdx < 0 ||
+    ctx.funcMap.has("__error_boundary_is_native")
+  ) {
+    return;
+  }
+
+  ensureNativeStringBoundaryBridge(ctx);
+  const errorTypeIdx = ctx.errorStructTypeIdx;
+  const register = (name: string, result: ValType, body: Instr[]): void => {
+    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [result], `${name}_type`);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set(name, funcIdx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: true });
+    ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  };
+
+  register("__error_boundary_is_native", { kind: "i32" }, [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: errorTypeIdx },
+  ]);
+  const field = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: errorTypeIdx },
+    { op: "struct.get", typeIdx: errorTypeIdx, fieldIdx },
+  ];
+  register("__error_boundary_message", { kind: "externref" }, field(1));
+  register("__error_boundary_name", { kind: "externref" }, field(2));
 }
 
 /**
@@ -316,7 +360,7 @@ function emitErrorStructConstructor(
  * (i.e. actually constructs native errors) under wasi/standalone.
  */
 export function fillExternGetErrorProps(ctx: CodegenContext): void {
-  if (!(ctx.wasi || ctx.standalone)) return;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return;
   const errTypeIdx = ctx.errorStructTypeIdx;
   if (errTypeIdx < 0) return; // no native Error structs in this module
   const fn = ctx.mod.functions.find((f) => f.name === "__extern_get");

@@ -73,14 +73,17 @@ describe("#1524 — strict --no-host-imports gate", () => {
   });
 
   describe("allowlist enforcement", () => {
-    it("allows JSON.stringify under strict mode (on allowlist as JSON_stringify)", async () => {
+    it("keeps JSON.stringify native under strict mode while retaining its compatibility allowlist entry", async () => {
       const src = loadFixture("needs-host.ts");
       const result = await compile(src, { strictNoHostImports: true });
-      // Under strict mode the import is on the allowlist, so the build is
-      // success: true. Note this is NOT a WASI target, so JSON_stringify is
-      // emitted as an `env` import — and that's tolerated by the allowlist.
+      // Strict mode selects the native provider, so no semantic host import is
+      // emitted. The allowlist entry remains for explicit compatibility-mode
+      // imports and is verified directly rather than forcing legacy lowering.
       expect(result.success).toBe(true);
-      expect(envImportNames(result.wat)).toContain("JSON_stringify");
+      expect(envImportNames(result.wat)).not.toContain("JSON_stringify");
+
+      const { isHostImportAllowed } = await import("../src/codegen/host-import-allowlist.ts");
+      expect(isHostImportAllowed("env", "JSON_stringify")).toEqual({ allowed: true });
     });
 
     it("allowlist lookup rejects unknown names with a structured error", async () => {

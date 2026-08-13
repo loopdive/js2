@@ -18,8 +18,8 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   emitExternrefDestructureGuard,
+  emitNativeObjectRest,
   emitObjectPatternRestFromVec,
-  emitStandaloneObjectRest,
 } from "../destructuring-params.js";
 import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
 import { findUnresolvableInArrayPattern, findUnresolvableInObjectPattern } from "../expressions/unresolvable-assign.js";
@@ -175,17 +175,14 @@ export function compileForOfDestructuring(
               else if (ts.isStringLiteral(pn)) excludedKeys.push(pn.text);
               else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
             }
-            // (#3241) Standalone/WASI: route to the DEFINED native
-            // __extern_rest_object (exclusion-OBJECT signature) instead of the
-            // `env.__extern_rest_object` host import — which leaks an env::
-            // import AND is silently miscompiled if the native func is already
-            // registered (the CSV-string 2nd arg is not an exclusion object, so
-            // no key gets excluded). Host/gc lane below is byte-identical.
-            if (ctx.standalone || ctx.wasi) {
+            // (#3241/#4397) Native semantic providers route to the Wasm-defined
+            // __extern_rest_object (exclusion-object ABI). Compatibility mode
+            // retains the historical host helper and its CSV-key ABI below.
+            if (ctx.targetProfile.semanticProviders === "native-first") {
               // The loop element is a CLOSED-shape struct; reify it into an open
               // `$Object` (#3222 C1) so `__object_keys` enumeration sees the
               // fields — a bare `extern.convert_any` would yield an EMPTY rest.
-              emitStandaloneObjectRest(
+              emitNativeObjectRest(
                 ctx,
                 fctx,
                 () => {
