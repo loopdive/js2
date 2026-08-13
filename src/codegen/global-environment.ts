@@ -593,6 +593,37 @@ export function emitGlobalEnvironmentDelete(ctx: CodegenContext, fctx: FunctionC
   fctx.body.push({ op: "call", funcIdx: deleteIdx });
 }
 
+/**
+ * (#4394) Whether `expr` denotes the GLOBAL OBJECT itself — `globalThis`, or a
+ * script's top-level `this`.
+ *
+ * The global object is always a host value in the JS-host lane; it never has a
+ * compiled WasmGC struct representation. But `var $262 = { global: globalThis }`
+ * — which the test262 harness prefix puts in FRONT of every single test — makes
+ * the checker mint a struct for `typeof globalThis`, and a later
+ * `Object.defineProperty(globalThis, …)` then took the struct fast path. Its
+ * guarded `ref.test`/`ref.cast` cannot match a host externref, so the receiver
+ * became `ref.null` and the call threw "Object method called on null or
+ * undefined" — a receiver that was never null.
+ *
+ * `this` counts only in a SCRIPT's top-level code, where it is the global
+ * object; inside any function, or in a module, it is not. Mirrors the same
+ * gate `isNonConfigurableGlobalObjectDelete` uses below.
+ */
+export function isGlobalObjectExpr(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  let cur: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  if (cur.kind === ts.SyntaxKind.ThisKeyword) return fctx.name === "__module_init" && !ctx.sourceIsModule;
+  return ts.isIdentifier(cur) && cur.text === "globalThis" && !ctx.moduleGlobals.has("globalThis");
+}
+
 /** Whether a direct module-init member delete targets a script var/function. */
 export function isNonConfigurableGlobalObjectDelete(
   ctx: CodegenContext,

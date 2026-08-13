@@ -33,6 +33,10 @@ loc-budget-allow:
   # in the new leaf module codegen/callback-ctor-bridge.ts; what remains here is
   # the call that replaced the inline ternary.
   - src/codegen/closures.ts
+  # +4 lines: an import line and a two-line comment on the struct-name
+  # resolution that now excludes the global object. The predicate itself lives
+  # in global-environment.ts, beside the other global-object receiver gate.
+  - src/codegen/object-ops.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -55,6 +59,9 @@ func-budget-allow:
   # +2 lines: a two-line pointer above the call that replaced the inline
   # maker-name ternary. The decision lives in codegen/callback-ctor-bridge.ts.
   - src/codegen/closures.ts::compileArrowAsCallback
+  # +3 lines: a two-line comment plus the ternary that excludes the global
+  # object from struct-name resolution; the predicate is in global-environment.ts.
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -472,6 +479,54 @@ dynamic bridge is constructible for any closure; getting it right needs the
 closure's kind at runtime, which today has no discriminator export (the
 `closure-exports.ts` bit registry would need a new entry). Recorded rather than
 half-fixed.
+
+## Root cause 10 (2 tests) — `defineProperty(globalThis, …)` took the struct path
+
+`Object.defineProperty(this, 'Object', {configurable: true, value: Object})` —
+the whole of `harness/verifyProperty-configurable-object.js` — threw
+`TypeError: Object method called on null or undefined`, naming a receiver that
+was never null.
+
+The global object is a HOST value in the JS-host lane and has no compiled WasmGC
+struct. But the harness prefix opens with
+
+```js
+var $262 = { global: globalThis, … };
+```
+
+which sits in front of **every** test, and that single VALUE use makes the
+checker mint a struct type for `typeof globalThis` (the emitted module even
+carries `$__sget_globalThis` / `$__sget_eval` field accessors for it).
+`compileObjectDefineProperty` then resolved a struct name for the receiver and
+took the struct arm, whose guarded cast can never match a host externref:
+
+```wat
+call $__get_globalThis      ;; a host object
+any.convert_extern
+ref.test (ref 16)           ;; not that struct
+(if … (else ref.null 16))   ;; → NULL
+local.tee $__defprop_obj_3
+ref.is_null → throw         ;; "called on null or undefined"
+```
+
+The trigger is the earlier value use, not the define — the define alone always
+worked, which is why this only ever showed up under the assembled harness.
+
+### Fix
+
+`isGlobalObjectExpr` (in `global-environment.ts`, beside the existing
+global-object receiver gate) recognises `globalThis` and a script's top-level
+`this`; `compileObjectDefineProperty` skips struct-name resolution for such a
+receiver and falls through to the extern arm it should always have used.
+
+`this` counts only in a SCRIPT's top-level code — inside a function, or in a
+module, it is not the global object.
+
+### Measured
+
+94 → **96** pass (`verifyProperty-configurable-object.js`,
+`propertyhelper-verifyconfigurable-configurable-object.js`), 0 lost.
+equivalence-gate, all 8 shards: no new regressions.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 

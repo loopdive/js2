@@ -17,6 +17,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "./closures.js";
 import { reportError } from "./context/errors.js";
+import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
@@ -1340,9 +1341,14 @@ export function compileObjectDefineProperty(
   }
 
   // Check if obj is a struct type with the given field
+  // (#4394) …unless the receiver IS the global object — see `isGlobalObjectExpr`.
+  // JS-host only: standalone/WASI build globalThis as a real native `$Object`
+  // struct (`emitNativeGlobalThisObject`), so the struct arm is correct there.
   const objTsType = ctx.checker.getTypeAtLocation(objArg);
-  let structName =
-    resolveStructName(ctx, objTsType) || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
+  const receiverIsHostGlobalObject = !ctx.standalone && !ctx.wasi && isGlobalObjectExpr(ctx, fctx, objArg);
+  let structName = receiverIsHostGlobalObject
+    ? undefined
+    : resolveStructName(ctx, objTsType) || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
 
   // (#1629 S3) Whether the receiver is *statically* struct-typed — i.e. resolved
   // WITHOUT the `any`/externref rescue fallbacks 1-3 below. This is the same
