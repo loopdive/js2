@@ -13,6 +13,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -119,7 +120,10 @@ export function emitGuardedNativeStringElementGet(
       then: [
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-        { op: "call", funcIdx: flattenIdx },
+        // (#4157) `__str_charAt` flattens param 0 itself — the same argument
+        // as the bounds test above, which already reads the length off
+        // `$AnyString` field 0 without flattening. See `lazy-str-flatten.ts`.
+        ...redundantFlattenCall(flattenIdx),
         { op: "local.get", index: idxI32 },
         { op: "call", funcIdx: charAtIdx },
         { op: "extern.convert_any" },

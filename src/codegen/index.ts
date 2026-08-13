@@ -218,6 +218,10 @@ import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) ho
 import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
+import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
+import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
+import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
@@ -280,6 +284,9 @@ import { emitInlineMathFunctions } from "./math-helpers.js";
 import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
+import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
+import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
+import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5255,6 +5262,14 @@ export function generateModule(
     // hits collapse to a bare `struct.get` arm; misses fall back to the
     // generic dispatcher body filled just above.
     fillTypedMemberGetF64Dispatch(ctx);
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
+
+    // (#4157) Inline-cache the READ SITES against the arms just filled. Placed
+    // HERE so the copied arm and the copy share one type/funcIdx regime — every
+    // later remap treats both identically. DEFAULT OFF.
+    inlineMemberGetCallSites(ctx);
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
@@ -5291,6 +5306,15 @@ export function generateModule(
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
+
+    // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
+    // MUST run HERE: `unshiftExternGetProtoCacheArm` above is the last pass that
+    // prepends to `__extern_get`, and the extractor accepts the body only while
+    // that arm is still the PREFIX — which is also the property the arm's own
+    // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
+    // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
+    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    inlineExternGetCallSites(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
@@ -5510,6 +5534,12 @@ export function generateModule(
     // here because dead-type elimination has already remapped every `typeIdx`,
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
+    installExecCensus(ctx);
+    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
+    // is set, so the default binary stays byte-identical. This exact slot is
+    // load-bearing; the four preconditions are spelled out under "Placement
+    // contract" in `ir-inline.ts`. Do not move it without reading them.
+    inlineUserFunctions(ctx);
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -7606,6 +7636,10 @@ export function generateMultiModule(
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
+    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillErrorPropHelpers(ctx); // (#4098) multi-source parity for the shared Error bag ABI
@@ -7641,6 +7675,15 @@ export function generateMultiModule(
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
+
+    // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
+    // MUST run HERE: `unshiftExternGetProtoCacheArm` above is the last pass that
+    // prepends to `__extern_get`, and the extractor accepts the body only while
+    // that arm is still the PREFIX — which is also the property the arm's own
+    // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
+    // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
+    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    inlineExternGetCallSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
@@ -7862,6 +7905,12 @@ export function generateMultiModule(
     // here because dead-type elimination has already remapped every `typeIdx`,
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
+    installExecCensus(ctx);
+    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
+    // is set, so the default binary stays byte-identical. This exact slot is
+    // load-bearing; the four preconditions are spelled out under "Placement
+    // contract" in `ir-inline.ts`. Do not move it without reading them.
+    inlineUserFunctions(ctx);
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     finalizeFunctionPoisonPillCalls(ctx);

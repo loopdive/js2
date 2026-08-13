@@ -20,6 +20,7 @@
 import type { Instr } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { lazyStrFlattenEnabled, relocatedFlattenPreamble } from "./lazy-str-flatten.js";
 import type { NativeStrShared } from "./native-strings-shared.js";
 
 /**
@@ -430,10 +431,19 @@ function emitStrConcatOwnedHelper(shared: NativeStrShared): void {
  * Ordering & equality: `__str_equals`, `__str_compare` (UTF-16 code-unit order).
  */
 export function emitStrCompareHelpers(shared: NativeStrShared): void {
-  const { ctx, strTypeIdx, strDataTypeIdx, strRef, strDataRef, wrapBodyWithFlatten } = shared;
+  const { ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, strRef, strDataRef, getFlattenIdx, wrapBodyWithFlatten } =
+    shared;
 
   // --- $__str_equals(a: ref $NativeString, b: ref $NativeString) -> i32 ---
   {
+    // (#4157) OFF: `wrapBodyWithFlatten([0, 1])` materializes BOTH operands at
+    // the top of the function, ahead of three answers that need no flat buffer.
+    // ON: `relocatedFlattenPreamble` emits the SAME guarded preamble further
+    // down (just before the character loop), and the length compare reads
+    // `$AnyString` field 0. See `lazy-str-flatten.ts`.
+    const lazy = lazyStrFlattenEnabled();
+    const lenTypeIdx = lazy ? anyStrTypeIdx : strTypeIdx;
+    const lazyFlattenPreamble = relocatedFlattenPreamble(lazy, strTypeIdx, getFlattenIdx, [0, 1]);
     const typeIdx = addFuncType(ctx, [strRef, strRef], [{ kind: "i32" }]);
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_equals", funcIdx);
@@ -454,13 +464,13 @@ export function emitStrCompareHelpers(shared: NativeStrShared): void {
       },
       // len = a.len
       { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "struct.get", typeIdx: lenTypeIdx, fieldIdx: 0 },
       { op: "local.set", index: 2 }, // len
 
       // if a.len != b.len return 0
       { op: "local.get", index: 2 },
       { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "struct.get", typeIdx: lenTypeIdx, fieldIdx: 0 },
       { op: "i32.ne" },
       {
         op: "if",
@@ -523,6 +533,10 @@ export function emitStrCompareHelpers(shared: NativeStrShared): void {
             },
           ] satisfies Instr[])
         : []),
+
+      // (#4157) Everything above answered without a flat buffer; the loop below
+      // is the first consumer of `off`/`data`.
+      ...lazyFlattenPreamble,
 
       // aOff = a.off
       { op: "local.get", index: 0 },
@@ -610,7 +624,10 @@ export function emitStrCompareHelpers(shared: NativeStrShared): void {
         { name: "aHash", type: { kind: "i32" } },
         { name: "bHash", type: { kind: "i32" } },
       ],
-      body: wrapBodyWithFlatten(body, [0, 1]),
+      // (#4157) Under the flag the preamble is already spliced into `body`, so
+      // no params are declared here — the wrapper still runs for its second
+      // job, inserting `ref.cast $NativeString` before each `struct.get`.
+      body: wrapBodyWithFlatten(body, lazy ? [] : [0, 1]),
       exported: false,
     });
   }

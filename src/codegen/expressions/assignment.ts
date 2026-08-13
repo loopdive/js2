@@ -40,6 +40,7 @@ import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; 
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
+import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
   emitAlternateStructSetDispatch,
@@ -3370,6 +3371,9 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
+  // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
+  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, /*strict*/ true);
+  if (f64Set !== undefined) return f64Set;
   if (valResult && ctx.booleanPropertyNames.has(propName)) {
     // #2847: a dynamic method bridge may already have boxed an untyped
     // boolean-returning closure as numeric externref 0/1. The whole-program
@@ -4240,6 +4244,14 @@ function compilePropertyAssignmentExternSet(
   // Compile value as externref and save
   const valResult = compileExpression(ctx, fctx, value);
   if (!valResult) return null;
+  // (#3374) PutValue throws only when [[Set]] returns false AND the Reference is
+  // strict (§6.2.5.6 steps 3.d-e). Preserve that source-level bit instead of
+  // treating the compiler's synthetic ESM wrapper as strict JavaScript.
+  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
+  // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
+  const dyn = forceRuntimeSet || wrapRuntimeEvalCallable;
+  const f64Set = dyn ? undefined : tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, strict);
+  if (f64Set !== undefined) return f64Set;
   if (ctx.booleanPropertyNames.has(propName)) {
     ensureI32Condition(fctx, valResult, ctx);
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
@@ -4259,10 +4271,6 @@ function compilePropertyAssignmentExternSet(
   const valLocal = allocLocal(fctx, `__paset_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
 
-  // (#3374) PutValue throws only when [[Set]] returns false AND the Reference is
-  // strict (§6.2.5.6 steps 3.d-e). Preserve that source-level bit instead of
-  // treating the compiler's synthetic ESM wrapper as strict JavaScript.
-  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
   const setName = strict ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
