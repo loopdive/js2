@@ -1482,6 +1482,31 @@ closure parameters, object-literal methods/accessors, and wider cross-owner
 callable escapes. No shared direct closure implementation is deleted yet;
 those remaining typed consumers still require it.
 
+### Recursive named function-expression checkpoint (2026-08-13)
+
+A named function expression now binds its lexical self name directly to the
+canonical typed closure carrier inside its lifted IR body. Recursive calls
+therefore reuse the existing `closure.call`/`call_ref` path and pass the exact
+root carrier as `this` without introducing a dynamic lookup, global alias, or
+second closure allocation. Capture analysis excludes the self name while
+retaining ordinary outer captures in their existing sealed order.
+
+The selector mirrors that ownership boundary: the self name exists only in the
+literal's inner scope, carries the literal's exact callable projection while
+the body is checked, and disappears when the projection scope closes. A same-
+named enclosing binding remains deliberately unsupported for this slice rather
+than allowing ambiguous shadow evidence to widen selection.
+
+Anti-vacuity coverage runs both a zero-capture factorial and a recursive
+factorial with independent captured state on GC and standalone. With the
+terminal direct-body emitter poisoned, every prepared build reports
+`direct=0, IR=1`, validates, contains the lifted closure plus `call_ref`, and
+matches the direct runtime result. Optimized IR binaries are no larger than
+their same-source direct binaries. Default/destructured closure parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+the next serial R3 families; the shared direct closure implementation still has
+live typed consumers and is not deleted in this checkpoint.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

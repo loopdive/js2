@@ -11437,6 +11437,13 @@ function liftClosureBody(
 
   const selfType: IrType = { kind: "closure", signature };
   const selfV = builder.addParam("__self", selfType);
+  // A named function expression owns a lexical self binding that is visible
+  // only inside its body. Reuse the canonical closure carrier so recursive
+  // calls keep the exact typed call_ref path instead of escaping through a
+  // dynamic/global lookup.
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    scope.set(expr.name.text, { kind: "local", value: selfV, type: selfType });
+  }
 
   for (let i = 0; i < expr.parameters.length; i++) {
     const p = expr.parameters[i]!;
@@ -11562,6 +11569,7 @@ function analyseCaptures(
   const referenced = new Set<string>();
   const written = new Set<string>();
   const ownParams = new Set<string>();
+  if (ts.isFunctionExpression(fn) && fn.name) ownParams.add(fn.name.text);
   for (const p of fn.parameters) {
     if (ts.isIdentifier(p.name)) ownParams.add(p.name.text);
   }

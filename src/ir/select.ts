@@ -4758,7 +4758,6 @@ function isPhase1ClosureLiteral(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (ts.isFunctionExpression(expr) && expr.name) return shapeNo("closure-named-fnexpr", expr.name); // named func expr — defer
   if ("asteriskToken" in expr && expr.asteriskToken) return shapeNo("closure-generator", expr); // generator
   if (expr.modifiers && expr.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
     return shapeNo("closure-async", expr);
@@ -4768,6 +4767,10 @@ function isPhase1ClosureLiteral(
     return shapeNo("closure-return-type", expr.type ?? expr);
 
   const inner = new Set(scope);
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    if (inner.has(expr.name.text)) return shapeNo("closure-name-shadow", expr.name);
+    inner.add(expr.name.text);
+  }
   for (const p of expr.parameters) {
     if (!ts.isIdentifier(p.name)) return shapeNo("closure-param-name", p.name);
     if (p.questionToken || p.dotDotDotToken || p.initializer) return shapeNo("closure-param-shape", p);
@@ -4777,6 +4780,9 @@ function isPhase1ClosureLiteral(
   }
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    recordCallableProjection(expr.name.text, expr.parameters.length, expr.type);
+  }
   const outerMutableSlotNames = currentMutableSlotNames;
   currentMutableSlotNames = new Set();
 
