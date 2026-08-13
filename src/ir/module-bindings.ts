@@ -7,7 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
-import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
+import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "./class-accessor-safety.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
@@ -189,12 +189,19 @@ export function makeIrIdentityLocalClassExpressionResolver(
   const declarationCounts = new Map<ts.ClassDeclaration, number>();
   const symbolCounts = new Map<ts.Symbol, number>();
   const candidates: ProjectedClass[] = [];
-  for (const statement of sourceFile.statements) {
-    if (!ts.isClassDeclaration(statement) || !statement.name) continue;
+  for (const record of identityContext.inventory.classes) {
+    if (record.sourceId !== sourceId) continue;
+    const statement = identityContext.declarationByClassId.get(record.id);
+    if (!statement || !ts.isClassDeclaration(statement) || !statement.name) continue;
+    // Existing nested accessor preparation intentionally leaves its containing
+    // function on the direct path. Only the bounded ordinary-class family owns
+    // the constructor/method/caller graph atomically, so only that family may
+    // widen local-class expression resolution beyond source-file declarations.
+    if (statement.parent !== sourceFile && !isBoundedPreparedNestedOrdinaryClass(statement)) continue;
     const legacyName = statement.name.text;
     const shape = projectedShapes.get(legacyName);
-    if (!shape || shape.className !== legacyName) continue;
-    const classId = identityContext.classIdByDeclaration.get(statement);
+    if (!shape || shape.className !== legacyName || shape.classId !== record.id) continue;
+    const classId = record.id;
     if (classId === undefined || identityContext.declarationByClassId.get(classId) !== statement) {
       return planningInvariant(
         "missing-class-declaration",

@@ -2,6 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
@@ -1043,16 +1044,21 @@ class SourceInventoryBuilder {
       const promoteNestedAccessor =
         directNestedClass &&
         (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
+      const promoteNestedOrdinary =
+        directNestedClass &&
+        isBoundedPreparedNestedOrdinaryClass(node) &&
+        (ts.isConstructorDeclaration(functionalMember) || ts.isMethodDeclaration(functionalMember));
+      const promoteNestedMember = promoteNestedAccessor || promoteNestedOrdinary;
 
       const unit =
-        topLevelDeclaration || promoteNestedAccessor
+        topLevelDeclaration || promoteNestedMember
           ? this.addTerminalUnit(
               ts.isConstructorDeclaration(functionalMember)
                 ? "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               member,
-              promoteNestedAccessor
+              promoteNestedMember
                 ? `${legacyName}@nested:${classRecord.declarationStart}:${member.getStart(this.sourceFile)}`
                 : legacyName,
               "class-member",
@@ -1060,7 +1066,7 @@ class SourceInventoryBuilder {
               anonymousFailure,
               true,
               memberSyntheticRole,
-              promoteNestedAccessor ? (inheritedTerminalOwnerId ?? undefined) : undefined,
+              promoteNestedMember ? (inheritedTerminalOwnerId ?? undefined) : undefined,
             )
           : this.addSupportUnit(
               ts.isConstructorDeclaration(functionalMember)
@@ -1076,7 +1082,7 @@ class SourceInventoryBuilder {
       this.scanCallable(
         functionalMember,
         unit.id,
-        topLevelDeclaration || promoteNestedAccessor ? unit.id : inheritedTerminalOwnerId,
+        topLevelDeclaration || promoteNestedMember ? unit.id : inheritedTerminalOwnerId,
       );
     }
 

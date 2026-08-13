@@ -2399,7 +2399,9 @@ export class ProgramAbiSession {
       const classTypeIdx = classType ? this.module.types.indexOf(classType) : -1;
       const exactConsumers = terminals.every((terminal) => {
         if (!terminal || !classIntent) return false;
-        const accessor =
+        const exactNestedMember =
+          terminal.kind === "class-constructor" ||
+          terminal.kind === "class-instance-method" ||
           terminal.kind === "class-instance-getter" ||
           terminal.kind === "class-static-getter" ||
           terminal.kind === "class-instance-setter" ||
@@ -2415,7 +2417,7 @@ export class ProgramAbiSession {
           parsedFirstParam = undefined;
         }
         return (
-          accessor &&
+          exactNestedMember &&
           terminal.containingTerminalOwnerId !== undefined &&
           terminal.lexicalOwnerId === classIntent.classId &&
           this.terminalOwnerForKnownClass(classIntent.classId) === terminal.containingTerminalOwnerId &&

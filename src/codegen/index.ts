@@ -1306,7 +1306,7 @@ function buildIrClassShapes(
   const provisionalEntries = new Map<IrClassId, IrClassShapeEntry>();
   const populatedProvisionalIds = new Set<IrClassId>();
   for (const { classId, declaration } of declarationsInCollectionOrder) {
-    if (!ts.isClassDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
+    if (!ts.isClassDeclaration(declaration) || !declaration.name) {
       continue;
     }
     const className = declaration.name.text;
