@@ -88,6 +88,7 @@ func-budget-allow:
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
@@ -1314,6 +1315,51 @@ module-level, inline, capturing, and effectful class-expression consumers still
 use it. The next serial R3 owner is closures/object methods/cross-owner callable
 support; after those consumers reach zero, the obsolete direct branches must be
 deleted in the same checkpoint that proves their last use is gone.
+
+### Lifted nested-function ownership checkpoint (2026-08-13)
+
+Ordinary nested function declarations can now enter the enclosing terminal's
+prepare-before-emit transaction. The enclosing function and each admitted
+nested declaration lower together before the direct function-body compiler
+runs. If any nested body or prepared dependency fails, the transaction remains
+typed Unsupported and the existing direct route owns it once.
+
+The important accounting fix is structural: a lifted nested declaration now
+keeps its exact inventoried `nested-function` `IrUnitId`. It is no longer
+reported as a pass-created derived unit that happens to share the parent's
+display-name namespace. Lowering records its exact lexical parent, terminal
+owner, and source ordinal; integration verifies those fields against the
+frozen inventory. Only genuinely compiler-created lifts (including the narrow
+Promise-delay closure support) register `ProgramAbiDerivedUnitRecord`s.
+
+The bounded proof uses `run -> add`, with one captured scalar and one direct
+call. With direct `run` emission poisoned, GC and standalone both prepare the
+owner, allocate the nested source callable through the scoped Program ABI,
+validate, and return `42`. Optimized IR artifacts are no larger than their
+same-source direct artifacts. An independent AST-to-IR assertion proves the
+lifted function's ID is exactly the inventory ID rather than a newly derived
+ID.
+
+Focused nested/closure ABI evidence is **40/40** across this proof, the exact
+Promise-delay closure compile-once suite, prepared-scope sealing, and exact
+artifact/report identity. The broader closure/recursion matrix is **47/47**;
+the structural identity/Program ABI matrix is **51/51**; cross-backend parity
+is **29/29**; equivalence is **1,645 passing, 24 known failures, zero new
+regressions**; strict shadow remains **37/37 IR, zero legacy/Unsupported/
+Invariant**; and fallback, typecheck, lint, formatting, issue integrity, and
+optimization-retirement gates pass.
+
+Generic arrow/function-expression closure literals remain on the transitional
+late-overlay route in this checkpoint. The first combined probe was
+semantically correct but exposed a GC closure-support size regression, so their
+source-unit identities and support optimizations must land as their own
+measured slice. Object methods/accessors and cross-owner callable values remain
+after that.
+
+No shared direct nested-function implementation is deleted yet. Unsupported
+nested forms and the unretired closure-literal/object-method families still use
+the same direct compiler. Delete it only when the final typed consumer reaches
+zero.
 
 ## Exhaustive source-unit census
 
