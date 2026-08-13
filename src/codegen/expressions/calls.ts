@@ -149,6 +149,7 @@ import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
   emitNullCheckThrow,
+  isIrWithOpenObjectTargetReceiver,
   receiverIsCaughtErrorStringRead,
   receiverIsNativeStringValType,
   receiverMayBeNativeStringAtRuntime,
@@ -6645,6 +6646,16 @@ function compileCallExpression(
   // Handle property access calls: console.log, Math.xxx, extern methods
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const propAccess = expr.expression;
+
+    // (#671 W1) A callable field on the planner-selected open `with` target
+    // is runtime state just like a data field. Use the canonical open-object
+    // method provider instead of resolving the literal's stale static method;
+    // this retains both post-with replacement, repeated-read identity, and
+    // the full argument list in both lanes.
+    if (!ts.isPrivateIdentifier(propAccess.name) && isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression)) {
+      const openTargetCall = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text);
+      if (openTargetCall !== undefined) return openTargetCall;
+    }
 
     // (#2838 L6) Dynamic-`this` method-call dispatch. When the receiver is `this`
     // and the runtime `this` is DYNAMIC (the fctx `this` local is not a concrete

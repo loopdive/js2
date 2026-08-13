@@ -47,6 +47,7 @@ import {
   emitCapturedBoxGlobalWrite,
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
+  isIrWithOpenObjectTargetReceiver,
   isNumericIndexExpression,
   isProvablyNonNull,
   isSafeBoundsEliminated,
@@ -3495,6 +3496,16 @@ function compilePropertyAssignment(
 
   const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
   if (poisonResult !== undefined) return poisonResult;
+
+  // (#671 W1) The direct-DeleteBinding `with` planner selected one canonical
+  // open object for this exact declaration. A checker-derived struct.set here
+  // would split it from the raw member-read MOP (and can silently retain a
+  // stale field after the `with` body mutates it), so preserve the dynamic
+  // carrier through the matching runtime [[Set]] path. The key predicate is
+  // declaration-scoped; unrelated same-named locals do not reach this arm.
+  if (!ts.isPrivateIdentifier(target.name) && isIrWithOpenObjectTargetReceiver(ctx, target.expression)) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, target.name.text, true);
+  }
 
   // (#3872) Non-writable DATA property — `defineProperty(o,"p",{writable:false})`
   // then `o.p = v`. Sits at the TOP, before any lowering-path selection, because

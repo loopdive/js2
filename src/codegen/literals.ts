@@ -1689,7 +1689,8 @@ export function compileObjectLiteral(
     expr.properties.length > 0 &&
     ts.isVariableDeclaration(expr.parent) &&
     ts.isIdentifier(expr.parent.name) &&
-    ctx.growableObjectLiteralVars.has(expr.parent.name.text)
+    (ctx.growableObjectLiteralVars.has(expr.parent.name.text) ||
+      ctx.irWithOpenObjectTargetKeys.has(widenedVarKeyFromDecl(expr.parent.name)))
   ) {
     const growableResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (growableResult) return growableResult;

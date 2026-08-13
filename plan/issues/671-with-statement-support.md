@@ -1,7 +1,7 @@
 ---
 id: 671
 title: "ES5 `with`: complete Object Environment Record semantics on the IR path"
-status: ready
+status: in-progress
 created: 2026-03-20
 updated: 2026-08-13
 priority: high
@@ -11,6 +11,19 @@ task_type: feature
 area: ir, codegen, runtime
 es_edition: 5
 language_feature: with-statement
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/literals.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/property-access.ts
+func-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/literals.ts::compileObjectLiteral
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/context/create-context.ts::createCodegenContext
 goal: es5
 sprint: current
 test262_fail: 67
@@ -21,14 +34,79 @@ related: [1387, 2663, 3025, 4179, 4206, 4231, 4264, 1472]
 
 ## Status
 
-Ready for staged implementation. This is the live umbrella for finishing
-`with`; it supersedes the original “~272 tests / compile-time `if`” stub and the
-stale limitations in #1387 and #4206. It does **not** close until every direct
+W1 is in progress. This is the live umbrella for finishing `with`; it
+supersedes the original “~272 tests / compile-time `if`” stub and the stale
+limitations in #1387 and #4206. It does **not** close until every direct
 `WithStatement` row passes in both lanes and the unpartitioned ES5 goal reaches
 9,029/9,029 in each lane.
 
 This implementation plan was re-grounded by a Sol/max architecture pass on
 `origin/main@c26670fdc0d567203d95b68553d9393279608a96`.
+
+### W1 implementation evidence — 2026-08-13
+
+W1 now has one IR-owned direct-`DeleteBinding` target plan, a
+declaration-identity pre-claim, and one canonical open-object carrier. The
+property selector is also declaration-keyed: all public direct member reads,
+writes, and callable-member calls on the selected target consume the raw
+open-object MOP value rather than the stale checker-derived field type. A
+same-named binding in another scope remains on its existing representation.
+
+The measured manifest was the exact 21-file slice below, comparing the local
+base artifact from
+`origin/main@cb4d4d7ca2f151ba69f26cff517417e003428df7` with the rebased implementation
+`491898a4dfa4129478c8a7cd2ddec00ba28574e7` on
+`origin/main@bd71baaf840f4b8e0a53e8f78d8b48c905d040ce`.
+Both arms used `scripts/harness-flip-probe.ts` and demonstrated its mandatory
+must-pass and must-fail controls.
+
+| lane | base | head | gained | lost | net |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JS host | 21 fail | 6 pass / 15 fail | 6 | 0 | **+6** |
+| standalone | 21 pass | 21 pass | 0 | 0 | **0** |
+
+The host gains are `S12.10_A1.2_T{1,2,4}` and
+`S12.10_A1.3_T{1,2,4}`. The focused regression test covers host and standalone
+direct readback, post-`with` direct writes, function-valued member identity and
+arguments, deferred module initialization, capture refusal, a `for-in`
+consumer refusal, and one authentic gained host control.
+
+The 15 unchanged host rows are intentionally not folded into W1's claim:
+
+- twelve stop at assertion #18 (`value === undefined`, observed `null`), which
+  is `var` / VariableEnvironment declaration routing rather than target
+  representation and belongs to W4;
+- `S12.10_A1.5_T{1,2,4}` remains at the old deleted-`p3` observation because
+  its `for-in` target consumer fails W1's pre-allocation safety proof. W1 does
+  not widen that consumer without an explicit open-object iteration contract.
+
+The standalone pair has no transitions and remains 21/21 passing. The head arm
+used the canary-verified QuickJS artifact `b0662069c241…` and the compiler-keyed
+adapter `69f9752001f47bd7` for compiler bundle `66bbd7933576be22`; its runtime banner confirmed that provider before
+the population ran. An earlier candidate-only run that reported 21 failures
+was discarded because the worktree lacked that provider, while the baseline
+had it. Provider availability must match across both arms. W2/W4 retain the
+remaining environment and declaration work outside this exact W1 family.
+
+Root review caught and fixed one pre-publication carrier leak: the first W1
+candidate also inserted the target's bare spelling into the legacy
+`growableObjectLiteralVars` / `externrefAccessorVars` sets. A separate
+same-named local passed to a concrete struct parameter then trapped instead of
+returning `7`. W1 now uses its declaration key for the literal route as well as
+member operations and does not populate those name-wide sets. The compiled
+dual-lane regression returns `17` (the W1 mutation contributes `10`, the
+unrelated closed struct contributes `7`).
+
+## Test Results
+
+- `pnpm exec vitest run tests/issue-671-with-w1.test.ts` — 14/14 passed.
+- `pnpm run typecheck` — passed.
+- `pnpm run check:issues` — passed.
+- `pnpm run check:loc-budget` and `pnpm run check:func-budget` — passed with
+  the W1 allowances above.
+- `pnpm run check:ir-fallbacks` and `pnpm run check:ir-adoption` — passed.
+- Exact harness A/B controls passed in both lanes; the 21-row deltas are
+  recorded in the W1 evidence table above.
 
 ## Exact current population
 
@@ -232,6 +310,22 @@ machinery; IR must expose it without snapshotting the with-object.
 
 This is the first implementation handoff. Keep it bounded to the exact
 bare-identifier-delete trigger and its representation consequences.
+
+#### LOC budget allowance
+
+`src/codegen/declarations/object-shape-widening.ts` receives a narrowly scoped
+allowance for W1's declaration-identity, open-carrier, and
+concrete-struct-consumer safety boundary. The matching keyed selector lives in
+`property-access.ts`, with one small selection arm each in assignment and call
+codegen plus its context registration. Those paths are required to consume the
+same carrier for direct reads, writes, and callable members; they do not widen
+unrelated objects or add a runtime store.
+
+The corresponding function allowances cover only that atomic selection path:
+planner result, declaration identity, consumer-ABI refusal, pre-allocation
+carrier choice, and use-site MOP selection. Extracting only a helper would
+separate those interdependent decisions without shrinking the proof surface;
+broader shape analysis remains explicitly refused.
 
 **File: `src/ir/with-environment.ts` (lines ~18–110)**
 

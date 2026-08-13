@@ -2974,6 +2974,14 @@ export interface CodegenContext {
    */
   growableObjectLiteralVars: Set<string>;
   /**
+   * (#671 W1) Declaration-site keys for direct-DeleteBinding `with` targets
+   * whose planner/proof selected the canonical open-object carrier. Member
+   * reads and writes consult this keyed set rather than the bare-name
+   * growable-object set: a same-named local in another scope must retain its
+   * pre-existing representation and static member lowering.
+   */
+  irWithOpenObjectTargetKeys: Set<string>;
+  /**
    * (#4208) Exact declarations whose shared `var` binding is repeatedly
    * initialized with different OrdinaryToPrimitive method shapes. These
    * literals must use the open `$Object` carrier: a closed anonymous struct
