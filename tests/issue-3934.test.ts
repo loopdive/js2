@@ -28,11 +28,11 @@
  *     `linear-tests` was documented as required in both CLAUDE.md and
  *     docs/ci-policy.md and is NOT in the ruleset. Re-verify with:
  *
- *       gh api repos/loopdive/js2/rules/branches/main \
+ *       gh api repos/loopdive/js2wasm/rules/branches/main \
  *         --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
  *
  *     (Enforcement lives in a repo RULESET; the classic
- *     `repos/loopdive/js2/branches/main/protection` endpoint returns 404
+ *     `repos/loopdive/js2wasm/branches/main/protection` endpoint returns 404
  *     "Branch not protected".)
  *
  * Every assertion below is floored — the parse helpers throw rather than
@@ -367,7 +367,7 @@ describe("#3934 — the documented required-check list matches the live ruleset"
   const policy = read("docs/ci-policy.md");
   const claudeMd = read("CLAUDE.md");
   const RECHECK =
-    "re-verify with: gh api repos/loopdive/js2/rules/branches/main --jq '[.[]|select(.type==\"required_status_checks\")|.parameters.required_status_checks[].context]'";
+    "re-verify with: gh api repos/loopdive/js2wasm/rules/branches/main --jq '[.[]|select(.type==\"required_status_checks\")|.parameters.required_status_checks[].context]'";
 
   it("§1 required-checks table lists exactly the six required contexts", () => {
     const listed = tableContexts(section(policy, "### Required-checks list", /^### /m));

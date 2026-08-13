@@ -3,7 +3,7 @@
 //    '__defineProperty_value'"
 //   (re-allocated off the hand-picked #2588/#2602 id collisions — #2531)
 //
-// Reported by an external user (loopdive/js2#389) compiling an esbuild-bundled
+// Reported by an external user (loopdive/js2wasm#389) compiling an esbuild-bundled
 // Native Messaging host with `--target wasi --wit`. The bundle pulls in the
 // native `$Object` runtime (via `process.stdin.read(buf, offset)` into a typed
 // buffer, plus the esbuild interop prelude's `Object.defineProperty` getter
@@ -62,7 +62,7 @@ const ESBUILD_PRELUDE_LIKE = `${DECL}
     process.stdout.write(out);
   }`;
 
-describe("#2609 WASI native defineProperty funcIdx (loopdive/js2#389)", () => {
+describe("#2609 WASI native defineProperty funcIdx (loopdive/js2wasm#389)", () => {
   it("compiles a framed process.stdin.read loop under --target wasi without a funcIdx emit error", async () => {
     const result = await compile(FRAMED_STDIN, { fileName: "nm.ts", target: "wasi" });
     // Before the fix this failed with a hard emit error rather than producing a

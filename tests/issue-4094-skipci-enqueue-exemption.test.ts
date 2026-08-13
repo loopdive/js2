@@ -226,9 +226,9 @@ describe("#4094 head SHA is sourced from REST, never the cached PR view", () => 
       calls.push(args);
       return { ok: true, stdout: `${A}\n`, stderr: "" };
     };
-    const got = authoritativeHeadSha(4038, "loopdive/js2", fake);
+    const got = authoritativeHeadSha(4038, "loopdive/js2wasm", fake);
     expect(got).toEqual({ ok: true, sha: A, reason: "rest" });
-    expect(calls[0]!.join(" ")).toContain("repos/loopdive/js2/pulls/4038");
+    expect(calls[0]!.join(" ")).toContain("repos/loopdive/js2wasm/pulls/4038");
     expect(calls[0]!.join(" ")).toContain(".head.sha");
   });
 
@@ -255,7 +255,7 @@ describe("#4094 head SHA is sourced from REST, never the cached PR view", () => 
   // Falling back to the cached value on a REST failure would reinstate the bug.
   it("FAILS CLOSED when REST is unreadable — never falls back to the cached SHA", () => {
     const failing = () => ({ ok: false, stdout: "", stderr: "boom" });
-    const rest = authoritativeHeadSha(4038, "loopdive/js2", failing);
+    const rest = authoritativeHeadSha(4038, "loopdive/js2wasm", failing);
     expect(rest.ok).toBe(false);
     const got = reconcileHeadSha(A, rest);
     expect(got.ok).toBe(false);
@@ -264,14 +264,14 @@ describe("#4094 head SHA is sourced from REST, never the cached PR view", () => 
 
   it("rejects a non-SHA REST response rather than trusting it", () => {
     const garbage = () => ({ ok: true, stdout: "not-a-sha", stderr: "" });
-    expect(authoritativeHeadSha(4038, "loopdive/js2", garbage).ok).toBe(false);
+    expect(authoritativeHeadSha(4038, "loopdive/js2wasm", garbage).ok).toBe(false);
   });
 });
 
 describe("#4094 requiredCheckNames", () => {
   it("prefers the live ruleset over the static fallback", () => {
     const fake = () => ({ ok: true, stdout: JSON.stringify(["only-one"]), stderr: "" });
-    const got = requiredCheckNames("loopdive/js2", fake);
+    const got = requiredCheckNames("loopdive/js2wasm", fake);
     expect(got.names).toEqual(["only-one"]);
     expect(got.source).toBe("ruleset");
   });
@@ -281,7 +281,7 @@ describe("#4094 requiredCheckNames", () => {
   // must not yield an EMPTY required set, which would make everything "green".
   it("falls back to the six documented contexts when the ruleset is unreadable", () => {
     const failing = () => ({ ok: false, stdout: "", stderr: "boom" });
-    const got = requiredCheckNames("loopdive/js2", failing);
+    const got = requiredCheckNames("loopdive/js2wasm", failing);
     expect(got.source).toBe("fallback");
     expect(got.names).toEqual([...REQUIRED_CHECK_FALLBACK]);
     expect(got.names.length).toBe(6);
@@ -289,7 +289,7 @@ describe("#4094 requiredCheckNames", () => {
 
   it("falls back rather than accepting an empty ruleset array", () => {
     const empty = () => ({ ok: true, stdout: "[]", stderr: "" });
-    expect(requiredCheckNames("loopdive/js2", empty).source).toBe("fallback");
+    expect(requiredCheckNames("loopdive/js2wasm", empty).source).toBe("fallback");
   });
 });
 
@@ -305,7 +305,7 @@ describe("#4094 divergence fetch reads the correct compare field", () => {
       calls.push(args);
       return { ok: true, stdout: JSON.stringify([REAL_BASELINE_COMMIT]), stderr: "" };
     };
-    const got = divergenceCommitMessages("deadbeef", "loopdive/js2", fakeGh);
+    const got = divergenceCommitMessages("deadbeef", "loopdive/js2wasm", fakeGh);
     expect(got.ok).toBe(true);
     expect(got.messages).toEqual([REAL_BASELINE_COMMIT]);
     const jqArg = calls[0]![calls[0]!.length - 1]!;
@@ -317,18 +317,18 @@ describe("#4094 divergence fetch reads the correct compare field", () => {
   it("returns a multi-line message intact so a body-borne marker still matches", () => {
     const multiline = "chore: regen\n\nnothing testable changed\n[ci skip]";
     const fakeGh = () => ({ ok: true, stdout: JSON.stringify([multiline]), stderr: "" });
-    const got = divergenceCommitMessages("deadbeef", "loopdive/js2", fakeGh);
+    const got = divergenceCommitMessages("deadbeef", "loopdive/js2wasm", fakeGh);
     expect(got.messages).toEqual([multiline]);
     expect(isSkipCiOnlyDivergence(got.messages!)).toBe(true);
   });
 
   it("FAILS CLOSED when the compare call fails or is unparseable", () => {
     const failing = () => ({ ok: false, stdout: "", stderr: "boom" });
-    expect(divergenceCommitMessages("deadbeef", "loopdive/js2", failing).ok).toBe(false);
+    expect(divergenceCommitMessages("deadbeef", "loopdive/js2wasm", failing).ok).toBe(false);
     const garbage = () => ({ ok: true, stdout: "not json", stderr: "" });
-    expect(divergenceCommitMessages("deadbeef", "loopdive/js2", garbage).ok).toBe(false);
+    expect(divergenceCommitMessages("deadbeef", "loopdive/js2wasm", garbage).ok).toBe(false);
     const wrongShape = () => ({ ok: true, stdout: JSON.stringify({ commits: 1 }), stderr: "" });
-    expect(divergenceCommitMessages("deadbeef", "loopdive/js2", wrongShape).ok).toBe(false);
-    expect(divergenceCommitMessages("", "loopdive/js2", failing).ok).toBe(false);
+    expect(divergenceCommitMessages("deadbeef", "loopdive/js2wasm", wrongShape).ok).toBe(false);
+    expect(divergenceCommitMessages("", "loopdive/js2wasm", failing).ok).toBe(false);
   });
 });

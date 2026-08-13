@@ -15,10 +15,10 @@
   "homepage": "https://js2wasm.loopdive.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/loopdive/js2.git"
+    "url": "git+https://github.com/loopdive/js2wasm.git"
   },
   "bugs": {
-    "url": "https://github.com/loopdive/js2/issues"
+    "url": "https://github.com/loopdive/js2wasm/issues"
   },
   "type": "module",
   "main": "./dist/index.js",

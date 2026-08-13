@@ -8,7 +8,7 @@
  * written in TypeScript (`declare function …`, `private chunk: string`,
  * `read(size?): string | null`). The combined unit is parsed downstream under
  * the USER file's extension — so for a `.js`-named input (the reporter's
- * `bun build → .js` pipeline, loopdive/js2#389) the loose-JS grammar checker
+ * `bun build → .js` pipeline, loopdive/js2wasm#389) the loose-JS grammar checker
  * hard-rejected the prelude's TS syntax with TS8017/8009/8010 ("… can only be
  * used in TypeScript files") and compilation failed BEFORE codegen. The direct
  * `.ts` path always worked (its callbacks are typed); only the transpiled `.js`
@@ -36,7 +36,7 @@
  *      contextual typing only takes effect because of fix #1 (the prelude is now
  *      parsed as TS).
  *
- * The runtime gate (the unblocking criterion for loopdive/js2#389 + the v0.57.0
+ * The runtime gate (the unblocking criterion for loopdive/js2wasm#389 + the v0.57.0
  * publish): the type-stripped `nm_js2wasm_node_process.js` echoes a framed message
  * byte-exact AND exits cleanly under wasmtime with stdin held OPEN + the in-band
  * zero-length shutdown frame (`process.stdin.destroy()`).

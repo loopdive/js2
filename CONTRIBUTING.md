@@ -5,7 +5,7 @@
 ## Development Setup
 
 ```bash
-git clone https://github.com/loopdive/js2.git
+git clone https://github.com/loopdive/js2wasm.git
 cd js2
 pnpm install
 ```

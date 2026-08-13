@@ -9,7 +9,7 @@ metadata:
 ---
 
 **`POST /pulls` returning HTTP 500 (empty body) can be a repo-wide GitHub outage, not
-your setup.** Observed 2026-07-24 on `loopdive/js2`: every PR creation with a real diff
+your setup.** Observed 2026-07-24 on `loopdive/js2wasm`: every PR creation with a real diff
 failed for hours while everything around it looked healthy.
 
 **The bisection that identifies it** (each step is cheap and side-effect-free):

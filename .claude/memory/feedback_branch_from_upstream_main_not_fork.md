@@ -1,6 +1,6 @@
 ---
 name: feedback_branch_from_upstream_main_not_fork
-description: "Branch ALL work from upstream/main (loopdive/js2), never the fork origin/main — the fork is ~1188 commits behind, causing CONFLICTING PRs, CI that never triggers, and silent duplicate work"
+description: "Branch ALL work from upstream/main (loopdive/js2wasm), never the fork origin/main — the fork is ~1188 commits behind, causing CONFLICTING PRs, CI that never triggers, and silent duplicate work"
 metadata: 
   node_type: memory
   type: feedback
@@ -8,7 +8,7 @@ metadata:
 ---
 
 The fork `origin/main` (ttraenkler/js2) was **~1188 commits behind** upstream
-`loopdive/js2` (2026-06-21). PRs target upstream, so a branch cut from
+`loopdive/js2wasm` (2026-06-21). PRs target upstream, so a branch cut from
 `origin/main` has a stale base → the PR shows CONFLICTING/DIRTY, the required
 `pull_request` CI workflows never trigger (only `cla-check` runs), and — worst —
 the bug may already be fixed upstream, so the whole slice is silent duplicate
@@ -25,7 +25,7 @@ reproduced. Every PR had also been silently un-CI'd the whole time.
 **stale** until the fork is synced. The fork doesn't auto-track upstream.
 
 **How to apply:**
-- `git remote -v` confirms `upstream = loopdive/js2`. Always `git fetch upstream`
+- `git remote -v` confirms `upstream = loopdive/js2wasm`. Always `git fetch upstream`
   first.
 - Branch from `upstream/main`: `git worktree add <wt> -b <branch> upstream/main`.
 - **Probe the bug against `upstream/main` BEFORE writing any fix** (mirrors

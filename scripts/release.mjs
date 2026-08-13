@@ -2,7 +2,7 @@
 // scripts/release.mjs — cut a release version in lockstep across the root
 // package (@loopdive/js2) and the unscoped proxy (packages/js2wasm).
 //
-// Why this exists (loopdive/js2#389): version tags here were cut as bare
+// Why this exists (loopdive/js2wasm#389): version tags here were cut as bare
 // lightweight `git tag vX.Y.Z` that never touched package.json. publish-npm.yml
 // triggers on a `v*` tag push and publishes whatever version package.json
 // carries at that commit — so the field stayed stuck at 0.52.0 for thousands of
@@ -140,7 +140,7 @@ export function pickUpstreamRemote(remotesOutput) {
   }
   return {
     name: "origin",
-    note: "could not identify a remote pointing at loopdive/js2 — VERIFY which remote publishes before pushing the tag.",
+    note: "could not identify a remote pointing at loopdive/js2wasm — VERIFY which remote publishes before pushing the tag.",
   };
 }
 
@@ -243,7 +243,7 @@ function main() {
   // Bump the JSR manifest (jsr.json) in lockstep too. It carries its OWN
   // "version" field that pnpm/setVersion never touches — so without this,
   // `deno publish` reads the stale version and silently skips with
-  // "already published" (exit 0), freezing JSR at an old release. (loopdive/js2#389)
+  // "already published" (exit 0), freezing JSR at an old release. (loopdive/js2wasm#389)
   const jsrPath = join(repoRoot, "jsr.json");
   const jsr = JSON.parse(readFileSync(jsrPath, "utf8"));
   jsr.version = target;
@@ -302,8 +302,8 @@ function main() {
   if (notesPath) {
     console.log(`  5) Publish the notes onto the GitHub Release (publish-npm.yml creates the`);
     console.log(`     release with an EMPTY body, so this is what readers actually see):`);
-    console.log(`       gh release edit ${tag} -R loopdive/js2 --notes-file ${notesPath}`);
-    console.log(`       gh release view ${tag} -R loopdive/js2 --json body   # verify it landed`);
+    console.log(`       gh release edit ${tag} -R loopdive/js2wasm --notes-file ${notesPath}`);
+    console.log(`       gh release view ${tag} -R loopdive/js2wasm --json body   # verify it landed`);
     console.log(`     ('edit', not 'create' — the release already exists by then.)`);
   }
   if (upstream.note) console.log(`\n  ⚠️  ${upstream.note}`);

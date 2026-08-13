@@ -542,10 +542,10 @@ function makePull({
   mergedAt = null,
   headRef,
   headSha = `${number}`.padStart(40, "0"),
-  headRepo = "loopdive/js2",
+  headRepo = "loopdive/js2wasm",
   baseRef,
   baseSha = "0".repeat(40),
-  baseRepo = "loopdive/js2",
+  baseRepo = "loopdive/js2wasm",
   draft = false,
   labels = [],
 }) {
@@ -643,7 +643,7 @@ function fakeOptions(parentSha, children, { targetRef = "main", targetSha = "b".
 }
 
 async function selfCheck() {
-  const repo = "loopdive/js2";
+  const repo = "loopdive/js2wasm";
   const parentSha = "a".repeat(40);
   const targetSha = "b".repeat(40);
   const expected = {
@@ -667,7 +667,7 @@ async function selfCheck() {
 
   assert.deepEqual(parseRepository(repo), { owner: "loopdive", name: "js2", fullName: repo });
   assert.equal(parseParentNumber("10"), 10);
-  assert.throws(() => parseRepository("loopdive/js2/extra"), /owner\/name/);
+  assert.throws(() => parseRepository("loopdive/js2wasm/extra"), /owner\/name/);
   assert.throws(() => parseParentNumber("0"), /positive integer/);
   assert.equal(comparisonProvesAncestor({ merge_base_commit: { sha: parentSha } }, parentSha), true);
   assert.equal(comparisonProvesAncestor({ merge_base_commit: { sha: targetSha } }, parentSha), false);

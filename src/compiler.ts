@@ -603,7 +603,7 @@ export const WASM_MEMORY_INTRINSIC_MODULE = "wasm:memory";
  *
  *  - `rawWasi`: named imports from `"wasi_snapshot_preview1"` — the real WASI
  *    Preview-1 fd syscalls (`fd_read`/`fd_write`). The most honest pure-WASI-P1
- *    path for fd-based IO, with no `node:fs` surface (loopdive/js2#389). These
+ *    path for fd-based IO, with no `node:fs` surface (loopdive/js2wasm#389). These
  *    bind directly to the WASI import funcs.
  *  - `memAccessors`: named imports from `"wasm:memory"` — js2wasm's inline
  *    linear-memory access intrinsics (`store32`/`load32`/`store8`/`load8`). These

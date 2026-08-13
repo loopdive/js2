@@ -8,13 +8,13 @@ metadata:
   modified: 2026-07-28T12:08:50.744Z
 ---
 
-**CLAUDE.md says `origin` is upstream (`loopdive/js2`). In the `/workspace`
+**CLAUDE.md says `origin` is upstream (`loopdive/js2wasm`). In the `/workspace`
 checkout that is FALSE.** Measured 2026-07-26:
 
 ```
 fork      https://github.com/ttraenkler/js2   (fetch/push)
 origin    https://github.com/ttraenkler/js2   (fetch/push)   <-- the FORK
-upstream  https://github.com/loopdive/js2     (fetch/push)   <-- real main
+upstream  https://github.com/loopdive/js2wasm     (fetch/push)   <-- real main
 ```
 
 `git fetch origin main` prints `From https://github.com/ttraenkler/js2` — that
@@ -33,7 +33,7 @@ dangerous rather than merely annoying.
 
 ```bash
 git fetch upstream main -q
-SHA=$(gh pr view <N> -R loopdive/js2 --json mergeCommit -q '.mergeCommit.oid')
+SHA=$(gh pr view <N> -R loopdive/js2wasm --json mergeCommit -q '.mergeCommit.oid')
 git merge-base --is-ancestor "$SHA" upstream/main && echo ON-MAIN || echo NOT-ON-MAIN
 git ls-tree upstream/main path/to/added/test.ts        # floor: the new file must exist
 ```

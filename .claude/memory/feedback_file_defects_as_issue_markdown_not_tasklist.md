@@ -38,7 +38,7 @@ identified:**
 3. Write `plan/issues/<id>-<slug>.md`. **Filename prefix and frontmatter `id:`
    must agree** or the integrity gate rejects the PR.
 4. Land it. **Docs-only changes go in ONE open PR** — check
-   `gh pr list -R loopdive/js2 --state open` before opening a second.
+   `gh pr list -R loopdive/js2wasm --state open` before opening a second.
 5. A TaskList entry is optional *scheduling* on top; it is never the filing.
 
 **Do not reserve an id you may not use** — an abandoned reservation leaves a

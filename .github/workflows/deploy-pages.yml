@@ -183,7 +183,7 @@ jobs:
           # js2 dependency graph data
 
           This branch contains the generated \`website/public/graph-data.json\`
-          snapshot from \`loopdive/js2\`.
+          snapshot from \`loopdive/js2wasm\`.
 
           Source commit: $GRAPH_DATA_SHA
 

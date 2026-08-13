@@ -7,7 +7,7 @@
 // Preview-1 command module: it imports ONLY `wasi_snapshot_preview1` (fd_read /
 // fd_write), owns + exports its own `memory`, and runs directly under a WASI
 // host such as wasmtime — no node:fs shim, no Node runtime (#2655). This is the
-// loopdive/js2#389 reporter's exact use case: a host that runs under a WASI host,
+// loopdive/js2wasm#389 reporter's exact use case: a host that runs under a WASI host,
 // explicitly "not chasing Node.js".
 //
 // This source uses REAL Node fd-based synchronous IO — `fs.readSync(fd, …)` /
@@ -120,7 +120,7 @@ function putUint(out: Uint8Array, pos: number, value: number): number {
 }
 
 // Debug telemetry to stderr (fd=2) so it never pollutes the stdout protocol
-// stream — one line per input message. The reporter (loopdive/js2#389) noted
+// stream — one line per input message. The reporter (loopdive/js2wasm#389) noted
 // stderr was the one part that didn't work in his hand-port; this makes it work,
 // and the real-wasmtime smoke test pins the exact line (off-by-one guard).
 function nodeFsLog(declaredLen: number): void {

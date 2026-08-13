@@ -20,7 +20,7 @@ permissions:
   id-token: write # for npm provenance + JSR OIDC
 
 jobs:
-  # Guard against the drift bug (loopdive/js2#389): a `v*` tag is cut as a bare
+  # Guard against the drift bug (loopdive/js2wasm#389): a `v*` tag is cut as a bare
   # lightweight tag that never bumps package.json, so publish-npm would publish
   # whatever stale version package.json happens to carry. This job fails the
   # publish unless BOTH package.json versions and the proxy's canonical-package
@@ -121,7 +121,7 @@ jobs:
   # the matching @loopdive/js2 version. Runs as its OWN job so a missing trusted
   # publisher can't red the canonical or JSR publishes.
   # Requires an npm trusted publisher configured for the `js2wasm` package (same
-  # GitHub OIDC provider as @loopdive/js2). See loopdive/js2#389.
+  # GitHub OIDC provider as @loopdive/js2). See loopdive/js2wasm#389.
   publish-npm-proxy:
     name: npm publish (js2wasm proxy)
     runs-on: ubuntu-latest

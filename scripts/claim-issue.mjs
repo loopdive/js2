@@ -486,7 +486,7 @@ process.on("exit", () => {
   for (const ref of tempRefs) git(["-C", CACHE_DIR, "update-ref", "-d", ref]);
 });
 
-// The MAIN id scan must use UPSTREAM (loopdive/js2). The fork's `origin/main`
+// The MAIN id scan must use UPSTREAM (loopdive/js2wasm). The fork's `origin/main`
 // lags upstream by thousands of commits, so "next free off origin/main" returns
 // ids already taken on upstream/main — every such allocation then collides at
 // the required `check:issue-ids:against-main` gate (which checks upstream/main),

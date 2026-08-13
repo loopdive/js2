@@ -20,8 +20,8 @@ present (REST `/issues/N/labels` showed `hold`; timeline showed no new
 
 Reliable removal (bypasses the projects-classic GraphQL path):
 ```bash
-gh api -X DELETE repos/loopdive/js2/issues/<N>/labels/hold
-gh api repos/loopdive/js2/issues/<N>/labels -q '.[].name'   # verify it's gone
+gh api -X DELETE repos/loopdive/js2wasm/issues/<N>/labels/hold
+gh api repos/loopdive/js2wasm/issues/<N>/labels -q '.[].name'   # verify it's gone
 ```
 Always VERIFY the label set via REST after any add/remove — do not trust the
 `gh pr edit` exit code. When deciding "was this PR re-parked?", check the

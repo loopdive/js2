@@ -6,7 +6,7 @@ The faithful Node primitives for that are `fs.readSync(fd, …)` / `fs.writeSync
 to WASI `fd_read` / `fd_write` with **no filesystem**. (The earlier example used
 `process.stdin.read(buffer, offset)`, which matches **no** real Node API:
 `process.stdin` is an async Duplex stream with no synchronous buffer-filling
-`read` — loopdive/js2#389. `fs.readSync`/`fs.writeSync` are also what Javy uses:
+`read` — loopdive/js2wasm#389. `fs.readSync`/`fs.writeSync` are also what Javy uses:
 `Javy.IO.readSync`.)
 
 `--link node:fs` keeps the syscall implementation **out of codegen**: the

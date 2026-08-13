@@ -39,15 +39,15 @@ function runGuard(cwd: string, remote: string, url: string, refLines: string[]):
 describe("#3410 pre-push labs guard — remote classification", () => {
   // owner/repo normalization across HTTPS, SSH, SCP, proxied, tokened URLs.
   const normCases: Array<[string, string]> = [
-    ["https://github.com/loopdive/js2.git", "loopdive/js2"],
-    ["https://github.com/loopdive/js2", "loopdive/js2"],
     ["https://github.com/loopdive/js2wasm.git", "loopdive/js2wasm"],
-    ["ssh://git@github.com/loopdive/js2.git", "loopdive/js2"],
+    ["https://github.com/loopdive/js2wasm", "loopdive/js2wasm"],
+    ["https://github.com/loopdive/js2wasm.git", "loopdive/js2wasm"],
+    ["ssh://git@github.com/loopdive/js2wasm.git", "loopdive/js2wasm"],
     ["git@github.com:loopdive/js2wasm.git", "loopdive/js2wasm"],
     ["git@github.com:loopdive/js2wasm-labs.git", "loopdive/js2wasm-labs"],
-    ["http://local_proxy@127.0.0.1:41729/git/loopdive/js2", "loopdive/js2"],
+    ["http://local_proxy@127.0.0.1:41729/git/loopdive/js2wasm", "loopdive/js2wasm"],
     ["https://x-access-token:TOKEN@github.com/loopdive/js2wasm.git", "loopdive/js2wasm"],
-    ["https://GitHub.com/LoopDive/JS2.git", "loopdive/js2"], // case-insensitive
+    ["https://GitHub.com/LoopDive/JS2WASM.git", "loopdive/js2wasm"], // case-insensitive
     ["garbage", ""], // no owner/repo recoverable
     ["", ""],
   ];
@@ -58,15 +58,15 @@ describe("#3410 pre-push labs guard — remote classification", () => {
   // Classification: only the labs mirror is private; canonical + legacy
   // upstream and forks are public; anything else is unknown (fail-safe).
   const classCases: Array<[string, string]> = [
-    ["https://github.com/loopdive/js2.git", "public"],
-    ["https://github.com/loopdive/js2", "public"],
+    ["https://github.com/loopdive/js2wasm.git", "public"],
+    ["https://github.com/loopdive/js2wasm", "public"],
     ["https://github.com/loopdive/js2wasm.git", "public"], // legacy alias
     ["https://github.com/loopdive/js2wasm", "public"],
     ["git@github.com:loopdive/js2wasm.git", "public"],
-    ["ssh://git@github.com/loopdive/js2.git", "public"],
+    ["ssh://git@github.com/loopdive/js2wasm.git", "public"],
     ["https://github.com/ttraenkler/js2.git", "public"], // public fork
     ["git@github.com:ttraenkler/js2wasm.git", "public"], // legacy-named fork
-    ["http://local_proxy@127.0.0.1:41729/git/loopdive/js2", "public"], // current origin
+    ["http://local_proxy@127.0.0.1:41729/git/loopdive/js2wasm", "public"], // current origin
     ["https://github.com/loopdive/js2wasm-labs.git", "labs-remote"],
     ["git@github.com:loopdive/js2wasm-labs.git", "labs-remote"],
     ["/local/path/somerepo", "unknown"],
@@ -136,7 +136,7 @@ describe("#3410 pre-push labs guard — end-to-end scan", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
-  const PUBLIC = "https://github.com/loopdive/js2.git";
+  const PUBLIC = "https://github.com/loopdive/js2wasm.git";
   const LEGACY = "https://github.com/loopdive/js2wasm.git";
   const FORK = "https://github.com/ttraenkler/js2.git";
   const LABS = "https://github.com/loopdive/js2wasm-labs.git";

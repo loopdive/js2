@@ -240,7 +240,7 @@ export interface CodegenOptions {
   /** (#2657) Set of LOCAL names imported from `"wasi_snapshot_preview1"`
    *  (detected pre-preprocessing). The raw-WASI fd_read/fd_write passthrough
    *  binds these identifiers directly to the WASI import funcs — the most honest
-   *  pure-WASI-P1 expression, no `node:fs` surface (loopdive/js2#389). */
+   *  pure-WASI-P1 expression, no `node:fs` surface (loopdive/js2wasm#389). */
   wasiRawImports?: Set<string>;
   /** (#2657) Set of LOCAL names imported from `"wasm:memory"` — js2wasm's inline
    *  linear-memory access intrinsics (`store32`/`load32`/`store8`/`load8`). These
@@ -3485,7 +3485,7 @@ export interface CodegenContext {
   /** (#743) Shared `.d.ts` entrypoint seed map — see the CodegenOptions field. */
   dtsEntrypointSeeds?: import("../../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   /** (#2657) Local names imported from `"wasi_snapshot_preview1"` — the raw-WASI
-   *  fd_read/fd_write passthrough bindings (loopdive/js2#389). Empty for any
+   *  fd_read/fd_write passthrough bindings (loopdive/js2wasm#389). Empty for any
    *  program that does not import the raw WASI module. */
   wasiRawImports: Set<string>;
   /** (#2657) Local names imported from `"wasm:memory"` — js2wasm's inline

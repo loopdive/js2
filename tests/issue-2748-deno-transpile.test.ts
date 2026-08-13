@@ -1,7 +1,7 @@
 // #2748 — bun/tsc/esbuild-transpiled (TYPE-STRIPPED) `nm_js2wasm_deno.js` must compile to
 // the SAME pure-WASI-P1 module as the direct `.ts`, not leak `env::__extern_get`.
 //
-// loopdive/js2#389 (latest comment): the reporter's pipeline is
+// loopdive/js2wasm#389 (latest comment): the reporter's pipeline is
 //   bun build --no-bundle nm_js2wasm_deno.ts --outfile nm_js2wasm_deno.js   # strips TS types
 //   js2wasm nm_js2wasm_deno.js --target wasi
 // The direct `.ts` compile imports ONLY `wasi_snapshot_preview1` and echoes

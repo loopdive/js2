@@ -8,7 +8,7 @@ metadata:
 ---
 
 The tech lead's local view in `/workspace` is the **fork** `origin` =
-`ttraenkler/js2`, whose `main` runs **far behind** upstream `loopdive/js2`
+`ttraenkler/js2`, whose `main` runs **far behind** upstream `loopdive/js2wasm`
 (measured 1165 commits behind, 0 ahead, on 2026-06-21). PRs merge to
 **upstream**, and `scripts/sync-workspace-main.sh` only ff's to the stale
 fork `origin/main`, so local plan/issue files rot relative to canonical.

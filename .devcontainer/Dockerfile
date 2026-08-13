@@ -89,7 +89,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
   /usr/local/bin/wasmtime --version
 
 # deno CLI — runs the standalone Native Messaging test harnesses (e.g.
-# guest271314's nm_standalone_test.js from loopdive/js2#389) and other
+# guest271314's nm_standalone_test.js from loopdive/js2wasm#389) and other
 # Deno-based standalone-mode checks. Ships release .zip only (unzip is in the
 # apt block above). Arch-aware: amd64->x86_64, arm64->aarch64.
 ARG DENO_VERSION=v2.8.3
@@ -106,7 +106,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
   chmod +x /usr/local/bin/deno && \
   /usr/local/bin/deno --version
 
-# bun — reproduces the loopdive/js2#389 reporter's exact toolchain: he
+# bun — reproduces the loopdive/js2wasm#389 reporter's exact toolchain: he
 # `bun build`s the native-messaging TS to .js, then compiles that .js with
 # js2wasm. Baking bun into the image lets CI/agents replay that transpile-to-JS
 # flow, which exercises a different, looser-typed compiler path than the direct

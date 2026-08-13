@@ -29,8 +29,8 @@ before using it — the allocator hands out taken ids (#3636):
 
 ```bash
 git ls-tree -r --name-only upstream/main plan/issues/ | grep -E "/$NEW-"
-for n in $(gh pr list -R loopdive/js2 --state open --json number -q '.[].number'); do
-  gh pr view $n -R loopdive/js2 --json files -q '.files[].path' | grep -E "plan/issues/$NEW-"
+for n in $(gh pr list -R loopdive/js2wasm --state open --json number -q '.[].number'); do
+  gh pr view $n -R loopdive/js2wasm --json files -q '.files[].path' | grep -E "plan/issues/$NEW-"
 done
 for b in $(git branch --format='%(refname:short)'); do
   git ls-tree -r --name-only $b plan/issues/ 2>/dev/null | grep -E "/$NEW-"

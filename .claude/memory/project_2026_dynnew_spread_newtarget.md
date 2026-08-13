@@ -47,5 +47,5 @@ the multi-candidate runtime tag-dispatch. That's why variable spread needs the
 runtime-argv build, not a `compileSpreadCallArgs` reuse.
 
 PROCESS: lots of parallel sessions opening #2026 PRs — always `gh pr list -R
-loopdive/js2 --search "<id> in:title"` before claiming a follow-up. See
+loopdive/js2wasm --search "<id> in:title"` before claiming a follow-up. See
 [[feedback_no_duplicate_issue_dispatch]] / [[feedback_verify_fix_in_git_not_narrative]].

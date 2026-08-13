@@ -1,7 +1,7 @@
 // #2526 — the Native Messaging example host must write each frame (4-byte LE
 // length prefix + body) in a SINGLE process.stdout.write / fd_write. Writing the
 // prefix and body as separate writes (the pre-#2526 behaviour) lets a streaming
-// receiver misalign on pipe-chunk boundaries — loopdive/js2#389, where the
+// receiver misalign on pipe-chunk boundaries — loopdive/js2wasm#389, where the
 // reporter's harness threw "non-whitespace after JSON" while an atomic-framing
 // host (ComponentizeJS) worked with the same harness.
 import { describe, it, expect } from "vitest";

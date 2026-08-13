@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #2807 — REAL-WASMTIME scale round-trip for ALL FOUR Native-Messaging host
-// variants, the reporter's exact pipeline (loopdive/js2#389):
+// variants, the reporter's exact pipeline (loopdive/js2wasm#389):
 //
 //   bun build <variant>.ts --target node [externals] --outfile <variant>.js
 //   js2wasm <variant>.js --target wasi [--link node:fs]

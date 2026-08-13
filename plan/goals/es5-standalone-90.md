@@ -218,7 +218,7 @@ elision holes (#4230 L4 / #4222), reflective `replace`/`split`-family arms
 
 ## Wave 3 outcome (2026-08-08, on the post-merge branch)
 
-Waves 1+2 merged as loopdive/js2#4234 → official ES5 standalone
+Waves 1+2 merged as loopdive/js2wasm#4234 → official ES5 standalone
 **7,043/8,115 = 86.79 %** (+136 incl. collateral). Wave 3, measured per-package
 (sequential A/B, zero regressions each):
 

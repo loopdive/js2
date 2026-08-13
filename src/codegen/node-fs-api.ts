@@ -222,7 +222,7 @@ function matchProcessStdinRead(fctx: FunctionContext, expr: ts.CallExpression): 
 //
 // `readSync(fd, buf, …)` / `writeSync(fd, buf, …)` are the faithful synchronous
 // Node primitives the Native Messaging host needs (process.stdin is an async
-// Duplex with no synchronous buffer-filling read — loopdive/js2#389). They are
+// Duplex with no synchronous buffer-filling read — loopdive/js2wasm#389). They are
 // fd-based (integer fd 0/1/2), NOT path-based: they map 1:1 to fd_read/fd_write
 // with NO filesystem. The path-based `fs` family (readFileSync(path)) stays on
 // the --allow-fs path and is rejected in standalone WASI. Since #2633 these are
@@ -295,7 +295,7 @@ export function tryCompileNodeFsCall(
   // DIRECT WASI Preview-1 path (`!ctx.linkNodeShims`: the
   // `wasi_snapshot_preview1.fd_read`/`fd_write` syscalls). The direct path makes
   // a standalone stdio program a self-contained WASI P1 command module importing
-  // ONLY `wasi_snapshot_preview1` — no shim, no Node runtime (loopdive/js2#389).
+  // ONLY `wasi_snapshot_preview1` — no shim, no Node runtime (loopdive/js2wasm#389).
   if (expr.questionDotToken) return undefined;
   if (!ts.isIdentifier(expr.expression)) return undefined;
   const callee = expr.expression.text;

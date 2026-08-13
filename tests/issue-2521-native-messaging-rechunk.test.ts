@@ -1,5 +1,5 @@
 // #2521 — runtime coverage for the Native Messaging example host's behaviour on
-// the cases the reporter exercises in loopdive/js2#389: a >1 MiB message (which
+// the cases the reporter exercises in loopdive/js2wasm#389: a >1 MiB message (which
 // the host re-chunks into multiple <=1 MiB frames) and a multi-message sequence
 // (a large message followed by small ones).
 //

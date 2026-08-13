@@ -18,7 +18,7 @@ this is a standing condition to design around, not an incident to clean up.
   **`fork` = `ttraenkler/js2`**. Agents inherit these, and `push.default=current`,
   so a plain `git push` goes to **upstream**.
 - Lane A (this session) pushed branches to **upstream** → PR head repo =
-  `loopdive/js2`. That's why `gh pr create --head ttraenkler:<branch>` fails
+  `loopdive/js2wasm`. That's why `gh pr create --head ttraenkler:<branch>` fails
   with "No commits between" — the branch was never on the fork.
 - Lane B pushed the **same branch NAME** to the **fork** → PR head repo =
   `ttraenkler/js2`.
@@ -32,7 +32,7 @@ this is a standing condition to design around, not an incident to clean up.
 ## The mechanical fix (preferred — free and automatic)
 
 Have agents **push the branch to the `fork` remote** (`git push fork <branch>`)
-and open the PR with `-R loopdive/js2 --head ttraenkler:<branch>`, i.e. the
+and open the PR with `-R loopdive/js2wasm --head ttraenkler:<branch>`, i.e. the
 documented flow. Then both lanes share a head repo and **GitHub itself rejects
 the duplicate PR** — no coordination needed. The real hole is the upstream
 origin, not a missing check.

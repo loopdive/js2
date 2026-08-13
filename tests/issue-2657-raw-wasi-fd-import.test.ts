@@ -12,7 +12,7 @@
  * accessors lower to a single inline linear-memory op (store32/load32/store8/
  * load8) and emit NO import (no host provides them). There is NO `node:fs`
  * surface: the emitted module imports ONLY `wasi_snapshot_preview1`, owns +
- * exports `memory`, and runs under wasmtime (loopdive/js2#389).
+ * exports `memory`, and runs under wasmtime (loopdive/js2wasm#389).
  *
  * These cases pin:
  *   1. a raw fd echo compiles, imports ONLY `wasi_snapshot_preview1` (fd_read +

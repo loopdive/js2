@@ -15,7 +15,7 @@ the queue** between the two lanes. This lane MUST honor two rules.
 Before spawning ANY agent on an issue #N — including a `[CI-FIX]` on someone's
 DIRTY PR — verify ALL of:
 1. `git log origin/main --grep="#N"` → NOT already merged/fixed.
-2. `gh pr list -R loopdive/js2 --state open --search "#N"` (and check
+2. `gh pr list -R loopdive/js2wasm --state open --search "#N"` (and check
    `plan/issues/N-*.md` touched by any open PR) → NO open PR already implements it.
 3. `git log origin/issue-assignments --format='%s' | grep N` → NOT claimed by the
    OTHER lane.

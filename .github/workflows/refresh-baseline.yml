@@ -787,7 +787,7 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
-            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2wasm 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
             exit 1
           fi
           # #2562 — NORMAL (scheduled / non-forced) vs FORCED (emergency) label
