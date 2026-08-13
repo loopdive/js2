@@ -25,6 +25,7 @@ func-budget-allow:
   - src/codegen/async-cps.ts::buildBody
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/async-frame.ts::collectNestedRefsAndAssigns
   - src/codegen/literals.ts::compileArrayLiteral
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
@@ -153,3 +154,22 @@ an activation local and cannot yet survive resume-function reinvocation; moving
 that memo into the async frame is a follow-up. The conservative gate preserves
 the pre-slice behavior instead of manufacturing a second closure or trapping at
 the host constructor boundary.
+
+The authoritative retry then found two additional capture-ABI regressions that
+the original four-case probe did not cover:
+
+- `Array.fromAsync/async-iterable-input.js` changed from pass to an empty output
+  array because the outer frame boxed `expected`, while the nested host async
+  generator still consumed its capture by value. Async-generator declarations
+  are now excluded from the named-function cell remap; the exact test passes
+  again with the same Wasm hash as current main (`aa2f98495405`).
+- `AsyncDisposableStack.prototype.move` grew an `illegal_cast` trap because
+  read-only arrow captures were boxed even though anonymous closures retain a
+  by-value capture ABI. Read-only cell remapping is now limited to ordinary
+  named function declarations; mutable captures still use cells. The exact
+  test remains a known baseline failure but no longer traps, so the uncatchable
+  trap category does not grow.
+
+Focused runtime tests lock both distinctions: ordinary named-function captures
+still remap through the synthetic resume frame, while read-only arrow and async
+generator captures remain by-value.

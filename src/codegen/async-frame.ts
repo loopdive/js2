@@ -481,7 +481,11 @@ export function buildAsyncFrameInfo(
     decl.body === undefined ? new Map<string, ValType>() : collectCurrentNestedCaptureTypes(ctx, decl.body);
   const nestedRefsAndAssigns =
     decl.body === undefined
-      ? { referencedInNested: new Set<string>(), assigned: new Set<string>() }
+      ? {
+          referencedInNested: new Set<string>(),
+          referencedInNamedNested: new Set<string>(),
+          assigned: new Set<string>(),
+        }
       : collectNestedRefsAndAssigns(decl.body);
   const bodyBindingsByName = collectVarDeclsByName(decl);
   // The function-body hoist has already chosen concrete local/cell
@@ -526,17 +530,17 @@ export function buildAsyncFrameInfo(
   // `alreadyBoxed` aliasing branch) ALL flow through existing machinery, and
   // `storeSpills` stores the cell ref back into a matching field. Cell
   // IDENTITY survives suspends (the same heap cell is restored), so a nested
-  // closure and post-await states observe each other's writes. Force-boxing
-  // is deliberately an over-approximation: boxing a local closures.ts would
-  // not have boxed just adds an indirection — still correct — so the
-  // predicate need not mirror closures.ts exactly. Body locals require a
-  // defaultable value type (the entry cell needs `defaultSpillInstr`);
+  // closure and post-await states observe each other's writes. Read-only
+  // captures are boxed only for named declarations whose capture ABI is
+  // remapped to the resume frame; anonymous arrows keep their by-value ABI.
+  // Body locals require a defaultable value type (the entry cell needs
+  // `defaultSpillInstr`);
   // derived params are live-initialized, so any value type boxes. Async
   // GENERATOR frames are untouched (every own local spills there; the yield
   // machine has its own discipline).
   const spillCellInfo = new Map<number, { refCellTypeIdx: number; valType: ValType }>();
   if (decl.asteriskToken === undefined && decl.body !== undefined && spillNames.length > 0) {
-    const { referencedInNested, assigned } = nestedRefsAndAssigns;
+    const { referencedInNested, referencedInNamedNested, assigned } = nestedRefsAndAssigns;
     if (referencedInNested.size > 0) {
       const declByName = collectVarDeclsByName(decl);
       const derivedNames = new Set(derived.map((d) => d.name));
@@ -546,6 +550,13 @@ export function buildAsyncFrameInfo(
         const isDerived = derivedNames.has(name);
         const binding = declByName.get(name);
         if (binding === undefined && !isDerived) continue;
+        // Match the closure hoist's actual cell contract. A read-only captured
+        // aggregate (for example `var disposed = []` captured by disposer
+        // callbacks) remains a by-value ref; wrapping it in a ref-cell here
+        // makes the resumed outer body cast the cell as the aggregate. Ordinary
+        // named declarations remain the read-only exception because their
+        // capture ABI is explicitly remapped through the synthetic frame.
+        if (!assigned.has(name) && !isDerived && !referencedInNamedNested.has(name)) continue;
         // A read-only callable copied from an object property is already a
         // stable host/Wasm function value. Boxing it changes `.call` from the
         // host callable path to the ref-cell carrier and can turn an async
@@ -1200,9 +1211,11 @@ function isNestedScope(node: ts.Node): boolean {
  */
 function collectNestedRefsAndAssigns(body: ts.Node): {
   referencedInNested: Set<string>;
+  referencedInNamedNested: Set<string>;
   assigned: Set<string>;
 } {
   const referencedInNested = new Set<string>();
+  const referencedInNamedNested = new Set<string>();
   const assigned = new Set<string>();
 
   const noteAssignment = (node: ts.Node): void => {
@@ -1223,7 +1236,7 @@ function collectNestedRefsAndAssigns(body: ts.Node): {
     }
   };
 
-  const collectNestedRefs = (node: ts.Node): void => {
+  const collectNestedRefs = (node: ts.Node, refs = referencedInNested): void => {
     noteAssignment(node);
     if (ts.isIdentifier(node)) {
       // Skip pure property-name positions (`a.b`'s `b`, `{ b: 1 }`'s `b`).
@@ -1231,22 +1244,28 @@ function collectNestedRefsAndAssigns(body: ts.Node): {
       const isPropName =
         p !== undefined &&
         ((ts.isPropertyAccessExpression(p) && p.name === node) || (ts.isPropertyAssignment(p) && p.name === node));
-      if (!isPropName) referencedInNested.add(node.text);
+      if (!isPropName) refs.add(node.text);
       return;
     }
-    forEachChild(node, collectNestedRefs);
+    forEachChild(node, (child) => collectNestedRefs(child, refs));
   };
 
   const walk = (node: ts.Node): void => {
     if (isNestedScope(node)) {
       forEachChild(node, collectNestedRefs);
+      // Native/host async generators retain their own by-value capture ABI;
+      // only ordinary named declarations are remapped to the outer resume
+      // frame's synthetic capture cells.
+      if (ts.isFunctionDeclaration(node) && node.asteriskToken === undefined) {
+        forEachChild(node, (child) => collectNestedRefs(child, referencedInNamedNested));
+      }
       return;
     }
     noteAssignment(node);
     forEachChild(node, walk);
   };
   forEachChild(body, walk);
-  return { referencedInNested, assigned };
+  return { referencedInNested, referencedInNamedNested, assigned };
 }
 
 /**

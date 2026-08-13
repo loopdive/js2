@@ -143,6 +143,46 @@ it("remaps nested-function captures to the synthetic async resume frame", async 
   expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(1);
 });
 
+it("keeps read-only arrow captures on their by-value resume ABI", async () => {
+  const result = await compile(`
+    export async function test() {
+      const values: number[] = [];
+      const append = () => values.push(1);
+      append();
+      await Promise.resolve(0);
+      return values.length;
+    }
+  `);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const imports = buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
+  expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(1);
+});
+
+it("keeps nested async-generator captures on their by-value host ABI", async () => {
+  const result = await compile(
+    `
+      export async function test() {
+        const expected = [0, 1, 2];
+        async function* generateInput() {
+          yield* expected;
+        }
+        const output = await Array.fromAsync(generateInput());
+        return output.length;
+      }
+    `,
+    { allowJs: true, fileName: "array-from-async-capture.js", skipSemanticDiagnostics: true },
+  );
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const imports = buildImports(result.imports, {}, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
+  expect(await Promise.resolve((instance.exports.test as () => Promise<number> | number)())).toBe(3);
+});
+
 it("keeps reused nested function values off assignment-await frames until their memo is spillable", async () => {
   const result = await compile(
     `
