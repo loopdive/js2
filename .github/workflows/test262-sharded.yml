@@ -756,9 +756,12 @@ jobs:
     # A shard normally finishes in ~5-8 min; the prior 90-min cap let a single
     # hung shard (intermittent test262/runner stall, or the setup-node@v6 Node-25
     # tool-cache miss → flaky direct download) wedge the whole merge queue for up
-    # to 90 min before failing. 25 min fails a hung shard fast so the merge_group
-    # ejects + re-runs instead of stalling every other PR behind it.
-    timeout-minutes: 25
+    # to 90 min before failing. A bounded timeout fails a hung shard fast so the
+    # merge_group ejects + re-runs instead of stalling every other PR behind it.
+    # 25 → 40 (#4157 defaults flip): tuned emission adds per-compile cost, and
+    # the standalone lane's shards measured 18-22+ min under it — 25 left zero
+    # headroom and timed out 12 shards in merge-group run 31743784768.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -1031,10 +1034,10 @@ jobs:
       needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
-    # Same 25-min timeout as `test262-shard`. The per-target counts
-    # (js-host=66, standalone=36) target ~6-8 minutes in the current production
-    # configuration while leaving ample timeout headroom — see the generator.
-    timeout-minutes: 25
+    # Same 40-min timeout as `test262-shard` (25 → 40 for the #4157 defaults
+    # flip — see that job's comment; standalone shards measured 18-22+ min
+    # under tuned emission and 25 timed out 12 of them).
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.mg_shard_matrix) }}
