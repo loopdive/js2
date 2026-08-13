@@ -11,6 +11,7 @@ import {
 import { getDefaultEnvironment } from "../env.js";
 import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { buildModuleDecls } from "./node-capability-map.js";
+import { traceTs5Checker } from "./ts5-trace.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
 // This module no longer probes `typeof window` / `typeof process` directly
@@ -996,7 +997,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
 
   return {
     sourceFile: program.getSourceFile(fileName)!,
-    checker: program.getTypeChecker(),
+    checker: traceTs5Checker(program.getTypeChecker()),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1169,7 +1170,7 @@ export function analyzeMultiSource(
   return {
     sourceFiles: userSourceFiles,
     entryFile: entrySourceFile,
-    checker: program.getTypeChecker(),
+    checker: traceTs5Checker(program.getTypeChecker()),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1206,7 +1207,7 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
   }
 
   const program = ts.createProgram([resolvedEntry], compilerOptions);
-  const checker = program.getTypeChecker();
+  const checker = traceTs5Checker(program.getTypeChecker());
 
   const syntacticDiagnostics = program.getSyntacticDiagnostics();
   const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics
