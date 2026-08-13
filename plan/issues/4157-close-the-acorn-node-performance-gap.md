@@ -3284,3 +3284,201 @@ of acorn's *own* functions, and runtime type feedback an AOT compiler cannot
 obtain. That is a different program, and entry (18)/(19)'s decision — that the
 IR should own inlining, because `wasm-opt` will not inline anything containing a
 loop or a call, which is every function in acorn — is where it starts.
+
+## 2026-08-13 (25) — the IR inliner is BUILT and measured. It works, it is safe, and it does NOT hit the target entry (24) named
+
+> Ordering note: this entry answers entries (18), (19), (21) and (24), which at
+> the time of writing exist only in the shared checkout's working tree and not
+> on `main`. It is appended at the file's end and should be re-ordered after
+> those land. Branch: `worktree-agent-add66802ffbd50fc7`. Flag default OFF; no
+> PR was opened.
+
+`src/codegen/ir-inline.ts` — `JS2WASM_IR_INLINE`, default OFF, unset ⇒ binary
+**byte-identical**, verified by sha256 (`c750c6e4…` for the acorn self-parse
+binary, re-confirmed after every subsequent code change, and again in `report`
+mode which analyses without mutating).
+
+### The headline, in one line
+
+**The inliner removes 1,083,156 executed calls per acorn self-parse (−96.7 % of
+the `__dc_*` adapter layer) with the workload's checksum unchanged at 422 — but
+only 357 of its 8,016 admitted sites target compiled USER code, which is the
+population entry (24) said the remaining 3.6× lives in.**
+
+### The cost model as built, and what each rule fired on
+
+Attribution is emitted by the pass itself (`by-rule <rule>:<family>`), not
+inferred:
+
+| rule | admitted | adapter | helper | user | other |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 3 · adapters always | 3,820 | 3,820 | — | — | — |
+| 1 · loop-leaf (freq. from loop depth) | 2,379 | — | 2,003 | 331 | 45 |
+| 2 · specialisation delta | 1,175 | — | 1,169 | 5 | 1 |
+| — · single-caller | 642 | — | 618 | 21 | 3 |
+| **total** | **8,016** | 3,820 | 3,790 | **357** | 49 |
+
+of 48,046 direct call sites in a 3,521-function / 571,446-instruction module.
+
+Declines, also emitted: `no-rule` 35,189 · `cold-callee` 4,297 (rule 4, all
+`__new_*Error`) · `self-recursive` 334 · `unsafe:return-call` 203 ·
+`unsafe:try` 6 · `unsafe:multi-result` 1.
+
+**Rule 1 (frequency from loop nesting depth)** is `10^depth`, propagated one
+step across the call graph, with the body budget scaling as
+`loopMax · max(1, log10(weight))`. Stated where it appears, because a reviewer
+who knows **#3927 §7 will raise its objection first**: that section abandoned
+frequency-based *field* ranking because observed instance counts are a property
+of the **corpus**. Loop depth is read off the **source being compiled**, so it
+is a property of the **program** and remains valid for every input that program
+will ever see. The objection does not reach this.
+
+**Rule 2 (specialisation delta) is the one result that behaved exactly as
+entry (19) predicted, and it is the cheapest thing in this file**: 1,175 sites
+inlined for **+119 instructions in total** — 0.1 instructions per site, at
+`-O4` **+134 bytes on 1.69 MB (+0.008 %)**. That is inlining whose cost is
+indistinguishable from zero because the site's constant arguments fold the
+callee's branches away, which is precisely the case a size heuristic cannot
+see. Whether it *buys* anything is unmeasured (see "what is not claimed").
+
+### Proof the mechanism fired — three instruments, one number
+
+A confident null from a mechanism that never fired closes a door that was never
+opened, and this file records that failure twice in one session. So:
+
+1. **Executed-call census** (`JS2WASM_EXEC_CENSUS=__dc_`, 545 adapters
+   instrumented, 177 execute): **1,120,550 → 37,394**, Δ **−1,083,156**.
+2. **Runtime site counter** (`JS2WASM_IR_INLINE=adapters,count`, a global
+   incremented once per executed inlined body): **1,083,156**. Exact agreement
+   with (1) — two independent instruments, one number.
+3. **Poison probe** (`…,poison` replaces every inlined body with `unreachable`,
+   which is stack-polymorphic and therefore type-checks against any result
+   type — the numeric-perturbation variant covered *zero* adapters, since they
+   all return references): 3,820 sites poisoned, and the workload's answer moves
+   from **422** to `RuntimeError: unreachable`.
+
+The 37,394 survivors are **not** declines: the verbose per-callee decline list
+contains no `__dc_*` at all, so all 3,820 *direct* sites were taken. They are
+adapters reached through `call_ref` (dominated by
+`__dc_Parser_getTokenFromCode_1`, 25,705), which a direct-call inliner cannot
+see.
+
+### It is NOT overlapping with `wasm-opt` — measured statically, post-`-O4 -g`
+
+| | `__dc_*` functions surviving | `call $__dc_*` sites surviving |
+| --- | ---: | ---: |
+| `-O4` alone | 243 | 1,682 |
+| IR inliner + `-O4` | **8** | **43** |
+
+`wasm-opt` on its own leaves 1,682 adapter call sites; the IR inliner takes that
+to 43 — **97.4 % of what binaryen left**. Total functions after `-O4` fall
+1,320 → 1,196. Confirmed against binaryen 125's own `--help`: `-fimfs`
+(default 20) applies only to callees that are "lightweight (no loops or function
+calls)", and `-ocimfs` **defaults to `-1`, i.e. binaryen already inlines every
+single-caller function**. That last fact is why the `single-caller` rule is the
+weakest of the four and should be considered spent — the brief predicted this
+and it is confirmed (3,521 → 1,320 functions, 48,715 → 20,118 `Call` nodes at
+`-O4` with the inliner off).
+
+### Size, at both levels — every row checksum 422
+
+| config | `optimize: 0` | Δ | `-O4` | Δ |
+| --- | ---: | ---: | ---: | ---: |
+| base | 2,487,935 | — | 1,686,601 | — |
+| specialise only | 2,497,227 | +0.37 % | 1,686,735 | **+0.008 %** |
+| adapters only | 2,652,963 | +6.63 % | 1,725,467 | +2.30 % |
+| all rules (`on`) | 2,891,178 | +16.21 % | 1,758,507 | +4.26 % |
+
+Function-size distribution (IR instructions per function):
+
+| config | total | p50 | p90 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base | 571,446 | 28 | 376 | 1,887 | 15,790 |
+| specialise | 575,069 | 28 | 376 | 1,887 | 15,798 |
+| single-caller | 593,781 | 44 | 384 | 1,887 | 15,937 |
+| adapters | 637,256 | 33 | 428 | 2,251 | 15,790 |
+| loop-leaf | 639,283 | 32 | 410 | 2,012 | 42,925 |
+| all | 726,733 | 47 | 470 | 2,344 | 43,072 |
+
+The `loop-leaf` max (42,925) is the one number that should worry anyone: a
+single function nearly tripled. Entry (19)'s "watch the size distribution, do
+not pre-empt" obligation is discharged, and it says `loop-leaf` needs a
+per-function ceiling before it is used for anything.
+
+### The finding that matters more than the win
+
+**Executed `__closure_*` (compiled user code) calls: 1,296,951 OFF →
+1,257,245 ON, −39,706 (−3.1 %).**
+
+Only **1,242 of 48,046** direct call sites target user functions at all
+(357 admitted, 885 declined). Acorn's own call volume does not travel over
+direct `call` edges between `__closure_*` functions; it travels
+`caller → __dc_* trampoline → closure`. So an inliner that removes the
+trampoline removes a real frame — the ~4 % of pure self-time entry (18)
+attributed to `__dc_*` — but it leaves the user→user call itself intact inside
+the inlined trampoline body.
+
+**This bounds the slice honestly.** Entry (24) put the residual at ~3.6× and
+attributed it to "our compiled acorn code being slower than V8's JIT output …
+inlining of acorn's *own* functions". This pass does not do that, and the
+decline data says why: user callees are big (p90 = 376 instructions),
+multi-caller, and non-leaf, so every size-budget rule refuses them for the same
+structural reason `-fimfs` does. Inlining acorn's own functions needs a
+different admission argument than any of the four rules here — the honest
+candidates are partial inlining (hot prefix only) or specialisation on a
+receiver *type*, not on a constant.
+
+### What is NOT claimed
+
+**No wall-clock number, deliberately** — timing is serialised on this box and
+was out of scope for this run. Entry (24) is the reason that matters rather
+than being an excuse: **−59.1 % of executed helper calls bought −4.3 % of
+wall**, because inline caching relocates work instead of removing it. The same
+discount applies here, and a −1.08 M call figure must **not** be converted into
+a wall claim by assertion. The upper bound from entry (18)'s self-time
+attribution is ~4 % of runtime for the whole `__dc_*` bucket; the plausible
+realisation is a fraction of that, against **+2.30 % of `-O4` binary size**.
+Somebody with an idle box should measure `JS2WASM_IR_INLINE=adapters` at `-O4`
+order-reversed before this goes anywhere near a default.
+
+### Correctness
+
+- acorn self-parse checksum **422** for every configuration measured, at
+  `optimize: 0` and `-O4`.
+- `tests/dogfood/acorn.test.ts` with `DOGFOOD_ACORN=1` (the real
+  compile→validate→AST-diff loop): passes flag OFF and flag ON.
+- Equivalence: all 212 files under `tests/equivalence/`, batched 35 at a time
+  (`--pool=forks --poolOptions.forks.maxForks=2` — the full suite OOMs here),
+  run twice. **13 failing tests, and the failing set is byte-for-byte identical
+  ON and OFF** — same tests, same per-file counts (`arguments-nested-and-loops`,
+  `array-inline-return`, `delete-sentinel`, `logical-conditional-identity`,
+  `misc-small-patterns`, `new-non-constructor`, `null-dereference-guards`,
+  `optional-direct-closure-call`, `reflect-api`, `tdz-reference-error`,
+  `yield-as-expression`). All pre-existing on `origin/main`; zero attributable
+  to the inliner.
+- `tests/issue-4157-ir-inline.test.ts` pins the constructs the rewrite can get
+  wrong — closure captures, recursion, early `return` from a nested block,
+  loop-carried `break`/`continue`, `this`-binding through a method call, and a
+  constant-argument site sharing a callee with a non-constant one — by VALUE,
+  ON and OFF, plus the unset-flag and `report`-mode byte-identity assertions.
+
+### Two bugs found in my own pass, both worth recording
+
+1. **A shallow `f.body` snapshot made the pass silently iterative** in
+   `mod.functions` order: A inlined into B, then the already-inflated B into C.
+   Not unsound, but order-dependent and unbudgetable — and it cost **243,492
+   instructions where single-level costs 137,072**, i.e. 78 % of the growth was
+   a transitive effect nobody asked for. The snapshot is now a deep clone.
+2. **Folding a constant `if` down one structured level rewrites the meaning of
+   every branch that escaped the arm** — `br 0` that meant "leave the if" comes
+   to mean "leave the enclosing block". That is a silent miscompile, not a size
+   regression. Guarded by `escapesRegion`. (It never fires on acorn: the
+   binary is bit-identical with and without the guard. It is a net, not a
+   behaviour change — which is exactly when this class of bug ships.)
+
+Declined by construction, each because the wasm-level rewrite is not sound for
+it: `return_call`/`return_call_ref` (a tail call returns from the *enclosing*
+frame; rewriting to `call`+`br` is semantically right but converts a
+constant-stack tail call into a growing one), `try`/`rethrow`, multi-result
+callees (the wrapper block would need a `[] -> results` functype that may not
+exist), and direct self-recursion.

@@ -284,6 +284,7 @@ import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrappe
 import { peepholeOptimize } from "./peephole.js";
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
+import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5520,7 +5521,12 @@ export function generateModule(
     // here because dead-type elimination has already remapped every `typeIdx`,
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
-    installExecCensus(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
+    installExecCensus(ctx);
+    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
+    // is set, so the default binary stays byte-identical. This exact slot is
+    // load-bearing; the four preconditions are spelled out under "Placement
+    // contract" in `ir-inline.ts`. Do not move it without reading them.
+    inlineUserFunctions(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -7876,7 +7882,12 @@ export function generateMultiModule(
     // here because dead-type elimination has already remapped every `typeIdx`,
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
-    installExecCensus(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
+    installExecCensus(ctx);
+    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
+    // is set, so the default binary stays byte-identical. This exact slot is
+    // load-bearing; the four preconditions are spelled out under "Placement
+    // contract" in `ir-inline.ts`. Do not move it without reading them.
+    inlineUserFunctions(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     finalizeFunctionPoisonPillCalls(ctx);
