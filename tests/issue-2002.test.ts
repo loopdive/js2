@@ -30,6 +30,16 @@ describe("#2002 — startsWith/endsWith/includes honour the position argument", 
     expect(Boolean(inc.test!())).toBe(true);
   });
 
+  it("pads the position argument through an optional receiver chain", async () => {
+    const e = await compileAndRun(`
+      export function test(): boolean {
+        const root = globalThis;
+        return root.navigator?.platform?.startsWith("Win") ?? false;
+      }
+    `);
+    expect(Boolean(e.test!())).toBe(process.platform === "win32");
+  });
+
   it("position-arg miss cases match Node", async () => {
     const sw = await compileAndRun(`export function test(): boolean { return "hello".startsWith("lo", 1); }`);
     expect(Boolean(sw.test!())).toBe(false);

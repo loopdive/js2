@@ -843,7 +843,6 @@ export function compileNestedFunctionDeclaration(
       alreadyBoxed: false,
     });
   }
-
   // (#2172 / SF-1 of #2157) Wasm-native lowering for a NESTED `function*` in
   // standalone/WASI. Previously a nested generator always took the JS-host
   // buffer path (`__create_generator` etc.), which in standalone leaks env

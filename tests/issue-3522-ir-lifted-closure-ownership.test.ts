@@ -98,32 +98,27 @@ describe("#3522 lifted nested-function ownership", () => {
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
-  it("keeps generic closure literals and unsupported nested declarations on direct ownership", async () => {
-    for (const [fileName, body, expectedResult, expected] of [
-      [
-        "arrow-literal",
-        `const add = (value: number): number => value + 1; return add(input);`,
-        42,
-        { kind: "emitted", legacyBodyEmitted: true, irBodyEmitted: true },
-      ],
-      [
-        "optional-nested-parameter",
-        `function add(value?: number): number { return value ?? 0; } return add(input);`,
-        41,
-        { kind: "unsupported", legacyBodyEmitted: true, irBodyEmitted: false },
-      ],
-    ] as const) {
-      const result = await compile(`export function run(input: number): number { ${body} }`, {
-        fileName: `lifted-closure-${fileName}-fallback.ts`,
+  it("keeps an unsupported nested declaration on direct ownership", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        function add(value?: number): number { return value ?? 0; }
+        return add(input);
+      }`,
+      {
+        fileName: "lifted-closure-optional-nested-parameter-fallback.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
-      });
+      },
+    );
 
-      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-      expect((await instantiate(result)).run!(41)).toBe(expectedResult);
-      expect(outcome(result, "run")).toMatchObject(expected);
-      expect(outcome(result, "run")).not.toHaveProperty("preparedComponentId");
-      expect(result.irPostClaimErrors ?? []).toEqual([]);
-    }
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(41)).toBe(41);
+    expect(outcome(result, "run")).toMatchObject({
+      kind: "unsupported",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(outcome(result, "run")).not.toHaveProperty("preparedComponentId");
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 });

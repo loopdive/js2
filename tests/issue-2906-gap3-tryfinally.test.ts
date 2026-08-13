@@ -138,6 +138,25 @@ describe("#2906 Gap 3 — try/finally across await", () => {
     expect(ex.getCap()).toBe(105); // x=5 then finally +100
   });
 
+  it("Promise.race remains suspended when a finally block must run", async () => {
+    const ex = (await instantiateWasi(`
+      let cap: number = 0;
+      async function f(): Promise<void> {
+        try {
+          const x = await Promise.race([Promise.resolve(2)]);
+          cap = x as number;
+        } finally {
+          cap = cap + 10;
+        }
+      }
+      export function kick(): number { f() as any; return cap; }
+      export function getCap(): number { return cap; }
+    `)) as { kick: () => number; getCap: () => number; __drain_microtasks: () => void };
+    expect(ex.kick()).toBe(0);
+    for (let i = 0; i < 8; i++) ex.__drain_microtasks();
+    expect(ex.getCap()).toBe(12);
+  });
+
   it("finally runs after code that follows the try (normal path, post-try statements)", async () => {
     const ex = (await instantiateWasi(`
       let cap: number = 0;

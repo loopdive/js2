@@ -31,21 +31,31 @@ export function containsUnplannedNestedExecutableSyntax(
     if (ts.isArrowFunction(node)) {
       const plan = hostVoidCallbacks.get(node);
       if (
-        !plan ||
-        plan.ownerUnitId !== ownerUnitId ||
-        plan.ownerName !== ownerName ||
-        node.parameters.length !== 0 ||
-        plan.signature.params.length !== 0 ||
-        plan.signature.returnType !== null ||
-        !Number.isSafeInteger(plan.liftedOrdinal) ||
-        plan.liftedOrdinal < 0 ||
-        ordinals.has(plan.liftedOrdinal)
+        plan &&
+        (plan.ownerUnitId !== ownerUnitId ||
+          plan.ownerName !== ownerName ||
+          node.parameters.length !== 0 ||
+          plan.signature.params.length !== 0 ||
+          plan.signature.returnType !== null ||
+          !Number.isSafeInteger(plan.liftedOrdinal) ||
+          plan.liftedOrdinal < 0 ||
+          ordinals.has(plan.liftedOrdinal))
       ) {
         invalid = true;
         return;
       }
-      seen.add(plan);
-      ordinals.add(plan.liftedOrdinal);
+      if (plan) {
+        seen.add(plan);
+        ordinals.add(plan.liftedOrdinal);
+      }
+      ts.forEachChild(node.body, visit);
+      return;
+    }
+    if (ts.isFunctionExpression(node)) {
+      if (!node.body) {
+        invalid = true;
+        return;
+      }
       ts.forEachChild(node.body, visit);
       return;
     }
