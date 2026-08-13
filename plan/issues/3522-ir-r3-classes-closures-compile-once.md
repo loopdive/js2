@@ -1651,3 +1651,18 @@ class-component ownership decisions, the static-claim reconciliation table,
 per-unit direct/IR emission counters, and runtime evidence for every listed
 class/closure family. A green class sample with missing nested/static IDs is
 vacuous and does not close R3.
+
+### Incremental Function caller boundary repair (2026-08-13)
+
+The merge-group Test262 rerun exposed that the exact ES5
+`Function.caller` guard was sound only for a fresh TypeScript Program. The
+production Test262 worker reuses an incremental Program, whose oracle may
+return an equivalent declaration clone. Comparing that declaration by object
+identity let `gNonStrict.caller` enter the Prepared function-value population,
+where the new trampoline bypassed the direct caller-strictness hand-off.
+
+The guard now compares original declaration identity as well as the current
+node. An incremental-compiler fixture warms and reuses the Program before
+compiling the exact strict-eval/sloppy-caller shape, then proves the function
+remains direct and module initialization does not throw. Ordinary function
+value targets are unaffected.

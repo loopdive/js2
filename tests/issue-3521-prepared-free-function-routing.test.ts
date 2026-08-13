@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
-import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { compile, createIncrementalCompiler, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildImports } from "../src/runtime.js";
@@ -765,6 +765,37 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
+  });
+
+  it("keeps the caller activation boundary after incremental Program reuse", async () => {
+    const compiler = createIncrementalCompiler({
+      allowJs: true,
+      deferTopLevelInit: true,
+      emitWat: false,
+      fileName: "test.js",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+    });
+    const warmup = await compiler.compile(`function warmup() { return 1; } warmup();`);
+    expect(warmup.success, warmup.errors.map((error) => error.message).join("\n")).toBe(true);
+
+    const source = `
+      eval("\\\"use strict\\\";\\ngNonStrict();");
+      function gNonStrict() {
+        return gNonStrict.caller;
+      }
+    `;
+    const result = await compiler.compile(source);
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const exports = await instantiate(result);
+    expect(() => exports.__module_init!()).not.toThrow();
+    expect(outcome(result, "gNonStrict")).toMatchObject({
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    compiler.dispose();
   });
 
   it("prepares a closed free-function component beside direct class and module owners", async () => {

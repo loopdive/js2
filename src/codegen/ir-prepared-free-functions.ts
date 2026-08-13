@@ -508,6 +508,17 @@ function containsTopLevelFunctionValueReference(
  */
 function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration: ts.FunctionLikeDeclaration): boolean {
   if (!declaration.body) return false;
+  const originalDeclaration = ts.getOriginalNode(declaration);
+  const resolvesToCurrentFunction = (identifier: ts.Identifier): boolean => {
+    const resolved = ctx.oracle.valueDeclarationOf(identifier);
+    return (
+      resolved !== undefined &&
+      (resolved === declaration ||
+        resolved === originalDeclaration ||
+        ts.getOriginalNode(resolved) === declaration ||
+        ts.getOriginalNode(resolved) === originalDeclaration)
+    );
+  };
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -527,7 +538,7 @@ function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration:
       receiver !== undefined &&
       (name === "caller" || name === "arguments") &&
       ts.isIdentifier(receiver) &&
-      ctx.oracle.valueDeclarationOf(receiver) === declaration
+      resolvesToCurrentFunction(receiver)
     ) {
       found = true;
       return;
