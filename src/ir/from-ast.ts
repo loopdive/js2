@@ -11148,39 +11148,52 @@ function allocateLoweredLiftedFunctionArtifact(
  * `refcell.get` / `refcell.set` automatically (see the identifier
  * handler in `lowerExpr`).
  */
-function numericClosureDefaultInitializerIsIrSafe(initializer: ts.Expression): boolean {
+function numericClosureDefaultInitializerIsIrSafe(
+  initializer: ts.Expression,
+  availableParamNames: ReadonlySet<string>,
+): boolean {
   let candidate = initializer;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) return availableParamNames.has(candidate.text);
   if (
     ts.isPrefixUnaryExpression(candidate) &&
     (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
   ) {
-    let operand: ts.Expression = candidate.operand;
-    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-    return ts.isNumericLiteral(operand);
+    return numericClosureDefaultInitializerIsIrSafe(candidate.operand, availableParamNames);
   }
-  return false;
+  return (
+    ts.isBinaryExpression(candidate) &&
+    (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
+    numericClosureDefaultInitializerIsIrSafe(candidate.left, availableParamNames) &&
+    numericClosureDefaultInitializerIsIrSafe(candidate.right, availableParamNames)
+  );
 }
 
 function closureDefaultParamStart(parameters: readonly ts.ParameterDeclaration[], funcName: string): number {
   let firstDefault = parameters.length;
+  const availableParamNames = new Set<string>();
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
       if (firstDefault !== parameters.length) {
         throw new Error(`ir/from-ast: closure defaults must form a suffix (${funcName})`);
       }
-      continue;
-    }
-    if (
+    } else if (
       !ts.isIdentifier(parameter.name) ||
       parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
-      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer)
+      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames)
     ) {
-      throw new Error(`ir/from-ast: closure default parameter is outside the numeric constant subset (${funcName})`);
+      throw new Error(`ir/from-ast: closure default parameter is outside the pure numeric subset (${funcName})`);
+    } else if (firstDefault === parameters.length) {
+      firstDefault = index;
     }
-    if (firstDefault === parameters.length) firstDefault = index;
+    if (ts.isIdentifier(parameter.name) && parameter.type?.kind === ts.SyntaxKind.NumberKeyword) {
+      availableParamNames.add(parameter.name.text);
+    }
   }
   return firstDefault;
 }

@@ -4758,13 +4758,27 @@ function isPhase1NestedFunc(
  * Slice 3 (#1169c): shape-check an arrow / function-expression
  * initializer used as a `const` closure binding.
  */
-function closureNumericDefaultInitializerIsIrSafe(initializer: ts.Expression): boolean {
+function closureNumericDefaultInitializerIsIrSafe(
+  initializer: ts.Expression,
+  availableParamNames: ReadonlySet<string>,
+): boolean {
   const candidate = unwrapProjectionExpression(initializer);
   if (ts.isNumericLiteral(candidate)) return true;
-  return (
+  if (ts.isIdentifier(candidate)) return availableParamNames.has(candidate.text);
+  if (
     ts.isPrefixUnaryExpression(candidate) &&
-    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken) &&
-    ts.isNumericLiteral(unwrapProjectionExpression(candidate.operand))
+    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
+  ) {
+    return closureNumericDefaultInitializerIsIrSafe(candidate.operand, availableParamNames);
+  }
+  return (
+    ts.isBinaryExpression(candidate) &&
+    (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
+    closureNumericDefaultInitializerIsIrSafe(candidate.left, availableParamNames) &&
+    closureNumericDefaultInitializerIsIrSafe(candidate.right, availableParamNames)
   );
 }
 
@@ -4773,21 +4787,24 @@ function closureLiteralDefaultParamStart(
   allowNumericDefaultSuffix: boolean,
 ): number | null {
   let firstDefault = parameters.length;
+  const availableParamNames = new Set<string>();
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
       if (firstDefault !== parameters.length) return null;
-      continue;
-    }
-    if (
+    } else if (
       !allowNumericDefaultSuffix ||
       !ts.isIdentifier(parameter.name) ||
       parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
-      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer)
+      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames)
     ) {
       return null;
+    } else if (firstDefault === parameters.length) {
+      firstDefault = index;
     }
-    if (firstDefault === parameters.length) firstDefault = index;
+    if (ts.isIdentifier(parameter.name) && parameter.type?.kind === ts.SyntaxKind.NumberKeyword) {
+      availableParamNames.add(parameter.name.text);
+    }
   }
   return firstDefault;
 }

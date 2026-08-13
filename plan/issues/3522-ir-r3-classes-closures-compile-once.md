@@ -1577,6 +1577,28 @@ object-literal methods/accessors, and wider cross-owner callable escapes remain
 the next serial R3 families. The shared direct closure implementation still
 has those live typed consumers, so it is not deleted in this checkpoint.
 
+### Pure cross-parameter default checkpoint (2026-08-13)
+
+Numeric default suffixes may now derive a default from earlier numeric
+parameters through a bounded pure expression tree: literals, earlier parameter
+reads, unary `+`/`-`, and binary `+`, `-`, `*`, or `/`. Default resolution stays
+in declaration order, so a later default observes the already-resolved value
+of an earlier default. The selector and AST-to-IR builder independently check
+the same subset; self/later references, captures, calls, property reads, and
+all other potentially effectful expressions remain direct.
+
+GC and standalone parity coverage exercises omitted, partially supplied,
+explicit-`undefined`, and fully supplied calls for `(value = 2, bonus = value +
+3)`. Direct-body poison plus the compiled-function census proves both the owner
+and lifted closure are IR-emitted; runtime values match same-source direct
+builds, both binaries validate, and each optimized IR binary is no larger than
+its direct oracle. The focused default suite is **5/5** and the adjacent
+closure/prepared matrix is **60/60**. The fallback ratchet has no increase; the
+strict IR-only shadow remains **37/37 IR, 0 legacy bodies, 0 Unsupported, and 0
+Invariants**. Effectful/captured defaults, optional/rest parameters,
+object-literal methods/accessors, and wider cross-owner callable escapes remain
+direct.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
