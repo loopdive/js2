@@ -2071,8 +2071,11 @@ function makeIrImplicitParamTypeResolver(
       const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
       const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
       const returnedCall = returned && ts.isCallExpression(returned) ? returned : undefined;
-      const retainedPlan = returnedCall ? moduleBindingResolver?.retainedFunctionMethodPlan(returnedCall) : undefined;
-      if (retainedPlan && returnedCall) {
+      const receiverFirstPlan = returnedCall
+        ? (moduleBindingResolver?.retainedFunctionMethodPlan(returnedCall) ??
+          moduleBindingResolver?.fnctorArrayMethodPlan(returnedCall))
+        : undefined;
+      if (receiverFirstPlan && returnedCall) {
         const projected = new Set(candidates);
         for (let index = 0; index < declaration.parameters.length; index++) {
           const argument = returnedCall.arguments[index];
@@ -2219,6 +2222,7 @@ function planIrOverlay(
             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
+            stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
           },
           identityContext,
         );
@@ -2273,7 +2277,8 @@ function planIrOverlay(
     if (
       returned &&
       ts.isCallExpression(returned) &&
-      resolveModuleBinding?.retainedFunctionMethodPlan(returned) !== undefined
+      (resolveModuleBinding?.retainedFunctionMethodPlan(returned) !== undefined ||
+        resolveModuleBinding?.fnctorArrayMethodPlan(returned) !== undefined)
     ) {
       // #3793 — the exact retained wrapper uses the existing receiver-first
       // externref dispatcher and the implicit-param resolver above projects

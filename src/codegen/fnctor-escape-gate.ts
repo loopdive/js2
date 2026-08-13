@@ -47,6 +47,7 @@ import type { FieldDef, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
+import { analyzeStableArrayPrototypeNames } from "./fnctor-array-prototype-analysis.js";
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
@@ -82,6 +83,14 @@ export interface FnctorEscapeGateResult {
    * interception caused).
    */
   readonly approvedNames: ReadonlySet<string>;
+  /**
+   * #4387 — fnctors whose one provable top-level `F.prototype = ...` write
+   * installs an Array carrier. `$Object` reconstruction cannot retain that
+   * carrier in its typed `$proto` slot, so `new-super` keeps these allocation
+   * sites on the raw fnctor representation consumed by the Array-HOF runtime
+   * predicate. Empty means "no proof", never "no Array prototype".
+   */
+  readonly stableArrayPrototypeNames: ReadonlySet<string>;
   /**
    * #2660 PART-1 — receiver-expression → `__fnctor_<Name>` struct-name flow map.
    *
@@ -235,6 +244,7 @@ function emptyResult(compilePath: FnctorCompilePath, sourceFileCount: number): F
     sites: new Map(),
     approved: new Set(),
     approvedNames: new Set(),
+    stableArrayPrototypeNames: new Set(),
     receiverStruct: new Map(),
     newThisOwnerNames: new Set(),
     ctorDeclByName: new Map(),
@@ -1460,6 +1470,7 @@ export function analyzeFnctorEscapeGate(
   const sites = new Map<ts.NewExpression, FnctorGateClass>();
   const approved = new Set<ts.NewExpression>();
   const approvedNames = new Set<string>();
+  const stableArrayPrototypeNames = analyzeStableArrayPrototypeNames(checker, sourceFiles, resolveFnctorSymbol);
   const refusals = new Map<string, number>();
   const refusedNames = new Set<string>();
   const refuse = (name: string, reason: string): void => {
@@ -1712,6 +1723,7 @@ export function analyzeFnctorEscapeGate(
     sites,
     approved,
     approvedNames,
+    stableArrayPrototypeNames,
     receiverStruct,
     newThisOwnerNames,
     ctorDeclByName,

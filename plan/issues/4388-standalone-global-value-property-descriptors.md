@@ -3,7 +3,7 @@ id: 4388
 title: "Standalone global object omits ES5 value-property descriptors"
 status: done
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 priority: high
 feasibility: easy
 reasoning_effort: high
@@ -14,9 +14,10 @@ goal: es5-test262
 sprint: current
 es_edition: ES5
 assignee: ttraenkler/codex-es5-descriptor
-related: [2984, 2988, 2996, 3365]
+related: [2984, 2988, 2996, 3365, 4242]
 origin: "Fresh standalone <=ES5 Test262 failure clustering on origin/main"
 files:
+  - scripts/quickjs-eval-provider.mjs
   - src/codegen/array-object-proto.ts
   - tests/issue-4388-global-value-descriptors.test.ts
 loc-budget-allow:
@@ -54,6 +55,10 @@ The seed uses the existing native `__defineProperty_value` MOP. Consequently
 ordinary dynamic reflection and IR-emitted `dyn.member_get` observe the same
 carrier state; the fix does not add another AST-only descriptor synthesis.
 
+The QuickJS eval adapter leaves these three intrinsic names owned by each
+realm. Mirroring them is redundant, and its pull phase would otherwise assign
+back through the caller's newly correct non-writable descriptors and throw.
+
 ## Acceptance
 
 - [x] All three exact Test262 files pass in standalone mode.
@@ -61,6 +66,7 @@ carrier state; the fix does not add another AST-only descriptor synthesis.
       and flags.
 - [x] An IR-emitted dynamic read observes the seeded native global carrier.
 - [x] No JavaScript-host imports are introduced.
+- [x] The QuickJS provider pair builds and passes all linked-pair canaries.
 - [x] Typecheck and IR fallback gates pass.
 
 ## Verification
@@ -68,6 +74,8 @@ carrier state; the fix does not add another AST-only descriptor synthesis.
 - Exact standalone Test262: **0/3 → 3/3**, no unchanged failures in the
   three-file target.
 - `tests/issue-4388-global-value-descriptors.test.ts`: **2/2**.
+- QuickJS provider build plus linked-pair canaries: pass; provider suite:
+  **29/29**.
 - The `isGlobalNaN(any)` proof is an `emitted` IR outcome with no host imports.
 - `pnpm exec tsc --noEmit --pretty false`: pass.
 - `pnpm run check:ir-fallbacks`: pass, no gated increase.
