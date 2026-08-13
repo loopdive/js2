@@ -33,6 +33,8 @@ export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
   readonly parentId: IrUnitId;
   readonly role: "lifted-closure";
   readonly ordinal: number;
+  /** Present when the lifted artifact is an inventoried source body, not a pass-created unit. */
+  readonly sourceUnit?: true;
 }
 
 export interface IrLiftedFunctionArtifactOwner {
@@ -41,12 +43,23 @@ export interface IrLiftedFunctionArtifactOwner {
 }
 
 /** Exact producer-side provenance for one pass-created executable unit. */
-export interface IrDerivedUnitProvenance {
+export interface IrSyntheticUnitProvenance {
   readonly id: IrUnitId;
   readonly parentId: IrUnitId;
   readonly role: IrSyntheticUnitRole;
   readonly ordinal: number;
 }
+
+/** Exact lowering-side provenance for an inventoried nested source body. */
+export interface IrLiftedSourceUnitProvenance {
+  readonly id: IrUnitId;
+  readonly parentId: IrUnitId;
+  readonly role: "lifted-closure";
+  readonly ordinal: number;
+  readonly sourceUnit: true;
+}
+
+export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;
 
 /** Closed role families for compiler/pass-created executable units. */
 export type IrSyntheticUnitRole =

@@ -10,7 +10,7 @@
  */
 import { ts, forEachChild } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import { selectWithEnvironmentClosures } from "../ir/with-environment.js";
+import { planIrWithTarget, selectWithEnvironmentClosures } from "../ir/with-environment.js";
 import { reportError } from "./context/errors.js";
 import { pushBody, popBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -383,11 +383,10 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   // @@unscopables blocklist. The struct scope cannot see it, so defer to Tier-2.
   if (targetReceivesDynamicElementWrite(ident)) return null;
 
-  // `delete name` inside a `with` body has cascade / configurability semantics
-  // (§8.5.2 DeleteBinding, §13.5.1.2) that only the Tier-2 dynamic path
-  // implements; the static struct scope cannot express "absent name ⇒ false" or
-  // the outer-scope cascade. Defer any body containing a bare-identifier delete.
-  if (bodyContainsIdentifierDelete(stmt.statement)) return null;
+  // W1's IR-owned target plan is also the static-projection disqualifier: a
+  // bare `delete name` needs runtime HasBinding/DeleteBinding and one canonical
+  // open object identity for the later direct readback.
+  if (planIrWithTarget(stmt).representation === "open-object") return null;
 
   // Gates (a)/(b): a body-referenced name the static struct scope cannot route
   // but the object actually binds ⇒ defer to Tier-2.
@@ -1003,32 +1002,6 @@ function targetReceivesDynamicElementWrite(ident: ts.Identifier): boolean {
     forEachChild(node, walk);
   };
   walk(scope);
-  return found;
-}
-
-/**
- * (#3025 W1) True if the `with` body contains a `delete <Identifier>` on a bare
- * identifier (which could resolve to a with-binding). `delete obj.prop` (member
- * delete) is unaffected and does not count. Used to keep such bodies on the
- * Tier-2 dynamic path, which implements the DeleteBinding cascade / configurability
- * semantics the static struct scope cannot.
- */
-function bodyContainsIdentifierDelete(stmt: ts.Statement): boolean {
-  let found = false;
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    if (node !== stmt && isFunctionOrClassBoundary(node)) return;
-    if (ts.isDeleteExpression(node)) {
-      let operand: ts.Expression = node.expression;
-      while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-      if (ts.isIdentifier(operand)) {
-        found = true;
-        return;
-      }
-    }
-    forEachChild(node, walk);
-  };
-  walk(stmt);
   return found;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assertEquivalent, buildImports } from "./equivalence/helpers.js";
+import { assertEquivalent, instantiateWithRuntime } from "./equivalence/helpers.js";
 import { compile } from "../src/index.js";
 
 describe("callable parameter dispatch (#446)", () => {
@@ -51,8 +51,7 @@ export function test(): number {
     `;
     const result = await compile(src);
     expect(result.errors).toHaveLength(0);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe(42);
   });
 
@@ -70,8 +69,7 @@ export function test(): number {
     `;
     const result = await compile(src);
     expect(result.errors).toHaveLength(0);
-    const imports = buildImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const instance = await instantiateWithRuntime(result);
     expect((instance.exports as any).test()).toBe(1);
   });
 });

@@ -16,7 +16,12 @@
  */
 import { compileSource } from "./compiler.js";
 import type { ImportDescriptor, ImportIntent, ImportPolicy } from "./index.js";
-import { createEvalShim, createNewFunctionShim } from "./runtime-eval.js";
+import {
+  createEvalShim,
+  createNewFunctionShim,
+  hasActiveUnshadowedTest262Assert,
+  rawTest262AssertShimEnabled,
+} from "./runtime-eval.js";
 import * as wsh from "./runtime/wasm-struct-host-semantics.js";
 import { STRING_CONSTANTS16_NS } from "./string-surrogate.js";
 import {
@@ -3595,11 +3600,20 @@ function _getStructFieldNames(obj: any, exports: Record<string, Function> | unde
  * consulted for the ONE requested key only, preserving the per-instance
  * presence-bit semantics (#2847).
  */
-function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, Function> | undefined): boolean {
+function _structOwnFieldStatus(
+  obj: any,
+  key: string,
+  exports: Record<string, Function> | undefined,
+): boolean | undefined {
   const names = _structFieldNamesRaw(obj, exports);
-  if (!names || !names.includes(key)) return false;
+  if (!names) return undefined;
+  if (!names.includes(key)) return false;
   const presence = exports![`__shas_${key}`];
   return typeof presence !== "function" || presence(obj) !== 0;
+}
+
+function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, Function> | undefined): boolean {
+  return _structOwnFieldStatus(obj, key, exports) === true;
 }
 
 /**
@@ -9545,7 +9559,17 @@ function resolveImport(
           // Strip TypeScript annotations that wrapTest injects (e.g. `as number`,
           // `as any`) — the eval'd code runs as plain JS and rejects TS syntax.
           const jsSrc = src.replace(/\bas\s+number\b/g, "").replace(/\bas\s+any\b/g, "");
-          const needsShim = harnessIds.some((id) => jsSrc.includes(id));
+          // Raw Test262 `assert(...)` / `assert.<knownMember>(...)` calls
+          // survive some wrapTest paths unchanged.  Detect executable,
+          // unshadowed calls from syntax rather than treating comment/string
+          // text (or a locally-bound `assert`) as a harness dependency.
+          // Measurement kill switch: preserves the prior runtime behavior for
+          // same-population attribution runs without changing the classifier's
+          // syntax contract or any non-harness dynamic-code policy.
+          const rawAssertShimEnabled = rawTest262AssertShimEnabled();
+          const needsShim =
+            (rawAssertShimEnabled && hasActiveUnshadowedTest262Assert(jsSrc)) ||
+            harnessIds.some((id) => jsSrc.includes(id));
           // biome-ignore lint/style/noCommaOperator: (0, eval) forces indirect eval (global scope) per §19.2.1.1
           // biome-ignore lint/security/noGlobalEval: intentional test262 runtime eval for harness compatibility
           if (!needsShim) return (0, eval)(jsSrc);
@@ -9772,7 +9796,7 @@ assert._isSameValue = isSameValue;
             if (tomb && tomb.has(key)) return undefined;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
-            const fieldValue = wsh.readField(getter, obj, _structHasOwnFieldName(obj, key, exports));
+            const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
             if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
             // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
@@ -15501,7 +15525,7 @@ assert._isSameValue = isSameValue;
           if (tomb && tomb.has(key)) return undefined;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
-          const fieldValue = wsh.readField(getter, obj, _structHasOwnFieldName(obj, key, exports));
+          const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
           if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
           // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {

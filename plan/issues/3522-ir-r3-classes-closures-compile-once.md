@@ -88,6 +88,7 @@ func-budget-allow:
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
@@ -1314,6 +1315,99 @@ module-level, inline, capturing, and effectful class-expression consumers still
 use it. The next serial R3 owner is closures/object methods/cross-owner callable
 support; after those consumers reach zero, the obsolete direct branches must be
 deleted in the same checkpoint that proves their last use is gone.
+
+### Lifted nested-function ownership checkpoint (2026-08-13)
+
+Ordinary nested function declarations can now enter the enclosing terminal's
+prepare-before-emit transaction. The enclosing function and each admitted
+nested declaration lower together before the direct function-body compiler
+runs. If any nested body or prepared dependency fails, the transaction remains
+typed Unsupported and the existing direct route owns it once.
+
+The important accounting fix is structural: a lifted nested declaration now
+keeps its exact inventoried `nested-function` `IrUnitId`. It is no longer
+reported as a pass-created derived unit that happens to share the parent's
+display-name namespace. Lowering records its exact lexical parent, terminal
+owner, and source ordinal; integration verifies those fields against the
+frozen inventory. Only genuinely compiler-created lifts (including the narrow
+Promise-delay closure support) register `ProgramAbiDerivedUnitRecord`s.
+
+The bounded proof uses `run -> add`, with one captured scalar and one direct
+call. With direct `run` emission poisoned, GC and standalone both prepare the
+owner, allocate the nested source callable through the scoped Program ABI,
+validate, and return `42`. Optimized IR artifacts are no larger than their
+same-source direct artifacts. An independent AST-to-IR assertion proves the
+lifted function's ID is exactly the inventory ID rather than a newly derived
+ID.
+
+Focused nested/closure ABI evidence is **40/40** across this proof, the exact
+Promise-delay closure compile-once suite, prepared-scope sealing, and exact
+artifact/report identity. The broader closure/recursion matrix is **47/47**;
+the structural identity/Program ABI matrix is **51/51**; cross-backend parity
+is **29/29**; equivalence is **1,645 passing, 24 known failures, zero new
+regressions**; strict shadow remains **37/37 IR, zero legacy/Unsupported/
+Invariant**; and fallback, typecheck, lint, formatting, issue integrity, and
+optimization-retirement gates pass.
+
+Generic arrow/function-expression closure literals remain on the transitional
+late-overlay route in this checkpoint. The first combined probe was
+semantically correct but exposed a GC closure-support size regression, so their
+source-unit identities and support optimizations must land as their own
+measured slice. Object methods/accessors and cross-owner callable values remain
+after that.
+
+No shared direct nested-function implementation is deleted yet. Unsupported
+nested forms and the unretired closure-literal/object-method families still use
+the same direct compiler. Delete it only when the final typed consumer reaches
+zero.
+
+### Arrow/function-expression closure-literal checkpoint (2026-08-13)
+
+Ordinary arrow functions and function expressions now join their enclosing
+terminal's prepare-before-emit component instead of forcing the owner through
+the transitional direct-body overlay. Each literal keeps its exact inventoried
+`arrow-function` or `function-expression` source ID, including checker/usage
+transforms that clone a nested node. The source span, kind, source owner, and
+terminal owner must all match; genuinely synthesized lifts still use derived
+Program ABI provenance. Exact Promise-delay and one-shot host callbacks also
+retain their preplanned derived target IDs: those are compiler-owned artifacts
+whose plans are frozen before AST lowering, even though an arrow supplies their
+syntax.
+
+Mutable primitive captures now participate in the same sealed contract. Their
+canonical physical ref-cell struct is planned by semantic inner IR type, owns
+an explicit remappable Program ABI type ref, and is attached by object identity
+to the final boxed type plus every `refcell.new/get/set`. Missing, empty, stale,
+or unrelated evidence remains a typed preparation failure. Sibling closures
+share one cell and observe each other's writes. Closure carrier structs remain
+outside the user-data struct registry, preserving the direct backend's absence
+of `__sget_cap*`, `__struct_field_names`, and GC `__is_data_struct` reflection
+helpers.
+
+The anti-vacuity proof covers one immutable captured arrow plus a no-capture
+function expression, two sibling literals that share a mutable f64 capture,
+and an outer arrow that owns another captured arrow. With direct owner emission
+poisoned, GC and standalone prepare each complete tree atomically, validate,
+and return the same values as direct codegen. Every nested literal has its exact
+source ID. Optimized IR binaries are no larger than their same-source direct
+binaries. The exact Promise-delay regression suite proves its executor and
+timer callbacks keep their derived plan identities and execute in both
+optimized and unoptimized builds.
+
+Program ABI planner and dependency fail-closed coverage is **35/35**; focused
+closure ownership is **12/12**; exact Promise planning and execution is
+**8/8**; the adjacent direct closure/function-expression matrix is **56/56**
+after its legacy bare-import helpers were updated to link the compiler-declared
+runtime imports; typecheck, formatting, and the fallback ratchet pass with no
+unintended/post-claim/module-level increase. Hybrid and strict shadows remain
+**37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**.
+
+Recursive named/self-bound literals, default/destructured parameter forms,
+returned closure values, and other cross-owner callable escapes remain on the
+typed direct route. Object-literal methods/accessors are the next serial R3
+family. No shared direct closure implementation is deleted yet; retire each
+branch with the final consumer and keep its optimization/parity assertions in
+that deletion checkpoint.
 
 ## Exhaustive source-unit census
 

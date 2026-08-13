@@ -73,7 +73,7 @@ import {
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import { reportError } from "./context/errors.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   ERROR_FIELD,
@@ -94,7 +94,7 @@ import {
 } from "./frame-core.js";
 import { ensureI32Condition, resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
-import { addFuncType, getOrRegisterRefCellType } from "./registry/types.js";
+import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 
@@ -247,7 +247,13 @@ export function asyncFnNeedsHostDrive(
   }
   // Parity with asyncFnNeedsCps/asyncFnNeedsDrive: a lone `await Promise.all(...)`
   // already yields a real Promise the legacy identity path resolves correctly.
-  if (linear.segments.length === 1 && awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)) return false;
+  if (
+    linear.finalizer === null &&
+    linear.segments.length === 1 &&
+    awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)
+  ) {
+    return false;
+  }
   // Type gate: a resume binding spilled across a later await needs a spill-safe
   // type (same rule as the wasi drive layer).
   for (let k = 0; k < linear.segments.length; k++) {
@@ -421,6 +427,7 @@ export function buildAsyncFrameInfo(
   promiseTypeIdx: number,
   hostImports?: HostAsyncImports,
   derivedParams?: DerivedParamCapture[],
+  activatingFctx?: FunctionContext,
 ): AsyncFrameInfo {
   const functionName = asyncFnName(decl);
 
@@ -470,6 +477,45 @@ export function buildAsyncFrameInfo(
     spillNames.push(d.name);
     spillTypes.push(d.type);
   }
+  const nestedCaptureTypes =
+    decl.body === undefined ? new Map<string, ValType>() : collectCurrentNestedCaptureTypes(ctx, decl.body);
+  const nestedRefsAndAssigns =
+    decl.body === undefined
+      ? {
+          referencedInNested: new Set<string>(),
+          referencedInNamedNested: new Set<string>(),
+          assigned: new Set<string>(),
+        }
+      : collectNestedRefsAndAssigns(decl.body);
+  const bodyBindingsByName = collectVarDeclsByName(decl);
+  // The function-body hoist has already chosen concrete local/cell
+  // representations before async activation. Prefer that exact contract over
+  // checker reconstruction for body destructuring (where minified JS often has
+  // an `any` checker type but a scalar local selected from the initializer).
+  for (let i = 0; i < spillNames.length; i++) {
+    const name = spillNames[i]!;
+    const nestedCaptureType = nestedCaptureTypes.get(name);
+    if (nestedCaptureType !== undefined || nestedRefsAndAssigns.referencedInNested.has(name)) {
+      const local = activatingFctx?.localMap.get(name);
+      const liveType =
+        activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      if (liveType !== undefined) spillTypes[i] = liveType;
+      else if (nestedCaptureType !== undefined) spillTypes[i] = nestedCaptureType;
+      continue;
+    }
+    const boxed = activatingFctx?.boxedCaptures?.get(name);
+    if (boxed !== undefined) {
+      spillTypes[i] = boxed.valType;
+      continue;
+    }
+    const binding = bodyBindingsByName.get(name);
+    if (binding !== undefined && ts.isBindingElement(binding)) {
+      const local = activatingFctx?.localMap.get(name);
+      const liveType =
+        activatingFctx === undefined || local === undefined ? undefined : getLocalType(activatingFctx, local);
+      if (liveType !== undefined) spillTypes[i] = liveType;
+    }
+  }
 
   // (#2967 phase 3a) Cell-aware fields — FORCE-BOX class-1 hazardous spills.
   // A spill name that a NESTED function-like captures mutably gets cell-boxed
@@ -484,25 +530,48 @@ export function buildAsyncFrameInfo(
   // `alreadyBoxed` aliasing branch) ALL flow through existing machinery, and
   // `storeSpills` stores the cell ref back into a matching field. Cell
   // IDENTITY survives suspends (the same heap cell is restored), so a nested
-  // closure and post-await states observe each other's writes. Force-boxing
-  // is deliberately an over-approximation: boxing a local closures.ts would
-  // not have boxed just adds an indirection — still correct — so the
-  // predicate need not mirror closures.ts exactly. Body locals require a
-  // defaultable value type (the entry cell needs `defaultSpillInstr`);
+  // closure and post-await states observe each other's writes. Read-only
+  // captures are boxed only for named declarations whose capture ABI is
+  // remapped to the resume frame; anonymous arrows keep their by-value ABI.
+  // Body locals require a defaultable value type (the entry cell needs
+  // `defaultSpillInstr`);
   // derived params are live-initialized, so any value type boxes. Async
   // GENERATOR frames are untouched (every own local spills there; the yield
   // machine has its own discipline).
   const spillCellInfo = new Map<number, { refCellTypeIdx: number; valType: ValType }>();
   if (decl.asteriskToken === undefined && decl.body !== undefined && spillNames.length > 0) {
-    const { referencedInNested, assigned } = collectNestedRefsAndAssigns(decl.body);
-    if (referencedInNested.size > 0 && assigned.size > 0) {
+    const { referencedInNested, referencedInNamedNested, assigned } = nestedRefsAndAssigns;
+    if (referencedInNested.size > 0) {
       const declByName = collectVarDeclsByName(decl);
       const derivedNames = new Set(derived.map((d) => d.name));
       for (let i = 0; i < spillNames.length; i++) {
         const name = spillNames[i]!;
-        if (!referencedInNested.has(name) || !assigned.has(name)) continue;
+        if (!referencedInNested.has(name)) continue;
         const isDerived = derivedNames.has(name);
-        if (!declByName.has(name) && !isDerived) continue;
+        const binding = declByName.get(name);
+        if (binding === undefined && !isDerived) continue;
+        // Match the closure hoist's actual cell contract. A read-only captured
+        // aggregate (for example `var disposed = []` captured by disposer
+        // callbacks) remains a by-value ref; wrapping it in a ref-cell here
+        // makes the resumed outer body cast the cell as the aggregate. Ordinary
+        // named declarations remain the read-only exception because their
+        // capture ABI is explicitly remapped through the synthetic frame.
+        if (!assigned.has(name) && !isDerived && !referencedInNamedNested.has(name)) continue;
+        // A read-only callable copied from an object property is already a
+        // stable host/Wasm function value. Boxing it changes `.call` from the
+        // host callable path to the ref-cell carrier and can turn an async
+        // built-in rejection into a synchronous throw. Keep that narrow shape
+        // by-value; the remaining nested references retain the cell carrier
+        // required by independently-produced nested/resume layouts.
+        const initializer =
+          binding !== undefined && ts.isVariableDeclaration(binding) ? binding.initializer : undefined;
+        const readOnlyCallableProperty =
+          !assigned.has(name) &&
+          initializer !== undefined &&
+          (ts.isPropertyAccessExpression(initializer) || ts.isElementAccessExpression(initializer)) &&
+          binding !== undefined &&
+          ctx.oracle.typeFactOf(binding.name).kind === "function";
+        if (readOnlyCallableProperty) continue;
         const valType = spillTypes[i]!;
         if (!isDerived && !isSpillSafeType(valType)) continue; // no inert cell default
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, valType);
@@ -595,8 +664,12 @@ export function asyncGenStem(decl: ts.FunctionLikeDeclaration): string {
  * consistently in ONE place so the spill field and the resume-function local
  * agree and round-trip through `struct.get`/`struct.set`.
  */
-function resumeBindingValType(ctx: CodegenContext, rb: { name: string; type: ts.TypeNode | undefined }): ValType {
-  return rb.type ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(rb.type)) : { kind: "externref" };
+function resumeBindingValType(
+  ctx: CodegenContext,
+  rb: { name: string; type: ts.TypeNode | undefined; target?: ts.Identifier },
+): ValType {
+  const typeSite = rb.type ?? rb.target;
+  return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
 }
 
 /**
@@ -807,7 +880,13 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   }
   // Parity with asyncFnNeedsCps: a lone `await Promise.all(...)`/`.race`/… already
   // yields a real Promise — keep it on the legacy identity path.
-  if (linear.segments.length === 1 && awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)) return false;
+  if (
+    linear.finalizer === null &&
+    linear.segments.length === 1 &&
+    awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)
+  ) {
+    return false;
+  }
   // Slice-1 type gate: a resume binding spilled across a later await needs a
   // spill-safe type (see isSpillSafeType).
   for (let k = 0; k < linear.segments.length; k++) {
@@ -850,7 +929,7 @@ function computeLoopSpills(
       continue;
     }
     const declNode = declByName.get(name);
-    const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+    const resolved = declNode ? resolveSpillBindingValType(ctx, declNode) : null;
     spillNames.push(name);
     spillTypes.push(resolved ?? { kind: "externref" });
   }
@@ -876,7 +955,7 @@ function computeForAwaitSpills(
   const spillTypes: ValType[] = [];
   for (const name of info.names) {
     const declNode = declByName.get(name);
-    const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+    const resolved = declNode ? resolveSpillBindingValType(ctx, declNode) : null;
     spillNames.push(name);
     spillTypes.push(resolved ?? { kind: "externref" });
   }
@@ -909,8 +988,8 @@ function computeTryCatchSpills(
   // `collectVarDeclsByName` also picks up a CATCH clause's own
   // variableDeclaration (it IS a ts.VariableDeclaration) — those entries are
   // the catch params themselves, not shadowing body locals.
-  const isCatchClauseDecl = (node: ts.VariableDeclaration): boolean =>
-    node.parent !== undefined && ts.isCatchClause(node.parent);
+  const isCatchClauseDecl = (node: SpillDeclaration): boolean =>
+    ts.isVariableDeclaration(node) && node.parent !== undefined && ts.isCatchClause(node.parent);
   const paramNames = new Set<string>();
   for (const p of decl.parameters) if (ts.isIdentifier(p.name)) paramNames.add(p.name.text);
   for (const cp of info.catchParamNames) {
@@ -929,11 +1008,30 @@ function computeTryCatchSpills(
     if (isCatchClauseDecl(node)) continue; // catch-param spills are added below (externref)
     const rbType = rbTypeByName.get(name);
     spillNames.push(name);
-    spillTypes.push(rbType ?? resolveSpillLocalValType(ctx, node) ?? { kind: "externref" });
+    spillTypes.push(rbType ?? resolveSpillBindingValType(ctx, node) ?? { kind: "externref" });
   }
   for (const cp of info.catchParamNames) {
     spillNames.push(cp);
     spillTypes.push({ kind: "externref" });
+  }
+  for (const { iteratorSpill, indexSpill, source } of info.iteratorSpills) {
+    if (!spillNames.includes(iteratorSpill)) {
+      const sourceFact = ctx.oracle.typeFactOf(source);
+      let iteratorType: ValType = { kind: "externref" };
+      if (sourceFact.kind === "array" || sourceFact.kind === "tuple") {
+        const elementFacts = sourceFact.kind === "array" ? [sourceFact.element] : sourceFact.elements;
+        const numeric = elementFacts.length > 0 && elementFacts.every((fact) => fact.kind === "number");
+        const elemType: ValType = numeric ? { kind: "f64" } : { kind: "externref" };
+        const vecTypeIdx = getOrRegisterVecType(ctx, numeric ? "f64" : "externref", elemType);
+        iteratorType = { kind: "ref_null", typeIdx: vecTypeIdx };
+      }
+      spillNames.push(iteratorSpill);
+      spillTypes.push(iteratorType);
+    }
+    if (!spillNames.includes(indexSpill)) {
+      spillNames.push(indexSpill);
+      spillTypes.push({ kind: "i32" });
+    }
   }
   return { spillNames, spillTypes };
 }
@@ -974,7 +1072,7 @@ function computeAsyncSpills(
     const spillTypes: ValType[] = [];
     for (const [name, node] of asyncGenOwnLocalDecls(decl)) {
       spillNames.push(name);
-      spillTypes.push(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" });
+      spillTypes.push(resolveSpillBindingValType(ctx, node) ?? { kind: "externref" });
     }
     // (#2570) One persisted externref slot per `yield* <call>` delegate — the
     // inner frame carrier, created lazily in the delegate INIT state and live
@@ -1037,7 +1135,7 @@ function computeAsyncSpills(
         continue;
       }
       const declNode = declByName.get(name);
-      const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
+      const resolved = declNode ? resolveSpillBindingValType(ctx, declNode) : null;
       spillNames.push(name);
       spillTypes.push(resolved ?? { kind: "externref" });
     }
@@ -1045,15 +1143,41 @@ function computeAsyncSpills(
   return { spillNames, spillTypes };
 }
 
-/** Map each body `var`/`let`/`const` declaration name → its declaration node. */
-function collectVarDeclsByName(decl: ts.FunctionLikeDeclaration): Map<string, ts.VariableDeclaration> {
-  const out = new Map<string, ts.VariableDeclaration>();
+type SpillDeclaration = ts.VariableDeclaration | ts.BindingElement;
+
+function resolveSpillBindingValType(ctx: CodegenContext, decl: SpillDeclaration): ValType | null {
+  if (ts.isVariableDeclaration(decl)) return resolveSpillLocalValType(ctx, decl);
+  if (!ts.isIdentifier(decl.name)) return null;
+  switch (ctx.oracle.typeFactOf(decl).kind) {
+    case "number":
+      return { kind: "f64" };
+    case "boolean":
+      return { kind: "i32" };
+    case "bigint":
+      return { kind: "i64" };
+    default:
+      return { kind: "externref" };
+  }
+}
+
+/** Map each body `var`/`let`/`const` binding name → its declaration node. */
+function collectVarDeclsByName(decl: ts.FunctionLikeDeclaration): Map<string, SpillDeclaration> {
+  const out = new Map<string, SpillDeclaration>();
   const body = decl.body;
   if (body === undefined) return out;
+  const collectBinding = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) return;
+    for (const element of name.elements) {
+      if (ts.isOmittedExpression(element)) continue;
+      if (ts.isIdentifier(element.name)) out.set(element.name.text, element);
+      else collectBinding(element.name);
+    }
+  };
   const walk = (node: ts.Node): void => {
     if (isNestedScope(node)) return;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      out.set(node.name.text, node);
+    if (ts.isVariableDeclaration(node)) {
+      if (ts.isIdentifier(node.name)) out.set(node.name.text, node);
+      else collectBinding(node.name);
     }
     forEachChild(node, walk);
   };
@@ -1087,9 +1211,11 @@ function isNestedScope(node: ts.Node): boolean {
  */
 function collectNestedRefsAndAssigns(body: ts.Node): {
   referencedInNested: Set<string>;
+  referencedInNamedNested: Set<string>;
   assigned: Set<string>;
 } {
   const referencedInNested = new Set<string>();
+  const referencedInNamedNested = new Set<string>();
   const assigned = new Set<string>();
 
   const noteAssignment = (node: ts.Node): void => {
@@ -1110,7 +1236,7 @@ function collectNestedRefsAndAssigns(body: ts.Node): {
     }
   };
 
-  const collectNestedRefs = (node: ts.Node): void => {
+  const collectNestedRefs = (node: ts.Node, refs = referencedInNested): void => {
     noteAssignment(node);
     if (ts.isIdentifier(node)) {
       // Skip pure property-name positions (`a.b`'s `b`, `{ b: 1 }`'s `b`).
@@ -1118,22 +1244,53 @@ function collectNestedRefsAndAssigns(body: ts.Node): {
       const isPropName =
         p !== undefined &&
         ((ts.isPropertyAccessExpression(p) && p.name === node) || (ts.isPropertyAssignment(p) && p.name === node));
-      if (!isPropName) referencedInNested.add(node.text);
+      if (!isPropName) refs.add(node.text);
       return;
     }
-    forEachChild(node, collectNestedRefs);
+    forEachChild(node, (child) => collectNestedRefs(child, refs));
   };
 
   const walk = (node: ts.Node): void => {
     if (isNestedScope(node)) {
       forEachChild(node, collectNestedRefs);
+      // Native/host async generators retain their own by-value capture ABI;
+      // only ordinary named declarations are remapped to the outer resume
+      // frame's synthetic capture cells.
+      if (ts.isFunctionDeclaration(node) && node.asteriskToken === undefined) {
+        forEachChild(node, (child) => collectNestedRefs(child, referencedInNamedNested));
+      }
       return;
     }
     noteAssignment(node);
     forEachChild(node, walk);
   };
   forEachChild(body, walk);
-  return { referencedInNested, assigned };
+  return { referencedInNested, referencedInNamedNested, assigned };
+}
+
+/**
+ * Capture types published by the just-completed nested-declaration hoist for
+ * this async body. Async activation runs immediately after that hoist, so the
+ * bare-name registry still describes these direct declarations; later package
+ * declarations have not had a chance to overwrite it. Prefer the published
+ * mutable value type because it is the exact leading-cell ABI their calls use.
+ */
+function collectCurrentNestedCaptureTypes(ctx: CodegenContext, body: ts.Node): Map<string, ValType> {
+  const out = new Map<string, ValType>();
+  const walk = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node)) {
+      if (node.name) {
+        for (const capture of ctx.nestedFuncCaptures.get(node.name.text) ?? []) {
+          if (capture.mutable && capture.valType !== undefined) out.set(capture.name, capture.valType);
+        }
+      }
+      return;
+    }
+    if (isNestedScope(node)) return;
+    forEachChild(node, walk);
+  };
+  forEachChild(body, walk);
+  return out;
 }
 
 /**
@@ -1561,12 +1718,13 @@ export function ensureAsyncResumeFunction(
   for (const st of cfg.states) {
     const rb = st.resumeFrom?.binding;
     if (!rb) continue;
-    const t = resumeBindingValType(ctx, rb);
+    const inferred = resumeBindingValType(ctx, rb);
     const existing = resumeFctx.localMap.get(rb.name);
-    const local = existing !== undefined ? existing : allocLocal(resumeFctx, rb.name, t);
+    const type = existing !== undefined ? (getLocalType(resumeFctx, existing) ?? inferred) : inferred;
+    const local = existing !== undefined ? existing : allocLocal(resumeFctx, rb.name, type);
     bindingLocal.set(rb.name, {
       local,
-      type: t,
+      type,
       cell: existing !== undefined ? cellBySpillName.get(rb.name) : undefined,
     });
   }
@@ -1691,6 +1849,14 @@ export function ensureAsyncResumeFunction(
   // while-await / for-await planners express iteration with NO emitter change.
   const buildStateBody = (st: AsyncCfgState): Instr[] => {
     const saved = resumeFctx.body;
+    const previousAliases = st.lexicalAliases?.map(({ sourceName }) => ({
+      sourceName,
+      local: resumeFctx.localMap.get(sourceName),
+    }));
+    for (const { sourceName, targetName } of st.lexicalAliases ?? []) {
+      const targetLocal = resumeFctx.localMap.get(targetName);
+      if (targetLocal !== undefined) resumeFctx.localMap.set(sourceName, targetLocal);
+    }
     ctx.liveBodies.add(saved);
     const out: Instr[] = [];
     resumeFctx.body = out;
@@ -2118,6 +2284,10 @@ export function ensureAsyncResumeFunction(
         }
       }
     } finally {
+      for (const { sourceName, local } of previousAliases ?? []) {
+        if (local === undefined) resumeFctx.localMap.delete(sourceName);
+        else resumeFctx.localMap.set(sourceName, local);
+      }
       resumeFctx.body = saved;
       ctx.liveBodies.delete(saved);
     }
@@ -2492,7 +2662,17 @@ export function emitAsyncFrameStateMachine(
   // local here — capture them into the frame as live-initialized spill fields
   // (see buildAsyncFrameInfo). Empty for identifier-only params (byte-inert).
   const derivedParams = collectDerivedPatternParams(decl, fctx);
-  const info = buildAsyncFrameInfo(ctx, decl, plan, paramNames, paramTypes, promiseTypeIdx, hostImports, derivedParams);
+  const info = buildAsyncFrameInfo(
+    ctx,
+    decl,
+    plan,
+    paramNames,
+    paramTypes,
+    promiseTypeIdx,
+    hostImports,
+    derivedParams,
+    fctx,
+  );
   // (#2865) A CLOSURE consumer (arrow / fn-expr, #2957 phase 2) may capture
   // outer locals as ref cells (leading params of the lifted fn). The cells ride
   // into frame param fields like ordinary params; the resume body must deref
@@ -2647,7 +2827,7 @@ export function asyncGenDrivableUnderCarrier(
     if (p.dotDotDotToken !== undefined) return false;
   }
   for (const node of asyncGenOwnLocalDecls(decl).values()) {
-    if (!isSpillSafeType(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" })) return false;
+    if (!isSpillSafeType(resolveSpillBindingValType(ctx, node) ?? { kind: "externref" })) return false;
   }
   // (#2570) `yield* inner()` delegate segments are admitted when the inner
   // producer is a resolvable, earlier-declared, itself-drivable top-level
@@ -2758,7 +2938,7 @@ function asyncGenDelegatesForGate(
         if (p.dotDotDotToken !== undefined) return false;
       }
       for (const node of asyncGenOwnLocalDecls(inner).values()) {
-        if (!isSpillSafeType(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" })) return false;
+        if (!isSpillSafeType(resolveSpillBindingValType(ctx, node) ?? { kind: "externref" })) return false;
       }
       return true;
     },
@@ -2843,7 +3023,7 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // spill-safe type (an inert `struct.new` default), or the layout is invalid.
   const spillsSafe = (): boolean => {
     for (const node of asyncGenOwnLocalDecls(decl).values()) {
-      if (!isSpillSafeType(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" })) return false;
+      if (!isSpillSafeType(resolveSpillBindingValType(ctx, node) ?? { kind: "externref" })) return false;
     }
     return true;
   };
@@ -2936,7 +3116,17 @@ export function emitAsyncGenerator(ctx: CodegenContext, fctx: FunctionContext, d
   // same #2967 mechanism the async-FUNCTION path uses. Empty (byte-inert) for
   // identifier-only params, so no existing driven async-gen shape changes.
   const derivedParams = collectDerivedPatternParams(decl, fctx);
-  const info = buildAsyncFrameInfo(ctx, decl, plan, paramNames, paramTypes, promiseTypeIdx, undefined, derivedParams);
+  const info = buildAsyncFrameInfo(
+    ctx,
+    decl,
+    plan,
+    paramNames,
+    paramTypes,
+    promiseTypeIdx,
+    undefined,
+    derivedParams,
+    fctx,
+  );
   info.asyncGen = true;
   info.asyncGenResultTypeIdx = resultTypeIdx;
   // (#2865) Nested producers: thread the lifted fn's capture-cell metadata so

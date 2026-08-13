@@ -281,6 +281,7 @@ export function createCodegenContext(
     objectHashConsumerTypes: new Set(),
     dynamicObjectReturnFunctions: new Set(),
     growableObjectLiteralVars: new Set(),
+    irWithOpenObjectTargetKeys: new Set(),
     ordinaryToPrimitiveObjectDeclarations: new Set(),
     ordinaryToPrimitiveObjectLiterals: new Set(),
     externrefAccessorVars: new Set(),

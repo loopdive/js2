@@ -14,7 +14,10 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
-import { markStandaloneDynamicWithTargets } from "./dynamic-with-shape.js";
+import {
+  bindingHasIrPlannedOpenWithTarget,
+  bindingUsesOnlyIrPlannedOpenObjectOperations,
+} from "./dynamic-with-shape.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -50,6 +53,15 @@ function propertyChainRoot(pae: ts.PropertyAccessExpression): { root: string; de
 function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
   const sentinelFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
   return isUnboxedPrimitiveCarrier(type) && (tsType.flags & sentinelFlags) === 0;
+}
+
+/** Preserve semantic brands that are erased by the numeric Wasm carrier. */
+function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValType {
+  const type = resolveWasmType(ctx, tsType);
+  if (type.kind === "i32" && (tsType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+    return { ...type, symbol: true };
+  }
+  return type;
 }
 
 /**
@@ -495,6 +507,7 @@ function recordOpenObjectConsumerTypes(
   checker: ts.TypeChecker,
   decl: ts.VariableDeclaration,
   varName: string,
+  recordNameBasedGrowableVar = true,
 ): void {
   if (!decl.initializer) return;
   const initializerDeclaration = decl.initializer as unknown as ts.Declaration;
@@ -512,7 +525,10 @@ function recordOpenObjectConsumerTypes(
   ) {
     ctx.objectHashConsumerTypes.add(it);
   }
-  if (ctx.standalone) ctx.growableObjectLiteralVars.add(varName);
+  // The open-object plan is lane-neutral. `compileObjectLiteralAsExternref`
+  // uses the existing host MOP in the host lane and the native `$Object` MOP in
+  // standalone; both require the declaration slot to select the same carrier.
+  if (recordNameBasedGrowableVar) ctx.growableObjectLiteralVars.add(varName);
 
   // Fnctor field derivation can run before collectDeclarations reaches the
   // function declaration, so record the inferred return carrier here too.
@@ -732,6 +748,37 @@ export function collectGrowableObjectLiterals(
           const shape = literalShapeNames(decl.initializer);
           if (!shape) continue; // not a pure data literal → skip (externref builder would decline)
 
+          // (#671 W1) A direct bare-identifier DeleteBinding in `with (varName)`
+          // makes the legacy static scope fall through to runtime HasBinding /
+          // DeleteBinding. That runtime path and a later `varName.p` read must
+          // see one MOP-capable object identity in BOTH lanes. The IR planner
+          // supplies the language trigger; this allocator adds the binding- and
+          // ABI-safety proof before ANY struct type/allocation can be created.
+          //
+          // Deliberately refuse rather than insert a cast or follow an alias:
+          // an escaped concrete-struct consumer would otherwise observe a
+          // second representation or null. The measured test262 family uses
+          // only direct dot reads and is admitted here; every broader shape is
+          // left on its existing path for a later slice to model explicitly.
+          if (
+            bindingHasIrPlannedOpenWithTarget(stmts, checker, decl.name) &&
+            bindingUsesOnlyIrPlannedOpenObjectOperations(
+              checker,
+              stmts,
+              decl.name,
+              isOpenObjectPropertyReceiver,
+              isObjectMopCallArg,
+            )
+          ) {
+            // W1 routes member operations through its declaration-keyed set.
+            // Do not also populate the legacy bare-name growable/accessor sets:
+            // that would change an unrelated same-named binding in another
+            // scope and can break its concrete-struct ABI consumers.
+            recordOpenObjectConsumerTypes(ctx, checker, decl, varName, false);
+            ctx.irWithOpenObjectTargetKeys.add(widenedVarKeyFromDecl(decl.name));
+            continue;
+          }
+
           // (#2992 S6, standalone) `delete varName.k` / `delete varName[e]` or
           // an ACCESSOR-descriptor define on a NON-EMPTY pure-data literal var:
           // the closed-struct representation cannot observe the deletion (the
@@ -752,15 +799,15 @@ export function collectGrowableObjectLiterals(
           // struct path") is a HOST-lane discipline — in standalone the struct
           // path is precisely what cannot serve these consumers, so this arm
           // runs first. Host lane is untouched (byte-inert).
-          // (#4206) A Tier-2-bound `with (varName)` joins the same set — the
-          // native `$Object` helpers that serve it cannot see a WasmGC struct.
-          // Rationale + measured repro: ./dynamic-with-shape.ts.
+          // The #671 W1 `with` target has its own lane-neutral planner above.
+          // Keep this standalone-only block for its existing direct receiver
+          // delete/accessor paths; it must not re-admit a W1 target whose alias
+          // or ABI proof declined the open-object promotion.
           if (ctx.standalone) {
             const mopSet = new Set<string>();
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
-              markStandaloneDynamicWithTargets(s, varName, mopSet);
             }
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
@@ -1018,6 +1065,21 @@ function isObjectMopCallArg(id: ts.Identifier): boolean {
   return (
     ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Object"
   );
+}
+
+/** A direct dot read/write/delete is served by the existing externref MOP. */
+function isOpenObjectPropertyReceiver(id: ts.Identifier): boolean {
+  let current: ts.Expression = id;
+  while (
+    ts.isParenthesizedExpression(current.parent) ||
+    ts.isAsExpression(current.parent) ||
+    ts.isNonNullExpression(current.parent) ||
+    ts.isSatisfiesExpression(current.parent) ||
+    ts.isTypeAssertionExpression(current.parent)
+  ) {
+    current = current.parent as ts.Expression;
+  }
+  return ts.isPropertyAccessExpression(current.parent) && current.parent.expression === current;
 }
 
 /** (#2837) The identifier is used as a value (arg / return / RHS), not as an
@@ -1423,7 +1485,7 @@ function recordDefinePropertyWiden(
       for (const prop of descArg.properties) {
         if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name) && prop.name.text === "value") {
           const rhsType = checker.getTypeAtLocation(prop.initializer);
-          wasmType = resolveWasmType(ctx, rhsType);
+          wasmType = resolveWidenedPropertyType(ctx, rhsType);
           primitiveSeed = isRuntimePrimitiveSeed(wasmType, rhsType);
           break;
         }
@@ -1459,7 +1521,7 @@ export function collectPropsFromStatements(
         const propName = bin.left.name.text;
         // Infer wasm type from the RHS
         const rhsType = checker.getTypeAtLocation(bin.right);
-        const wasmType = resolveWasmType(ctx, rhsType);
+        const wasmType = resolveWidenedPropertyType(ctx, rhsType);
         if (!seenProps.has(propName)) {
           seenProps.add(propName);
           extraProps.push({

@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import type { IrClassId, IrUnitId } from "./identity.js";
 import {
@@ -454,6 +455,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * on the legacy path instead of failing after an IR claim.
    */
   readonly supportsHostStringArrayLiterals?: boolean;
+  /**
+   * The active backend has both the JS-host eval capability and the host
+   * externref string carrier needed by the exact indirect-eval import ABI.
+   * Omitted means unproven, so the selector leaves eval on the legacy path.
+   */
+  readonly supportsHostIndirectEval?: boolean;
   /**
    * (#3053 U2) True iff the unified gc member-read primitive `__dyn_member_get`
    * (#3053 U0) has a SOUND body in this compile config. The gc `$AnyValue` body
@@ -5583,6 +5590,39 @@ function expressionIsProvenString(expr: ts.Expression, seen = new Set<ts.Variabl
   return expressionIsProvenString(declaration.initializer, seen);
 }
 
+/**
+ * Eval needs a string value whose IR carrier is known to be the host
+ * externref string. The shared primitive classifier proves typed parameters
+ * and valid local flows; the literal-proven helper preserves the existing
+ * diagnostics-off guard for malformed local annotations.
+ */
+function expressionIsProvenHostEvalString(expr: ts.Expression): boolean {
+  return expressionIsProvenString(expr) || currentSelectionOptions?.classifyPrimitiveExpression?.(expr) === "string";
+}
+
+/**
+ * Every selection-side consumer of the host eval import uses this exact
+ * predicate. The optional scope argument adds the function-local shadow proof
+ * owned by Phase 1; the call graph has checker identity instead.
+ */
+function certifiedHostIndirectEval(
+  expr: ts.CallExpression,
+  scope?: ReadonlySet<string>,
+): ReturnType<typeof exactIndirectEvalStatement> {
+  const shape = exactIndirectEvalStatement(expr);
+  if (
+    !shape ||
+    currentSelectionOptions?.jsHostExterns !== true ||
+    currentSelectionOptions?.supportsHostIndirectEval !== true ||
+    !selectorSeesAmbientBinding(shape.evalIdentifier) ||
+    (scope?.has("eval") ?? false) ||
+    !expressionIsProvenHostEvalString(shape.source)
+  ) {
+    return undefined;
+  }
+  return shape;
+}
+
 function typeNodeIsStringOnly(typeNode: ts.TypeNode): boolean {
   if (typeNode.kind === ts.SyntaxKind.StringKeyword) return true;
   if (ts.isParenthesizedTypeNode(typeNode)) return typeNodeIsStringOnly(typeNode.type);
@@ -6747,6 +6787,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isOptionalModuleExternCall(expr)) {
       return shapeNo("expr-module-extern-optional-call", expr);
     }
+    const indirectEvalStatement = exactIndirectEvalStatement(expr);
+    if (indirectEvalStatement) {
+      const certified = certifiedHostIndirectEval(expr, scope);
+      if (!certified) {
+        return capabilityNo("call-resolution-unsupported", "expr-indirect-eval-host-statement", expr);
+      }
+      return isPhase1Expr(certified.source, scope, localClasses);
+    }
     // #3000-E: `super(args)` — a derived ctor chaining to its parent. `super` is
     // a keyword, not an identifier/property-access the generic receiver checks
     // below handle, so recognise the shape here. Args must be Phase-1 exprs; the
@@ -7882,6 +7930,11 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        const indirectEval = certifiedHostIndirectEval(node);
+        if (indirectEval) {
+          visit(indirectEval.source);
+          return;
+        }
         if (ts.isIdentifier(node.expression)) {
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
           if (imported) {

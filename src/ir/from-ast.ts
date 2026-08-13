@@ -36,6 +36,7 @@
 //     with arg types validated against the propagated callee param types.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
 import { TsCheckerOracle } from "../checker/oracle.js";
 import {
@@ -150,6 +151,7 @@ import {
   type IrLiftedFunctionArtifactIdentity,
   type IrUnitId,
 } from "./identity.js";
+import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import {
   computeI32PureNames,
   type I32PureNames,
@@ -159,7 +161,7 @@ import {
 // #4177 — fixpoint-fact consumption for the `+` operand proof.
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
-import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -321,6 +323,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Resolve the pre-collected exact JS-host indirect-eval import. */
+  hostIndirectEvalTarget?(): IrFuncRef | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -725,6 +729,8 @@ export interface AstToIrOptions {
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   /** (#2856) Exact Promise-delay construction/timer/resolve node plans. */
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  /** Exact source-unit identities for nested executable declarations. */
+  readonly identityContext?: IrPlanningIdentityContext;
   /**
    * Slice 4 (#1169d): map from class name to that class's IR shape
    * (fields + methods + constructor signature). Consulted when lowering
@@ -1128,6 +1134,7 @@ export function lowerFunctionAstToIr(
     hostDateSnapshots: options.hostDateSnapshots,
     hostDateGetters: options.hostDateGetters,
     promiseDelays: options.promiseDelays,
+    identityContext: options.identityContext,
     classShapes: options.classShapes,
     resolver: options.resolver,
     lifted,
@@ -2026,6 +2033,7 @@ interface LowerCtx {
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
+  readonly identityContext?: IrPlanningIdentityContext;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
   /**
@@ -5310,6 +5318,50 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // optional-call IR support is a follow-up.
   if (expr.questionDotToken) {
     throw new Error(`ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
+  }
+  const indirectEval = exactIndirectEvalStatement(expr);
+  if (indirectEval) {
+    const target = cx.resolver?.hostIndirectEvalTarget?.();
+    if (
+      !statementPosition ||
+      cx.resolver?.jsHostExterns?.() !== true ||
+      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.scope.has("eval") ||
+      cx.resolver?.stringIsExternref?.() !== true ||
+      !target
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified host indirect eval lost an owning predicate (${cx.funcName})`,
+      );
+    }
+    const source = lowerExpr(indirectEval.source, cx, { kind: "string" });
+    if (cx.builder.typeOf(source).kind !== "string") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified host indirect eval source is not a string (${cx.funcName})`,
+      );
+    }
+    const result = cx.builder.emitCall(
+      target,
+      [
+        cx.builder.emitCoerceToExternref(source),
+        cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })),
+      ],
+      irVal({ kind: "externref" }),
+    );
+    if (result === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: host indirect eval provider returned void (${cx.funcName})`,
+      );
+    }
+    // Statement-position lowering records this as a zero-use side-effecting
+    // call; the backend emits the mandated Wasm `drop` for its externref result.
+    return result;
   }
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
@@ -8932,6 +8984,17 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
     return;
   }
+  if (binding.kind === "local" && binding.type.kind === "boxed") {
+    const newValue = lowerExpr(rhs, cx, binding.type.inner);
+    const newType = cx.builder.typeOf(newValue);
+    if (!irTypeAssignable(newType, binding.type.inner)) {
+      throw new Error(
+        `ir/from-ast: assignment to captured "${id.text}" (${describeIrType(binding.type.inner)}) got ${describeIrType(newType)} in ${cx.funcName}`,
+      );
+    }
+    cx.builder.emitRefCellSet(binding.value, newValue);
+    return;
+  }
   if (binding.kind === "withField") {
     const newValue = lowerExpr(rhs, cx, binding.type);
     if (!irTypeAssignable(cx.builder.typeOf(newValue), binding.type)) {
@@ -8990,25 +9053,31 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   if (!binding) {
     throw new Error(`ir/from-ast: compound assign to undeclared identifier "${id.text}" in ${cx.funcName}`);
   }
-  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal") {
+  const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
+  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
     throw new Error(
       `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
   }
+  const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
+  const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
   // (#3741) i32-promoted slot — invariant W. `planI32Slots` only admits the
   // compound shapes handled here (bitwise compounds, plus `+=`/`-=` by an
   // integer literal on a `detectI32LoopVar`-proven counter); anything else
   // demotes rather than approximating.
-  if (binding.kind === "slot" && binding.i32Storage) {
-    lowerPromotedI32CompoundAssignment(id, binding.slotIndex, compoundOp, rhs, cx);
+  if (storage.kind === "slot" && storage.i32Storage) {
+    lowerPromotedI32CompoundAssignment(id, storage.slotIndex, compoundOp, rhs, cx);
     return;
   }
-  const logicalType = binding.kind === "slot" ? (binding.asType ?? binding.type) : binding.type;
+  const logicalType =
+    storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && logicalType.kind === "string") {
     const lhs =
-      binding.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(binding.globalRef, logicalType)
-        : cx.builder.emitSlotReadAs(binding.slotIndex, logicalType);
+      storage.kind === "moduleGlobal"
+        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
+        : storage.kind === "slot"
+          ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
+          : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (checkerOperandFamily(rhs, cx) === "string" && rhsType.kind !== "string") {
@@ -9017,7 +9086,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       );
     }
     const proof = proveTypedStringAppend(
-      typedValueEvidence(id, binding.type, binding.stringEncoding, cx, logicalType),
+      typedValueEvidence(id, storage.type, storage.stringEncoding, cx, logicalType),
       typedValueEvidence(rhs, rhsType, inferStringEncoding(rhs, cx), cx),
     );
     if (!proof) {
@@ -9030,28 +9099,32 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const symbol = cx.checker?.getSymbolAtLocation(id);
     const concatMode = symbol && cx.ownedStringAppendSymbols.has(symbol) ? "owned-append" : "immutable";
     const result = cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode);
-    if (binding.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(binding.globalRef, result);
+    if (storage.kind === "moduleGlobal") {
+      cx.builder.emitGlobalSet(storage.globalRef, result);
+    } else if (storage.kind === "slot") {
+      cx.builder.emitSlotWrite(storage.slotIndex, result);
     } else {
-      cx.builder.emitSlotWrite(binding.slotIndex, result);
+      cx.builder.emitRefCellSet(storage.value, result);
     }
-    cx.scope.set(id.text, { ...binding, stringEncoding: proof.resultEncoding });
+    cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
     return;
   }
-  const slotValType = asVal(binding.type);
+  const slotValType = asVal(logicalType);
   if (!slotValType || slotValType.kind !== "f64") {
     throw new Error(
-      `ir/from-ast: compound assign to non-f64 slot "${id.text}" (${describeIrType(binding.type)}) not in slice 6 (${cx.funcName})`,
+      `ir/from-ast: compound assign to non-f64 slot "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
     );
   }
 
   // Desugar: read the slot (or, #3142, the module-binding global), lower the
   // RHS, apply the binop, write back.
   const lhs =
-    binding.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet(binding.globalRef, binding.type)
-      : cx.builder.emitSlotRead(binding.slotIndex);
-  const rhsValue = lowerExpr(rhs, cx, binding.type);
+    storage.kind === "moduleGlobal"
+      ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
+      : storage.kind === "slot"
+        ? cx.builder.emitSlotRead(storage.slotIndex)
+        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
+  const rhsValue = lowerExpr(rhs, cx, logicalType);
   const rhsType = cx.builder.typeOf(rhsValue);
   if (asVal(rhsType)?.kind !== "f64") {
     // (#3565) DESIGNED demote: the f64 slot is fine, but the RHS lowered to a
@@ -9086,11 +9159,15 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       throw new Error(`ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`);
   }
   const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
-  if (binding.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet(binding.globalRef, result);
+  if (storage.kind === "moduleGlobal") {
+    cx.builder.emitGlobalSet(storage.globalRef, result);
     return;
   }
-  cx.builder.emitSlotWrite(binding.slotIndex, result);
+  if (storage.kind === "slot") {
+    cx.builder.emitSlotWrite(storage.slotIndex, result);
+    return;
+  }
+  cx.builder.emitRefCellSet(storage.value, result);
 }
 
 /**
@@ -9107,26 +9184,32 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   if (!binding) {
     throw new Error(`ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`);
   }
-  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal") {
+  const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
+  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
     throw new Error(
       `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
   }
+  const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
+  const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
   // (#3741) i32-promoted slot — `i32.add`/`i32.sub` of 1, exactly what legacy
   // has emitted for a promoted counter since #1120.
-  if (binding.kind === "slot" && binding.i32Storage) {
-    const cur = cx.builder.emitSlotRead(binding.slotIndex);
+  if (storage.kind === "slot" && storage.i32Storage) {
+    const cur = cx.builder.emitSlotRead(storage.slotIndex);
     const one = cx.builder.emitConst({ kind: "i32", value: 1 }, IR_I32);
     const next = cx.builder.emitBinary(op === ts.SyntaxKind.PlusPlusToken ? "i32.add" : "i32.sub", cur, one, IR_I32);
-    cx.builder.emitSlotWrite(binding.slotIndex, next);
+    cx.builder.emitSlotWrite(storage.slotIndex, next);
     return;
   }
-  const logicalType = binding.kind === "slot" ? (binding.asType ?? binding.type) : binding.type;
+  const logicalType =
+    storage.kind === "slot" ? (storage.asType ?? storage.type) : (capturedCellType?.inner ?? storage.type);
   if (logicalType.kind === "dynamic") {
     const current =
-      binding.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet(binding.globalRef, logicalType)
-        : cx.builder.emitSlotReadAs(binding.slotIndex, logicalType);
+      storage.kind === "moduleGlobal"
+        ? cx.builder.emitGlobalGet(storage.globalRef, logicalType)
+        : storage.kind === "slot"
+          ? cx.builder.emitSlotReadAs(storage.slotIndex, logicalType)
+          : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
     const numeric = cx.builder.emitDynToNumber(current);
     const one = cx.builder.emitConst({ kind: "f64", value: 1 }, irVal({ kind: "f64" }));
     const updated = cx.builder.emitBinary(
@@ -9136,37 +9219,45 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
       irVal({ kind: "f64" }),
     );
     const boxed = cx.builder.emitBox(updated, irDynamic(JsTag.NumberF64));
-    if (binding.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet(binding.globalRef, boxed);
+    if (storage.kind === "moduleGlobal") {
+      cx.builder.emitGlobalSet(storage.globalRef, boxed);
+    } else if (storage.kind === "slot") {
+      cx.builder.emitSlotWrite(storage.slotIndex, boxed);
     } else {
-      cx.builder.emitSlotWrite(binding.slotIndex, boxed);
+      cx.builder.emitRefCellSet(storage.value, boxed);
     }
     return;
   }
-  const slotValType = asVal(binding.type);
+  const slotValType = asVal(logicalType);
   // The IR's binop set only includes f64 arithmetic — i32 add/sub
   // would need additional binop variants. For now, restrict to f64
   // counters (the common case for `let i = 0; i++` where `i: number`).
   // i32-typed counters fall back to legacy via the lowerer's throw.
   if (!slotValType || slotValType.kind !== "f64") {
     throw new Error(
-      `ir/from-ast: increment/decrement of non-f64 slot "${id.text}" (${describeIrType(binding.type)}) not in slice 12 (${cx.funcName})`,
+      `ir/from-ast: increment/decrement of non-f64 slot "${id.text}" (${describeIrType(logicalType)}) not in slice 12 (${cx.funcName})`,
     );
   }
   const lhs =
-    binding.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet(binding.globalRef, binding.type)
-      : cx.builder.emitSlotRead(binding.slotIndex);
+    storage.kind === "moduleGlobal"
+      ? cx.builder.emitGlobalGet(storage.globalRef, storage.type)
+      : storage.kind === "slot"
+        ? cx.builder.emitSlotRead(storage.slotIndex)
+        : cx.builder.emitRefCellGet(storage.value, capturedCellType!.inner);
   const isAdd = op === ts.SyntaxKind.PlusPlusToken;
   const oneIr: IrType = irVal({ kind: "f64" });
   const one = cx.builder.emitConst({ kind: "f64", value: 1 }, oneIr);
   const binop: IrBinop = isAdd ? "f64.add" : "f64.sub";
   const result = cx.builder.emitBinary(binop, lhs, one, oneIr);
-  if (binding.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet(binding.globalRef, result);
+  if (storage.kind === "moduleGlobal") {
+    cx.builder.emitGlobalSet(storage.globalRef, result);
     return;
   }
-  cx.builder.emitSlotWrite(binding.slotIndex, result);
+  if (storage.kind === "slot") {
+    cx.builder.emitSlotWrite(storage.slotIndex, result);
+    return;
+  }
+  cx.builder.emitRefCellSet(storage.value, result);
 }
 
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
@@ -10920,7 +11011,78 @@ function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, 
     parentId: identity.parentId,
     role: identity.role,
     ordinal: identity.ordinal,
+    ...(identity.sourceUnit ? { sourceUnit: true } : {}),
   });
+}
+
+function allocateLoweredLiftedFunctionArtifact(
+  declaration: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  cx: LowerCtx,
+  displayNameForOrdinal: (ordinal: number) => string,
+  preserveDerivedIdentity = false,
+): IrLiftedFunctionArtifactIdentity {
+  // Exact host plans allocate their targets before AST lowering and compare
+  // against those derived identities when the plan is consumed. They are
+  // compiler-owned artifacts even though their syntax is a source closure;
+  // do not replace their planned target with the source node's unit ID.
+  if (preserveDerivedIdentity) return allocateLiftedFunctionArtifact(cx, displayNameForOrdinal);
+
+  // Mutable-capture/usage transforms may retain the terminal declaration but
+  // clone a nested function-like. TypeScript preserves the exact pre-transform
+  // node through getOriginalNode; consult it before classifying the lift as a
+  // compiler-created artifact, otherwise a real source arrow incorrectly
+  // escapes into the derived-unit namespace.
+  const originalDeclaration = ts.getOriginalNode(declaration);
+  const expectedSourceKind = ts.isFunctionDeclaration(declaration)
+    ? "nested-function"
+    : ts.isFunctionExpression(declaration)
+      ? "function-expression"
+      : "arrow-function";
+  let sourceUnitId =
+    cx.identityContext?.unitIdByDeclaration.get(declaration) ??
+    (originalDeclaration !== declaration
+      ? cx.identityContext?.unitIdByDeclaration.get(originalDeclaration)
+      : undefined);
+  if (!sourceUnitId && cx.identityContext) {
+    // A few checker/usage transforms clone the nested node without preserving
+    // TypeScript's original-node link. Recover only one exact-span source
+    // record under this terminal owner; kind, source, owner, and offsets must
+    // all agree with the frozen inventory.
+    const owner = cx.identityContext.unitByUnitId.get(cx.ownerUnitId);
+    const sourceFile = declaration.getSourceFile();
+    const candidates = owner
+      ? cx.identityContext.inventory.allUnits.filter(
+          (unit) =>
+            unit.sourceId === owner.sourceId &&
+            unit.kind === expectedSourceKind &&
+            unit.terminalOwnerId === cx.ownerUnitId &&
+            unit.declarationStart === declaration.getStart(sourceFile) &&
+            unit.declarationEnd === declaration.end,
+        )
+      : [];
+    if (candidates.length === 1) sourceUnitId = candidates[0]!.id;
+  }
+  const sourceUnit = sourceUnitId ? cx.identityContext?.unitByUnitId.get(sourceUnitId) : undefined;
+  if (sourceUnitId && sourceUnit) {
+    if (
+      sourceUnit.kind !== expectedSourceKind ||
+      sourceUnit.terminalOwnerId !== cx.ownerUnitId ||
+      sourceUnit.lexicalOwnerId === null ||
+      !cx.identityContext?.unitByUnitId.has(sourceUnit.lexicalOwnerId as IrUnitId)
+    ) {
+      throw new Error(`ir/from-ast: lifted source identity diverged (${cx.funcName})`);
+    }
+    const displayOrdinal = cx.liftedCounter.value++;
+    return {
+      unitId: sourceUnitId,
+      name: displayNameForOrdinal(displayOrdinal),
+      parentId: sourceUnit.lexicalOwnerId as IrUnitId,
+      role: "lifted-closure",
+      ordinal: sourceUnit.ordinal,
+      sourceUnit: true,
+    };
+  }
+  return allocateLiftedFunctionArtifact(cx, displayNameForOrdinal);
 }
 
 /**
@@ -11004,8 +11166,11 @@ function lowerClosureExpressionWithSignature(
     }
   }
 
-  const liftedIdentity = allocateLiftedFunctionArtifact(cx, (ordinal) =>
-    exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
+  const liftedIdentity = allocateLoweredLiftedFunctionArtifact(
+    expr,
+    cx,
+    (ordinal) => exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
+    exact?.expectedLiftedTarget !== undefined || exact?.hostOneShot === true,
   );
   recordLiftedUnitProvenance(liftedIdentity, cx);
   const liftedTarget = irUnitFuncRef(liftedIdentity);
@@ -11114,7 +11279,8 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
   const signature: IrClosureSignature = { params, returnType };
 
   const captures = analyseCaptures(fn, cx);
-  const liftedIdentity = allocateLiftedFunctionArtifact(
+  const liftedIdentity = allocateLoweredLiftedFunctionArtifact(
+    fn,
     cx,
     (ordinal) => `${cx.funcName}__nested_${innerName}_${ordinal}`,
   );
@@ -11179,6 +11345,7 @@ function liftNestedFunction(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,
@@ -11288,6 +11455,7 @@ function liftClosureBody(
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
     promiseDelays: cx.promiseDelays,
+    identityContext: cx.identityContext,
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,

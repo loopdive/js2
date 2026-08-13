@@ -1689,7 +1689,8 @@ export function compileObjectLiteral(
     expr.properties.length > 0 &&
     ts.isVariableDeclaration(expr.parent) &&
     ts.isIdentifier(expr.parent.name) &&
-    ctx.growableObjectLiteralVars.has(expr.parent.name.text)
+    (ctx.growableObjectLiteralVars.has(expr.parent.name.text) ||
+      ctx.irWithOpenObjectTargetKeys.has(widenedVarKeyFromDecl(expr.parent.name)))
   ) {
     const growableResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (growableResult) return growableResult;
@@ -3773,6 +3774,7 @@ export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ArrayLiteralExpression,
+  forcedElementType?: ValType,
 ): ValType | null {
   // (#3366) A destructuring assignment gives its RHS array literal the
   // assignment pattern's contextual tuple type. That context describes the
@@ -3789,6 +3791,21 @@ export function compileArrayLiteral(
     const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
+  let assignmentValue: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(assignmentValue.parent) ||
+    ts.isAsExpression(assignmentValue.parent) ||
+    ts.isTypeAssertionExpression(assignmentValue.parent) ||
+    ts.isNonNullExpression(assignmentValue.parent)
+  ) {
+    assignmentValue = assignmentValue.parent;
+  }
+  const assignmentParent = assignmentValue.parent;
+  const isDestructuringAssignmentValue =
+    ts.isBinaryExpression(assignmentParent) &&
+    assignmentParent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignmentParent.right === assignmentValue &&
+    (ts.isArrayLiteralExpression(assignmentParent.left) || ts.isObjectLiteralExpression(assignmentParent.left));
 
   // Check if the target type is a tuple — compile as struct.new instead of array.
   // Skip if _arrayLiteralForceVec is set (e.g. destructuring default where the target
@@ -3798,7 +3815,7 @@ export function compileArrayLiteral(
     ctxTupleType &&
     isTupleType(ctxTupleType) &&
     !(ctx as any)._arrayLiteralForceVec &&
-    !hasDynamicOrCallableElement
+    !(hasDynamicOrCallableElement && isDestructuringAssignmentValue)
   ) {
     // When the contextual type gives degenerate tuple types (e.g. all void from
     // destructuring defaults: `[w = counter()] = [null, 0, false, '']`),
@@ -4336,6 +4353,7 @@ export function compileArrayLiteral(
     const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
     elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
+  if (forcedElementType !== undefined) elemWasm = forcedElementType;
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an
   // inner `[undefined]` / `[hole]` array down to a numeric vec (the leaf

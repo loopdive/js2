@@ -6,10 +6,14 @@ import type { IrUnitId } from "../ir/identity.js";
 import { ts } from "../ts-api.js";
 
 /**
- * R2 may own nested executable syntax only when every nested callable is the
- * exact zero-argument host callback already certified by the TypedAST plan.
- * The map key is the authoritative AST identity; owner and ordinal checks keep
- * the synthetic closure namespace complete, gap-free, and source ordered.
+ * R3 may own nested executable syntax when the structural selector has already
+ * admitted the enclosing terminal and every special host callback still
+ * matches its exact TypedAST plan. Ordinary nested function declarations are
+ * lowered into their inventoried source units under the terminal owner's
+ * prepared transaction; generic closure literals, object members, and class
+ * static blocks remain outside this checkpoint. The host-callback map key is
+ * the authoritative AST identity; owner and ordinal checks keep that special
+ * synthetic namespace complete, gap-free, and source ordered.
  */
 export function containsUnplannedNestedExecutableSyntax(
   declaration: ts.FunctionLikeDeclaration,
@@ -27,21 +31,39 @@ export function containsUnplannedNestedExecutableSyntax(
     if (ts.isArrowFunction(node)) {
       const plan = hostVoidCallbacks.get(node);
       if (
-        !plan ||
-        plan.ownerUnitId !== ownerUnitId ||
-        plan.ownerName !== ownerName ||
-        node.parameters.length !== 0 ||
-        plan.signature.params.length !== 0 ||
-        plan.signature.returnType !== null ||
-        !Number.isSafeInteger(plan.liftedOrdinal) ||
-        plan.liftedOrdinal < 0 ||
-        ordinals.has(plan.liftedOrdinal)
+        plan &&
+        (plan.ownerUnitId !== ownerUnitId ||
+          plan.ownerName !== ownerName ||
+          node.parameters.length !== 0 ||
+          plan.signature.params.length !== 0 ||
+          plan.signature.returnType !== null ||
+          !Number.isSafeInteger(plan.liftedOrdinal) ||
+          plan.liftedOrdinal < 0 ||
+          ordinals.has(plan.liftedOrdinal))
       ) {
         invalid = true;
         return;
       }
-      seen.add(plan);
-      ordinals.add(plan.liftedOrdinal);
+      if (plan) {
+        seen.add(plan);
+        ordinals.add(plan.liftedOrdinal);
+      }
+      ts.forEachChild(node.body, visit);
+      return;
+    }
+    if (ts.isFunctionExpression(node)) {
+      if (!node.body) {
+        invalid = true;
+        return;
+      }
+      ts.forEachChild(node.body, visit);
+      return;
+    }
+    if (ts.isFunctionDeclaration(node)) {
+      if (!node.body) {
+        invalid = true;
+        return;
+      }
       ts.forEachChild(node.body, visit);
       return;
     }
