@@ -308,4 +308,19 @@ describe("#4383 — typed-array identity across internal calls", () => {
       `),
     ).toBe(1);
   });
+
+  it("does not route a statically typed property argument through the dynamic nullish reader", async () => {
+    expect(
+      await run(`
+        function present(value: any) {
+          return value === null || value === undefined ? 0 : 1;
+        }
+        class Example {}
+
+        export function test() {
+          return present(Example.prototype);
+        }
+      `),
+    ).toBe(1);
+  });
 });

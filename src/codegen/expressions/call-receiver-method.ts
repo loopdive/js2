@@ -119,6 +119,7 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileExternMethodCall } from "./extern.js";
+import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
@@ -1421,7 +1422,7 @@ export function compileReceiverMethodCall(
         const paramCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsStatic = ctx.funcUsesArguments.has(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
         }
         if (expr.arguments.length > paramCount) {
           if (calleeReadsArgsStatic) {
@@ -1565,7 +1566,7 @@ export function compileReceiverMethodCall(
         const ngParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNg = ctx.funcUsesArguments.has(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, ngParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
         }
         if (expr.arguments.length > ngParamCount) {
           if (calleeReadsArgsNg) {
@@ -1627,7 +1628,7 @@ export function compileReceiverMethodCall(
       const methodParamCount = paramTypes ? Math.max(0, paramTypes.length - 1) : expr.arguments.length;
       const calleeReadsArgsNn = ctx.funcUsesArguments.has(fullName);
       for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-        compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+        compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
       }
       if (expr.arguments.length > methodParamCount) {
         if (calleeReadsArgsNn) {
@@ -1719,7 +1720,7 @@ export function compileReceiverMethodCall(
           const smMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
           const calleeReadsArgsSm = ctx.funcUsesArguments.has(fullName);
           for (let i = 0; i < Math.min(expr.arguments.length, smMethodParamCount); i++) {
-            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
           }
           if (expr.arguments.length > smMethodParamCount) {
             if (calleeReadsArgsSm) {
@@ -1777,7 +1778,7 @@ export function compileReceiverMethodCall(
         const nnMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNns = ctx.funcUsesArguments.has(fullName);
         for (let i = 0; i < Math.min(expr.arguments.length, nnMethodParamCount); i++) {
-          compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
         }
         if (expr.arguments.length > nnMethodParamCount) {
           if (calleeReadsArgsNns) {
@@ -1921,7 +1922,7 @@ export function compileReceiverMethodCall(
           if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
           else if (at === null) fctx.body.push({ op: "ref.null.extern" });
         } else {
-          const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
+          const at = compileInternalCallArgument(ctx, fctx, arg, { kind: "externref" });
           if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
           else if (at === null) fctx.body.push({ op: "ref.null.extern" });
         }

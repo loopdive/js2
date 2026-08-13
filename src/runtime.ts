@@ -14717,17 +14717,6 @@ assert._isSameValue = isSameValue;
             typeof vecGet === "function" &&
             (typeof isVec !== "function" || isVec(obj))
           ) {
-            // (#4383) Use the same canonical live array view as every other
-            // WasmGC-vec host crossing. The old convertedArrays snapshot was a
-            // second host identity for the same vec: a typed argument reached
-            // an `any`-typed compiled callee as the snapshot, while returning
-            // that argument produced `_wrapForHost`'s live proxy. Besides
-            // making `buffer === returnedBuffer` false, indexed writes landed
-            // in the snapshot instead of the caller-owned vec. The live view
-            // is a real Array-backed proxy and remains iterable for the native
-            // APIs that require this helper.
-            const liveView = _wrapVecForHost(obj, exports);
-            if (liveView !== undefined) return liveView;
             const len = vecLen(obj) as number;
             if (typeof len === "number" && len >= 0) {
               const arr = convertedArrays.get(obj) ?? [];

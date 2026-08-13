@@ -42,7 +42,10 @@ export function compileInternalCallArgument(
   // numeric-looking field remains `undefined` instead of being narrowed to
   // f64 NaN and then re-boxed. This is the `v1(options) -> v1Bytes(...)`
   // nullish-default path in uuid (#4383).
-  if (ts.isPropertyAccessExpression(carrier)) {
+  if (
+    ts.isPropertyAccessExpression(carrier) &&
+    (ctx.checker.getTypeAtLocation(carrier.expression).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+  ) {
     return compilePropertyAccessForNullishObservation(ctx, fctx, carrier);
   }
   if (!ts.isIdentifier(carrier)) {
