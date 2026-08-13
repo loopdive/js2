@@ -1392,3 +1392,84 @@ Recorded rather than silently amended: entry (5) is published in PR #4429, and a
 prescription that sends the next lane to rewrite a 4,000-line-file hot path for
 1.36 % of calls in dead code is exactly the kind of confident-but-wrong direction
 this file exists to prevent.
+
+## 2026-08-12 (7) — the typed-receiver ABI, priced before building: ~0.6 %, below the floor
+
+Entry (6) established that the fixup hazard is gone and the typed-receiver
+experiment is cheap. Reading the fill body prices it, and the answer is: **do not
+build it.**
+
+### Only UNGUARDED trampolines can take a typed receiver
+
+`fillDirectCallTrampolines` emits, for an unguarded (`this`-receiver, sound by
+construction) trampoline:
+
+```
+local.get 0 ; any.convert_extern ; ref.cast $F ; local.get 1..n ; <pads> ; call twin
+```
+
+The guarded (`_g`) form instead emits `local.get 0 ; any.convert_extern ;
+ref.test $F ; if …then cast+call twin …else legacy`. That `ref.test` is the whole
+point of the variant: the receiver's shape comes from a whole-program flow
+verdict, and the guard turns an imprecision into a missed optimisation instead of
+a trap. A typed `(ref $F)` parameter would force the **call site** to produce the
+struct — i.e. to cast — which reintroduces exactly the trap the guard exists to
+prevent. **`_g` cannot take a typed receiver at all**, and that is a soundness
+fact, not a limitation to engineer around.
+
+### The split, from the profile
+
+| | self % |
+| --- | ---: |
+| unguarded `__dc_*` (typed receiver possible) | **≈ 1.29 %** |
+| guarded `__dc_*_g` (must keep externref + `ref.test`) | ≈ 2.80 % |
+
+The change removes `any.convert_extern; ref.cast` from the body and
+`extern.convert_any` from the call site. For a low-arity unguarded trampoline
+(`__dc_Parser_next_0` is 4 instructions total) that is about **half the body** —
+a good ratio, but applied to 1.29 %, so **≈ 0.6 % of runtime**.
+
+### Verdict
+
+0.6 % sits at or below this box's demonstrated resolution (±0.3–0.5 pp; see the
+two order-reversed nulls in entries (2) and (4)). Building it means a real
+change to the hottest call path in the compiler, touching reserve, both call-site
+paths and the fill's legacy-degradation arm, for a result this session has three
+times shown it cannot measure at that scale.
+
+**Priced out, not attempted.** If someone later makes unguarded trampolines a
+much larger share — e.g. by widening the receiver-flow analysis so fewer sites
+need `_g` — re-price it then; the arithmetic above is the template.
+
+## 2026-08-12 (8) — strategic close: helper-level work on acorn is finished
+
+Seven levers were priced in this session. Every one that could be measured
+measured null, and every one that could not be measured priced below the floor:
+
+| lever | verdict |
+| --- | --- |
+| ladder screen for plain-object receivers | measured NULL, ±0.3 pp |
+| abstract-`eq` casts on the cache hit path | measured NULL, ±0.5 pp |
+| smarter per-key cache (N-way / shape-keyed) | priced out — thrash is 3.77 % |
+| rewrite the `applyRefNullFixups` walk | priced out — 1.36 % of calls, dead code |
+| typed-receiver `__dc_*` ABI | priced out — ≈ 0.6 %, below floor |
+| regex AOT specialization | ≈ 0.7 % of acorn (82 % of patterns are runtime-built) |
+| site/name-local inline caching | **≈ 5 %, the only survivor above the floor** |
+
+The allocation program did work — GC 23.1 % → 2.97 %, roughly 9 ms of the 100 ms
+gap. But it is spent, and what replaced it at the top of the profile does not
+yield to the same technique.
+
+**The measured floor is the point.** The 2026-08-08 cross-runtime table already
+said it: Node spends 92.9 % of its parse inside acorn's own code; this build
+spends 37.1 % there. Removing **every** helper, GC and regexp millisecond leaves
+42.5 ms vs 14.1 ms ≈ **3.0×**. The compiled scanner and parser are 3.1× and 3.5×
+slower than the JIT'd equivalents, and that residue is register allocation,
+inlining and inline-cache-class work on the emitted code — not helper elision.
+
+So "on par with Node on acorn" is **not reachable by the programme this umbrella
+has been running**, and no combination of the levers above closes it. The
+remaining honest paths are (a) the ~5 % inline-cache slice, which is worth doing
+on its own merits, and (b) a genuinely different programme aimed at the quality
+of emitted code for hot compiled functions. (b) is where the 3× lives and nothing
+in this issue currently targets it.
