@@ -1894,11 +1894,12 @@ function isIrClaimable(
 //     `return;` / fall-through tails. `void` in param position is rejected
 //     (no JS source emits a `void`-typed param value, so there's nothing to
 //     accept).
-// #2859 / #3214 B0 — `closure` selector kind (param only): a FunctionTypeNode annotation whose params
+// #2859 / #3214 B0+B3 — `closure` selector kind: a FunctionTypeNode annotation whose params
 //   and return are all primitive-annotated (the same surface slice-3 closure
-//   literals support). The override lowers the source parameter to
+//   literals support). The override lowers a source parameter or result to
 //   `IrType.callable` / externref; calls unpack it through the canonical wrapper
-//   root. `IrType.closure` remains the compiler-owned local literal carrier.
+//   root. A returned literal is explicitly packed at the return boundary.
+//   `IrType.closure` remains the compiler-owned local literal carrier.
 // #2949 slice 2 — `dynamic`: an UNANNOTATED position whose propagated lattice
 //   type converged to `unknown` (no evidence) or `dynamic` (top). Lowers to
 //   `IrType.dynamic` → the module's boxed-any carrier via
@@ -2171,6 +2172,12 @@ function resolveReturnTypeNode(t: ts.TypeNode): ResolvedKind {
   // (#2949 slice 3b) `any` return IS the dynamic type (same rationale as
   // the param arm — one `any` ABI, move-only-scanned).
   if (t.kind === ts.SyntaxKind.AnyKeyword) return "dynamic";
+  // #3522 returned-closure ownership — exact primitive FunctionTypeNode
+  // results use the same canonical callable/externref ABI already proven for
+  // callable parameters. Inexpressible signatures remain unclaimable.
+  if (ts.isFunctionTypeNode(t)) {
+    return irClosureSignatureFromFunctionTypeNode(t) ? "closure" : null;
+  }
   if (ts.isTypeLiteralNode(t) || ts.isTypeReferenceNode(t) || ts.isArrayTypeNode(t)) return "object";
   return null;
 }
@@ -4585,6 +4592,10 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     if (!isPhase1Expr(d.initializer, initializerScope, localClasses))
       return shapeNo("vardecl-init-expr", d.initializer);
     const initializer = unwrapPhase1Parens(d.initializer);
+    const returnedCallable = directReturnedCallableSignature(initializer, initializerScope);
+    if (returnedCallable) {
+      currentCallableArities.set(d.name.text, returnedCallable.params.length);
+    }
     if (!currentSubjectIsModuleInit && isConst && expressionTouchesTrackedModuleValue(initializer)) {
       const family = obviousModuleValueFamily(initializer);
       if (family === "f64" || family === "boolean") {
@@ -4785,11 +4796,34 @@ function isPhase1ClosureLiteral(
 }
 
 /**
+ * A literal may be returned through an exact FunctionTypeNode boundary. Local
+ * declaration initializers retain their dedicated const-only/projection rules.
+ */
+function isPhase1ReturnedClosureLiteral(
+  expr: ts.ArrowFunction | ts.FunctionExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return isPhase1ClosureLiteral(expr, scope, localClasses);
+}
+
+/**
  * Resolve a TypeNode annotation to one of the slice-1+2 ResolvedKinds.
  * Returns `null` for anything outside that surface. Local helper for
  * the closure shape checks; mirrors `resolveParamType`'s annotation
  * arm but without the propagation-fallback path.
  */
+function isPhase1PreparedLiteral(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  if (ts.isObjectLiteralExpression(expr)) return isPhase1ObjectLiteral(expr, scope, localClasses);
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr))
+    return isPhase1ReturnedClosureLiteral(expr, scope, localClasses);
+  return undefined;
+}
+
 function annotationToResolvedKind(node: ts.TypeNode): ResolvedKind {
   if (node.kind === ts.SyntaxKind.NumberKeyword) return "f64";
   if (node.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
@@ -6355,6 +6389,28 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   return undefined;
 }
 
+/**
+ * Resolve the exact callable returned by a direct same-source function call.
+ * This is intentionally narrower than checker inference: only an unshadowed
+ * top-level declaration with an expressible FunctionTypeNode result can seed a
+ * local callable binding. The AST-to-IR direct-call plan independently carries
+ * and rechecks the same signature.
+ */
+function directReturnedCallableSignature(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+): IrClosureSignature | null {
+  const candidate = unwrapProjectionExpression(expression);
+  if (!ts.isCallExpression(candidate) || !ts.isIdentifier(candidate.expression)) return null;
+  const name = candidate.expression.text;
+  if (scope.has(name) || currentNestedFunctionNames.has(name) || currentLexicalValueBindingNames.has(name)) {
+    return null;
+  }
+  const declaration = currentDynScanDecls?.get(name);
+  const returnType = declaration ? effectiveIrReturnTypeNode(declaration) : undefined;
+  return returnType && ts.isFunctionTypeNode(returnType) ? irClosureSignatureFromFunctionTypeNode(returnType) : null;
+}
+
 function directCallParamUsesNumericVecAbi(
   call: ts.CallExpression,
   parameterIndex: number,
@@ -7408,9 +7464,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // helper rejects spread, methods, getters/setters, computed keys,
   // and duplicate keys. Initializers must themselves be Phase-1
   // claimable, so nested objects compose recursively.
-  if (ts.isObjectLiteralExpression(expr)) {
-    return isPhase1ObjectLiteral(expr, scope, localClasses);
-  }
+  const preparedLiteral = isPhase1PreparedLiteral(expr, scope, localClasses);
+  if (preparedLiteral !== undefined) return preparedLiteral;
   // Slices 1+2 — property access. Slice 1 accepts `<string>.length`
   // syntactically; slice 2 broadens to any Identifier-named property,
   // with the lowerer enforcing receiver IrType (string→.length only,
@@ -8134,6 +8189,17 @@ function collectLocalClassDeclarations(
 function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
   const names = new Set<string>();
   if (!fn.body) return names;
+  const localValueNames = new Set<string>();
+  for (const parameter of fn.parameters) collectBindingNameTexts(parameter.name, localValueNames);
+  const collectLocalValueName = (node: ts.Node): void => {
+    if (node !== fn && isFunctionLike(node)) {
+      if (ts.isFunctionDeclaration(node) && node.name) localValueNames.add(node.name.text);
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) collectBindingNameTexts(node.name, localValueNames);
+    forEachChild(node, collectLocalValueName);
+  };
+  forEachChild(fn.body, collectLocalValueName);
   // #2859 / #3214 B0 — function-typed params (`fn: () => number`). A call
   // through such a param dispatches via the IR callable/root machinery — it is
   // NOT an external call. Only
@@ -8170,7 +8236,9 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
           if (
             ts.isIdentifier(d.name) &&
             d.initializer &&
-            (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))
+            (ts.isArrowFunction(d.initializer) ||
+              ts.isFunctionExpression(d.initializer) ||
+              directReturnedCallableSignature(d.initializer, localValueNames) !== null)
           ) {
             names.add(d.name.text);
           }

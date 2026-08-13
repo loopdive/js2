@@ -3716,6 +3716,23 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isObjectLiteralExpression(expr)) {
     return lowerObjectLiteral(expr, cx);
   }
+  // #3522 returned-closure ownership. A literal produced in expression
+  // position retains the internal closure carrier until an exact callable
+  // boundary requests it. Function results use that boundary, so pack the
+  // closure once here; local literal declarations keep the existing internal
+  // carrier and avoid an externref round trip.
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+    const closure = lowerClosureExpression(expr, cx);
+    const closureType = cx.builder.typeOf(closure);
+    if (
+      hint.kind === "callable" &&
+      closureType.kind === "closure" &&
+      closureSignatureEquals(closureType.signature, hint.signature)
+    ) {
+      return cx.builder.emitCallablePack(closure, hint.signature);
+    }
+    return closure;
+  }
   if (ts.isElementAccessExpression(expr)) {
     return lowerElementAccess(expr, cx);
   }
@@ -7564,6 +7581,14 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
  */
 function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
   const declared = cx.returnType;
+  if (declared?.kind === "callable") {
+    const actual = cx.builder.typeOf(value);
+    if (actual.kind === "callable" && closureSignatureEquals(actual.signature, declared.signature)) return value;
+    if (actual.kind === "closure" && closureSignatureEquals(actual.signature, declared.signature)) {
+      return cx.builder.emitCallablePack(value, declared.signature);
+    }
+    return value;
+  }
   if (declared?.kind === "dynamic") {
     const actual = cx.builder.typeOf(value);
     if (actual.kind === "dynamic") return value;

@@ -1448,6 +1448,40 @@ the final direct-call instrumentation. The checkpoint carries a focused runtime
 parity test for that boundary. Ordinary function-value targets in sources that
 do not observe the legacy activation continue to prepare.
 
+### Returned closure component checkpoint (2026-08-13)
+
+A top-level function may now return an exactly annotated primitive callable
+and seal together with a caller that stores and invokes that returned value.
+The source result uses the same canonical callable/externref ABI already used
+for callable parameters. Inside the producer, a literal remains the optimized
+typed closure carrier until the return seam packs it once; the caller unpacks
+the exact signature for indirect dispatch. This preserves the existing
+closure representation and avoids a dynamic-value round trip.
+
+Preparation now recognizes callable source results as backend-stable. This is
+required for correctness, not just coverage: the inventoried returned arrow
+must receive its source-owned callable slot inside the prepare-before-emit
+transaction. Leaving the producer on the late route exposed an empty legacy
+placeholder with `typeIdx = 0` during Program ABI sealing. The producer and
+caller are closed over the same exact call edge, so neither side can retain a
+legacy body or cross an unplanned ABI.
+
+The anti-vacuity fixture is `make(offset) -> (value) => value + offset`, then
+`run` stores `make(2)` and invokes it. With both direct body emitters poisoned,
+GC and standalone emit `make`, its captured lifted arrow, and `run` through IR,
+record `direct=0, IR=1` for both terminal functions, share one prepared
+component ID, validate, and return `42`. Same-source optimized direct builds
+provide the performance/size oracle; the IR binaries are no larger. A shadowed
+local `make` negative control proves the call-graph exemption does not fall
+through to a same-text top-level factory.
+
+Focused returned/ordinary/lifted closure plus prepared-free-function coverage
+is **45/45**, with typecheck green and zero post-claim errors. The next serial
+R3 families are recursive named/self-bound literals, default/destructured
+closure parameters, object-literal methods/accessors, and wider cross-owner
+callable escapes. No shared direct closure implementation is deleted yet;
+those remaining typed consumers still require it.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

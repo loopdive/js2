@@ -336,6 +336,11 @@ function bodyProjection(
 
 function r2StableSignatureType(type: IrType | null): boolean {
   if (type === null || type.kind === "string") return true;
+  // #3522 returned-closure ownership — an exact callable source boundary is
+  // the same canonical externref contract in both backends. Admit the owner to
+  // prepare-before-emit so its inventoried lifted literal is allocated inside
+  // the sealed component instead of relying on a direct-body closure slot.
+  if (type.kind === "callable") return true;
   // #3522 Builtins retirement — opaque host-class contracts have one
   // backend-independent physical representation in the JS-host lane:
   // externref. Admission is still fail-closed because
@@ -622,7 +627,7 @@ function sameValType(left: ValType, right: ValType): boolean {
 }
 
 function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined {
-  if (type.kind === "extern") return { kind: "externref" };
+  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string") {
     if (!ctx.nativeStrings) return { kind: "externref" };
     return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;

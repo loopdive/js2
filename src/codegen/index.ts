@@ -1105,15 +1105,15 @@ function resolvePositionType(
       if (ir) return ir;
       throw new Error(`object TypeNode ${ts.SyntaxKind[node.kind]} could not be lowered to IrType.object`);
     }
-    // #2859 / #3214 B0 — function-typed PARAMETER (`fn: () => number`). Mirrors
-    // the selector's `resolveParamType` FunctionTypeNode arm: the signature is
+    // #2859 / #3214 B0+B3 — function-typed source boundary
+    // (`fn: () => number` or `(): () => number`). Mirrors the selector's
+    // FunctionTypeNode arms: the signature is
     // built by the SAME helper, so the override the lowerer receives compares
     // `irTypeEquals`-equal to the signature a slice-3 closure literal argument
     // produces. A claimed function reaching the throw below means selector and
     // override builder diverged (the standard out-of-sync guard → legacy).
-    // Callable RESULTS remain deliberately unclaimable: the selector rejects a
-    // FunctionTypeNode return as `return-type-not-resolvable` before this shared
-    // position resolver can be reached for it (#3214 B0 parameter-only invariant).
+    // Results and parameters share the canonical externref callable ABI; the
+    // AST lowerer explicitly packs a returned internal closure at that seam.
     if (ts.isFunctionTypeNode(node)) {
       const signature = irClosureSignatureFromFunctionTypeNode(node);
       if (signature) return { kind: "callable", signature };
