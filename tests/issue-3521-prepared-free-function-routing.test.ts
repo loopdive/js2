@@ -2,9 +2,16 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { analyzeSource } from "../src/checker/index.js";
+import { generateModule } from "../src/codegen/index.js";
 import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { irSupportGlobalRef } from "../src/ir/abi-bindings.js";
+import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildImports } from "../src/runtime.js";
+
+// Register the low-level codegen delegates used by generateModule.
+import "../src/codegen/expressions.js";
 
 function firstFunction(source: string): ts.FunctionDeclaration {
   const sourceFile = ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, true);
@@ -562,17 +569,168 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       export function run(): number { return holder.callable(); }
       `,
     ],
-  ] as const)("keeps a function value materialized through a %s off the sealed route", async (_kind, source) => {
-    const result = await compile(source, {
-      fileName: `prepared-function-value-${_kind.replace(" ", "-")}.ts`,
-      experimentalIR: true,
-      trackIrOutcomes: true,
-    });
+  ] as const)("prepares a function-value target used through a %s", async (_kind, source) => {
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let result: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "answer";
+      result = await compile(source, {
+        fileName: `prepared-function-value-${_kind.replace(" ", "-")}.ts`,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(outcome(result, "answer")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
-    expect(outcome(result, "answer")).not.toHaveProperty("preparedComponentId");
+    expect(outcome(result, "answer")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
     expect((await instantiate(result)).run!()).toBe(42);
+  });
+
+  it.each(["gc", "standalone"] as const)(
+    "preserves singleton identity while the function-value target is prepared in %s",
+    async (target) => {
+      const source = `
+        function answer(): number { return 42; }
+        export function run(): number {
+          const first: any = answer;
+          const second: any = answer;
+          return first === second ? first() : -1;
+        }
+      `;
+      const direct = await compile(source, {
+        fileName: `prepared-function-value-identity-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "answer";
+        prepared = await compile(source, {
+          fileName: `prepared-function-value-identity-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          optimize: true,
+          target,
+        });
+      } finally {
+        if (previousPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+        }
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!()).toBe(42);
+      }
+      expect(outcome(prepared, "answer")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it("publishes exact singleton support beneath the prepared value target", () => {
+    const source = `
+      function answer(): number { return 42; }
+      export function run(): number {
+        const first: any = answer;
+        return first();
+      }
+    `;
+    const ast = analyzeSource(source, "prepared-function-value-program-abi.ts");
+    const generated = generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+    expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+    const answerOutcome = generated.irOutcomes?.find(
+      (candidate) => candidate.unitKind === "function" && candidate.displayName === "answer",
+    );
+    expect(answerOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    if (!answerOutcome?.unitId) throw new Error("prepared answer has no exact terminal unit ID");
+
+    const trampoline = irSupportFuncRef(
+      answerOutcome.unitId,
+      "function-value-trampoline",
+      "diagnostic-prepared-function-value-trampoline",
+    );
+    const cache = irSupportGlobalRef(
+      answerOutcome.unitId,
+      "function-value-cache",
+      "diagnostic-prepared-function-value-cache",
+    );
+    const entries = generated.programAbi!.abi.entries();
+    expect(entries.find((entry) => entry.id === trampoline.binding.bindingId)).toMatchObject({
+      id: trampoline.binding.bindingId,
+      displayName: "__fn_tramp_answer_cached",
+      slotPolicy: "required",
+      slotSpace: "function",
+      intent: { kind: "callable", origin: "support", unitId: answerOutcome.unitId },
+    });
+    expect(entries.find((entry) => entry.id === cache.binding.bindingId)).toMatchObject({
+      id: cache.binding.bindingId,
+      displayName: "__fn_closure_answer",
+      slotPolicy: "required",
+      slotSpace: "global",
+      intent: { kind: "global", origin: "support", mutable: true },
+    });
+    expect(generated.programAbi!.abi.resolveFinalIndex(trampoline.binding.bindingId)).toMatchObject({
+      space: "function",
+    });
+    expect(generated.programAbi!.abi.resolveFinalIndex(cache.binding.bindingId)).toMatchObject({
+      space: "global",
+    });
+  });
+
+  it("does not allocate target support for a shadowed same-name local", () => {
+    const source = `
+      function answer(): number { return 42; }
+      export function invoke(): number { return answer(); }
+      export function readShadow(answer: number): number { return answer; }
+    `;
+    const ast = analyzeSource(source, "prepared-function-value-shadow.ts");
+    const generated = generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+    expect(generated.errors.filter((error) => error.severity !== "warning")).toEqual([]);
+    const answerOutcome = generated.irOutcomes?.find(
+      (candidate) => candidate.unitKind === "function" && candidate.displayName === "answer",
+    );
+    expect(answerOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    if (!answerOutcome?.unitId) throw new Error("prepared answer has no exact terminal unit ID");
+    const trampoline = irSupportFuncRef(
+      answerOutcome.unitId,
+      "function-value-trampoline",
+      "diagnostic-shadowed-function-value-trampoline",
+    );
+    const cache = irSupportGlobalRef(
+      answerOutcome.unitId,
+      "function-value-cache",
+      "diagnostic-shadowed-function-value-cache",
+    );
+    const entries = generated.programAbi!.abi.entries();
+    expect(entries.some((entry) => entry.id === trampoline.binding.bindingId)).toBe(false);
+    expect(entries.some((entry) => entry.id === cache.binding.bindingId)).toBe(false);
   });
 
   it("prepares a closed free-function component beside direct class and module owners", async () => {

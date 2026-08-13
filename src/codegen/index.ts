@@ -34,7 +34,8 @@ import {
 } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { irSupportFuncRef } from "../ir/callable-bindings.js";
+import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
+import { irSupportGlobalRef } from "../ir/abi-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
@@ -168,6 +169,7 @@ import {
 } from "./ir-overlay-safety.js";
 import {
   completePreparedIrIntegration,
+  collectPreparedTopLevelFunctionValueTargetUnitIds,
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
   prepareIrBodies,
@@ -2038,6 +2040,61 @@ interface IrOverlayPlan {
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
   readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
+}
+
+/**
+ * Allocate and freeze direct function-value singleton support before a target
+ * body can seal through Prepared IR. A direct caller may still materialize the
+ * value later, but it must reuse these exact allocator objects rather than
+ * adding ABI drafts to an already sealed target component.
+ */
+function prepareTopLevelFunctionValueTargetSupport(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+  selectedLegacyNames: ReadonlySet<string>,
+): void {
+  const selectedUnitIds = new Set(
+    [...selectedLegacyNames].map((legacyName) =>
+      irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+    ),
+  );
+  const valueTargetUnitIds = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
+  for (const unitId of valueTargetUnitIds) {
+    if (!selectedUnitIds.has(unitId)) continue;
+    const claim = plan.functionClaimsByUnitId.get(unitId);
+    const funcIdx = claim ? ctx.programAbiSourceCallables?.handleForUnit(unitId) : undefined;
+    const target = claim ? irUnitFuncRef({ unitId, name: claim.legacyName }) : undefined;
+    if (claim === undefined || funcIdx === undefined || target === undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} has no exact allocated source callable`,
+      );
+    }
+    const singleton = ensureFuncClosureSingleton(ctx, claim.legacyName, funcIdx, false);
+    const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
+    const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
+    if (!singleton || !trampoline || !cache) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} could not allocate its exact singleton support`,
+      );
+    }
+    const functionValuePlan = {
+      target,
+      trampoline: irSupportFuncRef(unitId, "function-value-trampoline", trampoline.name),
+      cacheGlobal: irSupportGlobalRef(unitId, "function-value-cache", cache.name),
+    };
+    if (!planProgramAbiFunctionValue(ctx, functionValuePlan, trampoline, cache)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} could not freeze its singleton Program ABI`,
+      );
+    }
+  }
 }
 
 function recordWholeSourceFailure(
@@ -4065,6 +4122,7 @@ function planIrFirstBodyRouting(
           },
           selection,
         );
+      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, preparedFreeFunctionNames);
       const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,

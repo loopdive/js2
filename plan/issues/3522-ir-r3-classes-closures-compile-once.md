@@ -74,6 +74,7 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
@@ -1408,6 +1409,33 @@ typed direct route. Object-literal methods/accessors are the next serial R3
 family. No shared direct closure implementation is deleted yet; retire each
 branch with the final consumer and keep its optimization/parity assertions in
 that deletion checkpoint.
+
+### Top-level function-value target checkpoint (2026-08-13)
+
+A top-level function declaration no longer has to retain its direct body merely
+because another owner materializes it as a runtime value. The selector admits
+the target when its body and callable signature are otherwise R2-safe, while
+the value-using owner remains direct unless it already has an exact IR
+function-value plan. Before any target component seals, codegen allocates the
+canonical lazy singleton and freezes its exact source-owned
+`function-value-trampoline` plus mutable `function-value-cache` Program ABI
+bindings. A later direct read must reuse those allocator objects; it cannot add
+support to an already sealed component.
+
+The checkpoint proves local-variable and module-object escapes with the target
+direct-body emitter poisoned: the target reports `direct=0, IR=1`, validates,
+and returns the expected value. GC and standalone parity cases prove repeated
+reads retain JavaScript singleton identity and that optimized IR binaries are
+no larger than their same-source direct binaries. Structural coverage resolves
+both support bindings to final function/global slots beneath the target's exact
+terminal unit, preventing a generic name-owned trampoline from satisfying the
+runtime-only tests.
+
+Only the target crosses this one-way boundary. General value-consuming owners,
+returned/escaped closure values, capture-carrying cross-owner calls, object
+methods/accessors, and callable values that require dynamic dispatch remain on
+the typed direct route. No shared direct closure implementation is deleted in
+this checkpoint because those consumers still reach it.
 
 ## Exhaustive source-unit census
 
