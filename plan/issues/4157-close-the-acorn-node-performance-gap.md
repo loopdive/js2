@@ -1963,3 +1963,57 @@ the checker (or `ctx.oracle`) can actually prove.
 comparison while leaving operands boxed is the partial-narrowing shape that
 measured as a **2.7× pessimization** in #3673 round 36. The hint must propagate
 down into the operand emitters, not just the comparison.
+
+## 2026-08-13 (17) — helper body sizes, and the one bucket nobody is working
+
+Sizes of the hot helpers, from the same disassembly (`optimize: 0`, names
+preserved). Read these against the inlining cliff of entry (9): `wasm-opt`
+inlined an 11-instruction helper at 1,255 sites and declined a ~45-instruction
+one at 1,812.
+
+| helper | wat lines | inner calls | static sites | runtime |
+| --- | ---: | ---: | ---: | ---: |
+| `__to_primitive` | **642** | **46** | 1,235 | 1.84 % |
+| `__extern_strict_eq` | 264 | 4 | — | 2.65 % |
+| `__is_truthy` | **126** | **0** | **1,655** | **3.93 %** |
+| `__extern_is_nullish` | 53 | 0 | 424 | 0.34 % |
+| `__unbox_boolean` | 31 | 0 | 745 | — |
+| `__box_boolean` | 14 | 0 | 1,212 | — |
+
+Three things fall out.
+
+**`__to_primitive` at 642 lines and 46 inner calls confirms the fusion slice.**
+It is the largest helper on this list by a factor of two and it is called at
+1,235 sites, **1,092 of which immediately unbox the result to f64** (entry 15).
+Materializing a boxed intermediate through a 642-line, 46-call helper and then
+discarding it is the most expensive redundant round trip in the program.
+
+**`dynamic-eq` is 6.93 % of runtime and has no owner.** `__is_truthy` (3.93 %)
+plus `__extern_strict_eq` (2.65 %) is a bigger bucket than `string-runtime`
+(4.39 %), and larger than the `regexp` bucket the whole AOT-matcher programme
+targets. Four workstreams are live — boxing, property access, inlining, strings —
+and none of them covers it.
+
+**`__is_truthy` is the cleanest inline-fast-path candidate in the program.** It
+is 126 lines with **zero inner calls**, so it is self-contained, and it sits at
+1,655 sites and 3.93 % of runtime. It is far past the inlining cliff, so
+`wasm-opt` will never hoist it — but it does not need to be hoisted whole. JS
+truthiness is false only for `undefined`, `null`, `false`, `0`, `-0`, `NaN` and
+`""`; the acorn-dominant operands are i31-packed integers and boxed booleans.
+A site-inlined guard of roughly:
+
+```
+ref.test i31   -> if: i31.get_s ; i32.eqz ; i32.eqz          (covers 0 vs non-0)
+ref.test $BoxedBoolean -> if: struct.get <flag>
+else           -> call __is_truthy                            (unchanged)
+```
+
+is under ten instructions and leaves the helper as the terminal arm, so it is a
+pure fast-path addition with no semantic surface — the shape that has worked
+here, as opposed to the reordering and outlining shapes that measured null.
+
+**Deliberately NOT started.** `__is_truthy` is emitted from several lowerings
+including the binary-op path that the in-flight `inlining` workstream owns
+(`binary-ops.ts` / `binary-ops-typed-dispatch.ts`, entry 16). Opening a fifth
+concurrent edit into shared emission would risk a conflict worth more than the
+delay. This is the next dispatch once one of the four lands.
