@@ -3905,3 +3905,39 @@ The three defects of entry (30) are now one measured, one measured, one open: A
 shows; B (receiver re-resolution) is a code-size win with a reusable structural
 lesson; **C (no redundancy elimination between adjacent ICs) is untouched, and B's
 relocation guard is the thing it will need first.**
+
+## 2026-08-13 (34) — the definitive wall measurement: **−12.0 %**, tuned-11, completed `-O4`
+
+The session's closing measurement, designed to answer entries (29) and (31) at
+once: order-reversed ON/OFF/OFF/ON on the lane, with `optimize.ts`'s `wasm-opt`
+timeout temporarily raised (file-copy A/B, restored after) so **no block could
+silently ship an unoptimized fallback** — the confound entry (31) exposed.
+
+ON = the tuned eight **plus** the three slices landed since:
+`JS2WASM_SET_MEMBER_F64`, `JS2WASM_RECEIVER_CSE`, `JS2WASM_EXTERN_GET_IC=1`.
+
+| block | wasm ms | node ms | ratio |
+| --- | ---: | ---: | ---: |
+| onA | 98.45 | 15.68 | 6.28× |
+| offA | 104.59 | 13.72 | 7.62× |
+| offB | 109.48 | 13.52 | 8.10× |
+| onB | 90.02 | 12.77 | 7.05× |
+| **ON mean** | **94.23** (spread 8.44) | | |
+| **OFF mean** | **107.03** (spread 4.89) | | |
+
+**−12.80 ms, −12.0 % — the largest wall improvement recorded in this issue**,
+and the effect exceeds both within-group spreads. The ratio moves ~7.9× → ~6.6×,
+quoted as ranges because the Node baseline still swings 12.8–15.7 ms between
+blocks.
+
+What changed since the −8.5 % of entry (28): the write-side f64 twin, the
+receiver CSE (which *shrinks* the binary), the extern-get IC (−87.2 % of the
+hottest helper's calls), and — likely material — a genuinely completed `-O4` on
+every ON block. This also closes entry (29)'s question: with the timeout
+confound removed and the never-firing truthiness arms left off, adding
+well-chosen flags helps; the earlier "more is slower" was a mix of genuinely
+harmful arm maximisation and silent unoptimized fallbacks.
+
+Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6–7.1×**.
+Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
+reuse), partial inlining of user functions, and receiver-type specialisation.
