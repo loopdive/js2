@@ -54,12 +54,18 @@ same-named binding in another scope remains on its existing representation.
 
 The final measured manifest was the exact 21-file slice below, comparing a
 fresh detached base at
-`origin/main@17606867782907257c9fd26e4a4bc3e4e735a679` with implementation commit
-`83afdac8778499586928feebfc6767d9daf2ab45` on that base. The intervening
-main commit merged only the #2668 planning markdown; the compiler, runtime,
-harness, and fixture inputs remain byte-identical to the measured base.
-Both arms used `scripts/harness-flip-probe.ts` and demonstrated its mandatory
-must-pass and must-fail controls.
+`origin/main@8a2baecf3bc39d7ac5de16ea0c65361e3b73aca9` with candidate tree
+`746fc27287e535cc4e39e8f03c3761639de8ed9a`. The compiler-bearing W1 commit is
+`d664215b9256d77ba5772439a751c848c9ef8ccd`; every later W1 commit through the
+measured candidate changes only this issue's evidence. This remeasurement
+therefore includes both the merged #4447 class-expression ownership changes
+and #4443 runtime-eval/compiler-IR changes in both arms instead of extrapolating
+from either earlier main. Both arms used
+`scripts/harness-flip-probe.ts`, demonstrated its mandatory must-pass and
+must-fail controls, and produced all 21 rows with no entered or missing files.
+The manifest SHA-256 is
+`386db0dde30a647a81965c673ab4f635c70da74e39a49ce6c733499502e0c4be`; the
+test262 corpus is `b363f29d3c43c626dc852744ad64a0b48a003693`.
 
 | lane | base | head | gained | lost | net |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -82,14 +88,25 @@ The 15 unchanged host rows are intentionally not folded into W1's claim:
   not widen that consumer without an explicit open-object iteration contract.
 
 The standalone pair has no transitions and remains 21/21 passing. Both arms
-used the canary-verified QuickJS artifact `b0662069c241…`. The base used adapter
-`d7929c0b71a19b0c` for compiler bundle `106b0cabd7ae6de3`; the head used adapter
-`69f9752001f47bd7` for compiler bundle `66bbd7933576be22`. Each runtime banner
-confirmed its matching provider before the population ran. An earlier
-candidate-only run that reported 21 failures was discarded because its
-worktree lacked that provider. Provider availability must match across both
-arms. W2/W4 retain the remaining environment and declaration work outside this
-exact W1 family.
+freshly built their compiler and runtime bundles, then compiled and
+canary-verified a matching real-QuickJS adapter before the population ran:
+
+| artifact | base | candidate |
+| --- | --- | --- |
+| compiler bundle SHA-256 | `c60f2481bbc8e454ea3c6f91c5c1ade1bc111c4d77f42b72e3d162a82ce66875` | `cb7a02b9e00e900e6c6d0a33047fc9857a202ba9f2067f59c3f713de51781720` |
+| runtime bundle SHA-256 | `015635d37dcfb16467ff846857a1dab3589838d4232f9eb982d167add120d011` | `e1d1d8bac4917fd5e8584f4404145a48414bb58657ec3d861eda57620087ee2b` |
+| QuickJS adapter key | `d9b6dcbecd8aab90` | `3f69394285448486` |
+
+Both adapters have SHA-256
+`ce3688616ca764f82990b4792bd7f10b46a7ed4eadc4d4745fc330c908391b08`;
+their distinct keys prove each was selected against its arm's bundle. Both use
+the immutable QuickJS artifact
+`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`.
+Each runtime banner confirmed the corresponding key before the 21 rows ran.
+An earlier candidate-only run that reported 21 failures was discarded because
+its worktree lacked that provider. Provider availability must match across
+both arms. W2/W4 retain the remaining environment and declaration work outside
+this exact W1 family.
 
 Root review caught and fixed one pre-publication carrier leak: the first W1
 candidate also inserted the target's bare spelling into the legacy
@@ -108,8 +125,10 @@ unrelated closed struct contributes `7`).
 - `pnpm run check:loc-budget` and `pnpm run check:func-budget` — passed with
   the W1 allowances above.
 - `pnpm run check:ir-fallbacks` and `pnpm run check:ir-adoption` — passed.
-- Exact harness A/B controls passed in both lanes; the 21-row deltas are
-  recorded in the W1 evidence table above.
+- Exact same-current-main harness A/B controls passed in both lanes. Host was
+  21 fail on base versus 6 pass / 15 fail on W1; standalone was 21 pass in both
+  arms. Both partitions verified `21 == 21`, with no other status changes,
+  entered rows, or missing rows.
 
 ## Exact current population
 
