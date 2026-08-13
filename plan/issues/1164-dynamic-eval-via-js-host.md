@@ -4,7 +4,7 @@ title: "Dynamic eval via JS host import — compile eval string to ad-hoc Wasm m
 status: done
 created: 2026-04-22
 updated: 2026-08-13
-completed: 2026-04-25
+completed: 2026-08-13
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -15,6 +15,21 @@ goal: spec-completeness
 sprint: 45
 depends_on: [1163]
 required_by: [1066, 1165]
+loc-budget-allow:
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/index.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/select.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
+  - src/codegen/declarations/import-collector.ts::unifiedVisitNode
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/select.ts::isPhase1Expr
+  - src/runtime.ts::resolveImport
 ---
 # #1164 — Dynamic eval via JS host import: compile eval string to ad-hoc Wasm module
 
@@ -445,3 +460,120 @@ instrumentation stub is not a passing eval implementation.
 - Do not claim direct eval, value-producing eval, or standalone eval from this
   increment. Record their remaining exact rows under #2925/#1165 and keep them
   inside the ES5 completion denominator.
+
+## 2026-08-13 ES5 residual implementation record
+
+### Delivered slice
+
+This increment has two deliberately narrow, independently attributable parts:
+
+1. The legacy host-eval fallback recognizes an *active, unshadowed* raw Test262
+   `assert(...)`, `assert.<known method>(...)`, or known bracket-method call by
+   parsing the eval text and resolving its receiver in a no-lib checker. It does
+   not activate for comments, strings/template text, optional calls, unknown
+   members, or a local `assert` binding.
+2. IR owns only an ambient, JS-host, proven-string, result-discarded
+   `(0, eval)(source);` statement. Collection reserves the existing
+   `env.__extern_eval : (externref, i32) -> externref` capability before body
+   planning; lowering emits `isDirect = 0` and drops the `externref` result.
+
+Direct eval, a used indirect-eval result, non-proven strings, optional/spread
+calls, shadowed `eval`, native-string mode, and standalone remain legacy-owned.
+
+### Exact same-population host A/B
+
+The maintained population is the 120 ES5 `annexB/language/eval-code` rows that
+reported `assert is not defined` from same-SHA base
+`1fcb363695415ff3a09e338feade66132c93dd50`. Every arm used the same local
+harness, file list, host target, timeout, corpus gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693`, and mandatory passing/negative
+controls. The ignored per-row records are retained as
+`.tmp/issue-1164-{base,runtime,full,killswitch}-host.jsonl`.
+
+| arm | pass | fail | compile error | timeout | skip | runner error |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| base | 0 | 120 | 0 | 0 | 0 | 0 |
+| raw-assert runtime classifier only | 30 | 90 | 0 | 0 | 0 | 0 |
+| full implementation | 30 | 90 | 0 | 0 | 0 | 0 |
+| full with `JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM=1` | 0 | 120 | 0 | 0 | 0 | 0 |
+
+- Base → runtime-only is exactly **30 fail → pass** and 90 unchanged.
+- Runtime-only → full is 120 unchanged: the IR ownership slice does not claim
+  an unexplained Test262 gain.
+- Full → kill switch is exactly those 30 pass → fail rows; kill-switch → base
+  is 120 unchanged.
+- The failing negative control and the passing control settled in every chunk.
+  This is focused attribution evidence only; the full 9,029-row lane was not
+  run and is not claimed here.
+
+### Real standalone zero-loss check
+
+The exact same 120 files were run from clean base and the full implementation
+with the real QuickJS evaluator, not a trap stub. Both arms were **120 / 120
+pass**, with every one of the 120 rows unchanged and zero entered/left/status
+transitions. The retained ignored records are
+`.tmp/issue-1164-{base,full}-standalone.jsonl`.
+
+The provider was GitHub Actions run `31660362908`, artifact
+`9165959972` (`quickjs-wasi-7f939fdc`), locally verified from
+`/private/tmp/js2wasm-quickjs-wasi-7f939fdc`: QuickJS
+`954dc53628e36891f93c359aa60895c2ae3dac6b`, wasi-libc
+`8d8348ec24253d0638a693b8af82445c13d92d32`, artifact SHA-256
+`b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b`, and
+adapter key `1429ec7ecf2163fd`. This proves no targeted standalone regression;
+it does not close standalone eval or substitute for its full-lane gate.
+
+### Post-rebase focused validation
+
+The implementation was rebased cleanly onto `origin/main`
+`5cbbd881148171595265f06775989d1212573c6b` as implementation commit
+`21dcc859a50438785dd23c1e7904f2b22277f592` before this focused validation:
+
+- `pnpm exec vitest run tests/issue-1164-es5-eval-slice.test.ts` — **29 / 29**
+  pass, including scope-correct raw-assert controls, host-import inventory,
+  and standalone demotion.
+- `pnpm exec vitest run tests/issue-1164.test.ts` — **17 / 17** pass for the
+  pre-existing dynamic-eval Wasm-module path.
+- `pnpm exec vitest run tests/issue-1163.test.ts` — 7 / 8 pass; the unchanged,
+  pre-existing `eval()` no-argument fallback returns `0` rather than
+  `undefined`. Clean `origin/main` at
+  `993a6d9f2c08a2a788eec9c830b8eb6a57a15b64` produces the identical 7 / 8
+  result. The only intervening main change is the #671 planning markdown, so
+  the tested compiler/runtime tree is unchanged. This slice accepts exactly
+  one argument and cannot select that shape.
+- `pnpm run typecheck` — pass.
+- `pnpm run check:ir-fallbacks` — pass.
+- `pnpm run check:ir-adoption` — pass.
+
+These are implementation checks, not a substitute for the deferred 9,029-row
+ES5 acceptance lane.
+
+### Exact 90-row residual disposition
+
+All 90 remaining host failures parse cleanly and each contains one outer eval
+literal. The classifier resolves all **295** raw `assert` receivers as
+unbound harness globals; none is a lexical-shadow false negative. No remaining
+row reports `assert is not defined`: each reaches the shim and then fails its
+actual Annex B/eval assertion.
+
+- 68 are `direct` rows: 49 function-scope and 19 global-scope. The 49
+  function-scope rows remain with
+  [#2925](2925-direct-eval-scope-reification-host.md), whose reified caller
+  environment is the required direct-eval substrate.
+- 22 are indirect global rows, and the 19 direct-global rows also exercise the
+  unresolved Annex B declaration/visibility boundary documented in
+  [#3633](3633-extern-eval-cannot-see-compiled-module-bindings.md). Its
+  resolution explains why assertion visibility is only an unmasking gate;
+  these rows now need their actual B.3.3/EvalDeclarationInstantiation
+  semantics, not another `assert` heuristic.
+- The real-QuickJS standalone comparison has no residual in this 120-row host
+  population. It is therefore not evidence to close or broaden
+  [#2929](2929-interpreter-direct-eval-with-proxy-mop.md), which owns the
+  standalone direct-eval environment model.
+
+The failure signatures are 43 function-scope `assert.throws` assertions, 12
+global `assert.throws` assertions, 15 `undefined` expectations, 14 function
+expectations, and 6 function-scope `sameValue` assertions. Candidate
+`64b8f831151efe4c11f241b2889cc7eedbebd7f7`'s reported +120 is not
+reproducible: its raw `"assert."` substring heuristic cannot solve rows that
+already reach the shim and fail their semantic assertion.

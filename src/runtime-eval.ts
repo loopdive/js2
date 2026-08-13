@@ -117,6 +117,113 @@ export interface EvalShimOptions {
   onCompiled?: (info: { src: string; binarySize: number; isDirect: boolean }) => void;
 }
 
+const TEST262_ASSERT_METHODS = new Set([
+  "sameValue",
+  "notSameValue",
+  "throws",
+  "throwsAsync",
+  "compareArray",
+  "_isSameValue",
+]);
+
+const ASSERT_PROBE_FILE_NAME = "__eval_assert_probe__.js";
+const DISABLE_RAW_TEST262_ASSERT_SHIM_ENV = "JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM";
+
+/**
+ * Keep the attribution-only kill switch safe in browser hosts, where Node's
+ * `process` global does not exist. An absent environment means the shim is
+ * enabled, matching the normal production path.
+ */
+export function rawTest262AssertShimEnabled(
+  environment: Readonly<Record<string, string | undefined>> | undefined = typeof process === "undefined"
+    ? undefined
+    : process.env,
+): boolean {
+  return environment?.[DISABLE_RAW_TEST262_ASSERT_SHIM_ENV] !== "1";
+}
+
+function stripAssertReferenceParentheses(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+function rawTest262AssertReceiver(expression: ts.Expression): ts.Identifier | undefined {
+  const callee = stripAssertReferenceParentheses(expression);
+  if (ts.isIdentifier(callee)) return callee.text === "assert" ? callee : undefined;
+  if (ts.isPropertyAccessExpression(callee)) {
+    if (callee.questionDotToken) return undefined;
+    const receiver = stripAssertReferenceParentheses(callee.expression);
+    return ts.isIdentifier(receiver) && receiver.text === "assert" && TEST262_ASSERT_METHODS.has(callee.name.text)
+      ? receiver
+      : undefined;
+  }
+  if (ts.isElementAccessExpression(callee)) {
+    if (callee.questionDotToken) return undefined;
+    const receiver = stripAssertReferenceParentheses(callee.expression);
+    const key = callee.argumentExpression && stripAssertReferenceParentheses(callee.argumentExpression);
+    return ts.isIdentifier(receiver) &&
+      receiver.text === "assert" &&
+      key !== undefined &&
+      ts.isStringLiteralLike(key) &&
+      TEST262_ASSERT_METHODS.has(key.text)
+      ? receiver
+      : undefined;
+  }
+  return undefined;
+}
+
+function makeAssertProbeProgram(source: string): { sourceFile: ts.SourceFile; checker: ts.TypeChecker } | undefined {
+  const parsed = ts.createSourceFile(ASSERT_PROBE_FILE_NAME, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const diagnostics = (parsed as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  if (diagnostics && diagnostics.length > 0) return undefined;
+
+  const host: ts.CompilerHost = {
+    getSourceFile: (fileName) => (fileName === ASSERT_PROBE_FILE_NAME ? parsed : undefined),
+    getDefaultLibFileName: () => "",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getCanonicalFileName: (fileName) => fileName,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (fileName) => fileName === ASSERT_PROBE_FILE_NAME,
+    readFile: (fileName) => (fileName === ASSERT_PROBE_FILE_NAME ? source : undefined),
+    directoryExists: () => true,
+    getDirectories: () => [],
+  };
+  const program = ts.createProgram(
+    [ASSERT_PROBE_FILE_NAME],
+    { allowJs: true, checkJs: false, noLib: true, noResolve: true, target: ts.ScriptTarget.Latest, types: [] },
+    host,
+  );
+  const sourceFile = program.getSourceFile(ASSERT_PROBE_FILE_NAME);
+  return sourceFile ? { sourceFile, checker: program.getTypeChecker() } : undefined;
+}
+
+/**
+ * Detect an executable, unshadowed raw Test262 assert call in eval text.
+ * A no-lib checker resolves each receiver in its own lexical scope, so a
+ * local assertion remains local without suppressing a sibling harness call.
+ */
+export function hasActiveUnshadowedTest262Assert(source: string): boolean {
+  const probe = makeAssertProbeProgram(source);
+  if (!probe) return false;
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    const receiver =
+      ts.isCallExpression(node) && !node.questionDotToken ? rawTest262AssertReceiver(node.expression) : undefined;
+    if (receiver && probe.checker.getSymbolAtLocation(receiver) === undefined) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(probe.sourceFile, visit);
+  return found;
+}
+
 /**
  * Build a `__extern_eval` host import for a JS-host runtime.
  *
