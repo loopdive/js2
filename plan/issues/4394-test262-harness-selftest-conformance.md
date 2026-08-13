@@ -772,6 +772,48 @@ The remaining four of the nine need `String` callable as a VALUE standalone —
 `STANDALONE_ES5_GLOBAL_FUNCTION_NAMES` covers `parseInt`/`parseFloat`/… but not
 the `String`/`Number`/`Boolean` conversion functions.
 
+## Attempted and REVERTED — `String` as a value in standalone (standalone, 1 test)
+
+The remaining `compare-array-*` failures need `compareArray.format`'s callback:
+
+```js
+Array.prototype.map.call(arrayLike, String)   // → [null, null, null]
+```
+
+Implemented as a value-only conversion closure (`__extern_toString`),
+deliberately kept OUT of `STANDALONE_ES5_GLOBAL_FUNCTION_NAMES` so it would not
+be seeded as `globalThis.String` and shadow the constructor's statics. It
+worked: `compareArray.format([1,2,"a"])` → `[1, 2, a]`, `String.fromCharCode`
+unaffected, standalone harness 80 → **81**.
+
+**Reverted.** A 175-file standalone `built-ins/String` A/B found **3
+regressions for 1 harness gain**:
+
+```
+REGRESS built-ins/String/S15.5.2.1_A1_T5.js   pass → fail
+REGRESS built-ins/String/S15.5.2.1_A1_T6.js   pass → fail
+REGRESS built-ins/String/S15.5.2.1_A1_T7.js   pass → fail
+   #1.5: __str = new String(NaN); __str.constructor === String.
+   Actual: __str.constructor === [object Object]
+```
+
+The premise was wrong. A bare `String` value read was ALREADY resolving
+correctly — to the constructor object, which is what `x.constructor === String`
+compares against. Substituting a conversion function hijacked that identity.
+
+The real requirement is narrower and harder: the builtin constructor CARRIER
+must itself be callable, so `String` keeps its identity while
+`String(x)` / `map(…, String)` perform ToString. That is a change to the
+builtin-namespace value representation, not an entry in a global-function
+registry. Recorded here so the next attempt starts from the right shape — and
+so the cheap-looking version is not re-attempted.
+
+The harness cohort's other three `compare-array-*` failures are NOT blocked on
+this and are separate defects: an `arguments` array-like reads its string and
+undefined elements back as `NaN` (`[0, NaN, NaN]` vs `[0, a, undefined]` — the
+standalone twin of root cause 4), and a Symbol element comparison (the #2610
+symbol-carrier bucket).
+
 ## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
 
 `verifyProperty-desc-is-not-object.js` asserts that a primitive `desc` argument
