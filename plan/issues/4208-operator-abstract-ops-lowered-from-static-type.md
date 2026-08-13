@@ -2,10 +2,10 @@
 id: 4208
 title: "Operator abstract-ops are lowered from the STATIC type: ToNumber / ToPrimitive / Type() are skipped for string, wrapper and `{valueOf}` operands — 59 ES5 files, `1 === true` answers true"
 status: in-progress
-completed_slice: "S1 (Type() for ===/!==) and S2 (update-expression ToNumber) — 2026-08-11"
+completed_slice: "S1, S2, the first S3/S7 OrdinaryToPrimitive slice, and S4 wrapper loose equality — 2026-08-13"
 sprint: current
 created: 2026-08-07
-updated: 2026-08-11
+updated: 2026-08-13
 priority: high
 horizon: xl
 feasibility: hard
@@ -28,6 +28,8 @@ loc-budget-allow:
   - src/ir/module-bindings.ts
   - src/ir/select.ts
   - src/codegen/binary-ops-typed-dispatch.ts
+  - src/codegen/binary-ops.ts
+  - src/ir/backend/legality.ts
   - src/ir/from-ast.ts
   - src/runtime.ts
 func-budget-allow:
@@ -596,3 +598,92 @@ The five previously crashing files are:
 This is a five-file slice, not closure of S3/S7 or the ES5 goal. Relational,
 addition, abstract-equality, Date/function operands, and wider
 OrdinaryToPrimitive shapes remain to be measured and implemented.
+
+---
+
+## S4 closure — primitive-wrapper abstract equality (2026-08-13)
+
+Base: exact `origin/main@81125e5e248847a5df94c3e2a3a20016782e1df4`,
+with Test262 pinned at `b363f29d3c43c626dc852744ad64a0b48a003693` in
+an isolated worktree.
+
+### Re-grounded lever and root cause
+
+The filed S4 population still reproduces exactly: eight standalone failures,
+all host-pass, all reporting `illegal cast in __str_to_number()` through the
+assembled Test262 harness. The files are `S11.9.1_A7.{2,3,4,5}.js` and
+`S11.9.2_A7.{2,3,4,5}.js`. Six adjacent controls — A7.1, A7.6, and A7.7 for
+both `==` and `!=` — pass in both lanes.
+
+The compatibility-path defect occurs before the already-correct native
+Object→ToPrimitive equality cascade. The early mixed-primitive shortcut asks
+the checker whether an operand is a String/Boolean/Number; a real
+`new String(...)` wrapper therefore enters the String shortcut from its static
+type, even though its runtime `Type` is Object. Standalone then feeds the
+wrapper externref directly to `__str_to_number`, whose `$AnyString` cast traps.
+
+Wrapper equality now bypasses that static primitive shortcut. The typed
+externref dispatcher receives the real operands and uses its existing
+IsLooselyEqual sequence: detect exactly one Object, call canonical
+`__to_primitive(value, default)`, then compare the resulting primitive through
+the shared number/boolean/string carrier cascade. Host mode retains its
+canonical `__host_loose_eq` wrapper route. Strict equality, wrapper identity,
+and wrapper-vs-string behavior are unchanged.
+
+### IR ownership boundary
+
+As in the first S3/S7 slice, the full assembled Test262 module initializer is
+still compatibility-owned because unrelated harness declarations are outside
+the current module-init selector. The IR proof therefore uses a focused typed
+source rather than claiming that the entire harness wrapper is IR-emitted.
+
+The focused producer admits only a fresh ambient `Boolean`/`Number`/`String`
+wrapper compared with `==`/`!=` to a proven Boolean or Number, in either operand
+order. Constructor identity is checker-backed, the constructor argument must
+already have its exact primitive family, and the current producer is limited to
+the non-fast externref dynamic carrier. From-AST allocates the real wrapper via
+`__new_Boolean`/`__new_Number`/`__new_String`, calls `__to_primitive`, boxes the
+returned primitive and the concrete counterpart into the canonical dynamic
+carrier, and emits `dyn.eq`. It does not compute the answer from AST shape.
+
+Focused functions are genuinely IR-emitted in host and standalone, with no
+post-claim errors; standalone has zero imports. Wrapper-vs-wrapper identity and
+wrapper-vs-string remain pre-claim legacy boundaries, and local-variable
+wrapper probes pin the compatibility fix independently of the fresh-wrapper IR
+producer.
+
+### Same-base A/B
+
+The assembled-harness instrument proved both verdict directions before each
+arm. Both arms contain the identical 14-file set, so the partition denominator
+is exact.
+
+| lane | before | after | gained | lost | unchanged |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| host GC | 14 / 14 | **14 / 14** | 0 | 0 | 14 |
+| standalone | 6 / 14 | **14 / 14** | **8** | 0 | 6 |
+
+Standalone gained exactly:
+
+- `language/expressions/equals/S11.9.1_A7.{2,3,4,5}.js`
+- `language/expressions/does-not-equals/S11.9.2_A7.{2,3,4,5}.js`
+
+The project-wide ES5 goal denominator is the full **9,029 tests in each lane**.
+This bounded S4 result does not exclude eval, `Function`, `with`, or any other
+ES5 category, and it does not claim closure of that full goal or of the remaining
+S3/S5/S6/S7 operator families.
+
+### Verification
+
+- Maintained filtered Test262 runner: host GC **8 / 8**
+  (`20260813-062253`) and standalone **8 / 8** (`20260813-062426`). The
+  standalone filter used the supported interpreter eval provider because this
+  machine lacks the `clang-18` required to build the default QuickJS provider;
+  these eight equality files do not invoke eval. This does not narrow the full
+  9,029-test ES5 target, and no full sweep is claimed here.
+- Focused wrapper loose-equality IR ownership and legacy-boundary suite:
+  **4 / 4**.
+- Related wrapper/object OrdinaryToPrimitive suites: **19 / 19**.
+- `pnpm run typecheck`: pass.
+- `pnpm run check:ir-fallbacks`: pass; no unintended, post-claim, or
+  module-level fallback increase.
