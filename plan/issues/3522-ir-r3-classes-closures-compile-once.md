@@ -2106,3 +2106,60 @@ escapes still require a planned capture/runtime-value ABI before admission.
 Receiver-sensitive methods, accessors, mixed/open objects, optional calls, and
 mutable callable fields remain explicit later families; their live direct
 implementations cannot be deleted at this checkpoint.
+
+### One-hop object-alias destructuring checkpoint (2026-08-13)
+
+The destructuring-only projection now follows exactly one immutable local
+object alias: `const copy = operations; const { add } = copy; add(input)`. The
+root remains an exact preceding `const` all-method object literal, and both the
+root and alias are resolved by declaration identity in the same lexical owner
+and in source order. General property reads through aliases are deliberately
+unchanged; this does not admit `copy.add` as a new callable-value family.
+
+The proof is receiver-wide and fail-closed. It scans both identities and
+permits exactly the selected root-to-alias edge plus represented own-method
+destructures. Mutation through either name, a mutable or second alias, another
+independent alias of the same root, escape, shorthand storage, nested capture,
+unsafe sibling destructuring, computed access, optional invocation, an
+unresolved checker reference, or changed-snapshot shadowing keeps the complete
+function on the direct path with zero post-claim errors. A static binding key
+whose spelling collides with the alias is correctly treated as a property key,
+not a value read; `const { copy: invoke } = copy` is an explicit positive
+control.
+
+No AST-to-IR, Program ABI, runtime, or Wasm lowering change is needed. The
+ordinary alias retains the same closed object SSA value, destructuring uses the
+existing closure-valued `object.get`, and invocation remains a typed
+`call_ref`. Direct-body poison proves the owner and lifted method are both
+IR-emitted with no legacy body in GC and standalone. The focused suite is
+**39/39** and the adjacent eight-file closure/object matrix is **77/77**.
+Hybrid and strict IR-only shadow
+validation remain **37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0
+Invariants**; the fallback ratchet remains clean with only the two existing
+deferred string-builder candidates. Cross-backend differential coverage is
+**29/29** and native-first host-import policy remains **379 imports, 0
+legacy-semantic, and 0 unknown**. Full equivalence reports **1,645 passing, 24
+known failures, 12 baseline cases now passing, and zero new regressions**.
+Typecheck, lint, formatting, LOC/function budgets, oracle, coercion-site, issue,
+and optimization-retirement gates are green.
+
+Optimization parity is explicit rather than inferred. The admitted alias
+artifact validates, returns 42, uses `call_ref`, contains no `__call_m_*`
+dispatcher, and introduces no import absent from the direct control. GC keeps
+exactly the box/unbox imports and standalone remains zero-import. In each
+target the optimized IR binary is byte-for-byte identical to the equivalent
+IR source without the object alias (**2,262 bytes GC; 5,893 standalone**) and
+smaller than direct (**3,306 bytes GC; 6,830 standalone**), proving that the
+source-level alias is erased without losing the existing optimization.
+
+Next resumable R3 slice: migrate the existing destructured method captured by
+a nested closure. The value flow and typed closure call already lower through
+IR; the remaining preparation blocker is that `prepareClosureTransaction` does
+not yet pass its `ClosureStructRegistry` while resolving closure-valued capture
+fields. Bootstrap that registry, preserve the canonical closure wrapper-root
+reference in the capture ABI, then convert the existing negative fixture with
+poison/parity/size/import coverage. This should move one focused terminal body
+from legacy to IR. Bare nested-function values, receiver-sensitive methods,
+accessors, mutable callable slots, optional calls, and broader escapes remain
+later families. No shared direct implementation has zero consumers at this
+checkpoint, so none is deleted here.
