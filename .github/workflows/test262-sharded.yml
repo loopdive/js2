@@ -854,6 +854,14 @@ jobs:
       # on standalone shards 10/17 in #4402. Match the repo's issue/equivalence
       # gates and leave compiler-worker limits unchanged.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv
@@ -1057,6 +1065,14 @@ jobs:
       # in this parent and need the same 1 GiB ceiling as the required issue and
       # equivalence gates.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       JS2WASM_IR_FIRST: ""
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"

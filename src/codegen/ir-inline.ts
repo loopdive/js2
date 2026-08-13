@@ -695,6 +695,56 @@ function blockTypeFor(results: ValType[]): BlockType {
   return { kind: "val", type: results[0] };
 }
 
+/** Memoized per-callee analysis results — see the site loop in `inlineUserFunctions`. */
+interface CalleeFacts {
+  unsafe: DeclineReason | null;
+  rawSize: number;
+  effSize: number;
+  isLeaf: boolean;
+}
+
+/**
+ * ORIGINAL-body views: inlining is SINGLE-LEVEL. Callee bodies are read from
+ * their pre-pass ORIGINAL, so a function that has itself had callees inlined
+ * into it still contributes its original body. That bounds growth to one
+ * level and removes any need for a cycle check beyond direct self-recursion.
+ *
+ * Reading a live `f.body` alias instead makes the pass silently iterative in
+ * `mod.functions` order — inlining A into B and then the already-inflated B
+ * into C. Measured on acorn with all rules on, the alias grew the module by
+ * 243,492 instructions where single-level costs 137,072, i.e. 78 % of the
+ * growth came from an order-dependent transitive effect nobody had asked for.
+ * It is not unsound (the relocation is uniform over the whole local space,
+ * which the alias also widens), but it is unpredictable and unbudgetable, so
+ * it is not what this pass does.
+ *
+ * (#4157 shard-slowdown fix) The original guarantee is COPY-ON-WRITE, not an
+ * eager whole-module deep clone. Eagerly cloning every body cost ~55 ms +
+ * tens of MB of garbage PER COMPILE — irrelevant amortized over one acorn
+ * build, but a large share of the tuned-defaults compile-time tax that pushed
+ * test262 standalone shards past their CI timeout (the runtime helper set is
+ * cloned wholesale even when nothing inlines). A function's body is
+ * deep-cloned exactly once, immediately BEFORE its first mutation as a caller
+ * (`preserveOriginal`); an unmutated function's live body IS its original, so
+ * reading it directly (`originalOf`) is byte-for-byte identical to the eager
+ * snapshot.
+ */
+function createOriginalBodyTracker(mod: WasmModule): {
+  originalOf: (idx: number) => { body: Instr[]; locals: LocalDef[] };
+  preserveOriginal: (idx: number) => void;
+} {
+  const snapshot: ({ body: Instr[]; locals: LocalDef[] } | undefined)[] = new Array(mod.functions.length);
+  return {
+    originalOf: (idx) => snapshot[idx] ?? mod.functions[idx],
+    preserveOriginal: (idx) => {
+      if (snapshot[idx] === undefined) {
+        const f = mod.functions[idx];
+        snapshot[idx] = { body: f.body.map(cloneInstr), locals: [...f.locals] };
+      }
+    },
+  };
+}
+
 export function inlineUserFunctions(ctx: CodegenContext): void {
   const opts = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   if (!opts.enabled) return;
@@ -769,21 +819,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     mod.exports.push({ name: "__ir_inline_execs", desc: { kind: "global", index: counterGlobalIdx } });
   }
 
-  // --- snapshot every body: inlining is SINGLE-LEVEL -----------------------
-  // Callee bodies are read from this snapshot, so a function that has itself
-  // had callees inlined into it still contributes its ORIGINAL body. That
-  // bounds growth to one level and removes any need for a cycle check beyond
-  // direct self-recursion.
-  //
-  // The clone is DEEP, and that is load-bearing: a shallow `f.body` alias makes
-  // the pass silently iterative in `mod.functions` order — inlining A into B
-  // and then the already-inflated B into C. Measured on acorn with all rules
-  // on, the alias grew the module by 243,492 instructions where single-level
-  // costs 137,072, i.e. 78 % of the growth came from an order-dependent
-  // transitive effect nobody had asked for. It is not unsound (the relocation
-  // is uniform over the whole local space, which the alias also widens), but it
-  // is unpredictable and unbudgetable, so it is not what this pass does.
-  const snapshot = mod.functions.map((f) => ({ body: f.body.map(cloneInstr), locals: [...f.locals] }));
+  const { originalOf, preserveOriginal } = createOriginalBodyTracker(mod);
+  // Per-callee analysis cache — see the comment at its use in the site loop.
+  const calleeFacts = new Map<number, CalleeFacts>();
 
   const stats: Stats = {
     functions: mod.functions.length,
@@ -845,8 +883,25 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
           declined(callee.name, "cold-callee");
           continue;
         }
-        const calleeBody = snapshot[cp].body;
-        const unsafe = calleeIsSafe({ ...callee, body: calleeBody }, calleeType.results);
+        const calleeBody = originalOf(cp).body;
+        // (#4157 shard-slowdown fix) The four analyses below are functions of
+        // the callee's ORIGINAL body only (guaranteed stable by the
+        // copy-on-write contract of `snapshot`), so they are computed once per
+        // callee, not once per call site. A hot helper is a callee at hundreds
+        // of sites per compile; re-walking its body at each was the dominant
+        // per-compile cost of this pass. Memoization changes no decision —
+        // every cached value is exactly what the per-site computation returned.
+        let facts = calleeFacts.get(cp);
+        if (facts === undefined) {
+          facts = {
+            unsafe: calleeIsSafe({ ...callee, body: calleeBody }, calleeType.results),
+            rawSize: countInstrs(calleeBody),
+            effSize: effectiveSize(calleeBody),
+            isLeaf: !hasCall(calleeBody),
+          };
+          calleeFacts.set(cp, facts);
+        }
+        const unsafe = facts.unsafe;
         if (unsafe) {
           declined(callee.name, unsafe);
           continue;
@@ -854,9 +909,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
 
         const nParams = calleeType.params.length;
         const siteCost = nParams + 2;
-        const rawSize = countInstrs(calleeBody);
-        const effSize = effectiveSize(calleeBody);
-        const isLeaf = !hasCall(calleeBody);
+        const rawSize = facts.rawSize;
+        const effSize = facts.effSize;
+        const isLeaf = facts.isLeaf;
 
         // Rule 2 — specialisation delta. Measured on the actual site facts.
         let specBody: Instr[] | null = null;
@@ -904,6 +959,10 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         if (opts.report) continue;
 
         // ---- the rewrite --------------------------------------------------
+        // First mutation of this caller: preserve its original body NOW, so a
+        // later read of it as a CALLEE still sees the pre-pass content
+        // (copy-on-write contract of `snapshot`, see its declaration).
+        preserveOriginal(ci);
         const base = callerType.params.length + caller.locals.length;
         const fresh: LocalDef[] = [];
         for (let p = 0; p < nParams; p++)
@@ -911,7 +970,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // The callee's locals come from the SNAPSHOT too: `callee.locals` is
         // live and may already carry another inline's temporaries, which would
         // not match `calleeBody`'s (snapshotted) local index space.
-        for (const l of snapshot[cp].locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
+        for (const l of originalOf(cp).locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
         caller.locals.push(...fresh);
 
         const source = specBody ?? calleeBody.map(cloneInstr);
