@@ -16,6 +16,8 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { getOrRegisterDvWindowType } from "../dataview-native.js";
 import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
+import { getOrRegisterHoleyArrayType } from "../registry/types.js";
+import { ensureHoleyArrayNew } from "../vec-elem-set.js";
 import { compileExpression } from "../shared.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -489,6 +491,7 @@ export function tryCompileIndexedBuiltinNew(
 
   // new Array() / new Array(n) / new Array(a, b, c)
   if (className === "Array") {
+    const holeyCarrier = ctx.holeyArrayConstructorNodes.has(expr);
     // Use contextual type (from variable declaration) if available, else expression type.
     // `new Array()` without type args gives Array<any>, but `var a: number[] = new Array()`
     // needs to produce Array<number> to match the variable's vec type.
@@ -499,7 +502,7 @@ export function tryCompileIndexedBuiltinNew(
     // like arr[i] = value and arr.push(value) to determine the element type.
     let inferredElemWasm: ValType | null = null;
     const rawTypeArgs = ctx.checker.getTypeArguments(exprType as ts.TypeReference);
-    if (rawTypeArgs?.[0] && rawTypeArgs[0].flags & ts.TypeFlags.Any) {
+    if (!holeyCarrier && rawTypeArgs?.[0] && rawTypeArgs[0].flags & ts.TypeFlags.Any) {
       const inferredElemTsType = inferArrayElementType(ctx, expr);
       if (inferredElemTsType) {
         inferredElemWasm = resolveWasmType(ctx, inferredElemTsType);
@@ -565,6 +568,12 @@ export function tryCompileIndexedBuiltinNew(
     ) {
       elemWasm = { kind: "i32" };
       vecTypeIdx = getOrRegisterVecType(ctx, "i32", { kind: "i32" });
+      arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    }
+
+    if (holeyCarrier) {
+      elemWasm = { kind: "externref" };
+      vecTypeIdx = getOrRegisterHoleyArrayType(ctx);
       arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     }
 
@@ -635,6 +644,10 @@ export function tryCompileIndexedBuiltinNew(
         kind: "i32",
       });
       fctx.body.push({ op: "local.tee", index: sizeLocal });
+      if (holeyCarrier) {
+        fctx.body.push({ op: "call", funcIdx: ensureHoleyArrayNew(ctx) });
+        return { kind: "ref_null", typeIdx: vecTypeIdx };
+      }
       fctx.body.push({ op: "local.get", index: sizeLocal });
       fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
       fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });

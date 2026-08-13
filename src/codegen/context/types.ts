@@ -1475,6 +1475,12 @@ export interface CodegenContext {
    * order. Clear — the common case — keeps every array read byte-identical.
    */
   usesArrayHoles: boolean;
+  /** Exact, escape-free `new Array(n)` declarations admitted to #4222's carrier. */
+  holeyArrayDeclarations: Set<ts.VariableDeclaration>;
+  /** Exact constructor nodes that materialize the dedicated sparse carrier. */
+  holeyArrayConstructorNodes: Set<ts.NewExpression>;
+  /** Exact direct `.filter(...)` calls that consume that carrier. */
+  holeyArrayFilterCallNodes: Set<ts.CallExpression>;
   /**
    * (#2001 S2 / merge-group park on PR #2832) Set by the same
    * `scanForArrayHoles` pre-scan when the module WRITES an index property onto
@@ -2788,6 +2794,12 @@ export interface CodegenContext {
   templateCacheCounter: number;
   /** Type index for template vec struct */
   templateVecTypeIdx: number;
+  /**
+   * (#4222 ES5 residual) Dedicated `new Array(n)` sparse carrier. This is a
+   * subtype of the ordinary externref vec, never a module-wide mode: only
+   * pre-scanned constructor sites may materialize it.
+   */
+  holeyArrayTypeIdx: number;
   /**
    * (#2186) Type index for the shared `$__vec_base` supertype — a `(length i32)`
    * struct that every `__vec_<elemKind>` subtypes. Lets standalone runtime

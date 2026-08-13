@@ -267,6 +267,7 @@ import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance exp
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
+import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) nominal sparse carrier
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -2460,6 +2461,9 @@ function planIrOverlay(
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
       isRegExpExpression,
+      isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
+      supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       legacyCallerAbiIsProjected,
@@ -5395,6 +5399,12 @@ export function generateModule(
     // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
     fillProtoIndexStore(ctx);
 
+    // (#4222 ES5 residual) The bounded sparse Array IR provider uses the
+    // normal HasProperty chokepoint, augmented with a nominal carrier arm.
+    // This runs after every other dynamic-reader fill so no generic arm gains
+    // `$Hole` semantics.
+    fillHoleyArrayHasIdxArm(ctx);
+
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
     // `__getPrototypeOf` / `__extern_get`, so `Object.setPrototypeOf(
@@ -7710,6 +7720,7 @@ export function generateMultiModule(
     // generateModule call above (same after-the-shape-probing-fills ordering;
     // see the single-source comment). No-op unless reserved.
     fillProtoIndexStore(ctx);
+    fillHoleyArrayHasIdxArm(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 

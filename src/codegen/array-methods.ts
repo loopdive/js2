@@ -31,6 +31,7 @@ import { compileStringLiteral, elemGetOp, unpackedElemType, valTypesMatch } from
 import {
   getArrTypeIdxFromVec,
   getOrRegisterArrayType,
+  isHoleyArrayType,
   getOrRegisterSubviewType,
   getOrRegisterTaDynViewType,
   getOrRegisterVecType,
@@ -5657,8 +5658,15 @@ function emitArrayLoop(fctx: FunctionContext, loopBody: Instr[]): void {
  * getter ⇒ [[Get]] is `undefined`) and un-regresses
  * `{every,filter,some}/*-c-i-22.js`.
  */
-function shouldHoleSkip(ctx: CodegenContext, elemType: ValType): boolean {
-  return ctx.usesArrayHoles && !ctx.protoIndexDirty && elemType.kind === "externref";
+function shouldHoleSkip(ctx: CodegenContext, elemType: ValType, vecTypeIdx?: number): boolean {
+  // The nominal carrier is only installed after the #4222 candidate scan has
+  // proven that its own declaration-to-filter path cannot observe an indexed
+  // prototype mutation.  `protoIndexDirty` can still be true for an unrelated,
+  // never-called Test262 harness helper, so do not let that module-wide legacy
+  // flag erase the carrier's locally-proven HasProperty behaviour.  Generic
+  // externref vecs retain the old global guard: they have no such proof.
+  const isBrandedHoleyCarrier = vecTypeIdx !== undefined && isHoleyArrayType(ctx, vecTypeIdx);
+  return (isBrandedHoleyCarrier || (ctx.usesArrayHoles && !ctx.protoIndexDirty)) && elemType.kind === "externref";
 }
 
 /**
@@ -5715,8 +5723,9 @@ function gateHoleFlag(
   arrTypeIdx: number,
   elemType: ValType,
   flagInner: Instr[],
+  vecTypeIdx?: number,
 ): Instr[] {
-  if (!shouldHoleSkip(ctx, elemType)) return flagInner;
+  if (!shouldHoleSkip(ctx, elemType, vecTypeIdx)) return flagInner;
   return [
     ...loadIsHoleInstrs(ctx, loop, arrTypeIdx),
     {
@@ -5835,7 +5844,7 @@ function compileArrayFilter(
     // HasProperty) and never adds it to the result. The flag-gate yields 0 for
     // a hole → the push `if` below does not fire (and the callback isn't run).
     ...filterSelectStage(loop, vecTypeIdx, arrTypeIdx, boundTmp, elemTmp, overlay, callAndCheck, (inner) =>
-      gateHoleFlag(ctx, loop, arrTypeIdx, elemType, inner),
+      gateHoleFlag(ctx, loop, arrTypeIdx, elemType, inner, vecTypeIdx),
     ),
 
     // if result is truthy, add element to result
