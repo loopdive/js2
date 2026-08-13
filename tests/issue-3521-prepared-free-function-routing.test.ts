@@ -733,12 +733,17 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(entries.some((entry) => entry.id === cache.binding.bindingId)).toBe(false);
   });
 
-  it("keeps an exact current-function caller read on the direct activation path", async () => {
+  it("keeps function-value targets direct beside a current-function caller read", async () => {
     const source = `
       eval("\\\"use strict\\\";\\ngNonStrict();");
       function gNonStrict() {
         return gNonStrict.caller;
       }
+      function answer() {
+        return 42;
+      }
+      const callable = answer;
+      if (callable() !== 42) throw new Error("function value changed");
     `;
     const direct = await compile(source, {
       allowJs: true,
@@ -762,6 +767,10 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       expect(() => exports.__module_init!()).not.toThrow();
     }
     expect(outcome(result, "gNonStrict")).toMatchObject({
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(outcome(result, "answer")).toMatchObject({
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });

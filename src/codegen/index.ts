@@ -168,6 +168,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import {
+  collectDirectCallerActivationTargetUnitIds,
   completePreparedIrIntegration,
   collectPreparedTopLevelFunctionValueTargetUnitIds,
   computePreparedInheritedIrFirstSkipUnitIds,
@@ -3926,12 +3927,38 @@ function withdrawClassMembersOutsidePreparedOwnerClosure(
   plan.safeSelection.classMembers = retainedLegacyNames;
 }
 
+/**
+ * The post-direct overlay must honor the same caller-activation boundary as
+ * early preparation. Merely withholding a target from R2 would still allow
+ * its already-emitted direct body to be replaced by the late IR patch.
+ */
+function withdrawDirectCallerActivationTargets(plan: IrOverlayPlan, targetUnitIds: ReadonlySet<IrUnitId>): void {
+  for (const unitId of targetUnitIds) {
+    const claim = plan.functionClaimsByUnitId.get(unitId);
+    // The target scan covers every exact top-level declaration, while the IR
+    // claim index intentionally contains only selector-admitted owners.
+    if (!claim) continue;
+    if (!plan.preparationFailuresByUnitId.has(unitId)) {
+      plan.preparationFailuresByUnitId.set(unitId, {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail: "the source observes a current function's legacy caller activation",
+      });
+    }
+    plan.safeSelection.funcs.delete(claim.legacyName);
+    irOverlayIdentity.dropIrSafeFunctionByLegacyName(plan.identityPlan, claim.legacyName);
+  }
+}
+
 function planIrFirstBodyRouting(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   plan: IrOverlayPlan,
   moduleInitPlanning: IrModuleInitPlanningEvidence | undefined,
 ): IrFirstBodyRouting {
+  const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(ctx, sourceFile, plan.identityPlan);
+  withdrawDirectCallerActivationTargets(plan, directCallerActivationTargets);
   const preliminarySelection = plan.safeSelection;
   const inheritedSkipInput = {
     sourceFile,

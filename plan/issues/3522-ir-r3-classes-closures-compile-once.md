@@ -1441,9 +1441,12 @@ The exact current-function `caller` / `arguments` poison-pill read also remains
 direct until IR owns the equivalent activation/caller hand-off. The merge-queue
 Test262 probe `built-ins/Function/15.3.5.4_2-12gs.js` caught this boundary: an
 otherwise safe sloppy function is materialized as a value by strict `eval`, but
-its legacy `caller` observation still depends on direct activation state. The
-checkpoint carries a focused runtime parity test for that source shape; all
-ordinary function-value targets continue to prepare.
+its legacy `caller` observation still depends on direct activation state. That
+handoff is source-wide, so runtime-materialized function targets in the same
+source also stay direct; otherwise an unrelated Prepared target can still alter
+the final direct-call instrumentation. The checkpoint carries a focused runtime
+parity test for that boundary. Ordinary function-value targets in sources that
+do not observe the legacy activation continue to prepare.
 
 ## Exhaustive source-unit census
 

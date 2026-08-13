@@ -440,6 +440,31 @@ function topLevelFunctionUnitsByName(
   return byName;
 }
 
+/**
+ * The checker oracle can retain a declaration node from a sibling Program
+ * snapshot while selection walks the structurally identical current source.
+ * Compare the stable source site as well as object identity so incremental
+ * compilation cannot silently lose an otherwise exact declaration match.
+ */
+function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
+  if (left === right) return true;
+  return (
+    left.kind === right.kind &&
+    left.pos === right.pos &&
+    left.end === right.end &&
+    left.getSourceFile().fileName === right.getSourceFile().fileName
+  );
+}
+
+function identifierResolvesToDeclaration(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  declaration: ts.Declaration,
+): boolean {
+  const resolved = ctx.oracle.valueDeclarationOf(identifier);
+  return resolved !== undefined && sameDeclarationSite(resolved, declaration);
+}
+
 function collectTopLevelFunctionValueTargets(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -452,13 +477,43 @@ function collectTopLevelFunctionValueTargets(
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
       const declaration = ctx.oracle.valueDeclarationOf(node);
-      const exact = (unitsByName.get(node.text) ?? []).find((unit) => unit.declaration === declaration);
+      const exact =
+        declaration === undefined
+          ? undefined
+          : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
       if (exact) targets.add(exact.unitId);
     }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
   return targets;
+}
+
+/**
+ * A source that observes the active `caller` of one of its own functions keeps
+ * every newly admitted function-value target direct. The caller-strictness
+ * hand-off is a source-wide call contract: preparing a different callable in
+ * the same script can still change the final direct-call instrumentation and
+ * therefore the observed activation. This gate only withholds the runtime-
+ * materialized target population; unrelated source functions remain eligible.
+ */
+function sourceObservesCurrentFunctionCaller(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
+  return sourceFile.statements.some(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) &&
+      statement.body !== undefined &&
+      containsCurrentFunctionPoisonPillRead(ctx, statement),
+  );
+}
+
+/** Function-value targets that must stay on the direct caller-activation route. */
+export function collectDirectCallerActivationTargetUnitIds(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlySet<IrUnitId> {
+  if (!sourceObservesCurrentFunctionCaller(ctx, sourceFile)) return new Set<IrUnitId>();
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
 }
 
 /** Exact top-level source callables materialized as runtime values anywhere in this source. */
@@ -484,7 +539,10 @@ function containsTopLevelFunctionValueReference(
     if (found) return;
     if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
       const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
-      if ((unitsByName.get(node.text) ?? []).some((unit) => unit.declaration === valueDeclaration)) {
+      if (
+        valueDeclaration !== undefined &&
+        (unitsByName.get(node.text) ?? []).some((unit) => sameDeclarationSite(unit.declaration, valueDeclaration))
+      ) {
         found = true;
         return;
       }
@@ -508,17 +566,6 @@ function containsTopLevelFunctionValueReference(
  */
 function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration: ts.FunctionLikeDeclaration): boolean {
   if (!declaration.body) return false;
-  const originalDeclaration = ts.getOriginalNode(declaration);
-  const resolvesToCurrentFunction = (identifier: ts.Identifier): boolean => {
-    const resolved = ctx.oracle.valueDeclarationOf(identifier);
-    return (
-      resolved !== undefined &&
-      (resolved === declaration ||
-        resolved === originalDeclaration ||
-        ts.getOriginalNode(resolved) === declaration ||
-        ts.getOriginalNode(resolved) === originalDeclaration)
-    );
-  };
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -538,7 +585,7 @@ function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration:
       receiver !== undefined &&
       (name === "caller" || name === "arguments") &&
       ts.isIdentifier(receiver) &&
-      resolvesToCurrentFunction(receiver)
+      identifierResolvesToDeclaration(ctx, receiver, declaration)
     ) {
       found = true;
       return;
@@ -953,6 +1000,11 @@ export function selectR2PreparedOwnerComponents(input: {
   const freeFunctionCandidates = new Set<IrUnitId>();
   const baseline = new Set<IrUnitId>();
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(
+    input.ctx,
+    input.sourceFile,
+    input.identityPlan,
+  );
   for (const legacyName of input.baselineLegacyNames) {
     baseline.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName));
   }
@@ -978,6 +1030,7 @@ export function selectR2PreparedOwnerComponents(input: {
       claim.declaration.asteriskToken ||
       containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
       containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
+      directCallerActivationTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
       !override.params.every(r2StableSignatureType) ||
       !r2StableSignatureType(override.returnType) ||
