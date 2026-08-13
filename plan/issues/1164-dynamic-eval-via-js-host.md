@@ -526,18 +526,21 @@ it does not close standalone eval or substitute for its full-lane gate.
 ### Post-rebase focused validation
 
 The implementation was rebased cleanly onto `origin/main`
-`cb4d4d7ca2f151ba69f26cff517417e003428df7` before this focused validation:
+`5cbbd881148171595265f06775989d1212573c6b` as implementation commit
+`21dcc859a50438785dd23c1e7904f2b22277f592` before this focused validation:
 
-- `pnpm exec vitest run tests/issue-1164-es5-eval-slice.test.ts` — **28 / 28**
+- `pnpm exec vitest run tests/issue-1164-es5-eval-slice.test.ts` — **29 / 29**
   pass, including scope-correct raw-assert controls, host-import inventory,
   and standalone demotion.
 - `pnpm exec vitest run tests/issue-1164.test.ts` — **17 / 17** pass for the
   pre-existing dynamic-eval Wasm-module path.
 - `pnpm exec vitest run tests/issue-1163.test.ts` — 7 / 8 pass; the unchanged,
   pre-existing `eval()` no-argument fallback returns `0` rather than
-  `undefined`. Clean `origin/main` at `cb4d4d7ca2f151ba69f26cff517417e003428df7`
-  produces the identical 7 / 8 result. This slice accepts exactly one argument
-  and cannot select that shape.
+  `undefined`. Clean `origin/main` at
+  `993a6d9f2c08a2a788eec9c830b8eb6a57a15b64` produces the identical 7 / 8
+  result. The only intervening main change is the #671 planning markdown, so
+  the tested compiler/runtime tree is unchanged. This slice accepts exactly
+  one argument and cannot select that shape.
 - `pnpm run typecheck` — pass.
 - `pnpm run check:ir-fallbacks` — pass.
 - `pnpm run check:ir-adoption` — pass.
