@@ -347,6 +347,7 @@ import {
   resolveClassMemberName,
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
+import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -4557,6 +4558,10 @@ export function generateModule(
     scanForArrayHoles(ctx, ast.sourceFile);
 
     collectDeclarations(ctx, ast.sourceFile);
+    // #3522 R3: exact fields that reference a later local class are collected
+    // provisionally as externref. Finalize their already-observed storage slot
+    // in place before class-shape planning snapshots the Program ABI layout.
+    finalizeForwardClassFieldLayouts(ctx, ast.sourceFile);
     // #3522 R3: callable slots with exact references to a later local class
     // must receive their final struct ABI before prepared IR planning decides
     // which direct bodies will never run. The direct body compiler retains its

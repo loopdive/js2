@@ -1,0 +1,200 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * Pre-emission finalization for exact forward class-field layouts.
+ *
+ * Class collection reserves structs in source order. A field on an earlier
+ * class that names a later local class is therefore provisionally collected as
+ * `externref`. Prepared IR must see the final storage ABI before it can decide
+ * that the direct class-body emitter will never run.
+ */
+import { ts } from "../ts-api.js";
+import type { FieldDef, StructTypeDef } from "../ir/types.js";
+import { ProgramAbiInvariantError } from "../ir/program-abi.js";
+import type { CodegenContext } from "./context/types.js";
+
+function hasStaticModifier(node: ts.Node & { readonly modifiers?: ts.NodeArray<ts.ModifierLike> }): boolean {
+  return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) === true;
+}
+
+function fixedFieldName(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return `__priv_${name.text.slice(1)}`;
+  return undefined;
+}
+
+function isFlatClass(declaration: ts.ClassDeclaration): boolean {
+  return declaration.heritageClauses === undefined || declaration.heritageClauses.length === 0;
+}
+
+function exactLocalClassReference(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  typeNode: ts.TypeNode | undefined,
+): ts.ClassDeclaration | undefined {
+  const identity = ctx.irPlanningIdentityContext;
+  if (
+    !identity ||
+    !typeNode ||
+    !ts.isTypeReferenceNode(typeNode) ||
+    !ts.isIdentifier(typeNode.typeName) ||
+    (typeNode.typeArguments?.length ?? 0) !== 0
+  ) {
+    return undefined;
+  }
+  const declarations = ctx.oracle.declarationsOf(typeNode.typeName);
+  if (declarations.length !== 1) return undefined;
+  const declaration = declarations[0];
+  if (!declaration || !ts.isClassDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
+    return undefined;
+  }
+  const classId = identity.classIdByDeclaration.get(declaration);
+  return classId !== undefined && identity.declarationByClassId.get(classId) === declaration ? declaration : undefined;
+}
+
+function fieldDependencies(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  declarations: readonly ts.ClassDeclaration[],
+): ReadonlyMap<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>> {
+  const local = new Set(declarations);
+  const dependencies = new Map<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>>();
+  for (const declaration of declarations) {
+    const required = new Set<ts.ClassDeclaration>();
+    for (const member of declaration.members) {
+      if (!ts.isPropertyDeclaration(member) || hasStaticModifier(member) || fixedFieldName(member.name) === undefined) {
+        continue;
+      }
+      const target = exactLocalClassReference(ctx, sourceFile, member.type);
+      if (target && local.has(target)) required.add(target);
+    }
+    dependencies.set(declaration, required);
+  }
+  return dependencies;
+}
+
+function inheritanceParticipants(
+  ctx: CodegenContext,
+  declarations: readonly ts.ClassDeclaration[],
+): ReadonlySet<ts.ClassDeclaration> {
+  const local = new Set(declarations);
+  const participants = new Set<ts.ClassDeclaration>();
+  for (const declaration of declarations) {
+    for (const clause of declaration.heritageClauses ?? []) {
+      if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+      participants.add(declaration);
+      for (const inherited of clause.types) {
+        const parents = ctx.oracle.declarationsOf(inherited.expression);
+        if (parents.length !== 1) continue;
+        const parent = parents[0];
+        if (parent && ts.isClassDeclaration(parent) && local.has(parent)) participants.add(parent);
+      }
+    }
+  }
+  return participants;
+}
+
+function reachesClass(
+  dependencies: ReadonlyMap<ts.ClassDeclaration, ReadonlySet<ts.ClassDeclaration>>,
+  start: ts.ClassDeclaration,
+  expected: ts.ClassDeclaration,
+  visited = new Set<ts.ClassDeclaration>(),
+): boolean {
+  if (start === expected) return true;
+  if (visited.has(start)) return false;
+  visited.add(start);
+  for (const dependency of dependencies.get(start) ?? []) {
+    if (reachesClass(dependencies, dependency, expected, visited)) return true;
+  }
+  return false;
+}
+
+function requireCommittedField(
+  ctx: CodegenContext,
+  declaration: ts.ClassDeclaration,
+  fieldName: string,
+): FieldDef | undefined {
+  const className = declaration.name!.text;
+  const typeIdx = ctx.structMap.get(className);
+  const type = typeIdx === undefined ? undefined : ctx.mod.types[typeIdx];
+  const fields = ctx.structFields.get(className);
+  if (!type || type.kind !== "struct" || !fields || type.fields !== fields) {
+    throw new ProgramAbiInvariantError(
+      "type-remap-mismatch",
+      `forward field ${className}.${fieldName} has no exact committed class layout`,
+    );
+  }
+  const field = fields.find((candidate) => candidate.name === fieldName);
+  if (field && !type.fields.includes(field)) {
+    throw new ProgramAbiInvariantError(
+      "type-remap-mismatch",
+      `forward field ${className}.${fieldName} is detached from its observed class layout`,
+    );
+  }
+  return field;
+}
+
+/**
+ * Commit exact, acyclic references from flat top-level fields to later local
+ * classes without replacing an observed StructTypeDef or changing type order.
+ *
+ * Recursive, inherited, nested, generic, union, optional, inferred, and
+ * externref-backed layouts deliberately remain on the typed direct route.
+ */
+export function finalizeForwardClassFieldLayouts(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  if (!ctx.irPlanningIdentityContext) return;
+  const declarations = sourceFile.statements.filter(
+    (statement): statement is ts.ClassDeclaration => ts.isClassDeclaration(statement) && statement.name !== undefined,
+  );
+  const nameCounts = new Map<string, number>();
+  for (const declaration of declarations) {
+    const name = declaration.name!.text;
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+  }
+  const dependencies = fieldDependencies(ctx, sourceFile, declarations);
+  const inherited = inheritanceParticipants(ctx, declarations);
+
+  for (const owner of declarations) {
+    const ownerName = owner.name!.text;
+    if (
+      !isFlatClass(owner) ||
+      inherited.has(owner) ||
+      nameCounts.get(ownerName) !== 1 ||
+      ctx.classExternrefBackedSet.has(ownerName)
+    ) {
+      continue;
+    }
+    const fieldNameCounts = new Map<string, number>();
+    for (const member of owner.members) {
+      if (!ts.isPropertyDeclaration(member) || hasStaticModifier(member)) continue;
+      const name = fixedFieldName(member.name);
+      if (name !== undefined) fieldNameCounts.set(name, (fieldNameCounts.get(name) ?? 0) + 1);
+    }
+
+    for (const member of owner.members) {
+      if (!ts.isPropertyDeclaration(member) || hasStaticModifier(member)) continue;
+      const fieldName = fixedFieldName(member.name);
+      const target = exactLocalClassReference(ctx, sourceFile, member.type);
+      if (
+        fieldName === undefined ||
+        fieldNameCounts.get(fieldName) !== 1 ||
+        !target?.name ||
+        target.getStart(sourceFile) <= owner.getStart(sourceFile) ||
+        !isFlatClass(target) ||
+        inherited.has(target) ||
+        nameCounts.get(target.name.text) !== 1 ||
+        ctx.classExternrefBackedSet.has(target.name.text) ||
+        reachesClass(dependencies, target, owner)
+      ) {
+        continue;
+      }
+      const targetTypeIdx = ctx.structMap.get(target.name.text);
+      if (targetTypeIdx === undefined) continue;
+      const targetType = ctx.mod.types[targetTypeIdx];
+      if (!targetType || targetType.kind !== "struct" || targetType.name !== target.name.text) continue;
+
+      const field = requireCommittedField(ctx, owner, fieldName);
+      if (field?.type.kind !== "externref") continue;
+      field.type = { kind: "ref_null", typeIdx: targetTypeIdx };
+    }
+  }
+}
