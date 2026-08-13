@@ -2127,3 +2127,38 @@ binaryen's defaults are unconstrained.
 Order: binaryen's own flags first (two lines, bounds the cheap path), then the IR
 inliner narrow — adapters plus negative-cost specialisation sites — then the
 stacked-nulls slice as the control.
+
+### Correction to (19): the binaryen "double inlining" obligation was wrong
+
+Entry (19) claims that if the IR inlines and `wasm-opt` then re-inlines, "the two
+compound into bloat and our specialised result gets duplicated at every site",
+and makes constraining binaryen's inliner part of the work. **Withdrawn.**
+
+**Once a callee is inlined into a caller, the call at that site no longer
+exists.** Binaryen cannot re-inline what is not there. There is no
+double-inlining mechanism, and the entry asserted one without checking.
+
+What is actually true is narrower, and none of it justifies disabling binaryen's
+inliner up front:
+
+- **Transitive size effects, both directions.** Inlining C into A grows A, which
+  may push A above binaryen's threshold so A is no longer inlined onward. Real
+  second-order effect — but our *specialising* inlines often make A **smaller**,
+  which makes it **more** likely to be inlined onward. Watch it in the size
+  distribution; do not pre-empt it.
+- **Disagreement at declined sites.** Binaryen may inline something we
+  deliberately left (a cold path). That is a difference of opinion, not
+  compounding, and binaryen's inliner is well-tested.
+- **Additive growth.** Two inliners inline more than one. Additive and
+  measurable, not multiplicative.
+
+So binaryen's inliner is a **cooperating pass**, not a competitor to be shut off.
+The only obligation is empirical: report total binary size and the function-size
+distribution, and revisit only if the numbers suggest the two are fighting.
+
+Knowing what inlining flags this binaryen version exposes is still worth an hour
+— a threshold bump is the cheap path and bounding it first is right — but as an
+experiment, not a defensive measure.
+
+Caught by the project lead, who asked the obvious question the entry had not:
+how would it double-inline if the call is already gone.
