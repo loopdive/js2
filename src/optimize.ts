@@ -526,7 +526,10 @@ function optimizeWithSystemBinary(
     let stderr: Buffer | string = "";
     try {
       n.execFileSync(wasmOptPath, args, {
-        timeout: 60_000, // 60 second timeout
+        // (#4157 entry 31) 600s, was 60s: acorn-scale modules with the inline
+        // caches enabled exceed 60s under -O4, and the catch below silently
+        // shipped the UNOPTIMIZED binary — measured as a phantom +57% size.
+        timeout: 600_000,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (err) {
@@ -537,6 +540,15 @@ function optimizeWithSystemBinary(
       const e = err as { stderr?: Buffer | string; message?: string };
       stderr = e.stderr ?? e.message ?? "unknown error";
       const text = Buffer.isBuffer(stderr) ? stderr.toString("utf-8") : String(stderr);
+      // (#4157 entry 31) LOUD, unconditionally: the warning field alone was
+      // ignored by every consumer, so a timeout here silently shipped an
+      // unoptimized binary into perf measurements twice. stderr is the one
+      // channel every harness keeps.
+      process.stderr.write(
+        `[optimize] wasm-opt -O${level} FAILED — shipping UNOPTIMIZED binary (${binary.length} bytes). ` +
+          `Perf/size numbers from this build are not comparable to an optimized one. ` +
+          `Cause: ${text.slice(0, 200).trim() || "(no stderr — likely the 600s timeout)"}\n`,
+      );
       return {
         binary,
         optimized: false,
