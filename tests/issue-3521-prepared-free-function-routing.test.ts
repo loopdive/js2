@@ -645,6 +645,51 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     },
   );
 
+  it.each([
+    {
+      kind: "call",
+      source: `
+        function add(value: number): number { return value + 1; }
+        export function run(): number { return add.call(undefined, 6); }
+      `,
+    },
+    {
+      kind: "apply",
+      source: `
+        function add(value: number): number { return value + 1; }
+        export function run(): number { return add.apply(undefined, [6]); }
+      `,
+    },
+  ])("retains the optimized zero-import route for an immediate local .$kind", async ({ kind, source }) => {
+    const direct = await compile(source, {
+      experimentalIR: false,
+      fileName: `prepared-function-${kind}-direct.ts`,
+      optimize: true,
+      semanticProviders: "native-first",
+    });
+    const prepared = await compile(source, {
+      experimentalIR: true,
+      fileName: `prepared-function-${kind}-ir.ts`,
+      optimize: true,
+      semanticProviders: "native-first",
+      trackIrOutcomes: true,
+    });
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect(WebAssembly.Module.imports(new WebAssembly.Module(compiled.binary))).toEqual([]);
+      expect((await instantiate(compiled)).run!()).toBe(7);
+    }
+    expect(outcome(prepared, "add")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
   it("publishes exact singleton support beneath the prepared value target", () => {
     const source = `
       function answer(): number { return 42; }

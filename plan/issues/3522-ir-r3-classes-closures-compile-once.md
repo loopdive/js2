@@ -1691,3 +1691,21 @@ harness callables and made the sloppy caller appear strict. The focused parity
 fixture therefore carries a direct-call-only sibling and requires it to stay
 IR-emitted beside the direct observing function and direct function-value
 target; it is not withdrawn by the source-wide activation boundary.
+
+### Native-first immediate call/apply parity repair (2026-08-13)
+
+After the native-first host-import gate landed on main, the queued merge
+exposed an optimization regression in the new singleton preparation. A local
+function used only as the receiver of an immediately invoked `.call(...)` or
+`.apply(...)` was retaining the complete generic closure bridge even though
+the direct owner already lowers that invocation without a persistent runtime
+function value. Each probe grew from a 43-byte, zero-import optimized module
+to 7,289 bytes with three JS-string bridge imports.
+
+The runtime-value census now excludes only those exact immediately invoked
+receivers. The function body remains Prepared and IR-emitted with no legacy
+body, while the existing optimized invocation route stays available to the
+direct owner. Explicit `call` and `apply` parity fixtures execute the result,
+require zero Wasm imports, and require the optimized IR binary to be no larger
+than its direct-backend control. Both are 43 bytes after the repair, and the
+native-first gate remains at 379 imports without increasing its baseline.

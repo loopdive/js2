@@ -395,6 +395,19 @@ function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): b
   const parent = identifier.parent;
   if (!parent) return false;
   if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
+  // The direct owner already lowers an immediately invoked `.call` / `.apply`
+  // without retaining a generic runtime function value. Preparing singleton
+  // support for this receiver alone would keep the JS-string bridge and the
+  // whole generic closure surface alive in an otherwise tiny optimized module.
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    (parent.name.text === "call" || parent.name.text === "apply") &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  ) {
+    return false;
+  }
   if (
     ((ts.isFunctionDeclaration(parent) ||
       ts.isFunctionExpression(parent) ||
