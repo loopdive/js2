@@ -18,7 +18,6 @@ depends_on: [3526, 3678]
 related: [1590, 2135, 2634, 3518, 3519, 3681]
 origin: "2026-08-12 compiler architecture and user-trust review"
 ---
-
 # #4382 — Compiler-derived capability manifest and per-program explain workflow
 
 ## Objective

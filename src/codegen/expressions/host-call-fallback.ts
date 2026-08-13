@@ -16,11 +16,15 @@ export type HostCallFallbackPlan = {
   arity: number;
 };
 
-export function planHostCallFallback(arity: number): HostCallFallbackPlan {
-  const fixedArity = process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4;
+export function planHostCallFallback(arity: number, nativeBoundary = false): HostCallFallbackPlan {
+  const fixedArity = nativeBoundary || (process.env.JS2WASM_FIXED_ARITY_HOST_CALLS !== "0" && arity <= 4);
   return {
     fixedArity,
-    importName: fixedArity ? `__call_function_${arity}` : "__call_function",
+    importName: nativeBoundary
+      ? `__boundary_callback_call_${arity}`
+      : fixedArity
+        ? `__call_function_${arity}`
+        : "__call_function",
     arity,
   };
 }

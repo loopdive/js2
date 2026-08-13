@@ -52,11 +52,20 @@ describe("#1355 standalone Proxy — deleteProperty trap (§10.5.10)", () => {
     ).toBe(1);
   });
 
-  it("the trap's falsy result becomes the delete operator's result (false)", async () => {
+  it("a falsy trap result makes strict module delete throw", async () => {
+    await expect(
+      runStandalone(`export function test(): number {
+        const p: any = new Proxy({ x: 5 }, { deleteProperty: (t: any, k: any) => false });
+        return (delete p.x) ? 1 : 0;
+      }`),
+    ).rejects.toBeDefined();
+  });
+
+  it("Reflect.deleteProperty returns the trap's falsy result without throwing", async () => {
     expect(
       await runStandalone(`export function test(): number {
         const p: any = new Proxy({ x: 5 }, { deleteProperty: (t: any, k: any) => false });
-        return (delete p.x) ? 1 : 0;
+        return Reflect.deleteProperty(p, "x") ? 1 : 0;
       }`),
     ).toBe(0);
   });
