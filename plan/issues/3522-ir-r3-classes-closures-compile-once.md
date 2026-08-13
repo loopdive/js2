@@ -1683,6 +1683,39 @@ receiver-sensitive methods, parameters, general method reads/calls, and wider
 cross-owner escapes remain later R3 families. No direct object-method emitter
 is deleted yet because those consumers remain live.
 
+### Parameterized object-method call checkpoint (2026-08-13)
+
+Receiver-insensitive method shorthand may now carry fixed number/boolean
+parameters and use an arbitrary stable property name. The closed object keeps
+the exact closure-valued field, and a direct `object.method(args)` expression
+loads that field and emits the existing typed closure call. This preserves the
+direct backend's static target: optimized output contains `call_ref` and no
+generic `__call_m_*` dispatcher.
+
+The GC and standalone anti-vacuity fixture captures an outer numeric offset,
+passes a runtime argument through two methods, validates, and returns 43 in
+both the direct and prepared builds. Direct-body poison proves the terminal
+and both lifted object-method units are IR-owned with zero post-claim errors.
+The optimized GC artifact improves from **2,855 to 2,827 bytes**; standalone
+improves from **6,268 to 6,245 bytes**. The focused checkpoint is **4/4**, and
+the object-method plus exact #4208 OrdinaryToPrimitive subset is **17/17**.
+The adjacent closure/object/prepared ownership matrix is **82/82 across 11
+files**. Full equivalence remains **1,645 passing, 24 known failures, 12
+baseline cases now passing, and zero new regressions**; cross-backend
+differential coverage is **29/29**. Hybrid and strict IR-only shadows remain
+**37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**.
+Typecheck, formatting, and the fallback ratchet are green.
+
+Receiver-sensitive methods remain direct because their call semantics require
+installing the real `this` value. Mixed data/method and mixed
+shorthand/function objects also remain direct until one closed representation
+can preserve their complete property semantics. String-returning shorthand,
+method reads/escapes, object accessors, and the general open-object surface are
+still later R3 families. The two unrelated #4208 module/runtime-support suites
+currently report the same **6 failures / 11 passes** on this checkpoint and its
+clean parent, so they are recorded as baseline rather than attributed to this
+slice.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

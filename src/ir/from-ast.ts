@@ -4742,6 +4742,23 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       }
       continue;
     }
+    if (ts.isMethodDeclaration(prop)) {
+      const name = phase1PropertyName(prop.name);
+      if (name === null) {
+        throw new Error(`ir/from-ast: object method name not in prepared scope (${cx.funcName})`);
+      }
+      if (seen.has(name)) {
+        throw new Error(`ir/from-ast: duplicate object method key "${name}" not in prepared scope (${cx.funcName})`);
+      }
+      seen.add(name);
+      const value = lowerClosureExpression(prop, cx);
+      const type = cx.builder.typeOf(value);
+      if (type.kind !== "closure") {
+        throw new Error(`ir/from-ast: object method "${name}" did not lower to a closure (${cx.funcName})`);
+      }
+      built.push({ name, type, value });
+      continue;
+    }
     throw new Error(`ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`);
   }
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -6745,6 +6762,25 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       throw new Error(`ir/from-ast: dynamic method .${methodName}(...) produced no result in ${cx.funcName}`);
     }
     return result;
+  }
+
+  // #3522 parameterized object-method ownership. A selector-certified
+  // shorthand method is stored as an exact closure field in the closed object
+  // layout. Receiver-sensitive bodies are rejected before build, so the
+  // JavaScript call is the same typed closure call with no ambient `this`
+  // installation. This retains the direct backend's static target and avoids
+  // generic property/method dispatch.
+  if (recvType.kind === "object") {
+    const field = recvType.shape.fields.find((candidate) => candidate.name === methodName);
+    if (!field || (field.type.kind !== "closure" && field.type.kind !== "callable")) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: object field .${methodName} is not an exact callable (${cx.funcName})`,
+      );
+    }
+    const callee = cx.builder.emitObjectGet(recv, methodName, field.type);
+    return lowerClosureCall(callee, field.type.signature, expr.arguments, cx, statementPosition);
   }
 
   // (#2856) `<number>.toString()` (no radix) on an f64 receiver → the

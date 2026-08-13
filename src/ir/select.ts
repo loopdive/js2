@@ -7806,11 +7806,12 @@ function isPhase1ObjectLiteral(
   // overrides pass would skip them when shape resolution failed.
   if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
 
-  // Function-valued data properties and method declarations have no general closed-object IR
-  // representation. The one certified exception is the exact #4208
-  // OrdinaryToPrimitive shape; require EVERY property to belong to it so a
-  // mixed `{ valueOf: function... , data: 1 }` literal is rejected before
-  // claim instead of claimed and demoted by lowerObjectLiteral.
+  // Function-valued data properties still have no general closed-object IR
+  // representation. Selector-certified method shorthand, however, is an
+  // exact closure-valued field: every method has a fixed primitive signature
+  // and a receiver-insensitive Phase-1 body. Require EVERY property to use one
+  // form so mixed data/method or shorthand/function semantics cannot cross the
+  // closed-object boundary accidentally.
   if (
     expr.properties.some(
       (property) =>
@@ -7842,13 +7843,22 @@ function isPhase1ObjectLiteral(
         primitiveReturn === ts.SyntaxKind.BooleanKeyword ||
         (ts.isFunctionExpression(method) && primitiveReturn === ts.SyntaxKind.StringKeyword);
       if (
-        (name !== "valueOf" && name !== "toString") ||
+        name === null ||
         seenMethods.has(name) ||
-        method.parameters.length !== 0 ||
         !hasPreparedParityReturn ||
         !isPhase1ClosureLiteral(method, scope, localClasses)
       ) {
         return shapeNo("objectlit-ordinary-to-primitive-method", method);
+      }
+      // Property-assigned function expressions retain #4208's exact
+      // zero-argument OrdinaryToPrimitive protocol. General method names and
+      // parameters are admitted only for shorthand declarations, whose direct
+      // call lowering consumes the closure field without an ambient receiver.
+      if (
+        ts.isFunctionExpression(method) &&
+        ((name !== "valueOf" && name !== "toString") || method.parameters.length !== 0)
+      ) {
+        return shapeNo("objectlit-function-property-surface", method);
       }
       seenMethods.add(name);
     }
