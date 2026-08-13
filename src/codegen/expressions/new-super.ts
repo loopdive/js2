@@ -14,14 +14,12 @@ import {
 } from "../closures.js";
 import { installFrameTrap } from "../frame-trap.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
-import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js"; // (#3486) fnctor ctor-closure singleton
 import {
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
   resolvesToNonConstructableValue,
 } from "./non-constructable.js"; // (#4017)
 import { tryNonConstructableNewTarget } from "./new-non-constructable-value.js"; // (#4246)
-import { popBody, pushBody } from "../context/bodies.js"; // (#3486) detached operand buffer
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -1359,53 +1357,21 @@ function emitCallSiteFnctorRegistration(
 function emitCtorPrologueFnctorRegistration(
   ctx: CodegenContext,
   ctorFctx: FunctionContext,
-  funcName: string,
+  constructorIdentityParamIdx: number,
   selfLocal: number,
 ): void {
   if (ctx.standalone || ctx.wasi) return;
-  // Build the closure operand in a DETACHED buffer (pushBody/popBody records it
-  // in `savedBodies`, so late-import shift walkers still reach it) and splice it
-  // back only on success — a helper that declines midway must not leave a
-  // partial operand on the ctor's stack.
-  const modGlobalIdx = ctx.moduleGlobals.get(funcName);
-  const declFuncIdx = ctx.funcMap.get(funcName);
-  const saved = pushBody(ctorFctx);
-  let operand: Instr[] | undefined;
-  if (modGlobalIdx !== undefined) {
-    // `var Parser = function(){}` — the module global already HOLDS the closure
-    // (it is not a lazy cache), so read it directly, as #1712 did.
-    ctorFctx.body.push({ op: "global.get", index: modGlobalIdx });
-    const gdef = ctx.mod.globals[localGlobalIdx(ctx, modGlobalIdx)];
-    if (gdef && gdef.type.kind !== "externref" && gdef.type.kind !== "ref_extern") {
-      ctorFctx.body.push({ op: "extern.convert_any" });
-    }
-    operand = ctorFctx.body;
-  } else if (declFuncIdx !== undefined && declFuncIdx >= ctx.numImportFuncs) {
-    const closureType = emitCachedFuncClosureAccess(ctx, ctorFctx, funcName, declFuncIdx);
-    if (closureType) {
-      if (closureType.kind !== "externref" && closureType.kind !== "ref_extern") {
-        ctorFctx.body.push({ op: "extern.convert_any" });
-      }
-      operand = ctorFctx.body;
-    }
-  }
-  popBody(ctorFctx, saved);
-  if (operand === undefined) return;
-  // Park the closure in a scratch local BEFORE the register import is added:
-  // `emitCachedFuncClosureAccess` bakes a trampoline funcIdx, and the single
-  // terminal `flushLateImportShifts` below must repair it in the SAME buffer
-  // sweep that fixes the `call` target (#2608 "one terminal flush, never
-  // mid-emission").
-  const ctorTmp = allocLocal(ctorFctx, `__fnctor_ctor_${ctorFctx.locals.length}`, { kind: "externref" });
-  ctorFctx.body.push(...operand);
-  ctorFctx.body.push({ op: "local.set", index: ctorTmp });
   ensureLateImport(ctx, "__register_fnctor_instance", [{ kind: "externref" }, { kind: "externref" }], []);
   flushLateImportShifts(ctx, ctorFctx);
   const regIdx = ctx.funcMap.get("__register_fnctor_instance");
   if (regIdx === undefined) return;
   ctorFctx.body.push({ op: "local.get", index: selfLocal });
   ctorFctx.body.push({ op: "extern.convert_any" });
-  ctorFctx.body.push({ op: "local.get", index: ctorTmp });
+  // The caller evaluated the real constructor value before its arguments and
+  // passed that exact closure identity. A synthesized cached closure is not
+  // equivalent for capturing nested constructors: prototype writes land on
+  // the live closure while the cache owns a different, empty sidecar.
+  ctorFctx.body.push({ op: "local.get", index: constructorIdentityParamIdx });
   ctorFctx.body.push({ op: "call", funcIdx: regIdx });
 }
 
@@ -1582,6 +1548,12 @@ function compileNewFunctionDeclaration(
     continueStack: [],
     labelMap: new Map(),
     savedBodies: [],
+    // The JS-host constructor executes with a concrete fnctor receiver, which
+    // lets constructor-time prototype calls use the in-Wasm driver before
+    // exports are available. Standalone keeps the historical dynamic `this`
+    // representation: forcing the struct fact there bypasses prototype
+    // overrides used by generic String methods on custom constructors.
+    ...(!ctx.standalone && !ctx.wasi ? { thisStructName: structName } : {}),
   };
   // The synthesized fnctor body is still the source function's activation for
   // legacy Function#caller. Register it before any prologue/body emission so
@@ -1632,7 +1604,7 @@ function compileNewFunctionDeclaration(
   // compile switches ctx.currentFunc to ctorFctx, later shifts reach these
   // prologue instrs through currentFunc.body, and after attachment through
   // ctx.mod.functions.
-  emitCtorPrologueFnctorRegistration(ctx, ctorFctx, funcName, selfLocal);
+  emitCtorPrologueFnctorRegistration(ctx, ctorFctx, ctorIdentityParamIdx, selfLocal);
 
   // Compile the function body
   const savedFunc = ctx.currentFunc;

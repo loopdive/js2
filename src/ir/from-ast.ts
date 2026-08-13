@@ -1427,6 +1427,13 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
       lowerNestedFunctionDeclaration(s, cx);
       continue;
     }
+    if (ts.isClassDeclaration(s) && s.name && cx.classShapes?.has(s.name.text)) {
+      // The bounded nested-class selector proved ClassDefinitionEvaluation is
+      // effect-free and Program ABI preparation already installed every body.
+      // No runtime instruction is required; retain the lexical name only in
+      // the selector's class-shape registry.
+      continue;
+    }
     // Slice 3 (#1169c): bare call expression statement — lower the
     // call, drop the result. Lets `inc(); inc(); inc();` work.
     //

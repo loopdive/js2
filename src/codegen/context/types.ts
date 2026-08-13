@@ -619,13 +619,7 @@ export interface FunctionContext {
    * localMap rather than reusing the declaring frame's outerLocalIdx.
    */
   liftedCaptureNames?: Set<string>;
-  /**
-   * This synthetic function recompiles a source function in a fresh local
-   * frame (for example an async resume function). Nested-function capture
-   * metadata still carries slot numbers from the original activation frame,
-   * so capture arguments must resolve through this frame's live `localMap`.
-   */
-  rematerializedCaptureSourceLocals?: boolean;
+  liftedCaptureSlots?: Map<string, number>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
@@ -696,15 +690,13 @@ export interface FunctionContext {
   /**
    * (#2976) Per-activation memo locals for capture-carrying nested function
    * declarations referenced as VALUES: funcName → local holding the
-   * `(ref null $__fn_cap_<name>_struct)` closure instance. Every reference
-   * site emits a `ref.is_null`-guarded lazy build into this local instead of
-   * constructing a fresh struct per reference, so `f === f` holds and
-   * sidecar/static writes land on the same instance every reference sees.
-   * The guard (rather than a prologue hoist) preserves the existing
-   * value-capture semantics: immutable captures are copied at the FIRST
-   * dynamic reference, exactly where the old per-site build copied them.
+   * closure instance. References lazily fill it once, preserving identity and
+   * making sidecar/static writes visible at every subsequent reference.
+   * Lazy initialization retains first-dynamic-reference capture semantics.
    */
   nestedFnClosureMemos?: Map<string, number>;
+  hoistedFunctionValueBindings?: Set<string>;
+  materializedHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
   /** Whether this constructor belongs to a class declared with `extends`. Spec §10.2.1.3

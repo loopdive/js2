@@ -1609,12 +1609,6 @@ export function ensureAsyncResumeFunction(
     // routing the lifted body had.
     boxedCaptures: info.boxedCaptures,
     readsCurrentThis: info.readsCurrentThis,
-    // The resume body recompiles `info.decl` in a new frame whose leading
-    // `__frame` parameter shifts every source local. Nested-function metadata
-    // was recorded against the activating frame, so its raw outerLocalIdx
-    // values are not meaningful here; source capture arguments must follow the
-    // live name-to-local mapping built below and by statement compilation.
-    rematerializedCaptureSourceLocals: true,
   };
   const frameLocal = 0;
 

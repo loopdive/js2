@@ -17,8 +17,6 @@ related: [1032, 1034, 3587, 4000]
 loc-budget-allow:
   - src/codegen/async-cps.ts
   - src/codegen/async-frame.ts
-  - src/codegen/closures/capture-source-slot.ts
-  - src/codegen/context/types.ts
   - src/codegen/index.ts
   - src/codegen/literals.ts
   - src/codegen/statements/nested-declarations.ts
@@ -27,7 +25,6 @@ func-budget-allow:
   - src/codegen/async-cps.ts::buildBody
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildStateBody
-  - src/codegen/closures/capture-source-slot.ts::captureSourceSlot
   - src/codegen/literals.ts::compileArrayLiteral
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---

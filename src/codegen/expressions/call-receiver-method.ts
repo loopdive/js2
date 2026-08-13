@@ -115,11 +115,11 @@ import {
   compileCallablePropertyCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
-  sourceDefinesFunctionMember,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
+import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall } from "./extern.js";
-import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
+import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -2957,10 +2957,8 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver (#4201).
-  if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
-  }
+  const valueOfFallback = tryEmitValueOfFallback(ctx, fctx, expr, propAccess);
+  if (valueOfFallback !== undefined) return valueOfFallback;
 
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
   if (lateFnctorCall !== undefined) return lateFnctorCall;
