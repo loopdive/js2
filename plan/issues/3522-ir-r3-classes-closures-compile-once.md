@@ -74,6 +74,7 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
@@ -1409,6 +1410,44 @@ family. No shared direct closure implementation is deleted yet; retire each
 branch with the final consumer and keep its optimization/parity assertions in
 that deletion checkpoint.
 
+### Top-level function-value target checkpoint (2026-08-13)
+
+A top-level function declaration no longer has to retain its direct body merely
+because another owner materializes it as a runtime value. The selector admits
+the target when its body and callable signature are otherwise R2-safe, while
+the value-using owner remains direct unless it already has an exact IR
+function-value plan. Before any target component seals, codegen allocates the
+canonical lazy singleton and freezes its exact source-owned
+`function-value-trampoline` plus mutable `function-value-cache` Program ABI
+bindings. A later direct read must reuse those allocator objects; it cannot add
+support to an already sealed component.
+
+The checkpoint proves local-variable and module-object escapes with the target
+direct-body emitter poisoned: the target reports `direct=0, IR=1`, validates,
+and returns the expected value. GC and standalone parity cases prove repeated
+reads retain JavaScript singleton identity and that optimized IR binaries are
+no larger than their same-source direct binaries. Structural coverage resolves
+both support bindings to final function/global slots beneath the target's exact
+terminal unit, preventing a generic name-owned trampoline from satisfying the
+runtime-only tests.
+
+Only the target crosses this one-way boundary. General value-consuming owners,
+returned/escaped closure values, capture-carrying cross-owner calls, object
+methods/accessors, and callable values that require dynamic dispatch remain on
+the typed direct route. No shared direct closure implementation is deleted in
+this checkpoint because those consumers still reach it.
+
+The exact current-function `caller` / `arguments` poison-pill read also remains
+direct until IR owns the equivalent activation/caller hand-off. The merge-queue
+Test262 probe `built-ins/Function/15.3.5.4_2-12gs.js` caught this boundary: an
+otherwise safe sloppy function is materialized as a value by strict `eval`, but
+its legacy `caller` observation still depends on direct activation state. That
+handoff is source-wide, so runtime-materialized function targets in the same
+source also stay direct; otherwise an unrelated Prepared target can still alter
+the final direct-call instrumentation. The checkpoint carries a focused runtime
+parity test for that boundary. Ordinary function-value targets in sources that
+do not observe the legacy activation continue to prepare.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
@@ -1615,3 +1654,58 @@ class-component ownership decisions, the static-claim reconciliation table,
 per-unit direct/IR emission counters, and runtime evidence for every listed
 class/closure family. A green class sample with missing nested/static IDs is
 vacuous and does not close R3.
+
+### Incremental Function caller boundary repair (2026-08-13)
+
+The merge-group Test262 rerun exposed that the exact ES5
+`Function.caller` guard was sound only for a fresh TypeScript Program. The
+production Test262 worker reuses an incremental Program, whose oracle may
+return an equivalent declaration clone. Comparing that declaration by object
+identity let `gNonStrict.caller` enter the Prepared function-value population,
+where the new trampoline bypassed the direct caller-strictness hand-off.
+
+The guard now compares original declaration identity as well as the current
+node. An incremental-compiler fixture warms and reuses the Program before
+compiling the exact strict-eval/sloppy-caller shape, then proves the function
+remains direct and module initialization does not throw. Ordinary function
+value targets are unaffected.
+
+The next merge-group rerun exposed the complementary only-strict row
+`built-ins/Function/15.3.5.4_2-11gs.js`. Incremental reuse can also return a
+same-named declaration from a different prior source shape, so even structural
+source-position comparison is not sufficient for the current function's
+syntactic self-read. The guard now recognizes a same-name self receiver
+conservatively. The observing function stays direct through that exact guard;
+runtime-materialized sibling targets also stay direct because they share the
+caller-activation hand-off, while unrelated direct-call-only functions remain
+eligible for the ordinary IR overlay. This avoids relying on stale checker
+identity without changing unrelated Test262 harness bodies. Focused incremental coverage pins
+both complementary semantics: a strict eval in a sloppy script exposes its
+non-strict caller without throwing, while an inherited-strict eval callback
+must throw when the callee reads `caller`.
+
+The broader every-top-level-function withdrawal was tried after the `11gs`
+queue failure and removed after the next merged-state run regressed
+`built-ins/Function/15.3.5.4_2-12gs.js`: it changed the Wasm for unrelated
+harness callables and made the sloppy caller appear strict. The focused parity
+fixture therefore carries a direct-call-only sibling and requires it to stay
+IR-emitted beside the direct observing function and direct function-value
+target; it is not withdrawn by the source-wide activation boundary.
+
+### Native-first immediate call/apply parity repair (2026-08-13)
+
+After the native-first host-import gate landed on main, the queued merge
+exposed an optimization regression in the new singleton preparation. A local
+function used only as the receiver of an immediately invoked `.call(...)` or
+`.apply(...)` was retaining the complete generic closure bridge even though
+the direct owner already lowers that invocation without a persistent runtime
+function value. Each probe grew from a 43-byte, zero-import optimized module
+to 7,289 bytes with three JS-string bridge imports.
+
+The runtime-value census now excludes only those exact immediately invoked
+receivers. The function body remains Prepared and IR-emitted with no legacy
+body, while the existing optimized invocation route stays available to the
+direct owner. Explicit `call` and `apply` parity fixtures execute the result,
+require zero Wasm imports, and require the optimized IR binary to be no larger
+than its direct-backend control. Both are 43 bytes after the repair, and the
+native-first gate remains at 379 imports without increasing its baseline.
