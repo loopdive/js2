@@ -174,6 +174,12 @@ describe("#3017 — Function poison-pill semantics", () => {
     expect((await runTest262File(file, "built-ins", 30_000, "standalone")).status).toBe("pass");
   });
 
+  it("keeps a strict direct-eval caller hidden from its sloppy callee", async () => {
+    const file = resolve("test262/test/built-ins/Function/15.3.5.4_2-11gs.js");
+    expect((await runTest262File(file, "built-ins")).status).toBe("pass");
+    expect((await runTest262File(file, "built-ins", 30_000, "standalone")).status).toBe("pass");
+  });
+
   it("keeps a direct-eval strict caller observable from its sloppy callee", async () => {
     const file = resolve("test262/test/built-ins/Function/15.3.5.4_2-12gs.js");
     expect((await runTest262File(file, "built-ins")).status).toBe("pass");
