@@ -3967,3 +3967,117 @@ harmful arm maximisation and silent unoptimized fallbacks.
 Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6–7.1×**.
 Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
 reuse), partial inlining of user functions, and receiver-type specialisation.
+
+## 2026-08-13 (35) — defect C BUILT: cross-IC guard reuse, −829 static type tests and 319,847 executed reuses, for −0.17 % size
+
+Entry (30)'s third defect, behind `JS2WASM_IC_GUARD_REUSE`, DEFAULT OFF.
+`src/codegen/ic-guard-reuse.ts`, consumed by `member-get-inline-ic.ts`.
+
+### The design decision, and why option 2 was not available
+
+The brief offered two shapes: a finalize-time window pass, or extending
+emission-time receiver-CSE (entry 33) to also cache the post-`ref.cast` typed
+value. **Option 2 is structurally impossible, not merely worse.** `ref.cast $S`
+does not exist at emission time — the struct candidate set is only COMPLETE at
+finalize, which is the entire #2674 argument for making the IC a finalize pass.
+At emission a dynamic member read is a plain `call $__get_member_<name>` with no
+type to cache. So option 1 was forced.
+
+What made it safe is that entries (9)/(13)'s "re-derive dominance on linear
+wasm" problem does not arise here: the pass rewrites ONE instruction array at a
+time by strictly appending to a fresh `out`, and a wasm array is entered only at
+the top, so an earlier instruction dominates every later one in it. That is
+receiver-CSE's original (naive) argument — which failed there **only** because
+`fctx.body` is spliced during EMISSION. After emission nothing splices. The
+relocation probe is carried anyway, in receiver-CSE's exact form (`out[at-1]`
+must still be the recorded `tee` OBJECT), where it does a second job: it is what
+makes the pre-scan's prediction unfalsifiable, since a leader the pre-scan
+predicted may still be declined at emission.
+
+### Two things that were NOT obvious and are the difference between 0 and 829
+
+- **Keying on the local index finds almost nothing (388 reuses).** The emitter
+  copies the receiver into a fresh local per statement (`local.set $85
+  (local.get $7)`, `$86`, …) and routes each site through its own
+  `any.convert_extern ; local.tee $92 ; extern.convert_any` round trip, so six
+  reads of one `this` present six different locals. Locals are therefore tracked
+  by VERSIONED VALUE IDENTITY: a modelled copy propagates the source's id, any
+  unmodelled write mints a fresh one — which also subsumes invalidation, because
+  an id is never resurrected. Modelling only ONE conversion direction loses the
+  chain at its first hop; both directions are needed (388 → 586).
+- **Scope is dominance, not array identity** (586 → 829). A nested body is
+  dominated by everything preceding its parent instruction, so a child array
+  inherits a copy of the state; a parent never inherits from a child (a
+  conditional arm's guard does not dominate what follows the `if`) and siblings
+  never see each other. **Two re-entry shapes break that reading and are the one
+  real trap here:** a `loop` back edge re-enters the body after later body
+  instructions ran, and a `catch` body is entered from anywhere in the try
+  body — in both, a receiver reassigned in between would be tested with the
+  stale guard. Both are handled by clobbering the subtree's write set on the way
+  in. `tests/issue-4157-ic-guard-reuse.test.ts` pins this: with the clobber
+  removed the fixture answers WRONG against the native-Node oracle.
+
+### Results (tuned-11 as the base, i.e. all of entry (34)'s ON set)
+
+| | flag OFF | flag ON | Δ |
+| --- | ---: | ---: | ---: |
+| binary @ `optimize: 0` | 2,680,957 | 2,678,693 | −2,264 (−0.08 %) |
+| binary @ completed `-O4` | 1,324,402 | 1,322,110 | −2,292 (−0.17 %) |
+| static `ref.test` @ `optimize: 0` | 35,214 | 34,385 | **−829** |
+| static `ref.cast` @ `optimize: 0` | 49,292 | 48,463 | **−829** |
+| static `ref.test` @ `-O4` | 20,990 | 20,559 | −431 |
+| static `ref.cast` @ `-O4` | 21,399 | 20,968 | −431 |
+| **executed reuses / self-parse** | — | **319,847** | (identical at `-O4`) |
+
+469 leaders, **829 reuses of 4,301 patched sites (19.3 %)**; 12 sites had an
+unkeyable producer, 3,460 were simply the first read of that value in their
+scope. `declined-relocated=0` — the probe never had to fire.
+
+Two readings worth keeping:
+
+- **`wasm-opt` already finds about half of it.** 829 static removals at
+  `optimize: 0` become 431 at `-O4`, so binaryen's own redundancy elimination
+  would have taken the rest. The 431 that survive are ones it does not find, and
+  the executed count is unchanged by `-O4` (319,847 either way), so the sites do
+  survive optimisation and do run.
+- **Size is the wrong headline and the executed count is the right one.** Like
+  slice B of entry (33) this removes inline instructions, not calls, so
+  `JS2WASM_EXEC_CENSUS` is blind to it; the counter added here
+  (`JS2WASM_IC_GUARD_REUSE_CENSUS=1`, one exported `i32`) is what converts a
+  static claim into a dynamic one. 319,847 executed reuses each drop a
+  `local.tee` + `ref.test`, and on the hit path a `ref.cast` as well — for scale,
+  `__is_truthy` is 997,454 calls and `__extern_get` 506,752.
+
+### Correctness
+
+Flag unset ⇒ **sha256-identical**: `2a3aa6ad…` with no flags at all, `4a1cda96…`
+on tuned-11 — the latter reproduced with `JS2WASM_IC_GUARD_REUSE_POISON=1` also
+set, so the poison is provably inert flag-off. Flag ON: census checksum 422;
+**poison ON kills the parse with `RuntimeError: dereferencing a null pointer`**,
+so the reused cast is genuinely executed and not merely emitted. The 64-name
+per-field differential is clean in BOTH read paths (`computed` and `named`): 0
+hash divergence, 0 presence divergence, 32,506 nodes, body 422.
+`DOGFOOD_ACORN=1 tests/dogfood/acorn.test.ts` 4/4 with the flag on (621 reuses in
+that lane). 34 property/object/member/numeric/assignment equivalence files
+(216 tests) all pass with the flag on — **zero failures, so nothing to
+attribute**; but note those snippets reuse essentially nothing (single-statement
+programs have no repeated receiver), so the acorn dogfood and the differentials
+are the real evidence, exactly as entry (33) found for slice B.
+
+Gates: loc/func budget, oracle-ratchet (+0), pushraw, coercion-sites,
+stack-balance, any-box-sites, lint, prettier, `tsc` all clean. `check:godfiles`
+fails on `object-runtime.ts` / `array-methods.ts` — pre-existing on this branch,
+confirmed by restoring the touched file to its `HEAD` blob (file copies; `git
+stash` is a single shared stack across worktrees).
+
+### What is left of defect C
+
+Only the member-get IC participates. The other two ICs guard different
+predicates — `extern-get` on a key-global hash plus its own receiver
+classification, `is-truthy` on OPERAND type — so there is no shared guard to
+reuse between them; "cross-IC" here means between consecutive member-get caches,
+which is where entry (30) counted the `ref.test`. The write side is untouched
+and is the bigger remaining population: `__set_member_*` is 344,602 executed
+calls that each re-test the receiver INSIDE the callee, and no inline cache
+exists for it at all. That, not more reuse on the read side, is where the next
+increment of this defect lives.
