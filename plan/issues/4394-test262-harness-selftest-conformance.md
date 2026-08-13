@@ -412,6 +412,51 @@ Behind it sits a THIRD defect this exposed: a `Test262Error` thrown from inside
 an OBJECT-LITERAL METHOD is caught with `err.constructor.name === "String"` —
 the error value degrades to a string across that boundary.
 
+## Attempted, not landed — callee-side async Promise envelope (7 tests)
+
+Async-ness is applied at the CALL SITE (`wrapAsyncReturn` +
+`wrapAsyncCallInTryCatch`): the caller wraps the result in `Promise.resolve` and
+re-emits the call inside a try that converts a throw into `Promise.reject`. That
+cannot reach an INDIRECT call, which is the shape `assert.throwsAsync` uses
+(`res = func()` on an untyped parameter). Measured: an async function
+EXPRESSION invoked through such a parameter returns the RAW value
+(`async function () { return 1; }` → the number `1`) and a sync throw ESCAPES —
+so `throwsAsync` reports "the function threw synchronously" for a function that
+per §27.7.5.1 cannot.
+
+A callee-side envelope was implemented for the well-defined subset — a DECLINED
+async fn-expr / arrow with **no `await` of its own**, where the legacy
+synchronous pass-through is already correct apart from the Promise envelope:
+
+- `closureReturnType` forced to `externref` before the lifted func type and
+  closure struct are minted;
+- a `fctx.asyncPromiseWrapReturn` hook so `return v` coerces to externref and
+  calls `Promise.resolve` (falling off the end fulfils with `undefined`, not
+  `null` — a raw `ref.null.extern` reads back as `null`);
+- the whole lifted body re-emitted inside a `try` whose `$exn` / `catch_all`
+  handlers call `Promise.reject`, mirroring `wrapAsyncCallInTryCatch`.
+
+**It works for a direct call and for a closure held in a variable** — verified
+in the assembled harness: `assert.throwsAsync(Error, inner)` passes. **It does
+NOT work when the async fn-expr is passed INLINE as an argument**, which is
+exactly how the tests spell it:
+
+```js
+var p = assert.throwsAsync(Error, async function () { throw new Error(); });
+```
+
+The blocker is the dynamic-closure-call lowering. `func()` inside `throwsAsync`
+emits a `ref.test`/`call_ref` chain over a FIXED list of candidate lifted func
+types; forcing the async closure's result to `externref` gives it a type that is
+not in that list, so the call falls through to the host bridge and the throw
+escapes the callee's `try` after all. Net effect on the harness: **0 fixed, 0
+broken** — so the work was reverted rather than landed.
+
+Closing it needs the candidate-type list at a dynamic call site to admit the
+closure's actual lifted type (or the wrapper-struct sharing to be keyed so the
+async signature participates), which is a change to the dynamic-dispatch
+substrate, not to async lowering.
+
 ## Remaining buckets (GC lane, 23 fail)
 
 | bucket | n | signature |
