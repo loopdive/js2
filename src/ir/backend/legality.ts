@@ -21,6 +21,7 @@ export type IrBackendTargetCapability =
   | "host-object-define-property"
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
+  | "standalone-wrapper-instanceof"
   | "legacy-numeric-array-global";
 
 /**
@@ -59,6 +60,16 @@ export function supportsIrBackendTargetCapability(
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-native-regexp-test-carrier":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+    case "standalone-wrapper-instanceof":
+      // The IR producer consumes the fast lane's native `$AnyValue` object
+      // payload as anyref. Non-fast standalone carries dynamic values as
+      // externref and needs an explicit extern→any conversion node first.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.target === "standalone" &&
+        !profile.allowHostImports &&
+        profile.fast === true
+      );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
   }
