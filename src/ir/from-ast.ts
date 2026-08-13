@@ -36,6 +36,7 @@
 //     with arg types validated against the propagated callee param types.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
 import { TsCheckerOracle } from "../checker/oracle.js";
 import {
@@ -158,7 +159,7 @@ import {
 // #4177 — fixpoint-fact consumption for the `+` operand proof.
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
-import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -315,6 +316,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Resolve the pre-collected exact JS-host indirect-eval import. */
+  hostIndirectEvalTarget?(): IrFuncRef | null;
   /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
   functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
@@ -5283,6 +5286,50 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // optional-call IR support is a follow-up.
   if (expr.questionDotToken) {
     throw new Error(`ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
+  }
+  const indirectEval = exactIndirectEvalStatement(expr);
+  if (indirectEval) {
+    const target = cx.resolver?.hostIndirectEvalTarget?.();
+    if (
+      !statementPosition ||
+      cx.resolver?.jsHostExterns?.() !== true ||
+      cx.resolver?.isAmbientBinding?.(indirectEval.evalIdentifier) !== true ||
+      cx.scope.has("eval") ||
+      cx.resolver?.stringIsExternref?.() !== true ||
+      !target
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified host indirect eval lost an owning predicate (${cx.funcName})`,
+      );
+    }
+    const source = lowerExpr(indirectEval.source, cx, { kind: "string" });
+    if (cx.builder.typeOf(source).kind !== "string") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified host indirect eval source is not a string (${cx.funcName})`,
+      );
+    }
+    const result = cx.builder.emitCall(
+      target,
+      [
+        cx.builder.emitCoerceToExternref(source),
+        cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })),
+      ],
+      irVal({ kind: "externref" }),
+    );
+    if (result === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: host indirect eval provider returned void (${cx.funcName})`,
+      );
+    }
+    // Statement-position lowering records this as a zero-use side-effecting
+    // call; the backend emits the mandated Wasm `drop` for its externref result.
+    return result;
   }
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
