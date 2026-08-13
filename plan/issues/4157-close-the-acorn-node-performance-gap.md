@@ -3640,3 +3640,30 @@ Anyone flipping defaults should start from that set and re-derive it per corpus,
 because the optimum is a *selection*, not a maximum. And the per-flag numbers in
 this file are all measured with the other flags OFF, so they do not compose
 additively — the size costs do.
+
+## 2026-08-13 (30) — fresh look at the flags-on binary: the "compiled residual" decomposes into three named defects
+
+Dissected the emitted code for **one hot JS statement** — `this.lastTokEnd =
+this.end` in `pp.next` — with the tuned flag set ON. V8's post-IC output for
+this statement is two moves. Ours is ~100+ instructions, and the excess is not
+JIT magic we lack; it is three specific code-quality defects, each quantified
+against the whole binary:
+
+| | defect | scale |
+| --- | --- | ---: |
+| **A** | **`this` is re-resolved per operand.** A ~15-instruction ladder — `global.get`, null test, undefined-singleton substitute, `ref.test`, sentinel `ref.eq` — emitted once per member operand, for a value that cannot change within the function. | **5,974 ladders** |
+| **B** | **Typed reads, boxed writes.** The get side has 19 `__get_member_*__f64` twins; the set side has **zero**. Every numeric write goes f64 → i31-range check (~20 instr) → box → `__set_member_*(externref, externref)` → unbox → f64 slot. | 424 dispatchers, **344,602 calls/parse** |
+| **C** | **No redundancy elimination between ICs.** Consecutive inlined ICs re-do `any.convert_extern` + `ref.test` on the same receiver; three consecutive `this.lastTokX = this.X` statements pay six type tests of a value whose type cannot change between them. | 6,723 `ref.test` of one struct type alone |
+
+Also newly measured: the write/dispatch populations nothing has touched —
+`__set_member_*` 344,602, `__call_m_*` 103,651, `__call_fn_method_*` 76,827,
+`__named_this_call_*` 32,468 = **560,056 executed calls/parse**.
+
+**Why this matters more than another helper slice:** these defects live in the
+`compiled` bucket — the ~40 % that was being written off as "register
+allocation, inlining and type feedback an AOT compiler cannot obtain".
+`this.lastTokEnd = this.end` needs **no type feedback**: both sides are
+statically fields of the same known struct. A, B and C are all fixable ahead of
+time — receiver CSE (hoist `this` resolution to one local per function), a
+`__set_member_<name>__f64` twin symmetric to the existing get twin, and reusing
+the IC's cast result across adjacent same-receiver ICs.
