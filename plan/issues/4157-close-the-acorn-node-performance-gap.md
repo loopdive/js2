@@ -25,6 +25,13 @@ func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # (#4157 inline cache, entry 14) +5 lines: the arm's ~119 lines of emission
+  # were EXTRACTED to `buildMemberGetInlineCacheArm` per this gate's own advice
+  # (504 -> 390 of a 385 budget). What remains is the call plus its two-field
+  # options object and the two spread sites that consume the result. Squeezing
+  # the last 5 would mean inlining the options object back into a positional
+  # argument list, which is worse code for a budget number.
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -1781,3 +1788,102 @@ put that at 6.38 pp *including* work the check still has to do.
 value is that the surviving lever from entry (8) is no longer a hypothesis: it
 has been built and it does not work as specced. Anyone picking it up starts from
 a measured failure and a named refinement, not from §10's optimism.
+
+## 2026-08-12 (14) — the gated inline cache: LANDED FLAG-OFF, measurement still owed
+
+Entry (13)'s named refinement — emit the cache arm **only** for dispatchers no
+closed struct carries — is implemented and committed **default-OFF**.
+
+| flag | checksum | binary |
+| --- | --- | ---: |
+| `JS2WASM_MEMBER_GET_IC` unset / `0` | 422 | **2,490,829 — byte-identical to base** |
+| `JS2WASM_MEMBER_GET_IC=1` | 422 | 2,492,413 (+1,584 B) |
+
+The byte-identical off-state is the guarantee #4211 established for the hot/cold
+split, and the +1,584 B on-state confirms the gate bites: the ungated ancestor
+cost +26,491 B, so this touches roughly a fifteenth as many dispatchers.
+
+**Why flag-OFF and not default-on: the A/B is contaminated and I am not quoting
+it.** Two order-reversed runs were launched into the same output directory (one
+backgrounded, one `nohup`-ed after an interruption appeared to kill the first).
+The file timestamps give it away — `offB` at 01:52 predates `offA` at 01:55,
+which is impossible for a single sequential run — and one OFF block came in at
+59,944 ms against ~50,500 ms for its siblings, the signature of CPU contention
+between two concurrent profile runs. The numbers trended the right way in all
+three affected buckets, which is exactly why they must not be quoted: a
+contaminated run that agrees with the hypothesis is the easiest kind of evidence
+to accept by mistake.
+
+**What is owed before this flips on:** one clean order-reversed ON/OFF/OFF/ON
+with nothing else on the box, reporting `dynamic-lookup` **and** `cast-convert`
+(the cache arm returns a boxed value, so any saving may land in either), plus
+the per-field differential over all 64 ESTree names in **both** read paths per
+the #4217 lesson.
+
+**And a prior to hold while doing it.** The gate fixes entry (13)'s regression by
+construction — it removes the arm from precisely the dispatchers that were being
+taxed — but fixing a regression is not the same as producing a win. The eligible
+population is small (+1,584 B is on the order of a dozen names), and if acorn's
+hottest generic reads do not sit in it, the honest result is another null. This
+is the eighth attempt in this file; five were nulls and one was a regression.
+
+## 2026-08-12 (15) — codegen-level breakdown, both runtimes
+
+Profile buckets say where time goes; this says what the compiler *emitted* to
+make it go there. Disassembled the standalone acorn build (`wasm-dis`, names
+preserved) and counted.
+
+**Compiled acorn: 1,134 functions, 773,232 WAT lines, 35,403 calls — 99.2 % of
+them into runtime helpers.** Compiled acorn code barely calls itself.
+
+| | JS | our wasm | V8 |
+| --- | ---: | ---: | ---: |
+| `pp.next` | 10 lines | **981 WAT lines, 34 helper calls** | ~12 inline IC sites |
+| `pp$2.finishNode` | 5 lines | 177 WAT lines, 6 calls | ~6 inline sites |
+
+Static call sites by category:
+
+| category | sites | share |
+| --- | ---: | ---: |
+| other runtime (`__new_TypeError` alone is 3,917) | 9,598 | 27.3 % |
+| property read | 4,672 | 13.3 % |
+| string runtime | 3,854 | 11.0 % |
+| devirt trampolines | 3,820 | 10.9 % |
+| unboxing | 3,146 | 9.0 % |
+| boxing | 2,740 | 7.8 % |
+| property write | 1,672 | 4.8 % |
+| truthiness | 1,581 | 4.5 % |
+| generic property read | 1,376 | 3.9 % |
+| method dispatch | 1,270 | 3.6 % |
+| coercion | 1,168 | 3.3 % |
+
+### Cross-runtime, per parse
+
+| phase | wasm | node | ratio |
+| --- | ---: | ---: | ---: |
+| acorn's own code | 55.3 ms | 14.9 ms | 3.7× |
+| GC | 4.1 ms | 5.0 ms | **0.82×** |
+| runtime helpers | **78.9 ms** | **0 ms** | — |
+| total | 138.3 | 19.9 | 6.95× |
+
+Gap 118.4 ms = helpers 78.9 (67 %) + code quality 40.4 (34 %) + GC −0.9 (−1 %).
+
+**We now beat V8 on GC in absolute terms** (4.1 ms vs 5.0 ms). Node's profile is
+74.76 % acorn's own functions and 25.24 % GC, with **no helper layer at all** —
+which is the entire story. (Caveat: node's profile window was 9,081 ms against
+300 × 19.9 = 5,970 ms of parse, so ~34 % is harness/profiler overhead and the
+25.24 % GC share should be read as ±several points.)
+
+### Two findings worth acting on
+
+- **`__new_TypeError` at 3,917 static sites is the single largest emitted item.**
+  V8 gets null-dereference TypeErrors free from the MMU — the load faults and a
+  signal handler raises. We emit an explicit test plus constructor call at every
+  member access. Pure spec-compliance tax, almost entirely cold, and it inflates
+  every function past `wasm-opt`'s inlining budget. Eliding it where the receiver
+  is provably non-null is a **code-size** lever, and code size is what blocks
+  inlining.
+- **Our code size is itself an optimisation barrier.** 682 WAT lines per function
+  average means almost nothing qualifies for inlining. That is the mechanism
+  behind entry (9)'s failure, and it means size reductions may buy speed
+  indirectly in a way none of this file's measurements would attribute to them.

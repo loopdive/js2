@@ -204,7 +204,7 @@ const FLAG_CONFIGURABLE = 0x04;
 // #1888 Slice 5 — accessor descriptor: when set, the entry's value is replaced
 // by the `$get`/`$set` funcref-bearing slots (fields 4/5). 0x08 is the first
 // extension bit (0x10 internal; 0x20/0x40 vec-overlay; 0x80 = TOMBSTONE).
-const FLAG_ACCESSOR = 0x08;
+export const FLAG_ACCESSOR = 0x08;
 // #1910/#1472 S2 — internal-slot marker. Set on the single reserved $PropEntry a
 // boxed primitive wrapper (`new Number`/`new String`/`new Boolean`) carries: it
 // holds the wrapper's [[NumberData]]/[[StringData]]/[[BooleanData]] primitive
@@ -218,7 +218,7 @@ export const FLAG_INTERNAL = 0x10;
 // COMPANION data entry whose [[Value]] could not be written back into the vec
 // element (kind-incompatible carrier); dynamic readers answer from the
 // companion. 0x40 marks a semantically deleted dense vec index.
-const FLAG_TOMBSTONE = 0x80;
+export const FLAG_TOMBSTONE = 0x80;
 /**
  * Reserved own-key under which a boxed primitive wrapper stores its internal
  * `[[PrimitiveValue]]` slot (#1910/#1472 S2). Uses the spec internal-slot
