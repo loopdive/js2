@@ -132,7 +132,7 @@ function icMaxCandidates(): number {
 }
 
 /** Declared type of local `index` in `fn` (params first, then declared locals). */
-function localTypeOf(ctx: CodegenContext, fn: WasmFunction, index: number): ValType | undefined {
+export function localTypeOf(ctx: CodegenContext, fn: WasmFunction, index: number): ValType | undefined {
   const t = ctx.mod.types[fn.typeIdx];
   const params = t && t.kind === "func" ? t.params : [];
   if (index < params.length) return params[index];
@@ -140,7 +140,7 @@ function localTypeOf(ctx: CodegenContext, fn: WasmFunction, index: number): ValT
 }
 
 /** Declared type of global `index` in the combined (imports-first) index space. */
-function globalTypeOf(ctx: CodegenContext, index: number): ValType | undefined {
+export function globalTypeOf(ctx: CodegenContext, index: number): ValType | undefined {
   let seen = 0;
   for (const imp of ctx.mod.imports) {
     const desc = imp.desc as { kind: string; type?: ValType };
@@ -162,7 +162,7 @@ function globalTypeOf(ctx: CodegenContext, index: number): ValType | undefined {
  * of these cases (`extern.convert_any` at the main dynamic-read chokepoint, an
  * externref local at the accessor/method-arm sites).
  */
-function producesExternref(ctx: CodegenContext, fn: WasmFunction, instr: Instr | undefined): boolean {
+export function producesExternref(ctx: CodegenContext, fn: WasmFunction, instr: Instr | undefined): boolean {
   if (!instr) return false;
   const a = instr as { op: string; index?: number; funcIdx?: number };
   if (a.op === "extern.convert_any") return true;

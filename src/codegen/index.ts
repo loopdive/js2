@@ -217,6 +217,7 @@ import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) ho
 import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
+import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
 import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
 import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
@@ -5161,6 +5162,7 @@ export function generateModule(
     // HERE so the copied arm and the copy share one type/funcIdx regime — every
     // later remap treats both identically. DEFAULT OFF.
     inlineMemberGetCallSites(ctx);
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
@@ -7522,6 +7524,7 @@ export function generateMultiModule(
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
     inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Mirror the single-source closed-struct own-property finalizer.

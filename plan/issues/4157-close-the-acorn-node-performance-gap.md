@@ -2941,3 +2941,291 @@ of entry (21) stands. It is simply not the helper this optimisation addresses.
 `=1` costs 38 KB for 8.7 %; `=4` costs 84 KB for 56 %. Whatever ships, the
 ceiling should be chosen on this curve rather than left at 1. Higher ceilings are
 unmeasured.
+
+## 2026-08-13 (22) — the specced i32-arithmetic site is DEAD; the reachable half is the box, and it removes 489,165 of 489,166 boxing calls
+
+Entry (20) handed the i32-arithmetic half to whoever owned
+`binary-ops-typed-dispatch.ts`. **That site cannot fire.** What replaces it is
+`src/codegen/smi-box-fast-path.ts`, on the same `JS2WASM_SMI_FASTPATH` flag,
+default OFF, byte-identical when off (sha256-verified).
+
+### The null first, because it invalidates the spec, not just the estimate
+
+Instrumented `compileTypedBinaryDispatch` with a per-`(op, leftKind, rightKind)`
+tally over a whole standalone acorn self-compile. Every arithmetic and
+relational dispatch — 1,617 of them — arrives **`L=f64 R=f64`**:
+
+| op | sites | L/R |
+| --- | ---: | --- |
+| `>=` · `<` · `>` · `<=` | 979 | all `f64`/`f64` |
+| `+` · `-` · `*` · `%` | 478 | all `f64`/`f64` |
+| `&` · `|` · `<<` · `>>` | 160 | all `f64`/`f64` |
+| **numeric ops with an externref operand** | **0** | — |
+
+The externref pairs at that dispatch (`===` 61, `!==` 2, plus 700-odd mixed
+`externref`/`ref`) are **equality**, which is not `isNumericOp` and never reaches
+line 626.
+
+The cause is structural, not incidental: `compileBinaryExpression` compiles both
+operands with a **numeric hint**, so the `externref → f64` ToNumber is emitted
+*inside* each operand's own compilation — at the `type-coercion.ts` site slice B
+already patches — and the dispatch only ever sees f64. Ten hand-written operand
+shapes (member read `o.x - o.y`, call result, element read, two `any` params,
+`any` vs literal in both orders, `unknown` casts, `*`, `<`, `|`) reproduce it:
+all `f64`/`f64`. So the transform was not merely low-yield, it had **no site**,
+and building it would have shipped unexercised code.
+
+### Where the boxes actually are (static, from `wasm-dis` of the acorn build)
+
+1,798 `call $__box_number` sites, by the producer feeding them:
+
+| producer | sites | | producer | sites |
+| --- | ---: | --- | --- | ---: |
+| `local.get` | 403 | | `if` | 90 |
+| `call` | 327 | | `call_ref` | 74 |
+| `struct.get` | 238 | | `f64.const` | 55 |
+| **`f64.add`** | **173** | | **`f64.sub`** | **37** |
+| **`f64.convert_i32_s`** | **138** | | `global.get` · `local.tee` · `block` · `array.get` | 263 |
+
+Arithmetic feeds **210 of 1,798 (11.7 %)**, and only **70** of those have *both*
+operands dynamic (`__unbox_number` on each side) — the shape the specced
+transform was aimed at. That is the ceiling the binary-op route was ever going
+to have, i32 operands or not.
+
+### What was built
+
+A finalize pass, not an emitter hook, because the boxing calls come from **two**
+front ends — legacy `coerceType` and the IR lowering's `emitBox`
+(`ir/integration.ts`) — and on this workload the IR is the one that matters:
+hooking `coerceType` alone reached **2** sites in a probe module. One pass over
+the finished bodies covers both, exactly as `const-box-hoist.ts` does. It runs
+right after the const hoist (so a constant box is already a `global.get` and is
+never re-expanded) and before dead elimination (so the `call $__box_number` kept
+in each else-arm is index-remapped like every other call).
+
+Two levels of the one flag, because the difference is purely a size lever:
+
+- **`=1`** — rewrites only `f64.convert_i32_s; call $__box_number`, i.e. an i32
+  that was widened solely to satisfy the helper's signature. **138 sites.** The
+  emitted guard is *only* the 31-bit range test, because `__box_number`'s other
+  two clauses are provably vacuous on an i32 source: `f64.convert_i32_s` is
+  exact and `i32.trunc_sat_f64_s` inverts it for every i32, so the round-trip
+  clause always holds; and `f64.convert_i32_s` yields `-0` for no input (`0`
+  gives `+0`), so the sign-bit clause always holds too.
+- **`=all`** — also rewrites the other 1,660 sites with `__box_number`'s own
+  predicate, inlined verbatim, delegating to the untouched call when it fails.
+
+Both failure arms call the unchanged helper, so the `$BoxedNumber` allocation
+path is never duplicated and never re-derived.
+
+### Measured — acorn self-parse, `optimize: 0`, checksum 422 everywhere
+
+Executed calls (`JS2WASM_EXEC_CENSUS`, the entry (21) instrument):
+
+| helper | OFF | `=1` before this change | **`=1`** | **`=all`** |
+| --- | ---: | ---: | ---: | ---: |
+| `__box_number` | 489,166 | 489,166 | **481,393** | **1** |
+| `__unbox_number` | 883,318 | 321,807 | 321,807 | 321,807 |
+| `__to_primitive` | 568,788 | 7,277 | 7,277 | 7,277 |
+| `__is_truthy` | 997,454 | 997,454 | 997,454 | 997,454 |
+
+Binary, `optimize: 0`, census off:
+
+| position | bytes | Δ vs OFF | Δ vs operand half alone |
+| --- | ---: | ---: | ---: |
+| OFF | 2,459,292 | — | — |
+| `=1`, before this change | 2,483,651 | +24,359 | — |
+| `=1` | 2,486,950 | +27,658 | **+3,299** (138 sites, ~24 B each) |
+| `=all` | 2,569,881 | +110,589 | **+86,230** (1,798 sites, ~48 B each) |
+
+**`__box_number` at 1 is the headline and it is worth reading twice**: across an
+entire acorn self-parse exactly ONE boxed number is not i31-able. Entry (20)'s
+premise that the box was the thing to remove was right; the mechanism was in the
+wrong place. Note also what did NOT move — `__unbox_number` is untouched,
+because guarding the box does not remove an unbox, the mirror of entry (21)'s
+finding that guarding an operand does not remove a box.
+
+`cold-tail-census` allocations are **189,977** and struct bytes **5,759,436** in
+both positions, identical: the change moves no allocation, as it must not — the
+i31 arm was already what `__box_number` returned in these 489,165 cases, so this
+removes the CALL, not an allocation. It is a call-count win, not a GC win, and
+the profile should be expected to move by roughly what 489 k eliminated calls are
+worth, no more.
+
+### Correctness
+
+- `cold-tail-census`: checksum **422** OFF and `=all`; allocations and struct
+  bytes identical.
+- `tests/dogfood/acorn.test.ts` with `DOGFOOD_ACORN=1` (the heavy compile →
+  validate → AST-diff loop): pass OFF and `=all`.
+- 28-file numeric/arith/coercion/equality/comparison equivalence batch:
+  **188/188 in all three positions**, zero failures, so nothing to attribute.
+- New `tests/issue-4157-smi-box-fast-path.test.ts` — 6 cases × 3 flag positions,
+  pinning the values where a mis-copied predicate diverges: the ±2^30 i31 edges
+  and their ±1 neighbours, `-0` (which round-trips through
+  `i32.trunc_sat_f64_s` and must **not** become `ref.i31 0` — checked via
+  `1/x === -Infinity` from inside Wasm), NaN self-inequality, both infinities,
+  non-integers, `Object.is` across boxes, `typeof`, truthiness, and dynamic
+  subtraction across the i31 edges.
+- One failure, attributed and **not a defect**:
+  `issue-4157-const-box-hoist.test.ts` "removes every constant boxing CALL"
+  expects 4 executed boxing calls per iteration with hoisting off, and sees 3
+  under `=all`. That test's own comment names the reason — "42 is i31-able and
+  never allocated" — so the guard answers exactly that one constant inline. It
+  asserts a flag-OFF baseline and passes with the flag unset, which is the
+  default.
+
+### Refused, and why
+
+- **The specced binary-op transform.** No site (above). Making one would mean
+  dropping the numeric hint for numeric ops, which moves ToNumber from
+  "eval-left, ToNumber-left, eval-right, ToNumber-right" to "eval both, then
+  ToNumber right, then left" — one non-conformant order for a different
+  non-conformant order (§13.15.3 wants left-ToNumeric first), observable
+  wherever an operand's `valueOf` runs user code. Not worth it for ≤70 sites.
+- **`*`, `/`, `%`, `**` in i32.** `a * b` on two i31 operands overflows i32
+  (2^30 × 2^30), and `/` and `%` are not closed over the integers at all. Only
+  `+`, `-` and the comparisons carry the no-range-guard proof from entry (20),
+  and none of them has a site.
+- **Boolean- and symbol-branded i32.** They box through
+  `__box_boolean`/`__box_symbol` and carry a TAG that `ref.i31` would erase
+  (#2785/#2760). Only `__box_number` is matched.
+- **JS-host mode.** `__box_number` is an `env::` import there and a boxed number
+  is a JS number, not a WasmGC `ref.i31`. Gated on `nativeBoxNumberTypeIdx >= 0`,
+  which is exactly the condition under which the i31-producing native was
+  registered.
+- **Constant boxes.** `const-box-hoist.ts` runs first and turns them into a
+  `global.get` of a once-seeded global, which is strictly better than an inline
+  `ref.i31`.
+
+### The obvious next question, unbuilt
+
+`=all` costs 86 KB to convert 481,392 calls; `=1` costs 3.3 KB for 7,773. Neither
+was timed — entry (21)'s standing rule is that counts are the verdict and this
+box cannot resolve wall clock. But entry (15) found code size is itself an
+inlining barrier, so `=all`'s +3.5 % is a real counterweight that only an A/B on
+a quiet machine can price.
+
+
+## 2026-08-13 (23) — `__is_truthy` inlined at the call site: **−757,690 executed calls (−76 %)**, and the operand mix is NOT what entry (17) predicted
+
+`__is_truthy` was the largest single executed-call figure in the programme —
+**997,454 per acorn self-parse**, 3.93 % of runtime, the unowned `dynamic-eq`
+bucket of entry (17) — and nothing had ever touched it. It is now inlined at the
+call site behind `JS2WASM_INLINE_TRUTHY_IC`, **default OFF**.
+
+**LANDED flag-gated** in `src/codegen/is-truthy-inline-ic.ts` (the rewrite) and
+`src/codegen/is-truthy-ladder.ts` (the ladder extraction), invoked from both
+finalize pipelines immediately after `inlineMemberGetCallSites`.
+
+### The result — acorn self-parse, `optimize: 0`, checksum **422** in every row
+
+| arm set | `__is_truthy` executed | Δ | removed | binary | Δ bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OFF (base) | 997,454 | — | — | 2,459,473 | — |
+| **`=1` (`anyval,boxbool`)** | **239,764** | **−757,690** | **76.0 %** | 2,541,262 | **+81,789** |
+| `anyval,boxbool,str` | 228,523 | −768,931 | 77.1 % | 2,575,947 | +116,474 |
+| `anyval,i31,boxbool,str` | 222,901 | −774,553 | 77.7 % | 2,607,346 | +147,873 |
+| `all` (6 arms) | 222,901 | −774,553 | 77.7 % | 2,707,567 | +248,094 |
+
+1,643 of the 1,655 static sites patched, in 504 functions; 12 declined on
+producer shape. `__box_boolean` (333,363), `__unbox_boolean` (2) and
+`__extern_strict_eq` (169,828) are **unchanged in every row** — this pass moves
+one helper and claims nothing about the others.
+
+On the acorn module without the census driver: `optimize: 0`
+1,841,473 → 1,923,262 (**+81,789 B, +4.4 %**); `-O4` 1,053,313 → 1,091,567
+(**+38,254 B, +3.6 %**) — `wasm-opt` recovers 53 % of the added bytes.
+
+For scale, this is a **larger** reduction than either previously-accepted win
+(the fused-ToNumber slice's −568,520 and the property cache's −563,343) and it
+costs about the same bytes as the property cache at ceiling 4 (+83,897).
+
+### The finding: entry (17) named the wrong operands
+
+Each arm was measured alone. The six singleton deltas **sum to 774,553, exactly
+the all-arms delta** — the arms are disjoint and the counts are additive, which
+is itself the cross-check that the model is right.
+
+| arm | hits/parse | share of all calls | +bytes @O0 |
+| --- | ---: | ---: | ---: |
+| `boxbool` — boxed boolean | **493,911** | **49.5 %** | +43,817 |
+| `anyval` — `$AnyValue` (`undefined` singleton) | **263,779** | **26.4 %** | +48,746 |
+| `str` — `$AnyString` (`""` vs non-empty) | 11,241 | 1.1 % | +45,460 |
+| `i31` — small-int | 5,622 | 0.6 % | +42,174 |
+| `boxnum` — heap-boxed f64 | **0** | — | +74,674 |
+| `bigint` | **0** | — | +47,103 |
+
+Entry (17) predicted "the acorn-dominant operands are i31-packed integers and
+boxed booleans". Booleans yes — but **i31 integers are 0.6 %, and heap-boxed
+numbers fire literally zero times.** ToBoolean on acorn almost never sees a
+number at all; it sees a boxed boolean or the `undefined` singleton. `boxnum` is
+also the most expensive arm to inline (+74,674 B, a 9-instruction tail with the
+`-0`/NaN test), so the intuitive arm is the worst trade on the board. Default
+is therefore `anyval,boxbool`: 76.0 % of the calls for 33 % of the all-arms
+byte cost. `str` and `i31` stay selectable by name; both are poor marginal
+trades here (+34,685 B for 1.1 pp, +31,399 B for 0.6 pp).
+
+**The real upstream finding is in the boolean number.** 493,911 boxed booleans
+reach ToBoolean per parse while only 333,363 are *created* — so acorn tests the
+same boxed flags repeatedly (parser options, `node.static`, scope flags read out
+of struct slots). Inlining the test is worth 49.5 % of this helper, but the
+larger prize is not boxing them: that is the value-representation lane's
+(`smi-arith` / #2860), not this pass's. Reported, not built — the three files
+`binary-ops-typed-dispatch.ts`, `binary-ops.ts` and `tonumber-fast-paths.ts`
+are owned elsewhere and were not touched.
+
+### Why a wrong guess cannot be a wrong answer
+
+Same safety shape as the property cache, with one addition it did not need.
+
+1. **The arms are not written by this pass.** `extractTruthyLadder` reads the
+   emitted `__is_truthy` body at finalize and copies each arm verbatim, re-homing
+   only the helper's two scratch locals. Re-deriving the ladder would have created
+   a second source of truth — the `$AnyValue` arm exists only under
+   `undefinedSingletonActive`, the `$AnyString` arm only when a native-string type
+   is registered, and #4173's `fastStrictEq` changes how the operand is
+   internalized. Any shape the extractor does not recognise declines the **whole
+   pass**; it cannot copy a stale arm.
+2. **The terminal `else` is the unmodified call**, so the site's answer set is
+   identical to the helper's rather than a subset of it.
+3. **Skipping a ladder arm is proved sound, not assumed.** The helper answers
+   with the FIRST arm that tests true, so inlining arm *k* while skipping arm
+   *j < k* is only correct if no value satisfies both. `mayAlias` refuses unless
+   the two heap types are provably unrelated — neither in the other's declared
+   supertype chain, and differing in field count/kind/mutability or in whether a
+   supertype is declared at all, which is what rules out wasm's structural
+   canonicalization silently merging two declarations. This is the check the
+   property cache never needed (it only ever speculated on `candidates[0]`).
+4. **`ref.test` is the non-null form (`0x14`)**, so `null` fails every guard and
+   reaches the helper's `ref.is_null → 0`. `-0`, `NaN`, `""` and the `$undefined`
+   singleton are not special-cased anywhere: they are answered by the copied arm,
+   which *is* the helper (`-0` is never i31-encoded, so it reaches
+   `$box_number`'s `f64.ne 0`; `""` reaches `$AnyString`'s `len != 0`;
+   `undefined` is a tag-1 `$AnyValue` answered by `tag > 1`).
+
+### The mechanism is proved live, not assumed (entry 22's lesson, applied)
+
+- **Patch-site counter**, printed unconditionally whenever the flag is on:
+  `[truthy-ic] arms=anyval,boxbool patched-sites=1643 functions=504
+  declined-producer-shape=12`.
+- **Poison probe** (`JS2WASM_INLINE_TRUTHY_IC_POISON=1` appends `i32.eqz` to
+  every fast arm): the workload no longer returns 422 — it **throws**
+  (`WebAssembly.Exception`, exit 1), because acorn's control flow inverts. With
+  the IC flag OFF, `POISON=1` reproduces the baseline byte-for-byte (checksum
+  422, 997,454 calls, 2,459,473 bytes), so the poison touches nothing but the
+  guard chain. A null on this pass is only believable after that probe changes
+  the answer.
+- **Byte-identity with the flag unset**: sha256 of the acorn binary is
+  `f01a62f1…7ef9` at `optimize: 0` and `bedb858f…beb7fd` at `-O4`, **identical**
+  to the same builds on the base commit (file-copy A/B, no `git stash`).
+
+### What is left on this helper
+
+239,764 calls survive at the default arm set — receivers that are neither a
+boxed boolean nor an `$AnyValue`: objects, arrays, functions and strings, which
+the ladder answers from its `-> truthy` default or the `$AnyString` arm. Getting
+those would mean inlining the *default*, i.e. speculating "any other non-null
+ref is truthy", which is a **negative** guard over the whole remaining type
+space and is exactly the shape that has measured null or worse in this file
+(entries 9, 13). Not attempted.

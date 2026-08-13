@@ -40,12 +40,17 @@
  *
  * ## What is deliberately NOT here
  *
- * The i32-arithmetic half of a true Smi path (test both operands, do the op in
- * i32, re-box with `ref.i31`) belongs at the BINARY-OP site, which is
- * `binary-ops.ts` / `binary-ops-typed-dispatch.ts` — owned by another lane at
- * the time of writing. This module does the operand half only, which is
- * op-agnostic and therefore correct for arithmetic and comparison alike. See
- * the issue entry for the write-up of the missing half.
+ * This module does the operand half only, which is op-agnostic and therefore
+ * correct for arithmetic and comparison alike.
+ *
+ * The other half — keep an i32 result in i32 and re-box it with `ref.i31` —
+ * was specced for the BINARY-OP site (`binary-ops-typed-dispatch.ts:626`, "both
+ * operands externref"). **That arm is dead**: `compileBinaryExpression` compiles
+ * both operands with a numeric hint, so the ToNumber is emitted inside each
+ * operand's own compilation — at the very coercion site this module patches —
+ * and all 1,617 arithmetic/relational dispatches in a standalone acorn compile
+ * arrive `f64`/`f64`. The reachable half therefore lives at the BOXING site:
+ * `smi-box-fast-path.ts`, same flag, with the measurement in the issue entry.
  */
 import type { Instr, ValType, FuncHandle } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -91,7 +96,20 @@ export function fusedToNumberEnabled(): boolean {
 
 /** `JS2WASM_SMI_FASTPATH=1` — Slice B. Default OFF. */
 export function smiFastPathEnabled(): boolean {
-  return flagOn(process.env.JS2WASM_SMI_FASTPATH);
+  return flagOn(process.env.JS2WASM_SMI_FASTPATH) || smiFastPathAllValues();
+}
+
+/**
+ * `JS2WASM_SMI_FASTPATH=all` — Slice B plus the *unrestricted* box-side guard
+ * (`smi-box-fast-path.ts`). A second LEVEL of the same flag rather than a second
+ * flag, because the two positions differ only in how many boxing sites the guard
+ * is inlined at, and that is purely a SIZE lever: the restricted level pays
+ * ~20 B at sites whose f64 is provably i32-derived, the unrestricted one pays
+ * ~50 B at every boxing site in the module. `=1` keeps the cheap level; `=all`
+ * implies `=1`.
+ */
+export function smiFastPathAllValues(): boolean {
+  return (process.env.JS2WASM_SMI_FASTPATH ?? "").trim().toLowerCase() === "all";
 }
 
 /**
