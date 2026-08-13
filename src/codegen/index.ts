@@ -1298,7 +1298,7 @@ function buildIrClassShapes(
     declarationsInCollectionOrder,
     identityContext,
   );
-  // Flat local classes are allocated as identity-stable descriptor cells
+  // Local classes are allocated as identity-stable descriptor cells
   // before any member type is projected. TypeScript permits self-recursive and
   // mutually recursive annotations, so a later class must be resolvable while
   // its descriptor is still being filled. The cells are planning-only: only
@@ -1306,12 +1306,7 @@ function buildIrClassShapes(
   const provisionalEntries = new Map<IrClassId, IrClassShapeEntry>();
   const populatedProvisionalIds = new Set<IrClassId>();
   for (const { classId, declaration } of declarationsInCollectionOrder) {
-    if (
-      !ts.isClassDeclaration(declaration) ||
-      !declaration.name ||
-      declaration.parent !== sourceFile ||
-      declaration.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) === true
-    ) {
+    if (!ts.isClassDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
       continue;
     }
     const className = declaration.name.text;
