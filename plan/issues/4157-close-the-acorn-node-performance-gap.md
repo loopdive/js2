@@ -4328,3 +4328,84 @@ not a 3-line patch on a queued defaults-flip PR. Worth knowing for the
 future: **any inliner will multiply whatever masked emitter bugs live in the
 bodies it copies — a fixup-count ratchet and an inliner are in structural
 tension unless stack-balance runs first or the producer is fixed.**
+
+## 2026-08-13 (39) — the remaining gap, decomposed from paired profiles: GC is exonerated, helpers are 2.2×, and 3.2× lives INSIDE the compiled functions
+
+Paired 300-iteration V8 CPU profiles of the SAME workload — the tuned build
+(defaults-on head) and native Node — make sample counts directly comparable:
+**24,301 wasm samples vs 4,244 node = 5.7×** (wall measured 6.6×; sampling
+skips some host glue).
+
+In units of NODE'S TOTAL TIME (= 1.0), the wasm run spends:
+
+| where | share of wasm run | × node-total |
+| --- | ---: | ---: |
+| compiled acorn code (incl. inlined IC/boxing sequences) | 55.7 % | **3.19** |
+| runtime helpers (extern 8.6 %, dispatch 7.7 %, member get/set 6.7 %, object model 6.3 %, regex 3.6 %, string 2.8 %, boxing 1.9 %) | 37.9 % | **2.17** |
+| GC | 5.3 % | **0.30** |
+
+Two headlines:
+
+1. **WasmGC's GC is exonerated: absolute GC cost is 1.29× node's** (1,291 vs
+   1,001 samples — node spends 23.6 % of its much shorter run in GC, we spend
+   5.3 % of ours). Allocation-rate work (fnctor arenas, presize) would buy
+   almost nothing.
+2. **Deleting ALL helper time leaves ~3.5×** — the independently-derived ~3×
+   floor for helper-elimination approaches, now confirmed by direct
+   measurement. The majority of the remaining gap is code QUALITY inside
+   compiled function bodies, not calls out of them.
+
+Per-function ratios (same acorn function, wasm/node self-samples; V8's
+aggressive inlining concentrates its self-time, so treat as indicative —
+the big ones are far outside attribution noise):
+
+| function | node | wasm | ratio |
+| --- | ---: | ---: | ---: |
+| `pp.next` | 62 | 1,208 | **19.5×** |
+| `pp$5.parseSubscript` | 124 | 1,226 | **9.9×** |
+| `finishNodeAt` | 41 | 371 | **9.0×** |
+| `pp$5.parseMaybeAssign` | 67 | 468 | 7.0× |
+| `pp.skipSpace` | 99 | 611 | 6.2× |
+| `pp.getTokenFromCode` | 153 | 787 | 5.1× |
+| `pp.finishToken` | 43 | 217 | 5.0× |
+| `pp$2.finishNode` | 162 | 161 | 1.0× |
+| `stringToNumber` | 38 | 39 | 1.0× |
+
+`pp.next` — the function entry (30) dissected — is STILL the worst compiled
+function at 19.5×, after receiver CSE and the f64 set twins. The census names
+why: the write side still CALLS. `__set_member_*` executes **344,617** times
+per parse (89 distinct dispatchers; `lastTokStartLoc`/`lastTokEndLoc` are
+externref writes with no typed twin possible), `__get_member_*` 339,151,
+`__call_m_*` + `__call_fn_*` + `__named_this_call` 213,000 — the full
+executed-helper census totals **4.84 M calls/parse** (checksum 422).
+
+Other loud census rows with no owner yet: `__str_equals` 254,976 +
+`__str_flatten` 252,367 (the flatten count survives LAZY_STR_FLATTEN — worth
+finding the caller), `__box_boolean` 238,653 (comparison results boxed to be
+immediately consumed), `__is_truthy` 239,764 residual, `__extern_strict_eq`
+169,828, `__extern_get_idx` 95,565 (per-char `charCodeAt` traffic:
+`fullCharCodeAt`/`fullCharCodeAtPos` run 163,778 times EACH).
+
+Ranked next levers, by (share of wasm run) × (headroom implied by the ratio):
+
+1. **Write-side member IC** (`__set_member_*` inline dispatch, symmetric to
+   the read IC) — the standing #4157 lever; directly targets `pp.next` 19.5×
+   and `finishNodeAt` 9.0×.
+2. **Call-dispatch devirtualisation** (`__call_m_*`/`__call_fn_method_*`
+   inline fast paths) — targets `parseSubscript` 9.9× / `parseMaybeAssign`
+   7.0×, the two biggest compiled frames after `next`.
+3. **Char-loop fast path**: `skipSpace`/`getTokenFromCode`/`fullCharCodeAt*`
+   at 5–6× are a per-character `__extern_get_idx`+rope-flatten story —
+   a native i16-array `charCodeAt` loop shape (or caching the flattened
+   backing store) attacks `__str_flatten`'s 252 k and `__extern_get_idx`'s
+   96 k in one move.
+4. **Unboxed booleans**: `__box_boolean` 238 k producing values that
+   `__is_truthy`-class consumers immediately unbox — a producer/consumer
+   fusion inside compiled bodies, invisible to any helper-side IC.
+
+`pp$2.finishNode` and `stringToNumber` at 1.0× prove the emitted code CAN
+match V8 where the shape is already direct — the gap is concentrated, not
+uniform.
+
+Profiles: `.tmp/gap/{wasm,node}.cpuprofile`, census `.tmp/gap/census.json`,
+method as entry (30) (closure-name map + bucket fold).
