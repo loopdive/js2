@@ -40,6 +40,13 @@ loc-budget-allow:
   # in the god-file, and there is no smaller way to route a coercion site to an
   # alternative lowering than to test for it where the site is.
   - src/codegen/type-coercion.ts
+  # (#4157 lazy string flattening, JS2WASM_LAZY_STR_FLATTEN) wiring only: the
+  # analysis and both emission shapes live in a new leaf module
+  # (src/codegen/lazy-str-flatten.ts). What remains here is the guarded preamble
+  # relocation in __str_equals and the key-flatten removal in __extern_get, both
+  # of which must sit where the helper body is built.
+  - src/codegen/object-runtime.ts
+  - src/codegen/string-ops.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
@@ -56,6 +63,10 @@ func-budget-allow:
   # a real refactor with its own byte-identity risk, and it would not shrink THIS
   # change: the early-out has to sit in whichever function owns the pair.
   - src/codegen/type-coercion.ts::coerceType
+  # (#4157 lazy string flattening) same wiring, seen per-function.
+  - src/codegen/native-strings-basics.ts::emitStrCompareHelpers
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -2640,3 +2651,171 @@ function body failing to compile (`local.set[0] expected (ref null 76), found
 f64.const`) — **reproduced byte-for-byte on `origin/main` blobs at the same
 offset**. A module-level binding of the same object compiles fine. Unfiled; worth
 an issue.
+
+## 2026-08-13 — lazy string flattening: two of the three named levers were already spent; the third is redundancy, and it is 403 sites
+
+Lane record for the `string-runtime` bucket (4.39 % of runtime, `__str_flatten`
+2.54 % at 2,497 static sites). Read alongside the disassembly entry that
+attributes ~55 % of those sites to the residual abstract-equality cascade —
+this entry deliberately does **not** touch `binary-ops.ts` /
+`binary-ops-typed-dispatch.ts`, and quantifies what is left after that lane
+lands.
+
+Everything below is static/structural. **No timings were taken.**
+
+### Two of the three scoped levers do not exist — they shipped years ago
+
+- **"Make `__str_flatten` cheap when already flat."** It already is. The FIRST
+  instruction of its body is `ref.test $NativeString` → `ref.cast` → return
+  (`native-strings-core.ts`, `emitStrFlattenHelpers`). There is no work to add.
+- **"Memoise the flattened form on the rope."** Already done, by #3673:
+  `flattenConsBody` rewrites the cons **in place** to `(left = flat, right = "")`
+  and the next flatten of that rope takes a two-field fast path instead of an
+  O(len) re-copy.
+- **`wrapBodyWithFlatten` goes further still** — it inlines the
+  `ref.test $NativeString` at each helper's entry, so an already-flat param
+  skips the *call itself*, not just the copy. Its own comment records why: the
+  unconditional call "was 35 % of a standalone compiled-acorn parse".
+
+So `__str_flatten` at 2.54 % is **not** ropes being copied. It is the call
+being made where it did not need to be made at all.
+
+### What IS forced: the caller-side flatten in front of a self-flattening callee
+
+Disassembled the standalone acorn build (`wasm-dis`, `optimize: 0`) and
+classified every `call $__str_flatten` by its real consumer (walking past
+`ref.cast` / `ref.as_non_null` / `local.tee` / `*.convert_*`):
+
+| consumer of the flattened value | sites | callee self-flattens? |
+| --- | ---: | --- |
+| `__str_equals` | 1,722 | **yes** (`wrapBodyWithFlatten(body, [0, 1])`) |
+| `else` (if-arm result) | 200 | — |
+| `local.set` | 192 | — (114 of them from `__extern_toString`) |
+| `__str_charAt` | 186 | **yes** `[0]` |
+| `__str_slice` | 148 | **yes** `[0]` |
+| `struct.get` / `return_call` / `then` / misc | 38 | — |
+| `__str_substr` · `__str_substring` · `__str_compare` | 9 | **yes** |
+| **total** | **2,497** | **2,065 (82.7 %) redundant** |
+
+`__str_equals`, `__str_charAt`, `__str_slice`, `__str_substring`,
+`__str_substr`, `__str_compare`, `__str_indexOf`, `__str_split`,
+`__str_replace`, `__str_replaceAll` and siblings all take `ref $AnyString` and
+flatten their own params. A `call $__str_flatten` at the call site therefore
+recomputes exactly what the callee's guard would have skipped.
+
+**And it is worse than redundant.** `__str_equals` answers three questions that
+need no flat buffer — `ref.eq` identity, the length compare, and the
+`$HashedString` hash reject — but `wrapBodyWithFlatten` prepends the flatten to
+the **top** of the function, ahead of all three. Pre-flattening at the call site
+then guarantees the helper never sees a rope, so `bigRopeA === bigRopeB` with
+differing lengths copies both ropes into fresh buffers to answer a question the
+`$AnyString` length field answers in one `struct.get`.
+
+### Landed, flag-gated: `JS2WASM_LAZY_STR_FLATTEN=1` (default OFF)
+
+New leaf `src/codegen/lazy-str-flatten.ts` (explicit `=1` opt-in, NOT the
+`derivation-flags.ts` unset-⇒-ON rule — the OFF position carries a
+byte-identity guarantee and must not be enabled by a typo).
+
+1. **`__str_equals` flattens lazily** (`native-strings-basics.ts`). The same
+   guarded preamble `wrapBodyWithFlatten` would have prepended is *relocated*,
+   byte-for-byte, to just before the character loop — the only consumer of
+   `off`/`data`. The length compare reads `$AnyString` field 0 instead of
+   `$NativeString` field 0.
+   **Soundness:** field 0 is the JS-visible code-unit count on all three
+   subtypes and immutable on all three — `$ConsString` keeps the total across
+   the in-place memoization rewrite, and `$Utf8String` field 0 is the UTF-16
+   length, not the byte length (`registry/types.ts`). `ref.eq` moved ahead of
+   the flatten can only lose true-answers, never gain them (same object ⇒ same
+   string), and every case it loses — e.g. two distinct `x + ""` conses whose
+   memoized `left` is the same flat struct — falls through to the char compare
+   and returns the identical verdict. The hash reject requires both sides to be
+   `$HashedString`, which a rope never is, so ordering cannot change it.
+2. **`__extern_get` no longer flattens its key** (`object-runtime.ts`,
+   `stringKeyArms`), and the `__fkey_ladder` scratch local widens to
+   `$AnyString`. Nothing downstream needed flat: `ref.test`/`ref.cast
+   $HashedString` and the baked-hash `struct.get` accept `$AnyString`,
+   `__obj_hash` is handed the ORIGINAL externref (`local.get 1`), and the
+   bucket probes go through `__str_equals`. A rope key fails the
+   `$HashedString` test and takes the `__obj_hash` arm — which is the arm it
+   already took, because a freshly-flattened cons carries hash 0 (uncomputed).
+   Note the **dynamic** count here is 64,680/parse, not 506,752: the round-21
+   per-key cache arm is unshifted LAST, so it returns before this on the
+   87.24 % that hit (see the per-key-cache entry above).
+3. **Redundant caller-side flattens dropped** where the immediate callee
+   self-flattens: `string-ops.ts` (`charAt`, `substring`, `slice`, `substr`,
+   `replace`/`replaceAll` ×3 params, and `emitNullableStringEquals`) and
+   `string-element-read.ts` (`__str_charAt`). Kept wherever the emitted code
+   itself needs the flat type (`at`, `codePointAt` read `struct.get
+   $NativeString` off the result) or the callee does not self-flatten
+   (`__str_repeat`, `__str_padStart`/`padEnd`, `__str_isWellFormed`,
+   `__str_toWellFormed`, `__str_to_extern`).
+
+### Result (static; no timings)
+
+| | flag OFF | flag ON |
+| --- | ---: | ---: |
+| `call $__str_flatten` sites, acorn | 2,497 | **2,094** (−403) |
+| acorn binary, `optimize: 0` | 2,459,292 B | 2,456,866 B (−2,426) |
+| `cold-tail-census` binary / checksum / allocations | 2,491,907 B / **422** / 189,977 | 2,489,481 B / **422** / 189,977 |
+
+Consumer histogram after: `__str_charAt` 186 → **0**, `__str_slice` 148 → **0**,
+`__str_substr` 4 → **0**, `__str_equals` 1,722 → 1,664. Allocation counts are
+identical, i.e. the change moves no allocation — as expected, since it removes
+calls rather than copies.
+
+**Byte-identical when OFF**: the flag-OFF build `cmp`s byte-for-byte against a
+build of the same tree taken before any edit, and the census reproduces
+pristine-HEAD's 2,491,907 B exactly.
+
+> The brief quoted **2,490,829 B** for the census baseline. Pristine
+> `da371b2e8` measures **2,491,907 B / checksum 422**, verified by reverting all
+> four touched files to `HEAD` via file copies (never `git stash`) and re-running.
+> The 1,078-byte delta predates this work.
+
+### The 1,664 remaining `__str_equals` feeders are the cascade's, and there is a one-line-each win in them for that lane
+
+Every remaining site is emitted by `binary-ops-typed-dispatch.ts` — the
+abstract-equality cascade (~line 959/962) and the mixed-externref strict-equality
+arm (~line 261/264) — both outside this lane. **Reported, not built:** those four
+`{ op: "call", funcIdx: flattenIdx }` entries can be deleted outright.
+`__str_equals` takes `ref $AnyString` and flattens its own params, so the
+operands are already type-correct without them. That single deletion:
+
+- removes ~1,364 more static `__str_flatten` sites (the largest remaining block
+  in the bucket), and
+- is what makes lever (1) above actually reachable at the hottest equality in
+  the program — today the cascade pre-flattens both operands, so the helper's
+  identity/length/hash answers never get to skip the materialization.
+
+It is **independent of, and much smaller than, removing the cascade itself**, and
+it does not relocate work into a new call the way route (a) of the cascade entry
+would. Worth taking even if the cascade work slips.
+
+### Refused, and why
+
+- **`String.prototype.at` / `codePointAt`** keep their caller-side flatten: the
+  emitted code reads `struct.get $NativeString` off the result, so the flat type
+  is load-bearing, not decorative.
+- **`trim`/`trimStart`/`trimEnd` and `toLocale{Lower,Upper}Case`** keep theirs:
+  the helper actually invoked is selected at emit time
+  (`selectProvenAsciiCaseHelper`) or is not one of the `wrapBodyWithFlatten`
+  set, so "the callee self-flattens" could not be established for every arm.
+- **`__str_concat`'s eager flatten below the 64-char rope threshold** is left
+  alone. It is the deliberate representation choice (a rope node for a 3-char
+  string is worse than the copy), the same call V8 makes, and nothing in the
+  measurement points at it.
+- **Hoisting `ref.eq` out of `__str_equals` to the call sites** was not done:
+  it would change which allocation identity is compared at 2,670 sites, and the
+  in-helper ordering achieves the same thing with one copy of the logic.
+
+### Gates
+
+- `cold-tail-census`: checksum **422** both flag positions.
+- `tests/dogfood/acorn.test.ts`: pass, flag ON.
+- 33 string-adjacent `tests/equivalence/*` files: pass OFF **and** ON.
+- 32 object / dynamic-lookup `tests/equivalence/*` files (extra net for the
+  `__extern_get` key change): pass ON.
+- Two chunks OOM-killed (exit 137) on the first attempt at
+  `maxForks=2` with other agents live; re-run one file at a time they pass in
+  **both** flag positions, so the kill is container memory, not the change.

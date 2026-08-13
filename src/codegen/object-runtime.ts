@@ -61,6 +61,7 @@ import type { CodegenContext } from "./context/types.js";
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
+import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
@@ -7560,10 +7561,18 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   // foreign keys landing in a live slot fall through exactly like a ladder
   // miss — into the builtin-meta arm / `__obj_find` walk / proto chain below.
   const objHashIdx = ctx.funcMap.get("__obj_hash");
+  // (#4157) The key flatten below is unconditional, and nothing downstream
+  // needs flat: `ref.test`/`ref.cast $HashedString` and the baked-hash
+  // `struct.get` accept an `$AnyString` local, `__obj_hash` is handed the
+  // ORIGINAL externref (`local.get 1`), and the probes call `__str_equals`,
+  // which flattens its own params. A rope key fails the `$HashedString` test
+  // and takes the `__obj_hash` arm it already took (a freshly flattened cons
+  // carries hash 0 = uncomputed). See `lazy-str-flatten.ts`.
+  const fkeyTypeIdx = lazyStrFlattenEnabled() ? ctx.anyStrTypeIdx : ctx.nativeStrTypeIdx;
   const fkeyLocal = 2 + fn.locals.length;
   const fkeyHashLocal = fkeyLocal + 1;
   fn.locals.push(
-    { name: "__fkey_ladder", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__fkey_ladder", type: { kind: "ref_null", typeIdx: fkeyTypeIdx } },
     { name: "__fkey_hash", type: { kind: "i32" } },
   );
   const buildNameProbe = (fieldName: string, entries: Entry[]): Instr[] => [
@@ -7577,7 +7586,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
+    ...redundantFlattenCall(flattenIdx),
     { op: "local.tee", index: fkeyLocal },
   ];
   if (ctx.hashedStrTypeIdx < 0 || objHashIdx === undefined) {
