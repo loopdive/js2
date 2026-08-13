@@ -1887,3 +1887,79 @@ which is the entire story. (Caveat: node's profile window was 9,081 ms against
   average means almost nothing qualifies for inlining. That is the mechanism
   behind entry (9)'s failure, and it means size reductions may buy speed
   indirectly in a way none of this file's measurements would attribute to them.
+
+## 2026-08-13 (16) — GUIDANCE FROM THE BINARY: one defect feeds three of the four workstreams
+
+The disassembly in entry (15) showed five helpers appearing at suspiciously
+similar counts. Five helpers at one count means **one emission pattern**, not
+five problems. Chasing it found the largest single actionable item in the file.
+
+### The residual abstract-equality cascade — 686 inline copies
+
+`src/codegen/binary-ops.ts` documents the shape in its own comment (~line 1083):
+an equality whose operands are not both statically `number` emits, INLINE:
+
+```
+__extern_is_nullish ×2 → __extern_is_undefined ×2 → __typeof_number ×2 →
+__unbox_number ×2 → __typeof_boolean ×2 → __unbox_boolean ×2 →
+__typeof_bigint ×2 → __to_bigint ×2 → __str_flatten ×2 → __str_equals → ref.eq
+```
+
+The comment's own words: *"~35 instructions and TWO STRING COMPARISONS for
+`tk[i] === 40`, on a tokenizer's hottest line."* #3688 fixed the case where the
+checker proves both operands `number`. **686 sites still emit it**, measured from
+the disassembly:
+
+| co-emitted helper | sites |
+| --- | ---: |
+| `__unbox_boolean` | 745 |
+| `__typeof_number` | 703 |
+| `__typeof_boolean` | 695 |
+| `__typeof_bigint` | 686 |
+| `__to_bigint` | 686 |
+
+`__to_bigint` at 686 sites in **acorn**, a parser that barely touches BigInt, is
+the tell.
+
+### It is the largest cause of the "string" bucket
+
+**682 of the 686 cascade sites have `__str_flatten` co-located.** At two per
+cascade that is **~1,364 of 2,497 `__str_flatten` sites — 55 %** — plus a large
+share of the 2,644 `__str_equals`.
+
+So `string-runtime` at 4.39 % of runtime is **not mostly string work**. It is an
+equality lowering emitting two string comparisons at every site where it cannot
+prove the operands aren't strings.
+
+### And the fix already exists, unused
+
+| helper | defined | called |
+| --- | ---: | ---: |
+| `__any_eq` | 1 | **1** |
+| `__any_strict_eq` | 1 | **1** |
+| `__extern_strict_eq` | 1 | 117 |
+
+**The outlined cascade is already a function and is called exactly once**, while
+686 sites emit it inline. Whatever the original reason, the effect today is
+~686 × 35 ≈ **24,000 instructions** of duplicated code.
+
+### Why this reprioritises the workstreams
+
+| workstream | how the cascade changes it |
+| --- | --- |
+| **lazy strings** | 55 % of the target sites are cascade artifacts. Making `__str_flatten` cheaper treats a symptom; removing the cascade deletes 1,364 sites outright. Re-scope to the genuine string work and let this be handled once. |
+| **boxing/unboxing** | The cascade *is* the redundant box→unbox pattern at scale: `__unbox_number` ×2 and `__unbox_boolean` ×2 per site, on operands it has just type-tested. |
+| **inlining** | ~24,000 instructions is pure function-size inflation, and size is the binding constraint on `wasm-opt`'s inliner (the 11-vs-45-instruction cliff of entry 9). This is the cheapest large size cut available. |
+
+**Two routes, and they are not equivalent.** (a) Route the 686 sites through the
+existing `__any_eq` — a code-size win with a *new call* per site, so it may cost
+time even as it shrinks the binary; entry (9) is the cautionary precedent for
+exactly that trade. (b) Widen #3688's numeric-hint gate so more sites prove their
+operands and skip the cascade entirely — strictly better where it applies,
+because it removes the work rather than relocating it, but it only reaches sites
+the checker (or `ctx.oracle`) can actually prove.
+
+**(b) first, (a) for the residue.** And note #3688's own warning: narrowing the
+comparison while leaving operands boxed is the partial-narrowing shape that
+measured as a **2.7× pessimization** in #3673 round 36. The hint must propagate
+down into the operand emitters, not just the comparison.
