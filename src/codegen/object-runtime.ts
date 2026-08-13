@@ -61,6 +61,7 @@ import type { CodegenContext } from "./context/types.js";
 import { BFN_ID_FIELD_IDX, BFN_STATE_FIELD_IDX } from "./builtin-fn-meta.js"; // (#4241) header-derived
 import { ensureNativeCharCodeAtHelper } from "./char-code-at-helpers.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 19b)
+import { lazyStrFlattenEnabled, redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import {
   ensureAnyToStringHelper,
   ensureNativeStringHelpers,
@@ -205,7 +206,7 @@ const FLAG_CONFIGURABLE = 0x04;
 // #1888 Slice 5 — accessor descriptor: when set, the entry's value is replaced
 // by the `$get`/`$set` funcref-bearing slots (fields 4/5). 0x08 is the first
 // extension bit (0x10 internal; 0x20/0x40 vec-overlay; 0x80 = TOMBSTONE).
-const FLAG_ACCESSOR = 0x08;
+export const FLAG_ACCESSOR = 0x08;
 // #1910/#1472 S2 — internal-slot marker. Set on the single reserved $PropEntry a
 // boxed primitive wrapper (`new Number`/`new String`/`new Boolean`) carries: it
 // holds the wrapper's [[NumberData]]/[[StringData]]/[[BooleanData]] primitive
@@ -219,7 +220,7 @@ export const FLAG_INTERNAL = 0x10;
 // COMPANION data entry whose [[Value]] could not be written back into the vec
 // element (kind-incompatible carrier); dynamic readers answer from the
 // companion. 0x40 marks a semantically deleted dense vec index.
-const FLAG_TOMBSTONE = 0x80;
+export const FLAG_TOMBSTONE = 0x80;
 /**
  * Reserved own-key under which a boxed primitive wrapper stores its internal
  * `[[PrimitiveValue]]` slot (#1910/#1472 S2). Uses the spec internal-slot
@@ -7559,10 +7560,18 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
   // foreign keys landing in a live slot fall through exactly like a ladder
   // miss — into the builtin-meta arm / `__obj_find` walk / proto chain below.
   const objHashIdx = ctx.funcMap.get("__obj_hash");
+  // (#4157) The key flatten below is unconditional, and nothing downstream
+  // needs flat: `ref.test`/`ref.cast $HashedString` and the baked-hash
+  // `struct.get` accept an `$AnyString` local, `__obj_hash` is handed the
+  // ORIGINAL externref (`local.get 1`), and the probes call `__str_equals`,
+  // which flattens its own params. A rope key fails the `$HashedString` test
+  // and takes the `__obj_hash` arm it already took (a freshly flattened cons
+  // carries hash 0 = uncomputed). See `lazy-str-flatten.ts`.
+  const fkeyTypeIdx = lazyStrFlattenEnabled() ? ctx.anyStrTypeIdx : ctx.nativeStrTypeIdx;
   const fkeyLocal = 2 + fn.locals.length;
   const fkeyHashLocal = fkeyLocal + 1;
   fn.locals.push(
-    { name: "__fkey_ladder", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    { name: "__fkey_ladder", type: { kind: "ref_null", typeIdx: fkeyTypeIdx } },
     { name: "__fkey_hash", type: { kind: "i32" } },
   );
   const buildNameProbe = (fieldName: string, entries: Entry[]): Instr[] => [
@@ -7576,7 +7585,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
+    ...redundantFlattenCall(flattenIdx),
     { op: "local.tee", index: fkeyLocal },
   ];
   if (ctx.hashedStrTypeIdx < 0 || objHashIdx === undefined) {

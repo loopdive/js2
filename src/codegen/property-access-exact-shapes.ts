@@ -102,8 +102,15 @@ function emitNominalExternrefClassFieldGet(
   structTypeIdx: number,
   fieldIdx: number,
   fieldType: ValType,
+  recvType?: ValType | null,
 ): ValType {
-  emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr);
+  // (#4157) `recvType` is the receiver BEFORE the `extern.convert_any` the
+  // caller applied; a non-nullable `(ref $T)` cannot become a null externref.
+  emitNullCheckThrow(ctx, fctx, { kind: "externref" }, expr, {
+    site: "exact-shapes:nominal-class-recv",
+    compiled: recvType,
+    expr: expr.expression,
+  });
   fctx.body.push({ op: "any.convert_extern" });
   const receiverLocal = allocLocal(fctx, `__nominal_recv_${fctx.locals.length}`, { kind: "anyref" });
   fctx.body.push({ op: "local.set", index: receiverLocal });
@@ -147,10 +154,14 @@ export function tryEmitExactStructFieldGet(
     (objResult.kind === "externref" || objResult.kind === "ref" || objResult.kind === "ref_null")
   ) {
     if (objResult.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-    return emitNominalExternrefClassFieldGet(ctx, fctx, expr, typeName, structTypeIdx, fieldIdx, fieldType);
+    return emitNominalExternrefClassFieldGet(ctx, fctx, expr, typeName, structTypeIdx, fieldIdx, fieldType, objResult);
   }
   if (objResult?.kind === "ref_null") {
-    emitNullGuardedStructGet(ctx, fctx, objResult, fieldType, structTypeIdx, fieldIdx, propName);
+    emitNullGuardedStructGet(ctx, fctx, objResult, fieldType, structTypeIdx, fieldIdx, propName, false, {
+      site: "exact-shapes:struct-get-recv",
+      compiled: objResult,
+      expr: expr.expression,
+    });
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   if (objResult?.kind === "externref") {
@@ -162,8 +173,14 @@ export function tryEmitExactStructFieldGet(
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   if (objResult?.kind === "ref") {
+    // The value is a NON-nullable ref; the widening below is a codegen
+    // convenience, not a claim that it can be null (#4157).
     const nullableObj: ValType = { kind: "ref_null", typeIdx: objResult.typeIdx ?? structTypeIdx };
-    emitNullGuardedStructGet(ctx, fctx, nullableObj, fieldType, structTypeIdx, fieldIdx, propName);
+    emitNullGuardedStructGet(ctx, fctx, nullableObj, fieldType, structTypeIdx, fieldIdx, propName, false, {
+      site: "exact-shapes:struct-get-recv-widened",
+      compiled: objResult,
+      expr: expr.expression,
+    });
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
