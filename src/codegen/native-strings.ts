@@ -19,7 +19,7 @@ import { emitStrFlattenHelpers, emitStrToUtf8Helper } from "./native-strings-cor
 import { emitStrConcatHelpers, emitStrCompareHelpers, emitStrSliceCharHelpers } from "./native-strings-basics.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
@@ -1641,6 +1641,42 @@ export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
       body,
       exported: false,
     });
+  }
+}
+
+/**
+ * Expose the existing native-string extern bridge only when a user export has
+ * a source-level string at the JS boundary. Internal string semantics keep the
+ * helpers private; the JS adapter calls these exports to preserve primitive
+ * string values while object and array results remain live views.
+ */
+export function ensureNativeStringBoundaryBridge(ctx: CodegenContext): void {
+  if (!hostStringBridgeUsable(ctx) || ctx.targetProfile.hostValueInterop === "off") return;
+  ensureNativeStringExternBridge(ctx);
+  if (!ctx.funcMap.has("__str_is_native")) {
+    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set("__str_is_native", funcIdx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: "__str_is_native",
+      typeIdx,
+      locals: [],
+      body: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      ],
+      exported: true,
+    });
+  }
+  for (const name of ["__str_to_extern", "__str_from_extern", "__str_is_native"] as const) {
+    const funcIdx = ctx.funcMap.get(name);
+    if (funcIdx === undefined) continue;
+    const func = definedFuncAt(ctx, funcIdx);
+    if (func) func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name)) {
+      ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+    }
   }
 }
 

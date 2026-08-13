@@ -25,7 +25,11 @@
 import { ts } from "../ts-api.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
-import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "./backend/legality.js";
+import {
+  projectIrBackendTargetProfile,
+  supportsIrBackendTargetCapability,
+  type IrBackendTargetCapability,
+} from "./backend/legality.js";
 
 import {
   ensureAnyHelpers,
@@ -853,17 +857,10 @@ export function compileIrPathFunctions(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
-  const jsHostExterns = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+  const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
+  const jsHostExterns = irTargetProfile.allowHostImports;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(
-      {
-        backend: "wasmgc",
-        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
-        allowHostImports: jsHostExterns,
-        fast: ctx.fast,
-      },
-      capability,
-    );
+    supportsIrBackendTargetCapability(irTargetProfile, capability);
   const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
   const backendCapabilitySelectionOptions = { supportsBackendCapability };
   const moduleBindingOptions = {
@@ -4092,15 +4089,7 @@ function makeFromAstResolver(
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(
-      {
-        backend: "wasmgc",
-        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
-        allowHostImports: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
-        fast: ctx.fast,
-      },
-      capability,
-    );
+    supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
@@ -4397,7 +4386,7 @@ function makeFromAstResolver(
     // supplies imports; standalone/WASI supplies the #2964 native object
     // runtime. Both variants snapshot keys and perform per-visit liveness.
     dynamicForInPlan() {
-      return ctx.standalone || ctx.wasi
+      return ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
         ? {
             keys: "__object_keys_forin",
             len: "__extern_length",
@@ -5477,7 +5466,7 @@ function preregisterIteratorSupport(
       legacyName: entry.ownerName,
     });
   }
-  if (ctx.standalone || ctx.wasi) {
+  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") {
     for (const owner of owners.values()) {
       failures.set(owner.unitId, {
         owner,
@@ -5743,6 +5732,7 @@ function jsTagToStaticType(
  * Both are idempotent, so overlapping legacy registration is a no-op.
  */
 function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
   let usesToNumber = false;
@@ -5768,9 +5758,9 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   let usesExternIsUndefined = false;
   // #4208 S3/S7 — explicit runtime refs emitted for the IR-owned open
   // OrdinaryToPrimitive literal. These providers must exist before Phase 3:
-  // host mode registers late imports, while standalone/wasi materialize the
-  // native object runtime. `__unbox_number` comes from the union family in
-  // every lane.
+  // compatibility mode registers late imports, while the native semantic
+  // provider materializes the object runtime. `__unbox_number` comes from the
+  // union family in every lane.
   let usesOrdinaryToPrimitiveObjectRuntime = false;
   let usesRuntimeUnboxNumber = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
@@ -5838,7 +5828,7 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
     }
   }
   if (usesOrdinaryToPrimitiveObjectRuntime) {
-    if (ctx.standalone || ctx.wasi) {
+    if (nativeSemanticProviders) {
       ensureObjectRuntime(ctx);
     } else {
       ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
@@ -5909,14 +5899,14 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   } else {
     // host: the classifier / box import family for box/unbox/tag.test/truthy.
     addUnionImports(ctx);
-    // #2949 S5.2 — dyn.eq in host mode calls `__host_eq` (JS `===`) /
-    // `__host_loose_eq` (JS `==`) — the SAME host-import equality legacy
-    // `any === any` uses. Register them up-front (they are LATE IMPORTS that
-    // shift defined funcIdxs) so no emit can trigger a mid-emission shift
+    // #2949 S5.2 — compatibility semantics call `__host_eq` (JS `===`) /
+    // `__host_loose_eq` (JS `==`). Native-first semantics use the native
+    // externref classifiers even when JS value interop remains available.
+    // Register the selected family up-front so no emit can trigger a shift
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
     if (usesEq) {
-      if (ctx.standalone || ctx.wasi) {
+      if (nativeSemanticProviders) {
         ensureExternStrictEqHelper(ctx);
         ensureExternLooseEqHelper(ctx);
       } else {
@@ -5943,11 +5933,12 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // `dyn.member_get` in a claimed function today, so `usesMemberGet` is never
   // set in a production compile.
   if (usesMemberGet) {
+    if (nativeSemanticProviders) ensureObjectRuntime(ctx);
     ctx.usesDynMemberGet = true;
     ensureDynMemberGet(ctx);
   }
   if (usesMemberSet) {
-    if (ctx.standalone || ctx.wasi) {
+    if (nativeSemanticProviders) {
       ensureObjectRuntime(ctx);
     } else {
       ensureLateImport(
@@ -5992,6 +5983,7 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
  *     plumbed through — a later producer slice.
  */
 export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | null {
+  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   if (ctx.fast) {
     ensureAnyValueType(ctx);
     const anyTypeIdx = ctx.anyValueTypeIdx;
@@ -6269,16 +6261,15 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       return [];
     },
     emitStrictEq(negate: boolean): readonly Instr[] {
-      // #2949 S5.P — host STRICT `===` uses the existing JS-host provider.
-      // Standalone/WASI uses the native externref classifier + AnyValue
-      // comparison helper, preserving host-free execution and object identity.
-      const helper = ctx.standalone || ctx.wasi ? "__extern_strict_eq" : "__host_eq";
+      // Compatibility semantics delegate to JS. Native-first semantics use the
+      // externref classifier + AnyValue comparison helper even with a JS host.
+      const helper = nativeSemanticProviders ? "__extern_strict_eq" : "__host_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitLooseEq(negate: boolean): readonly Instr[] {
-      // Host LOOSE `==` delegates to JS. Standalone/WASI classifies both
+      // Compatibility semantics delegate to JS. Native-first classifies both
       // externref carriers and routes through the native `__any_eq` engine.
-      const helper = ctx.standalone || ctx.wasi ? "__extern_loose_eq" : "__host_loose_eq";
+      const helper = nativeSemanticProviders ? "__extern_loose_eq" : "__host_loose_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitMemberGet(): readonly Instr[] {

@@ -21,6 +21,7 @@ import { isUndefWidenedBindingElement, resolveBindingElementType } from "../chec
 import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { usesNativeJsErrors } from "./js-errors.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
 // (#3178) done/value reads on native IteratorResult structs — late-bound via
 // shared.ts (a static member-get-dispatch.ts import here is an eval-time cycle).
@@ -57,8 +58,8 @@ import {
 } from "./statements/destructuring.js";
 
 /**
- * (#3241) Emit the host-free object-rest CopyDataProperties (ES §14.7.4) for
- * `--target standalone`/`wasi`, storing the fresh rest `$Object` into `restIdx`.
+ * (#3241/#4397) Emit the native-provider object-rest CopyDataProperties
+ * (ES §14.7.4), storing the fresh rest `$Object` into `restIdx`.
  *
  * Shared by every object-rest binding site (function-param rest, for-of/-await
  * loop-var rest, assignment-target rest) so they all route to the DEFINED native
@@ -77,10 +78,10 @@ import {
  * reinterpreted via `extern.convert_any` is invisible to it and yields an EMPTY
  * rest, #3222 C1; struct sources must be reified via `materializeStructAsObject`
  * inside `emitSource`). Returns `false` (caller keeps its host/gc path) if a
- * dependency is unexpectedly missing. The host/gc lanes are untouched — this is
- * gated on `ctx.standalone || ctx.wasi` at each call site.
+ * dependency is unexpectedly missing. Compatibility host-assisted builds retain
+ * the historical host helper; every native-first environment uses this path.
  */
-export function emitStandaloneObjectRest(
+export function emitNativeObjectRest(
   ctx: CodegenContext,
   fctx: FunctionContext,
   emitSource: () => void,
@@ -558,7 +559,7 @@ export function buildDestructureNullThrow(ctx: CodegenContext, fctx?: FunctionCo
   // works under wasmtime, with no `__throw_type_error` host import. The
   // constructor is registered in funcMap as an internal function, so
   // ensureLateImport resolves it without adding an import (no index shift).
-  if (ctx.wasi || ctx.standalone) {
+  if (usesNativeJsErrors(ctx)) {
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     // #1623 — resolve `__new_TypeError` through ensureLateImport (NOT a raw
     // `funcMap.get`). The constructor is an in-module function whose index is
@@ -665,18 +666,17 @@ export function destructureParamObjectExternref(
       if (restIdx === undefined) {
         restIdx = allocLocal(fctx, restName, { kind: "externref" });
       }
-      // (#3223) Standalone/WASI: use the native host-free __extern_rest_object
-      // (a DEFINED func) instead of the `env.__extern_rest_object` host import,
-      // which would leak an env:: import and fail zero-import instantiation.
+      // (#3223/#4397) Native semantic providers use the Wasm-defined
+      // __extern_rest_object instead of the legacy host semantic import.
       // The native helper takes an EXCLUSION OBJECT (own keys = excluded
       // property names) rather than the comma-joined string; membership is the
       // proven open-object hash lookup, so there is no runtime string parsing
       // and no delimiter false-match. The host/gc branch below is byte-identical
       // to the prior behaviour.
-      if (ctx.standalone || ctx.wasi) {
+      if (ctx.targetProfile.semanticProviders === "native-first") {
         // The param is an externref (already an open `$Object` at runtime), so
         // no `materializeStructAsObject` reification is needed here.
-        const ok = emitStandaloneObjectRest(
+        const ok = emitNativeObjectRest(
           ctx,
           fctx,
           () => fctx.body.push({ op: "local.get", index: paramIdx }),

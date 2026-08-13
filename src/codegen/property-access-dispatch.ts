@@ -33,7 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
-import { emitSymbolDescLoad } from "./symbol-native.js";
+import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import {
@@ -93,6 +93,7 @@ import {
   emitTaViewDynamicByteLength,
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
+  usesNativeDataViewProvider,
 } from "./dataview-native.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticUniformDerivedLength, tryEmitNativeTrimLength } from "./native-strings-derived-length.js";
@@ -846,7 +847,7 @@ export function tryBufferViewAttributeReads(
     // a bare `$__vec_i32_byte` (offset-0 default-length view). For the wrapper,
     // read its byteOffset / byteLength fields; for the bare vec, byteOffset = 0
     // and byteLength = vec.length (one i32 per byte ⇒ length IS the byte count).
-    if (isDataView && noJsHost(ctx) && propName !== "BYTES_PER_ELEMENT") {
+    if (isDataView && usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
       const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
       const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
       const fieldIdx = propName === "byteOffset" ? 1 : 2;
@@ -902,7 +903,7 @@ export function tryBufferViewAttributeReads(
     // through to `__extern_get(struct, "byteLength")` → undefined → NaN. Recover
     // the window via the `__dv_view_byte_attr(view, sel)` host helper:
     //   sel 0 → byteOffset, sel 1 → byteLength (windowed; sentinel handled host-side).
-    if (isDataView && !noJsHost(ctx) && propName !== "BYTES_PER_ELEMENT") {
+    if (isDataView && !usesNativeDataViewProvider(ctx) && propName !== "BYTES_PER_ELEMENT") {
       const attrIdx = ensureLateImport(
         ctx,
         "__dv_view_byte_attr",
@@ -1018,7 +1019,12 @@ export function tryBufferViewAttributeReads(
   // `a.buffer === b.buffer` identity) is OUT OF SCOPE — it needs the unified
   // byte-storage representation (pairs with #2593's packed migration); this slice
   // is the non-trapping floor. Host/gc mode keeps its host-import `.buffer`.
-  if (propName === "buffer" && noJsHost(ctx)) {
+  if (
+    propName === "buffer" &&
+    (noJsHost(ctx) ||
+      (usesNativeDataViewProvider(ctx) &&
+        ctx.checker.getTypeAtLocation(expr.expression).getSymbol()?.name === "DataView"))
+  ) {
     const bufRecvName =
       objType.getSymbol()?.name ??
       (ts.isNewExpression(expr.expression) && ts.isIdentifier(expr.expression.expression)
@@ -1234,7 +1240,10 @@ export function tryNativeErrorMemberRead(
   // $Error_struct) + struct.get`. If the receiver is already null at
   // runtime, `ref.cast` traps — but native JS has the same behaviour
   // (`null.message` throws), so the trap is acceptable Phase 1/2 semantics.
-  if ((ctx.wasi || ctx.standalone) && (propName === "message" || propName === "name" || propName === "stack")) {
+  if (
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    (propName === "message" || propName === "name" || propName === "stack")
+  ) {
     const lhsTsName = objType.getSymbol()?.name;
     // (#1536c) A user subclass of a built-in Error (`class MyError extends
     // Error {}`) is externref-backed; its instance is the parent's
@@ -3040,7 +3049,8 @@ export function tryNamespaceConstantAndSymbolReads(
     // accessor — read the description from the native id→string side table
     // (populated by `compileSymbolCall`). A null slot / out-of-range id reads as
     // `undefined`, matching `Symbol().description === undefined`.
-    if (noJsHost(ctx)) {
+    if (usesNativeSymbolProvider(ctx)) {
+      ensureNativeSymbolBoundaryBridge(ctx);
       const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32" });
       if (recvType && recvType.kind !== "i32") {
         coerceType(ctx, fctx, recvType, { kind: "i32" });
@@ -3713,6 +3723,15 @@ export function finalizeStructAndDynamicMemberGet(
           return localType?.kind === "externref";
         })());
     if (isExternObj) {
+      // These bindings were deliberately placed on the dynamic object carrier
+      // because their shape can change (growable objects, Proxy targets, and
+      // other representation-sensitive values). A same-named closed-struct
+      // field elsewhere in the module must not narrow the dynamic read back to
+      // f64/i32: a missing property is the real undefined carrier, not numeric
+      // NaN. The dispatch may still use its struct fast arms; only its result
+      // representation stays honest.
+      const preserveDynamicResultCarrier =
+        ts.isIdentifier(expr.expression) && ctx.externrefAccessorVars.has(expr.expression.text);
       const getIdx = ensureLateImport(
         ctx,
         "__extern_get",
@@ -3806,7 +3825,7 @@ export function finalizeStructAndDynamicMemberGet(
           // taught the consumer-side dispatch to use the typed read.
           let resultWasm: ValType =
             accessWasm.kind === "f64" || accessWasm.kind === "i32" ? accessWasm : ({ kind: "externref" } as const);
-          if (resultWasm.kind === "externref") {
+          if (resultWasm.kind === "externref" && !preserveDynamicResultCarrier) {
             const fieldKinds = new Set(structCandidates.map((c) => c.fieldType.kind));
             // (#3927) A hot/cold-split fnctor carries `propName` in its
             // lazily-allocated tail, and `findAlternateStructsForField`

@@ -944,7 +944,11 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ctx.funcMap.has("__defineProperties");
   const wantsDynamicWriteback =
     !ctx.standalone && !ctx.wasi && (ctx.funcMap.has("__extern_set") || ctx.funcMap.has("__extern_set_strict"));
-  if (wantsDefineWriteback || wantsDynamicWriteback) {
+  const wantsNativeBoundaryWriteback =
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.emitHostBridge &&
+    ctx.targetProfile.hostValueInterop !== "off";
+  if (wantsDefineWriteback || wantsDynamicWriteback || wantsNativeBoundaryWriteback) {
     emitVecDefineWritebackExports(ctx, mutEntries, unboxNumIdx);
   }
 }

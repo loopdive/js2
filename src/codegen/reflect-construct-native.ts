@@ -43,12 +43,46 @@ export function fillReflectIsConstructor(ctx: CodegenContext): void {
       },
     );
   }
+  // (#4397) A Proxy's [[Construct]] presence is fixed by its target at
+  // ProxyCreate time. Read the stored bit instead of accepting every $Proxy;
+  // it remains meaningful after revocation (the later operation throws).
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx !== undefined) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 6 },
+          { op: "return" },
+        ],
+      },
+    );
+  }
   // (#4120) A reified builtin CONSTRUCTOR (`Set`, `Array`, `TypeError`, …) is a
   // brand-marked `$Object` carrier, not a nominal closure wrapper, so no
   // `ref.test` above can see it. Without this arm `Reflect.construct(fn, [], Set)`
   // threw "newTarget is not a constructor" — test262's `isConstructor(Set)`
   // returned false where the spec says true.
   body.push(...buildBuiltinConstructorTestArm(ctx, 1, [{ op: "i32.const", value: 1 }, { op: "return" }]));
+  // An actual caller-owned JS constructor remains the same admitted object;
+  // the narrow adapter reports only its callable/constructible bits.
+  const boundaryKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
+  if (boundaryKindIdx !== undefined) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: boundaryKindIdx },
+      { op: "i32.const", value: 2 },
+      { op: "i32.and" },
+      { op: "i32.eqz" },
+      { op: "i32.eqz" },
+      { op: "return" },
+    );
+  }
   body.push({ op: "i32.const", value: 0 });
   fn.body = body;
 }

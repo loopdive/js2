@@ -19,6 +19,7 @@
  */
 
 import { ts } from "./ts-api.js";
+import type { PlatformCapabilityRequirement } from "./capability-registry.js";
 import type { TypedAST } from "./checker/index.js";
 import type { Import, TypeDef, ValType } from "./ir/types.js";
 
@@ -32,6 +33,8 @@ export interface WitGeneratorOptions {
   imports?: readonly Import[];
   /** Compiled module type table used to render import function signatures. */
   types?: readonly TypeDef[];
+  /** Versioned capability contracts used to project provider imports. */
+  capabilities?: readonly PlatformCapabilityRequirement[];
 }
 
 interface WitRecord {
@@ -48,6 +51,7 @@ interface WitFunc {
 interface WitImportFunc extends WitFunc {
   sourceModule: string;
   sourceName: string;
+  capability?: PlatformCapabilityRequirement;
 }
 
 /**
@@ -63,7 +67,23 @@ export function generateWit(ast: TypedAST, options?: WitGeneratorOptions): strin
   const recordNames = new Set<string>();
   const funcs: WitFunc[] = [];
   const importResources = new Set<string>();
-  const importFuncs = importsToWit(options?.imports ?? [], options?.types ?? [], importResources);
+  const usedImportNames = new Set<string>();
+  const capabilityRequirements = options?.capabilities ?? [];
+  const capabilityImportKeys = new Set(
+    capabilityRequirements.flatMap((requirement) =>
+      requirement.imports.map((entry) => `${entry.module}\0${entry.name}`),
+    ),
+  );
+  const importFuncs = [
+    ...capabilitiesToWit(capabilityRequirements, importResources, usedImportNames),
+    ...importsToWit(
+      options?.imports ?? [],
+      options?.types ?? [],
+      importResources,
+      usedImportNames,
+      capabilityImportKeys,
+    ),
+  ];
 
   const sf = ast.sourceFile;
   const checker = ast.checker;
@@ -125,7 +145,16 @@ export function generateWit(ast: TypedAST, options?: WitGeneratorOptions): strin
   for (const func of importFuncs) {
     const params = func.params.map((p) => `${p.name}: ${p.type}`).join(", ");
     const returnPart = func.result ? ` -> ${func.result}` : "";
-    lines.push(`  /// Core import: ${func.sourceModule}.${func.sourceName}`);
+    if (func.capability) {
+      lines.push(
+        `  /// Capability: ${func.capability.abiNamespace}@${func.capability.abiVersion}`,
+        `  /// Permissions: ${func.capability.permissions.join(", ") || "none"}`,
+        `  /// Selected provider: ${func.capability.selectedProviders.join(", ")}`,
+      );
+      lines.push(`  /// Core provider import: ${func.sourceModule}.${func.sourceName}`);
+    } else {
+      lines.push(`  /// Core import: ${func.sourceModule}.${func.sourceName}`);
+    }
     lines.push(`  import ${func.name}: func(${params})${returnPart};`);
   }
   if (importFuncs.length > 0 && funcs.length > 0) {
@@ -487,12 +516,18 @@ const KNOWN_IMPORT_PARAM_NAMES = new Map<string, string[]>([
   ["env.__wasi_env_get_str", ["key"]],
 ]);
 
-function importsToWit(imports: readonly Import[], types: readonly TypeDef[], resources: Set<string>): WitImportFunc[] {
+function importsToWit(
+  imports: readonly Import[],
+  types: readonly TypeDef[],
+  resources: Set<string>,
+  usedNames: Set<string>,
+  skipImports: ReadonlySet<string>,
+): WitImportFunc[] {
   const funcs: WitImportFunc[] = [];
-  const usedNames = new Set<string>();
 
   for (const imp of imports) {
     if (imp.desc.kind !== "func") continue;
+    if (skipImports.has(`${imp.module}\0${imp.name}`)) continue;
     const typeDef = types[imp.desc.typeIdx];
     if (!typeDef || typeDef.kind !== "func") continue;
 
@@ -515,6 +550,56 @@ function importsToWit(imports: readonly Import[], types: readonly TypeDef[], res
   }
 
   return funcs;
+}
+
+function capabilitiesToWit(
+  requirements: readonly PlatformCapabilityRequirement[],
+  resources: Set<string>,
+  usedNames: Set<string>,
+): WitImportFunc[] {
+  const funcs: WitImportFunc[] = [];
+  for (const requirement of [...requirements].sort((left, right) => left.id.localeCompare(right.id))) {
+    for (const entry of requirement.imports) {
+      if (entry.kind !== "func" || !entry.params || !entry.results) continue;
+      const sourceKey = `${entry.module}.${entry.name}`;
+      const knownParamNames = KNOWN_IMPORT_PARAM_NAMES.get(sourceKey) ?? [];
+      const params = entry.params.map((type, index) => ({
+        name: toWitIdentifier(knownParamNames[index] ?? `p${index}`),
+        type: mapCapabilityAbiTypeToWit(type, resources),
+      }));
+      const results = entry.results.map((type) => mapCapabilityAbiTypeToWit(type, resources));
+      funcs.push({
+        name: uniqueWitImportName(toWitIdentifier(entry.name), entry.module, usedNames),
+        params,
+        result: results.length === 0 ? null : results.length === 1 ? results[0]! : `tuple<${results.join(", ")}>`,
+        sourceModule: entry.module,
+        sourceName: entry.name,
+        capability: requirement,
+      });
+    }
+  }
+  return funcs;
+}
+
+function mapCapabilityAbiTypeToWit(type: string, resources: Set<string>): string {
+  switch (type) {
+    case "i8":
+      return "s8";
+    case "i16":
+      return "s16";
+    case "i32":
+      return "s32";
+    case "i64":
+      return "s64";
+    case "f32":
+    case "f64":
+      return type;
+    case "v128":
+      return "list<u8>";
+    default:
+      resources.add("host-ref");
+      return "host-ref";
+  }
 }
 
 function mapWasmValTypeToWit(type: ValType, resources: Set<string>): string {

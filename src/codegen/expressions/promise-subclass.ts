@@ -53,11 +53,13 @@ import { emitFuncRefAsClosure } from "../closures.js"; // (#2637 B2.1) materiali
  * Promise`, B maps to "A", not "Promise". `classParentMap` carries the
  * user-class edges, so we climb until we hit a builtin Promise parent.
  *
- * Standalone (WASI) mode has no JS host, so `__promise_subclass_ctor` is
- * unsatisfiable there — return `undefined` so callers fall back.
+ * Recognition is target-independent. Whether a target may materialize the
+ * legacy host constructor is a separate decision made by the emit helpers
+ * below. Keeping those concerns separate is important: native-first dispatch
+ * still needs to know that `P.resolve` names an inherited Promise static, even
+ * though it must never synthesize `P` through `__promise_subclass_ctor`.
  */
 export function resolvePromiseSubclassName(ctx: CodegenContext, name: string): string | undefined {
-  if (isStandalonePromiseActive(ctx)) return undefined;
   const resolved = ctx.classExprNameMap.get(name) ?? name;
   let cursor: string | undefined = resolved;
   const seen = new Set<string>();
@@ -179,6 +181,10 @@ function emitRegisterPromiseSubclassCtor(ctx: CodegenContext, fctx: FunctionCont
  * true; else return false (caller falls through to its normal handling).
  */
 export function tryEmitPromiseSubclassValue(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
+  // The cached JavaScript constructor is compatibility semantics, not boundary
+  // value adaptation. Native-first/host-free lanes recognize the class above
+  // but may not materialize it through this host import.
+  if (isStandalonePromiseActive(ctx)) return false;
   const resolved = resolvePromiseSubclassName(ctx, name);
   if (resolved === undefined) return false;
   return emitPromiseSubclassCtor(ctx, fctx, resolved);

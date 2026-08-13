@@ -38,6 +38,52 @@ export function calleeIsBoundFunctionVar(oracle: TypeOracle, expr: ts.Expression
   return resolveBoundFunctionInitializer(oracle, expr) !== undefined;
 }
 
+function boundTargetOf(init: ts.CallExpression): ts.Expression | undefined {
+  const callee = skipTransparentExpressions(init.expression);
+  if (!ts.isPropertyAccessExpression(callee)) return undefined;
+  if (callee.name.text === "bind") return callee.expression;
+  if (
+    callee.name.text === "call" &&
+    ts.isPropertyAccessExpression(callee.expression) &&
+    callee.expression.name.text === "bind"
+  ) {
+    return init.arguments[0];
+  }
+  return undefined;
+}
+
+/**
+ * Prove that a stored bind result ultimately targets a compiled callable.
+ *
+ * This is deliberately conservative: parameters, property reads, calls and
+ * otherwise dynamic values may be caller-owned JS functions and therefore
+ * retain the explicit callback-boundary fallback. Function declarations,
+ * function/arrow initializers, and chains of bind results rooted in one of
+ * those shapes stay entirely in Wasm.
+ */
+export function boundFunctionTargetIsDefinitelyCompiled(oracle: TypeOracle, expr: ts.Expression): boolean {
+  const init = resolveBoundFunctionInitializer(oracle, expr);
+  const root = init && boundTargetOf(init);
+  if (!root) return false;
+  const seen = new Set<ts.Node>();
+  const visit = (value: ts.Expression): boolean => {
+    const inner = skipTransparentExpressions(value);
+    if (seen.has(inner)) return false;
+    seen.add(inner);
+    if (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) return true;
+    if (!ts.isIdentifier(inner)) return false;
+    const declaration = oracle.valueDeclarationOf(inner);
+    if (declaration && ts.isFunctionDeclaration(declaration)) return true;
+    if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+    const variableInit = skipTransparentExpressions(declaration.initializer);
+    if (ts.isArrowFunction(variableInit) || ts.isFunctionExpression(variableInit)) return true;
+    if (!ts.isCallExpression(variableInit)) return false;
+    const nestedTarget = boundTargetOf(variableInit);
+    return nestedTarget ? visit(nestedTarget) : false;
+  };
+  return visit(root);
+}
+
 export type UncurriedBuiltinPrototypeMethod =
   | { builtin: "Array"; method: "join" | "push" }
   | { builtin: "Object"; method: "hasOwnProperty" | "propertyIsEnumerable" | "valueOf" };

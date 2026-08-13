@@ -182,6 +182,11 @@ export function hasStandaloneRegExpEngine(state: StandaloneRegExpEngineState): b
   return getStandaloneRegExpEngine(state) !== null;
 }
 
+/** Whether RegExp semantics are owned by the native provider for this build. */
+export function usesNativeRegExpProvider(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.semanticProviders === "native-first";
+}
+
 const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
 // g/i/y from Phase 2a, m/s from 2c, d/u/v from 2d (#1911 — `d` does not
 // change MATCHING semantics; the `.indices` result surface is #1914's lane;
@@ -2512,7 +2517,7 @@ export function tryCompileStandaloneRegExpTest(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "test") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "test") return undefined;
 
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
   if (!isGlobalRegExpType(receiverType)) return undefined;
@@ -2943,7 +2948,7 @@ export function tryCompileStandaloneRegExpExec(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "exec") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "exec") return undefined;
 
   const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
   if (!isGlobalRegExpType(receiverType)) return undefined;
@@ -3004,7 +3009,7 @@ export function tryCompileStandaloneStringSearch(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "search") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "search") return undefined;
 
   // The caller has already selected the native String method lane. Untyped
   // receivers may arrive through a proven native-string local or through the
@@ -3163,7 +3168,7 @@ export function tryCompileStandaloneStringMatch(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "match") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "match") return undefined;
 
   if (expr.arguments.length > 1) return undefined;
   const argExpr = expr.arguments[0];
@@ -3291,7 +3296,7 @@ export function tryCompileStandaloneStringMatchAll(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "matchAll") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "matchAll") return undefined;
 
   if (expr.arguments.length !== 1) return undefined;
   const argExpr = expr.arguments[0]!;
@@ -3403,7 +3408,7 @@ export function tryCompileStandaloneStringReplace(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (!usesNativeRegExpProvider(ctx)) return undefined;
   const method = propAccess.name.text;
   if (method !== "replace" && method !== "replaceAll") return undefined;
 
@@ -3423,7 +3428,7 @@ export function tryCompileStandaloneStringReplace(
   // declines for a runtime-only pattern or an unresolvable function value, which
   // then reaches the refusal below unchanged. Standalone only: WASI has no
   // native RegExp lowering here and must keep reporting the refusal.
-  const fnFlags = ctx.standalone ? staticRegExpFlags(ctx, reExpr) : null;
+  const fnFlags = usesNativeRegExpProvider(ctx) ? staticRegExpFlags(ctx, reExpr) : null;
   if (fnFlags !== null && !(method === "replaceAll" && !fnFlags.includes("g"))) {
     const fnReplace = tryCompileStandaloneRegExpFunctionReplace(
       ctx,
@@ -3448,7 +3453,7 @@ export function tryCompileStandaloneStringReplace(
   // WASI only joins the shared refusal above. Its supported RegExp replacement
   // behavior is otherwise unchanged; the native RegExp engine remains the
   // standalone target's lowering.
-  if (!ctx.standalone) return undefined;
+  if (!usesNativeRegExpProvider(ctx)) return undefined;
 
   const flags = staticRegExpFlags(ctx, reExpr);
   if (flags === null) return undefined;
@@ -3630,7 +3635,7 @@ export function tryCompileStandaloneStringSplit(
   propAccess: ts.PropertyAccessExpression,
   receiverOverride?: () => ValType | null,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "split") return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "split") return undefined;
 
   if (expr.arguments.length === 0) return undefined;
   const reExpr = expr.arguments[0]!;
@@ -3788,7 +3793,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
   regexExpr: ts.Expression,
   methodName: string,
 ): ValType | null | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (!usesNativeRegExpProvider(ctx)) return undefined;
 
   const symbolMethod =
     methodName === "@@match"
@@ -3820,7 +3825,7 @@ export function tryCompileStandaloneRegExpSymbolCall(
 
   // WASI shares only the fail-loud function-replacer contract. Supported
   // RegExp symbol-method behavior otherwise stays on its existing path.
-  if (!ctx.standalone) {
+  if (!usesNativeRegExpProvider(ctx)) {
     if (symbolMethod === "replace" && expr.arguments.length === 2) {
       return tryRefuseHostFreeRegExpReplacer(ctx, fctx, expr.arguments[1]!, "@@replace");
     }
@@ -3907,7 +3912,7 @@ export function tryCompileStandaloneRegExpPropertyRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
   if (!STANDALONE_REGEXP_REFLECTION_PROPS.has(propName)) return undefined;
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
@@ -3947,7 +3952,7 @@ export function emitStandaloneRegExpToStringFromExpr(
   fctx: FunctionContext,
   regexpExpr: ts.Expression,
 ): ValType | null | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!usesNativeRegExpProvider(ctx)) return undefined;
   const objType = ctx.checker.getTypeAtLocation(regexpExpr);
   const nonNull = objType.getNonNullableType?.() ?? objType;
   if (!isGlobalRegExpType(nonNull)) return undefined;
@@ -3991,7 +3996,9 @@ export function tryCompileStandaloneRegExpToString(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "toString" || expr.arguments.length !== 0) return undefined;
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "toString" || expr.arguments.length !== 0) {
+    return undefined;
+  }
   return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
 }
 
@@ -4421,7 +4428,7 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(target.name) || target.name.text !== "lastIndex") {
+  if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(target.name) || target.name.text !== "lastIndex") {
     return undefined;
   }
   const objType = ctx.checker.getTypeAtLocation(target.expression);
@@ -4463,7 +4470,7 @@ export function tryCompileStandaloneRegExpMatchResultRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
   if (propName !== "index" && propName !== "input" && propName !== "groups" && propName !== "indices") {
     return undefined;
@@ -4593,7 +4600,7 @@ export function inferStandaloneRegExpMatchGlobalType(
   ctx: CodegenContext,
   decl: ts.VariableDeclaration,
 ): ValType | null {
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
+  if (!usesNativeRegExpProvider(ctx) || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
   if (!decl.initializer || !ts.isIdentifier(decl.name)) return null;
   if (!isStandaloneMatchResultCall(ctx, decl.initializer)) return null;
   const sym = ctx.checker.getSymbolAtLocation(decl.name);
