@@ -340,41 +340,6 @@ function collectClosureParameterReferences(
   for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
 }
 
-/** Whether this closure observes a hoisted function binding as a value. */
-function observesHoistedFunctionValue(
-  ctx: CodegenContext,
-  closure: ts.ArrowFunction | ts.FunctionExpression,
-  name: string,
-): boolean {
-  let observed = false;
-  const visit = (node: ts.Node): void => {
-    if (observed) return;
-    if (
-      node !== closure &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node) ||
-        ts.isSetAccessorDeclaration(node) ||
-        ts.isConstructorDeclaration(node) ||
-        ts.isClassLike(node))
-    ) {
-      return;
-    }
-    if (ts.isIdentifier(node) && node.text === name) {
-      const parent = node.parent;
-      if (!(ts.isCallExpression(parent) && parent.expression === node)) {
-        observed = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(closure);
-  return observed;
-}
-
 /**
  * Phase 1 of compileArrowAsClosure: capture analysis. Scans the arrow /
  * function-expression body (and its parameter default initializers) for free
