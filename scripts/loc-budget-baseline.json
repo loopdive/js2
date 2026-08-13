@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-13",
   "threshold": 1500,
-  "totalCeiling": 602426,
+  "totalCeiling": 602570,
   "files": {
     "src/codegen-linear/index.ts": 5574,
     "src/codegen-linear/runtime.ts": 4292,
@@ -71,7 +71,7 @@
     "src/codegen/typeof-delete.ts": 2046,
     "src/codegen/vec-overlay.ts": 2263,
     "src/codegen/wasi.ts": 2166,
-    "src/compiler.ts": 1778,
+    "src/compiler.ts": 1784,
     "src/compiler/early-errors/node-checks.ts": 1876,
     "src/emit/binary.ts": 2056,
     "src/interp/emitter.ts": 2139,
