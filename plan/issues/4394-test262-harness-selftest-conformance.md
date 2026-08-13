@@ -607,21 +607,102 @@ shadows inside an IIFE, which is fixed.
 
 ## Standalone lane (measured 2026-08-13)
 
-The cohort is measured in the GC lane. Standalone is **41 / 116** on the same
-tree, and the gap is dominated by two things that are NOT compiler defects:
+The cohort headline is the GC lane. Standalone on the same tree is **66 / 116**
+— but only once the QuickJS runtime-eval provider is actually built. A container
+that lacks it reports 41/116, because 25 tests fail on
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` rather than
+on anything the compiler did. Build it with
 
-| bucket | count | note |
-| --- | ---: | --- |
-| `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` | 37 | container-local missing artifact, not a lane gap |
-| `asyncTest called without async flag` | 15 | standalone's `globalThis` is a native `$Object`, so the harness's `hasOwnProperty(globalThis, "$DONE")` guard cannot see the sandbox own-property that root cause 7 gates |
-| null deref in `toString` | 6 | |
-| `$DONE is not defined` | 4 | |
-| `Function.prototype.toString` renders `[object Object]` | 3 | |
-| singletons (deepEqual array/sparse, TypedArray illegal cast, …) | 10 | |
+```
+npx tsx scripts/build-quickjs-eval-provider.mjs
+```
 
-So the honest standalone figure once the provider is built is ~78/116, and the
-`$DONE` own-property bucket is the single largest real gap — it is the
-standalone counterpart of root cause 7, not a separate defect.
+— note `npx tsx`, not bare `node`: the plain-node run builds `libquickjs.wasm`
+and then fails to build the ADAPTER ("no usable compiler … or run under tsx"),
+leaving a half-populated cache that still reports "not built".
+
+Real standalone buckets at 66/116:
+
+| bucket | count |
+| --- | ---: |
+| `asyncTest called without async flag` | 15 |
+| null deref in `toString` | 6 |
+| `$DONE is not defined` | 4 |
+| `Function.prototype.toString` renders `[object Object]` | 3 |
+| `Expected true but got false` | 3 |
+| `Object method called on null or undefined` | 2 |
+| deepEqual array / sparse-array comparisons | 4 |
+| TypedArray `illegal cast` | 2 |
+| singletons | 11 |
+
+### The 15-test bucket is the `$DONE` own-property gate, standalone side
+
+`asyncHelpers.js` guards `asyncTest` with
+`Object.prototype.hasOwnProperty.call(globalThis, "$DONE")`. A JS engine
+satisfies it because a SCRIPT's top-level `function $DONE` (from
+`doneprintHandle.js`) becomes an own property of the global object.
+
+Measured on this tree, a top-level `function $DONE() {}`:
+
+| lane | `hasOwnProperty(globalThis, "$DONE")` | `typeof globalThis.$DONE` |
+| --- | --- | --- |
+| host/GC | **false** | `"function"` |
+| standalone | **false** | — |
+
+So neither lane actually implements the binding; the GC lane only passes because
+the runner *fakes* the own-property on its sandbox (root cause 7). Standalone has
+no sandbox to fake it on — its `globalThis` is the native `$Object` built by
+`emitNativeGlobalThisObject`.
+
+The real repair is the same one for both lanes: seed the global object with the
+script's top-level function bindings (`ctx.topLevelFunctionNames`), the way
+`standaloneGlobalFunctionSeedInstrs` already seeds the ES5 global functions.
+That would let the runner drop its sandbox stub as well. Not attempted here —
+the seeds are captured in a lazily-initialised detached body, so materialising
+user closure values into it is an ordering problem (#1712-class), not a one-line
+addition. **This is the highest-value single item left in either lane.**
+
+## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
+
+`verifyProperty-desc-is-not-object.js` asserts that a primitive `desc` argument
+is rejected. `verifyProperty`'s guard is
+`assert.sameValue(typeof desc, "object", …)`, and it never fires for a boolean
+or a number.
+
+Minimal repro — the exact JSDoc shape of `propertyHelper.js`, including the
+optional 4th parameter and one call site that supplies it:
+
+```js
+/**
+ * @param {object} obj
+ * @param {string|symbol} name
+ * @param {PropertyDescriptor|undefined} desc
+ * @param {object} [options]
+ */
+function vp(obj, name, desc, options) { return typeof desc; }
+var s = { foo: 1 };
+vp(s, "foo", true)                                  // → "object"   (want "boolean")
+vp(s, "foo", 42)                                    // → "object"   (want "number")
+vp(s, "foo", { configurable: true }, { restore: 1 }) // (this call is what forces the shape)
+```
+
+Under `allowJs` the checker honours JSDoc, so `desc`'s declared type makes the
+parameter's carrier a compiled struct; a primitive argument is coerced into that
+slot and `typeof` on a struct answers `"object"`. Drop the JSDoc, or the 4th
+parameter, and every answer is correct — which is what makes this invisible
+outside the assembled harness.
+
+Note the direction of the unsoundness: in a **JavaScript** module the declared
+types are not enforced by anything, so a struct-typed parameter carrier is
+unsound at every call site that passes a non-conforming value. `string` and
+`null` happen to survive (they answer `"string"` / `"object"`, and `null` is
+caught by the preceding `assert.notSameValue(desc, null)`), so only the boolean
+and number cases of the test fail.
+
+Not landed: the repair is "in a JS module, widen a parameter carrier to
+externref when any call site passes a statically-primitive argument" — a change
+to core parameter typing with whole-suite blast radius, for one harness test. It
+wants its own issue and its own merge-group measurement, not a late edit here.
 
 ## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
 
