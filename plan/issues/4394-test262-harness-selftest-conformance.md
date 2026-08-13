@@ -34,6 +34,11 @@ loc-budget-allow:
   # resolution that now excludes the global object. The predicate itself lives
   # in global-environment.ts, beside the other global-object receiver gate.
   - src/codegen/object-ops.ts
+  # +48 lines: the HOF routing arm in `emitArrayProtoMemberBody` plus its
+  # receiver guard and the comments recording why each half is load-bearing.
+  # It belongs beside the `slice` arm it sits in and beside the identical
+  # String.prototype receiver guard it mirrors, both in this file.
+  - src/codegen/array-object-proto.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -91,6 +96,8 @@ files:
   - tests/issue-4394-shadowed-error-ctor.test.ts
   - src/codegen/global-function-bindings.ts
   - tests/issue-4394-global-function-bindings.test.ts
+  - src/codegen/hof-native.ts
+  - tests/issue-4394-array-proto-hof-as-value.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -711,6 +718,59 @@ equivalence-gate, all 8 shards: no new regressions. 220-file standalone sample
 over `language/statements/function`, `language/global-code` and
 `built-ins/Function`: 0 regressions, and it fixes
 `language/global-code/decl-func.js` — the spec test for this exact binding.
+
+## Root cause 14 (standalone, 5 tests) — `Array.prototype.map` as a VALUE
+
+Nine standalone tests reported a constructor mismatch
+(`assert.sameValue(error.constructor, Test262Error)` failing with
+`«[object Object]»`) that had nothing to do with constructors. The real cause is
+one line of the harness — the code that FORMATS a failure:
+
+```js
+compareArray.format = function (arrayLike) {
+  return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";
+};
+```
+
+`emitArrayProtoMemberBody` implemented only `slice`; every other member degraded
+to a catchable `Array.prototype.<m> is not yet callable as a value in --target
+standalone`. So the moment a comparison failed, the TypeError from the FORMATTER
+replaced the Test262Error the test was asserting about.
+
+### Fix
+
+Route the higher-order members to `__hof_<name>` — the native standalone loop
+`ensureNativeArrayHof` already emits for the dynamic-receiver CALL form. It
+reads its receiver through `__extern_length` / `__extern_get_idx`, so it serves
+an arbitrary array-LIKE, which is exactly what `.call(arguments, …)` needs.
+
+The reduce family stays on the refusal: `__hof_reduce` takes
+`(recv, cb, init, hasInit)`, not `(recv, cb, thisArg)`.
+
+**The receiver guard is load-bearing.** The old refusal threw for EVERY
+receiver, so `Array.prototype.map.call(undefined)` passed its "must throw
+TypeError" test *by accident*. Routing to the loop without a §23.1.3 step-1
+ToObject check silently returns an empty result instead — measured as 3
+regressions (`map/15.4.4.19-1-1`, `-1-2`, `filter/15.4.4.20-1-2`) before the
+guard was added. It mirrors the `String.prototype.<member>` guard in the same
+file, including the `__extern_is_undefined` arm: under the undefined-singleton
+regime `undefined` is a NON-null sentinel externref, so `ref.is_null` alone
+misses it.
+
+### Measured
+
+standalone 75 → **80** pass, 0 lost (the five `compare-array-*` tests).
+GC lane unchanged. equivalence-gate, all 8 shards: no new regressions.
+200-file standalone sample over `Array/prototype/{map,filter,forEach}`:
+0 regressions, +1 (`map/call-with-boolean.js`).
+
+### Still open in this bucket
+
+The remaining four of the nine need `String` callable as a VALUE standalone —
+`format`'s callback. `compareArray.format([1,2,"a"])` now returns
+`[null, null, null]` instead of throwing: the loop runs, the callback is null.
+`STANDALONE_ES5_GLOBAL_FUNCTION_NAMES` covers `parseInt`/`parseFloat`/… but not
+the `String`/`Number`/`Boolean` conversion functions.
 
 ## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
 
