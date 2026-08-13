@@ -315,13 +315,42 @@ the String WRAPPER, so storing the unboxed primitive back into it coerces to the
 wrapper again. That is a parameter-carrier bug, not a `valueOf` one; the harness
 does not hit it (its `comparePrimitiveEquality` passes).
 
+## Root cause 6 (3 tests) — a `symbol`-typed parameter carries a raw i32 handle
+
+`propertyHelper.js`'s deprecated `verifyEnumerable(obj, name)` / `verifyNotEnumerable`
+carry no JSDoc, so `name` is inferred from the call sites. In the symbol tests
+that is exactly `symbol`, and `mapTsTypeToWasm` lowers a bare `symbol` to an
+UNBRANDED `{kind:"i32"}` (the unique counter id). The parameter slot then holds
+the raw handle, and every dynamic use reads it as a number:
+
+```js
+function k(o, name) { return typeof name + " " + String(name); }
+k({}, Symbol("1"))   // → "boolean 101"   (want "symbol Symbol(1)")
+```
+
+which is where `Expected obj[101] to have enumerable:true.` comes from. In the
+narrower shape `function k(o, name) { var t = typeof name === "string"; … }` the
+mismatch is not even representable and the module fails to VALIDATE:
+`call[0] expected type externref, found local.get of type i32`. Adding a second
+call site with a string argument widens the parameter to `string | symbol`,
+which forces externref and makes both symptoms disappear — a precise
+demonstration that the carrier, not the operation, is at fault.
+
+**Not fixed here, deliberately.** `type-mapper.ts` documents why the obvious
+repair (branding the ValType `{kind:"i32", symbol:true}`) is deferred: it would
+route ALL symbol→externref coercions through `__box_symbol` while other boxing
+sites still use `__box_number`, and that mismatch already regressed the host
+`Object/values/symbols-omitted` canary (#2792/#2785). The real repair is the
+#2610 symbol-as-any value-rep pass. This issue contributes the reproducer and
+the validation failure as evidence for it.
+
 ## Remaining buckets (GC lane, 24 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
 | `deepEqual` (residual) | 1 | deep structural compare of nested objects/arrays |
 | asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
-| propertyHelper, symbol-keyed | 3 | symbol key reaches the integer-typed property path |
+| propertyHelper, symbol-keyed | 3 | root cause 6 above — blocked on the #2610 symbol value-rep pass |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
 | singletons | 9 | `isConstructor`, `testTypedArray`, `wellKnownIntrinsicObjects`, `fnGlobalObject`, `detachArrayBuffer` ×2, `assert-throws-native`, `assert-throws-custom-typeerror`, `verifyProperty-value`, `verifyProperty-desc-is-not-object` |
 
