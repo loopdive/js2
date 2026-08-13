@@ -52,6 +52,8 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
+// (#4157) provably-dead null guards
+import { type ReceiverProofHint, emitReceiverNullGuard, receiverProofHolds } from "./nonnull-proof.js";
 import { ensureAnyFromExternHelper, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
@@ -1131,9 +1133,21 @@ export function typeErrorThrowInstrs(ctx: CodegenContext, node?: ts.Node): Instr
  * The `refType` should be the nullable ref type of the value on the stack.
  *
  * Stack: [ref_null T] -> [ref_null T]  (non-null at runtime after this point)
+ *
+ * (#4157) `proof` lets a caller that KNOWS the receiver's pre-coercion ValType
+ * and source expression offer them for the provably-non-null test. When it
+ * holds the whole sequence is skipped — the value is already on the stack,
+ * which is exactly this function's postcondition.
  */
-export function emitNullCheckThrow(ctx: CodegenContext, fctx: FunctionContext, refType: ValType, node?: ts.Node): void {
+export function emitNullCheckThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  refType: ValType,
+  node?: ts.Node,
+  proof?: ReceiverProofHint,
+): void {
   const backupLocal: number | undefined = (fctx as any).__lastGuardedCastBackup;
+  if (receiverProofHolds(ctx, fctx, proof, (e) => isProvablyNonNull(e, ctx.checker))) return;
 
   const tmp = allocTempLocal(fctx, refType);
   fctx.body.push({ op: "local.tee", index: tmp });
@@ -1310,10 +1324,14 @@ export function emitNullGuardedStructGet(
   fieldIdx: number,
   propName?: string,
   throwOnNull: boolean = false,
+  proof?: ReceiverProofHint,
 ): void {
   // For result type in the if block, normalize ref to ref_null so the null branch is valid
   const resultType: ValType =
     fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: (fieldType as any).typeIdx } : fieldType;
+  // (#4157) Ask once, up front: a receiver whose wasm value cannot be null
+  // makes both null arms below dead.
+  const provenNonNull = receiverProofHolds(ctx, fctx, proof, (e) => isProvablyNonNull(e, ctx.checker));
   let primaryPresenceSlot: PresenceSlot | undefined;
   if (propName) {
     for (const [structName, fields] of ctx.structFields) {
@@ -1343,31 +1361,40 @@ export function emitNullGuardedStructGet(
       (!ctx.standalone || (fctx as any).__lastGuardedCastBackup === undefined)
     ) {
       const tmp = allocLocal(fctx, `__ng_${fctx.locals.length}`, objType);
+      // (#4157) Proven non-null: emit the else-arm directly. The `if` block's
+      // value type IS `resultType`, so the arm alone leaves exactly the same
+      // one value on the stack that the block would have.
+      const readInstrs: Instr[] =
+        primaryPresenceSlot !== undefined
+          ? [
+              { op: "local.get", index: tmp },
+              ...presenceTestInstrs(typeIdx, primaryPresenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "val", type: resultType },
+                then: [
+                  { op: "local.get", index: tmp },
+                  { op: "struct.get", typeIdx, fieldIdx },
+                ],
+                else: absentValueInstrs(),
+              },
+            ]
+          : [
+              { op: "local.get", index: tmp },
+              { op: "struct.get", typeIdx, fieldIdx },
+            ];
+      if (provenNonNull) {
+        fctx.body.push({ op: "local.set", index: tmp });
+        fctx.body.push(...readInstrs);
+        return;
+      }
       fctx.body.push({ op: "local.tee", index: tmp });
       fctx.body.push({ op: "ref.is_null" });
       fctx.body.push({
         op: "if",
         blockType: { kind: "val" as const, type: resultType },
         then: typeErrorThrowInstrs(ctx),
-        else:
-          primaryPresenceSlot !== undefined
-            ? [
-                { op: "local.get", index: tmp },
-                ...presenceTestInstrs(typeIdx, primaryPresenceSlot),
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: resultType },
-                  then: [
-                    { op: "local.get", index: tmp },
-                    { op: "struct.get", typeIdx, fieldIdx },
-                  ],
-                  else: absentValueInstrs(),
-                },
-              ]
-            : [
-                { op: "local.get", index: tmp },
-                { op: "struct.get", typeIdx, fieldIdx },
-              ],
+        else: readInstrs,
       });
       return;
     }
@@ -1448,62 +1475,69 @@ export function emitNullGuardedStructGet(
 
     // Null check: if the value is genuinely null, throw TypeError (#728)
     // But if the backup is available and non-null, use it for multi-struct dispatch
-    fctx.body.push({ op: "local.get", index: tmpAny });
-    fctx.body.push({ op: "ref.is_null" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then:
-        backupLocal !== undefined
-          ? ([
-              // Value is null — could be wrong struct type or genuinely null.
-              // Check the backup anyref to distinguish.
-              { op: "local.get", index: backupLocal },
-              { op: "ref.is_null" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                // Backup is also null → genuinely null, throw TypeError
-                then: typeErrorThrowInstrs(ctx),
-                // Backup is non-null → wrong struct type, try primary + alternates on backup
-                else: [
-                  { op: "local.get", index: backupLocal },
-                  { op: "ref.test", typeIdx },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      ...(primaryPresenceSlot !== undefined
-                        ? ([
-                            { op: "local.get", index: backupLocal },
-                            { op: "ref.cast", typeIdx },
-                            ...presenceTestInstrs(typeIdx, primaryPresenceSlot),
-                            {
-                              op: "if",
-                              blockType: { kind: "val", type: resultType },
-                              then: [
-                                { op: "local.get", index: backupLocal },
-                                { op: "ref.cast", typeIdx },
-                                { op: "struct.get", typeIdx, fieldIdx },
-                              ],
-                              else: absentValueInstrs(),
-                            },
-                          ] satisfies Instr[])
-                        : ([
-                            { op: "local.get", index: backupLocal },
-                            { op: "ref.cast", typeIdx },
-                            { op: "struct.get", typeIdx, fieldIdx },
-                          ] satisfies Instr[])),
-                      { op: "local.set", index: resultLocal },
-                    ],
-                    else: buildFallback(backupLocal, 0),
-                  },
-                ],
-              },
-            ] satisfies Instr[])
-          : typeErrorThrowInstrs(ctx),
-      else: [],
-    });
+    //
+    // (#4157) The whole block is `blockType: empty` with an empty else, so when
+    // the receiver is proven non-null it contributes nothing and is skipped
+    // wholesale. `provenNonNull` already excludes the guarded-cast case, which
+    // is the one where this null does NOT mean "null receiver".
+    if (!provenNonNull) {
+      fctx.body.push({ op: "local.get", index: tmpAny });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then:
+          backupLocal !== undefined
+            ? ([
+                // Value is null — could be wrong struct type or genuinely null.
+                // Check the backup anyref to distinguish.
+                { op: "local.get", index: backupLocal },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  // Backup is also null → genuinely null, throw TypeError
+                  then: typeErrorThrowInstrs(ctx),
+                  // Backup is non-null → wrong struct type, try primary + alternates on backup
+                  else: [
+                    { op: "local.get", index: backupLocal },
+                    { op: "ref.test", typeIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        ...(primaryPresenceSlot !== undefined
+                          ? ([
+                              { op: "local.get", index: backupLocal },
+                              { op: "ref.cast", typeIdx },
+                              ...presenceTestInstrs(typeIdx, primaryPresenceSlot),
+                              {
+                                op: "if",
+                                blockType: { kind: "val", type: resultType },
+                                then: [
+                                  { op: "local.get", index: backupLocal },
+                                  { op: "ref.cast", typeIdx },
+                                  { op: "struct.get", typeIdx, fieldIdx },
+                                ],
+                                else: absentValueInstrs(),
+                              },
+                            ] satisfies Instr[])
+                          : ([
+                              { op: "local.get", index: backupLocal },
+                              { op: "ref.cast", typeIdx },
+                              { op: "struct.get", typeIdx, fieldIdx },
+                            ] satisfies Instr[])),
+                        { op: "local.set", index: resultLocal },
+                      ],
+                      else: buildFallback(backupLocal, 0),
+                    },
+                  ],
+                },
+              ] satisfies Instr[])
+            : typeErrorThrowInstrs(ctx),
+        else: [],
+      });
+    }
 
     // Non-null path: try primary struct type on the original value
     fctx.body.push({ op: "local.get", index: tmpAny });
@@ -3101,14 +3135,7 @@ function tryStandaloneGrowableDynamicGet(
   // §13.3 member access on null/undefined throws TypeError (keep parity with
   // the default read path's null guard).
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.tee", index: recvTmp });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: typeErrorThrowInstrs(ctx, expr),
-    else: [],
-  });
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, expr.expression, expr, "growable-get:recv");
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -3187,19 +3214,35 @@ function tryKnownFnctorDynamicObjectCarrierGet(
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.tee", index: recvTmp });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: typeErrorThrowInstrs(ctx, expr),
-    else: [],
-  });
+  emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv");
   fctx.body.push({ op: "local.get", index: recvTmp });
   releaseTempLocal(fctx, recvTmp);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#4157) `recvType` is the receiver's ValType BEFORE the
+ * `coerceType(…externref)` the callers apply: a non-nullable `(ref $T)` is
+ * widened with `extern.convert_any`, which cannot introduce a null.
+ */
+function emitExternRecvNullGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvTmp: number,
+  recvType: ValType | null,
+  recvExpr: ts.Expression,
+  throwNode: ts.Node,
+  site: string,
+): void {
+  emitReceiverNullGuard(
+    ctx,
+    fctx,
+    recvTmp,
+    { site, compiled: recvType, expr: recvExpr, syntacticNonNull: isProvablyNonNull(recvExpr, ctx.checker) },
+    () => typeErrorThrowInstrs(ctx, throwNode),
+  );
 }
 
 export function compilePropertyAccess(

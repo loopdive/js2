@@ -21,6 +21,18 @@ loc-budget-allow:
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
   - src/codegen/index.ts
+  # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
+  # both emission shapes live in a new subsystem module
+  # (src/codegen/nonnull-proof.ts); what remains in these two files is
+  # irreducible for this kind of change: an optional proof parameter on the two
+  # exported guard emitters (`emitNullCheckThrow`, `emitNullGuardedStructGet`),
+  # the receiver ValType threaded to their call sites, and — the bulk of it —
+  # restructuring the fast path's `if (ref.is_null) throw else <read>` so the
+  # else-arm can be emitted alone when the guard is dead. That restructure
+  # cannot move to the module, because the read instructions it guards are built
+  # from this file's presence-slot and struct-field state.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
@@ -2162,3 +2174,190 @@ experiment, not a defensive measure.
 
 Caught by the project lead, who asked the obvious question the entry had not:
 how would it double-inline if the call is already gone.
+
+## 2026-08-13 — the "inlining cliff" is a documented threshold with a SECOND clause, and the clause is what kills the cold-path outline
+
+(Responds to the cold-path-outline entry and the codegen-breakdown entry, which
+inferred a cliff "somewhere between 11 and 45 instructions" from two data points:
+an 11-instruction helper inlined at 1,255 sites, a ~45-instruction one declined
+at 1,812. Those entries are on sibling branches, not on this one.)
+
+Binaryen 125 states the rule outright (`wasm-opt --help`), and the second clause
+is the one nothing in this file had accounted for.
+
+| knob | flag | default |
+| --- | --- | ---: |
+| always-inline max size | `-aimfs` | **2** |
+| flexible-inline max size | `-fimfs` | **20** |
+| one-caller-inline max size | `-ocimfs` | −1 (unlimited) |
+| combined-binary-size cap | `-imcbs` | 409600 |
+| inline functions with loops | `-ifwl` | off |
+| partial-inlining ifs | `-pii` | 0 |
+
+`-fimfs`'s own help text: flexible inlining applies to functions that are
+**"lightweight (no loops or function calls)"**. So a multi-caller helper is
+inlined only if it is ≤ 20 AND call-free AND loop-free.
+
+**Consequence, and it is decisive for three recorded experiments.** Every helper
+this umbrella wants inlined — `__extern_get`, `__str_flatten`, the `__dc_*`
+trampolines — fails the *lightweight* clause, not the size clause. A trampoline
+exists in order to make a call. **No amount of shrinking reaches any of them, and
+the cold-path outline could never have worked**: the residual `__extern_get`
+necessarily contains a `call $__extern_get_cold`, which disqualifies it at any
+instruction count. That is a structural explanation for that null, independent of
+the ~45-vs-20 sizing error it self-diagnosed.
+
+### The flag matrix, measured (standalone acorn, `wasm-opt -O4`, names preserved)
+
+Run directly on ONE emitted binary, so every row is the same codegen output with
+different optimizer arguments. Baseline is today's shipped invocation.
+
+| args | binary | Δ | `call $__extern_get` | `call $__box_number` |
+| --- | ---: | ---: | ---: | ---: |
+| `-O4` (shipped) | 1,085,558 B | — | 834 | 993 |
+| `-O4 -fimfs=60` | 1,208,325 B | **+11.3 %** | **834** | **0** |
+| `-O4 --partial-inlining-ifs=2` | 1,085,584 B | +26 B | 834 | 993 |
+| `-O4` + `no-inline@__new_TypeError` | 1,054,682 B | −2.84 % | 834 | 993 |
+| `-O4` + `no-inline@__new_*` | **1,052,620 B** | **−3.03 %** | 834 | 993 |
+
+Three readings:
+
+1. **Raising the budget reaches exactly the leaf helpers and nothing else.**
+   `-fimfs=60` inlines `__box_number` at all 993 sites and moves `__extern_get`
+   by zero, for +11.3 % binary. The `__box_number` provability entry already
+   priced inlining that helper everywhere — indistinguishable from zero, sign
+   flipped with run order. **The cheap path buys the one thing already measured
+   worthless.**
+2. **Binaryen's own partial inliner does not fire here.** `-pii` is binaryen's
+   native version of the hand-built cold-path split; it moves 26 bytes.
+3. **The default `-O4` INLINES the cold `__new_TypeError` constructor into all
+   4,285 null-guard sites** (`call $__new_TypeError`: 4,285 → **0** after `-O4`).
+   Marking it no-inline gives back 30,876 B / 18,079 WAT lines for free. A cold
+   constructor duplicated 4,285 times is pure caller bloat, and caller bloat is
+   the barrier this issue is trying to remove. **This is the only knob that
+   shrinks.**
+
+`--no-inline` has a trap worth recording: its pass-arg takes **one** pattern.
+`no-inline@__new_*` works (wildcards are supported);
+`no-inline@__new_TypeError,__new_Error` produces a **byte-identical** binary and
+still exits 0 — a comma list is silently ignored. And `--no-inline` is a PASS, so
+it must precede `-O<level>`; placed after, the marking happens once inlining has
+already run.
+
+Shipped as `JS2WASM_INLINE_HINTS` (`src/inline-hints.ts`, default OFF; `=1`
+selects `cold`). Before this, `src/optimize.ts` passed **no** inlining
+configuration at all.
+
+### Function-size distribution, and the count that was the deliverable
+
+`wasm-dis` of the same builds. "lightweight" = call-free and loop-free, i.e. the
+population `-fimfs` can act on at all.
+
+| | pre-`wasm-opt` | `-O4` | `-O4` + cold no-inline |
+| --- | ---: | ---: | ---: |
+| functions | 3,521 | 1,321 | 1,323 |
+| WAT lines | 1,154,211 | 638,106 | **620,027** |
+| mean lines/function | 328 | 483 | 469 |
+| lightweight functions | 520 | 32 | 30 |
+| **eligible at `fimfs=20`** | 38 | **1** | **2** |
+| ≥ 1001 lines | 271 | 150 | 144 |
+
+**Functions crossing under the threshold: ONE.** That is the honest answer to
+"how many cross the cliff", and it does not depend on which lever is used: the
+distribution's mass sits at 100–1000+ lines, three to thirty times the budget,
+and no lever in this issue moves a function by more than tens of lines. The `-O4`
+mean going UP (328 → 483) while the module halves is the mechanism stated
+plainly — binaryen inlines the small functions away and grows what remains.
+
+
+## 2026-08-13 — eliding provably-non-null TypeError guards is a 2-of-3,629 null, and WHY is the useful part
+
+`__new_TypeError` at 3,917 static sites is the largest emitted item in the
+program; the proposal was to elide the guard where the receiver is provably
+non-null. Built behind `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` (default OFF,
+`src/codegen/nonnull-proof.ts`), with a flag-independent census.
+
+**Where the sites actually come from** (standalone acorn, 4,122 emissions; the
+top four are 87 %):
+
+| sites | emitter |
+| ---: | --- |
+| 1,685 | `property-access-dispatch.ts` — the `__nullchk_` guard before `__extern_get` |
+| 1,378 | `emitNullGuardedStructGet`, via `property-access-exact-shapes.ts:153` |
+| 525 | `tryKnownFnctorDynamicObjectCarrierGet` |
+| 206 | `emitNullCheckThrow` from element access |
+
+**Result: 2 of 3,629 candidate guards are provable. Binary −32 B, checksum 422.**
+
+The proofs are statements about the **wasm value**, not the TypeScript type:
+`nonnull-ref` (compiled `ValType` is a non-nullable `(ref $T)`, so
+`extern.convert_any` cannot yield null), `boxed-number` (`__box_number` returns
+`ref.i31`/`struct.new` on every path — restricted to no-JS-host mode, where it is
+the in-module native), and `syntactic-producer` (`new X()`, literals, `const` of
+those). Type-level nullability was **deliberately refused**: the corpus is JS
+compiled with `skipSemanticDiagnostics` and no `strictNullChecks`, where "the
+type excludes null" is not evidence about the value, and eliding a live guard
+converts a catchable `TypeError` into an uncatchable trap.
+
+**Why it is ~zero, and it is the same wall as everything else in this file.** At
+the 1,685-site dispatch guard the compiled receiver is `externref` or `ref_null`
+— **never** a non-nullable ref. Acorn's receivers bottom out at untyped
+parameters, which is exactly the finding #4155/#743 recorded for the
+representation levers. Decline breakdown: 2,658 identifiers, 758
+property-accesses, 84 `this`.
+
+### The one proof with real headroom, priced but NOT built
+
+The census also prices a **dominance** proof this module does not implement —
+"this receiver was already guarded earlier in the same function":
+
+| | sites |
+| --- | ---: |
+| repeat guard of an identifier already guarded in this function | 1,864 |
+| repeat guard of `this` | 60 |
+| first guard of that binding | 869 |
+| receiver not a simple binding | 836 |
+
+**1,924 of 3,629 (53 %) are repeat guards** — an UPPER bound, since it ignores
+control flow and reassignment. A sound implementation must scope guards to the
+current straight-line body region (inherit into nested bodies, never propagate
+out of one), and restrict to `this` plus identifiers never assigned anywhere in
+the program (a captured `var` can be reassigned by a callee).
+
+**It should not be built for size.** 1,924 guards × ~8 instructions ≈ 2 % of the
+module, against a distribution whose mass is 100–1000+ lines per function — by
+the entry above it moves the crossing count from 1 to about 1. The correctness
+downside is turning a spec-required catchable `TypeError` into a trap. **The
+cheaper way to remove the same bloat is `no-inline@__new_*`, which takes
+30,876 B with zero semantic risk and no analysis at all** — it stops duplicating
+the cold constructor instead of removing the guard.
+
+### Gates
+
+`tests/issue-4157-nonnull-typeerror-elision.test.ts` (ON changes the binary and
+shrinks it; answers match JavaScript under both states; a genuinely null receiver
+still throws under both) and `tests/issue-4157-inline-hints.test.ts` (OFF is
+byte-identical argv; `--no-inline` lands in the pre-`-O` position; a comma list
+is refused rather than forwarded into a silent no-op).
+
+Flags unset: census **2,491,907 B / checksum 422**, byte-identical to this
+branch's base. Flag ON: 2,491,875 B / checksum 422. `tests/dogfood/acorn.test.ts`
+passes under both. The 14-file error-semantics equivalence batch is **13 failed /
+77 passed under flag OFF, flag ON, and with `origin/main`'s blobs restored for
+every edited file** — all pre-existing (`null-dereference-guards`,
+`optional-direct-closure-call`, `tdz-reference-error`).
+
+### Not built, and why
+
+The IR-level inliner (adapters-always / negative-cost specialisation / loop-depth
+frequency) is **not** in this branch. The entry above is the argument for
+building it rather than against: the two knowledge advantages that survive
+contact with binaryen's actual rule are **(a) adapters** — `__dc_*` trampolines
+contain a call by construction, so the lightweight clause excludes them
+permanently, at any budget — and **(b) negative-cost specialisation**, where a
+monomorphic member-get folds to a `struct.get` smaller than the call it replaces,
+the only shape that escapes a size budget entirely. The other two are weaker than
+they look here: **loop-depth frequency** is a *speed* heuristic, and every
+measurement in this file says the binding constraint is size; and **cold
+callees** need no IR work at all — binaryen already exposes the exact control,
+measured above at −3.03 %.
