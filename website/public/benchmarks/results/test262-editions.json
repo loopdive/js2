@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 7386,
-    "fail": 1619,
-    "ce": 24,
+    "pass": 7415,
+    "fail": 1597,
+    "ce": 17,
     "skip": 0,
     "total": 9029,
     "pct": 82,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8927,
-    "fail": 2672,
+    "pass": 8928,
+    "fail": 2671,
     "ce": 104,
     "skip": 1,
     "total": 11704,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 190,
-        "fail": 241,
+        "pass": 191,
+        "fail": 240,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4128,
-    "fail": 1228,
+    "pass": 4130,
+    "fail": 1226,
     "ce": 89,
     "skip": 0,
     "total": 5445,

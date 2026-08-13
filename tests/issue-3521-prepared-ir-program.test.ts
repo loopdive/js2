@@ -14,6 +14,7 @@ import {
   type IrUnitId,
 } from "../src/ir/identity.js";
 import { PreparedIrProgramBuilder, type PreparedIrIrCandidateInput } from "../src/ir/prepare.js";
+import { IR_CLASS_SHAPE_CELL, type IrClassShape } from "../src/ir/nodes.js";
 import {
   createPreparedIrCandidateProgram,
   preparedIrReadonlyMap,
@@ -791,6 +792,59 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
           supportIntentCandidates: program.supportIntentCandidates,
           allocationCandidates: program.allocationCandidates,
           provenanceCandidates: program.provenanceCandidates,
+        }),
+      "invalid-prepared-data",
+    );
+  });
+
+  it("owns exact recursive class-shape cells while rejecting unbranded lookalike cycles", () => {
+    const { abi, alpha, beta, legacy } = preparedCoreFixture();
+    const left = {
+      [IR_CLASS_SHAPE_CELL]: true,
+      classId: "ir-class:v1:test:root:class:0",
+      className: "Left",
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    } as unknown as IrClassShape;
+    const right = {
+      [IR_CLASS_SHAPE_CELL]: true,
+      classId: "ir-class:v1:test:root:class:1",
+      className: "Right",
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    } as unknown as IrClassShape;
+    (left.fields as { name: string; type: unknown }[]).push({ name: "right", type: { kind: "class", shape: right } });
+    (right.fields as { name: string; type: unknown }[]).push({ name: "left", type: { kind: "class", shape: left } });
+
+    const builder = new PreparedIrProgramBuilder(abi);
+    builder.recordIrCandidate({ ...preparedInput(alpha.id, "alpha"), irCandidate: { shape: left } });
+    builder.recordIrCandidate(preparedInput(beta.id, "beta"));
+    builder.recordDirectCandidate({ unitId: legacy.id, code: "x", stage: "select", detail: "x" });
+    const program = builder.seal();
+    const ownedLeft = (program.irCandidates.get(alpha.id)?.irCandidate as { shape: IrClassShape }).shape;
+    const ownedRight = (ownedLeft.fields[0]!.type as { kind: "class"; shape: IrClassShape }).shape;
+    expect((ownedRight.fields[0]!.type as { kind: "class"; shape: IrClassShape }).shape).toBe(ownedLeft);
+    expect(Object.isFrozen(ownedLeft)).toBe(true);
+    expect(Object.isFrozen(ownedRight)).toBe(true);
+
+    const lookalike = {
+      classId: "ir-class:v1:test:root:class:2",
+      className: "Forged",
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    } as Record<string, unknown>;
+    lookalike.self = lookalike;
+    const rejectedFixture = preparedCoreFixture();
+    const rejected = new PreparedIrProgramBuilder(rejectedFixture.abi);
+    const rejectedUnit = rejectedFixture.alpha;
+    expectPreparedInvariant(
+      () =>
+        rejected.recordIrCandidate({
+          ...preparedInput(rejectedUnit.id, "alpha"),
+          irCandidate: { shape: lookalike },
         }),
       "invalid-prepared-data",
     );

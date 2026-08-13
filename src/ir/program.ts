@@ -2,6 +2,7 @@
 
 import type { IrBackendKind } from "./backend/legality.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "./identity.js";
+import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
 import type { ProgramAbiCallableSignature, ProgramAbiPlanEntry } from "./program-abi.js";
 
 export type PreparedIrCandidateRoute = "ir" | "direct" | "neither";
@@ -286,45 +287,74 @@ function invalidPreparedData(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
 }
 
-function immutableCopy(value: unknown, ancestors = new Set<object>()): unknown {
+function isRecursiveIrClassShape(value: object): boolean {
+  const candidate = value as Record<PropertyKey, unknown>;
+  return (
+    candidate[IR_CLASS_SHAPE_CELL] === true &&
+    typeof candidate.classId === "string" &&
+    candidate.classId.startsWith("ir-class:v1:") &&
+    typeof candidate.className === "string" &&
+    Array.isArray(candidate.fields) &&
+    Array.isArray(candidate.methods) &&
+    Array.isArray(candidate.constructorParams)
+  );
+}
+
+function immutableCopy(
+  value: unknown,
+  ancestors = new Set<object>(),
+  activeCopies = new Map<object, unknown>(),
+): unknown {
   if (typeof value === "function") invalidPreparedData("prepared data cannot contain executable functions");
   if (value === null || typeof value !== "object") return value;
-  if (ancestors.has(value)) invalidPreparedData("prepared data must be acyclic");
+  if (ancestors.has(value)) {
+    const recursiveShapeCopy = activeCopies.get(value);
+    if (recursiveShapeCopy !== undefined && isRecursiveIrClassShape(value)) return recursiveShapeCopy;
+    invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
+  }
   const nextAncestors = new Set(ancestors).add(value);
   if (value instanceof FrozenMap) {
     return preparedIrReadonlyMap(
-      [...value].map(([key, item]) => [immutableCopy(key, nextAncestors), immutableCopy(item, nextAncestors)] as const),
+      [...value].map(
+        ([key, item]) =>
+          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
+      ),
     );
   }
   if (value instanceof FrozenSet) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors)));
+    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
   }
-  if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors)));
+  if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors, activeCopies)));
   if (value instanceof Map) {
     return preparedIrReadonlyMap(
-      [...value].map(([key, item]) => [immutableCopy(key, nextAncestors), immutableCopy(item, nextAncestors)] as const),
+      [...value].map(
+        ([key, item]) =>
+          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
+      ),
     );
   }
   if (value instanceof Set) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors)));
+    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     invalidPreparedData(`prepared data contains unsupported mutable ${prototype?.constructor?.name ?? "object"}`);
   }
   const copy = Object.create(null) as Record<PropertyKey, unknown>;
+  activeCopies.set(value, copy);
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor || !("value" in descriptor)) {
       invalidPreparedData(`prepared data property ${String(key)} must be a non-executable data property`);
     }
     Object.defineProperty(copy, key, {
-      value: immutableCopy(descriptor.value, nextAncestors),
+      value: immutableCopy(descriptor.value, nextAncestors, activeCopies),
       enumerable: descriptor.enumerable,
       configurable: false,
       writable: false,
     });
   }
+  activeCopies.delete(value);
   return Object.freeze(copy);
 }
 

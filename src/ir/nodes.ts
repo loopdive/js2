@@ -268,7 +268,15 @@ export interface IrClassMethodDescriptor {
  * the resolver returns an exact typed callable reference for the selected
  * allocator-owned slot.
  */
+export const IR_CLASS_SHAPE_CELL: unique symbol = Symbol("IR_CLASS_SHAPE_CELL");
+
 export interface IrClassShape {
+  /**
+   * Compiler-owned identity cell for a shape that may participate in a
+   * recursive class graph. The prepared-data copier recognizes cycles only
+   * through this explicit brand; arbitrary cyclic input remains invalid.
+   */
+  readonly [IR_CLASS_SHAPE_CELL]?: true;
   readonly classId: IrClassId;
   /** Compatibility/debug label; never the semantic identity. */
   readonly className: string;

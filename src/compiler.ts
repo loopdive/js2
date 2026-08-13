@@ -54,6 +54,7 @@ import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
+import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
@@ -1213,6 +1214,11 @@ export async function compileSource(
   return result;
 }
 
+/** Make Annex B HTML-like comments lexable before an explicit Script-goal compile. */
+function lexScriptSource(source: string, options: CompileOptions): string {
+  return options.inferModuleStrictArguments === false ? normalizeScriptHtmlLikeComments(source) : source;
+}
+
 /**
  * Synchronous compilation core (no Binaryen optimization).
  *
@@ -1246,8 +1252,8 @@ export function compileSourceSync(
   // we compose them so diagnostics computed against `processedSource` can be
   // reported at the user's ORIGINAL line/column instead of the rewritten one.
   const defineResult = options.define
-    ? applyDefineSubstitutionsWithMap(source, options.define)
-    : { source, positionMap: PositionMap.identity() };
+    ? applyDefineSubstitutionsWithMap(lexScriptSource(source, options), options.define)
+    : { source: lexScriptSource(source, options), positionMap: PositionMap.identity() };
   const definedSource = defineResult.source;
 
   // Step 0a.4: #2632 Phase 3 — inject the faithful `process.stdin` Node `Readable`

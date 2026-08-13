@@ -5733,6 +5733,7 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // every lane.
   let usesOrdinaryToPrimitiveObjectRuntime = false;
   let usesRuntimeUnboxNumber = false;
+  const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
@@ -5756,6 +5757,15 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
+                break;
+              case "__new_Boolean":
+                primitiveWrapperConstructors.add("Boolean");
+                break;
+              case "__new_Number":
+                primitiveWrapperConstructors.add("Number");
+                break;
+              case "__new_String":
+                primitiveWrapperConstructors.add("String");
                 break;
               case IR_DYN_ADD_FN:
                 dynamicRuntimeNeeds.add("add");
@@ -5794,6 +5804,25 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
       ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
       ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
       ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
+  if (primitiveWrapperConstructors.size > 0) {
+    // #4208 S4 — explicit runtime refs for the focused primitive-wrapper
+    // construction. Host-free lanes materialize the real `$Object` wrappers
+    // (including [[PrimitiveValue]]) through the existing object runtime;
+    // host mode registers only the exact wrapper imports observed in IR.
+    if (ctx.standalone || ctx.wasi) {
+      ensureObjectRuntime(ctx);
+    } else {
+      for (const wrapperConstructor of primitiveWrapperConstructors) {
+        ensureLateImport(
+          ctx,
+          `__new_${wrapperConstructor}`,
+          [{ kind: wrapperConstructor === "String" ? "externref" : "f64" }],
+          [{ kind: "externref" }],
+        );
+      }
       flushLateImportShifts(ctx, null);
     }
   }
