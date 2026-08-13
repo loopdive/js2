@@ -66,7 +66,7 @@ import {
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
-import { ensureSymbolRegistry } from "../symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolRegistry, usesNativeSymbolProvider } from "../symbol-native.js";
 import { tryCompileTemporalStaticCall } from "../temporal-native.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper } from "./builtins.js";
@@ -372,7 +372,8 @@ export function compileNamespaceStaticCall(
       // to a `ref $AnyString`; `__symbol_for_native` does the content-equality
       // lookup / insert and returns the i32 symbol id (also recording the key
       // as the registered symbol's description). Zero host imports.
-      if (noJsHost(ctx)) {
+      if (usesNativeSymbolProvider(ctx)) {
+        ensureNativeSymbolBoundaryBridge(ctx);
         const { forIdx } = ensureSymbolRegistry(ctx);
         const keyType = compileExpression(ctx, fctx, expr.arguments[0]!, {
           kind: "ref",
@@ -416,7 +417,8 @@ export function compileNamespaceStaticCall(
       // (#2163) No-JS-host mode: the symbol is an i32 id; the native registry
       // returns its registration key (`ref_null $AnyString`, i.e. a native
       // string or undefined for an unregistered symbol). Zero host imports.
-      if (noJsHost(ctx)) {
+      if (usesNativeSymbolProvider(ctx)) {
+        ensureNativeSymbolBoundaryBridge(ctx);
         const { keyForIdx } = ensureSymbolRegistry(ctx);
         const symType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "i32" });
         if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
@@ -575,6 +577,42 @@ export function compileNamespaceStaticCall(
 
     const externRef: ValType = { kind: "externref" };
     const i32Ty: ValType = { kind: "i32" };
+    const nativeReflectProvider = ctx.targetProfile.semanticProviders === "native-first";
+    const boundaryReflectInterop =
+      nativeReflectProvider &&
+      ctx.targetProfile.environment === "javascript" &&
+      ctx.targetProfile.hostValueInterop !== "off" &&
+      !ctx.strictNoHostImports;
+    const isDynamicBoundaryTarget = (argument: ts.Expression | undefined): boolean => {
+      if (!argument) return false;
+      const type = ctx.checker.getTypeAtLocation(argument);
+      return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+    };
+    const emitNativeReflectTargetGuard = (targetLocal: number, message: string): void => {
+      const ort = ensureObjectRuntime(ctx);
+      const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
+      const before = fctx.body.length;
+      emitThrowTypeError(ctx, fctx, message);
+      const throwInstrs = fctx.body.splice(before);
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.test", typeIdx: ort.objectTypeIdx });
+      // A native Proxy is an Object in the ECMAScript sense even though its
+      // Wasm carrier is a sibling of `$Object`, not a subtype. Accept it here
+      // so the operation reaches the Proxy MOP; the earlier guard otherwise
+      // misreported every Proxy target as a Reflect primitive TypeError.
+      fctx.body.push({ op: "local.get", index: targetLocal });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.test", typeIdx: ort.proxyTypeIdx });
+      fctx.body.push({ op: "i32.or" });
+      if (admittedIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        fctx.body.push({ op: "call", funcIdx: admittedIdx });
+        fctx.body.push({ op: "i32.or" });
+      }
+      fctx.body.push({ op: "i32.eqz" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
+    };
 
     // ── #1472 Phase C — Reflect.* under --target standalone ───────────────
     //
@@ -599,21 +637,58 @@ export function compileNamespaceStaticCall(
     // - Reflect.apply/construct require call/constructor machinery with no
     //   native analog in this slice. Descriptor/prototype/integrity methods
     //   stay refused until their native invariants are proven end-to-end.
-    if (ctx.standalone) {
+    if (nativeReflectProvider) {
       if (reflectMethod === "get" && expr.arguments.length >= 2) {
-        // (#2046 PR-A defect 1) The native __extern_get has no separate
-        // receiver slot — an explicit receiver was previously evaluated and
-        // SILENTLY DROPPED, so accessor getters (live since #1888 S5b) ran
-        // with `this = target` instead of `receiver` (§28.1.5 → §10.1.8).
-        // Until real receiver plumbing (PR-C, senior/deferred), refuse loudly
-        // rather than mis-bind `this` — restores the #1888 fail-loud invariant.
+        // (#2046/#4397) Preserve the optional receiver in Wasm. A native
+        // target uses __reflect_get_receiver; an admitted caller-owned JS
+        // target alone uses the boundary adapter. Runtime admission, rather
+        // than an `any` static type, decides the branch so Wasm-owned Proxy
+        // targets never leak into host semantics.
         if (expr.arguments.length > 2) {
+          ensureObjectRuntime(ctx);
+          const nativeIdx = ctx.funcMap.get("__reflect_get_receiver");
+          const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_reflect_get") : undefined;
+          const admittedIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined;
+          if (nativeIdx !== undefined) {
+            const argLocals: number[] = [];
+            for (let i = 0; i < 3; i++) {
+              const arg = expr.arguments[i];
+              if (arg !== undefined) {
+                const argTy = compileExpression(ctx, fctx, arg, externRef);
+                if (argTy && argTy.kind !== "externref") coerceType(ctx, fctx, argTy, externRef);
+                else if (argTy === null) fctx.body.push({ op: "ref.null.extern" });
+              } else {
+                fctx.body.push({ op: "ref.null.extern" });
+              }
+              const local = allocTempLocal(fctx, externRef);
+              fctx.body.push({ op: "local.set", index: local });
+              argLocals.push(local);
+            }
+            const callWithLocals = (funcIdx: number): Instr[] => [
+              ...argLocals.map((index): Instr => ({ op: "local.get", index })),
+              { op: "call", funcIdx },
+            ];
+            if (boundaryIdx !== undefined && admittedIdx !== undefined) {
+              fctx.body.push(
+                { op: "local.get", index: argLocals[0]! },
+                { op: "call", funcIdx: admittedIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: externRef },
+                  then: callWithLocals(boundaryIdx),
+                  else: callWithLocals(nativeIdx),
+                },
+              );
+            } else {
+              fctx.body.push(...callWithLocals(nativeIdx));
+            }
+            for (let i = argLocals.length - 1; i >= 0; i--) releaseTempLocal(fctx, argLocals[i]!);
+            return { kind: "externref" };
+          }
           reportError(
             ctx,
             expr,
-            "Codegen error: Reflect.get with an explicit receiver argument is not yet supported " +
-              "in --target standalone (#2046); the receiver would be silently dropped and accessor " +
-              "getters would bind `this` to the target instead of the receiver.",
+            "Codegen error: Reflect.get with an explicit receiver could not register its native provider (#2046).",
           );
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -635,6 +710,16 @@ export function compileNamespaceStaticCall(
         // wrong object for accessor setters (§28.1.12 → §10.1.9). Refuse
         // loudly with an explicit receiver until PR-C lands.
         if (expr.arguments.length > 3) {
+          if (boundaryReflectInterop && isDynamicBoundaryTarget(expr.arguments[0])) {
+            ensureObjectRuntime(ctx);
+            emitReflectArgs(4);
+            const boundaryIdx = ctx.funcMap.get("__boundary_object_reflect_set");
+            if (boundaryIdx !== undefined) {
+              fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+              return { kind: "i32" };
+            }
+            return fallbackReturn(4, "i32-false");
+          }
           reportError(
             ctx,
             expr,
@@ -676,7 +761,7 @@ export function compileNamespaceStaticCall(
         // SUCCESS — correct there, wrong for Reflect. So gate at the CALL SITE
         // (do NOT touch the shared helper): ref.test the target against
         // $Object; if it is not an open object, throw a catchable TypeError.
-        const ort = ensureObjectRuntime(ctx);
+        ensureObjectRuntime(ctx);
         const targetLocal = allocTempLocal(fctx, externRef);
         // Evaluate the target once, save it for both the guard and the call.
         {
@@ -690,25 +775,9 @@ export function compileNamespaceStaticCall(
           }
         }
         fctx.body.push({ op: "local.set", index: targetLocal });
-        // Pre-register the TypeError constructor + any late import the throw
-        // needs BEFORE entering the `if`, so capturing the throw instrs by
-        // splice below cannot interleave a late-import index shift into the
-        // nested block (the registration happens against the flat body here).
-        const throwInstrs: Instr[] = (() => {
-          const before = fctx.body.length;
-          emitThrowTypeError(ctx, fctx, "Reflect.deleteProperty called on non-object");
-          return fctx.body.splice(before);
-        })();
-        // if !ref.test $Object(target) → throw TypeError
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.test", typeIdx: ort.objectTypeIdx });
-        fctx.body.push({ op: "i32.eqz" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: throwInstrs,
-        });
+        // Native `$Object` targets and explicitly admitted JS boundary objects
+        // are both legitimate. Everything else remains a Reflect TypeError.
+        emitNativeReflectTargetGuard(targetLocal, "Reflect.deleteProperty called on non-object");
         // target is an $Object — push [target, key] and delete.
         fctx.body.push({ op: "local.get", index: targetLocal });
         releaseTempLocal(fctx, targetLocal);
@@ -732,14 +801,44 @@ export function compileNamespaceStaticCall(
       }
 
       if (reflectMethod === "ownKeys" && expr.arguments.length >= 1) {
-        emitReflectArgs(1);
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        emitNativeReflectTargetGuard(targetLocal, "Reflect.ownKeys called on non-object");
+
         const funcIdx = ensureLateImport(ctx, "__object_keys", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
+        const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
+        if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
+          const resultLocal = allocTempLocal(fctx, externRef);
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          fctx.body.push({ op: "call", funcIdx: boundaryOwnKeysIdx });
+          fctx.body.push({ op: "local.tee", index: resultLocal });
+          fctx.body.push({ op: "ref.is_null" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: externRef },
+            then: [
+              { op: "local.get", index: targetLocal },
+              { op: "call", funcIdx },
+            ],
+            else: [{ op: "local.get", index: resultLocal }],
+          });
+          releaseTempLocal(fctx, resultLocal);
+          releaseTempLocal(fctx, targetLocal);
           return { kind: "externref" };
         }
-        return fallbackReturn(1, "extern-null");
+        if (funcIdx !== undefined) {
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          fctx.body.push({ op: "call", funcIdx });
+          releaseTempLocal(fctx, targetLocal);
+          return { kind: "externref" };
+        }
+        releaseTempLocal(fctx, targetLocal);
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
       }
 
       if (reflectMethod === "getOwnPropertyDescriptor" && expr.arguments.length >= 2) {
@@ -758,7 +857,7 @@ export function compileNamespaceStaticCall(
         // primitive wrapper), so — exactly as the deleteProperty PR-A guard —
         // gate at the CALL SITE with a `ref.test $Object` and throw a catchable
         // TypeError instead. The shared native is untouched.
-        const ort = ensureObjectRuntime(ctx);
+        ensureObjectRuntime(ctx);
         const targetLocal = allocTempLocal(fctx, externRef);
         {
           const tArg = expr.arguments[0];
@@ -771,24 +870,7 @@ export function compileNamespaceStaticCall(
           }
         }
         fctx.body.push({ op: "local.set", index: targetLocal });
-        // Pre-register the TypeError throw BEFORE the nested `if` so the splice
-        // that captures its instrs cannot interleave a late-import index shift
-        // into the block (same hazard handled in the deleteProperty guard).
-        const throwInstrs: Instr[] = (() => {
-          const before = fctx.body.length;
-          emitThrowTypeError(ctx, fctx, "Reflect.getOwnPropertyDescriptor called on non-object");
-          return fctx.body.splice(before);
-        })();
-        // if !ref.test $Object(target) → throw TypeError
-        fctx.body.push({ op: "local.get", index: targetLocal });
-        fctx.body.push({ op: "any.convert_extern" });
-        fctx.body.push({ op: "ref.test", typeIdx: ort.objectTypeIdx });
-        fctx.body.push({ op: "i32.eqz" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: throwInstrs,
-        });
+        emitNativeReflectTargetGuard(targetLocal, "Reflect.getOwnPropertyDescriptor called on non-object");
         // target is an $Object — push [target, key] and read the descriptor.
         fctx.body.push({ op: "local.get", index: targetLocal });
         releaseTempLocal(fctx, targetLocal);
@@ -989,6 +1071,125 @@ export function compileNamespaceStaticCall(
           return { kind: "i32" };
         }
         return fallbackReturn(0, "i32-true");
+      }
+
+      if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        emitNativeReflectTargetGuard(targetLocal, "Reflect.isExtensible called on non-object");
+
+        const nativeIdx = ensureLateImport(ctx, "__object_isExtensible", [externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        const boundaryIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_extensible") : undefined;
+        if (nativeIdx !== undefined && boundaryIdx !== undefined) {
+          const resultLocal = allocTempLocal(fctx, i32Ty);
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+          fctx.body.push({ op: "local.tee", index: resultLocal });
+          fctx.body.push({ op: "i32.eqz" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [
+              { op: "local.get", index: targetLocal },
+              { op: "call", funcIdx: nativeIdx },
+            ],
+            else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
+          });
+          releaseTempLocal(fctx, resultLocal);
+          releaseTempLocal(fctx, targetLocal);
+          return { kind: "i32" };
+        }
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        if (nativeIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nativeIdx });
+        else {
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: 0 });
+        }
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "i32" };
+      }
+
+      if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        emitNativeReflectTargetGuard(targetLocal, "Reflect.preventExtensions called on non-object");
+
+        const nativeIdx = ensureLateImport(ctx, "__object_preventExtensions", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const boundaryIdx = boundaryReflectInterop
+          ? ctx.funcMap.get("__boundary_object_reflect_prevent_extensions")
+          : undefined;
+        if (nativeIdx !== undefined && boundaryIdx !== undefined) {
+          const resultLocal = allocTempLocal(fctx, i32Ty);
+          fctx.body.push({ op: "local.get", index: targetLocal });
+          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+          fctx.body.push({ op: "local.tee", index: resultLocal });
+          fctx.body.push({ op: "i32.eqz" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [
+              { op: "local.get", index: targetLocal },
+              { op: "call", funcIdx: nativeIdx },
+              { op: "drop" },
+              { op: "i32.const", value: 1 },
+            ],
+            else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
+          });
+          releaseTempLocal(fctx, resultLocal);
+          releaseTempLocal(fctx, targetLocal);
+          return { kind: "i32" };
+        }
+        fctx.body.push({ op: "local.get", index: targetLocal });
+        if (nativeIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: nativeIdx });
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: 1 });
+        } else {
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: 0 });
+        }
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "i32" };
+      }
+
+      if (
+        reflectMethod === "apply" &&
+        expr.arguments.length >= 3 &&
+        boundaryReflectInterop &&
+        isDynamicBoundaryTarget(expr.arguments[0])
+      ) {
+        ensureObjectRuntime(ctx);
+        emitReflectArgs(3);
+        const boundaryIdx = ctx.funcMap.get("__boundary_object_apply");
+        if (boundaryIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(3, "extern-null");
+      }
+
+      if (
+        reflectMethod === "construct" &&
+        boundaryReflectInterop &&
+        isDynamicBoundaryTarget(expr.arguments[0]) &&
+        (expr.arguments[2] === undefined || isDynamicBoundaryTarget(expr.arguments[2]))
+      ) {
+        ensureObjectRuntime(ctx);
+        emitReflectArgs(3);
+        const boundaryIdx = ctx.funcMap.get("__boundary_object_construct");
+        if (boundaryIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+          return { kind: "externref" };
+        }
+        return fallbackReturn(3, "extern-null");
       }
 
       if (reflectMethod === "construct") {
@@ -1393,7 +1594,7 @@ export function compileNamespaceStaticCall(
       isAggregatorMethod;
     const isResolveReject =
       ts.isIdentifier(propAccess.expression) &&
-      propAccess.expression.text === "Promise" &&
+      (propAccess.expression.text === "Promise" || (isStandalonePromiseActive(ctx) && isPromiseSubclassReceiver)) &&
       (propAccess.name.text === "resolve" || propAccess.name.text === "reject");
     if (isAggregator) {
       const methodName = propAccess.name.text;
@@ -1710,14 +1911,15 @@ export function compileNamespaceStaticCall(
     }
   }
 
-  // Handle JSON.stringify / JSON.parse as host import calls
+  // Handle JSON APIs through the selected semantic provider.
   if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "JSON") {
     const method = propAccess.name.text;
-    // (#3176) ES2025 `JSON.rawJSON` / `JSON.isRawJSON` — standalone / WASI
-    // pure-Wasm. `rawJSON` builds a branded carrier object; `isRawJSON` reads
+    const useNativeJsonProvider = ctx.targetProfile.semanticProviders === "native-first";
+    // (#3176/#4397) ES2025 `JSON.rawJSON` / `JSON.isRawJSON` — native provider.
+    // `rawJSON` builds a branded carrier object; `isRawJSON` reads
     // the `[[IsRawJSON]]` brand bit. Both reuse the native JSON codec +
     // object runtime (no host import, no second parser).
-    if ((method === "rawJSON" || method === "isRawJSON") && (ctx.standalone || ctx.wasi)) {
+    if ((method === "rawJSON" || method === "isRawJSON") && useNativeJsonProvider) {
       if (method === "rawJSON" && expr.arguments.length >= 1) {
         // Build the carrier: `__json_rawjson` ToStrings the raw value inside
         // then validates + brands it.
@@ -1794,7 +1996,7 @@ export function compileNamespaceStaticCall(
           }
           return primitiveStringType;
         }
-        if ((ctx.standalone || ctx.wasi) && expr.arguments.length >= 1) {
+        if (useNativeJsonProvider && expr.arguments.length >= 1) {
           // #2166: thread the optional replacer (must be null/undefined) and
           // space args so `JSON.stringify(value, null, 2)` produces the
           // indented form statically instead of refusing.
@@ -1924,7 +2126,7 @@ export function compileNamespaceStaticCall(
           }
         }
       }
-      if (method === "parse" && (ctx.standalone || ctx.wasi)) {
+      if (method === "parse" && useNativeJsonProvider) {
         // (#2166 PR-D1) The static-literal fold ignores a reviver — skip it
         // when a 2nd arg is present so `JSON.parse('5', reviver)` runs the
         // reviver walk instead of folding to the bare parsed value.
@@ -2028,14 +2230,14 @@ export function compileNamespaceStaticCall(
       // (objects, arrays, strings, and all `JSON.parse`) needs the pure-Wasm
       // codec from Phase 2, which is not yet implemented. Emit a clear
       // compile error rather than a module that traps at instantiation.
-      if (ctx.standalone || ctx.wasi) {
+      if (useNativeJsonProvider) {
         reportError(
           ctx,
           expr,
-          `Codegen error: JSON.${method} of this value is not yet supported in --target standalone/wasi (#1599). ` +
+          `Codegen error: JSON.${method} of this value is not yet supported by the native JSON provider (#1599). ` +
             `Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; ` +
             `numbers, objects, arrays, strings, and JSON.parse require the Phase 2 pure-Wasm codec (#1599 Phase 2). ` +
-            `Avoid JSON for these shapes in standalone/WASI targets for now.`,
+            `Avoid this JSON shape when native semantic providers are selected for now.`,
           "error",
           // (#3725) STICKY. This `reportError(...); return null` pair is a
           // deliberate refusal, but `return null` is indistinguishable from an

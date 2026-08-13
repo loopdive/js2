@@ -11,6 +11,7 @@ import { compileArrayMethodCall } from "../array-methods.js";
 import { allocLocal } from "../context/locals.js";
 import { resolveStoredObjectStaticMethod, resolveUncurriedBuiltinPrototypeMethod } from "../object-builtin-effects.js";
 import { compileObjectDefineProperties, compileObjectDefineProperty } from "../object-ops.js";
+import { ensureObjVecBuilders } from "../object-runtime.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
@@ -133,12 +134,14 @@ function emitStoredObjectAssignCall(ctx: CodegenContext, fctx: FunctionContext, 
   const targetLocal = allocLocal(fctx, `__stored_assign_tgt_${fctx.locals.length}`, externRef);
   fctx.body.push({ op: "local.set", index: targetLocal });
 
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externRef]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
+  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
+  const nativeBuilders = nativeSemanticProviders ? ensureObjVecBuilders(ctx) : undefined;
+  const arrNewIdx = nativeBuilders?.newIdx ?? ensureLateImport(ctx, "__js_array_new", [], [externRef]);
+  const arrPushIdx = nativeBuilders?.pushIdx ?? ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
   const assignIdx = ensureLateImport(ctx, "__object_assign", [externRef, externRef], [externRef]);
   flushLateImportShifts(ctx, fctx);
-  const finalArrNewIdx = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-  const finalArrPushIdx = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+  const finalArrNewIdx = nativeBuilders?.newIdx ?? ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+  const finalArrPushIdx = nativeBuilders?.pushIdx ?? ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
   const finalAssignIdx = ctx.funcMap.get("__object_assign") ?? assignIdx;
   if (finalArrNewIdx === undefined || finalArrPushIdx === undefined || finalAssignIdx === undefined) {
     fctx.body.push({ op: "ref.null.extern" });

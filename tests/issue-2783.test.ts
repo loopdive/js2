@@ -83,6 +83,33 @@ describe("#2783 S2 — arbitrary `--link`'d namespace survives the strict gate",
       reason: "env-not-on-allowlist",
     });
   });
+
+  it("retains an explicit provider namespace outside WASI without a host-leak warning", async () => {
+    const source = `
+      declare function record(value: number): number;
+      export function run(): number { return record(1); }
+    `;
+    const unlinked = await compile(source, {
+      fileName: "standalone-unlinked-provider.ts",
+      target: "standalone",
+      externImportModule: "acme:telemetry",
+    });
+    const linked = await compile(source, {
+      fileName: "standalone-linked-provider.ts",
+      target: "standalone",
+      externImportModule: "acme:telemetry",
+      link: ["acme:telemetry"],
+    });
+
+    expect(unlinked.errors.some((error) => error.message.includes("Host import leak"))).toBe(true);
+    expect(linked.success, linked.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(linked.errors.some((error) => error.message.includes("Host import leak"))).toBe(false);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(linked.binary))).toContainEqual({
+      module: "acme:telemetry",
+      name: "record",
+      kind: "function",
+    });
+  });
 });
 
 describe("#2783 S3 — byte-neutral when no `--link` is passed", () => {
@@ -130,7 +157,7 @@ describe("#2783 S3 — the removed `--link-node-shims` flag and the `--link` CLI
 
   it("--link node:fs compiles cleanly (no deprecation note)", () => {
     const { stderr, status } = runCli("--link node:fs");
-    expect(status).toBe(0);
+    expect(status, stderr).toBe(0);
     expect(stderr).not.toMatch(/deprecated/);
   });
 });

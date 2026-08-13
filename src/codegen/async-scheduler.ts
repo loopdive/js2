@@ -3,8 +3,9 @@
 // #1326 Phase 1A — Async standalone microtask queue + Promise GC struct.
 // #1326 Phase 1C-A — Microtask queue infrastructure + drain export.
 //
-// This module provides the foundation for running Promise/async code in
-// standalone (WASI) mode without JS-host imports. The full Phase 1 is
+// This module provides the foundation for running Promise/async code through
+// the native semantic provider (including standalone/WASI and native-first JS
+// environments) without JS-host semantic imports. The full Phase 1 is
 // decomposed into 4 sub-slices (see issue file `## Implementation Plan`):
 //
 //   1A   (shipped): scaffold + type-registry + stubbed emit helpers
@@ -20,7 +21,7 @@ import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
-import { addUnionImportsViaRegistry } from "./shared.js";
+import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
@@ -1883,6 +1884,198 @@ export function exportDrainMicrotasksIfRegistered(ctx: CodegenContext): void {
     desc: { kind: "func", index: state.drainFuncIdx },
   });
   state.drainExported = true;
+}
+
+/** Register the two settlement notifications used only by the JS value edge. */
+export function ensureNativePromiseBoundaryBridge(ctx: CodegenContext): void {
+  if (
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    ctx.targetProfile.environment !== "javascript" ||
+    ctx.targetProfile.hostValueInterop === "off" ||
+    ctx.strictNoHostImports
+  ) {
+    return;
+  }
+  ensureLateImport(ctx, "__boundary_promise_resolve", [{ kind: "i32" }, { kind: "externref" }], []);
+  ensureLateImport(ctx, "__boundary_promise_reject", [{ kind: "i32" }, { kind: "externref" }], []);
+  flushLateImportShifts(ctx, null);
+}
+
+/**
+ * Export the minimal read-only `$Promise` view needed by the JavaScript value
+ * boundary. Promise state and reactions remain Wasm-owned; the host uses these
+ * helpers only to present a real JavaScript Promise for an exported native
+ * carrier. No-op when this module never registered the native Promise type.
+ */
+export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
+  const state = (ctx as CodegenContextWithScheduler).asyncScheduler;
+  if (!state || state.promiseTypeIdx === -1) return;
+  if (ctx.mod.exports.some((entry) => entry.name === "__promise_boundary_state")) return;
+
+  const promiseTypeIdx = state.promiseTypeIdx;
+  const stateFuncIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, stateFuncIdx, {
+    name: "__promise_boundary_state",
+    typeIdx: addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$__promise_boundary_state_type"),
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: promiseTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: promiseTypeIdx },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+        ],
+        else: [{ op: "i32.const", value: -1 }],
+      },
+    ],
+    exported: true,
+  });
+  ctx.mod.exports.push({ name: "__promise_boundary_state", desc: { kind: "func", index: stateFuncIdx } });
+
+  const valueFuncIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, valueFuncIdx, {
+    name: "__promise_boundary_value",
+    typeIdx: addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$__promise_boundary_value_type"),
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: promiseTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: promiseTypeIdx },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+        ],
+        else: [{ op: "ref.null.extern" }],
+      },
+    ],
+    exported: true,
+  });
+  ctx.mod.exports.push({ name: "__promise_boundary_value", desc: { kind: "func", index: valueFuncIdx } });
+
+  const resolveImportIdx = ctx.funcMap.get("__boundary_promise_resolve");
+  const rejectImportIdx = ctx.funcMap.get("__boundary_promise_reject");
+  if (resolveImportIdx === undefined || rejectImportIdx === undefined) return;
+
+  ensureMicrotaskQueue(ctx);
+  const callbackTypeIdx = getOrRegisterPromiseCallbackType(ctx);
+  const capsTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "$__promise_boundary_caps",
+    fields: [{ name: "id", type: { kind: "i32" }, mutable: false }],
+  });
+
+  const makeNotificationWrapper = (name: string, importIdx: number): number => {
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx: state.microtaskFuncTypeIdx,
+      locals: [],
+      body: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: capsTypeIdx },
+        { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: importIdx },
+        { op: "ref.null.extern" },
+      ],
+      exported: false,
+    });
+    return funcIdx;
+  };
+  const resolveWrapperIdx = makeNotificationWrapper("__promise_boundary_resolve_task", resolveImportIdx);
+  const rejectWrapperIdx = makeNotificationWrapper("__promise_boundary_reject_task", rejectImportIdx);
+
+  const observeFuncIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, observeFuncIdx, {
+    name: "__promise_boundary_observe",
+    typeIdx: addFuncType(
+      ctx,
+      [{ kind: "externref" }, { kind: "i32" }],
+      [{ kind: "i32" }],
+      "$__promise_boundary_observe_type",
+    ),
+    locals: [
+      { name: "$promise", type: { kind: "ref", typeIdx: promiseTypeIdx } },
+      { name: "$caps", type: { kind: "externref" } },
+    ],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: promiseTypeIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: promiseTypeIdx },
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 1 },
+      { op: "struct.new", typeIdx: capsTypeIdx },
+      { op: "extern.convert_any" },
+      { op: "local.set", index: 3 },
+      { op: "local.get", index: 2 },
+      { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+      { op: "i32.const", value: PROMISE_STATE_FULFILLED },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          { op: "call", funcIdx: resolveImportIdx },
+          { op: "i32.const", value: 1 },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 2 },
+      { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+      { op: "i32.const", value: PROMISE_STATE_REJECTED },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          { op: "call", funcIdx: rejectImportIdx },
+          { op: "i32.const", value: 1 },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 2 },
+      { op: "ref.func", funcIdx: resolveWrapperIdx },
+      { op: "local.get", index: 3 },
+      { op: "ref.func", funcIdx: rejectWrapperIdx },
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 2 },
+      { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 2 },
+      { op: "struct.new", typeIdx: callbackTypeIdx },
+      { op: "extern.convert_any" },
+      { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 2 },
+      { op: "i32.const", value: 1 },
+    ],
+    exported: true,
+  });
+  ctx.mod.exports.push({ name: "__promise_boundary_observe", desc: { kind: "func", index: observeFuncIdx } });
 }
 
 /**
@@ -4279,8 +4472,9 @@ export function emitStandalonePromiseFinally(
 }
 
 /**
- * #1326 — Check whether host-free Promise codegen (native `$Promise` carrier:
- * construction, async-fn return wrap, `await` unwrap) is active.
+ * #1326/#4397 — Check whether native Promise codegen (`$Promise` carrier:
+ * construction, async-fn return wrap, `await` unwrap) is active. Native-first
+ * JS builds use the same carrier and add only explicit boundary adapters.
  *
  * **THE #2980 CARRIER WIDEN IS FLIPPED (2026-07-10, stakeholder-approved):**
  * `--target standalone` now takes the native `$Promise` lane too, except for
@@ -4304,7 +4498,11 @@ export function emitStandalonePromiseFinally(
  * gating; see #2980 rule 2).
  */
 export function isStandalonePromiseActive(ctx: CodegenContext): boolean {
-  return ctx.wasi === true || (ctx.standalone === true && !widenAsyncGenFallback(ctx));
+  return (
+    ctx.targetProfile.semanticProviders === "native-first" ||
+    ctx.wasi === true ||
+    (ctx.standalone === true && !widenAsyncGenFallback(ctx))
+  );
 }
 
 /**
@@ -4357,7 +4555,11 @@ function widenAsyncGenFallback(ctx: CodegenContext): boolean {
  * validated (async-generator bucket net 0, zero regressions).
  */
 export function isStandaloneThenChainNativeActive(ctx: CodegenContext): boolean {
-  return ctx.wasi === true || (ctx.standalone === true && !widenAsyncGenFallback(ctx));
+  return (
+    ctx.targetProfile.semanticProviders === "native-first" ||
+    ctx.wasi === true ||
+    (ctx.standalone === true && !widenAsyncGenFallback(ctx))
+  );
 }
 
 /**

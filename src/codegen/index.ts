@@ -3,7 +3,11 @@ import { ts, forEachChild } from "../ts-api.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
-import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
+import {
+  emitNativeErrorBoundaryBridge,
+  emitWasiErrorConstructor,
+  fillExternGetErrorProps,
+} from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
@@ -17,7 +21,7 @@ import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
-import type { TypeFact, TypeOracle } from "../checker/oracle.js";
+import type { TypeFact } from "../checker/oracle.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -77,7 +81,11 @@ import {
   makeIrHostVoidCallbackResolver,
 } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
 import { makeIrHostDateSnapshotResolver } from "../ir/host-date.js";
-import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "../ir/backend/legality.js";
+import {
+  projectIrBackendTargetProfile,
+  supportsIrBackendTargetCapability,
+  type IrBackendTargetCapability,
+} from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
@@ -85,6 +93,7 @@ import {
   reconcileIrModuleInitPlan,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
+import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
@@ -270,6 +279,7 @@ import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance exp
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillProtoIndexStore } from "./proto-index-store.js"; // (#4160) prototype-index companions
+import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) nominal sparse carrier
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
@@ -316,6 +326,7 @@ import {
   enableStdinReactor,
   ensureTimerHeap,
   exportDrainMicrotasksIfRegistered,
+  exportPromiseBoundaryIfRegistered,
   getDrainFuncIdxForWasiStart,
   getRunLoopFuncIdxForWasiStart,
   shiftAsyncSideChannelFuncIdxs,
@@ -2361,17 +2372,10 @@ function planIrOverlay(
   // declaration, never the lib global). The registries ARE populated by the
   // time from-ast lowers (post-`compileDeclarations`), which is where member
   // resolution happens.
-  const jsHostExterns = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+  const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
+  const jsHostExterns = irTargetProfile.allowHostImports;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
-    supportsIrBackendTargetCapability(
-      {
-        backend: "wasmgc",
-        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
-        allowHostImports: jsHostExterns,
-        fast: ctx.fast,
-      },
-      capability,
-    );
+    supportsIrBackendTargetCapability(irTargetProfile, capability);
   const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
   const backendCapabilitySelectionOptions = { supportsBackendCapability };
   const resolveModuleBinding =
@@ -2518,6 +2522,9 @@ function planIrOverlay(
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
       isRegExpExpression,
+      isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
+      supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       legacyCallerAbiIsProjected,
@@ -2707,10 +2714,7 @@ function planIrOverlay(
   // signatures but before the IR overlay is installed; mixing the two paths
   // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
   // on one backend until the typed IR owns this carrier explicitly.
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile))
-  ) {
+  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
     const failure: IrPreparationFailure = {
       kind: "unsupported",
       code: "late-preparation-unsupported",
@@ -3575,103 +3579,6 @@ function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.Sourc
   for (const name of collectGlobalObjectPropertyNames(sourceFile, vars)) implicit.add(name);
 }
 
-function isGlobalEvalValueReference(node: ts.Node, oracle: TypeOracle): node is ts.Identifier {
-  if (!ts.isIdentifier(node) || node.text !== "eval") return false;
-  const declaration = oracle.valueDeclarationOf(node);
-  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
-}
-
-function isGlobalFunctionValueReference(node: ts.Node, oracle: TypeOracle): node is ts.Identifier {
-  if (!ts.isIdentifier(node) || node.text !== "Function") return false;
-  // Direct call/new syntax has its own literal compile-away and dynamic
-  // provider routing. This predicate is for the first-class VALUE form.
-  const parent = node.parent;
-  if (
-    ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) ||
-    ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
-      (parent.expression === node || (ts.isPropertyAccessExpression(parent) && parent.name === node)))
-  ) {
-    return false;
-  }
-  const declaration = oracle.valueDeclarationOf(node);
-  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
-}
-
-/** Pre-scan the small syntax surface that enables the linked runtime-eval ABI. */
-function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile, oracle: TypeOracle): boolean {
-  // (#3437) `callUsesRuntimeEvalBoundary` can only answer true for a call whose
-  // callee is the identifier `Function` or `eval` — so if neither name occurs
-  // anywhere in the source text, no call can match and the full-file AST walk
-  // below is guaranteed to return false. Skipping it on that cheap substring
-  // test keeps this predicate off the harness compile-work budget for the
-  // overwhelming majority of files (a sound over-approximation: the text test
-  // is only allowed to skip when the identifiers are definitely absent).
-  const text = sourceFile.text;
-  if (!text.includes("Function") && !text.includes("eval")) return false;
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    // `var indirect = eval` crosses the same provider boundary as an explicit
-    // `(0, eval)(source)` call, but its eventual CallExpression has an alias as
-    // callee. Recognize the global intrinsic at the value-read site.
-    if (isGlobalEvalValueReference(node, oracle)) {
-      found = true;
-      return;
-    }
-    if (isGlobalFunctionValueReference(node, oracle)) {
-      found = true;
-      return;
-    }
-    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && callUsesRuntimeEvalBoundary(node)) {
-      found = true;
-      return;
-    }
-    forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return found;
-}
-
-function sourceProvidesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
-  return sourceFile.statements.some(
-    (stmt) => ts.isFunctionDeclaration(stmt) && isRuntimeEvalBoundaryName(stmt.name?.text),
-  );
-}
-
-function isRuntimeEvalBoundaryName(name: string | undefined): boolean {
-  return (
-    name === "__runtime_new_function" ||
-    name === "__runtime_indirect_eval" ||
-    name === "__runtime_direct_eval" ||
-    name === "__runtime_apply_interpreted"
-  );
-}
-
-function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression): boolean {
-  let expr: ts.Expression = node.expression;
-  while (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isNonNullExpression(expr) ||
-    ts.isTypeAssertionExpression(expr)
-  ) {
-    expr = expr.expression;
-  }
-  // Direct eval now routes through #2929's linked caller-environment ABI.
-  if (ts.isIdentifier(expr) && expr.text === "eval") return true;
-  if (ts.isIdentifier(expr) && expr.text === "Function") {
-    // Literal-only Function construction is compiled away by #2924.
-    return node.arguments?.some((arg) => !ts.isStringLiteralLike(arg)) ?? false;
-  }
-  // `(0, eval)(...)` is indirect even when its source is a literal.
-  return (
-    ts.isBinaryExpression(expr) &&
-    expr.operatorToken.kind === ts.SyntaxKind.CommaToken &&
-    ts.isIdentifier(expr.right) &&
-    expr.right.text === "eval"
-  );
-}
-
 interface IrFirstBodyRouting {
   readonly requestedSkipProjection?: ReturnType<typeof buildIrRequestedFunctionSkipProjection>;
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
@@ -3840,12 +3747,7 @@ function preparedLexicalComponentPreflightFailure(
     ),
   );
   const supportsHostDateSnapshots = supportsIrBackendTargetCapability(
-    {
-      backend: "wasmgc",
-      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
-      allowHostImports: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
-      fast: ctx.fast,
-    },
+    projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
     "host-date-snapshot",
   );
   if (
@@ -4319,6 +4221,10 @@ export function generateModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
+  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+    ctx.runtimeEvalCallableBoundaryEnabled = true;
+  }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
@@ -4336,13 +4242,6 @@ export function generateModule(
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
       ctx.topLevelFunctionNames.add(stmt.name.text);
     }
-  }
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) ||
-      [...ctx.topLevelFunctionNames].some(isRuntimeEvalBoundaryName))
-  ) {
-    ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // (#2179) Pre-scan for `delete <member>` so `any`-receiver property reads can
   // be routed through the tombstone-aware `__extern_get` host helper instead of
@@ -4776,7 +4675,7 @@ export function generateModule(
     // (#2931) Back reassigned function-declaration names (`fn = …`) with a
     // mutable live-binding module global so later reads observe the write.
     // No-op unless a function declaration is reassigned.
-    registerReassignedFunctionGlobals(ctx, [ast.sourceFile]);
+    registerReassignedFunctionGlobals(ctx, [ast.sourceFile], ctx.runtimeEvalBoundaryPlan!);
 
     // (#4182) Back module-scope Annex B B.3.3.2 block-nested function names
     // with live-binding globals. No-op unless the (sloppy, script-mode) source
@@ -5018,8 +4917,8 @@ export function generateModule(
     }
     mod.stringLiteralValues = ctx.stringLiteralValues;
     mod.asyncFunctions = ctx.asyncFunctions;
-    // (#1700) Surface per-export TypedArray classifications so the JS-host
-    // wrapExports can marshal Uint8Array params/results across the boundary.
+    // (#1700/#4399) Surface per-export boundary classifications so wrapExports
+    // can marshal typed arrays and native strings across the JS↔Wasm edge.
     if (ctx.exportSignatures.size > 0) {
       const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
       for (const [k, v] of ctx.exportSignatures) obj[k] = v;
@@ -5468,6 +5367,7 @@ export function generateModule(
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
+    emitNativeErrorBoundaryBridge(ctx);
 
     // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
     // bodies and splice the `$NativeProto` write/direct-read arms into
@@ -5480,6 +5380,12 @@ export function generateModule(
     // vec / TA-view arm, so taking the front slot is semantically inert.
     // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
     fillProtoIndexStore(ctx);
+
+    // (#4222 ES5 residual) The bounded sparse Array IR provider uses the
+    // normal HasProperty chokepoint, augmented with a nominal carrier arm.
+    // This runs after every other dynamic-reader fill so no generic arm gains
+    // `$Hole` semantics.
+    fillHoleyArrayHasIdxArm(ctx);
 
     // (#802 Slices B+C) Mint the struct-proto natives and prepend the
     // marked-root dispatch arms into `__object_setPrototypeOf` /
@@ -5542,6 +5448,7 @@ export function generateModule(
     // _start wrapper (which appends a drain call) can find its funcIdx.
     // Idempotent + no-op when the queue was never registered.
     exportDrainMicrotasksIfRegistered(ctx);
+    exportPromiseBoundaryIfRegistered(ctx);
 
     // WASI: export _start entry point (before dead import elimination adjusts indices)
     if (ctx.wasi) {
@@ -6934,38 +6841,16 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
  * rare pattern, so `liveFuncBindingGlobals` is empty for virtually every program
  * and this is a no-op there.
  */
-function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
+function registerReassignedFunctionGlobals(
+  ctx: CodegenContext,
+  sourceFiles: readonly ts.SourceFile[],
+  runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
+): void {
   const reassigned = new Set<string>();
-  const dynamicSourceFragments: string[] = [];
-  let hasUnknownDynamicSource = false;
-  const runtimeEvalConsumer =
-    (ctx.standalone || ctx.wasi) &&
-    sourceFiles.some((sourceFile) => sourceUsesRuntimeEvalBoundary(sourceFile, ctx.oracle));
+  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
+  const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
+  const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const scan = (node: ts.Node): void => {
-    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && callUsesRuntimeEvalBoundary(node)) {
-      let callee: ts.Expression = node.expression;
-      while (
-        ts.isParenthesizedExpression(callee) ||
-        ts.isAsExpression(callee) ||
-        ts.isNonNullExpression(callee) ||
-        ts.isTypeAssertionExpression(callee)
-      ) {
-        callee = callee.expression;
-      }
-      if (ts.isIdentifier(callee) && callee.text === "Function") {
-        // A literal-only Function constructor is lowered statically and never
-        // reaches this branch. Any linked constructor therefore has source the
-        // compiler cannot enumerate and may observe every global function.
-        hasUnknownDynamicSource = true;
-      } else {
-        const source = node.arguments?.[0];
-        if (source && ts.isStringLiteralLike(source)) {
-          dynamicSourceFragments.push(source.text);
-        } else if (source) {
-          hasUnknownDynamicSource = true;
-        }
-      }
-    }
     // Simple / compound assignment (`fn = …`, `fn += …`, …) whose LHS is a
     // bare identifier resolving to a function declaration.
     if (
@@ -7191,6 +7076,10 @@ export function generateMultiModule(
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
+  ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
+  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
+    ctx.runtimeEvalCallableBoundaryEnabled = true;
+  }
   // Multi-file compilation is linked through import/export module records.
   ctx.sourceIsModule = true;
   // (#4223) Same demand gate as the single-source path — any source file that
@@ -7485,7 +7374,7 @@ export function generateMultiModule(
     // (#2931) Back reassigned function-declaration names (`fn = …`) with a mutable
     // live-binding module global BEFORE aliasing, so an import of such a function
     // (#2930) copies the live global too. No-op unless a function is reassigned.
-    registerReassignedFunctionGlobals(ctx, multiAst.sourceFiles);
+    registerReassignedFunctionGlobals(ctx, multiAst.sourceFiles, ctx.runtimeEvalBoundaryPlan!);
 
     // (#4182) Module-scope Annex B B.3.3.2 live bindings (see the single-source
     // site above). Runs before aliasing/bodies for the same reason as #2931.
@@ -7657,8 +7546,8 @@ export function generateMultiModule(
     }
     mod.stringLiteralValues = ctx.stringLiteralValues;
     mod.asyncFunctions = ctx.asyncFunctions;
-    // (#1700) Surface per-export TypedArray classifications so the JS-host
-    // wrapExports can marshal Uint8Array params/results across the boundary.
+    // (#1700/#4399) Surface per-export boundary classifications so wrapExports
+    // can marshal typed arrays and native strings across the JS↔Wasm edge.
     if (ctx.exportSignatures.size > 0) {
       const obj: Record<string, import("../ir/types.js").ExportSignature> = {};
       for (const [k, v] of ctx.exportSignatures) obj[k] = v;
@@ -7796,6 +7685,7 @@ export function generateMultiModule(
     // generateModule call above (same after-the-shape-probing-fills ordering;
     // see the single-source comment). No-op unless reserved.
     fillProtoIndexStore(ctx);
+    fillHoleyArrayHasIdxArm(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
@@ -7898,6 +7788,9 @@ export function generateMultiModule(
     // multi-file module without such a site stays byte-identical.
     fillNativeConstructDrivers(ctx);
     fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
+    // Native Proxy trap drivers use the same finalize-only closure bridge in
+    // project compilation as in the single-source pipeline.
+    fillProxyDispatch(ctx);
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.
@@ -7920,6 +7813,7 @@ export function generateMultiModule(
     // _start wrapper (which appends a drain call) can find its funcIdx.
     // Idempotent + no-op when the queue was never registered.
     exportDrainMicrotasksIfRegistered(ctx);
+    exportPromiseBoundaryIfRegistered(ctx);
 
     // WASI: export _start entry point (before dead import elimination adjusts indices)
     if (ctx.wasi) {

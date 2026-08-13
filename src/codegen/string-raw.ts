@@ -7,7 +7,8 @@
  * path (#2008/#2510 in string-ops.ts) — a TaggedTemplateExpression never
  * reaches this helper. The test262 `built-ins/String/raw/*` suite calls
  * `String.raw` as a plain function with hand-built template objects
- * (`{ raw: {...} }`), which standalone previously refused through the
+ * (`{ raw: {...} }`), which the standalone and native-first profiles previously
+ * refused or delegated through the
  * `__get_builtin` dynamic-shape path (#1472 Phase B) — 22 hard CEs.
  *
  * §22.1.2.4 algorithm over the open-object runtime (#1472 Phase B):
@@ -30,8 +31,9 @@
  *     substitutionCount — substitutions past `literalCount - 1` are never
  *     touched (their `toString` must NOT run).
  *
- * Dual-mode: host mode is untouched (the `__get_builtin` route stays). Pure
- * Wasm, no new host import. Registered lazily from the call site (append-only
+ * Profile split: compatibility host-assisted mode is untouched (the
+ * `__get_builtin` route stays). Standalone and native-first use pure Wasm with
+ * no new host import. Registered lazily from the call site (append-only
  * — no funcidx shift of the in-flight function; same discipline as
  * `ensureObjectGroupBy`).
  */
@@ -54,7 +56,7 @@ import { ensureSymbolCarrier } from "./symbol-native.js";
  * `__string_raw(template: externref, subs: externref) -> ref $AnyString`.
  *
  * `subs` is an `$ObjVec` of the already-evaluated substitution values (built
- * by the call site with `__objvec_new`/`__objvec_push`). Standalone-only.
+ * by the call site with `__objvec_new`/`__objvec_push`).
  */
 export function ensureStringRawHelper(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get("__string_raw");

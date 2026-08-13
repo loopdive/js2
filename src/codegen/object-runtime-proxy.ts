@@ -19,6 +19,7 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -33,6 +34,7 @@ const PROXY_CALL_PREVEXT = "__proxy_call_prevext"; // (#1355 Slice D) preventExt
 const PROXY_CALL_OWNKEYS = "__proxy_call_ownkeys"; // (#1355 Slice E) ownKeys
 const PROXY_CALL_DEFINE = "__proxy_call_define"; // (#1355 Slice F) defineProperty
 const PROXY_CALL_APPLY = "__proxy_call_apply"; // (#3031 apply slice) apply — §10.5.12 [[Call]]
+const PROXY_CALL_CONSTRUCT = "__proxy_call_construct"; // (#4397) construct — §10.5.13 [[Construct]]
 
 /**
  * (#1100) Standalone Proxy meta-object dispatch runtime — Phase 1.
@@ -133,6 +135,7 @@ export function ensureProxyRuntime(
   const F_PHANDLER = 2;
   const F_PTRAPS = 3;
   const F_REVOKED = 4;
+  const F_CONSTRUCTIBLE = 6;
   // Field indices on $ProxyTraps: get(0) set(1) has(2) apply(3) deleteProperty(4).
   const TRAP_GET = 0;
   const TRAP_SET = 1;
@@ -146,6 +149,7 @@ export function ensureProxyRuntime(
   const TRAP_PREVEXT = 9; // (#1355 Slice D) preventExtensions
   const TRAP_OWNKEYS = 10; // (#1355 Slice E) ownKeys
   const TRAP_DEFINE = 11; // (#1355 Slice F) defineProperty
+  const TRAP_CONSTRUCT = 12; // (#4397) construct
 
   // ── Reserve the trap-invoke driver placeholders (filled by fillProxyDispatch) ──
   //
@@ -209,6 +213,9 @@ export function ensureProxyRuntime(
   // externref unchanged (a [[Call]] result is any language value — no invariant
   // to enforce, unlike [[Construct]]'s must-be-Object).
   const callApplyIdx = reserveDriver(PROXY_CALL_APPLY, [externref, externref, externref, externref, externref]);
+  // (#4397) construct driver — 3 trap args: (handler, trap, target,
+  // argumentsList, newTarget), matching §10.5.13 step 9.
+  const callConstructIdx = reserveDriver(PROXY_CALL_CONSTRUCT, [externref, externref, externref, externref, externref]);
   ctx.proxyDispatchReserved = true;
 
   // Builds a dispatch helper body. `trapFieldIdx` selects the trap closure;
@@ -217,7 +224,8 @@ export function ensureProxyRuntime(
   // params: 0=proxyExtern 1=key 2=receiver(get/has)/value(set)
   // locals: 3=p (ref $Proxy)  4=trap (externref)
   const buildDispatch = (trapFieldIdx: number, forwardName: string, isSet: boolean): Instr[] => {
-    const forwardIdx = ctx.funcMap.get(forwardName)!;
+    const forwardIdx =
+      trapFieldIdx === TRAP_GET ? ctx.funcMap.get("__reflect_get_receiver")! : ctx.funcMap.get(forwardName)!;
     // The trap-invoke arm: read handler + target, then call the reserved driver.
     // get:  driver(handler, trap, target, key, receiver=param2)
     // has:  driver(handler, trap, target, key)
@@ -314,11 +322,14 @@ export function ensureProxyRuntime(
                 { op: "call", funcIdx: ctx.funcMap.get("__box_boolean")! },
               ]
             : [
-                // __extern_get(target, key) -> externref
+                // [[Get]](target, key, receiver) -> externref. Other
+                // two-argument dispatch operations retain their original
+                // forward helper.
                 { op: "local.get", index: 3 },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
                 { op: "extern.convert_any" },
                 { op: "local.get", index: 1 },
+                ...(trapFieldIdx === TRAP_GET ? ([{ op: "local.get", index: 2 }] satisfies Instr[]) : []),
                 { op: "call", funcIdx: forwardIdx },
               ],
         // trap present → invoke it through the closure-call bridge driver.
@@ -908,6 +919,128 @@ export function ensureProxyRuntime(
     },
   ]);
 
+  // (#4397) §10.5.13 [[Construct]] trap half. The fixed-arity native
+  // constructor driver owns the trap-absent forward because it already has the
+  // evaluated positional arguments. This helper owns everything intrinsic to
+  // the Proxy: revocation, the target's stable [[Construct]] bit, GetMethod
+  // callability, trap invocation, and the must-return-Object invariant. A null
+  // result is therefore an unambiguous "trap absent; forward" sentinel.
+  {
+    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
+    const typeofObjectIdx = ctx.funcMap.get("__typeof_object")!;
+    const typeofSymbolIdx = ctx.funcMap.get("__typeof_symbol");
+    const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
+    const notConstructorMsg = "Proxy target is not a constructor";
+    const trapNotCallableMsg = "Proxy construct trap is not callable";
+    const resultNotObjectMsg = "Proxy construct trap must return an object";
+    for (const message of [notConstructorMsg, trapNotCallableMsg, resultNotObjectMsg]) {
+      addStringConstantGlobal(ctx, message);
+    }
+    const throwTypeError = (message: string): Instr[] => [
+      ...stringConstantExternrefInstrs(ctx, message),
+      { op: "call", funcIdx: typeErrorCtorIdx },
+      { op: "throw", tagIdx: exnTagIdx },
+    ];
+    const callableTest = (local: number): Instr[] => [
+      { op: "local.get", index: local },
+      { op: "call", funcIdx: typeofFunctionIdx },
+      ...(boundaryCallableKindIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: local },
+            { op: "call", funcIdx: boundaryCallableKindIdx },
+            { op: "i32.const", value: 1 },
+            { op: "i32.and" },
+            { op: "i32.or" },
+          ] satisfies Instr[])),
+    ];
+    const objectTest = (local: number): Instr[] => [
+      { op: "local.get", index: local },
+      { op: "call", funcIdx: typeofObjectIdx },
+      ...callableTest(local),
+      { op: "i32.or" },
+      ...(typeofSymbolIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: local },
+            { op: "call", funcIdx: typeofSymbolIdx },
+            { op: "i32.eqz" },
+            { op: "i32.and" },
+          ] satisfies Instr[])),
+    ];
+    registerNative(
+      "__proxy_construct_dispatch",
+      [externref, externref, externref],
+      [externref],
+      [
+        { name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType },
+        { name: "trap", type: externref },
+        { name: "result", type: externref },
+      ],
+      [
+        // p = cast(proxy); revoked proxies always throw.
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "local.set", index: 3 },
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+        { op: "if", blockType: { kind: "empty" }, then: throwRevoked() },
+        // Proxy objects only carry [[Construct]] when their target did at
+        // ProxyCreate time. The bit survives revocation, like the JS slot.
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_CONSTRUCTIBLE },
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwTypeError(notConstructorMsg) },
+        // trap = p.ptraps?.construct
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: externref },
+          then: [{ op: "ref.null.extern" }],
+          else: [
+            { op: "local.get", index: 3 },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_CONSTRUCT },
+          ],
+        },
+        { op: "local.tee", index: 4 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          // Null is reserved for the fixed-arity driver's forward arm.
+          then: [{ op: "ref.null.extern" }, { op: "return" }],
+        },
+        // GetMethod must reject a present non-callable trap.
+        ...callableTest(4),
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwTypeError(trapNotCallableMsg) },
+        // Call(trap, handler, «target, argumentsList, newTarget»).
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PHANDLER },
+        { op: "extern.convert_any" },
+        { op: "local.get", index: 4 },
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+        { op: "extern.convert_any" },
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: callConstructIdx },
+        { op: "local.tee", index: 5 },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: throwTypeError(resultNotObjectMsg) },
+        ...objectTest(5),
+        { op: "i32.eqz" },
+        { op: "if", blockType: { kind: "empty" }, then: throwTypeError(resultNotObjectMsg) },
+        { op: "local.get", index: 5 },
+      ],
+    );
+  }
+
   // ── __proxy_create(target, handler) -> externref ──────────────────────────
   //
   // §28.2.1.1 ProxyCreate. Reads get/set/has/apply off `handler` via
@@ -924,6 +1057,8 @@ export function ensureProxyRuntime(
   // params: 0=target 1=handler ; locals: 2=getT 3=setT 4=hasT 5=applyT (externref)
   {
     const externGetIdx = ctx.funcMap.get("__extern_get")!;
+    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
+    const isConstructorIdx = ensureReflectIsConstructor(ctx);
     const notObjectMsg = "Cannot create proxy with a non-object as target or handler";
     addStringConstantGlobal(ctx, notObjectMsg);
     // FRESH array per use (this block is embedded in BOTH the target-null and
@@ -946,6 +1081,25 @@ export function ensureProxyRuntime(
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
+    const primitiveTypeofIndices = [
+      "__typeof_number",
+      "__typeof_boolean",
+      "__typeof_string",
+      "__typeof_bigint",
+      "__typeof_symbol",
+      "__extern_is_undefined",
+    ]
+      .map((name) => ctx.funcMap.get(name))
+      .filter((idx): idx is number => idx !== undefined);
+    const requireObject = (local: number): Instr[] => {
+      const primitiveTest: Instr[] = [];
+      for (const funcIdx of primitiveTypeofIndices) {
+        primitiveTest.push({ op: "local.get", index: local }, { op: "call", funcIdx });
+        if (primitiveTest.length > 2) primitiveTest.push({ op: "i32.or" });
+      }
+      if (primitiveTest.length === 0) primitiveTest.push({ op: "i32.const", value: 0 });
+      return [...primitiveTest, { op: "if", blockType: { kind: "empty" }, then: throwNotObject() }];
+    };
     const proxyCreateBody: Instr[] = [
       // if target == null → throw
       { op: "local.get", index: 0 },
@@ -957,6 +1111,12 @@ export function ensureProxyRuntime(
       { op: "any.convert_extern" },
       { op: "ref.is_null" },
       { op: "if", blockType: { kind: "empty" }, then: throwNotObject() },
+      // ProxyCreate requires actual Object values, including callable objects.
+      // Primitive boxes remain primitives here; admitted JS objects/functions
+      // are recognized by the finalized typeof classifiers without changing
+      // their identity or representation.
+      ...requireObject(0),
+      ...requireObject(1),
       // read the traps off the (open) handler. (#1355) deleteProperty appended.
       ...readTrap("get"),
       { op: "local.set", index: 2 },
@@ -982,6 +1142,8 @@ export function ensureProxyRuntime(
       { op: "local.set", index: 12 },
       ...readTrap("defineProperty"),
       { op: "local.set", index: 13 },
+      ...readTrap("construct"),
+      { op: "local.set", index: 14 },
       // proxy fields (standalone $Proxy struct):
       { op: "i32.const", value: 1 }, // ptag = PROXY_TAG (1; bare ref.test $Proxy is the real discriminator)
       { op: "local.get", index: 0 }, // ptarget (externref → anyref)
@@ -1002,8 +1164,17 @@ export function ensureProxyRuntime(
       { op: "local.get", index: 11 },
       { op: "local.get", index: 12 },
       { op: "local.get", index: 13 },
+      { op: "local.get", index: 14 },
       { op: "struct.new", typeIdx: proxyTrapsTypeIdx },
       { op: "i32.const", value: 0 }, // revoked = 0
+      // [[Call]]/[[Construct]] slots are fixed by the target at ProxyCreate
+      // time and survive revocation. The finalize-filled classifiers include
+      // native carriers, nested Proxies, branded builtins, and admitted JS
+      // boundary callables without replacing their identities.
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: typeofFunctionIdx },
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isConstructorIdx },
       { op: "struct.new", typeIdx: proxyTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -1024,6 +1195,7 @@ export function ensureProxyRuntime(
         { name: "prevextT", type: externref }, // (#1355 Slice D) preventExtensions
         { name: "ownKeysT", type: externref }, // (#1355 Slice E) ownKeys
         { name: "defineT", type: externref }, // (#1355 Slice F) defineProperty
+        { name: "constructT", type: externref }, // (#4397) construct
       ],
       proxyCreateBody,
     );
@@ -1059,6 +1231,67 @@ export function ensureProxyRuntime(
       [],
       [{ name: "p", type: { kind: "ref", typeIdx: proxyTypeIdx } as ValType }],
       revokeBody,
+    );
+  }
+
+  // ── __proxy_revocable(target, handler) -> externref ─────────────────────
+  //
+  // §28.2.2.1 returns an ordinary object with a live proxy and a zero-argument
+  // revoker. The revoker is a tiny Wasm-owned callable carrier holding the
+  // proxy; `fillApplyClosure` recognizes the carrier and calls
+  // `__proxy_revoke`. This keeps both proxy semantics and revocation in Wasm —
+  // JavaScript only ever sees the result through the normal export-boundary
+  // live view when it actually crosses that boundary.
+  {
+    const revokerName = "__proxy_revoker";
+    let revokerTypeIdx = ctx.structMap.get(revokerName);
+    if (revokerTypeIdx === undefined) {
+      revokerTypeIdx = ctx.mod.types.length;
+      const fields = [{ name: "proxy", type: externref, mutable: false }];
+      ctx.mod.types.push({ kind: "struct", name: revokerName, fields });
+      ctx.structMap.set(revokerName, revokerTypeIdx);
+      ctx.typeIdxToStructName.set(revokerTypeIdx, revokerName);
+      ctx.structFields.set(revokerName, fields);
+    }
+
+    addStringConstantGlobal(ctx, "proxy");
+    addStringConstantGlobal(ctx, "revoke");
+    const proxyCreateIdx = ctx.funcMap.get("__proxy_create")!;
+    const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
+    const externSetIdx = ctx.funcMap.get("__extern_set")!;
+    const proxyLocal = 2;
+    const revokerLocal = 3;
+    const resultLocal = 4;
+    registerNative(
+      "__proxy_revocable",
+      [externref, externref],
+      [externref],
+      [
+        { name: "proxy", type: externref },
+        { name: "revoker", type: externref },
+        { name: "result", type: externref },
+      ],
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: proxyCreateIdx },
+        { op: "local.set", index: proxyLocal },
+        { op: "local.get", index: proxyLocal },
+        { op: "struct.new", typeIdx: revokerTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "local.set", index: revokerLocal },
+        { op: "call", funcIdx: newObjectIdx },
+        { op: "local.set", index: resultLocal },
+        { op: "local.get", index: resultLocal },
+        ...stringConstantExternrefInstrs(ctx, "proxy"),
+        { op: "local.get", index: proxyLocal },
+        { op: "call", funcIdx: externSetIdx },
+        { op: "local.get", index: resultLocal },
+        ...stringConstantExternrefInstrs(ctx, "revoke"),
+        { op: "local.get", index: revokerLocal },
+        { op: "call", funcIdx: externSetIdx },
+        { op: "local.get", index: resultLocal },
+      ],
     );
   }
 
@@ -1106,6 +1339,29 @@ export function ensureProxyRuntime(
       },
     ];
     getBody.unshift(...guard);
+  }
+
+  // Reflect.get(target,key,receiver) has a separate receiver-aware wrapper.
+  // A Proxy target must see that receiver in both its trap and trap-absent
+  // forwarding paths.
+  const reflectGetReceiverBody = findBody("__reflect_get_receiver");
+  if (reflectGetReceiverBody) {
+    reflectGetReceiverBody.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: getDispatchIdx },
+          { op: "return" },
+        ],
+      },
+    );
   }
 
   // __extern_set(obj, key, value) -> () : if proxy → set_dispatch(obj,key,value); drop; return
@@ -1484,4 +1740,5 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
   fill(PROXY_CALL_OWNKEYS, 1); // (#1355 Slice E) ownKeys (target)
   fill(PROXY_CALL_DEFINE, 3); // (#1355 Slice F) defineProperty (target, key, desc)
   fill(PROXY_CALL_APPLY, 3); // (#3031 apply slice) apply (target, thisArg, argArray)
+  fill(PROXY_CALL_CONSTRUCT, 3); // (#4397) construct (target, argumentsList, newTarget)
 }

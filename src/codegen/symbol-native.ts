@@ -22,15 +22,20 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureSymbolCounter } from "./literals.js";
-import { ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
+import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { compileNativeStringLiteral } from "./string-ops.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 /** Initial capacity of the description table (covers small symbol counts without
  *  a grow; ids start at 100 so the very first user symbol already forces one
  *  grow regardless — see emitSymbolDescStore). */
 const INITIAL_CAP = 128;
+
+/** Select the Wasm-owned Symbol provider independently of the host environment. */
+export function usesNativeSymbolProvider(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.semanticProviders === "native-first";
+}
 
 /**
  * (#2866) Ensure the native `$Symbol` carrier struct and the host-free
@@ -207,6 +212,139 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
     });
   }
   return ctx.symbolTypeIdx;
+}
+
+/**
+ * Publish the narrow value adapter used when a native Symbol crosses a
+ * JavaScript boundary. Symbol identity, descriptions, and the global registry
+ * remain module-owned; the host adapter only maps the canonical i32 id to/from
+ * the corresponding JavaScript Symbol primitive.
+ */
+export function ensureNativeSymbolBoundaryBridge(ctx: CodegenContext): void {
+  if (!usesNativeSymbolProvider(ctx) || !ctx.emitHostBridge || ctx.targetProfile.hostValueInterop === "off") return;
+
+  ensureNativeStringHelpers(ctx);
+  ensureNativeStringBoundaryBridge(ctx);
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
+  ensureSymbolDescTable(ctx);
+  const { forIdx, keyForIdx } = ensureSymbolRegistry(ctx);
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const anyStrNull: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
+  const descArrTypeIdx = ctx.symbolDescArrTypeIdx;
+  const descGlobalIdx = ctx.symbolDescGlobalIdx;
+  const descArrNull: ValType = { kind: "ref_null", typeIdx: descArrTypeIdx };
+
+  const register = (
+    name: string,
+    params: ValType[],
+    results: ValType[],
+    locals: { name: string; type: ValType }[],
+    body: Instr[],
+  ): number => {
+    const existing = ctx.funcMap.get(name);
+    if (existing !== undefined) return existing;
+    const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set(name, funcIdx);
+    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: true });
+    return funcIdx;
+  };
+
+  const isNativeIdx = register(
+    "__symbol_boundary_is_native",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }],
+    [],
+    [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: symbolTypeIdx }],
+  );
+  const idIdx = register(
+    "__symbol_boundary_id",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }],
+    [],
+    [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: symbolTypeIdx },
+      { op: "struct.get", typeIdx: symbolTypeIdx, fieldIdx: 0 },
+    ],
+  );
+  const descriptionIdx = register(
+    "__symbol_boundary_description",
+    [{ kind: "i32" }],
+    [anyStrNull],
+    [{ name: "table", type: descArrNull }],
+    [
+      { op: "global.get", index: descGlobalIdx },
+      { op: "local.tee", index: 1 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: anyStrNull },
+        then: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ge_s" },
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "ref.as_non_null" },
+          { op: "array.len" },
+          { op: "i32.lt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: anyStrNull },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "ref.as_non_null" },
+              { op: "local.get", index: 0 },
+              { op: "array.get", typeIdx: descArrTypeIdx },
+            ],
+            else: [{ op: "ref.null", typeIdx: anyStrTypeIdx }],
+          },
+        ],
+      },
+    ],
+  );
+
+  const counterIdx = ensureSymbolCounter(ctx);
+  const newIdx = register(
+    "__symbol_boundary_new",
+    [anyStrNull],
+    [{ kind: "i32" }],
+    [
+      { name: "id", type: { kind: "i32" } },
+      { name: "table", type: descArrNull },
+      { name: "grow", type: descArrNull },
+    ],
+    [
+      { op: "global.get", index: counterIdx },
+      { op: "i32.const", value: 1 },
+      { op: "i32.add" },
+      { op: "global.set", index: counterIdx },
+      { op: "global.get", index: counterIdx },
+      { op: "local.set", index: 1 },
+      ...emitDescStoreInline(descGlobalIdx, descArrTypeIdx, 1, 0, 2, 3),
+      { op: "local.get", index: 1 },
+    ],
+  );
+
+  const expose = (name: string, funcIdx: number): void => {
+    const func = definedFuncAt(ctx, funcIdx);
+    if (func) func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name)) {
+      ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+    }
+  };
+  expose("__symbol_boundary_is_native", isNativeIdx);
+  expose("__symbol_boundary_id", idIdx);
+  expose("__symbol_boundary_description", descriptionIdx);
+  expose("__symbol_boundary_new", newIdx);
+  expose("__symbol_boundary_for", forIdx);
+  expose("__symbol_boundary_key_for", keyForIdx);
+  const boxIdx = ctx.funcMap.get("__box_symbol");
+  if (boxIdx !== undefined) expose("__box_symbol", boxIdx);
 }
 
 /**

@@ -149,6 +149,9 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks
 
+      - name: Native-first host semantic debt gate (#4401)
+        run: pnpm run check:host-import-policy
+
       - name: IR-only readiness instrumentation (#3519)
         if: steps.npm_compat.outputs.only != 'true'
         # Hybrid policy is the bounded migration ratchet: Unsupported rows are
