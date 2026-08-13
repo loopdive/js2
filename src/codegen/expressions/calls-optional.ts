@@ -9,14 +9,14 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { resolveWasmType } from "../index.js";
+import { addStringImports, resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
-import { compileExpression, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { compileCallablePropertyCall } from "./calls-closures.js";
-import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imports.js";
+import { ensureExternIsUndefinedImport, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
@@ -167,7 +167,55 @@ export function compileOptionalCallExpression(
       const funcIdx = ctx.funcMap.get(importName);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: tmp });
-        for (const arg of expr.arguments) compileExpression(ctx, fctx, arg);
+        const paramTypes = getFuncParamTypes(ctx, funcIdx);
+        const userParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
+        for (let i = 0; i < expr.arguments.length; i++) {
+          if (i >= userParamCount) {
+            const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+            if (extraType !== null) fctx.body.push({ op: "drop" });
+            continue;
+          }
+          const expected = paramTypes?.[i + 1];
+          const actual = compileExpression(ctx, fctx, expr.arguments[i]!, expected);
+          if (actual === null) {
+            pushDefaultValue(fctx, expected ?? { kind: "externref" }, ctx);
+          } else if (expected && !valTypesMatch(actual, expected)) {
+            coerceType(ctx, fctx, actual, expected);
+          }
+        }
+        if (paramTypes) {
+          for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
+            const paramType = paramTypes[i]!;
+            if ((methodName === "substring" || methodName === "slice") && i === 2 && paramType.kind === "f64") {
+              addStringImports(ctx);
+              const lengthIdx = ctx.jsStringImports.get("length");
+              if (lengthIdx === undefined) {
+                fctx.body.push({ op: "f64.const", value: 0x7fffffff });
+              } else {
+                fctx.body.push(
+                  { op: "local.get", index: tmp },
+                  { op: "call", funcIdx: lengthIdx },
+                  { op: "f64.convert_i32_u" },
+                );
+              }
+            } else if (paramType.kind === "externref") {
+              const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+              flushLateImportShifts(ctx, fctx);
+              if (undefinedIdx === undefined) fctx.body.push({ op: "ref.null.extern" });
+              else fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_undefined")! });
+            } else if (paramType.kind === "f64") {
+              const value =
+                methodName === "split"
+                  ? -1
+                  : methodName === "includes" || methodName === "startsWith" || methodName === "endsWith"
+                    ? Number.NaN
+                    : 0;
+              fctx.body.push({ op: "f64.const", value });
+            } else {
+              pushDefaultValue(fctx, paramType, ctx);
+            }
+          }
+        }
         fctx.body.push({ op: "call", funcIdx });
         methodResolved = true;
       }

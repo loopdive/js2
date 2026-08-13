@@ -10294,12 +10294,15 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           preHoistRecord.flagSlot = flagIdx;
         }
       }
-      // Destructuring patterns (let/const) are NOT pre-allocated here —
-      // `compileObjectDestructuring` / `compileArrayDestructuring` allocate
-      // their own bindings + TDZ flags via `ensureLetConstBindingPatternTdzFlags`
-      // at entry. Pre-allocating here would create duplicate locals (one from
-      // the pre-pass, one from destructuring) and pollute closure-capture
-      // analysis (#1128).
+      if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+        // A nested function declaration is hoisted before statement-position
+        // destructuring runs. Publish the pattern's binding locals now, just as
+        // we do for identifier let/const declarations, so capture signatures
+        // cannot be inferred from a missing or same-name stale slot. The shared
+        // helper and the later destructuring path both reuse existing locals
+        // and TDZ flags, so this does not allocate a second binding.
+        ensureLetConstBindingPatternTdzFlags(ctx, fctx, decl.name);
+      }
     }
     return;
   }

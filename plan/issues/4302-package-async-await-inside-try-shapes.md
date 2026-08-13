@@ -1,10 +1,10 @@
 ---
 id: 4302
 title: "Async CPS: support the await-inside-try shapes used by Prettier, Axios, and Stylelint"
-status: ready
+status: in_progress
 sprint: current
 created: 2026-08-09
-updated: 2026-08-11
+updated: 2026-08-13
 priority: high
 horizon: m
 feasibility: hard
@@ -15,8 +15,18 @@ language_feature: async, promises, try-catch
 goal: npm-library-support
 related: [1032, 1034, 3587, 4000]
 loc-budget-allow:
-  - src/codegen/context/types.ts
-  - src/compiler.ts
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/nested-declarations.ts
+func-budget-allow:
+  - src/codegen/async-cps.ts::planTryCatchCfg
+  - src/codegen/async-cps.ts::buildBody
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
 
 # Support residual package `await`-inside-`try` shapes
@@ -77,8 +87,50 @@ refusal for everything still outside the machine.
 ## Acceptance criteria
 
 - [x] Every rejected suspension point reports its source file and location.
-- [ ] Reduced tests cover the shared package shape and rejection delivery
+- [x] Reduced tests cover the shared package shape and rejection delivery
       through `catch`/`finally` on the host lane.
 - [ ] Prettier, Axios, and Stylelint advance beyond this refusal without source
       rewriting or a synchronous fallback.
-- [ ] Any still-unsupported rejection-sensitive shape continues to fail loudly.
+- [x] Any still-unsupported rejection-sensitive shape continues to fail loudly.
+
+## Implementation update (2026-08-13)
+
+The generic structured-CFG implementation now covers assignment awaits,
+multiple/conditional declarators, ordinary `for..of` across a suspension, and
+nested lexical catch bindings. Promise combinators retain their legacy shortcut
+only when there is no finalizer, so `try/finally` still genuinely suspends.
+
+The package run also exposed three independent representation bugs that are
+fixed in the same slice:
+
+- optional string calls pad omitted positional arguments;
+- contextual tuple inference is retained for concise closure returns;
+- async spill fields use the concrete nested-capture cell ABI chosen by the
+  just-completed function hoist, including destructured locals.
+
+Destructured lexical bindings are now visible during the TDZ/function hoist,
+and local compaction visits shared instruction objects once. The latter avoids
+applying a non-idempotent old-to-new local remap twice when an instruction
+fragment is reused by two control-flow arms.
+
+Measured pinned Prettier 3.8.1 result:
+
+| metric | result |
+| --- | --- |
+| command | `node --import tsx tests/dogfood/prettier-harness.mjs --json` |
+| compile | success, 0 diagnostics, 106.768 s |
+| binary | 7,610,691 bytes |
+| validation | valid |
+| runtime differential | not implemented by the existing Prettier harness |
+
+This proves package-entry compilation and binary validity. Correctness remains
+unverified until Prettier gets a real differential workload; the issue must not
+claim runtime compatibility from validation alone.
+
+The same exact-head audit shows the remaining boundary honestly:
+
+- Jest 30.4.2 clears the #3587 refusal and compiles in 33.313 s, then exposes a
+  separate invalid `struct.new` in `runJest.ts`.
+- Axios 1.16.1 still stops at `lib/adapters/fetch.js:219:32`; that nested
+  conditional assignment shape remains outside this CFG slice and continues to
+  fail loudly as required.

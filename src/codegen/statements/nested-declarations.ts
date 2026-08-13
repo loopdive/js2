@@ -80,6 +80,44 @@ import {
 } from "../annexb-cancel.js";
 import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
 
+function declarationIsInside(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+/**
+ * A whole-program `funcMap` entry with the same bare spelling must not hide a
+ * lexical value captured by this exact nested declaration. Minified package
+ * graphs routinely reuse one-letter names across unrelated scopes (`f` is an
+ * array in one function and a function declaration elsewhere). The checker
+ * still identifies the lexical declaration precisely, so retain the capture
+ * whenever at least one reference resolves outside this function to a
+ * non-function binding. Declarations inside `stmt` are ignored because the
+ * own-locals analysis already treats them as shadows rather than captures.
+ */
+function referencesOuterNonFunctionBinding(ctx: CodegenContext, stmt: ts.FunctionDeclaration, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      const declaration = ctx.oracle.valueDeclarationOf(node);
+      if (
+        declaration !== undefined &&
+        !declarationIsInside(declaration, stmt) &&
+        !ts.isFunctionDeclaration(declaration)
+      ) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(stmt.body!);
+  return found;
+}
+
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
  * class's inner scope AFTER the `extends` clause is evaluated. Referencing the
@@ -776,7 +814,13 @@ export function compileNestedFunctionDeclaration(
     // builtin import (concat/length/equals/substring/charCodeAt), which lives in
     // funcMap yet must not block capture of a same-named outer local (the
     // test262 `let length = "outer"` dstr template captured by a nested fn).
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
+      !referencesOuterNonFunctionBinding(ctx, stmt, name)
+    ) {
+      continue;
+    }
     const type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
@@ -856,7 +900,6 @@ export function compileNestedFunctionDeclaration(
       alreadyBoxed: false,
     });
   }
-
   // (#2172 / SF-1 of #2157) Wasm-native lowering for a NESTED `function*` in
   // standalone/WASI. Previously a nested generator always took the JS-host
   // buffer path (`__create_generator` etc.), which in standalone leaks env
