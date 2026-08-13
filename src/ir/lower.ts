@@ -2110,7 +2110,7 @@ export function lowerIrFunctionBody<S, Slot>(
         const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         // ref.func $lifted, (#3673) $arity, push captures, struct.new <subtype>.
         emitter.emitFuncRef(liftedIdx, out);
-        emitter.emitClosureArityOperand?.(instr.signature.params.length, out);
+        emitter.emitClosureArityOperand?.(instr.signature.defaultParamStart ?? instr.signature.params.length, out);
         for (const cap of instr.captures) emitValue(cap, out);
         emitter.emitClosureNew(sub, instr.captures.length, out);
         return;

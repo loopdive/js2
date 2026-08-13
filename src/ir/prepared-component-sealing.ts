@@ -298,21 +298,19 @@ export function sealDependencyCompletePreparedComponents(input: {
     );
     if (failingOwnerUnitIds.size === 0) break;
     for (const unitId of failingOwnerUnitIds) {
-      if (classMemberTerminalUnitIds.has(unitId)) {
-        const ownerFailures = report.components.flatMap((component) =>
-          component.failures.filter((failure) => failure.ownerUnitId === unitId),
-        );
-        const detail = ownerFailures.map((failure) => `${failure.code}: ${failure.detail}`).join("; ");
-        input.onSealFailure(
-          unitId,
-          new IrUnsupportedError(
-            "late-preparation-unsupported",
-            "resolve",
-            `prepared class-member owner ${unitId} has incomplete dependencies: ${detail}`,
-            ownerFailures,
-          ),
-        );
-      }
+      const ownerFailures = report.components.flatMap((component) =>
+        component.failures.filter((failure) => failure.ownerUnitId === unitId),
+      );
+      const detail = ownerFailures.map((failure) => `${failure.code}: ${failure.detail}`).join("; ");
+      input.onSealFailure(
+        unitId,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `prepared ${classMemberTerminalUnitIds.has(unitId) ? "class-member " : ""}owner ${unitId} has incomplete dependencies: ${detail}`,
+          ownerFailures,
+        ),
+      );
       candidateTerminalUnitIds.delete(unitId);
     }
     report = derive(candidateTerminalUnitIds);

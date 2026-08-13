@@ -717,6 +717,7 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
         out.push({ kind: "unary", type: "f64", effects: value.effects, op: "neg", value });
         return;
       case "f64.reinterpret_i64":
+      case "i64.reinterpret_f64":
         throw new Error(`porffor backend does not support unary op '${op}'`);
       case "i32.eqz":
         out.push({ kind: "unary", type: "i32", effects: value.effects, op: "!", value });

@@ -10,8 +10,10 @@ import { ts } from "../ts-api.js";
  * admitted the enclosing terminal and every special host callback still
  * matches its exact TypedAST plan. Ordinary nested function declarations are
  * lowered into their inventoried source units under the terminal owner's
- * prepared transaction; generic closure literals, object members, and class
- * static blocks remain outside this checkpoint. The host-callback map key is
+ * prepared transaction; generic closure literals and selector-certified
+ * object methods are lowered into their inventoried source units under the
+ * same transaction. Accessors and class static blocks remain outside this
+ * checkpoint. The host-callback map key is
  * the authoritative AST identity; owner and ordinal checks keep that special
  * synthetic namespace complete, gap-free, and source ordered.
  */
@@ -52,6 +54,14 @@ export function containsUnplannedNestedExecutableSyntax(
       return;
     }
     if (ts.isFunctionExpression(node)) {
+      if (!node.body) {
+        invalid = true;
+        return;
+      }
+      ts.forEachChild(node.body, visit);
+      return;
+    }
+    if (ts.isMethodDeclaration(node) && ts.isObjectLiteralExpression(node.parent)) {
       if (!node.body) {
         invalid = true;
         return;

@@ -681,7 +681,9 @@ function implicitSupportRequirement(
     case "object.new":
     case "object.get":
     case "object.set":
-      return `${instr.kind} resolves an object layout without an explicit symbolic type ref`;
+      return hasPreparedSupport
+        ? null
+        : `${instr.kind} resolves an object layout without an explicit symbolic type ref`;
     case "closure.new":
     case "closure.cap":
     case "closure.call":
@@ -1323,11 +1325,13 @@ function collectFunctionEvidence(
     }
     const preparedRefs = input.closureSupport?.typeRefs.get(type);
     if (
-      (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed") &&
+      (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed" || type.kind === "object") &&
       recordPreparedClosureRefs(preparedRefs, `prepared IR ${type.kind} type must use Program ABI support refs`)
     ) {
       if (type.kind === "boxed") {
         collectType(type.inner);
+      } else if (type.kind === "object") {
+        for (const field of type.shape.fields) collectType(field.type);
       } else {
         for (const param of type.signature.params) collectType(param);
         if (type.signature.returnType) collectType(type.signature.returnType);
@@ -1373,7 +1377,14 @@ function collectFunctionEvidence(
       const hasPreparedSupport =
         nested.kind === "closure.cap"
           ? (functionClosureSupport?.length ?? 0) > 0
-          : (instructionClosureSupport?.length ?? 0) > 0;
+          : (instructionClosureSupport?.length ?? 0) > 0 ||
+            ((nested.kind === "object.new" || nested.kind === "object.get" || nested.kind === "object.set") &&
+              (() => {
+                const objectType = nested.kind === "object.new" ? nested.resultType : valueTypes.get(nested.value);
+                return (
+                  objectType?.kind === "object" && (input.closureSupport?.typeRefs.get(objectType)?.length ?? 0) > 0
+                );
+              })());
       const exceptionTagTypeRef = nested.kind === "throw" ? classAccessorWriteback?.tdzExceptionTagTypeRef : undefined;
       if (exceptionTagTypeRef) {
         recordSupportTypeReference(

@@ -31,6 +31,7 @@ import {
   programAbiCallableSignaturesEqual,
   type ProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
+import { SHAPE_BRAND_FIELD } from "./shape-brand.js";
 
 const ABI_DOMAIN_ORDINAL = Object.freeze({
   callable: 0,
@@ -630,6 +631,68 @@ function isLeafFinalizationOnly(previousLayout: string, currentLayout: string): 
     );
   };
   return compare(previous, current) && changed;
+}
+
+function isTrailingShapeIdentityFieldOnly(
+  previousLayout: string,
+  currentLayout: string,
+  fieldName: string,
+  typeMatches: (type: Record<string, unknown>) => boolean,
+): boolean {
+  let previous: unknown;
+  let current: unknown;
+  try {
+    previous = JSON.parse(previousLayout);
+    current = JSON.parse(currentLayout);
+  } catch {
+    return false;
+  }
+  if (typeof previous !== "object" || previous === null || typeof current !== "object" || current === null) {
+    return false;
+  }
+  const left = previous as Record<string, unknown>;
+  const right = current as Record<string, unknown>;
+  if (
+    left.kind !== "struct" ||
+    right.kind !== "struct" ||
+    left.superTypeIdx !== right.superTypeIdx ||
+    left.final !== right.final ||
+    !Array.isArray(left.fields) ||
+    !Array.isArray(right.fields)
+  ) {
+    return false;
+  }
+  const leftFields = left.fields;
+  const rightFields = right.fields;
+  if (
+    rightFields.length !== leftFields.length + 1 ||
+    !leftFields.every((field, index) => JSON.stringify(field) === JSON.stringify(rightFields[index]))
+  ) {
+    return false;
+  }
+  const brand = rightFields[rightFields.length - 1];
+  if (typeof brand !== "object" || brand === null) return false;
+  const field = brand as Record<string, unknown>;
+  if (field.name !== fieldName || field.mutable !== false || typeof field.type !== "string") return false;
+  try {
+    const type = JSON.parse(field.type) as Record<string, unknown>;
+    return typeMatches(type);
+  } catch {
+    return false;
+  }
+}
+
+function isShapeStampingOnly(previousLayout: string, currentLayout: string): boolean {
+  return isTrailingShapeIdentityFieldOnly(previousLayout, currentLayout, "$shape", (type) => type.kind === "i32");
+}
+
+function isShapeBrandingOnly(previousLayout: string, currentLayout: string): boolean {
+  return isTrailingShapeIdentityFieldOnly(
+    previousLayout,
+    currentLayout,
+    SHAPE_BRAND_FIELD,
+    (type) => type.kind === "ref_null" && Number.isSafeInteger(type.typeIdx) && (type.typeIdx as number) >= 0,
+  );
 }
 
 interface ProgramAbiDerivedPath {
@@ -1572,6 +1635,134 @@ export class ProgramAbiSession {
       for (const [id, draft] of remappedTypeDrafts) {
         if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
       }
+    }
+  }
+
+  /**
+   * Record the deterministic trailing identity fields added to colliding
+   * anonymous object layouts after prepared scopes are sealed.
+   *
+   * Both passes preserve every source field and index. Stamping appends an
+   * i32 identity and cannot expand the reachable type graph. Branding appends
+   * a nullable type reference, so it may make the deterministic backward
+   * brand chain reachable. Accept only the exact transition reported by each
+   * pass, then refresh prepared layout evidence before leaf finalization and
+   * DCE.
+   */
+  recordShapeStamping(stampedTypeIndices: readonly number[]): void {
+    this.recordTrailingShapeIdentity("shape stamping", stampedTypeIndices, isShapeStampingOnly, false);
+  }
+
+  recordShapeBranding(brandedTypeIndices: readonly number[]): void {
+    this.recordTrailingShapeIdentity("shape branding", brandedTypeIndices, isShapeBrandingOnly, true);
+  }
+
+  private recordTrailingShapeIdentity(
+    operation: string,
+    affectedTypeIndices: readonly number[],
+    mutationMatches: (previousLayout: string, currentLayout: string) => boolean,
+    allowReachableExpansion: boolean,
+  ): void {
+    this.assertLayoutMutable(`record ${operation}`);
+    if (affectedTypeIndices.length === 0 || this.preparedScopes.size === 0) return;
+    const affected = new Set(affectedTypeIndices);
+    for (const index of affected) {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= this.module.types.length) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `${operation} reports invalid module type index ${index}`,
+        );
+      }
+    }
+
+    const refreshedDrafts = new Map<IrBindingId, ProgramAbiDraft>();
+    const refreshed: Array<{
+      readonly scope: PreparedProgramAbiScopeRecord;
+      readonly typeLayouts: Map<IrBindingId, string>;
+      readonly reachableTypeLayouts: Map<number, string>;
+    }> = [];
+    for (const scope of this.preparedScopes.values()) {
+      const typeLayouts = new Map(scope.typeLayouts);
+      for (const [id, expectedLayout] of scope.typeLayouts) {
+        const locator = this.locators.get(id);
+        if (locator?.kind !== "type-cell" || locator.cell.current === null) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `${operation} changed explicit prepared type/class binding ${id}`,
+          );
+        }
+        const currentLayout = canonicalProgramAbiTypeDef(locator.cell.current);
+        if (currentLayout === expectedLayout) continue;
+        const draft = this.drafts.get(id);
+        const index = this.module.types.indexOf(locator.cell.current);
+        if (
+          (draft?.intent.kind !== "type" && draft?.intent.kind !== "class") ||
+          index < 0 ||
+          !affected.has(index) ||
+          !mutationMatches(expectedLayout, currentLayout)
+        ) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `${operation} changed explicit prepared type/class binding ${id}`,
+          );
+        }
+        typeLayouts.set(id, currentLayout);
+        const refreshedDraft: ProgramAbiDraft =
+          draft.intent.kind === "type"
+            ? { ...draft, intent: { ...draft.intent, shapeKey: currentLayout } }
+            : { ...draft, intent: { ...draft.intent, layoutKey: currentLayout } };
+        const previousRefresh = refreshedDrafts.get(id);
+        if (previousRefresh && !draftsEqual(previousRefresh, refreshedDraft)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `${operation} produced conflicting prepared draft refreshes for ${id}`,
+          );
+        }
+        refreshedDrafts.set(id, refreshedDraft);
+      }
+
+      const currentReachableTypeLayouts = this.collectPreparedReachableTypeLayouts(
+        this.module,
+        typeLayouts.keys(),
+        scope.callableTypeContracts,
+        scope.globalTypeContracts,
+      );
+      for (const [index, expectedLayout] of scope.reachableTypeLayouts) {
+        const currentLayout = currentReachableTypeLayouts.get(index);
+        if (currentLayout === undefined) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `${operation} removed prepared reachable type ${index}`,
+          );
+        }
+        if (currentLayout === expectedLayout) continue;
+        if (!affected.has(index) || !mutationMatches(expectedLayout, currentLayout)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `${operation} changed prepared reachable type ${index} outside its trailing-field contract`,
+          );
+        }
+      }
+      const addedReachableTypeIndices = [...currentReachableTypeLayouts.keys()].filter(
+        (index) => !scope.reachableTypeLayouts.has(index),
+      );
+      if (!allowReachableExpansion && addedReachableTypeIndices.length > 0) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `${operation} expanded the reachable type graph for prepared scope ${scope.scopeId}`,
+        );
+      }
+      refreshed.push({ scope, typeLayouts, reachableTypeLayouts: currentReachableTypeLayouts });
+    }
+    for (const [id, draft] of refreshedDrafts) this.drafts.set(id, draft);
+    for (const { scope, typeLayouts, reachableTypeLayouts } of refreshed) {
+      for (const [id, draft] of refreshedDrafts) {
+        if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
+      }
+      scope.typeLayouts.clear();
+      for (const [id, layout] of typeLayouts) scope.typeLayouts.set(id, layout);
+      scope.reachableTypeLayouts.clear();
+      for (const [index, layout] of reachableTypeLayouts) scope.reachableTypeLayouts.set(index, layout);
     }
   }
 
