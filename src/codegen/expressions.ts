@@ -60,6 +60,7 @@ import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190)
 import { buildCurrentThisNonNullArm } from "./explicit-null-receiver.js"; // (#4203)
+import { emitCachedResolvedThis, recordResolvedThis } from "./receiver-cse.js"; // (#4157 B) receiver CSE
 
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
@@ -1161,6 +1162,8 @@ function compileExpressionInner(
       // which bodies read the global. The Array.prototype.{every,…} callbacks
       // and top-level strict `this` (#873/#895-fixed) are unaffected — those
       // either bind `this` via a local or do not set `readsCurrentThis`.
+      // (#4157 B) the ladder below already ran in this sequence — reuse its slot.
+      if (emitCachedResolvedThis(ctx, fctx, expr)) return { kind: "externref" };
       const thisTmp = allocTempLocal(fctx, { kind: "externref" });
       fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
       fctx.body.push({ op: "local.tee", index: thisTmp });
@@ -1183,6 +1186,7 @@ function compileExpressionInner(
         else: elseBody,
       });
       releaseTempLocal(fctx, thisTmp);
+      recordResolvedThis(ctx, fctx, expr); // (#4157 B) cache for the rest of this sequence
       return { kind: "externref" };
     }
     // (#4190) Terminal fallback: no receiver binding of any kind. Sloppy code
