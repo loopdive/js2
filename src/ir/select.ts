@@ -4603,10 +4603,19 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     const initializer = unwrapPhase1Parens(d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
+    const callableAlias =
+      isConst &&
+      ts.isIdentifier(initializer) &&
+      initializerScope.has(initializer.text) &&
+      currentCallableArities.has(initializer.text)
+        ? initializer.text
+        : null;
     if (objectMethodValue) {
       recordCallableProjection(d.name.text, objectMethodValue.arity, objectMethodValue.returnType);
     } else if (returnedCallable) {
       currentCallableArities.set(d.name.text, exactCallableArity(returnedCallable.params.length));
+    } else if (callableAlias !== null) {
+      copyCallableProjection(d.name.text, callableAlias);
     }
     if (!currentSubjectIsModuleInit && isConst && expressionTouchesTrackedModuleValue(initializer)) {
       const family = obviousModuleValueFamily(initializer);
@@ -5901,6 +5910,16 @@ function recordCallableProjection(
   currentCallableArities.set(name, typeof arity === "number" ? exactCallableArity(arity) : arity);
   const returnClass = returnType ? localClassNameFromTypeNode(returnType) : null;
   if (returnClass !== null) currentCallableReturnClasses.set(name, returnClass);
+}
+
+/** Preserve one exact immutable callable projection through `const alias = source`. */
+function copyCallableProjection(target: string, source: string): void {
+  const arity = currentCallableArities.get(source);
+  if (!arity) return;
+  clearProjectionBinding(target);
+  currentCallableArities.set(target, arity);
+  const returnClass = currentCallableReturnClasses.get(source);
+  if (returnClass !== undefined) currentCallableReturnClasses.set(target, returnClass);
 }
 
 function projectionBindingSnapshot(): ProjectionBindingSnapshot {
@@ -8459,6 +8478,8 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
         if (!ts.isIdentifier(d.name) || !d.initializer) continue;
         const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
         const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
+        const aliasInitializer = unwrapProjectionExpression(d.initializer);
+        const callableAlias = isConst && ts.isIdentifier(aliasInitializer) && names.has(aliasInitializer.text);
         // Literal closures retain the existing const-only rule. A direct
         // returned-callable binding already passed the ordinary variable
         // statement shape walk for var/let as well; an exact const
@@ -8470,6 +8491,7 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
         if (
           (isConst && literal) ||
           objectMethodValue ||
+          callableAlias ||
           directReturnedCallableSignature(d.initializer, localValueNames) !== null
         ) {
           names.add(d.name.text);

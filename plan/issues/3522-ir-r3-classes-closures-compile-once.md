@@ -2003,3 +2003,22 @@ direct owner. Explicit `call` and `apply` parity fixtures execute the result,
 require zero Wasm imports, and require the optimized IR binary to be no larger
 than its direct-backend control. Both are 43 bytes after the repair, and the
 native-first gate remains at 379 imports without increasing its baseline.
+
+### Chained object-method value checkpoint (2026-08-13)
+
+An exact callable projection now survives immutable local alias chains such as
+`const add = operations.add; const alias = add; const invoke = alias`. The
+selector copies the already-proven arity and return-class projection at each
+`const` link, while the call-graph census recognizes the same source-ordered
+links as intra-function closure values. AST-to-IR already carries the exact
+closure SSA value through identifier reads, so this adds no wrapper, boxing,
+generic dispatch, or new runtime representation.
+
+Direct-body poison proves `run` remains IR-owned with `direct=0, IR=1` in GC
+and standalone, the lifted object method stays in the same prepared component,
+both artifacts validate and return 42, and WAT uses `call_ref` without a
+`__call_m_*` dispatcher. Optimized GC remains **2,262 bytes versus 3,406
+direct**; standalone remains **5,893 versus 6,458 direct**. A mutable link is
+an explicit negative control and remains a select-stage
+`call-resolution-unsupported` direct body. The focused object-method suite is
+**10/10**.

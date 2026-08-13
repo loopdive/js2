@@ -29,6 +29,19 @@ export function run(input: number): number {
 }
 `;
 
+const CHAINED_METHOD_VALUE_SOURCE = `
+export function run(input: number): number {
+  const offset: number = 2;
+  const operations = {
+    add(value: number): number { return value + offset; }
+  };
+  const add = operations.add;
+  const alias = add;
+  const invoke = alias;
+  return invoke(input);
+}
+`;
+
 function outcome(result: CompileResult): IrObservedOutcome {
   const observed = (result.irOutcomes ?? []).filter((candidate) => candidate.displayName === "run");
   expect(observed).toHaveLength(1);
@@ -126,6 +139,47 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
+  it.each(TARGETS)("preserves an exact object-method value through a const alias in the %s lane", async (target) => {
+    const direct = await compile(CHAINED_METHOD_VALUE_SOURCE, {
+      fileName: `object-method-value-alias-direct-${target}.ts`,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      prepared = await compile(CHAINED_METHOD_VALUE_SOURCE, {
+        fileName: `object-method-value-alias-prepared-${target}.ts`,
+        experimentalIR: true,
+        optimize: true,
+        target,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(42);
+    }
+    expect(outcome(prepared)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
   it("keeps mutable object-method value aliases on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
@@ -137,6 +191,35 @@ describe("#3522 object-method call ownership", () => {
       }`,
       {
         fileName: "object-method-value-let-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      code: "call-resolution-unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a mutable link in an object-method value alias chain on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const add = operations.add;
+        let alias = add;
+        return alias(input);
+      }`,
+      {
+        fileName: "object-method-value-chain-let-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },
