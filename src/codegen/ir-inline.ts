@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4157) IR-level inliner for USER code — `JS2WASM_IR_INLINE`, default OFF.
+ * (#4157) IR-level inliner for USER code — `JS2WASM_IR_INLINE`, **default `on`**
+ * since the tuned-set flip (see `src/perf-flags.ts`). `=0` / `off` is the revert.
  *
  * ## Why this exists at all
  *
@@ -119,12 +120,18 @@
  *
  * ## Flag surface
  *
+ *   (unset)                                   the `on` preset — the DEFAULT
+ *   JS2WASM_IR_INLINE=0 | off                 the pass does not run at all
  *   JS2WASM_IR_INLINE=report                  analyse + print, mutate NOTHING
  *   JS2WASM_IR_INLINE=on                      adapters + single-caller + loop-leaf
  *   JS2WASM_IR_INLINE=adapters,single,loop    pick rules individually
  *   JS2WASM_IR_INLINE=on,count                + runtime site-execution counter
  *   JS2WASM_IR_INLINE=on,poison               + perturb every inlined result
  *   ...,maxsize=N  ...,growth=N  ...,verbose
+ *
+ * A value that selects no rule at all — `count` on its own, or a typo — gets
+ * the `on` preset plus whatever modifiers it did name, rather than silently
+ * disabling the inliner; only an explicit off-token disables it.
  *
  * `poison` exists because a confident null from a mechanism that never fired
  * closes a door that was never opened — #4157 records that failure twice in one
@@ -133,6 +140,7 @@
  */
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
 
@@ -190,14 +198,32 @@ const DEFAULTS: InlineOptions = {
   verbose: false,
 };
 
+/** The `on` preset: every rule, no modifiers. Applied in place. */
+function applyOnPreset(o: InlineOptions): void {
+  o.enabled = true;
+  o.adapters = true;
+  o.single = true;
+  o.loop = true;
+  o.specialise = true;
+}
+
 export function parseInlineOptions(raw: string | undefined): InlineOptions {
   const o: InlineOptions = { ...DEFAULTS };
-  if (!raw) return o;
+  // Unset ⇒ the tuned default. An off-token ⇒ genuinely off. Everything else
+  // is parsed, and falls back to the preset below if it selected no rule.
+  if (!tunedFlagEnabled(raw)) return o;
+  if (raw === undefined) {
+    applyOnPreset(o);
+    return o;
+  }
   const toks = raw
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 0);
-  if (toks.length === 0) return o;
+  if (toks.length === 0) {
+    applyOnPreset(o);
+    return o;
+  }
   for (const t of toks) {
     const eq = t.indexOf("=");
     if (eq > 0) {
@@ -214,20 +240,12 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
       case "off":
         return { ...DEFAULTS };
       case "report":
-        o.enabled = true;
+        applyOnPreset(o);
         o.report = true;
-        o.adapters = true;
-        o.single = true;
-        o.loop = true;
-        o.specialise = true;
         break;
       case "1":
       case "on":
-        o.enabled = true;
-        o.adapters = true;
-        o.single = true;
-        o.loop = true;
-        o.specialise = true;
+        applyOnPreset(o);
         break;
       case "adapters":
         o.enabled = true;
@@ -262,6 +280,11 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
         break;
     }
   }
+  // A spec that named only modifiers (`count`, `verbose`, `growth=…`) or
+  // nothing recognisable at all selected no RULE. Under the tuned default that
+  // must not read as "off" — it reads as "the default set, plus what you asked
+  // for", which is also what `JS2WASM_IR_INLINE=count` obviously means.
+  if (!o.enabled) applyOnPreset(o);
   return o;
 }
 
@@ -942,6 +965,10 @@ function hasCall(body: Instr[]): boolean {
 }
 
 function report(stats: Stats, opts: InlineOptions, mod: WasmModule): void {
+  // Three dense lines per compile is a diagnostic, not a compiler message.
+  // Printed when the operator asked for the flag (including `report`, whose
+  // whole purpose is the print) — silent on a plain default build.
+  if (!opts.report && !opts.verbose && !tunedFlagExplicit(process.env.JS2WASM_IR_INLINE)) return;
   const w = (s: string): void => void process.stderr.write(s);
   const sizes = mod.functions.map((f) => countInstrs(f.body)).sort((a, b) => a - b);
   const pct = (p: number): number =>

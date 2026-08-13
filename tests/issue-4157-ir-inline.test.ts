@@ -1,7 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#4157) IR-level inliner for user code — behaviour must be identical with the
- * flag ON and OFF, and the binary must be BYTE-identical when the flag is unset.
+ * flag ON and OFF, and the binary must be BYTE-identical to the legacy compiler
+ * when the flag is `0`.
+ *
+ * The inliner is **default ON** since the tuned-set flip (`src/perf-flags.ts`),
+ * so the byte-identity guarantee moved from *absence* to *an explicit
+ * off-token*; `report` is now compared against `=0` rather than against unset,
+ * because unset mutates.
  *
  * The constructs here are the ones the rewrite can get wrong (see
  * `src/codegen/ir-inline.ts`): closure captures, recursion, loop-carried
@@ -120,34 +126,55 @@ const PROBES: { name: string; source: string; expected: number }[] = [
   },
 ];
 
+const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+
 describe("#4157 IR-level inliner", () => {
-  test("unset flag is byte-identical to the base compiler", async () => {
-    delete process.env[FLAG];
+  test("`=0` is byte-identical to the base compiler, and `report` mutates nothing", async () => {
+    process.env[FLAG] = "0";
     const a = await build(PROBES[0].source);
-    const b = await build(PROBES[0].source);
-    expect(createHash("sha256").update(b).digest("hex")).toBe(createHash("sha256").update(a).digest("hex"));
+    process.env[FLAG] = "off";
+    expect(sha(await build(PROBES[0].source)), "`off` must be the same off-token as `0`").toBe(sha(a));
 
     process.env[FLAG] = "report";
-    const reported = await build(PROBES[0].source);
-    // `report` analyses and prints but must not mutate the module.
-    expect(createHash("sha256").update(reported).digest("hex")).toBe(createHash("sha256").update(a).digest("hex"));
+    // `report` analyses and prints but must not mutate the module — so it lands
+    // on the OFF bytes even though it sets `enabled`.
+    expect(sha(await build(PROBES[0].source))).toBe(sha(a));
+  });
+
+  test("unset runs the `on` preset, and a modifier-only spec does not disable it", async () => {
+    process.env[FLAG] = "0";
+    const off = sha(await build(PROBES[2].source));
+    delete process.env[FLAG];
+    const unset = sha(await build(PROBES[2].source));
+    process.env[FLAG] = "on";
+    const on = sha(await build(PROBES[2].source));
+    expect(unset, "unset must inline — the pass is default ON").not.toBe(off);
+    expect(unset).toBe(on);
+    // `verbose` selects no RULE. Before the flip that meant "off"; now it means
+    // "the default set, plus the modifier you asked for".
+    process.env[FLAG] = "verbose";
+    expect(sha(await build(PROBES[2].source))).toBe(on);
   });
 
   test("an enabled rule actually changes the binary", async () => {
-    delete process.env[FLAG];
+    process.env[FLAG] = "0";
     const off = await build(PROBES[2].source);
     process.env[FLAG] = "on";
     const on = await build(PROBES[2].source);
-    expect(createHash("sha256").update(on).digest("hex")).not.toBe(createHash("sha256").update(off).digest("hex"));
+    expect(sha(on)).not.toBe(sha(off));
   });
 
   for (const probe of PROBES) {
     test(`${probe.name} — flag OFF`, async () => {
-      delete process.env[FLAG];
+      process.env[FLAG] = "0";
       expect(await run(probe.source)).toBe(probe.expected);
     });
     test(`${probe.name} — flag ON`, async () => {
       process.env[FLAG] = "on";
+      expect(await run(probe.source)).toBe(probe.expected);
+    });
+    test(`${probe.name} — shipped default (unset)`, async () => {
+      delete process.env[FLAG];
       expect(await run(probe.source)).toBe(probe.expected);
     });
   }

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#4157) `JS2WASM_LAZY_STR_FLATTEN` — stop forcing rope materialization where
- * the consumer does not need a flat buffer. **Default OFF**; unset ⇒ the
- * emitted binary is byte-identical to the flag-less compiler.
+ * the consumer does not need a flat buffer. **Default ON** since the tuned-set
+ * flip; `=0` ⇒ the emitted binary is byte-identical to the flag-less compiler.
  *
  * ## What "forced but not required" means here
  *
@@ -60,15 +60,17 @@
  *
  * ## Spelling
  *
- * Explicit opt-in (`=1`), NOT the `src/derivation-flags.ts` unset-⇒-ON token
- * rule: this flag's OFF position is the shipped default and the byte-identity
- * guarantee hangs off it, so it must not be enabled by a typo. Same shape as
- * `JS2WASM_FNCTOR_CTOR_PARAM_SLOTS`.
+ * The `src/perf-flags.ts` token rule: unset ⇒ ON, `0`/`off`/`false`/`no`/empty
+ * ⇒ OFF, anything else ⇒ ON. The byte-identity guarantee now hangs off the OFF
+ * position rather than off absence — this flag shipped opt-in specifically so a
+ * typo could not enable it, and after the flip the same reasoning runs the
+ * other way: a typo must not silently DISABLE a measured default.
  */
 import type { Instr } from "../ir/types.js";
+import { tunedFlagEnabled } from "../perf-flags.js";
 
 export function lazyStrFlattenEnabled(): boolean {
-  return process.env.JS2WASM_LAZY_STR_FLATTEN === "1";
+  return tunedFlagEnabled(process.env.JS2WASM_LAZY_STR_FLATTEN);
 }
 
 /**

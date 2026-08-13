@@ -220,7 +220,7 @@ import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#392
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
 import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
 import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
-import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default ON
 import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
@@ -5266,9 +5266,9 @@ export function generateModule(
 
     // (#4157) Inline-cache the READ SITES against the arms just filled. Placed
     // HERE so the copied arm and the copy share one type/funcIdx regime — every
-    // later remap treats both identically. DEFAULT OFF.
+    // later remap treats both identically. DEFAULT ON since the tuned-set flip.
     inlineMemberGetCallSites(ctx);
-    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
@@ -5313,7 +5313,7 @@ export function generateModule(
     // that arm is still the PREFIX — which is also the property the arm's own
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
-    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
@@ -5535,8 +5535,8 @@ export function generateModule(
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
     installExecCensus(ctx);
-    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
-    // is set, so the default binary stays byte-identical. This exact slot is
+    // (#4157) IR-level inliner for USER code — runs by DEFAULT since the
+    // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);
@@ -7637,8 +7637,8 @@ export function generateMultiModule(
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
     fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
-    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
-    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default ON
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Mirror the single-source closed-struct own-property finalizer.
@@ -7682,7 +7682,7 @@ export function generateMultiModule(
     // that arm is still the PREFIX — which is also the property the arm's own
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
-    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
@@ -7906,8 +7906,8 @@ export function generateMultiModule(
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
     installExecCensus(ctx);
-    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
-    // is set, so the default binary stays byte-identical. This exact slot is
+    // (#4157) IR-level inliner for USER code — runs by DEFAULT since the
+    // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);

@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4157) Two independent, default-OFF fast paths for the standalone
- * `externref → f64` ToNumber lowering in `type-coercion.ts` — the single
- * choke point every `any`-typed numeric operand passes through.
+ * (#4157) Two independent fast paths for the standalone `externref → f64`
+ * ToNumber lowering in `type-coercion.ts` — the single choke point every
+ * `any`-typed numeric operand passes through. Both are **default ON** since the
+ * tuned-set flip; `=0` on either flag restores the pre-#4157 emission.
  *
  * ## What the site emits today
  *
@@ -53,6 +54,7 @@
  * `smi-box-fast-path.ts`, same flag, with the measurement in the issue entry.
  */
 import type { Instr, ValType, FuncHandle } from "../ir/types.js";
+import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -77,26 +79,25 @@ const FUSED_NAME = "__to_number";
 const reservedIn = new WeakSet<CodegenContext>();
 
 /**
- * Both flags are **opt-in**: unset ⇒ OFF, and only an affirmative token turns
- * them on. This is the OPPOSITE of the `src/derivation-flags.ts` family (unset
- * ⇒ ON), and deliberately so — that family ships analyses whose OFF position is
- * a revert, whereas these two change EMITTED CODE on a hot path and have not
- * been measured. A typo must not enable them.
+ * Both flags were opt-in until the #4157 tuned-set flip; both are now **default
+ * ON** under the `src/perf-flags.ts` token rule (unset ⇒ on, `0`/`off`/empty ⇒
+ * off, anything else ⇒ the tuned default).
+ *
+ * The reason the original spelling was the OPPOSITE of `derivation-flags.ts` —
+ * "these change EMITTED CODE on a hot path and have not been measured, so a
+ * typo must not enable them" — was retired by the measurement, not by fiat:
+ * entry (34) measured them. The same sentence now runs the other way, since a
+ * typo must not silently disable a default the project chose.
+ *
+ * `JS2WASM_FUSED_TONUMBER` — Slice A, the fused `__to_number`.
  */
-function flagOn(raw: string | undefined): boolean {
-  if (raw === undefined) return false;
-  const norm = raw.trim().toLowerCase();
-  return norm === "1" || norm === "true" || norm === "on" || norm === "yes";
-}
-
-/** `JS2WASM_FUSED_TONUMBER=1` — Slice A. Default OFF. */
 export function fusedToNumberEnabled(): boolean {
-  return flagOn(process.env.JS2WASM_FUSED_TONUMBER);
+  return tunedFlagEnabled(process.env.JS2WASM_FUSED_TONUMBER);
 }
 
-/** `JS2WASM_SMI_FASTPATH=1` — Slice B. Default OFF. */
+/** `JS2WASM_SMI_FASTPATH` — Slice B. Default ON (at the `all` level). */
 export function smiFastPathEnabled(): boolean {
-  return flagOn(process.env.JS2WASM_SMI_FASTPATH) || smiFastPathAllValues();
+  return tunedFlagEnabled(process.env.JS2WASM_SMI_FASTPATH);
 }
 
 /**
@@ -107,9 +108,17 @@ export function smiFastPathEnabled(): boolean {
  * ~20 B at sites whose f64 is provably i32-derived, the unrestricted one pays
  * ~50 B at every boxing site in the module. `=1` keeps the cheap level; `=all`
  * implies `=1`.
+ *
+ * **`all` is the DEFAULT level** — it is what entry (34) measured. `=1` is now a
+ * deliberate step DOWN to the cheap level, so it is the one spelling that has to
+ * be recognised exactly; every other non-off value takes the default.
  */
 export function smiFastPathAllValues(): boolean {
-  return (process.env.JS2WASM_SMI_FASTPATH ?? "").trim().toLowerCase() === "all";
+  const raw = process.env.JS2WASM_SMI_FASTPATH;
+  if (!tunedFlagEnabled(raw)) return false;
+  if (raw === undefined) return true;
+  const norm = raw.trim().toLowerCase();
+  return norm !== "1" && norm !== "true" && norm !== "on" && norm !== "yes";
 }
 
 /**

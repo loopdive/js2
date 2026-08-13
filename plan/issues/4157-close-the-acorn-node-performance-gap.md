@@ -3967,3 +3967,116 @@ harmful arm maximisation and silent unoptimized fallbacks.
 Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6–7.1×**.
 Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
 reuse), partial inlining of user functions, and receiver-type specialisation.
+
+## 2026-08-13 (35) — DEFAULTS FLIPPED: the tuned eleven ship ON, and the byte-identity guarantee inverts
+
+Project-lead decision on entry (34)'s **−12.0 %**: the eleven flags below are
+now the compiler's default. The token rule and the whole table live in
+`src/perf-flags.ts`; every per-pass module delegates to it rather than
+re-implementing a parse, for the reason `derivation-flags.ts` gives — three
+copies of a parse drift, and a parse is what "unset ⇒ ON" turns a literal
+comparison into.
+
+| flag | default when unset | how OFF is spelled |
+| --- | --- | --- |
+| `JS2WASM_INLINE_PROP_IC` | `8` | `0` |
+| `JS2WASM_INLINE_TRUTHY_IC` | `1` (`anyval,boxbool`) | `0` |
+| `JS2WASM_IR_INLINE` | the `on` preset | `0` |
+| `JS2WASM_FUSED_TONUMBER` | on | `0` |
+| `JS2WASM_SMI_FASTPATH` | `all` | `0` |
+| `JS2WASM_LAZY_STR_FLATTEN` | on | `0` |
+| `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` | on | `0` |
+| `JS2WASM_INLINE_HINTS` | `1` (the `cold` profile) | `0` |
+| `JS2WASM_SET_MEMBER_F64` | on | `0` |
+| `JS2WASM_RECEIVER_CSE` | on | `0` |
+| `JS2WASM_EXTERN_GET_IC` | `1` (inline mode) | `0` |
+
+Token rule: `0` / `off` / `false` / `no` / empty disable; **anything else takes
+the tuned default**. That asymmetry is the point — a malformed value must never
+land in a half-enabled state, and for a flag whose OFF position exists to be a
+one-variable revert, "fails to disable" is the safe failure. The levelled flags
+keep their explicit levels (`INLINE_PROP_IC=4`, `SMI_FASTPATH=1`,
+`INLINE_TRUTHY_IC=all`, `EXTERN_GET_IC=census`, `IR_INLINE=adapters`); only a
+value that selects *nothing recognisable* falls back.
+
+### The revert is exact, and that is the load-bearing measurement
+
+`=0` on all eleven, standalone acorn, `optimize: 0`:
+
+| build | sha256 | bytes | checksum |
+| --- | --- | ---: | ---: |
+| pre-flip, everything unset | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| post-flip, everything `=0` | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| pre-flip, explicit tuned-11 | `62f67369…2e3a7d` | 3,297,245 | 422 |
+| post-flip, everything unset | `62f67369…2e3a7d` | 3,297,245 | 422 |
+
+Both directions are **sha256-identical**, not merely the same size. So the flip
+moved the default and changed no emission: the legacy binary is still reachable
+with one variable per flag, and the new default is exactly what entry (34)
+measured rather than something adjacent to it.
+
+Deterministic counts at the new default (`JS2WASM_EXEC_CENSUS`), identical to the
+explicit tuned-11 on the same tree: `__extern_get` **64,691** (entry 31's
+−87.2 %), `__is_truthy` **239,764** (entry 23), `__str_flatten` **252,367**
+(entry 26), `__unbox_number` 214,677. The 64-name differential
+(`cold-tail-differential.mjs`) is identical between new-default and explicit
+tuned-11 in **both** read paths — every hash, every presence count, `nodes`
+32,506, `body` 422 — with only `compileMs` differing.
+
+**`__box_number` reads 1, not the ~401,521 of entry (33).** That figure is
+`SET_MEMBER_F64` measured ALONE; it does not survive composition. Under the full
+set `IR_INLINE` inlines `__box_number` into its callers, and `stripCensusPrefix`
+deliberately removes the entry counter from every inlined copy — so an inlined
+call is genuinely ABSENT from the count rather than double-counted. Reading 1 is
+the census working, not the helper vanishing. Any future single-slice number in
+this file is a single-slice number: entry (29) already recorded that these do
+not compose additively, and this is the same warning seen from the counting side.
+
+### What the flip broke, and what that says
+
+Two classes, both structural rather than incidental:
+
+1. **Every test pinning "unset ⇒ OFF" now pins the wrong contract.** Seven
+   fixtures were rewritten to pin `=0 ⇒ legacy` and to assert positively that
+   unset ENGAGES — the mechanism assertion has to move with the default, or the
+   fixture silently becomes a test that the tuned build merely compiles.
+   `tests/issue-4157-tonumber-fast-paths.test.ts` inverted hardest: its "junk
+   must be OFF" case is now "junk must take the default", which reads backwards
+   against its own pre-flip self and is exactly right.
+2. **`tests/issue-4157-const-box-hoist.test.ts` had to pin `SMI_FASTPATH=0`.**
+   Its unhoisted baseline counts 4 executed `__box_number` calls per iteration;
+   at the new default the SMI guard answers the i31-able `42` inline and the
+   baseline becomes 3. The fixture would have stayed GREEN and stopped meaning
+   what it says — `CONSTANTS_PER_ITERATION` would have drifted from "the
+   constants this pass removes" to "the constants some other pass had not
+   already removed". This is the general hazard of flipping a default under a
+   suite of count-based fixtures: the ones that break are the lucky ones.
+
+### Stderr had to be re-calibrated, and one refusal was demoted
+
+Five passes printed an unconditional "the mechanism fired" line when enabled.
+That was right for an opt-in flag — #4157 twice recorded a confident null from a
+mechanism that was never live — and is wrong for a default: it would put five to
+eight lines on stderr for **every compile in the project**. They now print only
+when the operator named the flag (or its `_DEBUG` channel).
+
+One of them is not a summary and deserves the note: `[extern-get-ic] REFUSED:
+… (prefix-not-key-load)`. `extern-get-cache-arm.ts` states plainly that a module
+where `fillDynamicForinVecArms` / `fillObjVecReflectionHelpers` unshifted ahead
+of the cache arm declines **by design** — and that class is common: it fires on
+essentially every small fixture, while acorn patches 964 of 975 static-key
+sites. Leaving it loud would have made a designed decline look like a defect on
+most compiles in the suite. It is demoted to the same channel, and the loudness
+is preserved for anyone who set the flag deliberately.
+
+### Not verified here, by construction
+
+This is the first time these eleven face the **test262 merge-group
+re-validation**. Every measurement above is acorn plus the targeted fixtures;
+there is no local test262 and the PR-level regression checks are designed
+no-ops. If a flag breaks conformance beyond acorn, the merge queue's auto-park
+is what will find it. Local green is not conformance-proven.
+
+`optimize.ts` is deliberately untouched — its `wasm-opt` timeout fix (entry 31)
+is a separate commit, and `JS2WASM_INLINE_HINTS` reaches it only through
+`inlineHintArgs`, whose OFF position still produces byte-identical argv.
