@@ -2054,3 +2054,55 @@ standalone remains zero-import, GC introduces no import absent from the direct
 control (and commonly removes generic call/destructuring bridges), and the WAT
 checks reject `__call_m_*` dispatch. All admitted fixtures retain runtime,
 validation, exact IR ownership, and optimized-size parity.
+
+### Destructured object-method value checkpoint (2026-08-13)
+
+Exact object-method values may now flow through a const object binding pattern,
+including renaming and immutable local alias chains: `const { add: selected } =
+operations; const invoke = selected; invoke(input)`. The module-binding
+resolver exposes the exact same-source value declaration for binding elements,
+parameters, nested declarations, and variables, so the selector and local call
+graph compare lexical identities instead of names. Incremental Programs retain
+the established stable file/position identity fallback; a changed-snapshot
+warm-up followed by fresh and reused target compiles produces byte-identical
+artifacts and does not let a block-local destructured `parseInt` hide the later
+ambient call.
+
+The new projection is fail-closed and atomic. Every destructuring use of the
+exact const all-method receiver must name represented own methods, the receiver
+must be unwritten and unescaped, and each projected value/const-alias chain may
+be used only by direct non-optional calls in the same lexical owner. Mixed or
+inherited fields, sibling unsafe patterns, object aliases, property writes,
+cross-owner captures, callback/value escapes, mutable links, and optional calls
+stay on a typed select-stage direct body with zero post-claim errors. Optional
+invocation is also rejected by the general call selector because AST-to-IR does
+not lower `?.()` yet; a later valid projection can no longer expose that
+pre-existing select/build mismatch.
+
+Direct-body poison proves `run` and its lifted method are IR-owned with
+`direct=0, IR=1` for both admitted patterns. Both optimized artifacts validate,
+execute, use `call_ref`, and contain no `__call_m_*` dispatcher. Exact output
+and import measurements are:
+
+| Pattern | Target | Direct bytes | IR bytes | Direct imports | IR imports |
+| --- | --- | ---: | ---: | --- | --- |
+| `{ add }` | GC | 3,306 | 2,262 | box, throw-type-error, unbox | box, unbox |
+| `{ add }` | standalone | 6,830 | 5,893 | none | none |
+| `{ add: selected }` plus two const aliases | GC | 3,419 | 2,262 | box, generic-call/array, throw-type-error, unbox | box, unbox |
+| `{ add: selected }` plus two const aliases | standalone | 6,830 | 5,893 | none | none |
+
+The focused object-method suite is **24/24** and the adjacent six-file
+closure/object matrix is **46/46**. Hybrid and strict IR-only shadow validation
+remain **37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**;
+cross-backend differential coverage is **29/29**; the fallback ratchet has zero
+unintended, post-claim, or module-level increases; and native-first host-import
+policy remains **379 imports, 0 legacy-semantic, 0 unknown**. Typecheck,
+formatting, LOC/function budgets, oracle, and coercion-site gates are green.
+Full equivalence reports **1,645 passing, 24 known failures, 12 baseline cases
+now passing, and zero new regressions**.
+
+Remaining R3 boundary: cross-owner object-method values and general callable
+escapes still require a planned capture/runtime-value ABI before admission.
+Receiver-sensitive methods, accessors, mixed/open objects, optional calls, and
+mutable callable fields remain explicit later families; their live direct
+implementations cannot be deleted at this checkpoint.

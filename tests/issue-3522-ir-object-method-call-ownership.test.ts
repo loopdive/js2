@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { compile, createIncrementalCompiler, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 const TARGETS = ["gc", "standalone"] as const;
@@ -37,6 +37,30 @@ export function run(input: number): number {
   };
   const add = operations.add;
   const alias = add;
+  const invoke = alias;
+  return invoke(input);
+}
+`;
+
+const DESTRUCTURED_METHOD_VALUE_SOURCE = `
+export function run(input: number): number {
+  const offset: number = 2;
+  const operations = {
+    add(value: number): number { return value - offset; }
+  };
+  const { add } = operations;
+  return add(input);
+}
+`;
+
+const RENAMED_DESTRUCTURED_METHOD_VALUE_SOURCE = `
+export function run(input: number): number {
+  const offset: number = 2;
+  const operations = {
+    add(value: number): number { return value + offset; }
+  };
+  const { add: selected } = operations;
+  const alias = selected;
   const invoke = alias;
   return invoke(input);
 }
@@ -202,6 +226,94 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
+  it.each(TARGETS)("prepares a destructured exact object-method value in the %s lane", async (target) => {
+    const direct = await compile(DESTRUCTURED_METHOD_VALUE_SOURCE, {
+      fileName: `object-method-value-destructured-direct-${target}.ts`,
+      emitWat: true,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
+      prepared = await compile(DESTRUCTURED_METHOD_VALUE_SOURCE, {
+        fileName: `object-method-value-destructured-prepared-${target}.ts`,
+        emitWat: true,
+        experimentalIR: true,
+        optimize: true,
+        target,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(38);
+    }
+    expect(outcome(prepared)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
+  it.each(TARGETS)("preserves a renamed destructured method through const aliases in the %s lane", async (target) => {
+    const direct = await compile(RENAMED_DESTRUCTURED_METHOD_VALUE_SOURCE, {
+      fileName: `object-method-value-destructured-alias-direct-${target}.ts`,
+      emitWat: true,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
+      prepared = await compile(RENAMED_DESTRUCTURED_METHOD_VALUE_SOURCE, {
+        fileName: `object-method-value-destructured-alias-prepared-${target}.ts`,
+        emitWat: true,
+        experimentalIR: true,
+        optimize: true,
+        target,
+        trackIrOutcomes: true,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(42);
+    }
+    expect(outcome(prepared)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+  });
+
   it("keeps mutable object-method value aliases on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
@@ -259,6 +371,234 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
+  it("keeps destructuring through an untracked object alias on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-object-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      code: "call-resolution-unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps mixed exact and inherited destructuring atomic on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add, toString } = operations;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-mixed-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps receiver-wide destructuring atomic across declarations", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { toString } = operations;
+        const { add } = operations;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-receiver-atomic-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps optional calls through destructured methods on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        add?.(input);
+        return 42;
+      }`,
+      {
+        fileName: "object-method-value-destructured-optional-call-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("does not let a later destructured projection mask an earlier optional call", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const other = (value: number): number => value + 1;
+        other?.(input);
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        operations.add?.(input);
+        const { add } = operations;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-prior-optional-call-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      code: "body-shape-rejected",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps destructured method values captured by nested closures on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        return invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-captured-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps captured destructured method alias chains on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const selected = add;
+        const invoke = (value: number): number => selected(value);
+        return invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-alias-captured-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps reassigned method fields destructured later on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 1; }
+        };
+        operations.add = (value: number): number => value + 2;
+        const { add } = operations;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-reassigned-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
   it("keeps a bare nested-function alias on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
@@ -285,32 +625,50 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("does not let a block-local callable alias hide a later ambient call", async () => {
-    const result = await compile(
-      `export function run(input: number): number {
-        for (let i: number = 0; i < 1; i++) {
-          const local = (value: number): number => value + 1;
-          const parseInt = local;
-          parseInt(input);
-        }
-        return parseInt("42");
-      }`,
+  it("does not let a block-local destructured method hide a later ambient call after compiler reuse", async () => {
+    const source = `export function run(input: number): number {
       {
-        fileName: "block-local-callable-alias-shadow.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      },
-    );
+        const operations = {
+          add(value: number): number { return value + 1; }
+        };
+        const { add: parseInt } = operations;
+        parseInt(input);
+      }
+      return parseInt("42");
+    }`;
+    const options = {
+      fileName: "block-local-destructured-method-shadow.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    } as const;
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect((await instantiate(result)).run!(0)).toBe(42);
-    expect(outcome(result)).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
-    });
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    const fresh = await compile(source, options);
+    const compiler = createIncrementalCompiler(options);
+    try {
+      const contaminant = source
+        .replace("add(value", "sub(value")
+        .replace("{ add: parseInt }", "{ sub: parseNum }")
+        .replace("parseInt(input)", "parseNum(input)");
+      const warmup = await compiler.compile(contaminant);
+      expect(warmup.success, warmup.errors.map((error) => error.message).join("\n")).toBe(true);
+      const warmed = await compiler.compile(source);
+      const reused = await compiler.compile(source);
+      for (const result of [fresh, warmed, reused]) {
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect((await instantiate(result)).run!(0)).toBe(42);
+        expect(outcome(result)).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+      }
+      expect(Buffer.from(warmed.binary)).toEqual(Buffer.from(fresh.binary));
+      expect(Buffer.from(reused.binary)).toEqual(Buffer.from(fresh.binary));
+    } finally {
+      compiler.dispose();
+    }
   });
 
   it("keeps receiver-sensitive object methods on the direct path", async () => {
