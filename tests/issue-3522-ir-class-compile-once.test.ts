@@ -1152,56 +1152,149 @@ describe("#3522 instance class-method compile-once ownership", () => {
   );
 
   it.each(["gc", "standalone"] as const)(
-    "keeps cyclic class ABIs on one typed direct path in the %s lane",
+    "prepares mutually recursive class layouts exactly once in the %s lane",
     async (target) => {
       const source = `
         class Left {
-          right: Right;
-          constructor(right: Right) { this.right = right; }
+          right!: Right;
+          constructor() {}
+          attach(right: Right): void { this.right = right; }
+          value(): number { return this.right.amount; }
         }
         class Right {
-          left: Left;
-          constructor(left: Left) { this.left = left; }
+          left!: Left;
+          amount: number;
+          constructor(amount: number) { this.amount = amount; }
+          attach(left: Left): void { this.left = left; }
         }
-        export function marker(): number { return 1; }
+        export function run(): number {
+          const left = new Left();
+          const right = new Right(7);
+          left.attach(right);
+          right.attach(left);
+          return left.value() + right.left.value();
+        }
       `;
-      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const direct = await compile(source, {
+        fileName: `cyclic-class-constructor-abi-${target}.ts`,
+        experimentalIR: false,
+        emitWat: true,
+        target,
+      });
+      expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(direct.binary)).toBe(true);
+      expect((await instantiate(direct)).run!()).toBe(14);
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
       try {
-        Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-        const direct = await compile(source, {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = [
+          "Left_new",
+          "Left_attach",
+          "Left_value",
+          "Right_new",
+          "Right_attach",
+        ].join(",");
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        const result = await compile(source, {
           fileName: `cyclic-class-constructor-abi-${target}.ts`,
           experimentalIR: true,
           trackIrOutcomes: true,
           emitWat: true,
           target,
         });
-        expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
-        expect(WebAssembly.validate(direct.binary)).toBe(true);
-        for (const name of ["Left_new", "Right_new"]) {
-          expect(classMemberOutcome(direct, name)).toMatchObject({
-            kind: "unsupported",
-            stage: "select",
-            legacyBodyEmitted: true,
-            irBodyEmitted: false,
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        for (const name of ["Left_new", "Left_attach", "Left_value", "Right_new", "Right_attach"]) {
+          expect(classMemberOutcome(result, name)).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
           });
         }
-        expect(direct.irPostClaimErrors ?? []).toEqual([]);
-        expect(watTypeDefinition(direct.wat, "Left")).toContain("(field $right (mut externref))");
+        expect(functionOutcome(result, "run")).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        expect(watTypeDefinition(result.wat, "Left")).toContain("(field $right (mut (ref null");
+        expect(watTypeDefinition(result.wat, "Right")).toContain("(field $left (mut (ref null");
+        for (const name of ["Left_attach", "Left_value", "Right_attach", "run"]) {
+          expect(watFunctionBody(result.wat, name)).not.toMatch(
+            /any\.convert_extern|extern\.convert_any|ref\.(?:test|cast)|call_ref|call_indirect/,
+          );
+        }
+        expect((await instantiate(result)).run!()).toBe(14);
+        expect(result.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+      } finally {
+        if (previousClassPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        if (previousFunctionPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
+      }
+    },
+  );
 
-        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Left_new,Right_new";
-        const poisoned = await compile(source, {
-          fileName: `cyclic-class-constructor-abi-${target}.ts`,
+  it.each(["gc", "standalone"] as const)(
+    "prepares a self-recursive class layout exactly once in the %s lane",
+    async (target) => {
+      const source = `
+        class Node {
+          next!: Node;
+          value: number;
+          constructor(value: number) { this.value = value; }
+          link(next: Node): void { this.next = next; }
+          sum(): number { return this.value + this.next.value; }
+        }
+        export function run(): number {
+          const first = new Node(3);
+          const second = new Node(4);
+          first.link(second);
+          return first.sum();
+        }
+      `;
+      const previousClassPoison = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      const previousFunctionPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Node_new,Node_link,Node_sum";
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+        const result = await compile(source, {
+          fileName: `self-recursive-class-layout-${target}.ts`,
           experimentalIR: true,
           trackIrOutcomes: true,
+          emitWat: true,
           target,
         });
-        expect(poisoned.success).toBe(false);
-        expect(poisoned.errors.some((error) => error.message.includes("injected direct class-body poison:"))).toBe(
-          true,
-        );
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        for (const name of ["Node_new", "Node_link", "Node_sum"]) {
+          expect(classMemberOutcome(result, name)).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+          });
+        }
+        expect(functionOutcome(result, "run")).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+        expect(watTypeDefinition(result.wat, "Node")).toContain("(field $next (mut (ref null");
+        for (const name of ["Node_link", "Node_sum", "run"]) {
+          expect(watFunctionBody(result.wat, name)).not.toMatch(
+            /any\.convert_extern|extern\.convert_any|ref\.(?:test|cast)|call_ref|call_indirect/,
+          );
+        }
+        expect((await instantiate(result)).run!()).toBe(7);
       } finally {
-        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
-        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+        if (previousClassPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previousClassPoison;
+        if (previousFunctionPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousFunctionPoison;
       }
     },
   );

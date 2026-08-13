@@ -856,15 +856,21 @@ function collectModuleFacts(
   return { allocations };
 }
 
-function collectLayoutsFromType(type: IrType, layouts: Map<string, LinearLayoutPlan>): void {
+function collectLayoutsFromType(
+  type: IrType,
+  layouts: Map<string, LinearLayoutPlan>,
+  seenClassShapes = new Set<IrClassShape>(),
+): void {
   switch (type.kind) {
     case "object":
       internLayout(layouts, recordLayoutForObject(type.shape));
-      for (const field of type.shape.fields) collectLayoutsFromType(field.type, layouts);
+      for (const field of type.shape.fields) collectLayoutsFromType(field.type, layouts, seenClassShapes);
       return;
     case "class":
       internLayout(layouts, recordLayoutForClass(type.shape));
-      for (const field of type.shape.fields) collectLayoutsFromType(field.type, layouts);
+      if (seenClassShapes.has(type.shape)) return;
+      seenClassShapes.add(type.shape);
+      for (const field of type.shape.fields) collectLayoutsFromType(field.type, layouts, seenClassShapes);
       return;
     case "boxed":
       internLayout(
@@ -873,22 +879,23 @@ function collectLayoutsFromType(type: IrType, layouts: Map<string, LinearLayoutP
           { name: "value", storage: linearStorageForIrType(type.inner) },
         ]),
       );
-      collectLayoutsFromType(type.inner, layouts);
+      collectLayoutsFromType(type.inner, layouts, seenClassShapes);
       return;
     case "string":
       internLayout(layouts, planLinearStringLayout());
       return;
     case "vec":
       internLayout(layouts, planLinearVectorLayout(type.elementType));
-      collectLayoutsFromType(type.elementType, layouts);
+      collectLayoutsFromType(type.elementType, layouts, seenClassShapes);
       return;
     case "closure":
     case "callable":
-      for (const param of type.signature.params) collectLayoutsFromType(param, layouts);
-      if (type.signature.returnType !== null) collectLayoutsFromType(type.signature.returnType, layouts);
+      for (const param of type.signature.params) collectLayoutsFromType(param, layouts, seenClassShapes);
+      if (type.signature.returnType !== null)
+        collectLayoutsFromType(type.signature.returnType, layouts, seenClassShapes);
       return;
     case "union":
-      for (const member of type.members) collectLayoutsFromType(member, layouts);
+      for (const member of type.members) collectLayoutsFromType(member, layouts, seenClassShapes);
       return;
     default:
       return;
