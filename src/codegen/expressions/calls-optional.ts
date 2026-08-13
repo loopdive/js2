@@ -9,12 +9,14 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { resolveWasmType } from "../index.js";
+import { addStringImports, resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
-import { compileExpression, VOID_RESULT } from "../shared.js";
+import { coerceType, compileExpression, ensureLateImport, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
+import { addStringConstantGlobal } from "../registry/imports.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { compileCallablePropertyCall } from "./calls-closures.js";
 import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imports.js";
 import { getFuncParamTypes } from "./helpers.js";
@@ -27,6 +29,20 @@ export function compileOptionalCallExpression(
   expr: ts.CallExpression,
 ): InnerResult {
   const propAccess = expr.expression as ts.PropertyAccessExpression;
+  // `obj.method?.(args)` short-circuits on the METHOD VALUE, not on `obj`.
+  // It is a distinct AST shape from `obj?.method(args)`: the question-dot is
+  // carried by the CallExpression while the PropertyAccessExpression is plain.
+  // Keeping it in the receiver-null path below made `{ }.rng?.()` attempt an
+  // ordinary call and throw "rng is not a function" (uuid v1/v6/v7). `super`
+  // remains on the static class-method lane: converting its typed receiver to
+  // a host call loses the instance identity used as the method's `this`.
+  if (
+    expr.questionDotToken &&
+    !propAccess.questionDotToken &&
+    propAccess.expression.kind !== ts.SyntaxKind.SuperKeyword
+  ) {
+    return compileOptionalPropertyValueCall(ctx, fctx, expr, propAccess);
+  }
   const objType = compileExpression(ctx, fctx, propAccess.expression);
   if (!objType) return null;
 
@@ -167,7 +183,55 @@ export function compileOptionalCallExpression(
       const funcIdx = ctx.funcMap.get(importName);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: tmp });
-        for (const arg of expr.arguments) compileExpression(ctx, fctx, arg);
+        const paramTypes = getFuncParamTypes(ctx, funcIdx);
+        const userParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
+        for (let i = 0; i < expr.arguments.length; i++) {
+          if (i >= userParamCount) {
+            const extraType = compileExpression(ctx, fctx, expr.arguments[i]!);
+            if (extraType !== null) fctx.body.push({ op: "drop" });
+            continue;
+          }
+          const expected = paramTypes?.[i + 1];
+          const actual = compileExpression(ctx, fctx, expr.arguments[i]!, expected);
+          if (actual === null) {
+            pushDefaultValue(fctx, expected ?? { kind: "externref" }, ctx);
+          } else if (expected && !valTypesMatch(actual, expected)) {
+            coerceType(ctx, fctx, actual, expected);
+          }
+        }
+        if (paramTypes) {
+          for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
+            const paramType = paramTypes[i]!;
+            if ((methodName === "substring" || methodName === "slice") && i === 2 && paramType.kind === "f64") {
+              addStringImports(ctx);
+              const lengthIdx = ctx.jsStringImports.get("length");
+              if (lengthIdx === undefined) {
+                fctx.body.push({ op: "f64.const", value: 0x7fffffff });
+              } else {
+                fctx.body.push(
+                  { op: "local.get", index: tmp },
+                  { op: "call", funcIdx: lengthIdx },
+                  { op: "f64.convert_i32_u" },
+                );
+              }
+            } else if (paramType.kind === "externref") {
+              const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+              flushLateImportShifts(ctx, fctx);
+              if (undefinedIdx === undefined) fctx.body.push({ op: "ref.null.extern" });
+              else fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_undefined")! });
+            } else if (paramType.kind === "f64") {
+              const value =
+                methodName === "split"
+                  ? -1
+                  : methodName === "includes" || methodName === "startsWith" || methodName === "endsWith"
+                    ? Number.NaN
+                    : 0;
+              fctx.body.push({ op: "f64.const", value });
+            } else {
+              pushDefaultValue(fctx, paramType, ctx);
+            }
+          }
+        }
         fctx.body.push({ op: "call", funcIdx });
         methodResolved = true;
       }
@@ -241,6 +305,88 @@ export function compileOptionalCallExpression(
   });
 
   return resultType;
+}
+
+function compileOptionalPropertyValueCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult {
+  const externref: ValType = { kind: "externref" };
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (receiverType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (receiverType.kind !== "externref") {
+    coerceType(ctx, fctx, receiverType, externref);
+  }
+  const receiverLocal = allocLocal(fctx, `__optprop_recv_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: receiverLocal });
+
+  const methodName = ts.isPrivateIdentifier(propAccess.name) ? propAccess.name.text.slice(1) : propAccess.name.text;
+  const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
+  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externref]);
+  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [externref, externref], []);
+  const callIdx = ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref]);
+  const getUndefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [externref]);
+  addStringConstantGlobal(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
+  const resolvedGetIdx = ctx.funcMap.get("__extern_get") ?? getIdx;
+  const resolvedNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
+  const resolvedPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
+  const resolvedCallIdx = ctx.funcMap.get("__call_function") ?? callIdx;
+  if (
+    resolvedGetIdx === undefined ||
+    resolvedNewIdx === undefined ||
+    resolvedPushIdx === undefined ||
+    resolvedCallIdx === undefined
+  ) {
+    fctx.body.push(...defaultValueInstrs(externref));
+    return externref;
+  }
+
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push({ op: "call", funcIdx: resolvedGetIdx });
+  const calleeLocal = allocLocal(fctx, `__optprop_fn_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.tee", index: calleeLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
+
+  const savedBody = pushBody(fctx);
+  fctx.body.push({ op: "call", funcIdx: resolvedNewIdx });
+  const argsLocal = allocLocal(fctx, `__optprop_args_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const argument of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argType = compileExpression(ctx, fctx, ts.isSpreadElement(argument) ? argument.expression : argument);
+    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
+    fctx.body.push({ op: "call", funcIdx: resolvedPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: resolvedCallIdx });
+  const elseInstrs = fctx.body;
+  popBody(fctx, savedBody);
+
+  const resolvedUndefinedIdx = ctx.funcMap.get("__get_undefined") ?? getUndefinedIdx;
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: externref },
+    then:
+      resolvedUndefinedIdx === undefined
+        ? [{ op: "ref.null.extern" }]
+        : [{ op: "call", funcIdx: resolvedUndefinedIdx }],
+    else: elseInstrs,
+  });
+  return externref;
 }
 
 /** A dynamic optional-method receiver that can be read twice observably safely. */

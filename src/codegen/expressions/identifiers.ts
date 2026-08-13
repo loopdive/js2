@@ -16,6 +16,7 @@ import {
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
+import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -69,6 +70,7 @@ import {
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
 import { definedFuncAt } from "../func-space.js";
+import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -677,7 +679,7 @@ function compileIdentifierCore(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
-    // TDZ check for function-local let/const variables
+    materializeHoistedFunctionValueBinding(ctx, fctx, name);
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
       const tdzResult = analyzeTdzAccess(ctx, id);
@@ -1787,13 +1789,7 @@ function closureRootTypeIdxsFor(ctx: CodegenContext): number[] {
  * natively via `ref.test`, for the `noJsHost` (standalone / WASI) string-name
  * path where the legacy `__instanceof` host import is unsatisfiable.
  *
- * Return contract:
- *   - non-empty list → emit an OR of `ref.test <typeIdx>` (membership test)
- *   - empty list     → the module never registers that builtin's backing struct,
- *                      so NO value can be an instance → a definite `0`
- *   - `undefined`    → this builtin is not natively modeled here; caller emits a
- *                      conservative `0` (a missed conversion, never a wrong
- *                      `true`)
+ * Non-empty lists are unions; empty is false; undefined has no native model.
  *
  * SAFETY: this whole branch only runs under `noJsHost`, where the string-name
  * path currently *always* leaks `__instanceof` (→ the module cannot instantiate
@@ -2023,6 +2019,10 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   if (staticResult !== undefined) {
     return emitConstantInstanceOf(ctx, fctx, expr, staticResult);
   }
+
+  const hostDate =
+    ctorName === "Date" ? emitHostOrNativeBuiltinInstanceOf(ctx, fctx, expr, ctorName, [ensureDateStruct(ctx)]) : null;
+  if (hostDate) return hostDate;
 
   // (#1536c) Standalone / WASI: `instance instanceof MyError` where
   // `class MyError extends Error {}` is an externref-backed user subclass. The

@@ -836,18 +836,27 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
   const shapeIdByCsv = new Map<string, number>();
   const collidingTypeIdxs: { typeIdx: number; structName: string; shapeId: number }[] = [];
 
+  const allocateShapeId = (csv: string): number => {
+    const existing = shapeIdByCsv.get(csv);
+    if (existing !== undefined) return existing;
+    // Shape id zero is the physical default observed when a structurally
+    // accepted but logically unrelated receiver reaches a stamped candidate
+    // arm. Reserve it as the invalid/miss identity so it can never authorize a
+    // field read or write (#4383).
+    if (ctx.shapeNameCsvById.length === 0) ctx.shapeNameCsvById.push("");
+    const shapeId = ctx.shapeNameCsvById.length;
+    ctx.shapeNameCsvById.push(csv);
+    shapeIdByCsv.set(csv, shapeId);
+    return shapeId;
+  };
+
   for (const group of byShape.values()) {
     const distinctNameCsvs = new Set(group.map((m) => m.names.join(",")));
-    if (distinctNameCsvs.size < 2) continue; // unique-name shape — leave untouched
+    if (distinctNameCsvs.size < 2) continue;
 
     for (const m of group) {
       const csv = m.names.join(",");
-      let shapeId = shapeIdByCsv.get(csv);
-      if (shapeId === undefined) {
-        shapeId = ctx.shapeNameCsvById.length;
-        ctx.shapeNameCsvById.push(csv);
-        shapeIdByCsv.set(csv, shapeId);
-      }
+      const shapeId = allocateShapeId(csv);
       ctx.shapeIdByStructName.set(m.structName, shapeId);
       collidingTypeIdxs.push({ typeIdx: m.typeIdx, structName: m.structName, shapeId });
     }

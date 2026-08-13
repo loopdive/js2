@@ -637,7 +637,7 @@ function samePreparedVecLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boo
 function implicitSupportRequirement(
   instr: IrInstr,
   valueTypes: ReadonlyMap<IrValueId, IrType>,
-  hasPreparedClosureSupport = false,
+  hasPreparedSupport = false,
   exceptionSupportPrepared = false,
 ): string | null {
   switch (instr.kind) {
@@ -685,13 +685,15 @@ function implicitSupportRequirement(
     case "closure.new":
     case "closure.cap":
     case "closure.call":
-      return hasPreparedClosureSupport
+      return hasPreparedSupport
         ? null
         : `${instr.kind} resolves closure wrapper/type support beyond its explicit callable ref`;
     case "refcell.new":
     case "refcell.get":
     case "refcell.set":
-      return `${instr.kind} resolves ref-cell type support without an explicit symbolic type ref`;
+      return hasPreparedSupport
+        ? null
+        : `${instr.kind} resolves ref-cell type support without an explicit symbolic type ref`;
     case "vec.len":
     case "vec.get":
     case "vec.set":
@@ -815,15 +817,17 @@ function addClassLayout(
     return;
   }
   const terminal = terminalInventoryUnit(inventory, evidence.terminalOwnerUnitId);
-  const borrowsOwnNestedAccessorLayout =
+  const borrowsOwnNestedClassLayout =
     terminalOwner !== null &&
     terminal?.containingTerminalOwnerId === terminalOwner &&
     terminal.lexicalOwnerId === shape.classId &&
-    (terminal.kind === "class-instance-getter" ||
+    (terminal.kind === "class-constructor" ||
+      terminal.kind === "class-instance-method" ||
+      terminal.kind === "class-instance-getter" ||
       terminal.kind === "class-static-getter" ||
       terminal.kind === "class-instance-setter" ||
       terminal.kind === "class-static-setter");
-  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner) && !borrowsOwnNestedAccessorLayout) {
+  if (terminalOwner !== null && !candidateTerminalUnitIds.has(terminalOwner) && !borrowsOwnNestedClassLayout) {
     addFailure(evidence, {
       code: "foreign-source-class",
       ownerUnitId: evidence.terminalOwnerUnitId,
@@ -839,7 +843,7 @@ function addClassLayout(
     structuralReferenceKey: irTypeBindingKey(ref.binding),
     expected: (intent) => intent.kind === "class" && intent.classId === shape.classId,
   });
-  if (borrowsOwnNestedAccessorLayout && !candidateTerminalUnitIds.has(terminalOwner)) {
+  if (borrowsOwnNestedClassLayout && !candidateTerminalUnitIds.has(terminalOwner)) {
     const key = `class-layout\u0000${ref.binding.bindingId}`;
     const dependency = evidence.abiDependencies.get(key);
     if (dependency) {
@@ -1319,11 +1323,15 @@ function collectFunctionEvidence(
     }
     const preparedRefs = input.closureSupport?.typeRefs.get(type);
     if (
-      (type.kind === "closure" || type.kind === "callable") &&
+      (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed") &&
       recordPreparedClosureRefs(preparedRefs, `prepared IR ${type.kind} type must use Program ABI support refs`)
     ) {
-      for (const param of type.signature.params) collectType(param);
-      if (type.signature.returnType) collectType(type.signature.returnType);
+      if (type.kind === "boxed") {
+        collectType(type.inner);
+      } else {
+        for (const param of type.signature.params) collectType(param);
+        if (type.signature.returnType) collectType(type.signature.returnType);
+      }
       return;
     }
     recordImplicitTypeRequirement(
@@ -1362,7 +1370,7 @@ function collectFunctionEvidence(
         instructionClosureSupport,
         `prepared IR ${nested.kind} must use Program ABI support refs`,
       );
-      const hasPreparedClosureSupport =
+      const hasPreparedSupport =
         nested.kind === "closure.cap"
           ? (functionClosureSupport?.length ?? 0) > 0
           : (instructionClosureSupport?.length ?? 0) > 0;
@@ -1379,7 +1387,7 @@ function collectFunctionEvidence(
       const implicitSupport = implicitSupportRequirement(
         nested,
         valueTypes,
-        hasPreparedClosureSupport,
+        hasPreparedSupport,
         input.exceptionSupportPrepared === true || exceptionTagTypeRef !== undefined,
       );
       if (implicitSupport) {

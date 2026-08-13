@@ -1,10 +1,10 @@
 ---
 id: 4383
 title: "UUID original suite exposes vector, crypto, exception, and callback ABI gaps"
-status: ready
+status: in_progress
 sprint: current
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 priority: high
 horizon: m
 feasibility: hard
@@ -18,6 +18,55 @@ related: [3995]
 files:
   - tests/dogfood/uuid-upstream-suite.mjs
   - tests/dogfood/report/uuid-upstream-suite.json
+loc-budget-allow:
+  - src/codegen/statements/nested-declarations.ts
+  - src/runtime.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/index.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/closures.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/context/types.ts
+  - src/codegen/literals.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/declarations/object-shape-widening.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/calls.ts::compileCallExpression
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
+  - src/runtime.ts::<anonymous>#89
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/statements/nested-declarations.ts::emitSetExtrasArgv
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/index.ts::generateModule
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+coercion-sites-allow:
+  - src/codegen/closure-exports.ts
 ---
 
 # UUID original suite exposes vector, crypto, exception, and callback ABI gaps
@@ -60,8 +109,8 @@ acceptance oracle.
 
 ## Acceptance criteria
 
-- [ ] `v7.test.ts` emits valid Wasm and its 14 callbacks execute.
-- [ ] The v1 illegal-cast cluster is reduced to a minimal compiler regression
+- [x] `v7.test.ts` emits valid Wasm and its 14 callbacks execute.
+- [x] The v1 illegal-cast cluster is reduced to a minimal compiler regression
       and fixed without UUID-specific source rewriting.
 - [ ] Byte-vector parse/stringify/buffer-offset behavior matches Node.
 - [ ] Node-platform `crypto`/RNG capability is either provided honestly or
@@ -70,8 +119,41 @@ acceptance oracle.
 - [ ] The unchanged original suite reaches 75/75 Node and 75/75 Wasm, with zero
       harness-incompatible tests.
 
+## 2026-08-12 implementation checkpoint
+
+The unchanged pinned suite reaches **10/75 Wasm** with **75/75 Node**, up from
+**3/75 Wasm** on current `main`. All ten generated modules compile and validate;
+`main` validates only nine because `v7.test.ts` has a callback ABI mismatch.
+
+The seven newly passing callbacks are three v1 cases formerly blocked by an
+illegal cast, one v4 option-path case, and three v7 cases formerly blocked by
+the invalid module. Focused reductions pass 16/16 and cover typed-array identity,
+optional and shadowed callables, missing option fields, and collision-safe
+struct reads. This is a real compatibility increment, but it does not fix the
+broad vector, crypto, digest, exception, and dynamic-state failures: **65/75**
+upstream callbacks still fail and remain follow-up work for the final 75/75
+acceptance target.
+
 ## Reproduction
 
 ```bash
 node --import tsx tests/dogfood/uuid-upstream-suite.mjs --json
 ```
+
+## 2026-08-13 merge-group regression handoff
+
+The first merge-group attempt exposed 74 host-lane and 99 standalone
+candidate regressions. The host set now reproduces at **74/74 passing** after
+generic fixes for function-value observation, internal-call arguments,
+nullish property reads, symbol-key widening, optional `super` calls, async
+hoisting, and null-prototype native host objects.
+
+Standalone reruns recovered 86 of the 99 rows after the current-main merge. Two additional generic routing
+fixes keep primitive `valueOf()` and constructor-assigned methods on the native
+standalone paths. The 13 locally unresolved rows are not changes introduced by
+this branch: the exact pre-PR source also fails them in the current checkout.
+They cover three tests requiring the unavailable local QuickJS artifact, one
+absent Test262 harness file, and nine pre-existing module-binding cases. The
+exact 74 host regressions now pass 74/74, the 86 locally executable standalone
+rows pass, and the authoritative merge-group baseline remains the final oracle
+before removing the hold label.

@@ -25,6 +25,14 @@ const GENERATED_ROOT = join(resolve(HERE, "..", "..", ".uuid-upstream-suite"), "
 
 const ASSERT_SHIM = String.raw`
 function __uuid_fail(message) { throw new Error(String(message || "Assertion failed")); }
+function __uuid_repr(value) {
+  if (value != null && typeof value.length === "number") {
+    let out = "[";
+    for (let i = 0; i < value.length; i++) out += (i === 0 ? "" : ",") + String(value[i]);
+    return out + "]";
+  }
+  return String(value);
+}
 function __uuid_same(a, b) {
   if (Object.is(a, b)) return true;
   if (a == null || b == null || typeof a !== typeof b) return false;
@@ -44,12 +52,12 @@ function __uuid_same(a, b) {
 }
 const assert = {
   ok(value, message) { if (!value) __uuid_fail(message || "expected a truthy value"); },
-  equal(actual, expected, message) { if (actual != expected) __uuid_fail(message || (String(actual) + " != " + String(expected))); },
+  equal(actual, expected, message) { if (actual != expected) __uuid_fail((message ? String(message) + ": " : "") + String(actual) + " != " + String(expected)); },
   notEqual(actual, expected, message) { if (actual == expected) __uuid_fail(message || "values are equal"); },
   notStrictEqual(actual, expected, message) { if (actual === expected) __uuid_fail(message || "values are strictly equal"); },
-  strictEqual(actual, expected, message) { if (actual !== expected) __uuid_fail(message || "values are not strictly equal"); },
-  deepEqual(actual, expected, message) { if (!__uuid_same(actual, expected)) __uuid_fail(message || "values are not deeply equal"); },
-  deepStrictEqual(actual, expected, message) { if (!__uuid_same(actual, expected)) __uuid_fail(message || "values are not deeply equal"); },
+  strictEqual(actual, expected, message) { if (actual !== expected) __uuid_fail((message ? String(message) + ": " : "") + String(actual) + " !== " + String(expected)); },
+  deepEqual(actual, expected, message) { if (!__uuid_same(actual, expected)) __uuid_fail((message ? String(message) + ": " : "") + __uuid_repr(actual) + " != " + __uuid_repr(expected)); },
+  deepStrictEqual(actual, expected, message) { if (!__uuid_same(actual, expected)) __uuid_fail((message ? String(message) + ": " : "") + __uuid_repr(actual) + " != " + __uuid_repr(expected)); },
   throws(fn, expected, message) {
     let thrown = null;
     try { fn(); } catch (error) { thrown = error; }
@@ -238,7 +246,7 @@ function helperSource(source, packageRoot, generatedDirectory) {
 }
 
 function wasmModuleSource(source, filePath, packageRoot, generatedDirectory) {
-  const transformed = transformSource({ source, filePath, packageRoot, generatedDirectory, native: false }).source;
+  let transformed = transformSource({ source, filePath, packageRoot, generatedDirectory, native: false }).source;
   return [
     ASSERT_SHIM,
     REGISTRATION_SHIM,
@@ -357,6 +365,7 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
       skipSemanticDiagnostics: true,
       target: "gc",
       platform: "node",
+      deferTopLevelInit: true,
     });
   } catch (error) {
     result = { success: false, errors: [{ message: recordNativeError(error) }] };
@@ -408,7 +417,9 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
   try {
     const imports = result.importObject ?? {};
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
     imports.__setInstance?.(instance);
+    instance.exports.__module_init?.();
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
     const statuses = exports.uuidRun(makeMockContext());
     wasmResults = Array.from(statuses, (value) => value === 1);

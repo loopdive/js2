@@ -285,13 +285,23 @@ export function deduplicateLocals(fctx: FunctionContext): void {
   fctx.locals = fctx.locals.filter((_, i) => !isDuplicate[i]);
 }
 
-function rewriteLocalRefs(instrs: Instr[], indexRemap: Map<number, number>): void {
+function rewriteLocalRefs(
+  instrs: Instr[],
+  indexRemap: Map<number, number>,
+  seen: WeakSet<object> = new WeakSet<object>(),
+): void {
   for (const instr of instrs) {
+    // Instruction fragments are sometimes intentionally shared between two
+    // control-flow arms (for example Array#join's element conversion). A local
+    // compaction remap is not idempotent: visiting the same object through both
+    // arms applies old→new twice and can redirect it to an unrelated local.
+    if (seen.has(instr)) continue;
+    seen.add(instr);
     const op = instr.op;
     if (op === "local.get" || op === "local.set" || op === "local.tee") {
       const newIdx = indexRemap.get((instr as { index: number }).index);
       if (newIdx !== undefined) (instr as { index: number }).index = newIdx;
     }
-    walkChildren(instr, (body) => rewriteLocalRefs(body, indexRemap));
+    walkChildren(instr, (body) => rewriteLocalRefs(body, indexRemap, seen));
   }
 }

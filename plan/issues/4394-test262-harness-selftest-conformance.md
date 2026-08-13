@@ -21,9 +21,6 @@ loc-budget-allow:
   # It belongs next to the #3536 arm it generalizes and to
   # `compileObjectLiteralForStruct`, which it dispatches to; both live here.
   - src/codegen/literals.ts
-  # +7 lines: the new arm's body lives in its own module
-  # (codegen/host-dyn-valueof.ts); what remains here is the guarded call.
-  - src/codegen/expressions/call-receiver-method.ts
   # +27 lines: entries in the two ambient-global registries (`LIB_GLOBALS` and
   # `AMBIENT_BUILTIN_CTORS`) plus the comments recording why they must stay in
   # step. Both registries live in this file and are read only from it; moving
@@ -54,8 +51,6 @@ func-budget-allow:
   # +13 lines: a one-condition change to the existing widening scan plus the
   # comment recording the literal-vs-non-literal divergence it closes.
   - src/codegen/literals.ts::compileArrayLiteral
-  # +6 lines: the new arm is a guarded call into codegen/host-dyn-valueof.ts.
-  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   # +2 lines: a two-line pointer above the call that replaced the inline
   # maker-name ternary. The decision lives in codegen/callback-ctor-bridge.ts.
   - src/codegen/closures.ts::compileArrowAsCallback
@@ -77,7 +72,6 @@ files:
   - tests/issue-4394-nested-fn-static-write.test.ts
   - tests/issue-4394-optional-field-literal-arg.test.ts
   - tests/issue-4394-mixed-array-literal-host.test.ts
-  - src/codegen/host-dyn-valueof.ts
   - tests/issue-4394-host-dynamic-valueof.test.ts
   - tests/test262-runner.ts
   - src/codegen/extern-declarations.ts
@@ -307,21 +301,18 @@ the blanket change in place, while the identity contract was broken.
 
 ### Fix
 
-Mirror #4201's structure in `src/codegen/host-dyn-valueof.ts` — decide
-in-module and return the ORIGINAL externref for the identity case, never a host
-round-trip:
+Originally landed as `src/codegen/host-dyn-valueof.ts`, mirroring #4201's
+structure: decide in-module and return the ORIGINAL externref for the identity
+case, never a host round-trip.
 
-```
-recv → local
-local.get recv ; call __dyn_valueof_is_override           ;; i32
-if (result externref)
-  then local.get recv ; call __dyn_valueof_call            ;; wrapper slot / user override
-  else local.get recv                                      ;; identity, no round-trip
-```
-
-where `__dyn_valueof_is_override` answers 0 — the identity arm — when the
-receiver's resolved `valueOf` is absent, non-callable, or exactly
-`Object.prototype.valueOf`.
+**Superseded on main.** `3f614151` (Moment dogfood) extracted the whole fallback
+into `expressions/valueof-fallback.ts`, where a dynamic receiver in the host lane
+falls through to the generic dynamic method call. Verified at merge time that
+that route ALSO preserves `o.valueOf() === o` — all five cases of
+`tests/issue-4394-host-dynamic-valueof.test.ts` pass against it, inline
+comparison included — so `host-dyn-valueof.ts` and its two builtins were removed
+rather than kept as a second implementation of the same decision. The test stays:
+it is what proves the surviving route holds the contract.
 
 ### Measured
 

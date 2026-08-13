@@ -2,6 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
@@ -32,6 +33,8 @@ export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
   readonly parentId: IrUnitId;
   readonly role: "lifted-closure";
   readonly ordinal: number;
+  /** Present when the lifted artifact is an inventoried source body, not a pass-created unit. */
+  readonly sourceUnit?: true;
 }
 
 export interface IrLiftedFunctionArtifactOwner {
@@ -40,12 +43,23 @@ export interface IrLiftedFunctionArtifactOwner {
 }
 
 /** Exact producer-side provenance for one pass-created executable unit. */
-export interface IrDerivedUnitProvenance {
+export interface IrSyntheticUnitProvenance {
   readonly id: IrUnitId;
   readonly parentId: IrUnitId;
   readonly role: IrSyntheticUnitRole;
   readonly ordinal: number;
 }
+
+/** Exact lowering-side provenance for an inventoried nested source body. */
+export interface IrLiftedSourceUnitProvenance {
+  readonly id: IrUnitId;
+  readonly parentId: IrUnitId;
+  readonly role: "lifted-closure";
+  readonly ordinal: number;
+  readonly sourceUnit: true;
+}
+
+export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;
 
 /** Closed role families for compiler/pass-created executable units. */
 export type IrSyntheticUnitRole =
@@ -1043,16 +1057,21 @@ class SourceInventoryBuilder {
       const promoteNestedAccessor =
         directNestedClass &&
         (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
+      const promoteNestedOrdinary =
+        directNestedClass &&
+        isBoundedPreparedNestedOrdinaryClass(node) &&
+        (ts.isConstructorDeclaration(functionalMember) || ts.isMethodDeclaration(functionalMember));
+      const promoteNestedMember = promoteNestedAccessor || promoteNestedOrdinary;
 
       const unit =
-        topLevelDeclaration || promoteNestedAccessor
+        topLevelDeclaration || promoteNestedMember
           ? this.addTerminalUnit(
               ts.isConstructorDeclaration(functionalMember)
                 ? "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               member,
-              promoteNestedAccessor
+              promoteNestedMember
                 ? `${legacyName}@nested:${classRecord.declarationStart}:${member.getStart(this.sourceFile)}`
                 : legacyName,
               "class-member",
@@ -1060,7 +1079,7 @@ class SourceInventoryBuilder {
               anonymousFailure,
               true,
               memberSyntheticRole,
-              promoteNestedAccessor ? (inheritedTerminalOwnerId ?? undefined) : undefined,
+              promoteNestedMember ? (inheritedTerminalOwnerId ?? undefined) : undefined,
             )
           : this.addSupportUnit(
               ts.isConstructorDeclaration(functionalMember)
@@ -1076,7 +1095,7 @@ class SourceInventoryBuilder {
       this.scanCallable(
         functionalMember,
         unit.id,
-        topLevelDeclaration || promoteNestedAccessor ? unit.id : inheritedTerminalOwnerId,
+        topLevelDeclaration || promoteNestedMember ? unit.id : inheritedTerminalOwnerId,
       );
     }
 

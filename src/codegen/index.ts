@@ -425,6 +425,7 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import { emitDateHostBridge } from "./date-host-bridge.js";
 import {
   emitStructFieldGetters,
   emitStructFieldBooleanMarkers,
@@ -1298,7 +1299,7 @@ function buildIrClassShapes(
     declarationsInCollectionOrder,
     identityContext,
   );
-  // Flat local classes are allocated as identity-stable descriptor cells
+  // Local classes are allocated as identity-stable descriptor cells
   // before any member type is projected. TypeScript permits self-recursive and
   // mutually recursive annotations, so a later class must be resolvable while
   // its descriptor is still being filled. The cells are planning-only: only
@@ -1306,12 +1307,7 @@ function buildIrClassShapes(
   const provisionalEntries = new Map<IrClassId, IrClassShapeEntry>();
   const populatedProvisionalIds = new Set<IrClassId>();
   for (const { classId, declaration } of declarationsInCollectionOrder) {
-    if (
-      !ts.isClassDeclaration(declaration) ||
-      !declaration.name ||
-      declaration.parent !== sourceFile ||
-      declaration.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) === true
-    ) {
+    if (!ts.isClassDeclaration(declaration) || !declaration.name) {
       continue;
     }
     const className = declaration.name.text;
@@ -2468,6 +2464,7 @@ function planIrOverlay(
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
       ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
@@ -5082,10 +5079,10 @@ export function generateModule(
     // `Array.prototype.{forEach,map,filter,every,some,find,...}.call(obj, cb)`
     // dispatched through the host `__proto_method_call` — the host invokes
     // the callback with `(value, index, array)` (arity 3) or, for reduce,
-    // `(acc, value, index, array)` (arity 4). The dispatchers iterate
-    // closures of arity ≤ N; lower-arity closures see extra args dropped.
+    // `(acc, value, index, array)` (arity 4).
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // #1636-S1 — emit __call_fn_method_N exports (N=0..2) for calling Wasm
     // closures from JS with a host-supplied `this`-value. Same dispatch
@@ -7582,13 +7579,6 @@ export function generateMultiModule(
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);
 
-    // (#3371/#3496) Constructible function-expression wrappers are nominal
-    // subtypes of the ordinary closure wrapper. Multi-source harness methods
-    // route those values through `__apply_closure`, so rebuild that reserved
-    // bridge only after every source has registered its complete closure-type
-    // set. Leaving the placeholder untouched traps valid `assert.*` calls.
-    fillApplyClosure(ctx);
-
     // (#3496) A multi-source entry can reserve a closed method dispatcher just
     // like a single source can. The literal Test262 harness does so for
     // `assert.compareArray(...)`: the property assignment registers a closure
@@ -7701,12 +7691,11 @@ export function generateMultiModule(
 
     // Multi-source projects can pass entry-module closures into an imported
     // function whose dynamic call is compiled before that closure wrapper is
-    // known. The host fallback then needs the same 2..4 argument dispatchers
-    // as the single-source pipeline; otherwise it silently falls back to the
-    // highest available arity (formerly 1) and returns null for wider closures.
+    // known. The host fallback needs matching dispatchers or wider closures return null.
     emitClosureCallExport2(ctx);
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // Mirror the single-source receiver bridge over the complete multi-source
     // closure registry. Include native-construction demand in the cap so its
@@ -7728,6 +7717,12 @@ export function generateMultiModule(
     // Unknown-arity host wrappers use this classifier to choose a dispatcher
     // wide enough for the closure's declared parameters.
     emitClosureArityExport(ctx);
+
+    // Fill multi-source constructor method drivers after all closure tables.
+    fillHostFnctorMethodDrivers(ctx);
+
+    // Fill apply only after every multi-source arity dispatcher exists.
+    fillApplyClosure(ctx);
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
@@ -10394,12 +10389,15 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           preHoistRecord.flagSlot = flagIdx;
         }
       }
-      // Destructuring patterns (let/const) are NOT pre-allocated here —
-      // `compileObjectDestructuring` / `compileArrayDestructuring` allocate
-      // their own bindings + TDZ flags via `ensureLetConstBindingPatternTdzFlags`
-      // at entry. Pre-allocating here would create duplicate locals (one from
-      // the pre-pass, one from destructuring) and pollute closure-capture
-      // analysis (#1128).
+      if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+        // A nested function declaration is hoisted before statement-position
+        // destructuring runs. Publish the pattern's binding locals now, just as
+        // we do for identifier let/const declarations, so capture signatures
+        // cannot be inferred from a missing or same-name stale slot. The shared
+        // helper and the later destructuring path both reuse existing locals
+        // and TDZ flags, so this does not allocate a second binding.
+        ensureLetConstBindingPatternTdzFlags(ctx, fctx, decl.name);
+      }
     }
     return;
   }

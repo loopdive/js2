@@ -55,6 +55,7 @@ import {
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { coerceType } from "./type-coercion.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -283,7 +284,13 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // Evaluate the expression (for side effects) but discard the result.
   if (ts.isExportAssignment(stmt)) {
     const resultType = compileExpression(ctx, fctx, stmt.expression);
-    if (resultType !== null) {
+    const expressionGlobal = ctx.defaultExpressionGlobals?.get(stmt);
+    if (resultType !== null && expressionGlobal) {
+      if (resultType.kind !== expressionGlobal.type.kind) {
+        coerceType(ctx, fctx, resultType, expressionGlobal.type);
+      }
+      fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(expressionGlobal.bindingName)! });
+    } else if (resultType !== null) {
       fctx.body.push({ op: "drop" });
     }
     return;

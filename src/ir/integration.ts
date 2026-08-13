@@ -459,6 +459,7 @@ interface BuiltFn {
 
 interface PreparedClosureTransaction {
   readonly registry: ClosureStructRegistry;
+  readonly refCells: RefCellRegistry;
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
   bindLowerResolver(resolver: IrLowerResolver): void;
@@ -610,9 +611,10 @@ function prepareClosureTransaction(input: {
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): PreparedClosureTransaction {
-  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type);
+  const refCells = new RefCellRegistry(input.ctx);
+  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
-  const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry);
+  const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry, refCells);
   const freshSlots = allocatePreparedDerivedCallableSlots(
     input.ctx,
     input.entries,
@@ -631,6 +633,7 @@ function prepareClosureTransaction(input: {
   });
   return {
     registry,
+    refCells,
     freshSlots,
     componentIds,
     bindLowerResolver: (resolver) => {
@@ -907,7 +910,7 @@ export function compileIrPathFunctions(
     }
     const records = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
     for (const provenance of result.liftedUnitProvenance) {
-      if (provenance.parentId !== parentUnitId || !isLiftedExecutableRole(provenance.role)) {
+      if (!isLiftedExecutableRole(provenance.role)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -920,6 +923,30 @@ export function compileIrPathFunctions(
           "selection-preparation-mismatch",
           "build",
           `ir/integration: lifted unit ${provenance.id} has no exact inventory parent and terminal owner`,
+        );
+      }
+      if ("sourceUnit" in provenance) {
+        const sourceUnit = inventoryUnitById.get(provenance.id);
+        if (
+          !sourceUnit ||
+          sourceUnit.terminal ||
+          sourceUnit.lexicalOwnerId !== provenance.parentId ||
+          sourceUnit.terminalOwnerId !== terminalOwnerId ||
+          sourceUnit.ordinal !== provenance.ordinal
+        ) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "build",
+            `ir/integration: lifted source unit ${provenance.id} has inconsistent inventory provenance`,
+          );
+        }
+        continue;
+      }
+      if (provenance.parentId !== parentUnitId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: derived lifted unit ${provenance.id} has an unexpected parent`,
         );
       }
       if (records.has(provenance.id)) {
@@ -936,7 +963,8 @@ export function compileIrPathFunctions(
       });
     }
     for (const lifted of result.lifted) {
-      if (!records.has(lifted.unitId)) {
+      const sourceUnit = inventoryUnitById.get(lifted.unitId);
+      if (!records.has(lifted.unitId) && (!sourceUnit || sourceUnit.terminalOwnerId !== terminalOwnerId)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -1009,6 +1037,7 @@ export function compileIrPathFunctions(
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation = loweringPlans
@@ -1309,6 +1338,7 @@ export function compileIrPathFunctions(
         hostDateSnapshots: loweringPlans?.hostDateSnapshots,
         hostDateGetters: loweringPlans?.hostDateGetters,
         promiseDelays: loweringPlans?.promiseDelays,
+        identityContext: moduleBindingIdentityContext,
         classShapes,
         // Slice 6 part 4 refactor (#1185): thread the from-ast subset
         // of the IR resolver. Replaces the per-feature `nativeStrings:
@@ -1359,7 +1389,7 @@ export function compileIrPathFunctions(
           name: lifted.name,
           ownerName: owner.legacyName,
           fn: lifted,
-          derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+          derivedUnit: liftedAbiRecords.get(lifted.unitId),
           synthesized: true,
         });
       }
@@ -1528,6 +1558,7 @@ export function compileIrPathFunctions(
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
           hostDateSnapshots: loweringPlans?.hostDateSnapshots,
           hostDateGetters: loweringPlans?.hostDateGetters,
+          identityContext: moduleBindingIdentityContext,
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
@@ -1596,7 +1627,7 @@ export function compileIrPathFunctions(
             name: lifted.name,
             ownerName: owner.legacyName,
             fn: lifted,
-            derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+            derivedUnit: liftedAbiRecords.get(lifted.unitId),
             synthesized: true,
           });
         }
@@ -1724,6 +1755,7 @@ export function compileIrPathFunctions(
             hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
             hostDateSnapshots: loweringPlans?.hostDateSnapshots,
             hostDateGetters: loweringPlans?.hostDateGetters,
+            identityContext: moduleBindingIdentityContext,
             classShapes,
             resolver: fromAstResolver,
             allocRegistry,
@@ -1772,7 +1804,7 @@ export function compileIrPathFunctions(
               name: lifted.name,
               ownerName: owner.legacyName,
               fn: lifted,
-              derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+              derivedUnit: liftedAbiRecords.get(lifted.unitId),
               synthesized: true,
             });
           }
@@ -1876,6 +1908,7 @@ export function compileIrPathFunctions(
         hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
         hostDateSnapshots: loweringPlans?.hostDateSnapshots,
         hostDateGetters: loweringPlans?.hostDateGetters,
+        identityContext: moduleBindingIdentityContext,
         classShapes,
         resolver: fromAstResolver,
         allocRegistry,
@@ -1917,7 +1950,7 @@ export function compileIrPathFunctions(
               name: lifted.name,
               ownerName: moduleInitOwner.legacyName,
               fn: lifted,
-              derivedUnit: liftedAbiRecords.get(lifted.unitId)!,
+              derivedUnit: liftedAbiRecords.get(lifted.unitId),
               synthesized: true,
             });
           }
@@ -2927,7 +2960,7 @@ export function compileIrPathFunctions(
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
     deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
       closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
-    const refCellRegistry = new RefCellRegistry(ctx);
+    const refCellRegistry = preparedClosure?.refCells ?? new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
     // legacy class-collection state — `ctx.structMap`, `ctx.structFields`,
@@ -4070,6 +4103,13 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    hostIndirectEvalTarget() {
+      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
+      const functionIndex = ctx.funcMap.get("__extern_eval");
+      const exactIndex = exactCallableImportIndex(ctx, "env", "__extern_eval");
+      if (functionIndex === undefined || exactIndex === undefined || functionIndex !== exactIndex) return null;
+      return irImportFuncRef("env", "__extern_eval");
+    },
     standaloneWrapperInstanceOfPlan(ctorName: string) {
       if (
         !supportsBackendCapability("standalone-wrapper-instanceof") ||
@@ -5733,6 +5773,7 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // every lane.
   let usesOrdinaryToPrimitiveObjectRuntime = false;
   let usesRuntimeUnboxNumber = false;
+  const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
     for (const block of entry.fn.blocks) {
@@ -5756,6 +5797,15 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
+                break;
+              case "__new_Boolean":
+                primitiveWrapperConstructors.add("Boolean");
+                break;
+              case "__new_Number":
+                primitiveWrapperConstructors.add("Number");
+                break;
+              case "__new_String":
+                primitiveWrapperConstructors.add("String");
                 break;
               case IR_DYN_ADD_FN:
                 dynamicRuntimeNeeds.add("add");
@@ -5794,6 +5844,25 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
       ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
       ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
       ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
+  }
+  if (primitiveWrapperConstructors.size > 0) {
+    // #4208 S4 — explicit runtime refs for the focused primitive-wrapper
+    // construction. Host-free lanes materialize the real `$Object` wrappers
+    // (including [[PrimitiveValue]]) through the existing object runtime;
+    // host mode registers only the exact wrapper imports observed in IR.
+    if (ctx.standalone || ctx.wasi) {
+      ensureObjectRuntime(ctx);
+    } else {
+      for (const wrapperConstructor of primitiveWrapperConstructors) {
+        ensureLateImport(
+          ctx,
+          `__new_${wrapperConstructor}`,
+          [{ kind: wrapperConstructor === "String" ? "externref" : "f64" }],
+          [{ kind: "externref" }],
+        );
+      }
       flushLateImportShifts(ctx, null);
     }
   }
@@ -6513,7 +6582,11 @@ class ClosureStructRegistry {
     } as StructTypeDef);
     this.ctx.structMap.set(subName, subIdx);
     this.ctx.typeIdxToStructName.set(subIdx, subName);
-    this.ctx.structFields.set(subName, fields);
+    // Closure subtypes are private callable carriers, not user-visible data
+    // structs. Keep them out of structFields just like legacy captured
+    // closures: registering them there makes finalize emit __sget_capN,
+    // __struct_field_names, and __is_data_struct, both bloating the module and
+    // misclassifying an IR closure as an object at the host boundary.
 
     const baseInfo = this.ctx.closureInfoByTypeIdx.get(base.structTypeIdx);
     if (!baseInfo) {
@@ -6565,6 +6638,10 @@ class RefCellRegistry {
   resolve(inner: ValType): IrRefCellLowering | null {
     const typeIdx = getOrRegisterRefCellType(this.ctx, inner);
     return { typeIdx, fieldIdx: 0 };
+  }
+
+  resolveIr(inner: IrType): IrRefCellLowering | null {
+    return this.resolve(lowerPreparedClosureSupportType(this.ctx, inner, this));
   }
 }
 

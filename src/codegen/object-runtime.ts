@@ -181,6 +181,7 @@ import {
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
+import { applyUndefinedInstrs, guardNullableApplyArguments } from "./apply-closure-args.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
 import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
@@ -5505,6 +5506,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       ? directDataField.type.typeIdx
       : undefined;
   const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
+  const getUndefinedIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__get_undefined") : undefined;
 
   if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
     bridgeFn.body = [{ op: "ref.null.extern" }];
@@ -5528,8 +5530,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     locals.push({ name: "__vec_arglen", type: { kind: "i32" } });
   }
 
-  // Locals: 0=fn 1=recv 2=args (params); 3=n(i32), then widen locals, result,
-  // and (fast path) __argdata.
+  // Locals: 0=fn 1=recv 2=args; 3=n, then widening/result/carrier locals.
   const ARG_OF = (k: number): Instr[] => {
     let fallback: Instr[] = hasGenericArgsReader
       ? [
@@ -5537,11 +5538,9 @@ export function fillApplyClosure(ctx: CodegenContext): void {
           { op: "f64.const", value: k },
           { op: "call", funcIdx: externGetIdxArr! },
         ]
-      : (undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }]);
-    // OOB (an under-applied call widened up by the #3592 selector widening
-    // reads k >= len) answers the undefined sentinel — exactly what the
-    // generic `__extern_get_idx` returns for an out-of-bounds index.
-    const oob: Instr[] = undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
+      : applyUndefinedInstrs(ctx, getUndefinedIdx);
+    // Under-applied widening reads out-of-bounds as undefined (#3592).
+    const oob = (): Instr[] => applyUndefinedInstrs(ctx, getUndefinedIdx);
     const fastRead = (dataLocal: number, lenLocal: number, arrTypeIdx: number, prior: Instr[]): Instr[] => [
       { op: "local.get", index: dataLocal },
       { op: "ref.is_null" },
@@ -5562,7 +5561,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
               { op: "i32.const", value: k },
               { op: "array.get", typeIdx: arrTypeIdx },
             ],
-            else: oob,
+            else: oob(),
           },
         ],
       },
@@ -5571,7 +5570,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     if (fastDirectArgs) {
       fallback = fastRead(directArgDataLocal, directArgLenLocal, directVecArrTypeIdx, fallback);
     }
-    return fallback;
+    return guardNullableApplyArguments(oob(), fallback);
   };
 
   const buildArm = (n: number): Instr[] => {

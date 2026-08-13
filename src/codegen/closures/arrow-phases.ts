@@ -33,6 +33,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { allocLocal } from "../context/locals.js";
+import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
 import { emitBoundsCheckedArrayGet } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import {
@@ -292,6 +293,31 @@ function hasReferenceOutsideClosure(ctx: CodegenContext, closure: ts.Node, name:
   return !sawReference || sawOuterReference;
 }
 
+/** Resolve a closure's free reference by declaration identity, not spelling. */
+function referencedBindingDeclaration(
+  ctx: CodegenContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): ts.Declaration | undefined {
+  let declaration: ts.Declaration | undefined;
+  let ambiguous = false;
+  const visit = (node: ts.Node): void => {
+    if (ambiguous) return;
+    if (node !== closure && ts.isFunctionLike(node)) return;
+    if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
+      const resolved = ctx.oracle.valueDeclarationOf(node);
+      if (!resolved || (declaration !== undefined && declaration !== resolved)) {
+        ambiguous = true;
+        return;
+      }
+      declaration = resolved;
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return ambiguous ? undefined : declaration;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -416,16 +442,12 @@ export function planClosureCaptures(
   // Transitively add captures needed by called nested functions.
   // E.g. if this closure calls g() and g has nestedFuncCaptures {first, second},
   // this closure must also capture first and second so it can pass ref cells to g.
-  for (const name of [...referencedNames]) {
-    if (ownLocals.has(name)) continue;
-    if (isEnclosingParameterBinding(fctx, name)) continue;
-    const transitiveCaptures = ctx.nestedFuncCaptures.get(name);
-    if (transitiveCaptures) {
-      for (const cap of transitiveCaptures) {
-        if (!ownLocals.has(cap.name)) referencedNames.add(cap.name);
-      }
-    }
-  }
+  const transitivelyRequiredNames = collectTransitiveCaptureNames(
+    ctx.nestedFuncCaptures,
+    referencedNames,
+    ownLocals,
+    (name) => isEnclosingParameterBinding(fctx, name),
+  );
 
   // Detect which captured variables are written inside the closure body
   const writtenInClosure = new Set<string>();
@@ -578,6 +600,7 @@ export function planClosureCaptures(
       }
     }
     if (localIdx === undefined) continue;
+    const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -587,7 +610,10 @@ export function planClosureCaptures(
       !createdInParameterEnvironment &&
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
-      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
+      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
+      (!fctx.hoistedFunctionValueBindings?.has(name) ||
+        (!transitivelyRequiredNames.has(name) && !closureObservesBindingValue(arrow, name)))
     ) {
       continue;
     }
