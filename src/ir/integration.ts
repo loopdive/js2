@@ -60,6 +60,10 @@ import {
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import {
+  ensureStandaloneWrapperInstanceOfHelper,
+  type StandaloneWrapperConstructorName,
+} from "../codegen/standalone-wrapper-instanceof.js";
+import {
   ensureFunctionPrototypeCallHelper,
   FUNCTION_PROTOTYPE_CALL_HELPER,
 } from "../codegen/function-prototype-callable.js";
@@ -4066,6 +4070,24 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    standaloneWrapperInstanceOfPlan(ctorName: string) {
+      if (
+        !supportsBackendCapability("standalone-wrapper-instanceof") ||
+        (ctorName !== "Number" && ctorName !== "String" && ctorName !== "Boolean")
+      ) {
+        return null;
+      }
+      const funcIdx = ensureStandaloneWrapperInstanceOfHelper(ctx, ctorName as StandaloneWrapperConstructorName);
+      const func = definedFuncAt(ctx, funcIdx);
+      if (!func) {
+        throw new IrInvariantError(
+          "unknown-function-ref",
+          "build",
+          `standalone wrapper instanceof helper ${ctorName} has no allocator-owned function`,
+        );
+      }
+      return { funcName: func.name };
+    },
     fnctorArrayMethodPlan(call: ts.CallExpression) {
       if (
         !supportsBackendCapability("standalone-native-regexp-test-carrier") ||

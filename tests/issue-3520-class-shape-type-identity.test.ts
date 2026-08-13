@@ -13,6 +13,7 @@ import {
   irTypeEquals,
   irUnitFuncRef,
   planLinearMemory,
+  verifyIrBackendLegality,
   type IrClassShape,
   type IrFunction,
   type IrType,
@@ -138,5 +139,35 @@ describe("#3520 source-qualified class-shape type identity", () => {
     expect(secondLayout).toBeDefined();
     expect(firstLayout?.id).not.toBe(secondLayout?.id);
     expect(plan.layouts.filter((layout) => layout.id.startsWith("record:class:"))).toHaveLength(2);
+  });
+
+  it("plans and verifies mutually recursive class layouts without losing nominal identity", () => {
+    const left = sameLabelShape("@test/recursive-left.ts");
+    const right = sameLabelShape("@test/recursive-right.ts");
+    (left.fields as { name: string; type: IrType }[]).push({ name: "right", type: { kind: "class", shape: right } });
+    (right.fields as { name: string; type: IrType }[]).push({ name: "left", type: { kind: "class", shape: left } });
+    const leftType: IrType = { kind: "class", shape: left };
+    const registry = new AllocSiteRegistry();
+    const builder = new IrFunctionBuilder(identities.next("recursive-layout"), [leftType], false, registry);
+    const value = builder.addParam("value", leftType);
+    builder.openBlock();
+    builder.terminate({ kind: "return", values: [value] });
+    const func = builder.finish();
+
+    const linearErrors = verifyIrBackendLegality(func, "linear");
+    expect(linearErrors).toHaveLength(4);
+    expect(linearErrors.every((error) => error.message.includes("does not support IR type 'class'"))).toBe(true);
+    expect(linearErrors.map((error) => error.message)).toContain(
+      "param value.right.left: linear backend does not support IR type 'class'",
+    );
+    expect(verifyIrBackendLegality(func, "wasmgc")).toEqual([]);
+    const plan = planLinearMemory({ functions: [func] }, registry);
+    expect(plan.layoutForClassShape(left)?.id).not.toBe(plan.layoutForClassShape(right)?.id);
+    expect(plan.layouts.filter((layout) => layout.id.startsWith("record:class:")).map((layout) => layout.id)).toEqual(
+      expect.arrayContaining([
+        `record:class:${JSON.stringify(left.classId)}`,
+        `record:class:${JSON.stringify(right.classId)}`,
+      ]),
+    );
   });
 });

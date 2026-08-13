@@ -43,7 +43,7 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
-import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
 import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
@@ -69,6 +69,10 @@ import {
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
 import { definedFuncAt } from "../func-space.js";
+import {
+  ensureStandaloneWrapperInstanceOfHelper,
+  type StandaloneWrapperConstructorName,
+} from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 
 /**
@@ -634,6 +638,9 @@ function compileIdentifierCore(
   // modules are byte-identical.
   const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
   if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+    return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+  }
+  if (annexBReadEscapesFunctionScope(id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
@@ -1865,6 +1872,36 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
   }
 }
 
+function isStandaloneWrapperConstructorName(ctorName: string): ctorName is StandaloneWrapperConstructorName {
+  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean";
+}
+
+/** Emit the real standalone wrapper-brand predicate over the LHS carrier. */
+function emitNativeWrapperInstanceOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  ctorName: StandaloneWrapperConstructorName,
+): ValType {
+  const helperIdx = ensureStandaloneWrapperInstanceOfHelper(ctx, ctorName);
+  const leftType = compileExpression(ctx, fctx, expr.left);
+  if (leftType && (leftType.kind === "i32" || leftType.kind === "f64" || leftType.kind === "i64")) {
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    return { kind: "i32" };
+  }
+  if (!leftType) {
+    fctx.body.push({ op: "ref.null", typeIdx: -18 }); // none <: anyref
+  } else if (leftType.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" });
+  } else if (leftType.kind !== "anyref") {
+    coerceType(ctx, fctx, leftType, { kind: "externref" });
+    fctx.body.push({ op: "any.convert_extern" });
+  }
+  fctx.body.push({ op: "call", funcIdx: helperIdx });
+  return { kind: "i32" };
+}
+
 /**
  * (#2916) Emit a native `value instanceof <Builtin>` membership test: normalize
  * the LHS to anyref and OR together `ref.test <typeIdx>` over `typeIdxs`. A
@@ -2116,6 +2153,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // modeled (#1325, distinct $__Date / $__StandaloneRegExp structs). NEVER emit
   // the host import here.
   if (noJsHost(ctx)) {
+    if (ctx.standalone && isStandaloneWrapperConstructorName(ctorName)) {
+      return emitNativeWrapperInstanceOf(ctx, fctx, expr, ctorName);
+    }
     const typeIdxs = nativeBuiltinInstanceOfTypeIdxs(ctx, ctorName);
     // `Object` and `Function` cannot be answered by a backing-struct membership
     // list — see `native-object-family-instanceof.ts` for why (no finite list /

@@ -199,6 +199,78 @@ describe("#4276 — cross-constructor misses stay false (standalone)", () => {
   }
 });
 
+describe("#4276 — primitive-wrapper instanceof uses the real internal brand (standalone)", () => {
+  const positives: Array<[string, string]> = [
+    ["Number", "new Number(1)"],
+    ["String", 'new String("x")'],
+    ["Boolean", "new Boolean(false)"],
+  ];
+  for (const [ctor, value] of positives) {
+    it(`answers true for a real ${ctor} wrapper, including an any-carrier round trip`, async () => {
+      const o = await run(`var value: any = ${value};\nresult = value instanceof ${ctor} ? 1 : 0;`);
+      expect(o.result).toBe(1);
+      expect(o.imports).toEqual([]);
+    });
+  }
+
+  it("does not confuse a strict primitive this receiver with a Boolean wrapper", async () => {
+    const o = await run(
+      `result = (function () { "use strict"; return this instanceof Boolean; }).call(false) ? 1 : 0;`,
+    );
+    expect(o.result).toBe(0);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("rejects cross-wrapper brands and a user-spoofed internal-slot spelling", async () => {
+    const o = await run(
+      `var fake = {};\n` +
+        `Object.defineProperty(fake, "[[PrimitiveValue]]", { value: 1 });\n` +
+        `result = (!(new Number(1) instanceof String) &&\n` +
+        `  !(new String("x") instanceof Boolean) &&\n` +
+        `  !(new Boolean(false) instanceof Number) &&\n` +
+        `  !(fake instanceof Number)) ? 1 : 0;`,
+    );
+    expect(o.result).toBe(1);
+    expect(o.imports).toEqual([]);
+  });
+});
+
+describe("#4276 — primitive-wrapper instanceof is emitted through IR", () => {
+  for (const ctor of ["Number", "String", "Boolean"] as const) {
+    it(`IR-emits an exact ambient ${ctor} predicate in fast standalone`, async () => {
+      const compiled = await compile(`export function test(value: any): boolean { return value instanceof ${ctor}; }`, {
+        fileName: `issue-4276-ir-${ctor}.ts`,
+        target: "standalone",
+        fast: true,
+        skipSemanticDiagnostics: true,
+        trackIrOutcomes: true,
+      });
+      expect(compiled.success, compiled.errors.map((e) => e.message).join("; ")).toBe(true);
+      expect(compiled.irPostClaimErrors ?? []).toEqual([]);
+      expect(compiled.irCompiledFuncs).toContain("test");
+      expect(compiled.irOutcomes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ displayName: "test", kind: "emitted", stage: "patch" })]),
+      );
+      expect(compiled.wat).toContain(`(func $__instanceof_wrapper_${ctor}`);
+    });
+  }
+
+  it("does not claim a source-shadowed Number constructor as the ambient wrapper", async () => {
+    const compiled = await compile(
+      `function Number() {}\nexport function test(value: any): boolean { return value instanceof Number; }`,
+      {
+        fileName: "issue-4276-ir-shadow.ts",
+        target: "standalone",
+        fast: true,
+        skipSemanticDiagnostics: true,
+        trackIrOutcomes: true,
+      },
+    );
+    expect(compiled.success, compiled.errors.map((e) => e.message).join("; ")).toBe(true);
+    expect(compiled.irCompiledFuncs ?? []).not.toContain("test");
+  });
+});
+
 // The upstream files this change actually flipped, measured file-by-file
 // through the same `runTest262File(…, "standalone")` seam the sweep used. All
 // five are RED on base. `S11.8.6_A6_T3` is the one that carries the
@@ -215,12 +287,34 @@ const FLIPPED = [
   ["built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-247.js", "`desc instanceof Object`"],
 ] as const;
 
+const WRAPPER_FLIPPED = [
+  "built-ins/Object/create/15.2.3.5-4-7.js",
+  "built-ins/Object/create/15.2.3.5-4-8.js",
+  "built-ins/Object/create/15.2.3.5-4-9.js",
+  "built-ins/Object/defineProperties/15.2.3.7-2-4.js",
+  "built-ins/Object/defineProperties/15.2.3.7-2-6.js",
+  "built-ins/Object/defineProperties/15.2.3.7-2-8.js",
+] as const;
+
 describe.skipIf(!CORPUS_AVAILABLE)("#4276 — the upstream files this flipped (standalone)", () => {
   for (const [rel, what] of FLIPPED) {
     it(`${rel} — ${what}`, async () => {
       const r = await runTest262File(join(TEST262_ROOT, "test", rel), "issue-4276", 120_000, "standalone");
       expect(r.status, `error: ${r.error ?? r.reason ?? ""}`).toBe("pass");
     }, 180_000);
+  }
+});
+
+describe.skipIf(!CORPUS_AVAILABLE)("#4276 — wrapper accessor files flipped by the internal brand", () => {
+  for (const rel of WRAPPER_FLIPPED) {
+    it(
+      rel,
+      async () => {
+        const r = await runTest262File(join(TEST262_ROOT, "test", rel), "issue-4276-wrapper", 120_000, "standalone");
+        expect(r.status, `error: ${r.error ?? r.reason ?? ""}`).toBe("pass");
+      },
+      180_000,
+    );
   }
 });
 

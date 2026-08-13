@@ -8,7 +8,7 @@
 // surfaces a localized diagnostic instead of a late raw-emitter throw or
 // malformed Wasm/bytecode.
 
-import type { IrBinop, IrBlock, IrFunction, IrInstr, IrType } from "../nodes.js";
+import type { IrBinop, IrBlock, IrClassShape, IrFunction, IrInstr, IrType } from "../nodes.js";
 import { asVal } from "../nodes.js";
 import type { ValType } from "../types.js";
 
@@ -21,6 +21,7 @@ export type IrBackendTargetCapability =
   | "host-object-define-property"
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
+  | "standalone-wrapper-instanceof"
   | "legacy-numeric-array-global";
 
 /**
@@ -59,6 +60,16 @@ export function supportsIrBackendTargetCapability(
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
     case "standalone-native-regexp-test-carrier":
       return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+    case "standalone-wrapper-instanceof":
+      // The IR producer consumes the fast lane's native `$AnyValue` object
+      // payload as anyref. Non-fast standalone carries dynamic values as
+      // externref and needs an explicit extern→any conversion node first.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.target === "standalone" &&
+        !profile.allowHostImports &&
+        profile.fast === true
+      );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
   }
@@ -73,10 +84,11 @@ export interface IrBackendLegalityError {
 
 export function verifyIrBackendLegality(func: IrFunction, backend: IrBackendKind): IrBackendLegalityError[] {
   const errors: IrBackendLegalityError[] = [];
+  const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string): void => {
     const msg = backendTypeError(backend, type);
     if (msg) errors.push({ message: `${where}: ${msg}`, func: func.name, block });
-    checkNestedTypeShapes(type, block, where, checkType);
+    checkNestedTypeShapes(type, block, where, checkType, checkedClassShapes);
   };
 
   for (const p of func.params) checkType(p.type, undefined, `param ${p.name}`);
@@ -501,6 +513,7 @@ function checkNestedTypeShapes(
   block: number | undefined,
   where: string,
   checkType: (type: IrType, block: number | undefined, where: string) => void,
+  checkedClassShapes: Set<IrClassShape>,
 ): void {
   switch (type.kind) {
     case "object":
@@ -513,6 +526,8 @@ function checkNestedTypeShapes(
       if (type.signature.returnType) checkType(type.signature.returnType, block, `${where}.return`);
       return;
     case "class":
+      if (checkedClassShapes.has(type.shape)) return;
+      checkedClassShapes.add(type.shape);
       for (const field of type.shape.fields) checkType(field.type, block, `${where}.${field.name}`);
       for (const method of type.shape.methods) {
         for (let i = 0; i < method.params.length; i++)

@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-13
 priority: critical
 horizon: xl
 complexity: XL
@@ -42,6 +42,7 @@ files:
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
   - src/codegen/class-callable-abi.ts
+  - src/codegen/class-field-layout.ts
   - src/codegen/function-body.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
@@ -1046,6 +1047,118 @@ new regressions** (twelve stale baseline entries now pass but are deliberately
 not mixed into this PR). Cross-backend differential is **29/29**. Typecheck,
 lint, formatting, issue/optimization-retirement integrity, oracle separation,
 IR adoption, verdict-oracle, LOC, and function-budget gates also pass.
+
+### Forward class-field layout checkpoint (2026-08-13)
+
+Exact forward class references now cross the physical storage boundary before
+any source body emits. Class collection still reserves structs in source order,
+so `Holder.current: Value` is initially an `externref` slot when `Value` is
+declared later. The new post-collection `class-field-layout.ts` phase resolves
+the exact declaration through the Type Oracle and mutates that already-observed
+field in place to `(ref null $Value)` before callable finalization and class
+shape planning. It does not pre-reserve or reorder types, and it does not
+replace the `StructTypeDef` object held by the Program ABI type cell.
+
+This checkpoint is deliberately bounded to explicit identifier/private fields
+on unique, flat, top-level classes in one source. The reference must be a bare,
+non-generic `TypeReferenceNode` to a later unique local class, and the complete
+field dependency graph must be acyclic. Classes participating in inheritance,
+recursive/self layouts, nested/class-expression owners, optional/union/generic
+annotations, constructor-only inferred fields, and externref-backed targets
+remain on the typed direct route. Multi-source finalization remains R5 work.
+
+The primary `Holder -> Value` fixture now gives all four source bodies
+(`Holder_new`, `Holder_replace`, `Value_new`, and `run`) one prepared IR owner in
+WasmGC and standalone under both direct-class and direct-function poison. It
+validates and returns `25`, and the committed field plus constructor assignment,
+method read/write, and constructing caller contain no `externref` conversion,
+cast/test, or indirect-call traffic. Separate parity controls prove:
+
+- an initialized `current: Value = new Value(2)` retains the established typed
+  instance-field initialization optimization and per-instance behavior;
+- multiple public/private fields retain their exact shared target layout;
+- an adjacent default-parameter method can remain a typed direct fallback while
+  consuming the same finalized physical field ABI; and
+- mutual field recursion and any inheritance participant remain direct, with
+  the unresolved forward slot still physically `externref`.
+
+The exact A/B driver runs the same allocation, field replacement, and two field
+reads per iteration. Three repeated local measurements produced identical
+artifact sizes and correct checksums:
+
+| Target | Direct binary | Prepared IR binary | Delta | Direct median | Prepared median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| WasmGC | 2,836 bytes | 1,292 bytes | -1,544 bytes (-54.4%) | 3.318-3.684 us | 0.010-0.011 us |
+| standalone | 47,714 bytes | 21,531 bytes | -26,183 bytes (-54.9%) | 0.011-0.012 us | 0.010-0.011 us |
+
+The WasmGC direct lane's host-carrier path explains its much larger runtime
+gap; the relevant retirement requirement is satisfied in both targets: prepared
+IR is no larger and no slower than direct. A forward field forms a valid WasmGC
+recursive group spanning the owner-to-target type interval; binary validation,
+exact WAT assertions, and the artifact reduction guard that representation
+effect. The direct-only lane is unchanged and remains the A/B control.
+
+No shared legacy implementation is deleted here. The same direct layout/body
+code still has live consumers in every excluded family, and deleting it would
+violate the retirement rule. The next serial R3 transaction is immutable
+recursive class-layout cells for self and mutually recursive class fields;
+after that, extend the same proof to inheritance participants before nested and
+multi-source owners.
+
+### Recursive class-layout cell checkpoint (2026-08-13)
+
+Self and mutually recursive flat class graphs now cross the same prepare-before-
+emit boundary. `buildIrClassShapes` allocates compiler-branded, identity-stable
+descriptor cells for every eligible exact class before projecting constructor,
+field, and method positions. It fills those cells once, removes any incomplete
+cell plus every transitive consumer before publication, and preserves source
+order in the public sidecar. Selection can therefore resolve `Node.next: Node`
+and `Left.right: Right -> Right.left: Left` without a name fallback or a late
+body-time ABI repair.
+
+The physical layout finalizer now admits the same exact recursive field edges.
+It mutates only the pre-existing field object after every struct is registered,
+so WasmGC forms the required recursive type group without replacing a Program
+ABI type cell or changing type order. Inheritance participants, nested/class-
+expression owners, optional/union/generic annotations, inferred constructor
+fields, externref-backed targets, and multi-source graphs remain excluded.
+
+Prepared ownership remains fail-closed. Recursive shape cells carry a private
+compiler symbol; the immutable prepared-data copier may preserve a back-edge
+only through a structurally valid branded class shape. Arbitrary object, map,
+set, and class-lookalike cycles still raise `invalid-prepared-data`. Backend
+legality and linear-memory layout discovery now track visited exact shape
+objects, so a valid class cycle terminates while visiting every nominal class
+once. A unit test proves the linear planner interns two distinct layouts for a
+mutual cycle; linear legality continues to reject the unsupported `class` atom
+with finite, stable diagnostics rather than recursing.
+
+The executable GC/standalone matrix covers both a mutual cycle and a self
+cycle. The mutual fixture prepares **six** terminal source bodies (`Left_new`,
+`Left_attach`, `Left_value`, `Right_new`, `Right_attach`, and `run`) with
+`direct=0, IR=1`; the self fixture prepares **four** (`Node_new`, `Node_link`,
+`Node_sum`, and `run`) with the same counters. Direct class/function poison is
+active, both binaries validate, and runtime returns `14` and `7`. Exact WAT
+assertions require nullable nominal field refs plus typed `struct.get`/
+`struct.set` and direct calls; the migrated bodies reject extern conversions,
+casts/tests, and indirect calls. The mutual-cycle IR artifact is no larger than
+the same-source direct artifact in either target.
+
+The focused R2/R3 completion matrix is green at **126/126**. The complete class
+file is **42/42**, exact shape/program ownership suites are **29/29**, and the
+hybrid plus strict shadows remain **37/37 IR, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. Ordinary and shape-diagnostic fallback gates report zero
+unintended/post-claim/module-level increases and zero attributed body-shape
+rejections. Typecheck, changed-file lint, and formatting pass. Wider
+equivalence, cross-backend, optimization-retirement, integrity, adoption,
+oracle, and budget gates remain required before publication.
+
+No shared direct implementation is deleted in this checkpoint. Inheritance
+participants and the other excluded class families still consume it. The next
+serial R3 transaction extends exact field-layout finalization through local
+inheritance without allowing recursive heritage, then tackles nested/class-
+expression ownership. The obsolete direct implementation is removed in the
+same later transaction that proves its last consumer is gone.
 
 ## Exhaustive source-unit census
 

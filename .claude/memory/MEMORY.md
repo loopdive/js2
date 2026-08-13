@@ -42,7 +42,7 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - project_test262_lane_parity_program · project_acorn_dogfood_regression_20260723
 - project_bigint_i64_brand_gate · project_linear_backend_no_console_log · project_proxy_no_ts_type_brand · project_1917_coercion_engine_byte_diff_gate · project_2106_undefined_singleton_s1_atomic
 - project_2602_forawait_rest_aliases_source_recompile · project_2602_forof_assign_rest_write_unimplemented
-- [es5-standalone-goal-ex-dynamic-code](project_es5_standalone_goal_restated_ex_dynamic_code.md) — goal restated 2026-08-01: ~95.4% ES5+untagged standalone **EX-DYNAMIC-CODE**; the 317 dynamic-code files are OUT OF SCOPE, not failures
+- [es5-full-scope-including-dynamic-code](project_es5_standalone_goal_restated_ex_dynamic_code.md) — current 2026-08-13 ruling: 100% of all 9,029 ES5-and-earlier tests in both lanes; `eval`, `Function`, and `with` are IN SCOPE
 
 ### Team & agents
 

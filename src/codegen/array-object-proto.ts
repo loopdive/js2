@@ -42,7 +42,7 @@ import { compileArraySliceFromVecLocal } from "./array-methods.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { undefinedSingletonActive } from "./any-helpers.js";
+import { undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import {
   ensureAnyToStringHelper,
@@ -2463,21 +2463,62 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
 
+  // Lazy init: allocate the one realm object and install the three immutable
+  // ES5 global value properties plus the ES5 global function properties on
+  // that real carrier. The old gOPD special case assumed top-level script
+  // `this` still lowered to undefined; #3365 now
+  // correctly lowers it to this object, so the runtime object itself must own
+  // the descriptors.  Seeding here also makes dynamic/IR-driven reflection see
+  // the same state instead of depending on an AST-only gOPD fold.
+  //
+  // Settle every late helper before capturing function indices in the detached
+  // seed arrays. `standaloneGlobalFunctionSeedInstrs` follows the same rule for
+  // its callable seeds; live indices are read only after both families settle.
+  ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
   const objLocal = allocLocal(fctx, `__native_globalThis_obj_${fctx.locals.length}`, { kind: "externref" });
-  const seeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
+  const functionSeeds = standaloneGlobalFunctionSeedInstrs(ctx, objLocal);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object");
-  if (!seeds || newObjectIdx === undefined) return null;
-  // Lazy-init the singleton only after all ES5 function seeds are available.
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+  if (!functionSeeds || newObjectIdx === undefined || defineValueIdx === undefined || boxNumberIdx === undefined) {
+    return null;
+  }
+
+  for (const key of ["NaN", "Infinity", "undefined"]) addStringConstantGlobal(ctx, key);
+  const valueSeeds: Instr[] = [];
+  const seedValue = (key: string, value: Instr[]): void => {
+    valueSeeds.push(
+      { op: "local.get", index: objLocal },
+      ...stringConstantExternrefInstrs(ctx, key),
+      ...value,
+      { op: "f64.const", value: 0 }, // writable/enumerable/configurable: false
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  };
+  seedValue("NaN", [
+    { op: "f64.const", value: Number.NaN },
+    { op: "call", funcIdx: boxNumberIdx },
+  ]);
+  seedValue("Infinity", [
+    { op: "f64.const", value: Number.POSITIVE_INFINITY },
+    { op: "call", funcIdx: boxNumberIdx },
+  ]);
+  seedValue("undefined", undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
+
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
-    ...seeds,
+    ...functionSeeds,
+    ...valueSeeds,
     { op: "local.get", index: objLocal },
     { op: "global.set", index: globalIdx },
   ];
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
 }
