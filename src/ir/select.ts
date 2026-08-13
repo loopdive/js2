@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import type { IrClassId, IrUnitId } from "./identity.js";
 import {
@@ -448,6 +449,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * on the legacy path instead of failing after an IR claim.
    */
   readonly supportsHostStringArrayLiterals?: boolean;
+  /**
+   * The active backend has both the JS-host eval capability and the host
+   * externref string carrier needed by the exact indirect-eval import ABI.
+   * Omitted means unproven, so the selector leaves eval on the legacy path.
+   */
+  readonly supportsHostIndirectEval?: boolean;
   /**
    * (#3053 U2) True iff the unified gc member-read primitive `__dyn_member_get`
    * (#3053 U0) has a SOUND body in this compile config. The gc `$AnyValue` body
@@ -1250,7 +1257,7 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
-let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration> = new Map();
+let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression> = new Map();
 let currentClaimClassName: string | null = null;
 // #2949 Acorn follow-up — the current top-level function's return expressions
 // may be provably boolean even while its unannotated JS callable ABI remains
@@ -1325,7 +1332,7 @@ let currentNumericParamNames = new Set<string>();
 export function configureIrStructuralSelectorPredicates(
   sourceFile: ts.SourceFile,
   options: IrSelectionOptions | undefined,
-  localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration>,
+  localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression>,
   functionDeclarations: ReadonlyMap<string, ts.FunctionDeclaration>,
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
@@ -1525,8 +1532,10 @@ function whyNotIrClaimable(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
   currentClaimClassName =
-    isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent)) && fn.parent.name
-      ? fn.parent.name.text
+    isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent))
+      ? ([...currentLocalClassDeclarations].find(([, declaration]) => declaration === fn.parent)?.[0] ??
+        fn.parent.name?.text ??
+        null)
       : null;
   currentClassBindings = new Map<string, string>();
   currentCallableArities = new Map<string, number>();
@@ -3303,6 +3312,38 @@ function isPhase1StatementListInScope(
   return isPhase1Tail(stmts[stmts.length - 1]!, scope, localClasses, isGenerator, isVoidReturn);
 }
 
+function boundedClassExpressionBindingHasOnlyStaticConstructionUses(
+  declaration: ts.VariableDeclaration,
+  classExpression: ts.ClassExpression,
+): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  let owner: ts.Node | undefined = declaration;
+  while (owner && !ts.isFunctionDeclaration(owner) && !ts.isFunctionExpression(owner) && !ts.isArrowFunction(owner)) {
+    owner = owner.parent;
+  }
+  if (
+    !owner ||
+    (!ts.isFunctionDeclaration(owner) && !ts.isFunctionExpression(owner) && !ts.isArrowFunction(owner)) ||
+    !owner.body
+  ) {
+    return false;
+  }
+  const bindingName = declaration.name.text;
+  let accepted = true;
+  const visit = (node: ts.Node): void => {
+    if (!accepted || node === classExpression) return;
+    if (ts.isIdentifier(node) && node.text === bindingName) {
+      if (node === declaration.name) return;
+      if (ts.isNewExpression(node.parent) && node.parent.expression === node) return;
+      accepted = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(owner.body);
+  return accepted;
+}
+
 /**
  * Slice 9 (#1169h): shape-check a `throw <expr>;` statement. Bare
  * `throw;` (no expression) is rejected — the legacy path handles that
@@ -4447,6 +4488,21 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
     initializerScope.add(d.name.text);
+    if (ts.isClassExpression(d.initializer)) {
+      if (
+        !isConst ||
+        currentLocalClassDeclarations.get(d.name.text) !== d.initializer ||
+        !localClasses.has(d.name.text) ||
+        !boundedClassExpressionBindingHasOnlyStaticConstructionUses(d, d.initializer)
+      ) {
+        return shapeNo("vardecl-class-expression-unprepared", d.initializer);
+      }
+      // The exact prepared class has inert definition evaluation. Its
+      // constructor binding is consumed only by the dedicated `new C(...)`
+      // and static-member selector arms, never as a first-class IR value.
+      scope.add(d.name.text);
+      continue;
+    }
     const declarationList = d.parent;
     const declarationStatement = ts.isVariableDeclarationList(declarationList) ? declarationList.parent : undefined;
     const directModuleDeclaration =
@@ -5528,6 +5584,39 @@ function expressionIsProvenString(expr: ts.Expression, seen = new Set<ts.Variabl
   return expressionIsProvenString(declaration.initializer, seen);
 }
 
+/**
+ * Eval needs a string value whose IR carrier is known to be the host
+ * externref string. The shared primitive classifier proves typed parameters
+ * and valid local flows; the literal-proven helper preserves the existing
+ * diagnostics-off guard for malformed local annotations.
+ */
+function expressionIsProvenHostEvalString(expr: ts.Expression): boolean {
+  return expressionIsProvenString(expr) || currentSelectionOptions?.classifyPrimitiveExpression?.(expr) === "string";
+}
+
+/**
+ * Every selection-side consumer of the host eval import uses this exact
+ * predicate. The optional scope argument adds the function-local shadow proof
+ * owned by Phase 1; the call graph has checker identity instead.
+ */
+function certifiedHostIndirectEval(
+  expr: ts.CallExpression,
+  scope?: ReadonlySet<string>,
+): ReturnType<typeof exactIndirectEvalStatement> {
+  const shape = exactIndirectEvalStatement(expr);
+  if (
+    !shape ||
+    currentSelectionOptions?.jsHostExterns !== true ||
+    currentSelectionOptions?.supportsHostIndirectEval !== true ||
+    !selectorSeesAmbientBinding(shape.evalIdentifier) ||
+    (scope?.has("eval") ?? false) ||
+    !expressionIsProvenHostEvalString(shape.source)
+  ) {
+    return undefined;
+  }
+  return shape;
+}
+
 function typeNodeIsStringOnly(typeNode: ts.TypeNode): boolean {
   if (typeNode.kind === ts.SyntaxKind.StringKeyword) return true;
   if (ts.isParenthesizedTypeNode(typeNode)) return typeNodeIsStringOnly(typeNode.type);
@@ -5999,7 +6088,7 @@ function preflightClassPropertyWrite(expression: ts.PropertyAccessExpression, sc
 
 function classPositionTypeMayProject(
   type: ts.TypeNode | undefined,
-  owner: ts.ClassDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
   allowVoid: boolean = false,
 ): boolean {
   if (!type) return false;
@@ -6039,7 +6128,10 @@ function classPositionTypeMayProject(
   return false;
 }
 
-function classInitializerMayProject(initializer: ts.Expression | undefined, owner: ts.ClassDeclaration): boolean {
+function classInitializerMayProject(
+  initializer: ts.Expression | undefined,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
   if (!initializer) return false;
   const candidate = unwrapProjectionExpression(initializer);
   if (
@@ -6058,14 +6150,17 @@ function classInitializerMayProject(initializer: ts.Expression | undefined, owne
   return false;
 }
 
-function classFieldMayProject(field: ts.PropertyDeclaration, owner: ts.ClassDeclaration): boolean {
+function classFieldMayProject(field: ts.PropertyDeclaration, owner: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (!ts.isIdentifier(field.name) && !ts.isPrivateIdentifier(field.name)) return false;
   return field.type
     ? classPositionTypeMayProject(field.type, owner)
     : classInitializerMayProject(field.initializer, owner);
 }
 
-function classMethodSignatureMayProject(method: ts.MethodDeclaration, owner: ts.ClassDeclaration): boolean {
+function classMethodSignatureMayProject(
+  method: ts.MethodDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
   return (
     hasFixedIrParameters(method.parameters) &&
     method.parameters.every((parameter) => classPositionTypeMayProject(parameter.type, owner)) &&
@@ -6075,7 +6170,7 @@ function classMethodSignatureMayProject(method: ts.MethodDeclaration, owner: ts.
 
 function classAccessorMayProject(
   accessor: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-  owner: ts.ClassDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
 ): boolean {
   if (ts.isGetAccessorDeclaration(accessor)) {
     return accessor.parameters.length === 0 && classPositionTypeMayProject(accessor.type, owner);
@@ -6156,7 +6251,7 @@ function projectedConstructorArity(className: string): number | undefined {
 }
 
 function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): boolean {
-  const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.get(name)?.name !== undefined;
+  const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.has(name);
   return (
     (!scope.has(name) || exactNestedClassBinding) &&
     !currentNestedFunctionNames.has(name) &&
@@ -6685,6 +6780,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (isOptionalModuleExternCall(expr)) {
       return shapeNo("expr-module-extern-optional-call", expr);
+    }
+    const indirectEvalStatement = exactIndirectEvalStatement(expr);
+    if (indirectEvalStatement) {
+      const certified = certifiedHostIndirectEval(expr, scope);
+      if (!certified) {
+        return capabilityNo("call-resolution-unsupported", "expr-indirect-eval-host-statement", expr);
+      }
+      return isPhase1Expr(certified.source, scope, localClasses);
     }
     // #3000-E: `super(args)` — a derived ctor chaining to its parent. `super` is
     // a keyword, not an identifier/property-access the generic receiver checks
@@ -7781,6 +7884,11 @@ export function buildLocalCallGraph(
         return;
       }
       if (ts.isCallExpression(node)) {
+        const indirectEval = certifiedHostIndirectEval(node);
+        if (indirectEval) {
+          visit(indirectEval.source);
+          return;
+        }
         if (ts.isIdentifier(node.expression)) {
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
           if (imported) {
@@ -7957,8 +8065,10 @@ function implicitParameterHasOnlyStringCallArguments(
  * doesn't accept their use). Anonymous classes (no `name`) are skipped. The
  * declaration values preserve the identity needed by #3529 projection checks.
  */
-function collectLocalClassDeclarations(sourceFile: ts.SourceFile): Map<string, ts.ClassDeclaration> {
-  const declarations = new Map<string, ts.ClassDeclaration>();
+function collectLocalClassDeclarations(
+  sourceFile: ts.SourceFile,
+): Map<string, ts.ClassDeclaration | ts.ClassExpression> {
+  const declarations = new Map<string, ts.ClassDeclaration | ts.ClassExpression>();
   for (const stmt of sourceFile.statements) {
     if (ts.isClassDeclaration(stmt) && stmt.name) declarations.set(stmt.name.text, stmt);
   }

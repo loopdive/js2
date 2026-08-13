@@ -52,6 +52,7 @@ files:
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/ir-class-shapes.ts
   - src/codegen/program-abi-class-callable-planning.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/program-abi-type-planning.ts
@@ -60,6 +61,7 @@ files:
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
@@ -1259,13 +1261,59 @@ expressions and nested classes with inheritance, static/effectful elements,
 computed keys, initializers, flexible parameters, or captures still consume
 the nested class/body machinery. The remaining serial R3 checklist is:
 
-1. class-expression ownership and the remaining effect-free declaration
-   positions;
-2. closures, object methods/accessors, and cross-owner callable support;
-3. module initialization under #3523;
-4. runtime and linear-memory helpers; and
-5. delete each direct implementation when its final typed consumer reaches
+1. closures, object methods/accessors, and cross-owner callable support;
+2. module initialization under #3523;
+3. runtime and linear-memory helpers; and
+4. delete each direct implementation when its final typed consumer reaches
    zero, then enable IR-only as the default.
+
+### Const-bound nested class-expression ownership checkpoint (2026-08-13)
+
+The next nested-class family is now a prepare-before-emit transaction for the
+exact effect-free `const C = class { ... }` and `const C = class C { ... }`
+forms. The class expression keeps its synthetic legacy callable/layout label,
+while the exact const binding is published as a selector/lowerer alias. The
+identity selector, checker-backed class resolver, Program ABI constructor
+support transaction, and declaration skip audit all correlate through the
+same `IrClassId`; the surrounding function, `_init`, AST-free `_new`, and every
+method either prepare as one component or remain direct together.
+
+The bounded family does not turn a class object into an IR runtime value.
+Selection proves every reference to the const binding is the callee of direct
+`new C(...)`. Passing, comparing, returning, or otherwise reading `C` keeps the
+whole component direct. Mutable bindings, differently named inner class
+expressions, captures, inheritance, decorators, static/effectful elements,
+computed keys, field initializers, flexible parameters, and unsupported member
+bodies also remain fail-closed.
+
+Explicit parity evidence covers both GC and standalone:
+
+- the enclosing `run`, constructor, `add`, and `scale` terminals share one
+  prepared component with `legacyBodyEmitted:false` and
+  `irBodyEmitted:true` while both direct-body poison seams are active;
+- both targets validate and return `715`, with typed `struct.set`/`struct.get`
+  bodies and no extern conversions, casts/tests, `call_ref`, or
+  `call_indirect` in migrated functions;
+- prepared binary size is **1,232 vs 1,557 bytes** direct on GC and **21,536
+  vs 47,058 bytes** direct on standalone; and
+- first-class-value, mutable-binding, and differently-named controls preserve
+  direct runtime semantics and record no post-claim failures.
+
+Focused class/expression/accessor qualification is **71/71**, including all
+42 class compile-once tests and all 21 nested-accessor writeback tests. The
+broader R2/R3 ownership matrix is **134/134**, cross-backend differential is
+**29/29**, and equivalence is **1,645 passing, 24 known failures, zero new
+regressions** (12 baseline failures now pass). Hybrid and strict shadows remain
+READY at **37/37 IR bodies, 0 legacy bodies, 0 Unsupported, 0 Invariants**.
+The fallback gate has zero unintended, post-claim, or module-level increases;
+typecheck, lint, formatting, optimization retirement, LOC, and function-budget
+gates pass.
+
+No shared direct class-expression implementation is deleted yet. First-class,
+module-level, inline, capturing, and effectful class-expression consumers still
+use it. The next serial R3 owner is closures/object methods/cross-owner callable
+support; after those consumers reach zero, the obsolete direct branches must be
+deleted in the same checkpoint that proves their last use is gone.
 
 ## Exhaustive source-unit census
 
