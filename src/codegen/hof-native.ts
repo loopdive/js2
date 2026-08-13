@@ -66,7 +66,9 @@ const NATIVE_HOF_EACH = new Set([
   "every",
   "some",
 ]);
-const NATIVE_HOF_REDUCE = new Set(["reduce", "reduceRight"]);
+// Exported (#4394) so the Array.prototype value-read arm can tell the
+// `(recv, cb, thisArg)` members apart from the `(recv, cb, init, hasInit)` ones.
+export const NATIVE_HOF_REDUCE: ReadonlySet<string> = new Set(["reduce", "reduceRight"]);
 
 /** Method names served by {@link ensureNativeArrayHof} (single source for the
  *  call-site closure-compile gate and the dispatcher arm — #3098). */

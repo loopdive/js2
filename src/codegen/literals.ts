@@ -1438,6 +1438,66 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
 }
 
+/**
+ * (#4394) Build an object literal directly as the struct the call boundary
+ * EXPECTS, when its own inferred shape is a different struct.
+ *
+ * Returns the built value's `ValType`, or `undefined` to decline — in which
+ * case NOTHING has been emitted and the caller keeps its existing lowering.
+ *
+ * Declines unless the diversion can only replace a downcast that was going to
+ * fail: the expected typeIdx must name a registered struct, every property the
+ * literal writes must be one of its fields, and the literal's own struct
+ * resolution must be a DIFFERENT type (equal shapes already lower correctly).
+ * Spreads, accessors, methods and computed keys decline — those carry their own
+ * dedicated lowerings above this point.
+ */
+function tryCompileObjectLiteralAsExpectedStruct(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+  expectedTypeIdx: number,
+): ValType | null | undefined {
+  let expectedName: string | undefined;
+  for (const [name, idx] of ctx.structMap) {
+    if (idx === expectedTypeIdx) {
+      expectedName = name;
+      break;
+    }
+  }
+  if (expectedName === undefined) return undefined;
+  const expectedFields = ctx.structFields.get(expectedName);
+  if (!expectedFields || expectedFields.length === 0) return undefined;
+
+  const fieldNames = new Set(expectedFields.map((field) => field.name));
+  for (const prop of expr.properties) {
+    if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) return undefined;
+    const nameNode = prop.name;
+    if (!ts.isIdentifier(nameNode) && !ts.isStringLiteral(nameNode)) return undefined;
+    if (!fieldNames.has(nameNode.text)) return undefined;
+  }
+
+  // oracle-ratchet-allow (#4394, granted in the issue frontmatter): the same
+  // raw-type-IDENTITY question the #3536 arm below asks — `resolveStructName`
+  // keys off `ts.Type` identity to reach `anonTypeMap`/`structMap`, a
+  // wasm-lowering ValType question the oracle deliberately does not express.
+  let litType: ts.Type | undefined;
+  try {
+    litType = ctx.checker.getTypeAtLocation(expr);
+  } catch {
+    litType = undefined;
+  }
+  if (litType === undefined) return undefined;
+  const litStructName = resolveStructName(ctx, litType);
+  if (litStructName !== undefined && ctx.structMap.get(litStructName) === expectedTypeIdx) {
+    // Same shape — the existing path already builds a matching struct.
+    return undefined;
+  }
+
+  ensureComputedPropertyFields(ctx, fctx, expr, litType);
+  return compileObjectLiteralForStruct(ctx, fctx, expr, expectedName);
+}
+
 export function compileObjectLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1621,6 +1681,35 @@ export function compileObjectLiteral(
   // on typeIdx equality, so an expected `$Object` / class / vec / AnyValue
   // type can never divert a literal that would not have lowered to that exact
   // struct anyway.
+  // (#4394) The literal's own shape is a DIFFERENT struct from the expected one
+  // because it OMITS optional fields the parameter declares. That is the
+  // ordinary shape of a JSDoc-typed harness parameter under `allowJs` —
+  //
+  //   /** @param {object} [options]
+  //    *  @param {boolean} [options.label]
+  //    *  @param {boolean} [options.restore] */
+  //   function verifyProperty(obj, name, desc, options) { … }
+  //   verifyProperty(obj, prop, desc, { restore: true });   // propertyHelper.js
+  //
+  // The argument lowered to `struct.new <{restore}>` followed by the
+  // call-boundary guarded downcast to `<{label,restore}>`, which cannot match —
+  // and a failed guarded cast yields `ref.null`, so the callee's `options`
+  // arrived as NULL. `options && options.restore` was then false and
+  // `verifyProperty`'s `{ restore: true }` contract silently did nothing.
+  //
+  // Build the literal directly AS the expected struct instead, defaulting the
+  // absent optional fields — exactly what `compileObjectLiteralForStruct`
+  // already does for a field the literal does not mention. Scoped so it can only
+  // ever REPLACE a cast that was going to fail (see the helper's contract).
+  if (
+    expectedType !== undefined &&
+    (expectedType.kind === "ref" || expectedType.kind === "ref_null") &&
+    expr.properties.length > 0
+  ) {
+    const diverted = tryCompileObjectLiteralAsExpectedStruct(ctx, fctx, expr, expectedType.typeIdx);
+    if (diverted !== undefined) return diverted;
+  }
+
   if (
     ctx.standalone &&
     expectedType !== undefined &&
@@ -4088,7 +4177,20 @@ export function compileArrayLiteral(
         // strings and numbers keep the numeric/native-string fast path.
         const hasObjectElem = expr.elements.some((el) => {
           if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
-          if (el.kind === ts.SyntaxKind.StringLiteral) return false;
+          // (#4394) The StringLiteral carve-out below keeps the numeric fast
+          // path for the native-strings lanes, where a widening decision is
+          // made by the dedicated `hasNativeStringElem` scan further down. In
+          // the JS-host/GC lane there is no such scan and a string element is
+          // plain `externref`, so excluding the LITERAL form made the literal
+          // and non-literal spellings of the same array disagree:
+          //
+          //   var s = "a"; [0, s]    // widened → "a" survives
+          //   [0, "a"]               // NOT widened → f64 vec → reads back NaN
+          //
+          // That is what makes compareArray.js report `[0, 'a', undefined]` as
+          // `[0, NaN, NaN]`, so `compareArray(first, second)` answers `true`
+          // for arrays that differ only in their string elements.
+          if (el.kind === ts.SyntaxKind.StringLiteral && ctx.nativeStrings) return false;
           const t = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(el));
           return t.kind === "ref" || t.kind === "ref_null" || t.kind === "externref";
         });

@@ -81,6 +81,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
   // Callback maker
   if (name === "__make_callback") return { type: "callback_maker" };
+  // (#4394) Same maker, constructible bridge — see closures.ts.
+  if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
   if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
 
   // Async/await
@@ -297,6 +299,14 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // Route through a dedicated builtin handler that boxes the i32 symbol id and
   // returns `Object(sym)`.
   if (name === "__new_Symbol") return { type: "builtin", name };
+
+  // (#4394) `new Test262Error(msg)` in a module that DECLARES `function
+  // Test262Error` (every literal-upstream-harness assembly does — sta.js).
+  // Takes the module's own constructor value as a second argument so the
+  // host-built Error carries a `.constructor` back-pointer that is `===` the
+  // identifier read. Must precede the generic `__new_` extern_class arm below,
+  // which would otherwise resolve it as a class named `Test262Error_ctor`.
+  if (name === "__new_Test262Error_ctor") return { type: "builtin", name };
 
   // Unknown constructor imports (__new_ClassName)
   if (name.startsWith("__new_")) {

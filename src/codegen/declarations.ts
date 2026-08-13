@@ -35,6 +35,7 @@ import {
   isAssignmentOperator,
 } from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
+import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -2413,6 +2414,24 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             ctx.moduleInitStatements.push(stmt);
             continue;
           }
+          // (#4394) Host/GC counterpart of the standalone #3666 keep above:
+          // the receiver is itself a function-valued own property of a
+          // top-level function — `assert.deepEqual._compare = (function(){…})()`,
+          // the literal harness's deepEqual.js. The bare-identifier gate above
+          // does not match, so the statement was dropped and compiled to
+          // NOTHING: `_compare` silently never existed and the whole deepEqual
+          // family failed with `_compare is not a function`. Gated exactly like
+          // the standalone arm — the oracle must prove the receiver CALLABLE,
+          // which excludes `F.prototype.m` and ordinary object-valued chains.
+          if (
+            !ts.isPrivateIdentifier(expr.left.name) &&
+            !STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(expr.left.name.text) &&
+            !ts.isIdentifier(receiver) &&
+            isTopLevelFunctionPropertyReceiver(ctx, receiver)
+          ) {
+            ctx.moduleInitStatements.push(stmt);
+            continue;
+          }
           // (#2623 P-7b) `Promise.<prop> = …` — a top-level static patch on the
           // BUILTIN Promise (the test262 observable-resolve shape
           // `Promise.resolve = function(){…}`, `all/race invoke-resolve.js`).
@@ -3141,6 +3160,11 @@ export function compileDeclarations(
     // `emitCachedFuncClosureAccess` (NOT the identifier read-path, which would
     // recurse into the live-binding `global.get` arm). Dedupe by global index so
     // an import alias sharing the same global is seeded once.
+    // (#4394) §9.1.1.4.18 — a SCRIPT's top-level function declarations are own
+    // properties of the global object. Seeded here, ahead of every user
+    // statement, which is what declaration hoisting requires.
+    emitScriptGlobalFunctionBindings(ctx, initFctx);
+
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
       for (const liveName of ctx.liveFuncBindingGlobals) {
