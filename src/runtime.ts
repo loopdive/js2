@@ -1545,6 +1545,21 @@ const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
+/**
+ * (#4394) The single host-side `Test262Error` class used by every
+ * `new Test262Error(msg)` lowering. Hoisted to module scope so the
+ * `__new_Test262Error_ctor` builtin and the generic `extern_class` arm mint
+ * instances of the SAME class — otherwise `err.constructor` identity depends
+ * on which import a given module happened to bind.
+ */
+class _HostTest262Error extends Error {
+  constructor(msg?: string) {
+    super(msg);
+    this.name = "Test262Error";
+  }
+}
+_test262ErrorConstructors.add(_HostTest262Error);
+
 // (#3369) Callback bridges must remain usable while the evaluated program has
 // installed non-writable numeric properties on Array.prototype. `[].push(x)`
 // and direct indexed assignment perform [[Set]] and can be rejected by such an
@@ -8652,15 +8667,10 @@ function resolveImport(
           return (v: any): any => Object(v);
         }
         // Test262Error is a simple Error subclass used by the test262 harness
-        class Test262Error extends Error {
-          constructor(msg?: string) {
-            super(msg);
-            this.name = "Test262Error";
-          }
-        }
-        if (intent.className === "Test262Error") {
-          _test262ErrorConstructors.add(Test262Error);
-        }
+        // (#4394) Was a fresh `class Test262Error extends Error` minted per
+        // resolver call, so two modules — or two imports in one module — saw
+        // different constructor identities. Bound to the hoisted single class.
+        const Test262Error = _HostTest262Error;
         const builtinCtors: Record<string, Function> = {
           Number,
           Boolean,
@@ -12981,6 +12991,34 @@ assert._isSameValue = isSameValue;
       // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
       // symbol preserves identity/description) then `Object()` it into a wrapper
       // object. `Symbol.prototype.description` already unwraps such wrappers.
+      // (#4394) `new Test262Error(msg)` where the compiled module DECLARES its
+      // own `function Test262Error` — which the literal upstream harness
+      // (sta.js) always does. The error object itself must stay a real host
+      // `Error` subclass (the exception bridge, the failure renderer and every
+      // `String(err)` path depend on that), but §10.2.2 says the constructed
+      // object's `constructor` is the function that was invoked. The compiled
+      // module's `Test262Error` identifier reads a WasmGC closure struct, so a
+      // host class can never be `===` to it. Take that closure as a second
+      // argument and stamp it as a non-enumerable own `constructor`, which is
+      // exactly what `assert.throws` / the harness self-tests compare.
+      if (name === "__new_Test262Error_ctor") {
+        return (msg: any, ctor: any): any => {
+          const err = new _HostTest262Error(msg == null ? undefined : String(msg));
+          if (ctor != null) {
+            try {
+              Object.defineProperty(err, "constructor", {
+                value: ctor,
+                writable: true,
+                enumerable: false,
+                configurable: true,
+              });
+            } catch {
+              /* a frozen Error prototype chain is not worth failing construction over */
+            }
+          }
+          return err;
+        };
+      }
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =

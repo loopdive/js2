@@ -28,6 +28,7 @@ import { ensureObjectRuntime } from "../object-runtime.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { coerceType, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -433,6 +434,11 @@ export function tryCompileBuiltinGlobalNew(
         if (internalFuncIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: internalFuncIdx });
         }
+        return { kind: "externref" };
+      }
+      // (#4394) JS-host `new Test262Error(msg)` in a module that declares its
+      // own `function Test262Error` — see test262-error-ctor.ts.
+      if (emitTest262ErrorWithModuleCtor(ctx, fctx, expr, ctorName)) {
         return { kind: "externref" };
       }
       // Use host import to create a real Error object with correct .name/.message/.stack
