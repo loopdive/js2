@@ -74,6 +74,21 @@ func-budget-allow:
   - src/codegen/native-strings-basics.ts::emitStrCompareHelpers
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
+oracle-ratchet-allow:
+  # (#4157 non-null guard elision, JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR) The
+  # +5 net counted sites all feed the PRE-EXISTING main helper
+  # `isProvablyNonNull(expr, checker?)` (property-access.ts:1074), whose
+  # signature takes the raw `ts.TypeChecker` — the new code adds CALLERS of
+  # that helper at the guard-elision sites, it does not introduce new raw type
+  # queries. Routing through ctx.oracle would mean migrating the helper itself,
+  # a separate refactor out of scope for a flags-off byte-identical PR.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
+  # nonnull-proof.ts's single counted hit is a DOC COMMENT ("`isProvablyNonNull
+  # (expr, ctx.checker)` — passed in to avoid an import cycle", line ~136) —
+  # the module deliberately takes the proof callback injected and holds no
+  # checker reference of its own.
+  - src/codegen/nonnull-proof.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
