@@ -217,6 +217,7 @@ import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) ho
 import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
+import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
@@ -5154,6 +5155,11 @@ export function generateModule(
     // generic dispatcher body filled just above.
     fillTypedMemberGetF64Dispatch(ctx);
 
+    // (#4157) Inline-cache the READ SITES against the arms just filled. Placed
+    // HERE so the copied arm and the copy share one type/funcIdx regime — every
+    // later remap treats both identically. DEFAULT OFF.
+    inlineMemberGetCallSites(ctx);
+
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
     fillErrorPropHelpers(ctx); // (#4098) fill reserved Error bag ABI before its MOP consumers finalize
@@ -7511,6 +7517,7 @@ export function generateMultiModule(
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
+    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillErrorPropHelpers(ctx); // (#4098) multi-source parity for the shared Error bag ABI

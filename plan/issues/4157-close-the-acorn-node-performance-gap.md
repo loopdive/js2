@@ -2361,3 +2361,197 @@ they look here: **loop-depth frequency** is a *speed* heuristic, and every
 measurement in this file says the binding constraint is size; and **cold
 callees** need no IR work at all — binaryen already exposes the exact control,
 measured above at −3.03 %.
+
+## 2026-08-13 — call-site inline caching, BUILT: the read becomes machine code, not a call
+
+**LANDED flag-gated, DEFAULT OFF** (`JS2WASM_INLINE_PROP_IC`), in
+`src/codegen/member-get-inline-ic.ts`, wired into both finalize sequences.
+No wall-clock number is quoted and none was taken — the box was under concurrent
+agent load throughout, and §6 of #3927 rules anything under ~10 % unresolvable
+here even when it is quiet. What is reported is deterministic: sites,
+instructions, bytes, and correctness.
+
+> Ordering note: this lands on a base whose copy of this file ends at entry (5).
+> The dispatcher-level attempts it responds to — "outlining the cold path", the
+> "implementation spec for the surviving lever", "the spec from §10 was BUILT.
+> It is a regression", and "the gated inline cache: LANDED FLAG-OFF" — are
+> entries (9), (10), (13) and (14) in the parallel lane's copy. This entry is
+> written to merge after them.
+
+### What was built, and why it is a different lever from entries (13)/(14)
+
+Entries (13)/(14) put a cache arm INSIDE `__get_member_<name>`. The read was
+still a call. This removes the call: at every eligible
+`call $__get_member_<name>` site the dispatcher's FIRST arm is copied inline and
+the call becomes the `else`.
+
+```
+<receiver: anyref>              ;; the site's own extern.convert_any is DROPPED
+local.tee  $__ic
+ref.test   $S
+if (result externref)
+  local.get $__ic ; ref.cast $S ; struct.get $S <slot> ; <box>
+else
+  local.get $__ic ; extern.convert_any ; call $__get_member_<name>
+end
+```
+
+**9 total instructions replacing 2** for a reference-typed slot (10 with an f64
+box, 11 with an i32 widen + box), counted at FULL DEPTH — the `if` plus both of
+its arms — because entry (9) failed by counting four TOP-LEVEL instructions when
+one of them was an `if` carrying ~45. The **executed hit path is 6 instructions
+and contains no conversion at all**: `local.tee`, `ref.test`, `if`, `local.get`,
+`ref.cast`, `struct.get`. That is V8's `load map / compare / branch / load at
+fixed offset`, with `ref.test` doing in one instruction what V8 needs a map load
+plus a compare for.
+
+Both conversions are gone because the pass inspects the instruction it is
+patching in front of: the dominant read site emits `…; extern.convert_any; call
+$disp` — it *had* the anyref and converted it only to satisfy the dispatcher's
+externref ABI — so the pass **deletes the site's own conversion** and re-adds it
+in the miss arm. Worth 2 instructions per site and ~5.5 KB on acorn.
+
+### Why the #2674 hazard cannot recur, structurally
+
+#2674 removed inline multi-struct dispatch because the site froze its candidate
+set at that read's compile time; a struct registered later (`$__fnctor_Parser`
+after `$__anon_5`) was excluded, reads fell to `__extern_get` → `undefined`
+while writes hit the slot, and the expression parser never terminated. Two
+independent properties block that here:
+
+1. **No site-frozen set exists.** This is a FINALIZE pass. It calls
+   `findAlternateStructsForField(ctx, propName, -1)` — literally the same call,
+   at the same point in the pipeline, as `fillMemberGetDispatch` — and runs
+   immediately after that fill, before every index-remapping pass
+   (`brandCollidingShapeTypes`, dead-elim). The arm it copies and the copy
+   therefore live in one type/funcIdx regime, and every later remap treats them
+   identically.
+2. **A wrong guess is a branch, never an answer.** The `then` arm is a literal
+   copy of the dispatcher's arm for `candidates[0]`; the `else` arm is the
+   unmodified call. The site's answer set is IDENTICAL to the dispatcher's —
+   exactly the property the frozen chain lacked, whose set was a strict subset.
+   Even a speculation that never hit would cost only the guard.
+
+Only `candidates[0]` is ever speculated on, and that is what removes the need to
+reason about subtyping or structural canonicalization at all: the dispatcher
+tests arms in order, so any receiver satisfying the inline `ref.test $S0` would
+have taken the dispatcher's first arm anyway. The fast path is not "a case the
+dispatcher would also handle"; it is "the exact code the dispatcher would run".
+
+Where copying an arm faithfully would need more than `struct.get` + box — a
+`$shape` collision stamp, a packed presence bit, the #2979 generator-sentinel
+f64, or any get-accessor candidate (which the dispatcher tries FIRST, so an
+inline field read would shadow a getter) — the pass **declines** and the site
+keeps today's plain call. There is no half-copy.
+
+### Why it does not repeat entry (13)'s 3.50 pp regression
+
+Entry (13) taxed every dispatcher, including the majority whose reads a struct
+arm answers a few instructions later, because `reserveMemberGetDispatch` is
+unconditional. This pass fires only where a struct arm IS the answer, and by
+default only where the receiver shape is unambiguous. The 37 acorn dispatchers
+with **no** struct candidates — `locations`, `ranges`, `ecmaVersion`, `onToken`,
+the entire entry-(13)/(14) population — are declined and untouched. The two
+levers do not overlap and can be measured independently.
+
+### Why the #1269 narrowing vote cannot move
+
+The Phase-3 vote is computed during EMISSION in `property-access-dispatch.ts`
+from the field-kind finders. This pass runs after all emission is finished and
+changes no finder, no reservation and no `resultWasm`. It cannot be observed by
+the vote, because the vote has already happened. The per-field differential was
+run anyway — a structural argument is a reason to expect a gate to pass, not a
+substitute for running it.
+
+### Numbers (standalone acorn self-parse, `optimize: 0`, checksum 422 throughout)
+
+| build | bytes | Δ | sha256 | patched sites | functions |
+| --- | ---: | ---: | --- | ---: | ---: |
+| pass NOT WIRED (base) | 2,459,292 | — | `84f88c1c…b58de` | — | — |
+| wired, `JS2WASM_INLINE_PROP_IC` unset | **2,459,292** | **0** | **`84f88c1c…b58de`** | 0 | 0 |
+| `=1` (monomorphic only) | 2,497,399 | +38,107 (+1.55 %) | `9d6f2218…4e61e` | **1,497** | 329 |
+| `=4` (ceiling raised) | 2,543,189 | +83,897 (+3.41 %) | `5c789a81…0f21d` | 3,347 | 621 |
+
+**Byte-identical-when-off is proved by HASH, not by size**: the flag-off build
+and a build with the pass not wired into the finalize sequence at all are the
+same 2,459,292 bytes with the same sha256. The flag reads as a number —
+unset/`0` disables; `=1` speculates only where exactly one struct carries the
+name; `=N` raises the ceiling and still speculates on `candidates[0]`.
+
+**≈25 B per patched site**, in line with the inlining arithmetic in the
+`__box_number` entry. Code size is itself an optimisation barrier here (entry 15:
+682 WAT lines per function on average already blocks `wasm-opt` inlining), so
++1.55 % is a real cost to weigh, not a footnote — and it is the argument for
+shipping `=1` rather than a higher ceiling: `=4` more than doubles the sites for
+speculation on names where, by construction, at least one other shape exists.
+
+Declines at `=1`: 58 polymorphic, 37 no-struct-candidates (`locations`,
+`ranges`, `ecmaVersion`, `onToken` — the entry-(13)/(14) population), 14
+polymorphic on the typed-f64 twin. **Zero sites declined on producer shape**,
+after `producesExternref` was widened to resolve IMPORTED callees
+(`funcSignatureOf`, not `definedFuncAt` — `__extern_get` and friends are
+imports) and to accept a value-producing `if` of externref type, which is what
+this pass itself emits and is therefore what a chained `a.b.c` read presents.
+Before that widening the same acorn build declined 14 sites at `=1` and 1,116 at
+`=4`; the residual discipline is unchanged — the pass still refuses to
+`local.tee` any value whose type it cannot prove, exactly as `instrPopsPushes`
+refuses to model an unrecognised instruction.
+
+### Correctness
+
+- `cold-tail-census.mjs`: **checksum 422** at every setting, and an unchanged
+  allocation census — 189,977 allocations, 5,759,436 struct bytes, all 26
+  streams identical ON and OFF.
+- **Per-field differential over all 64 ESTree names, BOTH read paths**
+  (`PROBE_READ=computed` and `PROBE_READ=named`), ON vs OFF: **0 hash
+  divergences, 0 presence divergences, 32,506 nodes, body 422** in both modes.
+  This is the #4217 gate: that defect was invisible to a computed read and
+  uniform in a named one, so a single-path differential reports all-clear.
+- `tests/dogfood/acorn.test.ts`: 3 passed / 1 skipped, identical ON and OFF.
+- Property / object / struct / member / proto / hasOwn / numeric-key equivalence
+  batch, 49 files: **2 failed / 308 passed, THE SAME two either way** —
+  `tests/equivalence/new-non-constructor.test.ts` ("not-a-constructor test262
+  pattern compiles without stack underflow", "guard preamble with many exported
+  functions does not double-remap"). Attributed by re-running that file against
+  `origin/main`'s `src/codegen/index.ts` blob (file copy, never `git stash`):
+  both fail there too. **Pre-existing, unrelated.**
+- New fixture `tests/issue-4157-member-get-inline-ic.test.ts` (4/4): answers checked
+  against **native Node**, plus a mechanism assertion (the pass's own site
+  counter must be non-zero AND grow when the ceiling is raised — a gate that
+  never bites is indistinguishable from an absent gate), plus the #2674
+  read/write-agreement case (write a name onto a struct with no slot for it, so
+  it lands in the sidecar, and read it back through the guard).
+
+### Two pre-existing defects this fixture surfaced (NOT caused by this change)
+
+Both reproduce on the base build, and are recorded because they cost real time to
+rule out and will cost the next lane the same.
+
+1. **Structurally identical class structs alias in `__get_member_<name>`.** With
+   `class Mono { mv: number }` and `class Bare { other: number }` — same field
+   arity, same kinds — a dynamic read of `.mv` on a `Bare` instance answers
+   `Bare.other`, not `undefined`. WasmGC canonicalizes the two structs to one
+   heap type, so the dispatcher's `ref.test $Mono` matches a `Bare`, and no
+   `$shape` stamp guard is present on these candidates. Mechanism not diagnosed
+   beyond that; the observable is certain. Giving every fixture class a distinct
+   field arity makes it go away, which is why the committed fixture does.
+2. **A monomorphic f64-narrowed read answers `NaN` on a MISS, not `undefined`.**
+   #1269's Phase-3 narrowing collapses a single-f64-candidate read to f64, so a
+   receiver that does not carry the name unboxes `undefined` to NaN. That is why
+   the fixture splits its miss cases into a second entry point whose oracle is
+   the base build rather than Node.
+
+### What is owed, and the prior to hold while doing it
+
+One clean order-reversed ON/OFF/OFF/ON on `standalone-dynamic` with nothing else
+on the box, reporting **`dynamic-lookup` AND `cast-convert`** (the inlined arm
+boxes, so a saving may land in either) and the bucket total, not just the
+`__extern_get` frame — entry (9) moved 2.33 pp between frames for a net 0.13 pp
+and only the bucket exposed it.
+
+The prior: this is the ninth attempt recorded in this file, of which five were
+nulls and one was a regression. What is different is that the target is the
+6.38 pp cache-hit **prologue** entry (9) isolated, that the call itself goes away
+rather than being relocated, and that the hit path is 6 instructions with no
+conversion. What is the same is that this box cannot resolve small effects, and
+that +1.53 % of binary is a real cost that has to be paid back.
