@@ -206,6 +206,74 @@ function expectCanonicalMultiCapturedMethodAbi(wat: string): void {
   );
 }
 
+function expectTypedCapturedSiblingCalls(wat: string, names: readonly string[]): void {
+  for (const name of names) {
+    const body = watFunctionBody(wat, name);
+    expect(body).toMatch(
+      /struct\.get \d+ 3[\s\S]*struct\.get \d+ 0\s+ref\.cast \(ref (\d+)\)\s+(?:return_)?call_ref \1/,
+    );
+    expect(body).not.toMatch(
+      /any\.convert_extern|extern\.convert_any|ref\.test|call_indirect|__call_m_|__call_function|\bcall \d+/,
+    );
+  }
+}
+
+function expectCanonicalSiblingCapturedMethodAbi(wat: string, names: readonly string[]): void {
+  const types = watTypeLines(wat);
+  const rootStructs = types.filter((line) => /\$__fn_wrap_\d+_struct \(sub \(struct/.test(line));
+  expect(rootStructs, "expected one canonical callable wrapper root").toHaveLength(1);
+  const rootSuffix = rootStructs[0]!.match(/\$__fn_wrap_(\d+)_struct/)?.[1];
+  expect(rootSuffix).toBeDefined();
+  const rootLifted = types.find((line) => line.includes(`$__fn_wrap_${rootSuffix}_type`));
+  const rootIdxText = rootLifted?.match(/\(ref(?: null)? (\d+)\)/)?.[1];
+  expect(rootIdxText, "canonical callable wrapper root has no self type").toBeDefined();
+  const rootIdx = Number(rootIdxText);
+
+  const liftedTypes = types.filter((line) => /\$__fn_wrap_\d+_type \(func/.test(line));
+  expect(
+    liftedTypes.some((line) => line.includes("(result f64)")),
+    "number wrapper is missing",
+  ).toBe(true);
+  expect(
+    liftedTypes.some((line) => line.includes("(result i32)")),
+    "boolean wrapper is missing",
+  ).toBe(true);
+  const capturedTypes = types.filter((line) => line.includes("(type $__ir_closure_"));
+  expect(capturedTypes, "each sibling should have one IR capture subtype").toHaveLength(names.length);
+  for (const capturedType of capturedTypes) {
+    expect(capturedType).toMatch(new RegExp(`\\(field \\$cap0 \\(ref(?: null)? ${rootIdx}\\)\\)`));
+  }
+
+  expectTypedCapturedSiblingCalls(wat, names);
+  for (const name of names) {
+    expect(watFunctionBody(wat, name)).toContain(`struct.get ${rootIdx} 0`);
+  }
+}
+
+function expectSiblingCaptureOfCapturedMethodAbi(wat: string, names: readonly string[]): void {
+  const types = watTypeLines(wat);
+  const rootStructs = types.filter((line) => /\$__fn_wrap_\d+_struct \(sub \(struct/.test(line));
+  expect(rootStructs, "expected one canonical callable wrapper root").toHaveLength(1);
+  const rootSuffix = rootStructs[0]!.match(/\$__fn_wrap_(\d+)_struct/)?.[1];
+  expect(rootSuffix).toBeDefined();
+  const rootLifted = types.find((line) => line.includes(`$__fn_wrap_${rootSuffix}_type`));
+  const rootIdxText = rootLifted?.match(/\(ref(?: null)? (\d+)\)/)?.[1];
+  expect(rootIdxText, "canonical callable wrapper root has no self type").toBeDefined();
+  const rootIdx = Number(rootIdxText);
+
+  const capturedTypes = types.filter((line) => line.includes("(type $__ir_closure_"));
+  expect(capturedTypes, "method and identical siblings need two semantic capture layouts").toHaveLength(2);
+  expect(capturedTypes.some((line) => /\(field \$cap0 f64\)/.test(line))).toBe(true);
+  expect(
+    capturedTypes.some((line) => new RegExp(`\\(field \\$cap0 \\(ref(?: null)? ${rootIdx}\\)\\)`).test(line)),
+  ).toBe(true);
+
+  expectTypedCapturedSiblingCalls(wat, names);
+  for (const name of names) {
+    expect(watFunctionBody(wat, name)).toContain(`struct.get ${rootIdx} 0`);
+  }
+}
+
 function expectNoImportRegression(
   direct: CompileResult,
   prepared: CompileResult,
@@ -1188,35 +1256,65 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps a direct-property method captured by two sibling closures on the direct path", async () => {
-    const result = await compile(
-      `export function run(input: number): number {
+  it.each(TARGETS)(
+    "prepares a direct-property method captured by two sibling closures in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
         const add = operations.add;
-        const first = (value: number): number => add(value);
-        const second = (value: number): number => add(value);
+        const selected = add;
+        const first = (value: number): number => selected(value);
+        const second = (value: number): number => selected(value);
         return first(input) + second(0) - 2;
-      }`,
-      {
-        fileName: "object-method-value-property-two-capture-owners-direct.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      },
-    );
+      }`;
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2"];
+      const direct = await compile(source, {
+        fileName: `object-method-value-property-two-capture-owners-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = exactBodies.join(",");
+        prepared = await compile(source, {
+          fileName: `object-method-value-property-two-capture-owners-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    expect((await instantiate(result)).run!(40)).toBe(42);
-    expect(outcome(result)).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
-    });
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
-  });
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(exactBodies);
+      expect(watTypeLines(prepared.wat!).filter((line) => line.includes("(type $__ir_closure_"))).toHaveLength(1);
+      expectTypedCapturedSiblingCalls(prepared.wat!, ["run__closure_1", "run__closure_2"]);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
 
   it("keeps an escaped direct-property method capture closure on the direct path", async () => {
     const result = await compile(
@@ -1428,9 +1526,10 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
-  it("keeps one captured method alias shared by two nested closure owners on the direct path", async () => {
-    const result = await compile(
-      `export function run(input: number): number {
+  it.each(TARGETS)(
+    "prepares one captured method alias shared by two sibling closures in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
@@ -1439,29 +1538,117 @@ describe("#3522 object-method call ownership", () => {
         const first = (value: number): number => selected(value);
         const second = (value: number): number => selected(value);
         return first(input) + second(0) - 2;
-      }`,
-      {
-        fileName: "object-method-value-destructured-two-capture-owners-direct.ts",
-        experimentalIR: true,
-        trackIrOutcomes: true,
-      },
-    );
+      }`;
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2"];
+      const direct = await compile(source, {
+        fileName: `object-method-value-destructured-two-capture-owners-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = exactBodies.join(",");
+        prepared = await compile(source, {
+          fileName: `object-method-value-destructured-two-capture-owners-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    expect((await instantiate(result)).run!(40)).toBe(42);
-    expect(outcome(result)).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
-    });
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
-  });
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(exactBodies);
+      expect(watTypeLines(prepared.wat!).filter((line) => line.includes("(type $__ir_closure_"))).toHaveLength(1);
+      expectTypedCapturedSiblingCalls(prepared.wat!, ["run__closure_1", "run__closure_2"]);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
 
-  it("keeps one destructuring pattern captured by two nested closure owners on the direct path", async () => {
-    const result = await compile(
-      `export function run(input: number): number {
+  it.each(TARGETS)(
+    "captures a method with its own readonly capture through two sibling closures in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
+        const offset: number = 2;
+        const operations = {
+          add(value: number): number { return value + offset; }
+        };
+        const { add } = operations;
+        const first = (value: number): number => add(value);
+        const second = (value: number): number => add(value);
+        return first(input) + second(0) - offset;
+      }`;
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2"];
+      const direct = await compile(source, {
+        fileName: `object-method-value-captured-method-siblings-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = exactBodies.join(",");
+        prepared = await compile(source, {
+          fileName: `object-method-value-captured-method-siblings-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(exactBodies);
+      expectSiblingCaptureOfCapturedMethodAbi(prepared.wat!, ["run__closure_1", "run__closure_2"]);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(target === "gc" ? ["env::__box_number", "env::__unbox_number"] : []);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it.each(TARGETS)(
+    "prepares one heterogeneous destructuring pattern captured by two sibling closures in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; },
           positive(value: number): boolean { return value > 0; }
@@ -1470,9 +1657,129 @@ describe("#3522 object-method call ownership", () => {
         const invokeAdd = (value: number): number => add(value);
         const invokePositive = (value: number): boolean => positive(value);
         return invokeAdd(input) + (invokePositive(input) ? 0 : 1);
+      }`;
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2", "run__closure_3"];
+      const direct = await compile(source, {
+        fileName: `object-method-value-destructured-pattern-two-capture-owners-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = exactBodies.join(",");
+        prepared = await compile(source, {
+          fileName: `object-method-value-destructured-pattern-two-capture-owners-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(exactBodies);
+      expectCanonicalSiblingCapturedMethodAbi(prepared.wat!, ["run__closure_2", "run__closure_3"]);
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(importLabels(prepared)).toEqual(
+        target === "gc" ? ["env::__box_boolean", "env::__box_number", "env::__unbox_number"] : [],
+      );
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it("keeps sibling capture fan-out stable across changed incremental snapshots", async () => {
+    const source = `export function run(input: number): number {
+      const operations = {
+        add(value: number): number { return value + 2; }
+      };
+      const { add } = operations;
+      const selected = add;
+      const first = (value: number): number => selected(value);
+      const second = (value: number): number => selected(value);
+      return first(input) + second(0) - 2;
+    }`;
+    const unsafe = source.replace(
+      "return first(input) + second(0) - 2;",
+      "const escaped = { second }; return first(input) + escaped.second(0) - 2;",
+    );
+    const options = {
+      fileName: "object-method-value-sibling-capture-reuse.ts",
+      emitWat: true,
+      experimentalIR: true,
+      optimize: true,
+      trackIrOutcomes: true,
+    } as const;
+
+    const fresh = await compile(source, options);
+    const compiler = createIncrementalCompiler(options);
+    try {
+      const warmup = await compiler.compile(unsafe);
+      expect(warmup.success, warmup.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect((await instantiate(warmup)).run!(40)).toBe(42);
+      expect(outcome(warmup)).toMatchObject({
+        kind: "unsupported",
+        stage: "select",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+      expect(warmup.irPostClaimErrors ?? []).toEqual([]);
+
+      const warmed = await compiler.compile(source);
+      const reused = await compiler.compile(source);
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2"];
+      for (const result of [fresh, warmed, reused]) {
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        expect((await instantiate(result)).run!(40)).toBe(42);
+        expect(outcome(result)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        expect(result.irCompiledFuncs ?? []).toEqual(exactBodies);
+      }
+      expect(Buffer.from(warmed.binary)).toEqual(Buffer.from(fresh.binary));
+      expect(Buffer.from(reused.binary)).toEqual(Buffer.from(fresh.binary));
+    } finally {
+      compiler.dispose();
+    }
+  });
+
+  it("keeps mixed safe and escaped sibling captures atomic on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const first = (value: number): number => add(value);
+        const second = (value: number): number => add(value);
+        const escaped = { second };
+        return first(input) + escaped.second(0) - 2;
       }`,
       {
-        fileName: "object-method-value-destructured-pattern-two-capture-owners-direct.ts",
+        fileName: "object-method-value-mixed-safe-escaped-sibling-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },

@@ -6639,7 +6639,7 @@ function directObjectMethodValueProjection(
   const candidate = unwrapProjectionExpression(expression);
   if (!ts.isPropertyAccessExpression(candidate) || !ts.isIdentifier(candidate.name)) return null;
   const method = directObjectMethodDeclaration(candidate.expression, candidate.name.text, scope);
-  if (!method || !methodValueAliasChainHasOnlyBoundedDirectCalls(declaration, new Set())) return null;
+  if (!method || !methodValueAliasChainHasOnlyBoundedDirectCalls(declaration)) return null;
   return {
     arity: exactCallableArity(method.parameters.length),
     returnType: method.type,
@@ -6900,14 +6900,11 @@ function directDestructuredObjectMethodReceiverUsesAreStable(
 }
 
 /**
- * Bound this callable surface to immutable aliases and direct calls. One
- * immediately nested, directly-called const closure may capture the value;
- * broader cross-owner flow, return/pass escapes, and mutation remain direct.
+ * Bound this callable surface to immutable aliases and direct calls.
+ * Immediately nested, directly-called const closures may capture the value;
+ * deeper cross-owner flow, return/pass escapes, and mutation remain direct.
  */
-function methodValueAliasChainHasOnlyBoundedDirectCalls(
-  seed: ts.VariableDeclaration | ts.BindingElement,
-  projectionCaptureOwners: Set<ts.Node>,
-): boolean {
+function methodValueAliasChainHasOnlyBoundedDirectCalls(seed: ts.VariableDeclaration | ts.BindingElement): boolean {
   if (!ts.isIdentifier(seed.name)) return false;
   const owner = enclosingProjectionOwner(seed);
   if (!owner || !currentModuleBindingResolver) return false;
@@ -6993,16 +6990,13 @@ function methodValueAliasChainHasOnlyBoundedDirectCalls(
     forEachChild(node, validateUses);
   };
   forEachChild(owner, validateUses);
-  for (const capturedOwner of capturedCallOwners) projectionCaptureOwners.add(capturedOwner);
   return (
     accepted &&
-    capturedCallOwners.size <= 1 &&
-    projectionCaptureOwners.size <= 1 &&
     [...capturedCallOwners].every((capturedOwner) => capturingClosureHasOnlyOuterDirectCalls(capturedOwner, owner))
   );
 }
 
-/** Keep the new capture surface inside one immediately-invoked local closure. */
+/** Keep each captured owner inside one immediately-invoked local closure. */
 function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOwner: ts.Node): boolean {
   if (!ts.isArrowFunction(capturedOwner) && !ts.isFunctionExpression(capturedOwner)) return false;
   const declaration = capturedOwner.parent;
@@ -7065,7 +7059,6 @@ function directDestructuredObjectMethodProjections(
   const receiver = directDestructuredObjectMethodReceiver(initializer, scope);
   if (!receiver || !directDestructuredObjectMethodReceiverUsesAreStable(receiver)) return null;
   const projections: DirectDestructuredObjectMethodProjection[] = [];
-  const captureOwners = new Set<ts.Node>();
   for (const element of pattern.elements) {
     if (!ts.isIdentifier(element.name)) return null;
     const propertyName = element.propertyName
@@ -7073,7 +7066,7 @@ function directDestructuredObjectMethodProjections(
         ? element.propertyName.text
         : null
       : element.name.text;
-    if (propertyName === null || !methodValueAliasChainHasOnlyBoundedDirectCalls(element, captureOwners)) {
+    if (propertyName === null || !methodValueAliasChainHasOnlyBoundedDirectCalls(element)) {
       return null;
     }
     const method = receiver.root.object.properties.find(
