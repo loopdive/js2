@@ -2670,6 +2670,8 @@ function isEmptyStringLiteral(expression: ts.Expression): boolean {
 
 const IR_I32: IrType = irVal({ kind: "i32" });
 const IR_F64: IrType = irVal({ kind: "f64" });
+const IR_I64: IrType = irVal({ kind: "i64" });
+const LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS = 0x7ff00000deadc0den;
 
 /** `cx`-bound "is this name an i32-promoted slot right now?" predicate. */
 function promotedI32Probe(cx: LowerCtx): IsPromotedI32 {
@@ -3716,6 +3718,23 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isObjectLiteralExpression(expr)) {
     return lowerObjectLiteral(expr, cx);
   }
+  // #3522 returned-closure ownership. A literal produced in expression
+  // position retains the internal closure carrier until an exact callable
+  // boundary requests it. Function results use that boundary, so pack the
+  // closure once here; local literal declarations keep the existing internal
+  // carrier and avoid an externref round trip.
+  if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+    const closure = lowerClosureExpression(expr, cx);
+    const closureType = cx.builder.typeOf(closure);
+    if (
+      hint.kind === "callable" &&
+      closureType.kind === "closure" &&
+      closureSignatureEquals(closureType.signature, hint.signature)
+    ) {
+      return cx.builder.emitCallablePack(closure, hint.signature);
+    }
+    return closure;
+  }
   if (ts.isElementAccessExpression(expr)) {
     return lowerElementAccess(expr, cx);
   }
@@ -4723,6 +4742,23 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       }
       continue;
     }
+    if (ts.isMethodDeclaration(prop)) {
+      const name = phase1PropertyName(prop.name);
+      if (name === null) {
+        throw new Error(`ir/from-ast: object method name not in prepared scope (${cx.funcName})`);
+      }
+      if (seen.has(name)) {
+        throw new Error(`ir/from-ast: duplicate object method key "${name}" not in prepared scope (${cx.funcName})`);
+      }
+      seen.add(name);
+      const value = lowerClosureExpression(prop, cx);
+      const type = cx.builder.typeOf(value);
+      if (type.kind !== "closure") {
+        throw new Error(`ir/from-ast: object method "${name}" did not lower to a closure (${cx.funcName})`);
+      }
+      built.push({ name, type, value });
+      continue;
+    }
     throw new Error(`ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`);
   }
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -4736,53 +4772,92 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
 }
 
 /**
- * #4208 S3/S7 — lower the selector-certified OrdinaryToPrimitive literal as
- * an open object rather than a closed structural `object.new`:
+ * #4208 S3/S7 + #3522 — lower selector-certified OrdinaryToPrimitive
+ * literals. Property-assigned function expressions retain #4208's open-object
+ * protocol. An all-shorthand-method literal uses a closed structural
+ * `object.new` whose method fields retain their exact closure signatures:
  *
  *   { valueOf: function(): number { return 1; } }
  *
- * A closed IR object has a compile-time field layout and cannot participate in
- * the runtime OrdinaryToPrimitive protocol. The open object stores canonical
- * callable externrefs, so both the JS-host and host-free object runtimes can
- * invoke the methods through their existing zero-arity closure dispatcher.
+ * The shorthand selector requires every method to return a numeric/boolean IR
+ * primitive and rejects receiver-sensitive `this`, so unary coercion can
+ * invoke its preferred field directly. String-returning shorthand remains
+ * direct until a native string-to-number IR intrinsic avoids the larger
+ * generic boxed conversion. This preserves the direct backend's static
+ * object-method optimisation and avoids pulling the generic open-object
+ * runtime into a standalone binary. Keeping the pre-existing expression form
+ * open preserves its already-certified dynamic protocol and ABI.
  */
 function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId | null {
-  const properties: { name: "valueOf" | "toString"; initializer: ts.FunctionExpression }[] = [];
+  const properties: {
+    name: "valueOf" | "toString";
+    initializer: ts.FunctionExpression | ts.MethodDeclaration;
+  }[] = [];
   const seen = new Set<string>();
   for (const property of expr.properties) {
-    if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) return null;
+    const initializer = ts.isMethodDeclaration(property)
+      ? property
+      : ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)
+        ? property.initializer
+        : null;
+    if (initializer === null) return null;
+    if (!property.name) return null;
     const name = phase1PropertyName(property.name);
+    const primitiveReturn = initializer.type?.kind;
+    const hasPreparedParityReturn =
+      primitiveReturn === ts.SyntaxKind.NumberKeyword ||
+      primitiveReturn === ts.SyntaxKind.BooleanKeyword ||
+      (ts.isFunctionExpression(initializer) && primitiveReturn === ts.SyntaxKind.StringKeyword);
     if (
       (name !== "valueOf" && name !== "toString") ||
       seen.has(name) ||
-      property.initializer.parameters.length !== 0 ||
-      (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
-        property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
-        property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword)
+      initializer.parameters.length !== 0 ||
+      !hasPreparedParityReturn
     ) {
       return null;
     }
     seen.add(name);
-    properties.push({ name, initializer: property.initializer });
+    properties.push({ name, initializer });
   }
   if (properties.length === 0) return null;
+  const hasFunctionExpression = properties.some(({ initializer }) => ts.isFunctionExpression(initializer));
+  const hasMethodDeclaration = properties.some(({ initializer }) => ts.isMethodDeclaration(initializer));
+  if (hasFunctionExpression && hasMethodDeclaration) return null;
 
-  const objectType: IrType = { kind: "extern", className: "Object" };
-  const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
-  if (object === null) {
-    throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
+  if (hasFunctionExpression) {
+    const objectType: IrType = { kind: "extern", className: "Object" };
+    const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
+    if (object === null) {
+      throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
+    }
+    for (const property of properties) {
+      const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
+      const closure = lowerClosureExpression(property.initializer, cx);
+      const closureType = cx.builder.typeOf(closure);
+      if (closureType.kind !== "closure") {
+        throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
+      }
+      const callable = cx.builder.emitCallablePack(closure, closureType.signature);
+      cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+    }
+    return object;
   }
+
+  const built: { name: "valueOf" | "toString"; type: IrType; value: IrValueId }[] = [];
   for (const property of properties) {
-    const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
     const closure = lowerClosureExpression(property.initializer, cx);
     const closureType = cx.builder.typeOf(closure);
     if (closureType.kind !== "closure") {
       throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
     }
-    const callable = cx.builder.emitCallablePack(closure, closureType.signature);
-    cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+    built.push({ name: property.name, type: closureType, value: closure });
   }
-  return object;
+  built.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const shape: IrObjectShape = { fields: built.map(({ name, type }) => ({ name, type })) };
+  return cx.builder.emitObjectNew(
+    shape,
+    built.map(({ value }) => value),
+  );
 }
 
 /**
@@ -5187,6 +5262,14 @@ function requireSuperParentShape(cx: LowerCtx): IrClassShape {
   return parent;
 }
 
+function emitExpressionDefaultMissingF64(expected: IrType, cx: LowerCtx): IrValueId {
+  if (asVal(expected)?.kind !== "f64") {
+    throw new Error(`ir/from-ast: expression-default sentinel requires an f64 parameter (${cx.funcName})`);
+  }
+  const bits = cx.builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
+  return cx.builder.emitUnary("f64.reinterpret_i64", bits, expected);
+}
+
 function importedMissingArgument(
   expected: IrType,
   optional: IrImportedOptionalParamPlan | undefined,
@@ -5205,8 +5288,7 @@ function importedMissingArgument(
     if (optional?.hasExpressionDefault) {
       // Exact legacy default-expression sentinel. Construct from its bits so
       // JS number canonicalization can never quiet/change the NaN payload.
-      const bits = cx.builder.emitConst({ kind: "i64", value: 0x7ff00000deadc0den }, irVal({ kind: "i64" }));
-      return cx.builder.emitUnary("f64.reinterpret_i64", bits, expected);
+      return emitExpressionDefaultMissingF64(expected, cx);
     }
     return cx.builder.emitConst({ kind: "f64", value: 0 }, expected);
   }
@@ -5612,6 +5694,17 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
  * Boundary callables unpack externref through a root cast on each self use;
  * `collectIrUses`'s double count forces the source SSA value into a local.
  */
+function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boolean {
+  let candidate = expr;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  return (
+    ts.isIdentifier(candidate) &&
+    candidate.text === "undefined" &&
+    !cx.scope.has("undefined") &&
+    cx.resolver?.resolveModuleBinding?.(candidate) === undefined
+  );
+}
+
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
@@ -5622,14 +5715,20 @@ function lowerClosureCall(
   if (signature.returnType === null && !statementPosition) {
     unsupportedVoidCallExpression(`ir/from-ast: void closure calls are not in value position scope (${cx.funcName})`);
   }
-  if (argExprs.length !== signature.params.length) {
+  const expandedArgExprs = expandStaticSpreadArgs(argExprs, cx);
+  const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
+  if (expandedArgExprs.length < defaultParamStart || expandedArgExprs.length > signature.params.length) {
     throw new Error(`ir/from-ast: closure call arity mismatch in ${cx.funcName}`);
   }
   const args: IrValueId[] = [];
-  for (let i = 0; i < argExprs.length; i++) {
+  for (let i = 0; i < signature.params.length; i++) {
     const expected = signature.params[i]!;
-    const argVal = lowerExpr(argExprs[i]!, cx, expected);
-    if (!irTypeEquals(cx.builder.typeOf(argVal), expected)) {
+    const argument = expandedArgExprs[i];
+    const argVal =
+      i >= defaultParamStart && (argument === undefined || isUnshadowedUndefinedExpression(argument, cx))
+        ? emitExpressionDefaultMissingF64(expected, cx)
+        : lowerExpr(argument!, cx, expected);
+    if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       throw new Error(
         `ir/from-ast: closure arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
       );
@@ -6665,6 +6764,25 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return result;
   }
 
+  // #3522 parameterized object-method ownership. A selector-certified
+  // shorthand method is stored as an exact closure field in the closed object
+  // layout. Receiver-sensitive bodies are rejected before build, so the
+  // JavaScript call is the same typed closure call with no ambient `this`
+  // installation. This retains the direct backend's static target and avoids
+  // generic property/method dispatch.
+  if (recvType.kind === "object") {
+    const field = recvType.shape.fields.find((candidate) => candidate.name === methodName);
+    if (!field || (field.type.kind !== "closure" && field.type.kind !== "callable")) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: object field .${methodName} is not an exact callable (${cx.funcName})`,
+      );
+    }
+    const callee = cx.builder.emitObjectGet(recv, methodName, field.type);
+    return lowerClosureCall(callee, field.type.signature, expr.arguments, cx, statementPosition);
+  }
+
   // (#2856) `<number>.toString()` (no radix) on an f64 receiver → the
   // `number_toString` `(f64) -> externref` host import, pre-registered by the
   // legacy source scan whenever a checker-number `.toString()` appears in
@@ -7564,6 +7682,14 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
  */
 function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
   const declared = cx.returnType;
+  if (declared?.kind === "callable") {
+    const actual = cx.builder.typeOf(value);
+    if (actual.kind === "callable" && closureSignatureEquals(actual.signature, declared.signature)) return value;
+    if (actual.kind === "closure" && closureSignatureEquals(actual.signature, declared.signature)) {
+      return cx.builder.emitCallablePack(value, declared.signature);
+    }
+    return value;
+  }
   if (declared?.kind === "dynamic") {
     const actual = cx.builder.typeOf(value);
     if (actual.kind === "dynamic") return value;
@@ -9350,11 +9476,9 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
     const boxed = cx.builder.emitBox(rand, irDynamic(JsTag.String));
     return cx.builder.emitDynToNumber(boxed);
   }
-  // #4208 S3/S7 — the open OrdinaryToPrimitive object produced above. Keep
+  // #4208 S3/S7 — the original open OrdinaryToPrimitive object route. Keep
   // this branded as `extern:Object` so enabling the abstract operation does
-  // not silently widen every host-class externref unary expression. A null
-  // hint selects the default/number method order; the returned primitive then
-  // flows through the canonical lane-specific ToNumber helper.
+  // not silently widen every host-class externref unary expression.
   if (randType.kind === "extern" && randType.className === "Object") {
     const externref = irVal({ kind: "externref" });
     const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
@@ -9367,6 +9491,39 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
       throw new Error(`ir/from-ast: __unbox_number produced no value in ${cx.funcName}`);
     }
     return number;
+  }
+  // #3522 — selector-certified closed OrdinaryToPrimitive literals contain
+  // only zero-arity valueOf/toString closures with primitive returns and no
+  // receiver-sensitive `this`. Invoke the preferred number-hint method
+  // directly, matching the direct backend's static method dispatch instead of
+  // materializing the generic standalone object/coercion runtime.
+  if (randType.kind === "object") {
+    const method =
+      randType.shape.fields.find((field) => field.name === "valueOf") ??
+      randType.shape.fields.find((field) => field.name === "toString");
+    if (method?.type.kind === "closure" && method.type.signature.params.length === 0) {
+      const closure = cx.builder.emitObjectGet(rand, method.name, method.type);
+      const primitive = cx.builder.emitClosureCall(closure, [], method.type.signature.returnType);
+      if (primitive === null || method.type.signature.returnType === null) {
+        throw new Error(`ir/from-ast: OrdinaryToPrimitive method produced no value in ${cx.funcName}`);
+      }
+      const primitiveType = method.type.signature.returnType;
+      if (asVal(primitiveType)?.kind === "f64") return primitive;
+      if (asVal(primitiveType)?.kind === "i32") {
+        return cx.builder.emitUnary("f64.convert_i32_s", primitive, irVal({ kind: "f64" }));
+      }
+      if (primitiveType.kind === "string") {
+        const number = cx.builder.emitCall(
+          irRuntimeFuncRef("__unbox_number"),
+          [cx.builder.emitCoerceToExternref(primitive)],
+          irVal({ kind: "f64" }),
+        );
+        if (number === null) {
+          throw new Error(`ir/from-ast: string OrdinaryToPrimitive result produced no number in ${cx.funcName}`);
+        }
+        return number;
+      }
+    }
   }
   return null;
 }
@@ -11016,7 +11173,7 @@ function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, 
 }
 
 function allocateLoweredLiftedFunctionArtifact(
-  declaration: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  declaration: ts.FunctionDeclaration | IrClosureLiteral,
   cx: LowerCtx,
   displayNameForOrdinal: (ordinal: number) => string,
   preserveDerivedIdentity = false,
@@ -11035,9 +11192,11 @@ function allocateLoweredLiftedFunctionArtifact(
   const originalDeclaration = ts.getOriginalNode(declaration);
   const expectedSourceKind = ts.isFunctionDeclaration(declaration)
     ? "nested-function"
-    : ts.isFunctionExpression(declaration)
-      ? "function-expression"
-      : "arrow-function";
+    : ts.isMethodDeclaration(declaration)
+      ? "object-method"
+      : ts.isFunctionExpression(declaration)
+        ? "function-expression"
+        : "arrow-function";
   let sourceUnitId =
     cx.identityContext?.unitIdByDeclaration.get(declaration) ??
     (originalDeclaration !== declaration
@@ -11097,30 +11256,141 @@ function allocateLoweredLiftedFunctionArtifact(
  * `refcell.get` / `refcell.set` automatically (see the identifier
  * handler in `lowerExpr`).
  */
-function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, cx: LowerCtx): IrValueId {
+function numericClosureDefaultInitializerIsIrSafe(
+  initializer: ts.Expression,
+  availableParamNames: ReadonlySet<string>,
+  ownParamNames: ReadonlySet<string>,
+  outerCx: LowerCtx,
+): boolean {
+  let candidate = initializer;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  if (ts.isNumericLiteral(candidate)) return true;
+  if (ts.isIdentifier(candidate)) {
+    if (availableParamNames.has(candidate.text)) return true;
+    if (ownParamNames.has(candidate.text)) return false;
+    const binding = outerCx.scope.get(candidate.text);
+    if (binding?.kind !== "local") return false;
+    const type = binding.type.kind === "boxed" ? binding.type.inner : binding.type;
+    return asVal(type)?.kind === "f64";
+  }
+  if (
+    ts.isPrefixUnaryExpression(candidate) &&
+    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
+  ) {
+    return numericClosureDefaultInitializerIsIrSafe(candidate.operand, availableParamNames, ownParamNames, outerCx);
+  }
+  return (
+    ts.isBinaryExpression(candidate) &&
+    (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
+    numericClosureDefaultInitializerIsIrSafe(candidate.left, availableParamNames, ownParamNames, outerCx) &&
+    numericClosureDefaultInitializerIsIrSafe(candidate.right, availableParamNames, ownParamNames, outerCx)
+  );
+}
+
+function closureDefaultParamStart(
+  parameters: readonly ts.ParameterDeclaration[],
+  funcName: string,
+  outerCx: LowerCtx,
+): number {
+  let firstDefault = parameters.length;
+  const availableParamNames = new Set<string>();
+  const ownParamNames = new Set<string>();
+  for (const parameter of parameters) collectBindingNames(parameter.name, ownParamNames);
+  for (let index = 0; index < parameters.length; index++) {
+    const parameter = parameters[index]!;
+    if (!parameter.initializer) {
+      if (firstDefault !== parameters.length) {
+        throw new Error(`ir/from-ast: closure defaults must form a suffix (${funcName})`);
+      }
+    } else if (
+      !ts.isIdentifier(parameter.name) ||
+      parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
+      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerCx)
+    ) {
+      throw new Error(`ir/from-ast: closure default parameter is outside the pure numeric subset (${funcName})`);
+    } else if (firstDefault === parameters.length) {
+      firstDefault = index;
+    }
+    if (ts.isIdentifier(parameter.name) && parameter.type?.kind === ts.SyntaxKind.NumberKeyword) {
+      availableParamNames.add(parameter.name.text);
+    }
+  }
+  return firstDefault;
+}
+
+type IrClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
+
+function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   const params: IrType[] = expr.parameters.map((p) => {
-    if (!ts.isIdentifier(p.name) || !p.type) {
-      throw new Error(`ir/from-ast: closure params must be Identifier-named with annotations (${cx.funcName})`);
+    if (!p.type) {
+      throw new Error(`ir/from-ast: closure params must have annotations (${cx.funcName})`);
     }
-    // #2713 — rest (`...xs`), default (`x = 5`) and optional (`x?`) params keep
+    // #2713 — rest (`...xs`) and optional (`x?`) params keep
     // an Identifier name, so the gate above lets them through and the lowering
-    // below silently drops their arity/defaulting semantics (a regression
+    // below would silently drop their arity semantics (a regression
     // against #1372's intent). Reject them to legacy here, mirroring the
-    // top-level selector gate (`select.ts` param-shape-rejected). Demote-to-
-    // legacy is the documented contract; legacy applies the default initializer
-    // / rest gathering correctly.
-    if (p.questionToken || p.dotDotDotToken || p.initializer) {
-      throw new Error(`ir/from-ast: closure rest/default/optional param not in IR scope (${cx.funcName})`);
+    // top-level selector gate (`select.ts` param-shape-rejected). Numeric
+    // constant defaults are handled below through the exact legacy sentinel.
+    if (p.questionToken || p.dotDotDotToken) {
+      throw new Error(`ir/from-ast: closure rest/optional param not in IR scope (${cx.funcName})`);
     }
-    return typeNodeToIr(p.type, `param ${p.name.text} of ${cx.funcName}.<closure>`);
+    const description = ts.isIdentifier(p.name) ? p.name.text : "<pattern>";
+    return closureParameterTypeToIr(p.type, cx, `param ${description} of ${cx.funcName}.<closure>`);
   });
   if (!expr.type) {
     throw new Error(`ir/from-ast: closure must have a return type annotation (${cx.funcName})`);
   }
   const returnType = typeNodeToIr(expr.type, `return type of ${cx.funcName}.<closure>`);
-  const signature: IrClosureSignature = { params, returnType };
+  const signature: IrClosureSignature = {
+    params,
+    returnType,
+    ...(defaultParamStart < params.length ? { defaultParamStart } : {}),
+  };
 
   return lowerClosureExpressionWithSignature(expr, signature, undefined, cx);
+}
+
+/**
+ * Resolve the checker-independent closure-parameter surface admitted by the
+ * selector. Named interfaces/classes remain on the planned direct route until
+ * lifted closures receive the top-level position-type sidecar.
+ */
+function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string): IrType {
+  if (isPrimitiveTypeNode(node)) return typeNodeToIr(node, where);
+  if (ts.isArrayTypeNode(node) && node.elementType.kind === ts.SyntaxKind.NumberKeyword) {
+    const elementValType: ValType = { kind: "f64" };
+    const elementType = irVal(elementValType);
+    if (!cx.resolver?.resolveVecForElement?.(elementValType)) {
+      throw new Error(`ir/from-ast: resolver cannot register numeric closure parameter vec (${where})`);
+    }
+    return irVec(elementType, true);
+  }
+  if (ts.isTypeLiteralNode(node) && node.members.length > 0) {
+    const fields: { name: string; type: IrType }[] = [];
+    const seen = new Set<string>();
+    for (const member of node.members) {
+      if (!ts.isPropertySignature(member) || member.questionToken || !member.type) {
+        throw new Error(`ir/from-ast: unsupported closure object parameter member (${where})`);
+      }
+      const name = ts.isIdentifier(member.name)
+        ? member.name.text
+        : ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+          ? member.name.text
+          : null;
+      if (name === null || seen.has(name) || !isPrimitiveTypeNode(member.type)) {
+        throw new Error(`ir/from-ast: unsupported closure object parameter shape (${where})`);
+      }
+      seen.add(name);
+      fields.push({ name, type: typeNodeToIr(member.type, `${where}.${name}`) });
+    }
+    fields.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+    return { kind: "object", shape: { fields } };
+  }
+  throw new Error(`ir/from-ast: unsupported closure parameter type (${where})`);
 }
 
 /**
@@ -11148,12 +11418,16 @@ function lowerHostVoidCallbackExpression(
 }
 
 function lowerClosureExpressionWithSignature(
-  expr: ts.ArrowFunction | ts.FunctionExpression,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   expectedReadonlyCaptures: ReadonlySet<string> | undefined,
   cx: LowerCtx,
   exact?: ExactClosureLoweringOptions,
 ): IrValueId {
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
+  if ((signature.defaultParamStart ?? signature.params.length) !== defaultParamStart) {
+    throw new Error(`ir/from-ast: exact closure default-parameter plan diverged (${cx.funcName})`);
+  }
   const captures = analyseCaptures(expr, cx, exact?.orderedReadonlyCaptures);
   if (expectedReadonlyCaptures) {
     const actual = new Set(captures.map((capture) => capture.name));
@@ -11393,7 +11667,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  */
 function liftClosureBody(
   liftedIdentity: IrFunctionIdentity,
-  expr: ts.ArrowFunction | ts.FunctionExpression,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
@@ -11401,6 +11675,10 @@ function liftClosureBody(
   allowConciseVoidBody = false,
   hostOneShot = false,
 ): IrFunction {
+  const body = expr.body;
+  if (!body) {
+    throw new Error(`ir/from-ast: object method closure has no body (${cx.funcName})`);
+  }
   const liftedName = liftedIdentity.name;
   const builder = new IrFunctionBuilder(
     liftedIdentity,
@@ -11412,13 +11690,31 @@ function liftClosureBody(
 
   const selfType: IrType = { kind: "closure", signature };
   const selfV = builder.addParam("__self", selfType);
+  // A named function expression owns a lexical self binding that is visible
+  // only inside its body. Reuse the canonical closure carrier so recursive
+  // calls keep the exact typed call_ref path instead of escaping through a
+  // dynamic/global lookup.
+  if (ts.isFunctionExpression(expr) && expr.name) {
+    scope.set(expr.name.text, { kind: "local", value: selfV, type: selfType });
+  }
 
+  const pendingDestructures: { pattern: ts.BindingPattern; value: IrValueId }[] = [];
+  const pendingDefaults: {
+    name: string;
+    rawValue: IrValueId;
+    type: IrType;
+    initializer: ts.Expression;
+  }[] = [];
+  const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
   for (let i = 0; i < expr.parameters.length; i++) {
     const p = expr.parameters[i]!;
-    const name = (p.name as ts.Identifier).text;
     const t = signature.params[i]!;
+    const name = ts.isIdentifier(p.name) ? p.name.text : `__pattern_param_${i}`;
     const v = builder.addParam(name, t);
-    scope.set(name, { kind: "local", value: v, type: t });
+    if (ts.isIdentifier(p.name) && i >= defaultParamStart && p.initializer) {
+      pendingDefaults.push({ name, rawValue: v, type: t, initializer: p.initializer });
+    } else if (ts.isIdentifier(p.name)) scope.set(name, { kind: "local", value: v, type: t });
+    else pendingDestructures.push({ pattern: p.name, value: v });
   }
 
   builder.openBlock();
@@ -11464,16 +11760,13 @@ function liftClosureBody(
     // Slice 6 part 2 (#1181) — closure-body mutated lets are scanned
     // per closure (block bodies) or empty (concise expression bodies,
     // which can't host a let declaration).
-    mutatedLets:
-      ts.isBlock(expr.body) && (ts.isFunctionExpression(expr) || ts.isArrowFunction(expr))
-        ? collectMutatedLetNamesFromBlock(expr.body)
-        : new Set<string>(),
+    mutatedLets: ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>(),
     dynamicStringLocals: new Set(),
     // (#3758) same independent-per-closure reasoning as mutatedLets above;
     // computeI32PureNames itself no-ops on a non-block (concise) body.
     i32PureNames: computeI32PureNames(expr),
-    ownedStringAppendSymbols: ts.isBlock(expr.body)
-      ? collectOwnedStringAppendSymbols(expr.body, cx.checker)
+    ownedStringAppendSymbols: ts.isBlock(body)
+      ? collectOwnedStringAppendSymbols(body, cx.checker)
       : new Set<ts.Symbol>(),
     emptyArrayInference: inferEmptyArrayElementTypes(expr, cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
     // Slice 7a (#1169f) — closures are never generator/async in 7a
@@ -11484,12 +11777,31 @@ function liftClosureBody(
     allocRegistry: cx.allocRegistry,
   };
 
-  if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
+  for (const pending of pendingDefaults) {
+    if (asVal(pending.type)?.kind !== "f64") {
+      throw new Error(`ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`);
+    }
+    const rawBits = builder.emitUnary("i64.reinterpret_f64", pending.rawValue, IR_I64);
+    const sentinelBits = builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
+    const missing = builder.emitBinary("i64.eq", rawBits, sentinelBits, IR_I32);
+    const fallback = lowerExpr(pending.initializer, innerCx, pending.type);
+    if (!irTypeAssignable(builder.typeOf(fallback), pending.type)) {
+      throw new Error(`ir/from-ast: closure default initializer type mismatch (${liftedName})`);
+    }
+    const resolved = builder.emitSelect(missing, fallback, pending.rawValue, pending.type);
+    scope.set(pending.name, { kind: "local", value: resolved, type: pending.type });
+  }
+
+  for (const pending of pendingDestructures) {
+    lowerBindingPattern(pending.pattern, pending.value, innerCx);
+  }
+
+  if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
     if (signature.returnType === null) {
       if (!allowConciseVoidBody) {
         throw new Error(`ir/from-ast: void host callbacks must be block-bodied (${liftedName})`);
       }
-      lowerDiscardedExpression(expr.body, innerCx);
+      lowerDiscardedExpression(body, innerCx);
       builder.terminate({ kind: "return", values: [] });
       return builder.finish({
         signature,
@@ -11498,7 +11810,7 @@ function liftClosureBody(
       });
     }
     // Concise body — wrap as `return <expr>`.
-    const v = lowerExpr(expr.body, innerCx, signature.returnType);
+    const v = lowerExpr(body, innerCx, signature.returnType);
     if (!irTypeEquals(builder.typeOf(v), signature.returnType)) {
       throw new Error(
         `ir/from-ast: closure body type ${describeIrType(builder.typeOf(v))} != declared return ${describeIrType(signature.returnType)} (${liftedName})`,
@@ -11506,10 +11818,10 @@ function liftClosureBody(
     }
     builder.terminate({ kind: "return", values: [v] });
   } else {
-    if (!ts.isBlock(expr.body)) {
-      throw new Error(`ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[expr.body.kind]})`);
+    if (!ts.isBlock(body)) {
+      throw new Error(`ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[body.kind]})`);
     }
-    lowerStatementList(expr.body.statements, innerCx);
+    lowerStatementList(body.statements, innerCx);
   }
 
   return builder.finish({
@@ -11520,7 +11832,7 @@ function liftClosureBody(
 }
 
 /**
- * Walk a closure / nested-function body and collect identifiers that
+ * Walk a closure / nested-function's parameter initializers and body, collecting identifiers that
  * reference outer-scope `local` bindings. Classifies each capture as
  * mutable (the body OR the outer writes to it) or read-only.
  *
@@ -11530,15 +11842,16 @@ function liftClosureBody(
  * safe-and-simple approach the legacy path uses too.
  */
 function analyseCaptures(
-  fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression,
+  fn: ts.FunctionDeclaration | IrClosureLiteral,
   cx: LowerCtx,
   orderedCaptureNames?: readonly string[],
 ): NestedCapture[] {
   const referenced = new Set<string>();
   const written = new Set<string>();
   const ownParams = new Set<string>();
+  if (ts.isFunctionExpression(fn) && fn.name) ownParams.add(fn.name.text);
   for (const p of fn.parameters) {
-    if (ts.isIdentifier(p.name)) ownParams.add(p.name.text);
+    collectBindingNames(p.name, ownParams);
   }
 
   const visit = (node: ts.Node): void => {
@@ -11567,6 +11880,9 @@ function analyseCaptures(
     }
     forEachChild(node, visit);
   };
+  for (const parameter of fn.parameters) {
+    if (parameter.initializer) visit(parameter.initializer);
+  }
   if (fn.body) {
     if (ts.isBlock(fn.body)) {
       for (const s of fn.body.statements) visit(s);
@@ -11630,6 +11946,17 @@ function analyseCaptures(
     });
   }
   return captures;
+}
+
+/** Collect every identifier leaf owned by one parameter binding. */
+function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, out);
+  }
 }
 
 // ---------------------------------------------------------------------------

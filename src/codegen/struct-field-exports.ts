@@ -783,7 +783,7 @@ export function orderNamesByInsertion(ctx: CodegenContext, structName: string, s
   return ordered;
 }
 
-export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
+export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readonly number[] {
   // Structural-shape key = field TYPES only (the thing WasmGC canonicalizes on),
   // ignoring names and any pre-existing internal `$`/`__` fields. The hidden
   // identity is consumed both by host field-name exports and by standalone
@@ -862,7 +862,7 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
     }
   }
 
-  if (collidingTypeIdxs.length === 0) return;
+  if (collidingTypeIdxs.length === 0) return [];
 
   // Retro-stamp: append a hidden `$shape` i32 field to each colliding struct
   // type + structFields, then patch every `struct.new <typeIdx>` instruction in
@@ -884,6 +884,7 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
     }
     patchStructNewWithShapeId(ctx, typeIdx, shapeId);
   }
+  return [...new Set(collidingTypeIdxs.map(({ typeIdx }) => typeIdx))];
 }
 
 /**

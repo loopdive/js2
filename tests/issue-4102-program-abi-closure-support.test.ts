@@ -7,6 +7,7 @@ import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import {
   canonicalProgramAbiClosureLayoutKey,
   canonicalProgramAbiClosureSignatureKey,
+  canonicalProgramAbiObjectShapeKey,
   canonicalProgramAbiRefCellKey,
   type ProgramAbiClosureSupportLayoutRequest,
 } from "../src/codegen/program-abi-type-planning.js";
@@ -329,5 +330,40 @@ describe("#4102 Program ABI prepared closure support types", () => {
         ]),
       "type-remap-mismatch",
     );
+  });
+
+  it("plans and remaps closed object layouts by semantic IR shape", () => {
+    const f = fixture();
+    const objectType = {
+      kind: "object",
+      shape: { fields: [{ name: "value", type: F64 }] },
+    } as const satisfies Extract<IrType, { readonly kind: "object" }>;
+    const structType: StructTypeDef = {
+      kind: "struct",
+      name: "__prepared_object",
+      fields: [{ name: "value", type: { kind: "f64" }, mutable: true }],
+    };
+    f.module.types.push(structType);
+    const request = { objectType, structType };
+
+    const [support, duplicate] = f.registry.prepareObjectSupportTypes([request, request]);
+    expect(duplicate).toBe(support);
+    expect(support!.semanticShapeKey).toBe(canonicalProgramAbiObjectShapeKey(objectType));
+    expect(f.registry.prepareObjectSupportTypes([request])).toEqual([support]);
+
+    const originalIndex = f.module.types.indexOf(structType);
+    const replacement: StructTypeDef = {
+      ...structType,
+      name: "__prepared_object_after_remap",
+      fields: [...structType.fields],
+    };
+    f.session.remapTypeObject(structType, replacement);
+    f.module.types[originalIndex] = replacement;
+    f.registry.planRetained();
+    const publication = f.session.publish(f.module);
+    expect(publication.abi.resolveFinalIndex(support!.objectTypeRef.binding.bindingId)).toEqual({
+      space: "type",
+      index: originalIndex,
+    });
   });
 });

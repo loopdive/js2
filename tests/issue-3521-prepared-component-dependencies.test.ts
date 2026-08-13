@@ -1435,6 +1435,51 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
   });
 
+  it("requires identity-exact Program ABI evidence for each closed object operation", () => {
+    const f = fixture();
+    const objectType: IrType = {
+      kind: "object",
+      shape: { fields: [{ name: "value", type: irVal({ kind: "f64" }) }] },
+    };
+    const supportRef = irSupportTypeRef(f.first.id, "test-object-layout", "__test_object_layout");
+    const objectNew: IrInstr = {
+      kind: "object.new",
+      shape: objectType.kind === "object" ? objectType.shape : { fields: [] },
+      values: [asValueId(0)],
+      result: asValueId(1),
+      resultType: objectType,
+    };
+    const fn: IrFunction = {
+      ...irFunction(f.first, [objectNew]),
+      params: [{ value: asValueId(0), name: "value", type: irVal({ kind: "f64" }) }],
+      valueCount: 2,
+    };
+    const dependencies = (type: IrType, refs: readonly IrTypeRef[]) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [fn] },
+        terminalUnitIds: new Set([f.first.id]),
+        inventory: f.inventory,
+        closureSupport: {
+          typeRefs: new Map([[type, refs]]),
+          instructionRefs: new Map(),
+          functionRefs: new Map(),
+        },
+        abi: abiLookup([sourceCallableEntry(f.first.id), supportTypeEntry(supportRef)]),
+      }).components[0]!;
+
+    expect(dependencies(objectType, [])).toMatchObject({ status: "blocked" });
+    const structurallyEqualType: IrType =
+      objectType.kind === "object" ? { kind: "object", shape: objectType.shape } : objectType;
+    expect(dependencies(structurallyEqualType, [supportRef])).toMatchObject({ status: "blocked" });
+
+    const prepared = dependencies(objectType, [supportRef]);
+    expect(prepared.status).toBe("complete");
+    expect(prepared.failures).toEqual([]);
+    expect(prepared.abiDependencies).toContainEqual(
+      expect.objectContaining({ kind: "support", bindingId: supportRef.binding.bindingId }),
+    );
+  });
+
   it("fails closed for an unresolved exact unit ref and for a foreign terminal owner", () => {
     const f = fixture();
     const unknownUnitId = createDerivedIrUnitId({
