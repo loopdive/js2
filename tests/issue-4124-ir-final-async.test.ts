@@ -11,6 +11,14 @@ import { describe, expect, it } from "vitest";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { evaluateIrOutcomePolicy } from "../src/ir/outcomes.js";
 import { buildImports } from "../src/runtime.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) "free of redundant carrier/bounds traffic" and "preserves main's
+// direct-callee shapes" are asserted by locating named callees and counting
+// their sites in the emitted WAT. The IR inliner (default ON since the
+// tuned-set flip) splices those callees in, so the named state is not found at
+// all. Pin it off; the ownership/optimization parity here is an IR property.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 const PLAYGROUND_SOURCE = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
 const REPO_ROOT = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));

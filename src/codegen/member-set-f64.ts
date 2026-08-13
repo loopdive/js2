@@ -34,10 +34,12 @@
  * terminal) is reached through that delegate, so this twin never has to
  * re-derive them.
  *
- * OFF unless `JS2WASM_SET_MEMBER_F64=1`; with the flag unset no site reserves a
- * twin and the emitted binary is byte-identical.
+ * **Default ON** since the #4157 tuned-set flip (`src/perf-flags.ts`). With
+ * `JS2WASM_SET_MEMBER_F64=0` no site reserves a twin and the emitted binary is
+ * byte-identical to the pre-#4157 base.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -49,9 +51,9 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { coercionInstrs } from "./type-coercion.js";
 
-/** Flag gate. Default OFF ⇒ nothing below ever runs ⇒ byte-identical output. */
+/** Flag gate. Default ON; `=0` ⇒ nothing below runs ⇒ byte-identical output. */
 export function setMemberF64Enabled(): boolean {
-  return process.env.JS2WASM_SET_MEMBER_F64 === "1";
+  return tunedFlagEnabled(process.env.JS2WASM_SET_MEMBER_F64);
 }
 
 /** Patch-site counter — proof the mechanism fired, printed at finalize. */
@@ -261,6 +263,11 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       ...buildChain(0),
     ];
     filled++;
+  }
+  // Evidence the twin fired, for someone experimenting with the flag; silent on
+  // a default build, where it would print on every compile.
+  if (!tunedFlagExplicit(process.env.JS2WASM_SET_MEMBER_F64) && process.env.JS2WASM_SET_MEMBER_F64_DEBUG !== "1") {
+    return;
   }
   process.stderr.write(`[set-member-f64] sites=${emittedSites} dispatchers=${filled} directArms=${directArms}\n`);
   for (const [k, n] of [...declines].sort((a, b) => b[1] - a[1]).slice(0, 40)) {

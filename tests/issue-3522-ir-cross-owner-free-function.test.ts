@@ -4,6 +4,20 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) TWO tuned flags interfere here, and they interfere differently:
+//
+//  - `JS2WASM_IR_INLINE` removes call EDGES, so the "prepared exactly these
+//    owners" lists come back short (`[] ` vs `['Base_init']`). The preparation
+//    happened; the caller no longer calls it.
+//  - `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` removes the very `ref.is_null …
+//    throw` guard three assertions use as their marker for "the forwarding
+//    chain went through the prepared owner". A provably non-null receiver has
+//    no guard to find — the elision is correct and the marker is gone.
+//
+// Both are shape proxies for an IR-preparation property, so both are pinned.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0", JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR: "0" });
 import { buildImports } from "../src/runtime.js";
 
 const SOURCE = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");

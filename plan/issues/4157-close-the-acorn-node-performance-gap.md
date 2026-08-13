@@ -4115,3 +4115,184 @@ auto-park currently tells the shepherd *that* something regressed but not
 *what*, forcing exactly the artifact-archaeology this diagnosis needed. Fixing
 the empty-`META_ARGS` hand-off (or dropping `--quiet` in the park path) makes
 every future park self-describing.
+
+## 2026-08-13 (37) — DEFAULTS FLIPPED: the tuned eleven ship ON, and the byte-identity guarantee inverts
+
+Project-lead decision on entry (34)'s **−12.0 %**: the eleven flags below are
+now the compiler's default. The token rule and the whole table live in
+`src/perf-flags.ts`; every per-pass module delegates to it rather than
+re-implementing a parse, for the reason `derivation-flags.ts` gives — three
+copies of a parse drift, and a parse is what "unset ⇒ ON" turns a literal
+comparison into.
+
+| flag | default when unset | how OFF is spelled |
+| --- | --- | --- |
+| `JS2WASM_INLINE_PROP_IC` | `8` | `0` |
+| `JS2WASM_INLINE_TRUTHY_IC` | `1` (`anyval,boxbool`) | `0` |
+| `JS2WASM_IR_INLINE` | the `on` preset | `0` |
+| `JS2WASM_FUSED_TONUMBER` | on | `0` |
+| `JS2WASM_SMI_FASTPATH` | `all` | `0` |
+| `JS2WASM_LAZY_STR_FLATTEN` | on | `0` |
+| `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` | on | `0` |
+| `JS2WASM_INLINE_HINTS` | `1` (the `cold` profile) | `0` |
+| `JS2WASM_SET_MEMBER_F64` | on | `0` |
+| `JS2WASM_RECEIVER_CSE` | on | `0` |
+| `JS2WASM_EXTERN_GET_IC` | `1` (inline mode) | `0` |
+
+Token rule: `0` / `off` / `false` / `no` / empty disable; **anything else takes
+the tuned default**. That asymmetry is the point — a malformed value must never
+land in a half-enabled state, and for a flag whose OFF position exists to be a
+one-variable revert, "fails to disable" is the safe failure. The levelled flags
+keep their explicit levels (`INLINE_PROP_IC=4`, `SMI_FASTPATH=1`,
+`INLINE_TRUTHY_IC=all`, `EXTERN_GET_IC=census`, `IR_INLINE=adapters`); only a
+value that selects *nothing recognisable* falls back.
+
+### The revert is exact, and that is the load-bearing measurement
+
+`=0` on all eleven, standalone acorn, `optimize: 0`:
+
+| build | sha256 | bytes | checksum |
+| --- | --- | ---: | ---: |
+| pre-flip, everything unset | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| post-flip, everything `=0` | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| pre-flip, explicit tuned-11 | `62f67369…2e3a7d` | 3,297,245 | 422 |
+| post-flip, everything unset | `62f67369…2e3a7d` | 3,297,245 | 422 |
+
+Both directions are **sha256-identical**, not merely the same size. So the flip
+moved the default and changed no emission: the legacy binary is still reachable
+with one variable per flag, and the new default is exactly what entry (34)
+measured rather than something adjacent to it.
+
+Deterministic counts at the new default (`JS2WASM_EXEC_CENSUS`), identical to the
+explicit tuned-11 on the same tree: `__extern_get` **64,691** (entry 31's
+−87.2 %), `__is_truthy` **239,764** (entry 23), `__str_flatten` **252,367**
+(entry 26), `__unbox_number` 214,677. The 64-name differential
+(`cold-tail-differential.mjs`) is identical between new-default and explicit
+tuned-11 in **both** read paths — every hash, every presence count, `nodes`
+32,506, `body` 422 — with only `compileMs` differing.
+
+**`__box_number` reads 1, not the ~401,521 of entry (33).** That figure is
+`SET_MEMBER_F64` measured ALONE; it does not survive composition. Under the full
+set `IR_INLINE` inlines `__box_number` into its callers, and `stripCensusPrefix`
+deliberately removes the entry counter from every inlined copy — so an inlined
+call is genuinely ABSENT from the count rather than double-counted. Reading 1 is
+the census working, not the helper vanishing. Any future single-slice number in
+this file is a single-slice number: entry (29) already recorded that these do
+not compose additively, and this is the same warning seen from the counting side.
+
+### What the flip broke, and what that says
+
+Two classes, both structural rather than incidental:
+
+1. **Every test pinning "unset ⇒ OFF" now pins the wrong contract.** Seven
+   fixtures were rewritten to pin `=0 ⇒ legacy` and to assert positively that
+   unset ENGAGES — the mechanism assertion has to move with the default, or the
+   fixture silently becomes a test that the tuned build merely compiles.
+   `tests/issue-4157-tonumber-fast-paths.test.ts` inverted hardest: its "junk
+   must be OFF" case is now "junk must take the default", which reads backwards
+   against its own pre-flip self and is exactly right.
+2. **`tests/issue-4157-const-box-hoist.test.ts` had to pin `SMI_FASTPATH=0`.**
+   Its unhoisted baseline counts 4 executed `__box_number` calls per iteration;
+   at the new default the SMI guard answers the i31-able `42` inline and the
+   baseline becomes 3. The fixture would have stayed GREEN and stopped meaning
+   what it says — `CONSTANTS_PER_ITERATION` would have drifted from "the
+   constants this pass removes" to "the constants some other pass had not
+   already removed". This is the general hazard of flipping a default under a
+   suite of count-based fixtures: the ones that break are the lucky ones.
+
+### Stderr had to be re-calibrated, and one refusal was demoted
+
+Five passes printed an unconditional "the mechanism fired" line when enabled.
+That was right for an opt-in flag — #4157 twice recorded a confident null from a
+mechanism that was never live — and is wrong for a default: it would put five to
+eight lines on stderr for **every compile in the project**. They now print only
+when the operator named the flag (or its `_DEBUG` channel).
+
+One of them is not a summary and deserves the note: `[extern-get-ic] REFUSED:
+… (prefix-not-key-load)`. `extern-get-cache-arm.ts` states plainly that a module
+where `fillDynamicForinVecArms` / `fillObjVecReflectionHelpers` unshifted ahead
+of the cache arm declines **by design** — and that class is common: it fires on
+essentially every small fixture, while acorn patches 964 of 975 static-key
+sites. Leaving it loud would have made a designed decline look like a defect on
+most compiles in the suite. It is demoted to the same channel, and the loudness
+is preserved for anyone who set the flag deliberately.
+
+### Not verified here, by construction
+
+This is the first time these eleven face the **test262 merge-group
+re-validation**. Every measurement above is acorn plus the targeted fixtures;
+there is no local test262 and the PR-level regression checks are designed
+no-ops. If a flag breaks conformance beyond acorn, the merge queue's auto-park
+is what will find it. Local green is not conformance-proven.
+
+`optimize.ts` is deliberately untouched — its `wasm-opt` timeout fix (entry 31)
+is a separate commit, and `JS2WASM_INLINE_HINTS` reaches it only through
+`inlineHintArgs`, whose OFF position still produces byte-identical argv.
+
+## 2026-08-13 (36) — the default flip's real cost: 37 SHAPE assertions across 14 files, and none of them a wrong answer
+
+A default flip is measured by what it breaks. Swept `tests/` for every file that
+compiles without setting these flags and asserts exact WAT, exact emitted-function
+sets, absolute function indices, or opcode counts (174 + 61 files), then re-ran
+every failing file with all eleven `=0` as the control. **The control is the
+whole method**: this branch already carries pre-existing failures — 24 in
+`tests/equivalence/`, 148 named tests in the WAT set, one OOM — and every one of
+them reproduces identically with the flags off. Without the control, the flip
+would have been blamed for all of them.
+
+**Attributable to the flip: 37 tests in 14 files.** Every single one is a
+*shape* assertion used as a proxy for a *different* feature, and the four
+signatures are worth recording because they are what a default flip does to a
+suite:
+
+| signature | what actually happened |
+| --- | --- |
+| `expected '(func $f …)' to match /\bcall\b/` | the call was INLINED |
+| `expected [] to deeply equal ['Base_init']` | the call EDGE was inlined away |
+| `expected 53 to be 50`, `to contain 'call 66'` | an ABSOLUTE function index shifted |
+| `to match /ref\.is_null[\s\S]*throw/` | the null guard was correctly ELIDED |
+
+Not one is a wrong value. The equivalence suite — 214 files, value assertions,
+run at the default — is clean against its own control.
+
+**Attribution, by bisection**: `JS2WASM_IR_INLINE` accounts for 32 of 37 (it
+removes call edges, and its rule-3 inlines `__dc_*` adapters unconditionally);
+`JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` for 3 (the `ref.is_null … throw`
+marker); the ToNumber slices for 1 (`__unbox_number` is the marker for #3765's
+kill switch, and the fused call replaces it); one #3744 failure is pre-existing.
+
+### The fix is to PIN, not to relax — and pinning has a cost worth naming
+
+`tests/helpers/pin-perf-flags.ts` sets the narrowest interfering flag for a file
+and restores it after. The alternative — loosening each assertion — would leave
+14 files green while proving nothing, which is the exact failure this issue
+records twice (entries 22, 27: a confident null from a mechanism that never
+fired). These assertions ARE the evidence: #3522's "prepared exactly once"
+lists, #1761's "a non-provable length must NOT presize" soundness boundary,
+#4150's "the slow path is still a call".
+
+The cost is real and is stated at the helper: a pinned file no longer exercises
+the shipped default. That is acceptable *only* because these are shape
+assertions and the value-level coverage of the same features lives in
+`tests/equivalence/`, which runs at the default and is clean. Pin the narrowest
+set, never the whole table by reflex.
+
+### Two inversions worth reading twice
+
+- **#1761** asserts a soundness boundary by COUNTING the doubling grow call. The
+  inliner takes the call, the count reads 0, and the assertion flips to
+  "an unsound presize happened" — reporting a correctness failure that did not
+  occur. A count-of-calls instrument is not a proxy for a code path once
+  something is allowed to inline that call.
+- **#4150** asserts the SLOW path is still a `call`. Inlined, `call` vanishes and
+  the test reads "the fast path was taken" — the exact opposite of the truth.
+
+Both are green-when-wrong and wrong-when-green respectively; both were caught
+only because the OFF control existed.
+
+### Environment note, controlled and not ours
+
+The equivalence suite OOMs a vitest worker on this box at 4–6 GB. It OOMs
+**identically with every flag `=0`**, at the same file count, and
+`tests/equivalence/multi-file-compilation.test.ts` OOMs alone at 6 GB in both
+states. Pre-existing; swept around it by running in 20-file chunks.

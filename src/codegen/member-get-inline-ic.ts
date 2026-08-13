@@ -95,16 +95,22 @@
  * paths is still the acceptance gate — a structural argument is a reason to
  * expect the gate to pass, not a substitute for running it.)
  *
- * ## Flag
+ * ## Flag — DEFAULT `8` since the #4157 tuned-set flip
  *
- * DEFAULT OFF. `JS2WASM_INLINE_PROP_IC` unset / `0` → the pass returns before
- * touching anything, so the binary is byte-identical to the pre-#4157 emission.
+ * `JS2WASM_INLINE_PROP_IC` unset ⇒ **ceiling 8**, the operating point entry (29)
+ * measured (66.1 % of the dispatcher calls removed for +107 KB, versus 8.7 % for
+ * +38 KB at ceiling 1). `=0` / `off` returns before touching anything, which is
+ * the only way to get the pre-#4157 byte-identical emission back.
  *   - `=1`  monomorphic sites only (exactly one struct carries the name)
  *   - `=N`  speculate on `candidates[0]` at sites with up to N candidates
+ *   - `=0` / `off` / empty  OFF
+ *   - any other value ⇒ the default ceiling (see `src/perf-flags.ts` for why a
+ *     malformed value never lands in a half-enabled state)
  *   - `JS2WASM_INLINE_PROP_IC_DEBUG=1` prints patch counts and a histogram of
  *     DECLINED property names keyed by reason.
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import { funcSignatureOf } from "./func-space.js";
 import type { ReusePlan } from "./ic-guard-reuse.js";
@@ -133,12 +139,22 @@ interface IcPlan {
   armTail: Instr[];
 }
 
-/** Maximum struct candidates a site may have and still be speculated on. */
+/** The ceiling `JS2WASM_INLINE_PROP_IC` selects when unset — entry (29)'s optimum. */
+const DEFAULT_MAX_CANDIDATES = 8;
+
+/**
+ * Maximum struct candidates a site may have and still be speculated on.
+ *
+ * `0` when the flag is explicitly off. An explicit positive integer wins; every
+ * other spelling — unset, or junk — is the tuned default, so a typo cannot
+ * quietly demote the ceiling to a value nobody measured.
+ */
 function icMaxCandidates(): number {
   const raw = process.env.JS2WASM_INLINE_PROP_IC;
-  if (raw === undefined || raw === "" || raw === "0" || raw === "off") return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 1;
+  if (!tunedFlagEnabled(raw)) return 0;
+  if (raw === undefined) return DEFAULT_MAX_CANDIDATES;
+  const n = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_CANDIDATES;
 }
 
 /** Declared type of local `index` in `fn` (params first, then declared locals). */
@@ -384,11 +400,12 @@ function rewriteInstrs(
  * or function indices (`brandCollidingShapeTypes`, dead elimination), so the
  * operands it bakes are in the same regime as the dispatcher's own arms.
  *
- * No-op unless `JS2WASM_INLINE_PROP_IC` is set to a positive integer.
+ * Runs at ceiling 8 by default; a no-op only when `JS2WASM_INLINE_PROP_IC` is
+ * explicitly off.
  */
 export function inlineMemberGetCallSites(ctx: CodegenContext): void {
   const max = icMaxCandidates();
-  if (max <= 0) return; // DEFAULT OFF — byte-identical to base.
+  if (max <= 0) return; // explicitly OFF — byte-identical to the pre-#4157 base.
   const debug = process.env.JS2WASM_INLINE_PROP_IC_DEBUG === "1";
   resetGuardReuseStats(); // the reported line is per module, not per process
 

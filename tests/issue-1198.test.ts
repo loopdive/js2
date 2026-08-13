@@ -7,6 +7,14 @@ import { compile } from "../src/index.js";
 import { canonicalCountedPushPlanForLiteral } from "../src/ir/array-element-lowering.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) The fallback assertions read "the grow path is still there" as a
+// `call` in the WAT. The IR inliner (default ON since the tuned-set flip) can
+// inline that call away, leaving the grow path present but callless — which
+// reads as "the pre-size specialisation fired" when it did not. Pin the
+// inliner off so `call` keeps meaning what this file uses it to mean.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 async function compileAndRun(source: string, exportName: string, args: number[] = []): Promise<number> {
   const r = await compile(source, { fileName: "test.ts" });

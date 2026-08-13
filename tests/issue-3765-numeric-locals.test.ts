@@ -26,6 +26,15 @@ import {
   type PropertyKindVerdicts,
 } from "../src/codegen/numeric-property-analysis.js";
 import { ts } from "../src/ts-api.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) One case here asserts that the numeric-locals KILL SWITCH restores
+// the boxed carrier, and detects the boxed carrier by `call $__unbox_number`.
+// The ToNumber fast paths (default ON since the tuned-set flip) replace exactly
+// that call — with the fused `__to_number`, or with an inline i31 guard — so
+// the marker disappears while the carrier is boxed as the kill switch intends.
+// Pin the two ToNumber slices off so the marker keeps its meaning.
+pinPerfFlags({ JS2WASM_FUSED_TONUMBER: "0", JS2WASM_SMI_FASTPATH: "0" });
 
 async function build(source: string, env?: Record<string, string>) {
   const saved: Record<string, string | undefined> = {};
