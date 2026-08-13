@@ -202,6 +202,14 @@ function emitModuleShadowGlobalSync(
   fctx.body.push({ op: "global.set", index: moduleIdx });
 }
 
+function emitAnnexBOuterBindingWriteFlag(fctx: FunctionContext, name: string): void {
+  if (!fctx.annexBOuterBindings?.has(name)) return;
+  const flagLocal = fctx.tdzFlagLocals?.get(name);
+  if (flagLocal === undefined) return;
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: flagLocal });
+}
+
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
   // Unwrap parenthesized LHS: (x) = 1 → x = 1
   let lhs = expr.left;
@@ -553,16 +561,19 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
           // emitting an invalid local.tee with mismatched types.
           updateLocalType(fctx, localIdx, resultType);
           fctx.body.push({ op: "local.tee", index: localIdx });
+          emitAnnexBOuterBindingWriteFlag(fctx, name);
           emitMappedArgParamSync(ctx, fctx, localIdx, resultType);
           emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, resultType);
           return resultType;
         }
         fctx.body.push({ op: "local.tee", index: localIdx });
+        emitAnnexBOuterBindingWriteFlag(fctx, name);
         emitMappedArgParamSync(ctx, fctx, localIdx, effectiveLocalType);
         emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, effectiveLocalType);
         return effectiveLocalType;
       }
       fctx.body.push({ op: "local.tee", index: localIdx });
+      emitAnnexBOuterBindingWriteFlag(fctx, name);
       emitMappedArgParamSync(ctx, fctx, localIdx, resultType);
       emitModuleShadowGlobalSync(ctx, fctx, name, localIdx, resultType);
       return resultType;

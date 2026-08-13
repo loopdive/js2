@@ -136,6 +136,7 @@ function localBindingShadowsCapturingFunction(
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
   if (fctx.annexBRepeatedOuterBindings?.has(name)) return true;
+  if (fctx.annexBExistingDirectFunctionBindings?.has(name)) return true;
   const hasModuleBinding =
     ctx.runtimeEvalGlobalFunctionBindings ||
     (ctx.annexBModuleBindings?.has(name) === true && fctx.localMap.get(name) === undefined);

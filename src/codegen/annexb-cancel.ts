@@ -50,6 +50,13 @@ export interface AnnexBCancelSite {
   blockEnd: number;
 }
 
+interface AnnexBFunctionScopeSite {
+  name: string;
+  scopeStart: number;
+  scopeEnd: number;
+  outerScopeStart: number;
+}
+
 /** Is `node` a var-scope boundary (function-like or the source file)? */
 function isVarScopeBoundary(node: ts.Node): boolean {
   return (
@@ -361,6 +368,7 @@ export function annexBExistingVarUpdateNames(scope: ts.Node): ReadonlySet<string
 }
 
 const CACHE = new WeakMap<ts.SourceFile, AnnexBCancelSite[]>();
+const FUNCTION_SCOPE_CACHE = new WeakMap<ts.SourceFile, AnnexBFunctionScopeSite[]>();
 
 /** Shared empty result for callers with no SourceFile — never mutated. */
 const NO_SITES: AnnexBCancelSite[] = [];
@@ -474,6 +482,52 @@ export function annexBReadIsUnbound(sites: readonly AnnexBCancelSite[], id: ts.I
     if (pos < s.scopeStart || pos >= s.scopeEnd) continue;
     if (pos >= s.blockStart && pos < s.blockEnd) continue;
     if (boundByInterveningScope(id, name, s.scopeStart)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Annex B's synthetic var binding belongs to the function activation that
+ * contains the statement-position declaration. TypeScript resolves some
+ * `if (...) function f(){}` symbols beyond that function expression, so a
+ * later source-level read can otherwise reuse the lifted `funcMap` entry as if
+ * `f` were global. Record those function-local names and reject reads outside
+ * their owning activation when the outer scope has no independent binding.
+ */
+export function annexBReadEscapesFunctionScope(id: ts.Identifier): boolean {
+  const sf = id.getSourceFile();
+  if (!sf) return false;
+  let sites = FUNCTION_SCOPE_CACHE.get(sf);
+  if (!sites) {
+    sites = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name && node.body && annexBDeclaringRange(node) !== null) {
+        const scope = enclosingVarScope(node);
+        if (scope && !ts.isSourceFile(scope) && !ts.isModuleBlock(scope)) {
+          const outerScope = enclosingVarScope(scope);
+          if (outerScope && !scopeBindsName(outerScope, node.name.text)) {
+            sites!.push({
+              name: node.name.text,
+              scopeStart: scope.getStart(sf),
+              scopeEnd: scope.getEnd(),
+              outerScopeStart: outerScope.getStart(sf),
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sf, visit);
+    FUNCTION_SCOPE_CACHE.set(sf, sites);
+  }
+
+  if (sites.length === 0) return false;
+  const pos = id.getStart(sf);
+  for (const site of sites) {
+    if (site.name !== id.text) continue;
+    if (pos >= site.scopeStart && pos < site.scopeEnd) continue;
+    if (boundByInterveningScope(id, id.text, site.outerScopeStart)) continue;
     return true;
   }
   return false;

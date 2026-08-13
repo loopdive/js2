@@ -4,6 +4,7 @@ import { ts } from "../ts-api.js";
 import { addFunctionOwnLocals } from "./binding-info.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
 
 /** Whether a closure observes a binding outside a direct call position. */
 export function closureObservesBindingValue(closure: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
@@ -181,7 +182,14 @@ export function prepareHoistedFunctionValueBindings(
   stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
 ): void {
   for (const stmt of stmts) {
-    if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body || !declarationValueIsObserved(ctx, stmt)) {
+    if (
+      !ts.isFunctionDeclaration(stmt) ||
+      !stmt.name ||
+      !stmt.body ||
+      annexBDeclaringRange(stmt) !== null ||
+      functionDeclarationHasAnnexBUpdater(stmt) ||
+      !declarationValueIsObserved(ctx, stmt)
+    ) {
       continue;
     }
     if (!fctx.localMap.has(stmt.name.text)) {
@@ -189,6 +197,38 @@ export function prepareHoistedFunctionValueBindings(
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
+}
+
+/**
+ * True when a direct declaration's binding is replaced by a statement-position
+ * Annex B declaration in the same var scope. That binding has its own eager
+ * initialization/update lifecycle; the generic lazy declaration-value path
+ * must not reserve the local first or the initial outer value is never stored.
+ */
+function functionDeclarationHasAnnexBUpdater(decl: ts.FunctionDeclaration): boolean {
+  const name = decl.name?.text;
+  const scope = decl.parent;
+  if (!name || !scope) return false;
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== scope && ts.isFunctionDeclaration(node)) {
+      if (
+        node !== decl &&
+        node.name?.text === name &&
+        annexBDeclaringRange(node) !== null &&
+        annexBUpdatesExistingVarBinding(node)
+      ) {
+        found = true;
+      }
+      return;
+    }
+    if (node !== scope && (ts.isFunctionLike(node) || ts.isSourceFile(node) || ts.isModuleBlock(node))) return;
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return found;
 }
 
 function declarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {

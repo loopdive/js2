@@ -44,7 +44,7 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
-import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
 import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
@@ -636,6 +636,9 @@ function compileIdentifierCore(
   // modules are byte-identical.
   const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
   if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+    return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+  }
+  if (annexBReadEscapesFunctionScope(id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
