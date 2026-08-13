@@ -1732,7 +1732,7 @@ export function compileArrayMethodCall(
         elemType.kind === "externref" ||
         elemType.kind === "ref" ||
         elemType.kind === "ref_null"
-          ? compileArrayMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          ? compileArrayMap(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, receiverIsExternref)
           : undefined;
       break;
     case "reduce":
@@ -5929,6 +5929,7 @@ function compileArrayMap(
   vecTypeIdx: number,
   arrTypeIdx: number,
   elemType: ValType,
+  receiverIsExternref = false,
 ): ValType | null {
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.map")) {
@@ -5986,7 +5987,7 @@ function compileArrayMap(
   // callback), unchanged from pre-S2. The other skip methods
   // (forEach/filter/some/every/reduce/indexOf/lastIndexOf) are hole-correct.
 
-  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "map");
+  const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "map", receiverIsExternref);
 
   const resData = allocLocal(fctx, `__arr_map_rd_${fctx.locals.length}`, { kind: "ref_null", typeIdx: mapArrTypeIdx });
 
