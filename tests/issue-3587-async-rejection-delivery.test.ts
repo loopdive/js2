@@ -287,6 +287,143 @@ describe("#3587 — awaited rejections must reach their handlers (host gc lane)"
     expect(leaked).toEqual([]);
   });
 
+  it("delivers an awaited value into an existing local assigned inside try", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        let value: number;
+        const pending: Promise<number> = Promise.resolve(25);
+        try {
+          value = await pending;
+        } catch (error) {
+          return error as number;
+        }
+        return value;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(25);
+    expect(leaked).toEqual([]);
+  });
+
+  it("keeps the declared type when await assigns an existing numeric parameter", async () => {
+    const exports = await instantiate(`
+      async function replace(value: number, pending: Promise<number>): Promise<number> {
+        try {
+          value = await pending;
+        } catch (error) {
+          return -1;
+        }
+        return value;
+      }
+      export async function test(): Promise<number> {
+        return await replace(2, Promise.resolve(25));
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(25);
+    expect(leaked).toEqual([]);
+  });
+
+  it("spills destructured body locals across a conditional await", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        const { value } = { value: 17 };
+        try {
+          if (value > 0) await Promise.resolve(1);
+        } catch (error) {
+          return -1;
+        }
+        return value;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(17);
+    expect(leaked).toEqual([]);
+  });
+
+  it("keeps nested same-name catch bindings in their lexical scopes", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        try {
+          try {
+            await Promise.reject(-1);
+          } catch (e) {
+            throw e;
+          }
+        } catch (e) {
+          return e as number;
+        }
+        return -2;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(-1);
+    expect(leaked).toEqual([]);
+  });
+
+  it("drives sequential and conditional awaits in one declaration before try/catch", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        const firstPending: Promise<number> = Promise.resolve(7);
+        const secondPending: Promise<number> = Promise.resolve(11);
+        let first = await firstPending,
+          second = first > 0 ? await secondPending : 13;
+        let third: number;
+        try {
+          third = await Promise.resolve(17);
+        } catch (error) {
+          return -1;
+        }
+        return first * 100 + second * 10 + third;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(827);
+    expect(leaked).toEqual([]);
+  });
+
+  it("keeps the non-await arm of a conditional initializer on a direct CFG branch", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        const firstPending: Promise<number> = Promise.resolve(7);
+        const unusedPending: Promise<number> = Promise.resolve(99);
+        let first = await firstPending,
+          second = first < 0 ? await unusedPending : 13;
+        try {
+          await Promise.resolve(1);
+        } catch (error) {
+          return -1;
+        }
+        return first * 10 + second;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(83);
+    expect(leaked).toEqual([]);
+  });
+
+  it("persists an ordinary for-of iterator across awaits in its try/catch body", async () => {
+    const exports = await instantiate(`
+      export async function test(): Promise<number> {
+        const rows = [{ value: 2 }, { value: 3 }];
+        let sum = 0;
+        for (const { value } of rows) {
+          const pending: Promise<number> = Promise.resolve(value);
+          try {
+            const settled = await pending;
+            sum += settled;
+          } catch (error) {
+            sum = -100;
+          }
+        }
+        return sum;
+      }
+    `);
+    const { value, leaked } = await runTest(exports);
+    expect(value).toBe(5);
+    expect(leaked).toEqual([]);
+  });
+
   it("LOUD REFUSAL: a still-declined rejection-observing shape is a compile error, not a silent miscompile", async () => {
     // while-with-await INSIDE try/catch: outside both the linear plan and the
     // bounded 3c shape → engine still declines. The sync fallback would run

@@ -6,6 +6,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../codegen/func-space.js";
 import type {
   ProgramAbiClosureSupportLayout,
   ProgramAbiClosureSupportLayoutRequest,
+  ProgramAbiRefCellSupportRequest,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
@@ -20,7 +21,7 @@ import {
   type IrType,
   type IrTypeRef,
 } from "./nodes.js";
-import type { IrClosureLowering } from "./lower.js";
+import type { IrClosureLowering, IrRefCellLowering } from "./lower.js";
 import type { FuncTypeDef, StructTypeDef, ValType, WasmFunction } from "./types.js";
 
 export interface PreparedClosureRegistry {
@@ -32,7 +33,15 @@ export interface PreparedClosureRegistry {
   ): IrClosureLowering | null;
 }
 
-export function lowerPreparedClosureSupportType(ctx: CodegenContext, type: IrType): ValType {
+export interface PreparedRefCellRegistry {
+  resolveIr(inner: IrType): IrRefCellLowering | null;
+}
+
+export function lowerPreparedClosureSupportType(
+  ctx: CodegenContext,
+  type: IrType,
+  refCells?: PreparedRefCellRegistry,
+): ValType {
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
@@ -61,6 +70,10 @@ export function lowerPreparedClosureSupportType(ctx: CodegenContext, type: IrTyp
         irTypeBindingKey(type.layout.carrierType.binding),
       ),
     };
+  }
+  if (type.kind === "boxed" && refCells) {
+    const cell = refCells.resolveIr(type.inner);
+    if (cell) return { kind: "ref", typeIdx: cell.typeIdx };
   }
   throw new Error(`closure support type ${type.kind} requires the complete IR resolver`);
 }
@@ -173,6 +186,7 @@ export function prepareDependencyCompleteClosureSupport(
   ctx: CodegenContext,
   entries: readonly { readonly fn: IrFunction }[],
   registry: PreparedClosureRegistry,
+  refCells: PreparedRefCellRegistry,
 ): PreparedComponentClosureSupportEvidence {
   const typeRefs = new Map<IrType, readonly IrTypeRef[]>();
   const instructionRefs = new Map<IrInstr, readonly IrTypeRef[]>();
@@ -181,6 +195,19 @@ export function prepareDependencyCompleteClosureSupport(
     readonly request: ProgramAbiClosureSupportLayoutRequest;
     readonly publish: (refs: readonly IrTypeRef[]) => void;
   }> = [];
+  const pendingRefCells: Array<{
+    readonly request: ProgramAbiRefCellSupportRequest;
+    readonly publish: (refs: readonly IrTypeRef[]) => void;
+  }> = [];
+  const scheduleRefCell = (
+    boxedType: Extract<IrType, { readonly kind: "boxed" }>,
+    publish: (refs: readonly IrTypeRef[]) => void,
+  ): void => {
+    const lowering = refCells.resolveIr(boxedType.inner);
+    const cellType = lowering ? ctx.mod.types[lowering.typeIdx] : undefined;
+    if (!lowering || cellType?.kind !== "struct") return;
+    pendingRefCells.push({ request: { innerType: boxedType.inner, cellType }, publish });
+  };
   const schedule = (
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
@@ -217,6 +244,7 @@ export function prepareDependencyCompleteClosureSupport(
       ...fn.params.map((param) => param.type),
       ...fn.resultTypes,
       ...fn.blocks.flatMap((block) => block.blockArgTypes),
+      ...(fn.closureSubtype?.captureFieldTypes ?? []),
     ]);
     for (const block of fn.blocks) {
       block.blockArgs.forEach((value, index) => {
@@ -231,8 +259,11 @@ export function prepareDependencyCompleteClosureSupport(
       }
     }
     for (const type of exactTypes) {
-      if (type.kind !== "closure" && type.kind !== "callable") continue;
-      schedule(type.signature, [], (refs) => typeRefs.set(type, refs));
+      if (type.kind === "closure" || type.kind === "callable") {
+        schedule(type.signature, [], (refs) => typeRefs.set(type, refs));
+      } else if (type.kind === "boxed") {
+        scheduleRefCell(type, (refs) => typeRefs.set(type, refs));
+      }
     }
     if (fn.closureSubtype) {
       schedule(
@@ -256,6 +287,13 @@ export function prepareDependencyCompleteClosureSupport(
             const calleeType = valueTypes.get(nested.callee);
             if (calleeType?.kind === "closure" || calleeType?.kind === "callable") {
               schedule(calleeType.signature, [], (refs) => instructionRefs.set(nested, refs));
+            }
+          } else if (nested.kind === "refcell.new" && nested.resultType?.kind === "boxed") {
+            scheduleRefCell(nested.resultType, (refs) => instructionRefs.set(nested, refs));
+          } else if (nested.kind === "refcell.get" || nested.kind === "refcell.set") {
+            const cellType = valueTypes.get(nested.cell);
+            if (cellType?.kind === "boxed") {
+              scheduleRefCell(cellType, (refs) => instructionRefs.set(nested, refs));
             }
           }
         });
@@ -281,6 +319,19 @@ export function prepareDependencyCompleteClosureSupport(
       );
     }
     layouts.forEach((layout, index) => pending[index]!.publish(distinctRefs(layout)));
+  }
+
+  if (pendingRefCells.length > 0) {
+    const programAbiTypes = ctx.programAbiTypes;
+    if (!programAbiTypes) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared ref-cell support requires one canonical Program ABI type registry",
+      );
+    }
+    const support = programAbiTypes.prepareRefCellSupportTypes(pendingRefCells.map(({ request }) => request));
+    support.forEach((entry, index) => pendingRefCells[index]!.publish(Object.freeze([entry.cellTypeRef])));
   }
   return Object.freeze({ typeRefs, instructionRefs, functionRefs });
 }

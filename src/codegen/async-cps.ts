@@ -8,14 +8,17 @@ import { isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { collectBindingPatternNames, collectReferencedIdentifiers } from "./closures.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { RESULT_DONE_FIELD, RESULT_VALUE_FIELD, sanitizeTypeName } from "./frame-core.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { resolveWasmType } from "./index.js";
-import { coerceType, compileExpression, compileStatement } from "./shared.js";
+import { coerceType, compileExpression, compileStatement, unpackedElemType } from "./shared.js";
 import { ensureAsyncIterator } from "./statements/destructuring.js";
 import { compileForOfDestructuring } from "./statements/for-of-destructuring.js";
+import { collectInstrs } from "./statements/shared.js";
+import { addIteratorImports } from "./registry/imports.js";
+import { getArrTypeIdxFromVec } from "./registry/types.js";
 
 /**
  * Master gate for the AST-side async CPS lowering.
@@ -300,6 +303,8 @@ export interface AwaitSplit {
   readonly resumeBinding: {
     readonly name: string;
     readonly type: ts.TypeNode | undefined;
+    /** Existing assignment target used to recover its inferred/local type. */
+    readonly target?: ts.Identifier;
   } | null;
   readonly suffix: readonly ts.Statement[];
   readonly isReturnAwait: boolean;
@@ -440,6 +445,8 @@ export interface LinearAwaitSegment {
   readonly resumeBinding: {
     readonly name: string;
     readonly type: ts.TypeNode | undefined;
+    /** Existing assignment target used to recover its inferred/local type. */
+    readonly target?: ts.Identifier;
   } | null;
   /** `return await P` — the resolved value settles the result promise directly. */
   readonly isReturnAwait: boolean;
@@ -552,12 +559,51 @@ export function planLinearAwaits(
   // Every await must have been consumed into a segment (defensive; a stray await
   // in a `lead` statement would have made `awaitsHere > 0` and been handled).
   if (st.segments.length !== plan.awaitPoints.length) return null;
+  // A nested function value is memoized in an activation local. Recompiling
+  // the body in the async resume function gives each resume invocation fresh
+  // locals, so reusing that function in a later await would manufacture a new
+  // closure (and can desynchronize the host callable bridge from its capture
+  // struct). Keep the newly-admitted assignment-await form on the legacy lane
+  // for this narrow shape until nested-function memo locals ride the frame.
+  if (
+    st.segments.some((segment) => segment.resumeBinding?.target !== undefined) &&
+    reusesNestedFunctionAcrossAwaitSegments(body, st.segments)
+  ) {
+    return null;
+  }
   return {
     segments: st.segments,
     tail: st.lead,
     tailInTry: st.leadInTry,
     finalizer: st.theFinalizer,
   };
+}
+
+function reusesNestedFunctionAcrossAwaitSegments(body: ts.Block, segments: readonly LinearAwaitSegment[]): boolean {
+  const nestedNames = new Set<string>();
+  for (const statement of body.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      nestedNames.add(statement.name.text);
+    }
+  }
+  if (nestedNames.size === 0) return false;
+
+  const counts = new Map<string, number>();
+  for (const segment of segments) {
+    const seen = new Set<string>();
+    const walk = (node: ts.Node): void => {
+      if (isNestedFunctionScope(node)) return;
+      if (ts.isIdentifier(node) && nestedNames.has(node.text)) seen.add(node.text);
+      forEachChild(node, walk);
+    };
+    walk(segment.awaitedExpr);
+    for (const name of seen) {
+      const count = (counts.get(name) ?? 0) + 1;
+      if (count > 1) return true;
+      counts.set(name, count);
+    }
+  }
+  return false;
 }
 
 /** Mutable accumulator threaded through the recursive linear-await lowering. */
@@ -682,6 +728,32 @@ function lowerLinearStatements(
         leadStmts,
         awaitedExpr: awaitNode.expression,
         resumeBinding: null,
+        isReturnAwait: false,
+        awaitInTry,
+        leadInTry,
+      });
+      resetLead();
+      continue;
+    }
+    // Assignment is the existing-local twin of a variable initializer. The
+    // settled value is delivered into that local when the frame resumes. Keep
+    // this bounded to a plain identifier: property/destructuring assignments
+    // require observable work after resumption and need their own CFG lead.
+    if (
+      ts.isExpressionStatement(stmt) &&
+      ts.isBinaryExpression(stmt.expression) &&
+      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(stmt.expression.left) &&
+      stmt.expression.right === awaitNode
+    ) {
+      st.segments.push({
+        leadStmts,
+        awaitedExpr: awaitNode.expression,
+        resumeBinding: {
+          name: stmt.expression.left.text,
+          type: undefined,
+          target: stmt.expression.left,
+        },
         isReturnAwait: false,
         awaitInTry,
         leadInTry,
@@ -842,6 +914,8 @@ export interface AsyncResumePoint {
   readonly binding: {
     readonly name: string;
     readonly type: ts.TypeNode | undefined;
+    /** Existing assignment target used to recover its inferred/local type. */
+    readonly target?: ts.Identifier;
   } | null;
   /** Handler region the suspended await sat in (0 = none). */
   readonly handler: number;
@@ -924,6 +998,8 @@ export interface AsyncCfgState {
    * union-frame restore behaviour.
    */
   readonly restoreSpillNames?: readonly string[];
+  /** Lexical source names temporarily redirected to scope-unique frame locals. */
+  readonly lexicalAliases?: readonly { readonly sourceName: string; readonly targetName: string }[];
   readonly lead: readonly AsyncCfgStmt[];
   readonly terminator: AsyncCfgTerminator;
   /**
@@ -1378,6 +1454,8 @@ interface TryCatchGroup {
   /** Linear catch body (a nested awaited try inside a catch bails the shape). */
   readonly catchChunk: TryCatchChunk;
   readonly catchParamName: string | null;
+  /** Scope-unique frame/local name backing the catch binding. */
+  readonly catchParamSpillName: string | null;
   /**
    * (#2906 3c-ii-b) The group's await-free `finally` body, or null. A combined
    * try/catch/finally group mints TWO handler regions: the catch region
@@ -1396,6 +1474,19 @@ interface RegionBody {
   readonly items: ReadonlyArray<
     | { readonly kind: "chunk"; readonly chunk: TryCatchChunk }
     | { readonly kind: "group"; readonly group: TryCatchGroup }
+    | {
+        readonly kind: "conditional";
+        readonly condition: ts.Expression;
+        readonly whenTrue: RegionBody;
+        readonly whenFalse: RegionBody;
+      }
+    | {
+        readonly kind: "forOf";
+        readonly stmt: ts.ForOfStatement;
+        readonly body: RegionBody;
+        readonly iteratorSpill: string;
+        readonly indexSpill: string;
+      }
   >;
 }
 
@@ -1410,14 +1501,141 @@ function bodySegCount(body: RegionBody): number {
   let n = 0;
   for (const item of body.items) {
     if (item.kind === "chunk") n += item.chunk.segs.length;
-    else n += bodySegCount(item.group.tryBody) + item.group.catchChunk.segs.length;
+    else if (item.kind === "group") n += bodySegCount(item.group.tryBody) + item.group.catchChunk.segs.length;
+    else if (item.kind === "conditional") n += bodySegCount(item.whenTrue) + bodySegCount(item.whenFalse);
+    else n += bodySegCount(item.body);
   }
   return n;
 }
 
 /** Any try/catch group anywhere in the body (recursive)? */
 function bodyHasGroup(body: RegionBody): boolean {
-  return body.items.some((i) => i.kind === "group");
+  return body.items.some(
+    (item) =>
+      item.kind === "group" ||
+      (item.kind === "conditional" && (bodyHasGroup(item.whenTrue) || bodyHasGroup(item.whenFalse))) ||
+      (item.kind === "forOf" && bodyHasGroup(item.body)),
+  );
+}
+
+function asyncForOfIteratorSpill(stmt: ts.ForOfStatement): string {
+  return `__async_forof_iter_${stmt.pos >= 0 ? stmt.pos : stmt.getStart()}`;
+}
+
+function asyncForOfIndexSpill(stmt: ts.ForOfStatement): string {
+  return `__async_forof_index_${stmt.pos >= 0 ? stmt.pos : stmt.getStart()}`;
+}
+
+function bodyOfChunk(chunk: TryCatchChunk): RegionBody {
+  return { items: [{ kind: "chunk", chunk }] };
+}
+
+function assignmentStatement(target: ts.Identifier, value: ts.Expression): ts.ExpressionStatement {
+  return ts.factory.createExpressionStatement(
+    ts.factory.createBinaryExpression(target, ts.factory.createToken(ts.SyntaxKind.EqualsToken), value),
+  );
+}
+
+/**
+ * Lower a multi-declarator statement whose initializers suspend in source
+ * order. This is the minified-package form of sequential declarations such as
+ * `let a = await p, b = cond ? await q : fallback`.
+ *
+ * Locals are allocated from the original declarations before body emission,
+ * so the CFG only needs to deliver/assign their initializer values. A
+ * conditional await becomes a real branch: the non-await arm assigns directly
+ * and does not manufacture an extra microtask turn.
+ */
+function lowerAwaitingVariableStatement(
+  stmt: ts.VariableStatement,
+  awaitSet: ReadonlySet<ts.AwaitExpression>,
+): RegionBody | null {
+  const decls = stmt.declarationList.declarations;
+  if (decls.length < 2) return null;
+  const items: RegionBody["items"] extends readonly (infer T)[] ? T[] : never = [];
+  let seen = 0;
+  for (const decl of decls) {
+    if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) return null;
+    const initializer = decl.initializer;
+    if (ts.isAwaitExpression(initializer) && awaitSet.has(initializer)) {
+      items.push({
+        kind: "chunk",
+        chunk: {
+          segs: [
+            {
+              leadStmts: [],
+              awaitedExpr: initializer.expression,
+              resumeBinding: { name: decl.name.text, type: decl.type, target: decl.name },
+              isReturnAwait: false,
+              awaitInTry: false,
+              leadInTry: [],
+            },
+          ],
+          tail: [],
+          sawReturnAwait: false,
+        },
+      });
+      seen++;
+      continue;
+    }
+    if (ts.isConditionalExpression(initializer)) {
+      const trueAwait = ts.isAwaitExpression(initializer.whenTrue) && awaitSet.has(initializer.whenTrue);
+      const falseAwait = ts.isAwaitExpression(initializer.whenFalse) && awaitSet.has(initializer.whenFalse);
+      if (trueAwait === falseAwait) return null; // exactly one branch suspends
+      const awaited = (trueAwait ? initializer.whenTrue : initializer.whenFalse) as ts.AwaitExpression;
+      const immediate = (trueAwait ? initializer.whenFalse : initializer.whenTrue) as ts.Expression;
+      const suspendChunk: TryCatchChunk = {
+        segs: [
+          {
+            leadStmts: [],
+            awaitedExpr: awaited.expression,
+            resumeBinding: { name: decl.name.text, type: decl.type, target: decl.name },
+            isReturnAwait: false,
+            awaitInTry: false,
+            leadInTry: [],
+          },
+        ],
+        tail: [],
+        sawReturnAwait: false,
+      };
+      const immediateChunk: TryCatchChunk = {
+        segs: [],
+        tail: [assignmentStatement(decl.name, immediate)],
+        sawReturnAwait: false,
+      };
+      items.push({
+        kind: "conditional",
+        condition: initializer.condition,
+        whenTrue: bodyOfChunk(trueAwait ? suspendChunk : immediateChunk),
+        whenFalse: bodyOfChunk(trueAwait ? immediateChunk : suspendChunk),
+      });
+      seen++;
+      continue;
+    }
+    return null;
+  }
+  return seen === decls.length ? { items } : null;
+}
+
+function asyncForOfBodyHasUnsupportedControl(body: ts.Statement): boolean {
+  let unsupported = false;
+  const walk = (node: ts.Node): void => {
+    if (unsupported || isNestedFunctionScope(node)) return;
+    if (
+      ts.isBreakStatement(node) ||
+      ts.isContinueStatement(node) ||
+      ts.isReturnStatement(node) ||
+      ts.isLabeledStatement(node) ||
+      ts.isSwitchStatement(node) ||
+      (ts.isIterationStatement(node, false) && node !== body)
+    ) {
+      unsupported = true;
+      return;
+    }
+    forEachChild(node, walk);
+  };
+  forEachChild(body, walk);
+  return unsupported;
 }
 
 /**
@@ -1434,12 +1652,78 @@ function lowerRegionBody(
   awaitSet: ReadonlySet<ts.AwaitExpression>,
   depth: number,
 ): RegionBody | null {
-  const items: Array<{ kind: "chunk"; chunk: TryCatchChunk } | { kind: "group"; group: TryCatchGroup }> = [];
+  const items: Array<RegionBody["items"][number]> = [];
   let cursor = 0;
   for (let i = 0; i < statements.length; i++) {
     const stmt = statements[i]!;
+    const awaitsHere = countAwaitsInStatement(stmt, awaitSet);
+    if (awaitsHere === 0) continue;
+
+    if (ts.isVariableStatement(stmt)) {
+      const variableBody = lowerAwaitingVariableStatement(stmt, awaitSet);
+      if (variableBody === null) continue;
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      if (pre === null || pre.sawReturnAwait) return null;
+      items.push({ kind: "chunk", chunk: pre }, ...variableBody.items);
+      cursor = i + 1;
+      continue;
+    }
+
+    if (ts.isForOfStatement(stmt) && stmt.awaitModifier === undefined) {
+      if (
+        countAwaitsInStatement(stmt.expression, awaitSet) > 0 ||
+        asyncForOfBodyHasUnsupportedControl(stmt.statement)
+      ) {
+        return null;
+      }
+      const initializer = stmt.initializer;
+      if (!ts.isVariableDeclarationList(initializer) || initializer.declarations.length !== 1) return null;
+      const binding = initializer.declarations[0]!.name;
+      if (!ts.isIdentifier(binding) && !ts.isObjectBindingPattern(binding) && !ts.isArrayBindingPattern(binding)) {
+        return null;
+      }
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      if (pre === null || pre.sawReturnAwait) return null;
+      const bodyStatements = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
+      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth);
+      if (loopBody === null || bodySegCount(loopBody) === 0) return null;
+      items.push(
+        { kind: "chunk", chunk: pre },
+        {
+          kind: "forOf",
+          stmt,
+          body: loopBody,
+          iteratorSpill: asyncForOfIteratorSpill(stmt),
+          indexSpill: asyncForOfIndexSpill(stmt),
+        },
+      );
+      cursor = i + 1;
+      continue;
+    }
+
+    if (ts.isIfStatement(stmt)) {
+      if (countAwaitsInStatement(stmt.expression, awaitSet) > 0) return null;
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      if (pre === null || pre.sawReturnAwait) return null;
+      const thenStatements = ts.isBlock(stmt.thenStatement) ? stmt.thenStatement.statements : [stmt.thenStatement];
+      const elseStatements =
+        stmt.elseStatement === undefined
+          ? []
+          : ts.isBlock(stmt.elseStatement)
+            ? stmt.elseStatement.statements
+            : [stmt.elseStatement];
+      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth);
+      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth);
+      if (whenTrue === null || whenFalse === null) return null;
+      items.push(
+        { kind: "chunk", chunk: pre },
+        { kind: "conditional", condition: stmt.expression, whenTrue, whenFalse },
+      );
+      cursor = i + 1;
+      continue;
+    }
+
     if (!ts.isTryStatement(stmt)) continue;
-    if (countAwaitsInStatement(stmt, awaitSet) === 0) continue; // await-free try — an ordinary lead
     if (!stmt.catchClause) return null; // awaited try/finally → Gap-3 linear (top) / bounded out (nested)
     let finallyStmts: ts.Statement[] | null = null;
     if (stmt.finallyBlock) {
@@ -1452,6 +1736,8 @@ function lowerRegionBody(
     const decl = stmt.catchClause.variableDeclaration;
     if (decl !== undefined && !ts.isIdentifier(decl.name)) return null; // destructured catch param
     const catchParamName = decl !== undefined ? (decl.name as ts.Identifier).text : null;
+    const catchParamSpillName =
+      decl !== undefined ? `__async_catch_${decl.pos >= 0 ? decl.pos : decl.getStart()}_${catchParamName}` : null;
 
     const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
     if (pre === null || pre.sawReturnAwait) return null; // `return await` → the try is unreachable
@@ -1464,7 +1750,10 @@ function lowerRegionBody(
     // caller's non-final sawReturnAwait rejections below via the pre rule).
     const catchChunk = lowerChunk(stmt.catchClause.block.statements, awaitSet);
     if (catchChunk === null) return null;
-    items.push({ kind: "group", group: { tryBody, catchChunk, catchParamName, finallyStmts } });
+    items.push({
+      kind: "group",
+      group: { tryBody, catchChunk, catchParamName, catchParamSpillName, finallyStmts },
+    });
     cursor = i + 1;
   }
   const tail = lowerChunk(statements.slice(cursor), awaitSet);
@@ -1521,11 +1810,16 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
   let pendingResume: AsyncResumePoint | null = null;
 
   /** Push one suspend state per segment; the last delivers into the NEXT push. */
-  const pushSuspendChain = (segs: readonly LinearAwaitSegment[], handler: number): void => {
+  const pushSuspendChain = (
+    segs: readonly LinearAwaitSegment[],
+    handler: number,
+    lexicalAliases?: AsyncCfgState["lexicalAliases"],
+  ): void => {
     for (const seg of segs) {
       states.push({
         id: states.length,
         resumeFrom: pendingResume,
+        ...(lexicalAliases !== undefined ? { lexicalAliases } : {}),
         lead: [...pendingLeads, ...asLead(seg.leadStmts, handler)],
         terminator: { kind: "suspend", awaited: seg.awaitedExpr, resumeState: states.length + 1, handler },
       });
@@ -1551,6 +1845,239 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
         pendingLeads.push(...asLead(item.chunk.tail, enclosing));
         continue;
       }
+      if (item.kind === "conditional") {
+        // Reserve the condition state before either branch so its forward
+        // targets can be filled once both branch extents are known. Any value
+        // delivered by a preceding await belongs to this state.
+        const conditionId = states.length;
+        states.push({
+          id: conditionId,
+          resumeFrom: pendingResume,
+          lead: pendingLeads,
+          terminator: { kind: "condGoto", cond: item.condition, whenTrue: 0, whenFalse: 0, handler: enclosing },
+        });
+        pendingResume = null;
+        pendingLeads = [];
+
+        const buildBranch = (branch: RegionBody): { entry: number; gotoExit: number | null } => {
+          const entry = states.length;
+          buildBody(branch, enclosing);
+          const endsReturnAwait = bodyEndsWithReturnAwait(branch);
+          const exit = states.length;
+          states.push({
+            id: exit,
+            resumeFrom: pendingResume,
+            lead: endsReturnAwait ? [] : pendingLeads,
+            terminator: endsReturnAwait ? { kind: "settleSent" } : { kind: "goto", target: -1 },
+          });
+          pendingResume = null;
+          pendingLeads = [];
+          return { entry, gotoExit: endsReturnAwait ? null : exit };
+        };
+
+        const whenTrue = buildBranch(item.whenTrue);
+        const whenFalse = buildBranch(item.whenFalse);
+        const join = states.length;
+        states[conditionId] = {
+          id: conditionId,
+          resumeFrom: states[conditionId]!.resumeFrom,
+          lead: states[conditionId]!.lead,
+          terminator: {
+            kind: "condGoto",
+            cond: item.condition,
+            whenTrue: whenTrue.entry,
+            whenFalse: whenFalse.entry,
+            handler: enclosing,
+          },
+        };
+        for (const exit of [whenTrue.gotoExit, whenFalse.gotoExit]) {
+          if (exit === null) continue;
+          states[exit] = { ...states[exit]!, terminator: { kind: "goto", target: join } };
+        }
+        continue;
+      }
+      if (item.kind === "forOf") {
+        const { stmt, iteratorSpill, indexSpill } = item;
+        const declList = stmt.initializer as ts.VariableDeclarationList;
+        const binding = declList.declarations[0]!.name;
+        const L: {
+          iter: number;
+          index: number;
+          value: number;
+          done: number;
+          vecTypeIdx?: number;
+          arrTypeIdx?: number;
+          elemType?: ValType;
+        } = { iter: -1, index: -1, value: -1, done: -1 };
+
+        const initIterator: AsyncCfgStepEmit = (ctx, fctx) => {
+          addIteratorImports(ctx);
+          const spill = fctx.localMap.get(iteratorSpill);
+          const index = fctx.localMap.get(indexSpill);
+          L.iter = spill !== undefined ? spill : allocLocal(fctx, iteratorSpill, { kind: "externref" });
+          L.index = index !== undefined ? index : allocLocal(fctx, indexSpill, { kind: "i32" });
+          const sourceType = compileExpression(ctx, fctx, stmt.expression);
+          const iterType = getLocalType(fctx, L.iter) ?? { kind: "externref" };
+          if (sourceType === null || sourceType === undefined) {
+            fctx.body.push({ op: "ref.null.extern" });
+          } else {
+            coerceType(ctx, fctx, sourceType as ValType, iterType);
+          }
+          if (iterType.kind === "ref" || iterType.kind === "ref_null") {
+            const arrTypeIdx = getArrTypeIdxFromVec(ctx, iterType.typeIdx);
+            const arrDef = arrTypeIdx >= 0 ? ctx.mod.types[arrTypeIdx] : undefined;
+            if (arrDef?.kind === "array") {
+              L.vecTypeIdx = iterType.typeIdx;
+              L.arrTypeIdx = arrTypeIdx;
+              L.elemType = unpackedElemType(arrDef.element);
+            }
+          }
+          if (L.vecTypeIdx === undefined) {
+            const iteratorIdx = ctx.funcMap.get("__iterator");
+            if (iteratorIdx === undefined) {
+              fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+            } else {
+              fctx.body.push({ op: "call", funcIdx: iteratorIdx });
+            }
+          }
+          fctx.body.push({ op: "local.set", index: L.iter });
+          fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: L.index });
+        };
+
+        const stepNext: AsyncCfgStepEmit = (ctx, fctx) => {
+          const valueType: ValType =
+            L.elemType?.kind === "ref"
+              ? { kind: "ref_null", typeIdx: L.elemType.typeIdx }
+              : (L.elemType ?? { kind: "externref" });
+          if (L.value === -1) L.value = allocLocal(fctx, `__async_forof_value_${stmt.pos}`, valueType);
+          if (L.done === -1) L.done = allocLocal(fctx, `__async_forof_done_${stmt.pos}`, { kind: "i32" });
+          if (L.vecTypeIdx !== undefined && L.arrTypeIdx !== undefined && L.elemType !== undefined) {
+            const loadValue = collectInstrs(fctx, () => {
+              fctx.body.push(
+                { op: "local.get", index: L.iter },
+                { op: "struct.get", typeIdx: L.vecTypeIdx!, fieldIdx: 1 },
+                { op: "ref.as_non_null" },
+                { op: "local.get", index: L.index },
+                { op: "array.get", typeIdx: L.arrTypeIdx! },
+              );
+              coerceType(ctx, fctx, L.elemType!, valueType);
+              fctx.body.push({ op: "local.set", index: L.value });
+            });
+            fctx.body.push(
+              { op: "local.get", index: L.index },
+              { op: "local.get", index: L.iter },
+              { op: "struct.get", typeIdx: L.vecTypeIdx, fieldIdx: 0 },
+              { op: "i32.ge_u" },
+              { op: "local.tee", index: L.done },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [],
+                else: loadValue,
+              },
+            );
+            return;
+          }
+          const nextIdx = ctx.funcMap.get("__iterator_next");
+          if (nextIdx === undefined) {
+            fctx.body.push({ op: "i32.const", value: 1 }, { op: "ref.null.extern" });
+          } else {
+            fctx.body.push({ op: "local.get", index: L.iter }, { op: "call", funcIdx: nextIdx });
+          }
+          fctx.body.push({ op: "local.set", index: L.value }, { op: "local.set", index: L.done });
+        };
+
+        const doneCond: AsyncCfgValueEmit = (_ctx, fctx) => {
+          fctx.body.push({ op: "local.get", index: L.done });
+          return { kind: "i32" };
+        };
+
+        const bindElement: AsyncCfgStepEmit = (ctx, fctx) => {
+          const valueType = getLocalType(fctx, L.value) ?? { kind: "externref" };
+          if (ts.isIdentifier(binding)) {
+            const local = fctx.localMap.get(binding.text);
+            if (local === undefined) return;
+            fctx.body.push({ op: "local.get", index: L.value });
+            const targetType = getLocalType(fctx, local) ?? { kind: "externref" };
+            coerceType(ctx, fctx, valueType, targetType);
+            fctx.body.push({ op: "local.set", index: local });
+            return;
+          }
+          compileForOfDestructuring(ctx, fctx, binding, L.value, valueType, stmt);
+        };
+
+        const entryId = states.length;
+        const headId = entryId + 1;
+        states.push(
+          {
+            id: entryId,
+            resumeFrom: pendingResume,
+            lead: pendingLeads,
+            emit: initIterator,
+            terminator: { kind: "goto", target: headId },
+          },
+          {
+            id: headId,
+            resumeFrom: null,
+            lead: [],
+            emit: stepNext,
+            terminator: {
+              kind: "condGoto",
+              cond: { emit: doneCond },
+              whenTrue: -1,
+              whenFalse: -1,
+              handler: enclosing,
+            },
+          },
+        );
+        pendingResume = null;
+        pendingLeads = [];
+
+        const bodyEntry = states.length;
+        buildBody(item.body, enclosing);
+        if (states[bodyEntry] === undefined) return;
+        const firstBodyState = states[bodyEntry]!;
+        const priorPostDeliverEmit = firstBodyState.postDeliverEmit;
+        states[bodyEntry] = {
+          ...firstBodyState,
+          postDeliverEmit:
+            priorPostDeliverEmit === undefined
+              ? bindElement
+              : (ctx, fctx) => {
+                  bindElement(ctx, fctx);
+                  priorPostDeliverEmit(ctx, fctx);
+                },
+        };
+        states.push({
+          id: states.length,
+          resumeFrom: pendingResume,
+          lead: pendingLeads,
+          emit: (_ctx, fctx) => {
+            if (L.vecTypeIdx === undefined) return;
+            fctx.body.push(
+              { op: "local.get", index: L.index },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: L.index },
+            );
+          },
+          terminator: { kind: "goto", target: headId },
+        });
+        pendingResume = null;
+        pendingLeads = [];
+        const join = states.length;
+        states[headId] = {
+          ...states[headId]!,
+          terminator: {
+            kind: "condGoto",
+            cond: { emit: doneCond },
+            whenTrue: join,
+            whenFalse: bodyEntry,
+            handler: enclosing,
+          },
+        };
+        continue;
+      }
       const group = item.group;
       const fin = group.finallyStmts;
       // Region ids: `r` = the catch region (covers the TRY body; carries the
@@ -1564,6 +2091,10 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
       const r = nextRegionId++;
       const rFin = fin !== null ? nextRegionId++ : 0;
       const catchHandler = fin !== null ? rFin : enclosing;
+      const catchAliases =
+        group.catchParamName !== null && group.catchParamSpillName !== null
+          ? [{ sourceName: group.catchParamName, targetName: group.catchParamSpillName }]
+          : undefined;
       // Try body (recursive), tagged r.
       buildBody(group.tryBody, r);
       // Try-exit: deliver the last try suspend (handler r — a rejection routes
@@ -1590,14 +2121,16 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
         states.push({
           id: catchEntry,
           resumeFrom: null,
+          ...(catchAliases !== undefined ? { lexicalAliases: catchAliases } : {}),
           lead: [...asLead(group.catchChunk.tail, catchHandler), ...finLeads],
           terminator: { kind: "goto", target: join },
         });
       } else {
-        pushSuspendChain(group.catchChunk.segs, catchHandler);
+        pushSuspendChain(group.catchChunk.segs, catchHandler, catchAliases);
         states.push({
           id: states.length,
           resumeFrom: pendingResume,
+          ...(catchAliases !== undefined ? { lexicalAliases: catchAliases } : {}),
           lead: group.catchChunk.sawReturnAwait ? [] : [...asLead(group.catchChunk.tail, catchHandler), ...finLeads],
           terminator: group.catchChunk.sawReturnAwait ? { kind: "settleSent" } : { kind: "goto", target: join },
         });
@@ -1609,7 +2142,7 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
         parent: enclosing,
         finalizer: fin ?? [],
         catchState: catchEntry,
-        ...(group.catchParamName !== null ? { catchParamName: group.catchParamName } : {}),
+        ...(group.catchParamSpillName !== null ? { catchParamName: group.catchParamSpillName } : {}),
       });
       if (fin !== null) {
         handlers.push({ id: rFin, parent: enclosing, finalizer: fin });
@@ -1645,25 +2178,52 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
 export function tryCatchAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
-): { segments: readonly LinearAwaitSegment[]; catchParamNames: string[] } | null {
+): {
+  segments: readonly LinearAwaitSegment[];
+  catchParamNames: string[];
+  iteratorSpills: Array<{
+    iteratorSpill: string;
+    indexSpill: string;
+    source: ts.Expression;
+  }>;
+} | null {
   const shape = analyzeTryCatchAsync(fn, plan);
   if (shape === null) return null;
   const segments: LinearAwaitSegment[] = [];
   const catchParamNames: string[] = [];
+  const iteratorSpills: Array<{
+    iteratorSpill: string;
+    indexSpill: string;
+    source: ts.Expression;
+  }> = [];
   const collect = (region: RegionBody): void => {
     for (const item of region.items) {
       if (item.kind === "chunk") {
         segments.push(...item.chunk.segs);
         continue;
       }
+      if (item.kind === "conditional") {
+        collect(item.whenTrue);
+        collect(item.whenFalse);
+        continue;
+      }
+      if (item.kind === "forOf") {
+        iteratorSpills.push({
+          iteratorSpill: item.iteratorSpill,
+          indexSpill: item.indexSpill,
+          source: item.stmt.expression,
+        });
+        collect(item.body);
+        continue;
+      }
       collect(item.group.tryBody);
       segments.push(...item.group.catchChunk.segs);
-      const cp = item.group.catchParamName;
+      const cp = item.group.catchParamSpillName;
       if (cp !== null && !catchParamNames.includes(cp)) catchParamNames.push(cp);
     }
   };
   collect(shape.body);
-  return { segments, catchParamNames };
+  return { segments, catchParamNames, iteratorSpills };
 }
 
 // ---------------------------------------------------------------------------

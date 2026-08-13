@@ -3791,6 +3791,21 @@ export function compileArrayLiteral(
     const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
+  let assignmentValue: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(assignmentValue.parent) ||
+    ts.isAsExpression(assignmentValue.parent) ||
+    ts.isTypeAssertionExpression(assignmentValue.parent) ||
+    ts.isNonNullExpression(assignmentValue.parent)
+  ) {
+    assignmentValue = assignmentValue.parent;
+  }
+  const assignmentParent = assignmentValue.parent;
+  const isDestructuringAssignmentValue =
+    ts.isBinaryExpression(assignmentParent) &&
+    assignmentParent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignmentParent.right === assignmentValue &&
+    (ts.isArrayLiteralExpression(assignmentParent.left) || ts.isObjectLiteralExpression(assignmentParent.left));
 
   // Check if the target type is a tuple — compile as struct.new instead of array.
   // Skip if _arrayLiteralForceVec is set (e.g. destructuring default where the target
@@ -3800,7 +3815,7 @@ export function compileArrayLiteral(
     ctxTupleType &&
     isTupleType(ctxTupleType) &&
     !(ctx as any)._arrayLiteralForceVec &&
-    !hasDynamicOrCallableElement
+    !(hasDynamicOrCallableElement && isDestructuringAssignmentValue)
   ) {
     // When the contextual type gives degenerate tuple types (e.g. all void from
     // destructuring defaults: `[w = counter()] = [null, 0, false, '']`),

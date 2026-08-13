@@ -515,7 +515,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(classOwned)).readClass!()).toBe(42);
   });
 
-  it("keeps nested callable owners off the retrying preparation route", async () => {
+  it("prepares nested callable owners atomically", async () => {
     const result = await compile(
       `
       export function run(value: number): number {
@@ -533,11 +533,12 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("run");
+    expect(result.irFirstSkipped ?? []).toContain("run");
     expect(outcome(result, "run")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect((await instantiate(result)).run!(7)).toBe(24);
   });
