@@ -237,6 +237,32 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
+  it("keeps a bare nested-function alias on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        function add(value: number): number { return value + 2; }
+        const alias = add;
+        return alias(input);
+      }`,
+      {
+        fileName: "nested-function-value-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      code: "call-resolution-unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
   it("keeps receiver-sensitive object methods on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {

@@ -4607,6 +4607,10 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       isConst &&
       ts.isIdentifier(initializer) &&
       initializerScope.has(initializer.text) &&
+      // Nested function declarations are name-only direct-call targets in
+      // from-ast. They deliberately have no first-class SSA value, so an
+      // alias would pass selection but fail while lowering the bare read.
+      !currentNestedFunctionNames.has(initializer.text) &&
       currentCallableArities.has(initializer.text)
         ? initializer.text
         : null;

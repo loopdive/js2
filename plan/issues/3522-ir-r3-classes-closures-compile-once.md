@@ -2022,3 +2022,18 @@ direct**; standalone remains **5,893 versus 6,458 direct**. A mutable link is
 an explicit negative control and remains a select-stage
 `call-resolution-unsupported` direct body. The focused object-method suite is
 **10/10**.
+
+### Callable-alias materialization guard (2026-08-13)
+
+The immutable-alias checkpoint copies only projections whose source already
+has a first-class IR value. A nested `function declaration` is different: its
+selector projection describes a name-only direct-call target, and AST-to-IR
+does not materialize a bare read of that declaration as an SSA closure value.
+Copying that projection through `const alias = nestedFunction` therefore let
+selection succeed before lowering failed with an internal invariant.
+
+The alias gate now refuses that exact name-only source. A regression fixture
+executes `const alias = add; alias(input)` through the direct body, requires a
+typed select-stage `call-resolution-unsupported` outcome, and requires zero
+post-claim errors. The valid object-method alias chain remains IR-owned and
+the focused object-method suite is **11/11**.
