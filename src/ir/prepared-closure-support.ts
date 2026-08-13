@@ -55,9 +55,10 @@ function prepareClosureObjectType(
   ctx: CodegenContext,
   type: Extract<IrType, { readonly kind: "object" }>,
   refCells?: PreparedRefCellRegistry,
+  closures?: PreparedClosureRegistry,
 ): ValType {
   const fields: FieldDef[] = type.shape.fields.map((field) => {
-    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells);
+    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
     if (physical.kind === "ref") physical = { kind: "ref_null", typeIdx: physical.typeIdx };
     return { name: field.name, type: physical, mutable: true };
   });
@@ -83,6 +84,7 @@ export function lowerPreparedClosureSupportType(
   ctx: CodegenContext,
   type: IrType,
   refCells?: PreparedRefCellRegistry,
+  closures?: PreparedClosureRegistry,
 ): ValType {
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
@@ -113,7 +115,15 @@ export function lowerPreparedClosureSupportType(
       ),
     };
   }
-  if (type.kind === "object") return prepareClosureObjectType(ctx, type, refCells);
+  if (type.kind === "object") return prepareClosureObjectType(ctx, type, refCells, closures);
+  if (type.kind === "closure" && closures) {
+    if (!closures.resolveBase(type.signature)) {
+      throw new Error("prepared object field cannot allocate its closure signature");
+    }
+    const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+    if (rootTypeIdx === undefined) throw new Error("prepared object field has no closure wrapper root");
+    return { kind: "ref", typeIdx: rootTypeIdx };
+  }
   if (type.kind === "boxed" && refCells) {
     const cell = refCells.resolveIr(type.inner);
     if (cell) return { kind: "ref", typeIdx: cell.typeIdx };
@@ -127,7 +137,7 @@ export function prepareDerivedCallableTypeIdx(
   fn: IrFunction,
 ): number {
   const lower = (type: IrType): ValType => {
-    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type);
+    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, undefined, registry);
     if (!registry.resolveBase(type.signature)) {
       throw new Error("prepared callable signature cannot allocate its closure type");
     }
@@ -251,7 +261,7 @@ export function prepareDependencyCompleteClosureSupport(
     switch (type.kind) {
       case "object": {
         for (const field of type.shape.fields) collectObjectSupport(field.type);
-        const physical = prepareClosureObjectType(ctx, type, refCells);
+        const physical = prepareClosureObjectType(ctx, type, refCells, registry);
         if (physical.kind !== "ref" && physical.kind !== "ref_null") {
           throw new IrInvariantError(
             "selection-preparation-mismatch",

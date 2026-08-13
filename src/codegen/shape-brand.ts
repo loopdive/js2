@@ -149,7 +149,7 @@ export function markNoBrandSiblingShapes(
   noBrand.add(toIdx);
 }
 
-export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<number>): void {
+export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<number>): readonly number[] {
   const types = mod.types;
 
   // ── 1. Collision universe: shallow keys of every struct type ──
@@ -180,7 +180,7 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
       break;
     }
   }
-  if (anchorIdx < 0) return;
+  if (anchorIdx < 0) return [];
 
   // ── 3. Brand each colliding brandable shape (ascending index order keeps
   //       every chain ref BACKWARD → no new rec groups, no forward refs). ──
@@ -202,7 +202,7 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
     brandTarget.set(i, prev);
     prev = i;
   }
-  if (brandTarget.size === 0) return;
+  if (brandTarget.size === 0) return [];
 
   // ── 4. Patch every `struct.new` of a branded type: the brand is the LAST
   //       field, so `ref.null <target>` goes immediately before the
@@ -231,4 +231,5 @@ export function brandCollidingShapeTypes(mod: WasmModule, noBrand?: ReadonlySet<
   for (const g of mod.globals) {
     if (g.init && g.init.length > 0) patch(g.init);
   }
+  return [...brandTarget.keys()];
 }

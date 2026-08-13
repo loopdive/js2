@@ -4851,12 +4851,16 @@ function isDefaultedCallableUndefinedArgument(
   );
 }
 
+type Phase1ClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
+
 function isPhase1ClosureLiteral(
-  expr: ts.ArrowFunction | ts.FunctionExpression,
+  expr: Phase1ClosureLiteral,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
   allowNumericDefaultSuffix = false,
 ): boolean {
+  const body = expr.body;
+  if (!body) return shapeNo("closure-body-missing", expr);
   if ("asteriskToken" in expr && expr.asteriskToken) return shapeNo("closure-generator", expr); // generator
   if (expr.modifiers && expr.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
     return shapeNo("closure-async", expr);
@@ -4895,11 +4899,11 @@ function isPhase1ClosureLiteral(
   // ArrowFunction / FunctionExpression with block body: Phase-1 tail
   // statement list.
   try {
-    if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
-      return isPhase1Expr(expr.body, inner, localClasses) || shapeNo("closure-concise-body", expr.body);
+    if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
+      return isPhase1Expr(body, inner, localClasses) || shapeNo("closure-concise-body", body);
     }
-    if (!ts.isBlock(expr.body)) return shapeNo("closure-body-kind", expr.body);
-    return isPhase1StatementList(expr.body.statements, inner, localClasses) || shapeNo("closure-body", expr.body);
+    if (!ts.isBlock(body)) return shapeNo("closure-body-kind", body);
+    return isPhase1StatementList(body.statements, inner, localClasses) || shapeNo("closure-body", body);
   } finally {
     currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
@@ -7802,32 +7806,49 @@ function isPhase1ObjectLiteral(
   // overrides pass would skip them when shape resolution failed.
   if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
 
-  // Function-valued data properties have no general closed-object IR
+  // Function-valued data properties and method declarations have no general closed-object IR
   // representation. The one certified exception is the exact #4208
   // OrdinaryToPrimitive shape; require EVERY property to belong to it so a
   // mixed `{ valueOf: function... , data: 1 }` literal is rejected before
   // claim instead of claimed and demoted by lowerObjectLiteral.
   if (
     expr.properties.some(
-      (property) => ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer),
+      (property) =>
+        ts.isMethodDeclaration(property) ||
+        (ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)),
     )
   ) {
     const seenMethods = new Set<string>();
+    let literalForm: "method" | "function" | undefined;
     for (const property of expr.properties) {
-      if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) {
+      const method = ts.isMethodDeclaration(property)
+        ? property
+        : ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)
+          ? property.initializer
+          : null;
+      if (method === null) {
         return shapeNo("objectlit-ordinary-to-primitive-mixed", property);
       }
+      const propertyForm = ts.isMethodDeclaration(method) ? "method" : "function";
+      if (literalForm !== undefined && literalForm !== propertyForm) {
+        return shapeNo("objectlit-ordinary-to-primitive-mixed-form", property);
+      }
+      literalForm = propertyForm;
+      if (!property.name) return shapeNo("objectlit-ordinary-to-primitive-name", property);
       const name = phase1PropertyName(property.name);
+      const primitiveReturn = method.type?.kind;
+      const hasPreparedParityReturn =
+        primitiveReturn === ts.SyntaxKind.NumberKeyword ||
+        primitiveReturn === ts.SyntaxKind.BooleanKeyword ||
+        (ts.isFunctionExpression(method) && primitiveReturn === ts.SyntaxKind.StringKeyword);
       if (
         (name !== "valueOf" && name !== "toString") ||
         seenMethods.has(name) ||
-        property.initializer.parameters.length !== 0 ||
-        (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
-          property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
-          property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword) ||
-        !isPhase1ClosureLiteral(property.initializer, scope, localClasses)
+        method.parameters.length !== 0 ||
+        !hasPreparedParityReturn ||
+        !isPhase1ClosureLiteral(method, scope, localClasses)
       ) {
-        return shapeNo("objectlit-ordinary-to-primitive-method", property.initializer);
+        return shapeNo("objectlit-ordinary-to-primitive-method", method);
       }
       seenMethods.add(name);
     }
@@ -8382,17 +8403,18 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
     if (node !== fn && isFunctionLike(node)) return;
     if (ts.isVariableStatement(node)) {
       const isConst = !!(node.declarationList.flags & ts.NodeFlags.Const);
-      if (isConst) {
-        for (const d of node.declarationList.declarations) {
-          if (
-            ts.isIdentifier(d.name) &&
-            d.initializer &&
-            (ts.isArrowFunction(d.initializer) ||
-              ts.isFunctionExpression(d.initializer) ||
-              directReturnedCallableSignature(d.initializer, localValueNames) !== null)
-          ) {
-            names.add(d.name.text);
-          }
+      for (const d of node.declarationList.declarations) {
+        if (!ts.isIdentifier(d.name) || !d.initializer) continue;
+        const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
+        // Literal closures retain the existing const-only rule. A direct
+        // returned-callable binding already passed the ordinary variable
+        // statement shape walk for var/let as well, so mirror that accepted
+        // population here when closing the local call graph. Otherwise an
+        // accepted `var fn = make(); fn()` is mislabeled as an external call,
+        // leaving only `make` on the post-direct overlay with an unprepared
+        // lifted slot.
+        if ((isConst && literal) || directReturnedCallableSignature(d.initializer, localValueNames) !== null) {
+          names.add(d.name.text);
         }
       }
     }

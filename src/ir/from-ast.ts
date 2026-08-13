@@ -4755,53 +4755,92 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
 }
 
 /**
- * #4208 S3/S7 — lower the selector-certified OrdinaryToPrimitive literal as
- * an open object rather than a closed structural `object.new`:
+ * #4208 S3/S7 + #3522 — lower selector-certified OrdinaryToPrimitive
+ * literals. Property-assigned function expressions retain #4208's open-object
+ * protocol. An all-shorthand-method literal uses a closed structural
+ * `object.new` whose method fields retain their exact closure signatures:
  *
  *   { valueOf: function(): number { return 1; } }
  *
- * A closed IR object has a compile-time field layout and cannot participate in
- * the runtime OrdinaryToPrimitive protocol. The open object stores canonical
- * callable externrefs, so both the JS-host and host-free object runtimes can
- * invoke the methods through their existing zero-arity closure dispatcher.
+ * The shorthand selector requires every method to return a numeric/boolean IR
+ * primitive and rejects receiver-sensitive `this`, so unary coercion can
+ * invoke its preferred field directly. String-returning shorthand remains
+ * direct until a native string-to-number IR intrinsic avoids the larger
+ * generic boxed conversion. This preserves the direct backend's static
+ * object-method optimisation and avoids pulling the generic open-object
+ * runtime into a standalone binary. Keeping the pre-existing expression form
+ * open preserves its already-certified dynamic protocol and ABI.
  */
 function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId | null {
-  const properties: { name: "valueOf" | "toString"; initializer: ts.FunctionExpression }[] = [];
+  const properties: {
+    name: "valueOf" | "toString";
+    initializer: ts.FunctionExpression | ts.MethodDeclaration;
+  }[] = [];
   const seen = new Set<string>();
   for (const property of expr.properties) {
-    if (!ts.isPropertyAssignment(property) || !ts.isFunctionExpression(property.initializer)) return null;
+    const initializer = ts.isMethodDeclaration(property)
+      ? property
+      : ts.isPropertyAssignment(property) && ts.isFunctionExpression(property.initializer)
+        ? property.initializer
+        : null;
+    if (initializer === null) return null;
+    if (!property.name) return null;
     const name = phase1PropertyName(property.name);
+    const primitiveReturn = initializer.type?.kind;
+    const hasPreparedParityReturn =
+      primitiveReturn === ts.SyntaxKind.NumberKeyword ||
+      primitiveReturn === ts.SyntaxKind.BooleanKeyword ||
+      (ts.isFunctionExpression(initializer) && primitiveReturn === ts.SyntaxKind.StringKeyword);
     if (
       (name !== "valueOf" && name !== "toString") ||
       seen.has(name) ||
-      property.initializer.parameters.length !== 0 ||
-      (property.initializer.type?.kind !== ts.SyntaxKind.NumberKeyword &&
-        property.initializer.type?.kind !== ts.SyntaxKind.StringKeyword &&
-        property.initializer.type?.kind !== ts.SyntaxKind.BooleanKeyword)
+      initializer.parameters.length !== 0 ||
+      !hasPreparedParityReturn
     ) {
       return null;
     }
     seen.add(name);
-    properties.push({ name, initializer: property.initializer });
+    properties.push({ name, initializer });
   }
   if (properties.length === 0) return null;
+  const hasFunctionExpression = properties.some(({ initializer }) => ts.isFunctionExpression(initializer));
+  const hasMethodDeclaration = properties.some(({ initializer }) => ts.isMethodDeclaration(initializer));
+  if (hasFunctionExpression && hasMethodDeclaration) return null;
 
-  const objectType: IrType = { kind: "extern", className: "Object" };
-  const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
-  if (object === null) {
-    throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
+  if (hasFunctionExpression) {
+    const objectType: IrType = { kind: "extern", className: "Object" };
+    const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
+    if (object === null) {
+      throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
+    }
+    for (const property of properties) {
+      const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
+      const closure = lowerClosureExpression(property.initializer, cx);
+      const closureType = cx.builder.typeOf(closure);
+      if (closureType.kind !== "closure") {
+        throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
+      }
+      const callable = cx.builder.emitCallablePack(closure, closureType.signature);
+      cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+    }
+    return object;
   }
+
+  const built: { name: "valueOf" | "toString"; type: IrType; value: IrValueId }[] = [];
   for (const property of properties) {
-    const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
     const closure = lowerClosureExpression(property.initializer, cx);
     const closureType = cx.builder.typeOf(closure);
     if (closureType.kind !== "closure") {
       throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
     }
-    const callable = cx.builder.emitCallablePack(closure, closureType.signature);
-    cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
+    built.push({ name: property.name, type: closureType, value: closure });
   }
-  return object;
+  built.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const shape: IrObjectShape = { fields: built.map(({ name, type }) => ({ name, type })) };
+  return cx.builder.emitObjectNew(
+    shape,
+    built.map(({ value }) => value),
+  );
 }
 
 /**
@@ -9401,11 +9440,9 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
     const boxed = cx.builder.emitBox(rand, irDynamic(JsTag.String));
     return cx.builder.emitDynToNumber(boxed);
   }
-  // #4208 S3/S7 — the open OrdinaryToPrimitive object produced above. Keep
+  // #4208 S3/S7 — the original open OrdinaryToPrimitive object route. Keep
   // this branded as `extern:Object` so enabling the abstract operation does
-  // not silently widen every host-class externref unary expression. A null
-  // hint selects the default/number method order; the returned primitive then
-  // flows through the canonical lane-specific ToNumber helper.
+  // not silently widen every host-class externref unary expression.
   if (randType.kind === "extern" && randType.className === "Object") {
     const externref = irVal({ kind: "externref" });
     const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
@@ -9418,6 +9455,39 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
       throw new Error(`ir/from-ast: __unbox_number produced no value in ${cx.funcName}`);
     }
     return number;
+  }
+  // #3522 — selector-certified closed OrdinaryToPrimitive literals contain
+  // only zero-arity valueOf/toString closures with primitive returns and no
+  // receiver-sensitive `this`. Invoke the preferred number-hint method
+  // directly, matching the direct backend's static method dispatch instead of
+  // materializing the generic standalone object/coercion runtime.
+  if (randType.kind === "object") {
+    const method =
+      randType.shape.fields.find((field) => field.name === "valueOf") ??
+      randType.shape.fields.find((field) => field.name === "toString");
+    if (method?.type.kind === "closure" && method.type.signature.params.length === 0) {
+      const closure = cx.builder.emitObjectGet(rand, method.name, method.type);
+      const primitive = cx.builder.emitClosureCall(closure, [], method.type.signature.returnType);
+      if (primitive === null || method.type.signature.returnType === null) {
+        throw new Error(`ir/from-ast: OrdinaryToPrimitive method produced no value in ${cx.funcName}`);
+      }
+      const primitiveType = method.type.signature.returnType;
+      if (asVal(primitiveType)?.kind === "f64") return primitive;
+      if (asVal(primitiveType)?.kind === "i32") {
+        return cx.builder.emitUnary("f64.convert_i32_s", primitive, irVal({ kind: "f64" }));
+      }
+      if (primitiveType.kind === "string") {
+        const number = cx.builder.emitCall(
+          irRuntimeFuncRef("__unbox_number"),
+          [cx.builder.emitCoerceToExternref(primitive)],
+          irVal({ kind: "f64" }),
+        );
+        if (number === null) {
+          throw new Error(`ir/from-ast: string OrdinaryToPrimitive result produced no number in ${cx.funcName}`);
+        }
+        return number;
+      }
+    }
   }
   return null;
 }
@@ -11067,7 +11137,7 @@ function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, 
 }
 
 function allocateLoweredLiftedFunctionArtifact(
-  declaration: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  declaration: ts.FunctionDeclaration | IrClosureLiteral,
   cx: LowerCtx,
   displayNameForOrdinal: (ordinal: number) => string,
   preserveDerivedIdentity = false,
@@ -11086,9 +11156,11 @@ function allocateLoweredLiftedFunctionArtifact(
   const originalDeclaration = ts.getOriginalNode(declaration);
   const expectedSourceKind = ts.isFunctionDeclaration(declaration)
     ? "nested-function"
-    : ts.isFunctionExpression(declaration)
-      ? "function-expression"
-      : "arrow-function";
+    : ts.isMethodDeclaration(declaration)
+      ? "object-method"
+      : ts.isFunctionExpression(declaration)
+        ? "function-expression"
+        : "arrow-function";
   let sourceUnitId =
     cx.identityContext?.unitIdByDeclaration.get(declaration) ??
     (originalDeclaration !== declaration
@@ -11213,7 +11285,9 @@ function closureDefaultParamStart(
   return firstDefault;
 }
 
-function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, cx: LowerCtx): IrValueId {
+type IrClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
+
+function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   const params: IrType[] = expr.parameters.map((p) => {
     if (!p.type) {
@@ -11308,7 +11382,7 @@ function lowerHostVoidCallbackExpression(
 }
 
 function lowerClosureExpressionWithSignature(
-  expr: ts.ArrowFunction | ts.FunctionExpression,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   expectedReadonlyCaptures: ReadonlySet<string> | undefined,
   cx: LowerCtx,
@@ -11557,7 +11631,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  */
 function liftClosureBody(
   liftedIdentity: IrFunctionIdentity,
-  expr: ts.ArrowFunction | ts.FunctionExpression,
+  expr: IrClosureLiteral,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
@@ -11565,6 +11639,10 @@ function liftClosureBody(
   allowConciseVoidBody = false,
   hostOneShot = false,
 ): IrFunction {
+  const body = expr.body;
+  if (!body) {
+    throw new Error(`ir/from-ast: object method closure has no body (${cx.funcName})`);
+  }
   const liftedName = liftedIdentity.name;
   const builder = new IrFunctionBuilder(
     liftedIdentity,
@@ -11646,16 +11724,13 @@ function liftClosureBody(
     // Slice 6 part 2 (#1181) — closure-body mutated lets are scanned
     // per closure (block bodies) or empty (concise expression bodies,
     // which can't host a let declaration).
-    mutatedLets:
-      ts.isBlock(expr.body) && (ts.isFunctionExpression(expr) || ts.isArrowFunction(expr))
-        ? collectMutatedLetNamesFromBlock(expr.body)
-        : new Set<string>(),
+    mutatedLets: ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>(),
     dynamicStringLocals: new Set(),
     // (#3758) same independent-per-closure reasoning as mutatedLets above;
     // computeI32PureNames itself no-ops on a non-block (concise) body.
     i32PureNames: computeI32PureNames(expr),
-    ownedStringAppendSymbols: ts.isBlock(expr.body)
-      ? collectOwnedStringAppendSymbols(expr.body, cx.checker)
+    ownedStringAppendSymbols: ts.isBlock(body)
+      ? collectOwnedStringAppendSymbols(body, cx.checker)
       : new Set<ts.Symbol>(),
     emptyArrayInference: inferEmptyArrayElementTypes(expr, cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
     // Slice 7a (#1169f) — closures are never generator/async in 7a
@@ -11685,12 +11760,12 @@ function liftClosureBody(
     lowerBindingPattern(pending.pattern, pending.value, innerCx);
   }
 
-  if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
+  if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
     if (signature.returnType === null) {
       if (!allowConciseVoidBody) {
         throw new Error(`ir/from-ast: void host callbacks must be block-bodied (${liftedName})`);
       }
-      lowerDiscardedExpression(expr.body, innerCx);
+      lowerDiscardedExpression(body, innerCx);
       builder.terminate({ kind: "return", values: [] });
       return builder.finish({
         signature,
@@ -11699,7 +11774,7 @@ function liftClosureBody(
       });
     }
     // Concise body — wrap as `return <expr>`.
-    const v = lowerExpr(expr.body, innerCx, signature.returnType);
+    const v = lowerExpr(body, innerCx, signature.returnType);
     if (!irTypeEquals(builder.typeOf(v), signature.returnType)) {
       throw new Error(
         `ir/from-ast: closure body type ${describeIrType(builder.typeOf(v))} != declared return ${describeIrType(signature.returnType)} (${liftedName})`,
@@ -11707,10 +11782,10 @@ function liftClosureBody(
     }
     builder.terminate({ kind: "return", values: [v] });
   } else {
-    if (!ts.isBlock(expr.body)) {
-      throw new Error(`ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[expr.body.kind]})`);
+    if (!ts.isBlock(body)) {
+      throw new Error(`ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[body.kind]})`);
     }
-    lowerStatementList(expr.body.statements, innerCx);
+    lowerStatementList(body.statements, innerCx);
   }
 
   return builder.finish({
@@ -11731,7 +11806,7 @@ function liftClosureBody(
  * safe-and-simple approach the legacy path uses too.
  */
 function analyseCaptures(
-  fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression,
+  fn: ts.FunctionDeclaration | IrClosureLiteral,
   cx: LowerCtx,
   orderedCaptureNames?: readonly string[],
 ): NestedCapture[] {

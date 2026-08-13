@@ -4188,6 +4188,16 @@ function compileIrRoutedDeclarations(input: {
 }
 
 /** Compile a typed AST into a WasmModule IR */
+function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
+  const affected = resolveSameShapeFieldNameCollisions(ctx);
+  ctx.programAbiSession?.recordShapeStamping(affected);
+}
+
+function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
+  const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes);
+  ctx.programAbiSession?.recordShapeBranding(affected);
+}
+
 export function generateModule(
   ast: TypedAST,
   options?: CodegenOptions,
@@ -4942,7 +4952,7 @@ export function generateModule(
     // function bodies are final (legacy + IR), so its struct.new patch covers
     // every construction site uniformly and backend-agnostically. Only structs
     // that genuinely collide are touched; everything else is byte-identical.
-    resolveSameShapeFieldNameCollisions(ctx);
+    resolveAndRecordShapeStamping(ctx);
 
     // (#2831) Reserve the per-target-vec host-externref → wasm-vec materializers
     // BEFORE the setter/dispatch emitters bake their value coercions. This pass
@@ -5498,7 +5508,7 @@ export function generateModule(
     // runtime type (which made `ref.test`-keyed property dispatch read fields
     // by OFFSET instead of by KEY). Runs after all instruction emission and
     // BEFORE dead-type elimination so the brand-chain refs get remapped.
-    brandCollidingShapeTypes(mod, ctx.noBrandShapeTypes);
+    resolveAndRecordShapeBranding(ctx);
 
     finalizeLeafStructTypes(ctx);
 
@@ -7559,7 +7569,7 @@ export function generateMultiModule(
 
     // Mirror single-source exact shape provenance before any closed-struct
     // runtime finalizer consumes the complete multi-source type table.
-    resolveSameShapeFieldNameCollisions(ctx);
+    resolveAndRecordShapeStamping(ctx);
 
     // (#2831) Reserve the host-externref → wasm-vec materializers before the
     // `__sset_*` setters and deferred member dispatchers bake their value
@@ -7856,7 +7866,7 @@ export function generateMultiModule(
     // (#2853) Nominal shape branding — same pass + placement as the
     // single-module pipeline (see generateModule): after all instruction
     // emission, before dead-type elimination.
-    brandCollidingShapeTypes(mod, ctx.noBrandShapeTypes);
+    resolveAndRecordShapeBranding(ctx);
 
     finalizeLeafStructTypes(ctx);
 

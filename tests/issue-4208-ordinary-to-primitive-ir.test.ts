@@ -42,7 +42,7 @@ describe("#4208 S3/S7 — OrdinaryToPrimitive object literals", () => {
       expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
       expect(probeOutcome(result)).toMatchObject({
         kind: "emitted",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
         irBodyEmitted: true,
       });
       if (target === "standalone") {

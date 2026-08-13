@@ -1482,6 +1482,18 @@ closure parameters, object-literal methods/accessors, and wider cross-owner
 callable escapes. No shared direct closure implementation is deleted yet;
 those remaining typed consumers still require it.
 
+The later accumulated closure stack exposed one missed form in the original
+call-graph proof: `var fn = make(10); fn(32)` passed the ordinary statement
+selector but the graph collector recorded returned callables only for `const`.
+That mislabeled the caller as external, split it from `make`, and left the
+lifted arrow on a late placeholder with `typeIdx = 0`. The collector now keeps
+the existing const-only rule for literal closure declarations but recognizes
+an exact direct returned-callable binding under `var`/`let` as well. The
+equivalence regression is now an explicit GC/standalone poison-and-size parity
+test: producer, caller, and lifted arrow share one prepared component, both
+terminal bodies are IR-only, runtime returns 42, and optimized IR stays no
+larger than direct.
+
 ### Recursive named function-expression checkpoint (2026-08-13)
 
 A named function expression now binds its lexical self name directly to the
@@ -1622,6 +1634,54 @@ adjacent closure/prepared matrix is **63/63**. Calls, property reads, and other
 effectful defaults remain direct; optional/rest parameters, object-literal
 methods/accessors, and wider cross-owner callable escapes remain the next R3
 families.
+
+### Numeric object-method ownership checkpoint (2026-08-13)
+
+Selector-certified `valueOf`/`toString` method shorthand with zero parameters,
+an explicit numeric or boolean result, and no receiver-sensitive syntax now
+lowers as an inventoried `object-method` source unit inside its terminal
+owner's prepared transaction. The enclosing function builds a closed object
+whose fields retain their exact closure signatures, then unary ToNumber reads
+and invokes the preferred `valueOf`/`toString` closure directly. This preserves
+the direct backend's static method-dispatch optimization instead of routing the
+IR result through the generic open-object runtime.
+
+Prepared closure support now plans closure-valued object fields against the
+canonical closure root before scope sealing. The two late anonymous-shape
+identity passes report their exact affected type indices back to Program ABI:
+`$shape` stamping may change only the reported trailing i32 field, while
+`$shapeBrand` may change only the reported trailing nullable-ref field and its
+deterministic backward brand chain. The refresh is transactional and still
+rejects removed types, unrelated layout drift, or graph expansion caused by
+the non-reference stamping pass. This keeps the prepared type graph exact
+through leaf finalization and DCE even when two differently named object
+methods have physically colliding layouts.
+
+The anti-vacuity fixture creates a captured numeric `valueOf` method and a
+numeric `toString` fallback on two colliding shapes. Direct-body poison proves
+the terminal and both lifted methods are IR-owned; GC and standalone validate
+and return 43 with zero post-claim errors. The exact optimized binaries improve
+from **3,066 to 2,912 bytes** in GC and from **1,485 to 1,268 bytes** in
+standalone. Focused object-method plus existing #4208 OrdinaryToPrimitive
+coverage is **11/11**.
+
+The complete post-fix adjacent matrix is **83/83 across 11 files**. Full
+equivalence reports **1,645 passing, 24 known failures, 12 baseline cases now
+passing, and zero new regressions**. Cross-backend differential coverage is
+**29/29**. Hybrid and strict IR-only shadows both remain **37/37 IR bodies, 0
+legacy bodies, 0 Unsupported, and 0 Invariants**; typecheck, formatting,
+fallback, optimization-retirement, oracle, issue-integrity, LOC-budget, and
+function-budget gates are green.
+
+String-returning method shorthand remains typed-direct: the current prepared
+route is correct but its generic boxed standalone StringToNumber conversion is
+454 bytes larger than direct in the focused fixture. It must gain a native
+string-to-number IR intrinsic before admission. Property-assigned function
+expressions retain #4208's existing open-object IR protocol; mixed method/data
+and mixed shorthand/function forms remain direct. Object accessors,
+receiver-sensitive methods, parameters, general method reads/calls, and wider
+cross-owner escapes remain later R3 families. No direct object-method emitter
+is deleted yet because those consumers remain live.
 
 ## Exhaustive source-unit census
 

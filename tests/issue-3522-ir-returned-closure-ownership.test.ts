@@ -17,6 +17,16 @@ export function run(input: number): number {
 }
 `;
 
+const VAR_BOUND_SOURCE = `
+function makeAdder(offset: number): (value: number) => number {
+  return (value: number): number => value + offset;
+}
+export function run(input: number): number {
+  var add = makeAdder(2);
+  return add(input);
+}
+`;
+
 function outcome(result: CompileResult, name: string): IrObservedOutcome {
   const observed = (result.irOutcomes ?? []).filter(
     (candidate) => candidate.unitKind === "function" && candidate.displayName === name,
@@ -98,5 +108,51 @@ describe("#3522 returned closure ownership", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect((await instantiate(result)).run!(40)).toBe(42);
     expect(outcome(result, "run")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+  });
+
+  it.each(TARGETS)("keeps a var-bound returned closure in one prepared %s component", async (target) => {
+    const direct = await compile(VAR_BOUND_SOURCE, {
+      fileName: `returned-closure-var-direct-${target}.ts`,
+      experimentalIR: false,
+      optimize: true,
+      target,
+    });
+    const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+    let prepared: CompileResult;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "makeAdder,run";
+      prepared = await compile(VAR_BOUND_SOURCE, {
+        fileName: `returned-closure-var-prepared-${target}.ts`,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        optimize: true,
+        target,
+      });
+    } finally {
+      if (previousPoison === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+    }
+
+    for (const compiled of [direct, prepared]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      expect((await instantiate(compiled)).run!(40)).toBe(42);
+    }
+    const makeAdder = outcome(prepared, "makeAdder");
+    const run = outcome(prepared, "run");
+    for (const observed of [makeAdder, run]) {
+      expect(observed).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+    expect(makeAdder.preparedComponentId).toBe(run.preparedComponentId);
+    expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+    expect(prepared.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["makeAdder", "makeAdder__closure_0", "run"]),
+    );
+    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 });
