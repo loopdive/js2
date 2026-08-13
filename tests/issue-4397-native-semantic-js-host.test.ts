@@ -32,6 +32,39 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(sourceMayContainRuntimeEvalBoundary(source(String.raw`export const value = \u0065val;`))).toBe(true);
   });
 
+  it("keeps provider-owned caller realm state representation-neutral", async () => {
+    const result = await compile(
+      `
+        var callerRealm: any = undefined;
+        export function __runtime_new_function(_params: any, _body: any, realm: any): any {
+          callerRealm = realm;
+          return callerRealm;
+        }
+        export function __runtime_indirect_eval(_source: any, realm: any): any {
+          callerRealm = realm;
+          return callerRealm;
+        }
+        export function __runtime_direct_eval(_source: any, realm: any): any {
+          callerRealm = realm;
+          return callerRealm;
+        }
+        export function __runtime_apply_interpreted(_callable: any, realm: any): any {
+          callerRealm = realm;
+          return callerRealm;
+        }
+      `,
+      {
+        fileName: "issue-4397-runtime-eval-provider-realm.ts",
+        target: "standalone",
+        experimentalIR: false,
+        emitWat: true,
+        skipSemanticDiagnostics: true,
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(result.wat).toContain("(global $__mod_callerRealm (mut externref)");
+  });
+
   it("builds native-first imports without installing compatibility semantics into ambient intrinsics", async () => {
     const native = await compile(`export function value(): number { return 1; }`, {
       fileName: "issue-4397-no-ambient-compat.ts",

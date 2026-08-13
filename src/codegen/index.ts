@@ -6751,7 +6751,7 @@ function registerReassignedFunctionGlobals(
   runtimeEvalPlan: IrRuntimeEvalBoundaryPlan,
 ): void {
   const reassigned = new Set<string>();
-  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.providerMayExecute;
+  const runtimeEvalConsumer = (ctx.standalone || ctx.wasi) && runtimeEvalPlan.sharedRealmMayContainCanonicalValues;
   const dynamicSourceFragments = runtimeEvalPlan.dynamicSourceFragments;
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const scan = (node: ts.Node): void => {

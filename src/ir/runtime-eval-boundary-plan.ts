@@ -192,10 +192,17 @@ export function buildIrRuntimeEvalBoundaryPlan(
   const frozenSites = Object.freeze(sites.slice());
   const frozenFragments = Object.freeze(dynamicSourceFragments.slice());
   const providerMayExecute = frozenSites.some((site) => site.providerDisposition !== "provided");
+  // A provider module has no *consumer* call site of its own, but its exported
+  // boundary functions receive and retain canonical caller-realm values. Keep
+  // that distinction explicit: providerMayExecute describes callers, while
+  // sharedRealmMayContainCanonicalValues also covers the provider definition
+  // side of the seam.
+  const sharedRealmMayContainCanonicalValues =
+    providerMayExecute || frozenSites.some((site) => site.kind === "provider-definition");
   return Object.freeze({
     sites: frozenSites,
     providerMayExecute,
-    sharedRealmMayContainCanonicalValues: providerMayExecute,
+    sharedRealmMayContainCanonicalValues,
     callableBoundaryRequired: frozenSites.length !== 0,
     unknownDynamicSource,
     dynamicSourceFragments: frozenFragments,
