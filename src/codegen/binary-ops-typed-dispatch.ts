@@ -19,6 +19,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringImports, addUnionImports } from "./index.js";
@@ -258,10 +259,10 @@ export function compileTypedBinaryDispatch(
               then: [
                 { op: "local.get", index: tmpLeftAny },
                 { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                { op: "call", funcIdx: flattenIdx },
+                ...redundantFlattenCall(flattenIdx), // (#4157) callee self-flattens
                 { op: "local.get", index: tmpRightAny },
                 { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                { op: "call", funcIdx: flattenIdx },
+                ...redundantFlattenCall(flattenIdx), // (#4157) callee self-flattens
                 { op: "call", funcIdx: strEqIdx },
               ],
               else: [
@@ -956,10 +957,10 @@ export function compileTypedBinaryDispatch(
                                 then: [
                                   { op: "local.get", index: lAny },
                                   { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                                  { op: "call", funcIdx: flattenIdx },
+                                  ...redundantFlattenCall(flattenIdx), // (#4157)
                                   { op: "local.get", index: rAny },
                                   { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                                  { op: "call", funcIdx: flattenIdx },
+                                  ...redundantFlattenCall(flattenIdx), // (#4157)
                                   { op: "call", funcIdx: strEqIdx },
                                 ],
                                 else: identityArm,

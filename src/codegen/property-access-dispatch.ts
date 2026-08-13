@@ -127,6 +127,7 @@ import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
+import { emitReceiverNullGuard } from "./nonnull-proof.js"; // (#4157) provably-dead null guards
 import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
@@ -3246,6 +3247,39 @@ export function tryStringLengthIteratorAndExternClassReads(
   return PA_FALLTHROUGH;
 }
 
+/**
+ * (#4157) The `__extern_get` receiver guard, hoisted out of
+ * `finalizeStructAndDynamicMemberGet` so the proof plumbing does not grow an
+ * already-oversized function. Elided when the receiver is provably non-null —
+ * see `nonnull-proof.ts` for the proof discipline.
+ *
+ * `boxed` is recomputed rather than tracked: the caller boxes exactly when the
+ * compiled type is `f64`/`i32` and `__box_number` resolved, which is the same
+ * condition tested here.
+ */
+function emitExternGetReceiverGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  objExprType: ValType | null,
+  objTmp: number,
+): void {
+  const numeric = objExprType?.kind === "f64" || objExprType?.kind === "i32";
+  emitReceiverNullGuard(
+    ctx,
+    fctx,
+    objTmp,
+    {
+      site: "dispatch:extern-get-recv",
+      compiled: objExprType,
+      expr: expr.expression,
+      boxed: numeric && ctx.funcMap.get("__box_number") !== undefined,
+      syntacticNonNull: isProvablyNonNull(expr.expression, ctx.checker),
+    },
+    () => typeErrorThrowInstrs(ctx, expr),
+  );
+}
+
 export function finalizeStructAndDynamicMemberGet(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3773,16 +3807,10 @@ export function finalizeStructAndDynamicMemberGet(
             fctx.body.push({ op: "call", funcIdx: boxIdx });
           }
         }
-        // Null check: throw TypeError for property access on null/undefined
+        // Null check: throw TypeError for property access on null/undefined.
+        // (#4157) Skipped when the receiver is PROVABLY non-null.
         const objTmp = allocLocal(fctx, `__nullchk_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.tee", index: objTmp });
-        fctx.body.push({ op: "ref.is_null" });
-        fctx.body.push({
-          op: "if",
-          blockType: { kind: "empty" },
-          then: typeErrorThrowInstrs(ctx, expr),
-          else: [],
-        });
+        emitExternGetReceiverGuard(ctx, fctx, expr, objExprType, objTmp);
         // An interface / object-type receiver is only a structural contract.
         // When its runtime value is externref, let the canonical dynamic
         // provider discriminate exact closed shapes by their `$shape` stamps.

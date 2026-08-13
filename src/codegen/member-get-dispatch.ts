@@ -48,6 +48,8 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorResultStruct, sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { findAlternateStructsForField } from "./property-access.js";
+import { FLAG_ACCESSOR, FLAG_TOMBSTONE } from "./object-runtime.js"; // (#4157)
+import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4157)
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import {
@@ -780,12 +782,17 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       { op: "local.set", index: 1 }, // __any
       ...buildAccessorArmChain(0),
     ];
+    // (#4157) Inline-cache arm — see helper for rationale and gating.
+    const ic = buildMemberGetInlineCacheArm(ctx, propName, {
+      hasArms: candidates.length > 0 || methodArms.length > 0,
+      baseLocal: 2 + (usedSentinelBox ? 1 : 0) + (coldLocalIdx >= 0 ? 1 : 0),
+    });
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     if (methodArms.length > 0) locals.push({ name: "__mres", type: { kind: "externref" } }); // (#2963) local 2
     if (usedSentinelBox) locals.push({ name: "__f64tmp", type: { kind: "f64" } }); // local 2 legacy / 3 with arms
     if (coldLocalIdx >= 0) locals.push({ name: "__cold", type: { kind: "anyref" } }); // (#3927) tail scratch
-    dispFn.locals = locals;
-    dispFn.body = dispatchBody;
+    dispFn.locals = [...locals, ...ic.locals];
+    dispFn.body = [...ic.arm, ...dispatchBody];
   }
 }
 
@@ -974,3 +981,131 @@ registerReserveMemberGetDispatch(reserveMemberGetDispatch);
 // imports for `coercionInstrs`) rewrites ToNumber-context generic-dispatcher
 // calls into the typed f64 twin via this delegate.
 registerReserveTypedMemberGetF64Dispatch(reserveTypedMemberGetF64Dispatch);
+
+/**
+ * (#4157) Per-name inline cache arm for `__get_member_<name>`.
+ *
+ * `__extern_get`'s per-key cache (#3673) answers 87.24 % of 506,752 calls per
+ * parse, and entry (9) of #4157 measured that hit path as 73 % of the helper's
+ * self time. Every hit still pays a call into a 15,032-instruction function
+ * plus a ~45-instruction GENERIC prologue — generic because the shared helper
+ * must discover the key's type and hash at run time. Here the key is fixed, so
+ * that work folds away and only the validity check remains.
+ *
+ * GATED on the dispatcher having no struct/method/cold/layout candidates, and
+ * that gate is the whole lesson of entry (13): the ungated version was a
+ * 3.50 pp REGRESSION, because `reserveMemberGetDispatch` is called
+ * unconditionally, so every static name has a dispatcher — including the many
+ * answered by a struct arm a few instructions later. The check taxed reads it
+ * could not possibly serve and inflated those dispatchers past the size
+ * `wasm-opt` was inlining them at. Restricting it leaves exactly the population
+ * that reaches `__extern_get`.
+ *
+ * Read-only: population stays in `__extern_get`'s own data branch, so a miss
+ * falls through unchanged and the cache's lifetime is untouched.
+ *
+ * DEFAULT OFF (`JS2WASM_MEMBER_GET_IC=1` opts in) until a clean order-reversed
+ * A/B exists — precedent #4211/#4217.
+ */
+function buildMemberGetInlineCacheArm(
+  ctx: CodegenContext,
+  propName: string,
+  opts: { hasArms: boolean; baseLocal: number },
+): { arm: Instr[]; locals: { name: string; type: ValType }[] } {
+  const objTypes = ctx.objectRuntimeTypes;
+  const HSTR = ctx.hashedStrTypeIdx;
+  const eligible =
+    !opts.hasArms &&
+    findColdStructsForField(ctx, propName).length === 0 &&
+    findFnctorLayoutStructsForField(ctx, propName).length === 0;
+  if (
+    process.env.JS2WASM_MEMBER_GET_IC !== "1" ||
+    !eligible ||
+    !ctx.standalone ||
+    !ctx.nativeStrings ||
+    objTypes === undefined ||
+    HSTR < 0
+  ) {
+    return { arm: [], locals: [] };
+  }
+  addStringConstantGlobal(ctx, propName);
+  const key = (): Instr[] => [...nativeStringLiteralInstrs(ctx, propName), { op: "ref.cast", typeIdx: HSTR }];
+  const oLocal = opts.baseLocal;
+  const eLocal = opts.baseLocal + 1;
+  const arm: Instr[] = [];
+  arm.push(
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objTypes.objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: objTypes.objectTypeIdx },
+        { op: "local.set", index: oLocal },
+        ...nativeStringLiteralInstrs(ctx, propName),
+        { op: "ref.test", typeIdx: HSTR },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...key(),
+            { op: "struct.get", typeIdx: HSTR, fieldIdx: 4 },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...key(),
+                { op: "struct.get", typeIdx: HSTR, fieldIdx: 5 },
+                { op: "ref.cast_null", typeIdx: -19 },
+                { op: "local.get", index: oLocal },
+                { op: "ref.eq" },
+                { op: "local.get", index: oLocal },
+                { op: "struct.get", typeIdx: objTypes.objectTypeIdx, fieldIdx: 1 },
+                ...key(),
+                { op: "struct.get", typeIdx: HSTR, fieldIdx: 7 },
+                { op: "ref.cast_null", typeIdx: -19 },
+                { op: "ref.eq" },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    ...key(),
+                    { op: "struct.get", typeIdx: HSTR, fieldIdx: 6 },
+                    { op: "ref.cast", typeIdx: objTypes.propEntryTypeIdx },
+                    { op: "local.set", index: eLocal },
+                    { op: "local.get", index: eLocal },
+                    { op: "struct.get", typeIdx: objTypes.propEntryTypeIdx, fieldIdx: 2 },
+                    { op: "i32.const", value: FLAG_TOMBSTONE | FLAG_ACCESSOR },
+                    { op: "i32.and" },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: eLocal },
+                        { op: "struct.get", typeIdx: objTypes.propEntryTypeIdx, fieldIdx: 1 },
+                        { op: "extern.convert_any" },
+                        { op: "return" },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  );
+  return {
+    arm,
+    locals: [
+      { name: "__ic_o", type: { kind: "ref_null", typeIdx: objTypes.objectTypeIdx } },
+      { name: "__ic_e", type: { kind: "ref_null", typeIdx: objTypes.propEntryTypeIdx } },
+    ],
+  };
+}

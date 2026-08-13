@@ -11,9 +11,7 @@
   },
   "permissions": {
     "defaultMode": "bypassPermissions",
-    "allow": [
-      "Bash(*)"
-    ]
+    "allow": ["Bash(*)"]
   },
   "hooks": {
     "TeammateIdle": [
@@ -116,6 +114,17 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/pre-git-commit.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "if": "Bash(*--no-verify*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/block-no-verify.sh",
             "timeout": 5
           }
         ]

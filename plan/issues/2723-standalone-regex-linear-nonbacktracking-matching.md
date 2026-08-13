@@ -2,11 +2,14 @@
 id: 2723
 title: "standalone RegExp: linear (non-backtracking) matching path — retire the step-limit band-aid + ReDoS (arXiv:2311.17620)"
 status: ready
-sprint: Backlog
+sprint: current
+priority: medium
+horizon: l
+updated: 2026-08-12
 goal: standalone-mode
 feasibility: hard
 depends_on: []
-related: [1539, 1474, 1911, 1960, 2671]
+related: [1539, 1474, 1911, 1960, 2671, 4237]
 reasoning_effort: max
 task_type: feature
 area: codegen, runtime
@@ -366,3 +369,88 @@ executable for B–D once A's skeleton exists. Priority vs. the async family:
 BELOW #3164/#3132/#2903-R-slices — those retire ~4,000 leaky passes for far
 less effort than Slice A's ~1–2 dev-weeks for ~500 fails. Keep `sprint:
 Backlog` until the async family's S1/S2 are landed or staffing frees up.
+
+---
+
+## 2026-08-12 — REVISED: the linear path is an AOT EMITTER, not a second VM
+
+**The joint implementation plan now lives in
+`plan/issues/4237-compile-time-regex-specialization.md` §1–§7.** Read it before
+starting any slice here. This note records only what changed in *this* issue's
+conclusions and why; everything above stays valid as the algorithm reference
+(the arXiv:2311.17620 §4.x mapping in particular is unchanged and still the
+source for Slices 2–4 over there).
+
+### What changed
+
+The plan above recommends **HYBRID = a second generic linear VM
+(`__regex_run_linear`) + a compile-time router**. That is superseded. Measured
+(`.tmp/regex-ceiling.mjs`, five lanes in one process, order-rotated,
+checksum-agreed, lane `standalone`, #4237's pattern and workload):
+
+| lane | min ms | vs node |
+| --- | ---: | ---: |
+| node (V8 Irregexp) | 13.15 | 1.00× |
+| today's generic backtracking VM | 318.86 | 24.25× |
+| a specialized bit-parallel NFA, expressed in ordinary **dynamic-lane** codegen | 136.88 | 10.41× |
+| the same NFA with **native i32 locals** (what a hand-emitter produces) | **17.65** | **1.34×** |
+
+**The 18× is specialization, not the algorithm.** Routed through generic
+interpretation the same non-backtracking automaton is only 2.33× better than
+the backtracking VM — and a *generic* PikeVM would not even get that, because
+it pays a higher per-character constant factor than a backtracker on
+non-pathological patterns (this is precisely why V8 keeps `V8Linear` opt-in
+rather than default). So the Slice A artifact as specified above —
+"`__regex_run_linear`, one hand-authored Wasm function, one more opcode-for-
+opcode twin of `vm.ts`" — would buy this issue's conformance goal at the price
+of a **perf regression**, and would double the VM surface to maintain (the risk
+this issue already flags first under "Risks / cost").
+
+### The revised shape, and what it does for THIS issue's goals
+
+Emit a **per-pattern specialized non-backtracking matcher** for literal
+patterns in the linear-safe subset, hung off a new `matcher: (ref null …)`
+field on `$NativeRegExp`; leave `matcher` null for everything else and take the
+existing `__regex_run` unchanged. Then, for every claimed pattern:
+
+- **ReDoS immunity is structural**, not cap-based — a Glushkov bitset
+  simulation has no backtrack stack to blow up;
+- **the spurious `RangeError` disappears** — the specialized matcher has no
+  step counter at all, so there is nothing to exceed;
+- **lookbehind's ad-hoc atomic recursion is bypassed** for the patterns Slice 4
+  eventually claims.
+
+The step cap therefore narrows exactly as this issue wanted, and for the same
+reason — just delivered by emission rather than by a second interpreter.
+
+**Measured claim rate** over 2,784 regex literals from real shipped JS:
+94.8 % are linear-safe, **93.1 % fit one i64 word (≤64 Glushkov positions)**,
+**71.4 % are additionally capture-free** (Slice 1's target). Backreferences are
+0.9 % and stay on the backtracking VM permanently, as this issue already
+concluded.
+
+### What did NOT change
+
+- The verdict is still **hybrid, phased, backtracking retained** — only the
+  *form* of the linear path changed.
+- Backreferences and the ~0.003 % nullable-lazy-plus CIN/CDN case stay on
+  backtracking with the step cap, where a bounded-work cap is the correct
+  defense.
+- The `SPLIT`-ordering / `SAVE`-as-register / zero-width-op mapping recorded
+  above still holds; the AOT emitter consumes the same `parse.ts` AST, so the
+  parser and class table remain shared verbatim.
+- The §4.2 capture-reset clock and §4.3 oracle remain the reference for the
+  capture and lookaround slices (#4237 Slices 3–4).
+
+### Honest scope limit, recorded here too
+
+82.1 % of the regex operations acorn executes while parsing itself are on
+**runtime-constructed** patterns (`new RegExp("^(?:" + words.join("|") + ")$")`),
+which an AOT specializer cannot claim. Acorn's regexp bucket is 4.04 % of self
+time, so the ceiling on the only quotable dogfood is **≈0.7 % of runtime** — at
+or below this box's measurement floor. This work must be justified on
+conformance (this issue's own goal) and on regex-heavy workloads, **not** on the
+acorn profile. Those runtime-constructed patterns keep the step cap and keep the
+existing anchored-literal-alternation fast path; closing the conformance gap for
+*them* would need the generic linear VM after all, and is deliberately deferred
+until the specializer has landed and the residual is worth pricing.

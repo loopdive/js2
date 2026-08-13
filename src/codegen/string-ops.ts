@@ -12,6 +12,7 @@ import { compileNumericBinaryOp } from "./binary-ops.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
+import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
 import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -1846,13 +1847,15 @@ function emitNullableStringEquals(
   // if (left is null) { result = right is null ? 1 : 0 }
   // else if (right is null) { result = 0 }
   // else { result = __str_equals(flatten(left), flatten(right)) }
+  // (#4157) `__str_equals` flattens its own params — see `lazy-str-flatten.ts`.
+  const flattenOperand = redundantFlattenCall(flattenIdx);
   const compareBody: Instr[] = [
     { op: "local.get", index: leftLocal },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
+    ...flattenOperand,
     { op: "local.get", index: rightLocal },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-    { op: "call", funcIdx: flattenIdx },
+    ...flattenOperand,
     { op: "call", funcIdx: equalsIdx },
   ];
   const rightNullCheck: Instr[] = [
@@ -2515,6 +2518,10 @@ export function compileNativeStringMethodCall(
 
   // Helper: emit a flatten call to convert ref $AnyString → ref $NativeString
   const emitFlatten = () => fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  // (#4157) Use at a site whose IMMEDIATE callee self-flattens that param —
+  // see `redundantFlattenCall` in `lazy-str-flatten.ts` for which do, which
+  // do not, and why the call-site copy is redundant.
+  const emitFlattenRedundant = () => fctx.body.push(...redundantFlattenCall(flattenIdx));
   const compileStringValueToLocal = (value: ts.Expression | undefined, fallback: string, name: string): number => {
     const local = allocLocal(fctx, `${name}_${fctx.locals.length}`, nativeStringType(ctx));
     if (value) {
@@ -2725,7 +2732,7 @@ export function compileNativeStringMethodCall(
   // charAt: native helper
   if (method === "charAt") {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     if (expr.arguments.length > 0) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
     } else {
@@ -2874,7 +2881,7 @@ export function compileNativeStringMethodCall(
   // substring: native helper
   if (method === "substring") {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     // start
     if (expr.arguments.length > 0) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
@@ -2899,7 +2906,7 @@ export function compileNativeStringMethodCall(
   // slice: native helper (handles negative indices)
   if (method === "slice") {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     // start
     if (expr.arguments.length > 0) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
@@ -2922,7 +2929,7 @@ export function compileNativeStringMethodCall(
   // and let __str_substr clamp to `len - start`.
   if (method === "substr") {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     // start
     if (expr.arguments.length > 0 && !isStaticUndefinedArg(expr.arguments[0])) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[0]!);
@@ -3300,18 +3307,18 @@ export function compileNativeStringMethodCall(
   // replace(search, replacement): native helper
   if (method === "replace" && firstArgIsStringLike) {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     // search arg
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!);
-      emitFlatten();
+      emitFlattenRedundant();
     } else {
       fctx.body.push({ op: "ref.null", typeIdx: ctx.nativeStrTypeIdx });
     }
     // replacement arg
     if (expr.arguments.length > 1) {
       compileExpression(ctx, fctx, expr.arguments[1]!);
-      emitFlatten();
+      emitFlattenRedundant();
     } else {
       // default: empty string (len=0, off=0, [])
       fctx.body.push({ op: "i32.const", value: 0 }); // len
@@ -3331,18 +3338,18 @@ export function compileNativeStringMethodCall(
   // replaceAll(search, replacement): native helper
   if (method === "replaceAll" && firstArgIsStringLike) {
     emitReceiver();
-    emitFlatten();
+    emitFlattenRedundant();
     // search arg
     if (expr.arguments.length > 0) {
       compileExpression(ctx, fctx, expr.arguments[0]!);
-      emitFlatten();
+      emitFlattenRedundant();
     } else {
       fctx.body.push({ op: "ref.null", typeIdx: ctx.nativeStrTypeIdx });
     }
     // replacement arg
     if (expr.arguments.length > 1) {
       compileExpression(ctx, fctx, expr.arguments[1]!);
-      emitFlatten();
+      emitFlattenRedundant();
     } else {
       // default: empty string (len=0, off=0, [])
       fctx.body.push({ op: "i32.const", value: 0 }); // len

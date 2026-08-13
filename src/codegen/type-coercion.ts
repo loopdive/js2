@@ -33,6 +33,7 @@ import {
   reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
+import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -2238,6 +2239,10 @@ export function coerceType(
           }
         }
       }
+      // (#4157) Flag-gated ToNumber fast paths, both default OFF — returns
+      // false before touching `ctx` when they are, so the chain below stays
+      // byte-identical. Rationale in tonumber-fast-paths.ts.
+      if (tryEmitFastToNumber(ctx, fctx, hint)) return;
       pushStringHint(ctx, fctx, hint);
       const toPrimIdx = ensureLateImport(
         ctx,

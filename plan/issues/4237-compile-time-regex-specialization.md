@@ -1,11 +1,11 @@
 ---
 id: 4237
 title: "exploration: compile-time regex specialization — lower literal patterns to per-pattern wasm functions at build time (the AOT analogue of Irregexp's JIT tier)"
-status: backlog
-sprint: Backlog
+status: ready
+sprint: current
 created: 2026-08-08
-updated: 2026-08-08
-priority: low
+updated: 2026-08-12
+priority: medium
 horizon: l
 feasibility: hard
 model: fable
@@ -171,3 +171,297 @@ Fallback-engine note: the split-module proof in #4236 ("Feature-subset
 builds + the split regex module") means the decline path can be the ONE
 shared libregexp module serving both lanes — the specializer never has to
 carry a per-module generic engine.
+
+---
+
+# Implementation Plan (joint with #2723) — measured 2026-08-12
+
+**Read this together with `plan/issues/2723-standalone-regex-linear-nonbacktracking-matching.md`.**
+The two issues are not independent. #2723 asks for a *non-backtracking* matcher;
+#4237 asks for *AOT per-pattern emission*. Measured below: neither is worth
+building alone, and together they are one program.
+
+- The non-backtracking algorithm is what makes AOT emission **safe to emit**
+  (it dissolves #1539's recorded objection — verified against the code, §3).
+- AOT emission is what makes the non-backtracking algorithm **fast** (a
+  *generic* linear VM would be slower than today's backtracking VM, not faster —
+  §2).
+
+## 1. Verdict up front
+
+**Recommend (c) HYBRID — but a different hybrid boundary than either issue
+currently describes.** Build the non-backtracking matcher **only** as an
+AOT per-pattern emitter for literal patterns in the linear-safe subset; keep
+the existing generic backtracking VM verbatim for everything it declines.
+Explicitly **do not** build the generic `__regex_run_linear` interpreter that
+#2723's Slice A specifies (§2 says why).
+
+Do **not** pursue (b) port/embed. Two independent reasons, and the first is
+sufficient: the measurement below shows a from-scratch specializer reaches
+**1.34× of V8's Irregexp** on this backend, so there is no headroom left for a
+ported engine to buy. Beyond that, this lane is WasmGC with no linear memory
+and no C++ toolchain in the pipeline (#4237's own path-B estimate is 2–3 budget
+windows, most of it a V8-emulation shim with a permanent re-sync burden).
+
+Do not pursue (a) *as stated* either — "implement the non-backtracking
+algorithm natively" reads as a second generic VM, which is the thing §2 rules
+out.
+
+## 2. The measurement that decides it
+
+Harness `.tmp/regex-ceiling.mjs` — five lanes in ONE process, interleaved with
+rotating order, min-of-9-rounds after 3 warm rounds, **checksums asserted equal
+across every lane before any timing**. Lane `standalone` (WasmGC), workload =
+#4237's own pattern and shape: `/([a-z]+[0-9]+)@([a-z]+)\.([a-z][a-z][a-z])/`
+over 200 subjects × 500 iterations, `.test()`.
+
+| lane | what it is | min ms | vs node | module bytes |
+| --- | --- | ---: | ---: | ---: |
+| `node` | V8 Irregexp (JIT tier) | **13.15** | 1.00× | — |
+| `engine` | today's generic backtracking bytecode VM | **318.86** | 24.25× | 115,509 |
+| `nfa` | specialized bit-parallel NFA, written in the **dynamic** lane | 136.88 | 10.41× | 109,436 |
+| `nfa-i32` | same NFA with **native i32 locals** — the shape a hand-emitter produces | **17.65** | **1.34×** | 68,580 |
+| `floor-i32` | i32 lane, same loop, transitions removed (scan only, no early exit) | 20.68 | 1.57× | 68,299 |
+
+Three things fall out, and all three change the plan:
+
+1. **`engine / nfa-i32` = 18.1×.** #4237's headline 18× reproduces exactly —
+   and it is now shown to be **achievable inside this backend**, not a
+   native-vs-wasm gap. A specialized non-backtracking matcher lands within
+   **1.34×** of V8's JIT tier.
+2. **The win is SPECIALIZATION-TO-RAW-i32, not the algorithm.** The same NFA
+   expressed through ordinary dynamic-lane codegen (`nfa`) is only **2.33×**
+   better than the current engine. The remaining 7.8× is the lane (boxed
+   arithmetic, `charCodeAt` dispatch), which only a *hand-emitting* specializer
+   removes. **Consequence: a generic linear interpreter is the wrong artifact.**
+   It would carry the algorithm's higher per-character constant factor
+   (a PikeVM does more work per char than a backtracker on non-pathological
+   patterns) with none of the specialization win. #2723's Slice A as written is
+   therefore superseded — see the note appended to that issue.
+3. **The 18× is the MATCHER-INTERNAL ceiling; the end-to-end multiple will be
+   lower, and by how much is not yet measured.** In `nfa-i32` the whole module
+   is in the native-i32 regime, so the per-subject call overhead is native too.
+   In the real integration only the *emitted matcher* is raw i32 — the `.test()`
+   call site stays in whatever lane the caller is (flatten the subject, read the
+   struct fields, `call_ref`). That is per **call**, not per character, so it
+   does not scale with subject length; at 100 k calls it is plausibly 5–10 ms
+   against this workload's 17.65 ms, i.e. an end-to-end multiple somewhere in
+   the **10–16×** band rather than 18×. The dynamic-lane `floor` row (46.91 ms)
+   is **not** the right proxy for it — that number is per-*character*
+   `charCodeAt` dispatch, which an emitted matcher removes entirely by reading
+   `array.get_u` off the flattened string data itself. Slice 1 must measure the
+   real boundary cost rather than inherit either estimate.
+4. **The transitions are free; the scan is the cost.** `nfa-i32` (17.65 ms,
+   with early exit) is *faster than* `floor-i32` (20.68 ms, no matching work at
+   all but no early exit). The eight state-transition blocks cost nothing
+   measurable above the per-character loop itself. This is what licenses the
+   simple "one unrolled block per NFA position" emission strategy in §4 instead
+   of anything cleverer.
+
+### Size: #4237's 75.5 KB figure is measured against the wrong base
+
+`.tmp/regex-size.mjs`, standalone lane, A/B compile:
+
+| base module | +1 regex literal | marginal for 2nd…5th literal |
+| --- | --- | --- |
+| numeric only (`n * 2 + 1`) | **+72,859 raw / +33,530 gz** | +382…+501 raw |
+| already uses strings (`charCodeAt` loop) | **+7,062 raw / +2,572 gz** | +419…+525 raw |
+
+#4237 measured the first row (21,188 → 96,737 ≈ +75.5 KB) and attributed it to
+the regex engine. **~66 KB of it is the native-string runtime**, which every
+string-using module already pays. The regex engine's own marginal cost is
+**≈7 KB raw / 2.6 KB gz**. So:
+
+- the "specialization lets us drop a 75 KB engine" argument is **not available**
+  — the recoverable ceiling is ~7 KB raw, and only in a module where *every*
+  pattern is claimed and no `new RegExp(dynamic)` exists;
+- conversely the size *risk* of per-pattern emission is small: each specialized
+  matcher is a few hundred bytes of straight-line code, against a +419…+525 raw
+  per-literal cost the bytecode path already pays. Size is close to a wash and
+  is not a reason either way. Measure it per slice anyway (acceptance below).
+
+### Claim rate — what the specializer can actually take
+
+`.tmp/regex-census.mjs`, **2,784 regex literals** extracted from real shipped
+JS (react-dom cjs builds + every `dist/` and top-level `.js` in the repo's
+`node_modules`), each parsed with our own `regex/parse.ts` and analysed for
+Glushkov positions and features:
+
+| bucket | count | share |
+| --- | ---: | ---: |
+| linear-safe (no backref, no lookaround, parses) | 2,639 | 94.8 % |
+| … of which ≤32 positions (fits one i32 word) | 2,538 | **91.2 %** |
+| … of which ≤64 positions (fits one i64 word) | 2,592 | **93.1 %** |
+| … ≤64 positions **and capture-free** | 1,988 | **71.4 %** |
+| lookaround | 91 | 3.3 % |
+| backreference | 25 | 0.9 % |
+| refused by our parser today | 29 | 1.0 % |
+| >64 positions | 47 | 1.7 % |
+
+Position distribution among linear-safe literals: **median 2, p75 7, p90 17,
+p99 131, max 3,686.** The long tail is real but tiny; a one-word bitset covers
+the overwhelming majority, and the decline path is free (§5).
+
+### The honest negative — this will NOT move the acorn dogfood
+
+`.tmp/regex-hits.mjs` instruments `RegExp.prototype.{test,exec}` and the
+`String.prototype` regex methods during acorn's self-parse (the only quotable
+workload). 35,633 distinct regex operations:
+
+| origin | operations | share |
+| --- | ---: | ---: |
+| **runtime-constructed** (`new RegExp("^(?:" + words.join("|") + ")$")`) | 29,265 | **82.1 %** |
+| literal | 6,368 | 17.9 % |
+
+Acorn's hot regexes are its keyword/reserved-word predicates, **built at
+runtime from word lists**. An AOT specializer cannot claim them *by
+definition* — and they already have a dedicated runtime fast path
+(`REGEX_ANCHORED_LITERAL_ALTS_MARKER` + `buildIndexedAnchoredLiteralAltSearch`,
+#3673 round 29), which is a better structure than any NFA would be for a
+200-way keyword alternation.
+
+So the ceiling on acorn is **17.9 % of a 4.04 % bucket ≈ 0.7 % of runtime**,
+assuming specialization makes those operations free. That is at or below this
+box's resolvability (#3927 §6; #4157's ±0.3 pp floor). **Do not justify this
+work on the acorn number and do not expect the profile to move.** Its
+justification is (i) regex-heavy workloads — the 18× above, reproducible on
+demand, (ii) conformance: ReDoS immunity and retirement of the spurious
+`RangeError` for every claimed pattern (#2723's actual goal), (iii) it is the
+only structure that gets #2723's conformance win *without* a perf regression.
+
+## 3. Verifying the architectural premise against the code
+
+#1539's recorded rationale ("Implementation Notes (sd-1539, 2026-06-03) —
+bytecode VM, not specialised emission") rejects per-pattern emission because a
+**backtracking** matcher needs an explicit backtrack stack, so specialized
+emission would have to *generate* backtracking control flow — "nested
+`block`/`loop`/`br` with a save/restore stack, as raw `Instr[]`, recursively,
+per pattern … the single hardest-to-verify thing to emit in raw Wasm".
+
+**That objection is entirely specific to backtracking, and it does dissolve.**
+Verified by construction, not by analogy — the emitted skeleton is:
+
+```
+func $__re_test_p<N>(sdata, soff, slen, start) -> i32
+  local CUR:i64, NEXT:i64, CH:i32, SP:i32
+  SP = start ; CUR = 0
+  block $done
+    loop $step
+      br_if $done  (SP >= slen)
+      CH = sdata[soff + SP]
+      CUR = CUR | START_CLOSURE          ;; unanchored seed, constant
+      NEXT = 0
+      ;;  ---- one sibling block per NFA position, all at the SAME depth ----
+      if (CUR & (1<<i)) != 0 { if <class-test on CH> { NEXT |= FOLLOW_i } }   ;; × nPositions
+      if (CUR & ACCEPT) != 0 { return 1 }
+      CUR = NEXT ; SP = SP + 1
+      br $step
+  return 0
+```
+
+Every per-position block is `{ op: "if", blockType: { kind: "empty" }, … }`:
+it consumes nothing and produces nothing at its boundary, and its nesting depth
+is a **constant 2**, independent of the pattern. The only `br`s are the loop's
+own `br $step` / `br_if $done`, at fixed depths the emitter writes literally.
+There is no depth arithmetic derived from AST nesting anywhere — which is
+precisely the bug class #1539 was avoiding. Pattern structure enters **only**
+as `i64` constants (`FOLLOW_i`, `START_CLOSURE`, `ACCEPT`) and as the class-test
+comparison sequence. Stack balance is structurally guaranteed rather than
+argued.
+
+Everything the emitter needs already exists in the `Instr` union: `i64.{const,
+and,or,eqz,shl}` (`i64.const` takes a `bigint`), `array.get_u` on
+`ctx.nativeStrDataTypeIdx`, and `ref.func` / `call_ref` with typed function
+references (`src/ir/types.ts:380-382`) for the dispatch in §4.
+
+**Conclusion: the premise holds.** Recorded here so #1539's note is read as
+"backtracking emission is unsafe", not "specialized emission is unsafe".
+
+## 4. Where it hooks in
+
+The carrier is `$NativeRegExp` (`regexp-standalone.ts:803-810`,
+`ensureStandaloneRegExpStruct`). A `RegExp` value flows through variables,
+parameters, object fields and `externref` round-trips, and `emitRegexSearchCall`
+reads `prog`/`classTable` off the struct at the *call site* and calls the
+generic `__regex_search`. **So specialization must travel with the value, not
+with the call site.**
+
+- **Append field 7 `matcher: (ref null $ReMatcherFn)`** to `$NativeRegExp`
+  (append-only; field[1] must stay `i32` — the `getArrTypeIdxFromVec` vec-struct
+  heuristic documented at `regexp-standalone.ts:795-801` is load-bearing).
+  `$ReMatcherFn = (ref $NativeStrData, i32 off, i32 len, i32 start) -> i32`.
+- `emitStandaloneRegExpStruct` pushes `ref.func $__re_test_p<N>` when the
+  specializer claims the pattern, `ref.null` otherwise.
+  `ensureDynamicStandaloneRegExpCompiler` (the in-wasm runtime compiler for
+  `new RegExp(str)`) pushes `ref.null` unconditionally — dynamic patterns are
+  never claimed, which is exactly the 82 % of acorn traffic above.
+- The `.test` path (`tryCompileStandaloneRegExpTest` → `emitRegexSearchCall`)
+  becomes: `if (matcher != null) call_ref` else the existing
+  `__regex_search` call, byte-for-byte unchanged. **One branch, one new field,
+  zero change to the existing VM.** A statically-resolved literal receiver can
+  additionally skip the branch and `call` the specialized function directly;
+  that is an optimization, not the mechanism.
+
+This shape is why the work is additive and non-disruptive: the backtracking VM,
+its bytecode, `regex/vm.ts` and every existing test keep working untouched, and
+the specializer is a pure addition that can be flag-disabled to a measured null.
+
+## 5. Slice ladder
+
+Each slice is one PR. Every slice's decline path is "leave `matcher` null" —
+free, and the reason correctness risk is bounded by construction.
+
+- **Slice 1 — `test()` only, capture-free, ≤64 positions.**
+  New `src/codegen/regex/glushkov.ts` (AST → positions, First/Follow/Accept
+  bitsets — pure TS, unit-testable with no Wasm) + `src/codegen/regex-specialize.ts`
+  (bitsets → `Instr[]`) + the struct field and the one-branch dispatch.
+  **Claims 71.4 % of real-world literals.** Delivers the 18× above, ReDoS
+  immunity and no spurious `RangeError` for every claimed pattern.
+  *Correctness note that makes this slice safe:* a boolean existence query has
+  no leftmost-first obligation, so the bitset needs no priority order. That is
+  **not** true of `search`/`exec` — see Slice 2.
+- **Slice 2 — leftmost START (`search`, `String.match` index, `split`).**
+  A pure bitset gives the smallest match **END**, which is *not* JS semantics:
+  `/abc|b/` on `"abc"` ends earliest at 2 (via `b` at index 1) but JS returns
+  the match at index 0. Requires per-position origin tracking (keep the
+  **smallest** start on merge) and committing only when no thread with a
+  smaller start survives. Still linear, higher constant factor.
+- **Slice 3 — captures (`exec`).** Needs priority order, i.e. a specialized
+  PikeVM (ordered thread list + capture slots), because among matches at the
+  same start the greedy/lazy alternative order decides. Claims the remaining
+  23.3 % of ≤64-position literals. Expect a smaller multiple than 18×.
+- **Slice 4 — >64 positions (multi-word bitset) and lookaround.** The 1.7 % +
+  3.3 % tail. Lowest value; do last or never.
+
+**Backreferences stay on the backtracking VM permanently** (matching them is
+NP-hard; the step cap is the correct, defensible defense *there*), together
+with the ~0.003 % nullable-lazy-plus CIN/CDN case #2723 documents, every
+runtime-constructed pattern, and anything a slice declines.
+
+## 6. Acceptance / gates (every slice)
+
+- `npx vitest run tests/issue-1539-standalone-regex.test.ts tests/regex-bytecode.test.ts`
+  green, **checked by exit code, never by piping to `tail`/`head`**.
+- Differential: for every claimed pattern, the specialized matcher's answer must
+  equal the generic VM's answer *and* the host `RegExp`'s, over a shared
+  subject corpus. Cheap to make exhaustive because the specializer declines
+  freely — a wrong claim is the only way to be wrong.
+- acorn dogfood keeps **checksum 422 / 4,642 nodes**. Expect **no** wall-clock
+  movement there (§2's honest negative); a *regression* is the real signal.
+- `.tmp/regex-ceiling.mjs` re-run before/after; `.tmp/regex-size.mjs` for the
+  module-size delta at 1/5 literals.
+- Ship behind an env flag (`JS2WASM_REGEX_SPECIALIZE`, default ON once
+  measured) so the null is reproducible on demand, per the #4185 precedent.
+- Run test files in small batches (`--pool=forks --poolOptions.forks.maxForks=2`);
+  the full suite OOMs in this container.
+
+## 7. What this supersedes
+
+- #4237's **path B** (Irregexp front-end + bytecode→wasm translator): **closed
+  as unnecessary.** Path A reaches 1.34× of V8; B's own honest ceiling was
+  "5–10×, not the full 18×", for 2–3 budget windows and a permanent V8 re-sync
+  burden. Its stated advantage was correctness breadth, which the measured
+  94.8 % linear-safe rate plus a free decline path makes unnecessary.
+- #4237's **size argument**: corrected, ≈7 KB raw not 75.5 KB (§2).
+- #2723's **Slice A** (generic `__regex_run_linear` interpreter + router):
+  superseded by AOT emission — see the note appended to #2723.
