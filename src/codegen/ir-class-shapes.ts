@@ -301,8 +301,9 @@ function hasFixedClassShapeParameters(parameters: readonly ts.ParameterDeclarati
  * accidental restriction rather than an ABI constraint.
  *
  * Dependencies are identity-based and local to the candidate population.
- * Cycles deliberately retain their original order and therefore remain on the
- * typed direct path until recursive class-shape cells are planned explicitly.
+ * Cycles deliberately retain their original order. The descriptor builder
+ * resolves them through preallocated exact class-shape cells; stable residue
+ * order keeps planning deterministic without pretending a cycle is a DAG.
  */
 export function orderIrClassShapeDeclarationsForProjection(
   oracle: TypeOracle,

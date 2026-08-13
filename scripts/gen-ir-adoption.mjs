@@ -240,6 +240,10 @@ const BUCKETS = {
     "unintended",
     "Logical value/result families and JavaScript short-circuit coercions are represented in typed IR (#3518)",
   ],
+  "operand-coercion-unsupported": [
+    "unintended",
+    "Every supported operand coercion is represented through the canonical typed IR coercion engine (#4208)",
+  ],
   "template-substitution-unsupported": [
     "unintended",
     "Template substitutions support the remaining typed coercion families (#3518)",

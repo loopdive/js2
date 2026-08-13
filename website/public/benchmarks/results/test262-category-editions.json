@@ -185,9 +185,9 @@
   },
   "annexB/language": {
     "ES5": {
-      "pass": 431,
-      "fail": 367,
-      "ce": 7,
+      "pass": 460,
+      "fail": 345,
+      "ce": 0,
       "skip": 0
     },
     "ES2015": {
@@ -211,8 +211,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 103,
-      "fail": 117,
+      "pass": 104,
+      "fail": 116,
       "ce": 2,
       "skip": 0
     },
@@ -961,6 +961,14 @@
       "skip": 0
     }
   },
+  "built-ins/SuppressedError": {
+    "ES2027": {
+      "pass": 8,
+      "fail": 14,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/Set": {
     "ES2015": {
       "pass": 176,
@@ -984,14 +992,6 @@
       "pass": 168,
       "fail": 14,
       "ce": 4,
-      "skip": 0
-    }
-  },
-  "built-ins/SuppressedError": {
-    "ES2027": {
-      "pass": 8,
-      "fail": 14,
-      "ce": 0,
       "skip": 0
     }
   },
@@ -1359,18 +1359,18 @@
       "skip": 0
     }
   },
-  "built-ins/Reflect": {
-    "ES2015": {
-      "pass": 124,
-      "fail": 29,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/directive-prologue": {
     "ES5": {
       "pass": 60,
       "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/Reflect": {
+    "ES2015": {
+      "pass": 124,
+      "fail": 29,
       "ce": 0,
       "skip": 0
     }
@@ -1383,10 +1383,10 @@
       "skip": 0
     }
   },
-  "language/future-reserved-words": {
-    "ES5": {
-      "pass": 55,
-      "fail": 0,
+  "built-ins/GeneratorFunction": {
+    "ES2015": {
+      "pass": 6,
+      "fail": 17,
       "ce": 0,
       "skip": 0
     }
@@ -1419,10 +1419,10 @@
       "skip": 0
     }
   },
-  "built-ins/GeneratorFunction": {
-    "ES2015": {
-      "pass": 6,
-      "fail": 17,
+  "language/future-reserved-words": {
+    "ES5": {
+      "pass": 55,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }
@@ -1585,19 +1585,19 @@
       "skip": 0
     }
   },
-  "built-ins/AsyncGeneratorPrototype": {
-    "ES2018": {
-      "pass": 25,
-      "fail": 23,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/AsyncFromSyncIteratorPrototype": {
     "ES2018": {
       "pass": 3,
       "fail": 32,
       "ce": 3,
+      "skip": 0
+    }
+  },
+  "built-ins/AsyncGeneratorPrototype": {
+    "ES2018": {
+      "pass": 25,
+      "fail": 23,
+      "ce": 0,
       "skip": 0
     }
   },
@@ -1667,18 +1667,18 @@
       "skip": 0
     }
   },
-  "built-ins/encodeURI": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Infinity": {
     "ES5": {
       "pass": 5,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/encodeURI": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }

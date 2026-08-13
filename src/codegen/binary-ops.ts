@@ -813,6 +813,14 @@ export function compileBinaryExpression(
   // Regular binary ops: evaluate both sides
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
   const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+  const isEqualityOp =
+    op === ts.SyntaxKind.EqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken ||
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const leftIsWrapperObj = isWrapperObjectType(leftTsType);
+  const rightIsWrapperObj = isWrapperObjectType(rightTsType);
+  const wrapperEquality = isEqualityOp && (leftIsWrapperObj || rightIsWrapperObj);
 
   // ── Loose equality (== / !=) with mixed types ──
   // JS loose equality coerces types before comparing. Handle common cases:
@@ -821,7 +829,7 @@ export function compileBinaryExpression(
   //   string == boolean / boolean == string → coerce both to number
   const isLooseEq = op === ts.SyntaxKind.EqualsEqualsToken;
   const isLooseNeq = op === ts.SyntaxKind.ExclamationEqualsToken;
-  if (isLooseEq || isLooseNeq) {
+  if ((isLooseEq || isLooseNeq) && !wrapperEquality) {
     const leftIsNum = isNumberType(leftTsType);
     const leftIsBool = isBooleanType(leftTsType);
     const leftIsStr = isStringType(leftTsType);
@@ -1060,15 +1068,6 @@ export function compileBinaryExpression(
   // Equality ops involving a wrapper object (Number/String/Boolean) are not
   // simple string/number ops — they have object-identity / ToPrimitive
   // semantics. Route them through the externref/wrapper path below (#1111).
-  const isEqualityOp =
-    op === ts.SyntaxKind.EqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  const leftIsWrapperObj = isWrapperObjectType(leftTsType);
-  const rightIsWrapperObj = isWrapperObjectType(rightTsType);
-  const wrapperEquality = isEqualityOp && (leftIsWrapperObj || rightIsWrapperObj);
-
   // (#3688) Statically-`number` equality gets the SAME numeric operand hint the
   // relational ops already get.
   //
