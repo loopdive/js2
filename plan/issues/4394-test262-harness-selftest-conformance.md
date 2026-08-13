@@ -45,6 +45,10 @@ func-budget-allow:
   # +18 lines: one more arm in this function's top-level-statement keep ladder,
   # whose arm ORDER is load-bearing (each `continue`s past the later ones).
   - src/codegen/declarations.ts::collectDeclarations
+  # +5 lines: a three-line comment plus the guarded call that seeds script
+  # function bindings at the top of __module_init. The seeder itself lives in
+  # the new leaf module codegen/global-function-bindings.ts.
+  - src/codegen/declarations.ts::compileDeclarations
   # +29 lines: the new diversion is one guarded call plus the comment that
   # records the failure mode; the body lives in its own helper alongside.
   - src/codegen/literals.ts::compileObjectLiteral
@@ -85,6 +89,8 @@ files:
   - tests/issue-4394-test262-error-instanceof.test.ts
   - src/codegen/expressions/shadowed-error-ctor.ts
   - tests/issue-4394-shadowed-error-ctor.test.ts
+  - src/codegen/global-function-bindings.ts
+  - tests/issue-4394-global-function-bindings.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -661,6 +667,50 @@ That would let the runner drop its sandbox stub as well. Not attempted here —
 the seeds are captured in a lazily-initialised detached body, so materialising
 user closure values into it is an ordering problem (#1712-class), not a one-line
 addition. **This is the highest-value single item left in either lane.**
+
+## Root cause 13 (standalone, 9 tests) — script functions never bound on the global object
+
+§9.1.1.4.18 CreateGlobalFunctionBinding: a SCRIPT's top-level function
+declarations are own properties of the global object. We never implemented it.
+`globalThis.f` resolved — identifier lowering finds the function — but the
+BINDING did not exist, so every reflective probe answered `false`:
+
+| lane | `hasOwnProperty(globalThis, "$DONE")` | `typeof globalThis.$DONE` |
+| --- | --- | --- |
+| host/GC | false | `"function"` |
+| standalone | false | — |
+
+Neither lane implemented it. The GC lane only passes the affected tests because
+the runner *fakes* the own-property on its sandbox (root cause 7).
+
+### Fix
+
+`codegen/global-function-bindings.ts` seeds each top-level function name onto
+the native `$Object` at the TOP of `__module_init` — before any user statement,
+which is what declaration hoisting requires — with
+`{writable: true, enumerable: true, configurable: false}`.
+
+Scripts only; a module's top-level declarations live in the module environment
+record and are deliberately not global-object properties.
+
+The seed uses the PER-SITE closure path (`emitFuncRefAsClosure`), not
+`emitCachedFuncClosureAccess`. The latter's memoized singleton is planned from
+the IR's census of function-VALUE uses, and a name that only ever appears as a
+callee — `$DONE(err)`, exactly the case this exists for — has no planned
+trampoline; minting one here fails the ABI seal with
+`would mutate sealed prepared scope`.
+
+**Known gap:** the seeded value is therefore a distinct closure instance, so
+`globalThis.f` CALLS correctly but `globalThis.f === f` is false. Closing it
+needs the planner to mint a value-trampoline for call-only names.
+
+### Measured
+
+standalone 66 → **75** pass, 0 lost. GC lane byte-identical (gated off).
+equivalence-gate, all 8 shards: no new regressions. 220-file standalone sample
+over `language/statements/function`, `language/global-code` and
+`built-ins/Function`: 0 regressions, and it fixes
+`language/global-code/decl-func.js` — the spec test for this exact binding.
 
 ## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
 

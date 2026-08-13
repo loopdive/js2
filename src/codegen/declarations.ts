@@ -34,6 +34,7 @@ import {
   isAssignmentOperator,
 } from "./module-init-collection.js";
 import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
+import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -3006,6 +3007,11 @@ export function compileDeclarations(
     // `emitCachedFuncClosureAccess` (NOT the identifier read-path, which would
     // recurse into the live-binding `global.get` arm). Dedupe by global index so
     // an import alias sharing the same global is seeded once.
+    // (#4394) §9.1.1.4.18 — a SCRIPT's top-level function declarations are own
+    // properties of the global object. Seeded here, ahead of every user
+    // statement, which is what declaration hoisting requires.
+    emitScriptGlobalFunctionBindings(ctx, initFctx);
+
     if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
       const seededGlobals = new Set<number>();
       for (const liveName of ctx.liveFuncBindingGlobals) {
