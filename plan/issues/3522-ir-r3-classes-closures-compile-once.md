@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-13
 priority: critical
 horizon: xl
 complexity: XL
@@ -42,6 +42,7 @@ files:
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
   - src/codegen/class-callable-abi.ts
+  - src/codegen/class-field-layout.ts
   - src/codegen/function-body.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
@@ -1046,6 +1047,63 @@ new regressions** (twelve stale baseline entries now pass but are deliberately
 not mixed into this PR). Cross-backend differential is **29/29**. Typecheck,
 lint, formatting, issue/optimization-retirement integrity, oracle separation,
 IR adoption, verdict-oracle, LOC, and function-budget gates also pass.
+
+### Forward class-field layout checkpoint (2026-08-13)
+
+Exact forward class references now cross the physical storage boundary before
+any source body emits. Class collection still reserves structs in source order,
+so `Holder.current: Value` is initially an `externref` slot when `Value` is
+declared later. The new post-collection `class-field-layout.ts` phase resolves
+the exact declaration through the Type Oracle and mutates that already-observed
+field in place to `(ref null $Value)` before callable finalization and class
+shape planning. It does not pre-reserve or reorder types, and it does not
+replace the `StructTypeDef` object held by the Program ABI type cell.
+
+This checkpoint is deliberately bounded to explicit identifier/private fields
+on unique, flat, top-level classes in one source. The reference must be a bare,
+non-generic `TypeReferenceNode` to a later unique local class, and the complete
+field dependency graph must be acyclic. Classes participating in inheritance,
+recursive/self layouts, nested/class-expression owners, optional/union/generic
+annotations, constructor-only inferred fields, and externref-backed targets
+remain on the typed direct route. Multi-source finalization remains R5 work.
+
+The primary `Holder -> Value` fixture now gives all four source bodies
+(`Holder_new`, `Holder_replace`, `Value_new`, and `run`) one prepared IR owner in
+WasmGC and standalone under both direct-class and direct-function poison. It
+validates and returns `25`, and the committed field plus constructor assignment,
+method read/write, and constructing caller contain no `externref` conversion,
+cast/test, or indirect-call traffic. Separate parity controls prove:
+
+- an initialized `current: Value = new Value(2)` retains the established typed
+  instance-field initialization optimization and per-instance behavior;
+- multiple public/private fields retain their exact shared target layout;
+- an adjacent default-parameter method can remain a typed direct fallback while
+  consuming the same finalized physical field ABI; and
+- mutual field recursion and any inheritance participant remain direct, with
+  the unresolved forward slot still physically `externref`.
+
+The exact A/B driver runs the same allocation, field replacement, and two field
+reads per iteration. Three repeated local measurements produced identical
+artifact sizes and correct checksums:
+
+| Target | Direct binary | Prepared IR binary | Delta | Direct median | Prepared median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| WasmGC | 2,836 bytes | 1,292 bytes | -1,544 bytes (-54.4%) | 3.318-3.684 us | 0.010-0.011 us |
+| standalone | 47,714 bytes | 21,531 bytes | -26,183 bytes (-54.9%) | 0.011-0.012 us | 0.010-0.011 us |
+
+The WasmGC direct lane's host-carrier path explains its much larger runtime
+gap; the relevant retirement requirement is satisfied in both targets: prepared
+IR is no larger and no slower than direct. A forward field forms a valid WasmGC
+recursive group spanning the owner-to-target type interval; binary validation,
+exact WAT assertions, and the artifact reduction guard that representation
+effect. The direct-only lane is unchanged and remains the A/B control.
+
+No shared legacy implementation is deleted here. The same direct layout/body
+code still has live consumers in every excluded family, and deleting it would
+violate the retirement rule. The next serial R3 transaction is immutable
+recursive class-layout cells for self and mutually recursive class fields;
+after that, extend the same proof to inheritance participants before nested and
+multi-source owners.
 
 ## Exhaustive source-unit census
 
