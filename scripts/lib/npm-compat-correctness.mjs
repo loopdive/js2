@@ -27,7 +27,7 @@
  * that must stay true, or a miscompile could be ratified into the repo.
  */
 
-/** @typedef {{ kind: string, passed: number|null, total: number|null }} TestsField */
+/** @typedef {{ kind: string, status?: string, reason?: string|null, passed: number|null, total: number|null }} TestsField */
 
 /**
  * Derive a package's correctness verdict from the `tests` field the dogfood
@@ -45,6 +45,13 @@ export function correctnessVerdict(tests, context = {}) {
         context.compiles === false
           ? "package does not compile, so no workload could run"
           : "no differential workload — compile/validation only; correctness is unknown",
+    };
+  }
+  if (tests.status && tests.status !== "measured") {
+    return {
+      status: "unverified",
+      reason:
+        tests.reason ?? `workload '${tests.kind ?? "unknown"}' was ${tests.status}; no compiled result was measured`,
     };
   }
   const { passed, total } = tests;

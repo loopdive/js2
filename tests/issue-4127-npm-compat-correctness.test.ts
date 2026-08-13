@@ -70,6 +70,18 @@ describe("#4127 — 'never checked' must not look like 'checked and fine'", () =
     expect(correctnessVerdict({ kind: "d", passed: null, total: null }).status).toBe("unverified");
     expect(correctnessVerdict({ kind: "d" } as never).status).toBe("unverified");
   });
+
+  it("does not call implementation-blocked upstream tests divergent", () => {
+    const verdict = correctnessVerdict({
+      kind: "upstream-suite",
+      status: "blocked",
+      reason: "implementation did not produce a valid Wasm module",
+      passed: 0,
+      total: 294,
+    });
+    expect(verdict.status).toBe("unverified");
+    expect(verdict.reason).toMatch(/did not produce a valid Wasm module/);
+  });
 });
 
 describe("#4127 — the blind spot is counted and named", () => {

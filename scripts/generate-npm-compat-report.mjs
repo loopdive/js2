@@ -1738,14 +1738,30 @@ if (selectedPackages.has("react-dom")) {
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
   const reactDomSuite = await runReactDomUpstreamSuite({ quiet: true });
+  const reactDomImplementationReport = {
+    ...reactDomReport,
+    // The package-entry probe only compiles the small environment selector.
+    // The compatibility verdict must come from the real shared + client
+    // production renderer that the upstream tests execute.
+    compile: {
+      ...reactDomReport.compile,
+      success: reactDomSuite.compile?.success ?? false,
+      durationMs: reactDomSuite.compile?.durationMs ?? reactDomReport.compile?.durationMs,
+      binaryBytes: reactDomSuite.compile?.binaryBytes ?? 0,
+      error: reactDomSuite.summary?.implementationError ?? null,
+    },
+    validation: reactDomSuite.validation,
+  };
   packages.push(
     await buildPackageEntry({
       name: "react-dom",
       version: reactDomEntry.version,
       issue: 3982,
-      entryFile: reactDomEntry.entryModule.replace(/^package\//, ""),
+      // The card reports the real renderer result, so link the renderer rather
+      // than the tiny environment-selecting package entry.
+      entryFile: reactDomSuite.reactDom.modules[1].replace(/^package\//, ""),
       shape: reactDomEntry.shape,
-      report: reactDomReport,
+      report: reactDomImplementationReport,
       // (#3982) The suite landed in PR #4079 but this card kept saying
       // "not-integrated" — the same failure mode as lit/#3977: a suite that
       // exists in tests/dogfood/ is invisible to the dashboard until THIS
@@ -1755,6 +1771,10 @@ if (selectedPackages.has("react-dom")) {
       // nothing about the compiler.
       tests: {
         kind: "upstream-suite",
+        status: reactDomSuite.summary?.implementationInvalid ? "blocked" : "measured",
+        reason: reactDomSuite.summary?.implementationInvalid
+          ? "react-dom implementation did not produce a valid Wasm module; no upstream test executed in Wasm"
+          : null,
         passed: reactDomSuite.results?.passed ?? null,
         total: reactDomSuite.results?.scored ?? null,
         passRatePct: reactDomSuite.summary?.passRatePct ?? null,
