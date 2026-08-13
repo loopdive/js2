@@ -13,6 +13,7 @@ import {
   isStringType,
 } from "../../checker/type-mapper.js";
 import { forEachChild, ts } from "../../ts-api.js";
+import { exactIndirectEvalStatement } from "../../eval-call-shape.js";
 import { ensureWrapperTypes } from "../any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "../async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
@@ -79,6 +80,10 @@ interface UnifiedCollectorState {
   // `__date_parse_host` (delegates to JS Date.parse). Registered up-front to
   // avoid the #2043 late-import shift; standalone/WASI use the native parser.
   dateParseHostNeeded: boolean;
+  // #1164 — the exact `(0, eval)(string);` statement owned by the IR host
+  // import slice. This is collected before body planning because an IR body
+  // bypasses the legacy emitter that otherwise registers __extern_eval.
+  hostIndirectEvalNeeded: boolean;
   // -- collectURIImports --
   uriNeeded: Set<string>;
   // -- collectEscapeImports (#3063) — legacy global escape/unescape (§B.2.1/.2) --
@@ -181,6 +186,7 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
     mathNeedsToUint32: false,
     parseNeeded: new Set(),
     dateParseHostNeeded: false,
+    hostIndirectEvalNeeded: false,
     uriNeeded: new Set(),
     escapeNeeded: new Set(),
     needsFromCharCode: false,
@@ -212,8 +218,80 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
   };
 }
 
+function collectorSeesAmbientEval(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const declarations = ctx.oracle.declarationsOf(identifier);
+  // Match `makeIrAmbientBindingPredicate`: a merged lib symbol may carry
+  // several declarations, and the selector/lowerer accept it when one is an
+  // ambient declaration. A source-owned shadow has no declaration-file arm.
+  return declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile);
+}
+
+function collectorHostStringFact(ctx: CodegenContext, expression: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(expression);
+  return (
+    fact.kind === "string" ||
+    (fact.kind === "union" &&
+      !fact.nullable &&
+      !fact.undefinable &&
+      fact.parts.length > 0 &&
+      fact.parts.every((part) => part.kind === "string"))
+  );
+}
+
+function stripHostEvalTypeAssertions(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * Match the selector's proven-string discipline closely enough that the
+ * collector cannot omit an import from a claimed IR body. In particular,
+ * diagnostics-off annotations do not make `const s: string = 1` look like a
+ * host string merely because its declared type says so.
+ */
+function collectorProvesHostEvalString(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  seen = new Set<ts.VariableDeclaration>(),
+): boolean {
+  const candidate = stripHostEvalTypeAssertions(expression);
+  if (ts.isStringLiteral(candidate) || ts.isNoSubstitutionTemplateLiteral(candidate)) return true;
+  if (!collectorHostStringFact(ctx, candidate)) return false;
+  if (!ts.isIdentifier(candidate)) return true;
+  const declaration = ctx.oracle.variableDeclarationOf(candidate);
+  if (!declaration) return true; // typed parameter / non-local checker binding
+  if (!declaration.initializer || seen.has(declaration)) return false;
+  const nextSeen = new Set(seen);
+  nextSeen.add(declaration);
+  return collectorProvesHostEvalString(ctx, declaration.initializer, nextSeen);
+}
+
+function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolean {
+  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings || !ts.isCallExpression(node)) {
+    return false;
+  }
+  const shape = exactIndirectEvalStatement(node);
+  return (
+    !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
+  );
+}
+
 /** Single-pass visitor called on every AST node */
 export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
+  // #1164 — `__extern_eval` is an IR-owned host capability only for the exact
+  // certified statement shape. Do not arm it for direct eval, a discarded
+  // non-string, a shadowed callee, or a value-producing call that stays legacy.
+  if (needsHostIndirectEvalImport(ctx, node)) state.hostIndirectEvalNeeded = true;
+
   // ── collectStringLiterals (skip computed property names) ──
   if (state.insideComputedPropertyName === 0) {
     if (ts.isStringLiteral(node)) {
@@ -1331,6 +1409,14 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
 
 /** Run all post-walk finalization (register imports based on collected state) */
 export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedCollectorState): void {
+  // #1164 — reserve the host eval import before IR bodies are planned. The
+  // existing legacy scan may already have supplied the identical funcMap slot;
+  // preserve it rather than perturbing the function index space a second time.
+  if (state.hostIndirectEvalNeeded && ctx.funcMap.get("__extern_eval") === undefined) {
+    const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "externref" }]);
+    addImport(ctx, "env", "__extern_eval", { kind: "func", typeIdx });
+  }
+
   // ── collectConsoleImports finalize ──
   // In WASI mode, console.log/error use fd_write — skip JS host console imports.
   // (#3436) In standalone mode there is no JS host either, so emitting the

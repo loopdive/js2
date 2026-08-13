@@ -1009,6 +1009,7 @@ export function compileIrPathFunctions(
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation = loweringPlans
@@ -4070,6 +4071,13 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    hostIndirectEvalTarget() {
+      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
+      const functionIndex = ctx.funcMap.get("__extern_eval");
+      const exactIndex = exactCallableImportIndex(ctx, "env", "__extern_eval");
+      if (functionIndex === undefined || exactIndex === undefined || functionIndex !== exactIndex) return null;
+      return irImportFuncRef("env", "__extern_eval");
+    },
     standaloneWrapperInstanceOfPlan(ctorName: string) {
       if (
         !supportsBackendCapability("standalone-wrapper-instanceof") ||
