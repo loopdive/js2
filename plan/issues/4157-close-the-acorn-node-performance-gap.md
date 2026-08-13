@@ -1473,3 +1473,66 @@ remaining honest paths are (a) the ~5 % inline-cache slice, which is worth doing
 on its own merits, and (b) a genuinely different programme aimed at the quality
 of emitted code for hot compiled functions. (b) is where the 3× lives and nothing
 in this issue currently targets it.
+
+## 2026-08-12 (9) — outlining the cold path: net null, but it DECOMPOSES the helper
+
+The entry-(8) survivor is "remove the CALL to `__extern_get`". The expensive way
+is emitting a cache check into 1,812 call sites. This tried the cheap way first:
+**outline the cold path** so the remaining function is small enough for
+`wasm-opt`'s existing inliner to hoist at every site — no call-site emission at
+all.
+
+Implementation (reverted): after `unshiftExternGetProtoCacheArm`, split the body
+at the cache arm — `__extern_get` keeps the arm and calls a new
+`__extern_get_cold` holding everything else, same signature, same locals, plain
+`call` so it does not depend on tail calls. Shape-guarded (refuses unless the
+first four instructions are exactly the cache arm) and env-gated, so the A/B is a
+pure flag flip with no file copies. Checksum 422 held.
+
+Order-reversed **ON → OFF → OFF → ON**:
+
+| block | `__extern_get` | `__extern_get_cold` | sum | dynamic-lookup |
+| --- | ---: | ---: | ---: | ---: |
+| onA | 6.24 % | 2.13 % | 8.37 % | 15.84 % |
+| offA | 8.67 % | — | 8.67 % | 16.59 % |
+| offB | 8.74 % | — | 8.74 % | 16.22 % |
+| onB | 6.51 % | 2.27 % | 8.78 % | 16.39 % |
+
+**`__extern_get` alone falls 8.71 % → 6.38 %, −2.33 pp, with both ON blocks
+cleanly below both OFF blocks** — the first real separation this session
+produced. But it is a relocation, not a saving: the 2.2 pp reappears in
+`__extern_get_cold`, sum 8.58 % vs 8.71 %, **net −0.13 pp = noise**, and wall
+clock trended ~3 % *worse* under ON in both blocks (below resolution, but the
+sign is consistent).
+
+**`wasm-opt` did not inline the prologue, and the reason is an error in my own
+sizing.** I counted the cache arm as "four instructions" — that is four
+*top-level* instructions, one of which is an `if` carrying the entire cache
+check. The real prologue is ~45 instructions, far past any sane inlining budget
+at 1,812 sites. Function-splitting cannot make this inlinable; only emitting at
+the call site can.
+
+### The part worth keeping: the helper now decomposes
+
+The split is a measuring instrument even though it is not an optimisation, and
+it answers a question no earlier entry could:
+
+| half of `__extern_get` | self % | share |
+| --- | ---: | ---: |
+| cache-hit prologue | **6.38 %** | **73 %** |
+| entire cold path — field ladder, own-property walk, proto walk | 2.20 % | 27 % |
+
+This confirms entries (1)–(4) from a new direction and sharpens them. The 87.24 %
+hit rate is not just most of the *calls*, it is **73 % of the helper's time**;
+the 15,032-instruction ladder everyone's eye is drawn to is a quarter of it. It
+also explains both earlier nulls exactly: entry (2) optimised the cold path
+(27 %) and entry (4) shaved two instructions off a prologue that is ~45.
+
+**Consequence for the named slice.** Call-site inline caching now looks *better*
+than entry (2)'s ~5 % estimate, because the target is the 6.38 pp prologue, and
+inlining removes both the call and — since the key is a compile-time constant at
+a static-name site — the key `ref.test` + `ref.cast` + hash load that the shared
+helper must do generically. That is the one thing in this file still worth a
+budget window.
+
+Fourth measured null of the session, and the most useful one.
