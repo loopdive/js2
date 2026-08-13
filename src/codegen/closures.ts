@@ -31,6 +31,7 @@ import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
+import { resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -3800,7 +3801,9 @@ export function compileArrowAsCallback(
   });
 
   // 7. At creation site: push cbId + captures externref, call __make_callback / __make_getter_callback
-  const makeCallbackName = needsThis ? "__make_getter_callback" : "__make_callback";
+  // (#4394) The bridge's [[Construct]] must mirror the source callable's — see
+  // codegen/callback-ctor-bridge.ts.
+  const makeCallbackName = resolveCallbackMakerName(ctx, fctx, arrow, needsThis);
   const makeCallbackIdx = ctx.funcMap.get(makeCallbackName);
   if (makeCallbackIdx === undefined) {
     // (#3235) Standalone/WASI intentionally doesn't register the `__make_callback`

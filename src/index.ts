@@ -49,7 +49,10 @@ export type ImportIntent =
     }
   | { type: "string_method"; method: string }
   | { type: "builtin"; name: string }
-  | { type: "callback_maker" }
+  // `constructible` marks the #4394 sibling bridge (`__make_callback_ctor`),
+  // built for compiled ordinary function definitions so the host object it
+  // hands out has [[Construct]] like the source callable does.
+  | { type: "callback_maker"; constructible?: boolean }
   | { type: "getter_callback_maker" }
   | { type: "await" }
   | { type: "typeof_check"; targetType: string }
