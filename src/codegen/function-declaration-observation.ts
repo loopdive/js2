@@ -199,6 +199,17 @@ export function prepareHoistedFunctionValueBindings(
   }
 }
 
+/** Prepare stable values and return the shared Annex B name accumulator. */
+export function prepareHoistedFunctionBindings(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+  existingDirectFuncNames?: Set<string>,
+): Set<string> {
+  prepareHoistedFunctionValueBindings(ctx, fctx, stmts);
+  return existingDirectFuncNames ?? new Set<string>();
+}
+
 /**
  * True when a direct declaration's binding is replaced by a statement-position
  * Annex B declaration in the same var scope. That binding has its own eager

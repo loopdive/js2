@@ -24,7 +24,7 @@ import {
   functionDeclarationObservesBindingValue,
   observesHoistedFunctionValueBinding,
   observesOnlyHoistedFunctionValue,
-  prepareHoistedFunctionValueBindings,
+  prepareHoistedFunctionBindings,
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
@@ -2080,8 +2080,7 @@ export function hoistFunctionDeclarations(
 ): void {
   const isTopLevelHoist = _eagerBoxFuncNames === undefined;
   const eagerBoxFuncNames = _eagerBoxFuncNames ?? new Set<string>();
-  prepareHoistedFunctionValueBindings(ctx, fctx, stmts);
-  const existingDirectFuncNames = _existingDirectFuncNames ?? new Set<string>();
+  const existingDirectFuncNames = prepareHoistedFunctionBindings(ctx, fctx, stmts, _existingDirectFuncNames);
   // (#2068/#4013) Phase 0: reserve a correctly-typed bodyless funcMap slot for
   // every direct-sibling function BEFORE compiling any body. Without this a
   // forward sibling reference
@@ -2116,7 +2115,6 @@ export function hoistFunctionDeclarations(
   }
   const isShadowedDuplicate = (stmt: ts.FunctionDeclaration): boolean =>
     lastSiblingDeclForName.get(stmt.name!.text) !== stmt;
-
   if (siblingFuncNames.size > 1) {
     for (const stmt of stmts) {
       if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;

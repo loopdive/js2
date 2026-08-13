@@ -318,6 +318,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
   functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
+   * Resolve the fast-standalone predicate for an exact ambient primitive
+   * wrapper constructor. Null keeps the operation on direct codegen.
+   */
+  standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
+  /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
    *
@@ -9453,6 +9458,55 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
     throw new Error(`ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`);
+  }
+  const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
+  if (wrapperPlan) {
+    const lhs = lowerExpr(expr.left, cx, irDynamic());
+    const lt = cx.builder.typeOf(lhs);
+    const resultType = irVal({ kind: "i32" });
+    if (lt.kind === "dynamic") {
+      const isObject = cx.builder.emitTagTest(lhs, JsTag.Object);
+      let whenObject!: IrValueId;
+      const thenBody = cx.builder.collectBodyInstrs(() => {
+        const payload = cx.builder.emitUnbox(lhs, JsTag.Object);
+        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
+        if (result === null) {
+          throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+        }
+        whenObject = result;
+      });
+      let whenNotObject!: IrValueId;
+      const elseBody = cx.builder.collectBodyInstrs(() => {
+        whenNotObject = cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
+      });
+      return cx.builder.emitIfElse({
+        cond: isObject,
+        then: thenBody,
+        thenValue: whenObject,
+        else: elseBody,
+        elseValue: whenNotObject,
+        resultType,
+      });
+    }
+    const lv = asVal(lt);
+    if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {
+      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+      return result;
+    }
+    if (lv?.kind === "anyref" || lv?.kind === "eqref" || lv?.kind === "ref" || lv?.kind === "ref_null") {
+      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+      return result;
+    }
+    if (lv?.kind === "f64" || lv?.kind === "i32" || lv?.kind === "i64") {
+      return cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
+    }
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
+    );
   }
   const targetShape = cx.classShapes?.get(className);
   if (!targetShape) {
