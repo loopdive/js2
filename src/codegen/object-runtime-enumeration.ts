@@ -27,7 +27,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
-import { bagKeysIf, buildBagPushKeys } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
+import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
 // `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
@@ -61,16 +61,32 @@ export interface ObjectEnumerationHelperState {
   objVecPushIdx: number;
   objOrderedIdx: number;
   objOrderedAllIdx: number;
+  boundaryObjectKeysIdx?: number;
+  boundaryObjectForInKeysIdx?: number;
   FLAG_ENUMERABLE: number;
   FLAG_TOMBSTONE: number;
 }
 
-/** Non-$Object for-in snapshot: own carrier-bag keys, then implicit prototype. */
-function nonObjectForInKeysIf(ctx: CodegenContext): Instr {
+/** Non-$Object for-in snapshot: admitted JS object, or carrier bag + prototype. */
+function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: number): Instr {
   return {
     op: "if",
     blockType: { kind: "empty" },
     then: [
+      ...(boundaryObjectForInKeysIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryObjectForInKeysIdx },
+            { op: "local.tee", index: 10 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 10 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       ...buildBagPushKeys(ctx, { vecLocal: 7, includeNonEnum: false }),
       ...protoIndexForInPushInstrs(ctx, 0, 7, 8),
       { op: "local.get", index: 7 },
@@ -102,6 +118,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
+    boundaryObjectKeysIdx,
+    boundaryObjectForInKeysIdx,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   } = s;
@@ -125,13 +143,35 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
-      // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
+      // any = any.convert_extern(obj); if !$Object → an explicitly admitted
+      // JS-owned object's own enumerable keys, otherwise the native carrier
+      // bag's keys (or the empty vec).
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...(boundaryObjectKeysIdx !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: boundaryObjectKeysIdx },
+                { op: "local.tee", index: 8 },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: 8 }, { op: "return" }],
+                },
+              ] satisfies Instr[])
+            : []),
+          ...bagKeysTail(ctx, { vecLocal: 7, includeNonEnum: false }),
+        ],
+      },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -195,6 +235,9 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        ...(boundaryObjectKeysIdx !== undefined
+          ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
+          : []),
       ],
       body,
     );
@@ -242,7 +285,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      nonObjectForInKeysIf(ctx),
+      nonObjectForInKeysIf(ctx, boundaryObjectForInKeysIdx),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -405,6 +448,9 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "vec", type: { kind: "externref" } },
         { name: "seen", type: { kind: "externref" } },
         { name: "keyExt", type: { kind: "externref" } },
+        ...(boundaryObjectForInKeysIdx !== undefined
+          ? [{ name: "boundaryKeys", type: { kind: "externref" } as ValType }]
+          : []),
       ],
       body,
     );
@@ -1094,7 +1140,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // bit patterns compare equal, and +0 (0x0…) vs -0 (0x8000…) compare unequal.
   // boolean → unbox i32; bigint → i64; both-null → equal; else ref identity.
   //
-  // HOST-FREE (`ctx.standalone || ctx.wasi`), NOT standalone-only (#2609). The
+  // NATIVE-PROVIDER (`semanticProviders === "native-first"`), not merely
+  // standalone-only (#2609/#4397). The
   // native `__defineProperty_value` block below is registered UNCONDITIONALLY by
   // this runtime and its #2042-S4 ValidateAndApplyPropertyDescriptor preflight
   // bakes a direct `call __object_is` for the SameValue value-change check. WASI
@@ -1103,9 +1150,9 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // `ctx.standalone` alone left `funcMap.get("__object_is")` undefined in WASI,
   // and the define helper baked an undefined funcIdx → "function index out of
   // range — undefined at __defineProperty_value" hard emit error (loopdive/js2#389).
-  // The host-only path (`!ctx.standalone && !ctx.wasi`) still owns `__object_is`
-  // via its JS import, so its output stays byte-identical.
-  if (ctx.standalone || ctx.wasi) {
+  // The compatibility-provider path still owns `__object_is` via its JS import,
+  // so its output stays byte-identical.
+  if (ctx.targetProfile.semanticProviders === "native-first") {
     addUnionImportsViaRegistry(ctx);
     const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
     const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;

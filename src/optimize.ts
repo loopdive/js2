@@ -15,6 +15,8 @@
  * @module
  */
 
+import { inlineHintArgs } from "./inline-hints.js";
+
 // Dynamic imports to avoid vite bundling node-only modules for the browser.
 // These are only used by optimizeWithSystemBinary which only runs in Node.js.
 let _nodeImports: {
@@ -501,13 +503,20 @@ function optimizeWithSystemBinary(
     // refuse to parse. The cost of the disable is zero — js2wasm doesn't
     // emit exact refs itself, so the only effect is preventing wasm-opt
     // from inserting them as a width refinement.
+    // (#4157) `JS2WASM_INLINE_HINTS` — binaryen's inlining knobs. Both lists
+    // are empty (and the argv byte-identical) unless the flag is set. `pre`
+    // must precede `-O<level>`: `--no-inline` is a PASS and binaryen runs
+    // passes in command order.
+    const hints = inlineHintArgs();
     const args: string[] = [
       inputPath,
+      ...hints.pre,
       `-O${level}`,
       "-o",
       outputPath,
       "--all-features",
       "--disable-custom-descriptors",
+      ...hints.post,
     ];
     if (preserveNames) args.push("-g");
     void gc;

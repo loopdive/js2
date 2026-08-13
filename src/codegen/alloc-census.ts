@@ -33,6 +33,7 @@
  */
 import type { Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { reportReceiverCse } from "./receiver-cse.js"; // (#4157 B)
 import { walkChildren } from "./walk-instructions.js";
 
 /** Export-name prefix for a per-type counter. */
@@ -86,6 +87,8 @@ function callCensusTargets(): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** (#4157) Export-name prefix for a per-function executed-entry counter. */
+
 /** The allocation opcodes worth counting — every WasmGC heap producer. */
 const ALLOC_OPS = new Set([
   "struct.new",
@@ -118,6 +121,7 @@ function censusName(ctx: CodegenContext, typeIdx: number): string {
 export function installAllocCensus(ctx: CodegenContext): void {
   if (allocCensusEnabled()) installTypeCensus(ctx);
   installCallCensus(ctx);
+  reportReceiverCse(); // (#4157 B) one line of evidence that the CSE fired
 }
 
 function installTypeCensus(ctx: CodegenContext): void {

@@ -75,6 +75,7 @@ describe("#2074 — standalone string[] join (zero host imports)", () => {
 
 describe("#2075 — vec-shaped receivers join with zero imports (collateral probe shapes)", () => {
   const cases: Array<[string, string, number]> = [
+    ["map", `const a: number[] = [1,2,3]; return a.map(x => x * 2).join(",").length;`, 5], // "2,4,6"
     ["slice", `const a: number[] = [1,2,3,4]; return a.slice(1,3).join(",").length;`, 3], // "2,3"
     ["spread", `const a: number[] = [1,2,3]; return [...a].join(",").length;`, 5], // "1,2,3"
     ["push-pop", `const a: number[] = [1,2]; a.push(3); a.pop(); return a.join(",").length;`, 3], // "1,2"

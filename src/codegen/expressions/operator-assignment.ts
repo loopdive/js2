@@ -2589,7 +2589,7 @@ function compilePropertyCompoundAssignmentExternref(
   // `__str_concat` or `f64.add`) that `emitAnyAdd` already builds for this lane,
   // split out so a caller with pre-evaluated operands can reach it.
   if (op === ts.SyntaxKind.PlusEqualsToken) {
-    const noJsHostAdd = ctx.standalone === true || ctx.wasi === true;
+    const noJsHostAdd = ctx.targetProfile.semanticProviders === "native-first";
     if (noJsHostAdd) {
       // Current value is on the stack (from the read above) — park it, then
       // evaluate the RHS, so both operands are temps the dispatch can re-read.

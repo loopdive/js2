@@ -139,13 +139,12 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const applyClosureIdx = ctx.funcMap.get("__apply_closure");
     const objVecNewIdx = ctx.funcMap.get("__objvec_new");
     const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+    const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+    const proxyConstructDispatchIdx = ctx.funcMap.get("__proxy_construct_dispatch");
+    const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
+    const boundaryConstructIdx = ctx.funcMap.get("__boundary_object_construct");
     const protoKeyInstrs = ctx.nativeConstructProtoKey.get(arity);
-    if (
-      externGetIdx === undefined ||
-      objectCreateIdx === undefined ||
-      methodCallIdx === undefined ||
-      protoKeyInstrs === undefined
-    ) {
+    if (externGetIdx === undefined || objectCreateIdx === undefined || protoKeyInstrs === undefined) {
       driver.body = [{ op: "ref.null.extern" }];
       driver.locals = [];
       continue;
@@ -157,7 +156,100 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const resultLocal = arity + 4;
     const argsVecLocal = arity + 5;
 
-    const body: Instr[] = [
+    const buildArgsVec = (): Instr[] => {
+      if (objVecNewIdx === undefined || objVecPushIdx === undefined) return [];
+      const instrs: Instr[] = [
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "local.set", index: argsVecLocal },
+      ];
+      for (let arg = 0; arg < arity; arg++) {
+        instrs.push(
+          { op: "local.get", index: argsVecLocal },
+          { op: "local.get", index: arg + 2 },
+          { op: "call", funcIdx: objVecPushIdx },
+        );
+      }
+      return instrs;
+    };
+
+    const body: Instr[] = [];
+    const canProxyConstruct =
+      proxyTypeIdx !== undefined &&
+      proxyConstructDispatchIdx !== undefined &&
+      objVecNewIdx !== undefined &&
+      objVecPushIdx !== undefined;
+    if (canProxyConstruct) {
+      body.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...buildArgsVec(),
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: argsVecLocal },
+            // Ordinary `new proxy(...)` uses the proxy itself as NewTarget.
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: proxyConstructDispatchIdx },
+            { op: "local.tee", index: resultLocal },
+            { op: "ref.is_null" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: EXTERNREF },
+              // Missing trap: Construct(proxy.[[ProxyTarget]], args,
+              // proxy). Passing the already-selected proxy prototype through
+              // preserves the ordinary result's prototype without copying.
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: proxyTypeIdx },
+                { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 1 },
+                { op: "extern.convert_any" },
+                { op: "local.get", index: 1 },
+                ...Array.from({ length: arity }, (_, arg) => ({
+                  op: "local.get" as const,
+                  index: arg + 2,
+                })),
+                { op: "call", funcIdx: driverIdx },
+              ],
+              else: [{ op: "local.get", index: resultLocal }],
+            },
+            { op: "return" },
+          ],
+        },
+      );
+    }
+    const canBoundaryConstruct =
+      boundaryCallableKindIdx !== undefined &&
+      boundaryConstructIdx !== undefined &&
+      objVecNewIdx !== undefined &&
+      objVecPushIdx !== undefined;
+    if (canBoundaryConstruct) {
+      body.push(
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boundaryCallableKindIdx },
+        { op: "i32.const", value: 2 },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...buildArgsVec(),
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: argsVecLocal },
+            // Null asks the boundary adapter to use the actual constructor as
+            // NewTarget. This keeps caller JS identity intact and is the exact
+            // ordinary-forward result when no distinct NewTarget is exposed.
+            { op: "ref.null.extern" },
+            { op: "call", funcIdx: boundaryConstructIdx },
+            { op: "return" },
+          ],
+        },
+      );
+    }
+    body.push(
       // proto = suppliedProto ?? callee.prototype. The `__extern_get` arm reads
       // the closure own-property side table (#3468), which is where a
       // `.prototype` the #2660 S2 interception did not claim ends up. A
@@ -178,18 +270,24 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { op: "local.get", index: protoLocal },
       { op: "call", funcIdx: objectCreateIdx },
       { op: "local.set", index: selfLocal },
-    ];
+    );
 
     // result = callee.[[Call]](self, args). Ordinary caller-owned closures keep
     // the proven receiver-aware dispatcher. A provider-owned runtime Function
     // marker cannot enter that module-local classifier, so an exact type+brand
     // arm packs the already-evaluated args and invokes `__apply_closure`.
-    const ordinaryCall: Instr[] = [
-      { op: "local.get", index: selfLocal },
-      { op: "local.get", index: 0 },
-    ];
-    for (let arg = 0; arg < arity; arg++) ordinaryCall.push({ op: "local.get", index: arg + 2 });
-    ordinaryCall.push({ op: "call", funcIdx: methodCallIdx });
+    const ordinaryCall: Instr[] = [];
+    if (methodCallIdx !== undefined) {
+      ordinaryCall.push({ op: "local.get", index: selfLocal }, { op: "local.get", index: 0 });
+      for (let arg = 0; arg < arity; arg++) ordinaryCall.push({ op: "local.get", index: arg + 2 });
+      ordinaryCall.push({ op: "call", funcIdx: methodCallIdx });
+    } else {
+      // A module may reserve this driver solely for Proxy -> admitted-JS
+      // construction. That path has no module-local closure dispatcher, but it
+      // must not leave the whole driver as its null placeholder. Only the
+      // ordinary Wasm-closure tail is unavailable in that shape.
+      ordinaryCall.push({ op: "ref.null.extern" });
+    }
 
     const canApplyRuntimeMarker =
       runtimeCallbackTypeIdx !== undefined &&
@@ -296,7 +394,9 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { name: "__ctor_proto", type: EXTERNREF },
       { name: "__ctor_self", type: EXTERNREF },
       { name: "__ctor_result", type: EXTERNREF },
-      ...(canApplyRuntimeMarker ? [{ name: "__ctor_args", type: EXTERNREF }] : []),
+      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct
+        ? [{ name: "__ctor_args", type: EXTERNREF }]
+        : []),
     ];
     driver.body = body;
   }

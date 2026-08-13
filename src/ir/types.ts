@@ -122,12 +122,15 @@ export interface WasmModule {
 /** TS-level kind hint for a single export parameter or result (#1700). */
 export type TypedArrayKind = "uint8array" | "typed-array" | "other";
 
-/** TS-level TypedArray classification of one export's params and result (#1700). */
+/** Source-level value kind that needs an explicit JS/Wasm boundary adapter. */
+export type ExportBoundaryKind = TypedArrayKind | "string" | "symbol" | "promise" | "dynamic" | "aggregate";
+
+/** TS-level boundary classification of one export's params and result. */
 export interface ExportSignature {
-  /** Per-parameter TypedArray kind, positionally. */
-  params: TypedArrayKind[];
-  /** TypedArray kind of the return value. */
-  result: TypedArrayKind;
+  /** Per-parameter boundary kind, positionally. */
+  params: ExportBoundaryKind[];
+  /** Boundary kind of the return value. */
+  result: ExportBoundaryKind;
 }
 
 export type TypeDef = FuncTypeDef | StructTypeDef | ArrayTypeDef | RecGroupDef | SubTypeDef;

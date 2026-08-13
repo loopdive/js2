@@ -19,6 +19,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringImports, addUnionImports } from "./index.js";
@@ -258,10 +259,10 @@ export function compileTypedBinaryDispatch(
               then: [
                 { op: "local.get", index: tmpLeftAny },
                 { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                { op: "call", funcIdx: flattenIdx },
+                ...redundantFlattenCall(flattenIdx), // (#4157) callee self-flattens
                 { op: "local.get", index: tmpRightAny },
                 { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                { op: "call", funcIdx: flattenIdx },
+                ...redundantFlattenCall(flattenIdx), // (#4157) callee self-flattens
                 { op: "call", funcIdx: strEqIdx },
               ],
               else: [
@@ -424,9 +425,9 @@ export function compileTypedBinaryDispatch(
       const otherIsBoxableRef =
         otherEqType.kind === "externref" || otherEqType.kind === "ref" || otherEqType.kind === "ref_null";
       // (#2503) A wrapper object (`new Boolean`/`new Number`/`new String`) on the
-      // OTHER side: in JS-host mode it keeps its dedicated `__host_loose_eq`
-      // routing (the wrapper arm ~line 2483). But in STANDALONE/WASI there is no
-      // JS host — the wrapper arm's `__host_loose_eq` import is unsatisfiable, so
+      // OTHER side: with compatibility semantics it keeps its dedicated
+      // `__host_loose_eq` routing (the wrapper arm ~line 2483). With the native
+      // semantic provider, the wrapper must instead use the native equality
       // a `string == wrapper` must instead go through the native abstract-equality
       // cascade, whose `__to_primitive` already reduces a wrapper via its
       // WRAPPER_PRIMITIVE_KEY slot short-circuit (this is what makes `"1" == new
@@ -434,9 +435,9 @@ export function compileTypedBinaryDispatch(
       // for the wrapper case, `wrapperEquality` falls to the `else if (isEqOp)`
       // f64 path below, which `__str_to_number`s the string operand → NaN →
       // wrong `false` (the `"x" == new String("x")` residual). So permit a
-      // string-ref-vs-wrapper pairing through the externref box when noJsHost.
-      const noJsHostEq = ctx.standalone === true || ctx.wasi === true;
-      const wrapperOverStringAllowed = noJsHostEq && wrapperEquality;
+      // string-ref-vs-wrapper pairing through the externref box.
+      const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
+      const wrapperOverStringAllowed = nativeEqualityProvider && wrapperEquality;
       if (
         isLooseEqNeq &&
         (!wrapperEquality || wrapperOverStringAllowed) &&
@@ -656,13 +657,13 @@ export function compileTypedBinaryDispatch(
     const leftIsBool = !leftHasStaleType && isBooleanType(leftTsType);
     const rightIsBool = !rightHasStaleType && isBooleanType(rightTsType);
 
-    // #1776: standalone / WASI (no-JS-host) dynamic equality.
+    // #1776: Wasm-native dynamic equality.
     //
     // The JS-host equality fallbacks below import `__host_eq` / `__host_loose_eq`
-    // and delegate to JS `===` / `==`. Under `--target standalone` (and WASI)
-    // there is no JS host, so emitting those calls leaks an unsatisfiable
-    // `env::__host_eq` import — the module then fails `WebAssembly.instantiate`
-    // ("Import #0 env: module is not an object or function"). That broke the
+    // and delegate to JS `===` / `==`. The native-first semantic profile must
+    // not emit them even when a JS host exists: the host is an interop boundary,
+    // not the language-semantics provider. This path was originally introduced
+    // for standalone/WASI, where such imports are unsatisfiable. It also fixed the
     // test262 harness helper `isSameValue` for ~1,436 standalone tests (#1776):
     // `isSameValue(a: any, b: any)` compiles both params to `externref`, so its
     // `a === b` / `a !== a` comparisons all reach this externref-equality path.
@@ -679,8 +680,8 @@ export function compileTypedBinaryDispatch(
     //      references that are not identical are not `===`.
     // This needs no host import and never feeds an externref into an f64/i32
     // helper (acceptance criteria #1776).
-    const noJsHost = ctx.standalone === true || ctx.wasi === true;
-    if (noJsHost && (leftType.kind === "externref" || rightType.kind === "externref")) {
+    const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
+    if (nativeEqualityProvider && (leftType.kind === "externref" || rightType.kind === "externref")) {
       const EQ_HEAP = -19; // WasmGC `eq` abstract heap type (signed LEB 0x6d)
       // (#1910 R1) §7.2.13 IsLooselyEqual steps 11-12 — the Object↔primitive arm
       // is LOOSE-only (strict `===` never coerces, §7.2.16). Register the native
@@ -956,10 +957,10 @@ export function compileTypedBinaryDispatch(
                                 then: [
                                   { op: "local.get", index: lAny },
                                   { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                                  { op: "call", funcIdx: flattenIdx },
+                                  ...redundantFlattenCall(flattenIdx), // (#4157)
                                   { op: "local.get", index: rAny },
                                   { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                                  { op: "call", funcIdx: flattenIdx },
+                                  ...redundantFlattenCall(flattenIdx), // (#4157)
                                   { op: "call", funcIdx: strEqIdx },
                                 ],
                                 else: identityArm,
@@ -1158,7 +1159,7 @@ export function compileTypedBinaryDispatch(
       return { kind: "i32" };
     }
 
-    if (!noJsHost && (leftHasStaleType || rightHasStaleType)) {
+    if (!nativeEqualityProvider && (leftHasStaleType || rightHasStaleType)) {
       return emitHostEqualityFromStack(ctx, fctx, leftType, rightType, isStrict, isNeqOp);
     }
 
@@ -1213,13 +1214,13 @@ export function compileTypedBinaryDispatch(
     // IsStrictlyEqual must short-circuit to false on a type mismatch with no
     // coercion. Route through `__host_eq` (JS `===`) instead — it gets the spec
     // exactly right, including +0 === -0 (true) and NaN !== NaN. JS-host only; the
-    // standalone/WASI path is handled above (the `noJsHost` tag-dispatch block).
+    // native-first path is handled above by the tag-dispatch block.
     // Strings keep their dedicated `wasm:js-string equals` path below. A
     // boolean-typed side is also excluded: `coerceType(i32 → externref)` boxes
     // it as a JS *number* (`__box_number`), so `__host_eq(true, 1)` would be
     // false — boolean operands keep the existing (correct) lowering, and a
     // boolean `any` compared to a boolean falls through to it.
-    if (isStrict && !noJsHost && !leftIsString && !rightIsString && !leftIsBool && !rightIsBool) {
+    if (isStrict && !nativeEqualityProvider && !leftIsString && !rightIsString && !leftIsBool && !rightIsBool) {
       // (#3154 / task #90) Brand a statically-SYMBOL i32 operand so the
       // externref box preserves the JS tag: the brand-blind
       // `coerceType(i32 → externref)` fallthrough boxed a symbol HANDLE via
@@ -1480,23 +1481,24 @@ export function compileTypedBinaryDispatch(
             // Loose equality fallback for two externref `any` operands that are
             // not eqref-identical.
             //
-            // (#2081) STANDALONE/WASI has no JS host, so `__host_loose_eq` is an
-            // unsatisfiable import — it leaked into the module and made
+            // (#2081) The native semantic provider must not use
+            // `__host_loose_eq`; in standalone/WASI it is also unsatisfiable. It
+            // previously leaked into the module and made
             // `("1" as any) == (1 as any)` either fail instantiation or return a
             // wrong `false` (ref-identity never coerces string⇄number). Route
             // through the NATIVE IsLooselyEqual instead: box both externrefs to
             // `$AnyValue` (`__any_from_extern` → tag5 string / tag3 number / tag4
             // bool / tag1 null) and call `__any_eq`, whose §7.2.15 arms
             // (incl. the String⇄Number arm added in this PR) implement the spec
-            // coercion natively. Host mode keeps `__host_loose_eq` (JS `==`),
-            // unchanged.
+            // coercion natively. Compatibility mode keeps `__host_loose_eq`
+            // (JS `==`) unchanged.
             // (#1917 E6) The standalone native IsLooselyEqual tail — box both
             // externrefs to `$AnyValue` and call the keystone `__any_eq` — is the
             // same tag-5-sensitive dispatch the coercion engine owns for E3, so it
             // lives in `emitAnyEqFromExternTemps`. `null` ⇒ helpers unavailable
             // (should not happen) → fall through to the host import below.
-            const noJsHost = ctx.standalone === true || ctx.wasi === true;
-            if (noJsHost) {
+            const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
+            if (nativeEqualityProvider) {
               const nativeLooseEq = emitAnyEqFromExternTemps(ctx, tmpLeft, tmpRight, isNeqOp);
               if (nativeLooseEq !== null) {
                 return nativeLooseEq;

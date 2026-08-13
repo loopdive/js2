@@ -74,10 +74,19 @@ export const NATIVE_HOF_REDUCE: ReadonlySet<string> = new Set(["reduce", "reduce
  *  call-site closure-compile gate and the dispatcher arm — #3098). */
 export const NATIVE_HOF_METHODS: ReadonlySet<string> = new Set([...NATIVE_HOF_EACH, ...NATIVE_HOF_REDUCE]);
 
-export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): number | undefined {
+interface NativeArrayHofOptions {
+  helperName?: string;
+  forceHasProperty?: boolean;
+}
+
+export function ensureNativeArrayHof(
+  ctx: CodegenContext,
+  methodName: string,
+  options: NativeArrayHofOptions = {},
+): number | undefined {
   if (!ctx.standalone) return undefined;
   if (!NATIVE_HOF_METHODS.has(methodName)) return undefined;
-  const helperName = `__hof_${methodName}`;
+  const helperName = options.helperName ?? `__hof_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
 
@@ -126,7 +135,9 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   // widened here.
   const PRESENCE_SENSITIVE = new Set(["forEach", "map", "filter", "some", "every", "reduce", "reduceRight"]);
   const hasGateIdx =
-    ctx.protoIndexDirty && PRESENCE_SENSITIVE.has(methodName) && externHasIdxIdx !== undefined
+    (ctx.protoIndexDirty || options.forceHasProperty === true) &&
+    PRESENCE_SENSITIVE.has(methodName) &&
+    externHasIdxIdx !== undefined
       ? externHasIdxIdx
       : undefined;
 
@@ -508,4 +519,16 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
     exported: false,
   });
   return funcIdx;
+}
+
+/**
+ * (#4222 ES5 residual) Filter provider for the branded sparse carrier.
+ * It reuses the native closure protocol but always asks HasProperty first;
+ * only the carrier-specific `__extern_has_idx` arm knows about `$Hole`.
+ */
+export function ensureHoleyArrayFilter(ctx: CodegenContext): number | undefined {
+  return ensureNativeArrayHof(ctx, "filter", {
+    helperName: "__hof_holey_array_filter",
+    forceHasProperty: true,
+  });
 }

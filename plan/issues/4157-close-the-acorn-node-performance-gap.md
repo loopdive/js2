@@ -21,10 +21,104 @@ loc-budget-allow:
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
   - src/codegen/index.ts
+  # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
+  # both emission shapes live in a new subsystem module
+  # (src/codegen/nonnull-proof.ts); what remains in these two files is
+  # irreducible for this kind of change: an optional proof parameter on the two
+  # exported guard emitters (`emitNullCheckThrow`, `emitNullGuardedStructGet`),
+  # the receiver ValType threaded to their call sites, and — the bulk of it —
+  # restructuring the fast path's `if (ref.is_null) throw else <read>` so the
+  # else-arm can be emitted alone when the guard is dead. That restructure
+  # cannot move to the module, because the read instructions it guards are built
+  # from this file's presence-slot and struct-field state.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
+  # (#4157 ToNumber fast paths, JS2WASM_FUSED_TONUMBER / JS2WASM_SMI_FASTPATH)
+  # +5 lines: one import plus a 4-line early-out at the ONE standalone
+  # externref->f64 coercion site. Both fast paths live in a new subsystem module
+  # (src/codegen/tonumber-fast-paths.ts); this is the whole of their footprint
+  # in the god-file, and there is no smaller way to route a coercion site to an
+  # alternative lowering than to test for it where the site is.
+  - src/codegen/type-coercion.ts
+  # (#4157 lazy string flattening, JS2WASM_LAZY_STR_FLATTEN) wiring only: the
+  # analysis and both emission shapes live in a new leaf module
+  # (src/codegen/lazy-str-flatten.ts). What remains here is the guarded preamble
+  # relocation in __str_equals and the key-flatten removal in __extern_get, both
+  # of which must sit where the helper body is built.
+  - src/codegen/object-runtime.ts
+  - src/codegen/string-ops.ts
+  # (#4157 caller-side flatten elision) +1 line: the import of
+  # `redundantFlattenCall`. The four call sites it replaces are net-zero
+  # (`{ op: "call", ... }` -> `...redundantFlattenCall(...)`, one line each) and
+  # the whole rationale lives in the leaf module `lazy-str-flatten.ts`. One
+  # import line is the irreducible cost of routing a site to a subsystem module,
+  # which is the direction #3102 asks for.
+  - src/codegen/binary-ops-typed-dispatch.ts
+  # (#4157 A, JS2WASM_SET_MEMBER_F64) +8 lines: one import plus a two-line
+  # "typed twin first" early-out at each of the TWO dynamic member-write sites
+  # (`compilePropertyAssignmentExternSet`, `tryEmitPinnedStructMemberSet`). The
+  # dispatcher, its reserve/fill and every correctness argument live in a new
+  # leaf module (src/codegen/member-set-f64.ts). The site cost is irreducible:
+  # the decision needs the value's ValType, which exists only where the value
+  # has just been compiled onto the stack.
+  - src/codegen/expressions/assignment.ts
+  # (#4157 B, JS2WASM_RECEIVER_CSE) +4 lines: one import, a two-line cache-hit
+  # early-out, and one line recording the resolved receiver. The cache, the
+  # dominance argument and the relocation guard live in a new leaf module
+  # (src/codegen/receiver-cse.ts); what stays here is the `this` lowering they
+  # bracket, which cannot move.
+  - src/codegen/expressions.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  # (#4157 inline cache, entry 14) +5 lines: the arm's ~119 lines of emission
+  # were EXTRACTED to `buildMemberGetInlineCacheArm` per this gate's own advice
+  # (504 -> 390 of a 385 budget). What remains is the call plus its two-field
+  # options object and the two spread sites that consume the result. Squeezing
+  # the last 5 would mean inlining the options object back into a positional
+  # argument list, which is worse code for a budget number.
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  # (#4157 ToNumber fast paths) +4 lines in `coerceType`'s externref->f64 arm.
+  # Splitting a 1,454-line function that is one long from/to type-pair ladder is
+  # a real refactor with its own byte-identity risk, and it would not shrink THIS
+  # change: the early-out has to sit in whichever function owns the pair.
+  - src/codegen/type-coercion.ts::coerceType
+  # (#4157 lazy string flattening) same wiring, seen per-function.
+  - src/codegen/native-strings-basics.ts::emitStrCompareHelpers
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  # (#4157 B receiver CSE) +3 lines seen per-function. `compileExpressionInner` is
+  # the AST-kind switch; a `this` operand is one of its cases and the CSE has to
+  # bracket exactly that case's emission.
+  - src/codegen/expressions.ts::compileExpressionInner
+oracle-ratchet-allow:
+  # (#4157 non-null guard elision, JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR) The
+  # +5 net counted sites all feed the PRE-EXISTING main helper
+  # `isProvablyNonNull(expr, checker?)` (property-access.ts:1074), whose
+  # signature takes the raw `ts.TypeChecker` — the new code adds CALLERS of
+  # that helper at the guard-elision sites, it does not introduce new raw type
+  # queries. Routing through ctx.oracle would mean migrating the helper itself,
+  # a separate refactor out of scope for a flags-off byte-identical PR.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
+  # nonnull-proof.ts's single counted hit is a DOC COMMENT ("`isProvablyNonNull
+  # (expr, ctx.checker)` — passed in to avoid an import cycle", line ~136) —
+  # the module deliberately takes the proof callback injected and holds no
+  # checker reference of its own.
+  - src/codegen/nonnull-proof.ts
+coercion-sites-allow:
+  # (#4157 inline truthy IC, JS2WASM_INLINE_TRUTHY_IC) The pass's whole job is
+  # to rewrite `call $__is_truthy` sites into a guarded speculation whose
+  # slow arm is copied verbatim OUT of the emitted `__is_truthy` helper body —
+  # it must name the helper to find its call sites and read its arms. It adds
+  # no new coercion MATRIX; it relocates the engine's own emission.
+  - src/codegen/is-truthy-inline-ic.ts
+  # (#4157 fused ToNumber, JS2WASM_FUSED_TONUMBER) Replaces the exact pair
+  # `__unbox_number(__to_primitive(x))` with one `__to_number` — it has to name
+  # the two helpers it fuses to match and replace them. The fused helper is
+  # emitted from the same engine vocabulary, not a fresh hand-rolled matrix.
+  - src/codegen/tonumber-fast-paths.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -1327,3 +1421,2549 @@ and the typed-receiver ABI it enables is worth a cast per call on ~4 % of
 runtime. Its acceptance test is a `__dc_*` trampoline reserved with a
 `(ref $__fnctor_F)` receiver that validates — the case the ABI note says fails
 today with `call[1] expected type externref`.
+
+## 2026-08-12 (6) — CORRECTION to entry (5): the fixup walk is not the blocker
+
+Entry (5) above says the `__dc_*` trampolines are stuck on an `externref` ABI
+because `applyRefNullFixups` "walks backwards mapping one instruction per
+parameter", and prescribes rewriting that walk to use `instrPopsPushes`. **That
+prescription is wrong, because the rewrite already exists.** Measured, not
+argued.
+
+`src/codegen/fixups.ts` gained an exact FORWARD stack model in **#4077** —
+`locateCallArgProducers`, which threads `instrPopsPushes` through the
+instruction list and records, per call, exactly which instruction produced each
+argument. The hand-rolled backward walk entry (5) describes is only the
+**fallback** for calls that model could not reach. The ABI note in
+`typed-this.ts` was written for #3683 and predates it.
+
+Instrumenting `locateCallArgProducers` over the standalone acorn build
+(env-gated counters, reverted after measuring; checksum 422 held):
+
+| | count |
+| --- | ---: |
+| calls modelled EXACTLY by the forward model | **48,670** |
+| calls falling through to the legacy backward walk | **672** (1.36 %) |
+| instruction lists abandoned before the end | 12,266 |
+
+And the reason those lists abandon is not a modelling gap — it is **terminators**:
+
+| break-on op | lists |
+| --- | ---: |
+| `return` | 5,812 |
+| `throw` | 4,316 |
+| `br` | 1,445 |
+| `return_call` | 664 |
+| `unreachable` | 16 |
+| `rethrow` | 6 |
+| `local.tee` / `local.set` | 6 |
+| `br_table` | 1 |
+
+Every op above except the six `local.tee`/`local.set` is a **terminator**, after
+which the rest of that flat list is unreachable. Abandoning there is *correct*,
+not a defect, and the calls counted as "lost" are overwhelmingly in dead code —
+where Wasm validation is polymorphic anyway, so a mis-rewrite is inert.
+
+**Consequences:**
+
+1. **Do not "fix the walk".** It is exercised by 1.36 % of calls, nearly all
+   unreachable. Rewriting it is work with no measurable payoff, and entry (5)
+   should not be read as scoping that task.
+2. **The `__dc_*` typed-receiver ABI may already be unblocked.** The note's own
+   worked failure — acorn's
+   `this.parseExprOp(this.parseMaybeUnary(null, false, false, forInit), …)`,
+   where each `false` is two instructions — is exactly what the forward model
+   handles exactly. The cheap experiment is therefore **not** a fixup rewrite: it
+   is to reserve a `__dc_*` trampoline with `(ref $__fnctor_F)` as parameter 0,
+   drop the `extern.convert_any` at the call site and the
+   `any.convert_extern; ref.cast` in the body, and see whether it validates.
+   That is a small, self-contained change with an immediate pass/fail answer.
+3. The ~4 % self-time figure for the `__dc_*` family in entry (5) stands — that
+   was measured from the profile and is unaffected. Only the *diagnosis of what
+   blocks it* was wrong.
+
+Recorded rather than silently amended: entry (5) is published in PR #4429, and a
+prescription that sends the next lane to rewrite a 4,000-line-file hot path for
+1.36 % of calls in dead code is exactly the kind of confident-but-wrong direction
+this file exists to prevent.
+
+## 2026-08-12 (7) — the typed-receiver ABI, priced before building: ~0.6 %, below the floor
+
+Entry (6) established that the fixup hazard is gone and the typed-receiver
+experiment is cheap. Reading the fill body prices it, and the answer is: **do not
+build it.**
+
+### Only UNGUARDED trampolines can take a typed receiver
+
+`fillDirectCallTrampolines` emits, for an unguarded (`this`-receiver, sound by
+construction) trampoline:
+
+```
+local.get 0 ; any.convert_extern ; ref.cast $F ; local.get 1..n ; <pads> ; call twin
+```
+
+The guarded (`_g`) form instead emits `local.get 0 ; any.convert_extern ;
+ref.test $F ; if …then cast+call twin …else legacy`. That `ref.test` is the whole
+point of the variant: the receiver's shape comes from a whole-program flow
+verdict, and the guard turns an imprecision into a missed optimisation instead of
+a trap. A typed `(ref $F)` parameter would force the **call site** to produce the
+struct — i.e. to cast — which reintroduces exactly the trap the guard exists to
+prevent. **`_g` cannot take a typed receiver at all**, and that is a soundness
+fact, not a limitation to engineer around.
+
+### The split, from the profile
+
+| | self % |
+| --- | ---: |
+| unguarded `__dc_*` (typed receiver possible) | **≈ 1.29 %** |
+| guarded `__dc_*_g` (must keep externref + `ref.test`) | ≈ 2.80 % |
+
+The change removes `any.convert_extern; ref.cast` from the body and
+`extern.convert_any` from the call site. For a low-arity unguarded trampoline
+(`__dc_Parser_next_0` is 4 instructions total) that is about **half the body** —
+a good ratio, but applied to 1.29 %, so **≈ 0.6 % of runtime**.
+
+### Verdict
+
+0.6 % sits at or below this box's demonstrated resolution (±0.3–0.5 pp; see the
+two order-reversed nulls in entries (2) and (4)). Building it means a real
+change to the hottest call path in the compiler, touching reserve, both call-site
+paths and the fill's legacy-degradation arm, for a result this session has three
+times shown it cannot measure at that scale.
+
+**Priced out, not attempted.** If someone later makes unguarded trampolines a
+much larger share — e.g. by widening the receiver-flow analysis so fewer sites
+need `_g` — re-price it then; the arithmetic above is the template.
+
+## 2026-08-12 (8) — strategic close: helper-level work on acorn is finished
+
+Seven levers were priced in this session. Every one that could be measured
+measured null, and every one that could not be measured priced below the floor:
+
+| lever | verdict |
+| --- | --- |
+| ladder screen for plain-object receivers | measured NULL, ±0.3 pp |
+| abstract-`eq` casts on the cache hit path | measured NULL, ±0.5 pp |
+| smarter per-key cache (N-way / shape-keyed) | priced out — thrash is 3.77 % |
+| rewrite the `applyRefNullFixups` walk | priced out — 1.36 % of calls, dead code |
+| typed-receiver `__dc_*` ABI | priced out — ≈ 0.6 %, below floor |
+| regex AOT specialization | ≈ 0.7 % of acorn (82 % of patterns are runtime-built) |
+| site/name-local inline caching | **≈ 5 %, the only survivor above the floor** |
+
+The allocation program did work — GC 23.1 % → 2.97 %, roughly 9 ms of the 100 ms
+gap. But it is spent, and what replaced it at the top of the profile does not
+yield to the same technique.
+
+**The measured floor is the point.** The 2026-08-08 cross-runtime table already
+said it: Node spends 92.9 % of its parse inside acorn's own code; this build
+spends 37.1 % there. Removing **every** helper, GC and regexp millisecond leaves
+42.5 ms vs 14.1 ms ≈ **3.0×**. The compiled scanner and parser are 3.1× and 3.5×
+slower than the JIT'd equivalents, and that residue is register allocation,
+inlining and inline-cache-class work on the emitted code — not helper elision.
+
+So "on par with Node on acorn" is **not reachable by the programme this umbrella
+has been running**, and no combination of the levers above closes it. The
+remaining honest paths are (a) the ~5 % inline-cache slice, which is worth doing
+on its own merits, and (b) a genuinely different programme aimed at the quality
+of emitted code for hot compiled functions. (b) is where the 3× lives and nothing
+in this issue currently targets it.
+
+## 2026-08-12 (9) — outlining the cold path: net null, but it DECOMPOSES the helper
+
+The entry-(8) survivor is "remove the CALL to `__extern_get`". The expensive way
+is emitting a cache check into 1,812 call sites. This tried the cheap way first:
+**outline the cold path** so the remaining function is small enough for
+`wasm-opt`'s existing inliner to hoist at every site — no call-site emission at
+all.
+
+Implementation (reverted): after `unshiftExternGetProtoCacheArm`, split the body
+at the cache arm — `__extern_get` keeps the arm and calls a new
+`__extern_get_cold` holding everything else, same signature, same locals, plain
+`call` so it does not depend on tail calls. Shape-guarded (refuses unless the
+first four instructions are exactly the cache arm) and env-gated, so the A/B is a
+pure flag flip with no file copies. Checksum 422 held.
+
+Order-reversed **ON → OFF → OFF → ON**:
+
+| block | `__extern_get` | `__extern_get_cold` | sum | dynamic-lookup |
+| --- | ---: | ---: | ---: | ---: |
+| onA | 6.24 % | 2.13 % | 8.37 % | 15.84 % |
+| offA | 8.67 % | — | 8.67 % | 16.59 % |
+| offB | 8.74 % | — | 8.74 % | 16.22 % |
+| onB | 6.51 % | 2.27 % | 8.78 % | 16.39 % |
+
+**`__extern_get` alone falls 8.71 % → 6.38 %, −2.33 pp, with both ON blocks
+cleanly below both OFF blocks** — the first real separation this session
+produced. But it is a relocation, not a saving: the 2.2 pp reappears in
+`__extern_get_cold`, sum 8.58 % vs 8.71 %, **net −0.13 pp = noise**, and wall
+clock trended ~3 % *worse* under ON in both blocks (below resolution, but the
+sign is consistent).
+
+**`wasm-opt` did not inline the prologue, and the reason is an error in my own
+sizing.** I counted the cache arm as "four instructions" — that is four
+*top-level* instructions, one of which is an `if` carrying the entire cache
+check. The real prologue is ~45 instructions, far past any sane inlining budget
+at 1,812 sites. Function-splitting cannot make this inlinable; only emitting at
+the call site can.
+
+### The part worth keeping: the helper now decomposes
+
+The split is a measuring instrument even though it is not an optimisation, and
+it answers a question no earlier entry could:
+
+| half of `__extern_get` | self % | share |
+| --- | ---: | ---: |
+| cache-hit prologue | **6.38 %** | **73 %** |
+| entire cold path — field ladder, own-property walk, proto walk | 2.20 % | 27 % |
+
+This confirms entries (1)–(4) from a new direction and sharpens them. The 87.24 %
+hit rate is not just most of the *calls*, it is **73 % of the helper's time**;
+the 15,032-instruction ladder everyone's eye is drawn to is a quarter of it. It
+also explains both earlier nulls exactly: entry (2) optimised the cold path
+(27 %) and entry (4) shaved two instructions off a prologue that is ~45.
+
+**Consequence for the named slice.** Call-site inline caching now looks *better*
+than entry (2)'s ~5 % estimate, because the target is the 6.38 pp prologue, and
+inlining removes both the call and — since the key is a compile-time constant at
+a static-name site — the key `ref.test` + `ref.cast` + hash load that the shared
+helper must do generically. That is the one thing in this file still worth a
+budget window.
+
+Fourth measured null of the session, and the most useful one.
+
+## 2026-08-12 (10) — implementation spec for the surviving lever
+
+Everything needed to build the call-site inline cache is now measured. This is
+the spec, so the next window starts at code rather than at re-derivation.
+
+### Target and expected value
+
+The **cache-hit prologue of `__extern_get`, 6.38 % of runtime** (entry 9's
+decomposition). Inlining it at a static-name read site removes:
+
+1. the **call** itself (~506 k per parse);
+2. the key `ref.test $HashedString` + `ref.cast` — at a static-name site the key
+   is a compile-time constant, so its type is known;
+3. the hash load / `__obj_hash` fallback — likewise constant-folded;
+4. the receiver re-classification (`ref.null; local.set; ref.test $Object;
+   …; ref.is_null; i32.eqz`), which collapses to one `ref.test $Object`.
+
+What remains inline is the actual validity check — owner `ref.eq`, props
+`ref.eq`, flags test, value read — roughly **10 instructions against a call plus
+~45**.
+
+### Insertion point
+
+`fillMemberGetDispatch` in `src/codegen/member-get-dispatch.ts`, as a **new
+leading arm of `__get_member_<name>`**, ahead of every existing arm, falling
+through unchanged on a miss. Two reasons this beats emitting at each of the 1,812
+raw call sites: the dispatcher is **per NAME (~300)** rather than per site, so
+size grows ~6× less; and the name is fixed inside it, which is what makes (2)
+and (3) above constant-foldable.
+
+**This requires widening dispatcher reservation.** Today `__get_member_<name>`
+is only reserved when some closed struct carries the field — which is exactly why
+acorn's hottest names (`locations`, `ranges`, `ecmaVersion`, `onToken`) have
+none and emit a direct `__extern_get` call instead. Reserve one for any
+static-name read, struct candidates or not.
+
+### The sequence (all indices verified against current source)
+
+```
+;; key: `nativeStringLiteralInstrs(ctx, propName)` — resolves to a `global.get`
+;; of the interned $HashedString (or a materializer call), NOT a fresh string.
+;; That shared identity is what makes the existing per-key cache work at all.
+local.get 0 ; any.convert_extern ; ref.test $Object
+if
+  local.get 0 ; any.convert_extern ; ref.cast $Object ; local.tee $o
+  <key> ; struct.get $HashedString 4          ;; populated flag
+  if
+    <key> ; struct.get $HashedString 5        ;; cacheOwner (anyref)
+    ref.cast_null (ref null eq) ; local.get $o ; ref.eq
+    local.get $o ; struct.get $Object 1       ;; props
+    <key> ; struct.get $HashedString 7        ;; cacheProps (anyref)
+    ref.cast_null (ref null eq) ; ref.eq
+    i32.and
+    if
+      <key> ; struct.get $HashedString 6      ;; cacheEntry
+      ref.cast $PropEntry ; local.tee $e
+      struct.get $PropEntry 2                 ;; flags
+      i32.const (FLAG_TOMBSTONE | FLAG_ACCESSOR) ; i32.and ; i32.eqz
+      if
+        local.get $e ; struct.get $PropEntry 1 ; extern.convert_any ; return
+      end
+    end
+  end
+end
+;; fall through to the existing arms
+```
+
+Field indices: `$HashedString` `{0 len, 1 off, 2 data, 3 hash, 4 cacheGen/
+populated, 5 cacheOwner, 6 cacheEntry, 7 cacheProps}` (`registry/types.ts`);
+`$Object` field 1 = props; `$PropEntry` field 1 = value, field 2 = flags.
+
+**Population stays where it is** — inside `__extern_get`'s own data-property
+branch. The inline arm is read-only, so a miss simply falls through and the
+existing helper populates for next time. Nothing about cache lifetime changes.
+
+### Traps, each already paid for once
+
+- **Size the prologue by TOTAL instructions, not top-level ones.** Entry (9)
+  failed because "four instructions" was four *top-level* ones, one an `if`
+  carrying ~45. Budget the arm at its real depth before assuming anything about
+  `wasm-opt`.
+- **`ref.cast_null (ref null eq)`, not a concrete cast**, on the two `ref.eq`
+  operands (typeIdx `-19`; `-19 /* eq */` is an established idiom in
+  `vec-overlay.ts`). Sound because `ref.eq` is identity: a non-owner cannot
+  compare equal, so a would-be trap becomes a cache miss. Entry (4) measured this
+  as null *on its own* — it is bundled here because the arm is new code, not
+  because it pays by itself.
+- **Do not reorder against the existing arms.** Wrapping rather than reordering
+  is what kept #4424's screen sound, and the same argument applies: a miss must
+  reach the existing ladder in its current order.
+- **Consumer-side narrowing (#1269) is the sharp edge.** #4217's `generator`
+  defect came from a candidate-set vote that silently omitted a carrier. A new
+  arm that answers some reads earlier must not change which reads the Phase-3
+  narrowing sees, or the same class of bug returns — and it presents as one
+  wrong field out of 64, not as a crash.
+
+### Acceptance
+
+- `npx tsx tests/dogfood/cold-tail-census.mjs` → `"checksum":422`.
+- Per-field differential over all 64 ESTree names, **both** read paths — the
+  #4217 lesson is that the defect is invisible to a computed read and uniform in
+  a named one. `tests/dogfood/cold-tail-differential.mjs` is committed.
+- Order-reversed ON/OFF/OFF/ON on `standalone-dynamic`. **Report the bucket, not
+  just the frame** — entry (9) moved 2.33 pp between frames for a net 0.13 pp,
+  and only the bucket total exposed that.
+- Env-gate it, so the A/B is a flag flip rather than file copies.
+
+Predicted movement: a **fall in `dynamic-lookup` as a whole**, since the hit path
+stops being a call. If `__extern_get` drops but the bucket does not, the work was
+relocated again, not removed.
+
+## 2026-08-12 (11) — the load-bearing number, verified rather than inherited
+
+Every "this cannot be closed by helper work" conclusion in entries (8)–(10)
+rests on ONE inherited number: the 2026-08-08 cross-runtime table's **≈3.0×
+floor**. That table's own text flags the weak spot — Node's measurement swung
+**14.1 / 18.8 / 21.9 ms** across three runs, and the floor was computed from the
+*fastest* of them. Twice this session a written claim turned out to be stale
+(the `typed-this.ts` ABI note; my own entry 5), so this one was re-derived from
+the raw samples of this session's own lane run rather than quoted.
+
+Nine measured rounds, `standalone-dynamic`, checksum 422:
+
+| | median | spread |
+| --- | ---: | --- |
+| wasm | **138.3 ms** | 115.7 – 145.8 ms |
+| node | **19.9 ms** | 17.7 – 23.4 ms (**28 % of median**) |
+| **ratio** | **6.96×** | |
+
+**Two things this settles.**
+
+1. **~7× is right.** 6.96× from this run's own medians, independent of the
+   profiler-window arithmetic every earlier entry used. The standing figure was
+   not an artifact.
+2. **The floor holds, and slightly tighter than claimed.** Today's profile puts
+   acorn's own compiled code (`compiled` 21.37 % + `scanner` 18.63 %) at
+   **40.0 %** of self time. Deleting every other millisecond — helpers, GC,
+   regexp, casts, string runtime, the lot — leaves 55.3 ms against Node's
+   19.9 ms: **2.78×**. The inherited 3.0× was honest; the correction is
+   downward and does not change the conclusion.
+
+**And it re-derives the measurement floor from first principles.** Node's own
+median varies by 28 % run to run and wasm's by 22 %. That is why §6 of #3927
+rules wall-clock A/Bs under ~10 % unresolvable on this box, and why every
+verdict in this file is bucket share with order-reversal controls rather than a
+stopwatch. An A/B claiming a 5 % wall-clock win here would be reading noise
+four times its own size.
+
+So the programme's conclusion stands on a number that has now been checked, not
+assumed: **parity with Node on acorn is unreachable by helper elision**, because
+2.78× of it is the quality of the code emitted for acorn's own scanner and
+parser — register allocation, inlining, inline caches — and nothing in this
+umbrella targets that.
+
+## 2026-08-12 (12) — the OTHER lane, measured for the first time: JS-host is 342×
+
+Every number in this file is `standalone-dynamic`. The handoff calls that "the
+only quotable lane", but the reason given only ever covered `standalone`
+(compile-time-static, whose huge ratios are the parse being constant-folded).
+**The `js-host` lane had never been measured**, and if acorn were materially
+closer to Node there, every conclusion in entries (8)–(11) would be answering
+about the wrong lane. So it was run.
+
+| lane | wasm median | node median | ratio |
+| --- | ---: | ---: | ---: |
+| `standalone-dynamic` | 138.3 ms | 19.9 ms | **6.96×** |
+| `js-host` | **5,357.2 ms** | 15.6 ms | **342.6×** |
+
+Checksum 422 on both — the JS-host build is correct, just catastrophically slow.
+
+**Two conclusions, one of them uncomfortable for the architecture doc.**
+
+1. **`standalone-dynamic` is not merely the quotable lane, it is by far the best
+   one.** The 6.96× figure is the honest best case, and every verdict in this
+   file is about the right target. That question is now closed with a number.
+2. **CLAUDE.md describes JS-host mode as using "host imports for
+   performance/completeness."** On acorn that is inverted by a factor of **39×**:
+   the same workload runs 138 ms pure-Wasm and 5,357 ms through host imports.
+   Every dynamic property read that becomes a host call pays a wasm↔JS boundary
+   crossing, and acorn does ~506 k of them per parse — the same population entry
+   (1) identified. Pure WasmGC is not the fallback for this workload; it is the
+   fast path, by a wide margin.
+
+(2) deserves its own issue and is out of this umbrella's scope — the architecture
+principle is written as a general rule and this is one workload, dominated by
+exactly the operation the boundary punishes most. But "host imports for
+performance" should not be read as established for anything read-heavy without
+measuring it, and nobody had.
+
+## 2026-08-12 (13) — the spec from §10 was BUILT. It is a regression. Here is why.
+
+Entry (10) specced call-site inline caching as the one surviving lever. It was
+implemented, validated (checksum 422, +26,491 B / +1.06 %) and measured
+order-reversed. **It makes things worse**, consistently, in both blocks:
+
+| block | `__extern_get` | **dynamic-lookup** | wall |
+| --- | ---: | ---: | ---: |
+| onA | 8.23 % | **19.45 %** | 53,046 ms |
+| offA | 8.59 % | 16.14 % | 49,120 ms |
+| offB | 8.58 % | 16.19 % | 48,268 ms |
+| onB | 8.40 % | **19.88 %** | 50,217 ms |
+
+`__extern_get` itself barely moves (−0.27 pp), the **bucket rises 3.50 pp**
+(16.17 → 19.67) and wall clock is **~6 % worse** — far outside the noise that
+made every earlier verdict a null. Reverted.
+
+### The cause, which was foreseen and then overridden
+
+Before building, this was written down: *"the names that have a dispatcher have
+one because a closed struct carries the field, so their reads hit struct arms,
+not the cache — the arm would almost never fire."* That objection was then
+dropped on discovering `reserveMemberGetDispatch` is called **unconditionally**
+for static-name reads (`property-access-dispatch.ts:3893`), not gated on struct
+candidates.
+
+Both facts are true, and together they are the defect. Because reservation is
+unconditional, **every** static name gets a dispatcher — including the many whose
+reads are answered by a struct arm a few instructions later. Prepending the cache
+check to all of them makes those reads pay ~15 instructions of `ref.test` /
+`struct.get` / `ref.eq` that cannot possibly hit, before reaching the arm that
+was already answering them. The population that *would* hit is a minority of
+dispatchers, and it did not pay for the tax on the rest.
+
+Secondary effect, same direction: the arm inflates each dispatcher past the size
+where `wasm-opt` was inlining the trivial ones, so reads that used to fold into a
+direct call now pay a real one. That is the same sizing mistake as entry (9),
+arriving from the other end.
+
+### The refinement, and the honest caveat about it
+
+The obvious fix is to emit the arm **only for dispatchers with no struct
+candidates** — precisely acorn's `locations` / `ranges` / `ecmaVersion` /
+`onToken`, which are read off the plain `options` object and have no closed
+struct carrying them. That is a one-line gate on the existing candidate list.
+
+It is **not** validated, and it should not be assumed to work: this entry exists
+because the last confident prediction here was wrong by 3.5 pp in the wrong
+direction. It also cannot recover more than the hit path is worth, and entry (9)
+put that at 6.38 pp *including* work the check still has to do.
+
+**Sixth measured attempt, and the first regression rather than a null.** The
+value is that the surviving lever from entry (8) is no longer a hypothesis: it
+has been built and it does not work as specced. Anyone picking it up starts from
+a measured failure and a named refinement, not from §10's optimism.
+
+## 2026-08-12 (14) — the gated inline cache: LANDED FLAG-OFF, measurement still owed
+
+Entry (13)'s named refinement — emit the cache arm **only** for dispatchers no
+closed struct carries — is implemented and committed **default-OFF**.
+
+| flag | checksum | binary |
+| --- | --- | ---: |
+| `JS2WASM_MEMBER_GET_IC` unset / `0` | 422 | **2,490,829 — byte-identical to base** |
+| `JS2WASM_MEMBER_GET_IC=1` | 422 | 2,492,413 (+1,584 B) |
+
+The byte-identical off-state is the guarantee #4211 established for the hot/cold
+split, and the +1,584 B on-state confirms the gate bites: the ungated ancestor
+cost +26,491 B, so this touches roughly a fifteenth as many dispatchers.
+
+**Why flag-OFF and not default-on: the A/B is contaminated and I am not quoting
+it.** Two order-reversed runs were launched into the same output directory (one
+backgrounded, one `nohup`-ed after an interruption appeared to kill the first).
+The file timestamps give it away — `offB` at 01:52 predates `offA` at 01:55,
+which is impossible for a single sequential run — and one OFF block came in at
+59,944 ms against ~50,500 ms for its siblings, the signature of CPU contention
+between two concurrent profile runs. The numbers trended the right way in all
+three affected buckets, which is exactly why they must not be quoted: a
+contaminated run that agrees with the hypothesis is the easiest kind of evidence
+to accept by mistake.
+
+**What is owed before this flips on:** one clean order-reversed ON/OFF/OFF/ON
+with nothing else on the box, reporting `dynamic-lookup` **and** `cast-convert`
+(the cache arm returns a boxed value, so any saving may land in either), plus
+the per-field differential over all 64 ESTree names in **both** read paths per
+the #4217 lesson.
+
+**And a prior to hold while doing it.** The gate fixes entry (13)'s regression by
+construction — it removes the arm from precisely the dispatchers that were being
+taxed — but fixing a regression is not the same as producing a win. The eligible
+population is small (+1,584 B is on the order of a dozen names), and if acorn's
+hottest generic reads do not sit in it, the honest result is another null. This
+is the eighth attempt in this file; five were nulls and one was a regression.
+
+## 2026-08-12 (15) — codegen-level breakdown, both runtimes
+
+Profile buckets say where time goes; this says what the compiler *emitted* to
+make it go there. Disassembled the standalone acorn build (`wasm-dis`, names
+preserved) and counted.
+
+**Compiled acorn: 1,134 functions, 773,232 WAT lines, 35,403 calls — 99.2 % of
+them into runtime helpers.** Compiled acorn code barely calls itself.
+
+| | JS | our wasm | V8 |
+| --- | ---: | ---: | ---: |
+| `pp.next` | 10 lines | **981 WAT lines, 34 helper calls** | ~12 inline IC sites |
+| `pp$2.finishNode` | 5 lines | 177 WAT lines, 6 calls | ~6 inline sites |
+
+Static call sites by category:
+
+| category | sites | share |
+| --- | ---: | ---: |
+| other runtime (`__new_TypeError` alone is 3,917) | 9,598 | 27.3 % |
+| property read | 4,672 | 13.3 % |
+| string runtime | 3,854 | 11.0 % |
+| devirt trampolines | 3,820 | 10.9 % |
+| unboxing | 3,146 | 9.0 % |
+| boxing | 2,740 | 7.8 % |
+| property write | 1,672 | 4.8 % |
+| truthiness | 1,581 | 4.5 % |
+| generic property read | 1,376 | 3.9 % |
+| method dispatch | 1,270 | 3.6 % |
+| coercion | 1,168 | 3.3 % |
+
+### Cross-runtime, per parse
+
+| phase | wasm | node | ratio |
+| --- | ---: | ---: | ---: |
+| acorn's own code | 55.3 ms | 14.9 ms | 3.7× |
+| GC | 4.1 ms | 5.0 ms | **0.82×** |
+| runtime helpers | **78.9 ms** | **0 ms** | — |
+| total | 138.3 | 19.9 | 6.95× |
+
+Gap 118.4 ms = helpers 78.9 (67 %) + code quality 40.4 (34 %) + GC −0.9 (−1 %).
+
+**We now beat V8 on GC in absolute terms** (4.1 ms vs 5.0 ms). Node's profile is
+74.76 % acorn's own functions and 25.24 % GC, with **no helper layer at all** —
+which is the entire story. (Caveat: node's profile window was 9,081 ms against
+300 × 19.9 = 5,970 ms of parse, so ~34 % is harness/profiler overhead and the
+25.24 % GC share should be read as ±several points.)
+
+### Two findings worth acting on
+
+- **`__new_TypeError` at 3,917 static sites is the single largest emitted item.**
+  V8 gets null-dereference TypeErrors free from the MMU — the load faults and a
+  signal handler raises. We emit an explicit test plus constructor call at every
+  member access. Pure spec-compliance tax, almost entirely cold, and it inflates
+  every function past `wasm-opt`'s inlining budget. Eliding it where the receiver
+  is provably non-null is a **code-size** lever, and code size is what blocks
+  inlining.
+- **Our code size is itself an optimisation barrier.** 682 WAT lines per function
+  average means almost nothing qualifies for inlining. That is the mechanism
+  behind entry (9)'s failure, and it means size reductions may buy speed
+  indirectly in a way none of this file's measurements would attribute to them.
+
+## 2026-08-13 (16) — GUIDANCE FROM THE BINARY: one defect feeds three of the four workstreams
+
+The disassembly in entry (15) showed five helpers appearing at suspiciously
+similar counts. Five helpers at one count means **one emission pattern**, not
+five problems. Chasing it found the largest single actionable item in the file.
+
+### The residual abstract-equality cascade — 686 inline copies
+
+`src/codegen/binary-ops.ts` documents the shape in its own comment (~line 1083):
+an equality whose operands are not both statically `number` emits, INLINE:
+
+```
+__extern_is_nullish ×2 → __extern_is_undefined ×2 → __typeof_number ×2 →
+__unbox_number ×2 → __typeof_boolean ×2 → __unbox_boolean ×2 →
+__typeof_bigint ×2 → __to_bigint ×2 → __str_flatten ×2 → __str_equals → ref.eq
+```
+
+The comment's own words: *"~35 instructions and TWO STRING COMPARISONS for
+`tk[i] === 40`, on a tokenizer's hottest line."* #3688 fixed the case where the
+checker proves both operands `number`. **686 sites still emit it**, measured from
+the disassembly:
+
+| co-emitted helper | sites |
+| --- | ---: |
+| `__unbox_boolean` | 745 |
+| `__typeof_number` | 703 |
+| `__typeof_boolean` | 695 |
+| `__typeof_bigint` | 686 |
+| `__to_bigint` | 686 |
+
+`__to_bigint` at 686 sites in **acorn**, a parser that barely touches BigInt, is
+the tell.
+
+### It is the largest cause of the "string" bucket
+
+**682 of the 686 cascade sites have `__str_flatten` co-located.** At two per
+cascade that is **~1,364 of 2,497 `__str_flatten` sites — 55 %** — plus a large
+share of the 2,644 `__str_equals`.
+
+So `string-runtime` at 4.39 % of runtime is **not mostly string work**. It is an
+equality lowering emitting two string comparisons at every site where it cannot
+prove the operands aren't strings.
+
+### And the fix already exists, unused
+
+| helper | defined | called |
+| --- | ---: | ---: |
+| `__any_eq` | 1 | **1** |
+| `__any_strict_eq` | 1 | **1** |
+| `__extern_strict_eq` | 1 | 117 |
+
+**The outlined cascade is already a function and is called exactly once**, while
+686 sites emit it inline. Whatever the original reason, the effect today is
+~686 × 35 ≈ **24,000 instructions** of duplicated code.
+
+### Why this reprioritises the workstreams
+
+| workstream | how the cascade changes it |
+| --- | --- |
+| **lazy strings** | 55 % of the target sites are cascade artifacts. Making `__str_flatten` cheaper treats a symptom; removing the cascade deletes 1,364 sites outright. Re-scope to the genuine string work and let this be handled once. |
+| **boxing/unboxing** | The cascade *is* the redundant box→unbox pattern at scale: `__unbox_number` ×2 and `__unbox_boolean` ×2 per site, on operands it has just type-tested. |
+| **inlining** | ~24,000 instructions is pure function-size inflation, and size is the binding constraint on `wasm-opt`'s inliner (the 11-vs-45-instruction cliff of entry 9). This is the cheapest large size cut available. |
+
+**Two routes, and they are not equivalent.** (a) Route the 686 sites through the
+existing `__any_eq` — a code-size win with a *new call* per site, so it may cost
+time even as it shrinks the binary; entry (9) is the cautionary precedent for
+exactly that trade. (b) Widen #3688's numeric-hint gate so more sites prove their
+operands and skip the cascade entirely — strictly better where it applies,
+because it removes the work rather than relocating it, but it only reaches sites
+the checker (or `ctx.oracle`) can actually prove.
+
+**(b) first, (a) for the residue.** And note #3688's own warning: narrowing the
+comparison while leaving operands boxed is the partial-narrowing shape that
+measured as a **2.7× pessimization** in #3673 round 36. The hint must propagate
+down into the operand emitters, not just the comparison.
+
+## 2026-08-13 (17) — helper body sizes, and the one bucket nobody is working
+
+Sizes of the hot helpers, from the same disassembly (`optimize: 0`, names
+preserved). Read these against the inlining cliff of entry (9): `wasm-opt`
+inlined an 11-instruction helper at 1,255 sites and declined a ~45-instruction
+one at 1,812.
+
+| helper | wat lines | inner calls | static sites | runtime |
+| --- | ---: | ---: | ---: | ---: |
+| `__to_primitive` | **642** | **46** | 1,235 | 1.84 % |
+| `__extern_strict_eq` | 264 | 4 | — | 2.65 % |
+| `__is_truthy` | **126** | **0** | **1,655** | **3.93 %** |
+| `__extern_is_nullish` | 53 | 0 | 424 | 0.34 % |
+| `__unbox_boolean` | 31 | 0 | 745 | — |
+| `__box_boolean` | 14 | 0 | 1,212 | — |
+
+Three things fall out.
+
+**`__to_primitive` at 642 lines and 46 inner calls confirms the fusion slice.**
+It is the largest helper on this list by a factor of two and it is called at
+1,235 sites, **1,092 of which immediately unbox the result to f64** (entry 15).
+Materializing a boxed intermediate through a 642-line, 46-call helper and then
+discarding it is the most expensive redundant round trip in the program.
+
+**`dynamic-eq` is 6.93 % of runtime and has no owner.** `__is_truthy` (3.93 %)
+plus `__extern_strict_eq` (2.65 %) is a bigger bucket than `string-runtime`
+(4.39 %), and larger than the `regexp` bucket the whole AOT-matcher programme
+targets. Four workstreams are live — boxing, property access, inlining, strings —
+and none of them covers it.
+
+**`__is_truthy` is the cleanest inline-fast-path candidate in the program.** It
+is 126 lines with **zero inner calls**, so it is self-contained, and it sits at
+1,655 sites and 3.93 % of runtime. It is far past the inlining cliff, so
+`wasm-opt` will never hoist it — but it does not need to be hoisted whole. JS
+truthiness is false only for `undefined`, `null`, `false`, `0`, `-0`, `NaN` and
+`""`; the acorn-dominant operands are i31-packed integers and boxed booleans.
+A site-inlined guard of roughly:
+
+```
+ref.test i31   -> if: i31.get_s ; i32.eqz ; i32.eqz          (covers 0 vs non-0)
+ref.test $BoxedBoolean -> if: struct.get <flag>
+else           -> call __is_truthy                            (unchanged)
+```
+
+is under ten instructions and leaves the helper as the terminal arm, so it is a
+pure fast-path addition with no semantic surface — the shape that has worked
+here, as opposed to the reordering and outlining shapes that measured null.
+
+**Deliberately NOT started.** `__is_truthy` is emitted from several lowerings
+including the binary-op path that the in-flight `inlining` workstream owns
+(`binary-ops.ts` / `binary-ops-typed-dispatch.ts`, entry 16). Opening a fifth
+concurrent edit into shared emission would risk a conflict worth more than the
+delay. This is the next dispatch once one of the four lands.
+
+## 2026-08-13 (18) — the inliner question is backwards: the IR knows more than `wasm-opt`
+
+Everything in this file so far has asked *"how do we get under binaryen's size
+threshold"* — entries (2), (4), (9), (13) and (14) are all variations on it, and
+all measured null or worse. The premise deserves challenging.
+
+Two facts, verified:
+
+- **`src/optimize.ts` passes no inlining configuration at all** — only
+  `setOptimizeLevel` and `--all-features`. Binaryen has been running default
+  heuristics with zero guidance for the entire programme.
+- **There is no IR-level inliner.** All inlining is delegated to a pass that sees
+  a flat module with the type facts already erased.
+
+### What the IR knows that a flat wasm module cannot express
+
+1. **Which functions are adapters.** The `__dc_*` family is ~25 tiny functions
+   carrying **~4 % of runtime in pure self-time**; a trampoline's whole body is
+   overhead *by construction*. Binaryen sees ordinary functions and applies a
+   size heuristic. The IR knows what they are.
+2. **Types — and this is the load-bearing one.** Binaryen inlines *then*
+   optimises, over generic code, against a size budget. The IR can inline *with*
+   semantics: inline `__get_member_<name>` at a site whose receiver struct type
+   is already known, and the `ref.test` folds to a constant, the fallback arm
+   goes dead, and what remains is a `struct.get`. **The inlined result is smaller
+   than the callee** — so the cliff that blocked every attempt above does not
+   apply in the same way. `wasm-opt` cannot reach this: the facts are gone by the
+   time it runs.
+3. **Structural hotness.** Loop nesting depth is free in the IR and invisible to
+   a size heuristic — a call in the tokenizer loop versus one on a throw path.
+4. **Cold-by-construction callees.** The 3,917 `__new_TypeError` paths should
+   never be inlined, and arguably should not count against a caller's budget at
+   all.
+
+### Why this reframes the whole programme
+
+The recorded failures share a shape: each tried to shrink a *generic* helper
+until a *generic* inliner would take it. Point 2 says that is the wrong axis.
+Specialising at the inline site makes the code smaller **because** it is
+inlined — the opposite of the trade every attempt above was making.
+
+**Order of work** (dispatched to the in-flight inlining workstream):
+
+1. **Cheap and decisive first:** find what this binaryen version actually exposes
+   (inlining thresholds, always-inline, `--inline-functions-with-loops`) and pass
+   it from `optimize.ts`. If a threshold bump alone inlines the hot helpers, that
+   is a two-line change and must be measured before anything is built.
+2. **Then IR-level inlining as the primary design**, not a fallback. Even a
+   narrow cut — `__dc_*` trampolines only, or monomorphic-by-type helper calls
+   where the inlined form constant-folds — tests the "specialise while inlining"
+   claim, which is the part that would make it strictly better than a threshold
+   bump.
+3. **Keep the stacked-nulls slice as the control.** If IR inlining works, the
+   residual-instruction-count question stops mattering; if it does not, that
+   slice bounds the approach.
+
+Credit where due: this reframing came from the project lead, not from the
+measurements. The measurements had been circling the same premise for five
+attempts without questioning it.
+
+## 2026-08-13 (19) — decision: we own the inlining heuristics, `wasm-opt` is the fallback
+
+Project-lead decision, following entry (18). Not "help binaryen decide better" —
+**the inlining cost model moves into the IR, and `wasm-opt`'s inliner handles
+only what we do not decide.**
+
+### The cost model, and where its inputs come from
+
+| input | why the IR has it and a flat module does not |
+| --- | --- |
+| **call-site frequency from loop nesting depth** | the standard AOT substitute for V8's runtime call counts (LLVM's `BlockFrequencyInfo` weights ~10× per loop level). A call in acorn's tokenizer `while` is structurally hotter than one on a throw path. |
+| **specialisation delta** | the size of the inlined result *after* site facts fold — not the callee's size in isolation. |
+| **adapter classification** | `__dc_*` trampolines are overhead by construction (~25 functions, ~4 % of runtime in pure self-time). No size heuristic should get a vote. |
+| **cold-by-construction** | the 3,917 `__new_TypeError` paths inflate every enclosing function and thereby block *its* inlining. Outline or discount them; do not weigh them as body mass. |
+
+### Why loop depth is admissible here when observed frequency was not
+
+#3927 §7 had to abandon frequency-based field ranking: observed instance counts
+are a property of the **corpus**, so a compiler cannot use them without becoming
+input-specific, and six corpus-independent proxies were scored against ground
+truth with none beating ~25 %.
+
+**Loop nesting depth is not that.** It is derived from the source being compiled,
+so it is a property of the **program** and stays valid for any input. This
+distinction is load-bearing and should be stated wherever the heuristic appears —
+a reviewer who knows #3927 will reach for that objection first, and it does not
+apply.
+
+### The case binaryen structurally cannot see
+
+The other four inlining attempts in this file all asked "is the callee small
+enough". The IR can ask a better question: **how big is the result after the
+site's facts fold?** A monomorphic-by-type member-get inlines to a `struct.get` —
+**smaller than the call it replaces**. Negative-cost inlining is invisible to a
+generic size heuristic, and it is where the value is.
+
+### The obligation this creates
+
+If we inline in the IR and binaryen then re-inlines on its defaults, the two
+compound into bloat and our specialised result gets duplicated at every site.
+**"We own inlining" is only true if binaryen is not silently re-deciding
+underneath us**, so constraining its inlining pass — while keeping the peephole
+and DCE passes we do want — is part of the work, not an afterthought. Note
+`src/optimize.ts` currently passes no inlining configuration at all, so today
+binaryen's defaults are unconstrained.
+
+Order: binaryen's own flags first (two lines, bounds the cheap path), then the IR
+inliner narrow — adapters plus negative-cost specialisation sites — then the
+stacked-nulls slice as the control.
+
+### Correction to (19): the binaryen "double inlining" obligation was wrong
+
+Entry (19) claims that if the IR inlines and `wasm-opt` then re-inlines, "the two
+compound into bloat and our specialised result gets duplicated at every site",
+and makes constraining binaryen's inliner part of the work. **Withdrawn.**
+
+**Once a callee is inlined into a caller, the call at that site no longer
+exists.** Binaryen cannot re-inline what is not there. There is no
+double-inlining mechanism, and the entry asserted one without checking.
+
+What is actually true is narrower, and none of it justifies disabling binaryen's
+inliner up front:
+
+- **Transitive size effects, both directions.** Inlining C into A grows A, which
+  may push A above binaryen's threshold so A is no longer inlined onward. Real
+  second-order effect — but our *specialising* inlines often make A **smaller**,
+  which makes it **more** likely to be inlined onward. Watch it in the size
+  distribution; do not pre-empt it.
+- **Disagreement at declined sites.** Binaryen may inline something we
+  deliberately left (a cold path). That is a difference of opinion, not
+  compounding, and binaryen's inliner is well-tested.
+- **Additive growth.** Two inliners inline more than one. Additive and
+  measurable, not multiplicative.
+
+So binaryen's inliner is a **cooperating pass**, not a competitor to be shut off.
+The only obligation is empirical: report total binary size and the function-size
+distribution, and revisit only if the numbers suggest the two are fighting.
+
+Knowing what inlining flags this binaryen version exposes is still worth an hour
+— a threshold bump is the cheap path and bounding it first is right — but as an
+experiment, not a defensive measure.
+
+Caught by the project lead, who asked the obvious question the entry had not:
+how would it double-inline if the call is already gone.
+
+## 2026-08-13 — the "inlining cliff" is a documented threshold with a SECOND clause, and the clause is what kills the cold-path outline
+
+(Responds to the cold-path-outline entry and the codegen-breakdown entry, which
+inferred a cliff "somewhere between 11 and 45 instructions" from two data points:
+an 11-instruction helper inlined at 1,255 sites, a ~45-instruction one declined
+at 1,812. Those entries are on sibling branches, not on this one.)
+
+Binaryen 125 states the rule outright (`wasm-opt --help`), and the second clause
+is the one nothing in this file had accounted for.
+
+| knob | flag | default |
+| --- | --- | ---: |
+| always-inline max size | `-aimfs` | **2** |
+| flexible-inline max size | `-fimfs` | **20** |
+| one-caller-inline max size | `-ocimfs` | −1 (unlimited) |
+| combined-binary-size cap | `-imcbs` | 409600 |
+| inline functions with loops | `-ifwl` | off |
+| partial-inlining ifs | `-pii` | 0 |
+
+`-fimfs`'s own help text: flexible inlining applies to functions that are
+**"lightweight (no loops or function calls)"**. So a multi-caller helper is
+inlined only if it is ≤ 20 AND call-free AND loop-free.
+
+**Consequence, and it is decisive for three recorded experiments.** Every helper
+this umbrella wants inlined — `__extern_get`, `__str_flatten`, the `__dc_*`
+trampolines — fails the *lightweight* clause, not the size clause. A trampoline
+exists in order to make a call. **No amount of shrinking reaches any of them, and
+the cold-path outline could never have worked**: the residual `__extern_get`
+necessarily contains a `call $__extern_get_cold`, which disqualifies it at any
+instruction count. That is a structural explanation for that null, independent of
+the ~45-vs-20 sizing error it self-diagnosed.
+
+### The flag matrix, measured (standalone acorn, `wasm-opt -O4`, names preserved)
+
+Run directly on ONE emitted binary, so every row is the same codegen output with
+different optimizer arguments. Baseline is today's shipped invocation.
+
+| args | binary | Δ | `call $__extern_get` | `call $__box_number` |
+| --- | ---: | ---: | ---: | ---: |
+| `-O4` (shipped) | 1,085,558 B | — | 834 | 993 |
+| `-O4 -fimfs=60` | 1,208,325 B | **+11.3 %** | **834** | **0** |
+| `-O4 --partial-inlining-ifs=2` | 1,085,584 B | +26 B | 834 | 993 |
+| `-O4` + `no-inline@__new_TypeError` | 1,054,682 B | −2.84 % | 834 | 993 |
+| `-O4` + `no-inline@__new_*` | **1,052,620 B** | **−3.03 %** | 834 | 993 |
+
+Three readings:
+
+1. **Raising the budget reaches exactly the leaf helpers and nothing else.**
+   `-fimfs=60` inlines `__box_number` at all 993 sites and moves `__extern_get`
+   by zero, for +11.3 % binary. The `__box_number` provability entry already
+   priced inlining that helper everywhere — indistinguishable from zero, sign
+   flipped with run order. **The cheap path buys the one thing already measured
+   worthless.**
+2. **Binaryen's own partial inliner does not fire here.** `-pii` is binaryen's
+   native version of the hand-built cold-path split; it moves 26 bytes.
+3. **The default `-O4` INLINES the cold `__new_TypeError` constructor into all
+   4,285 null-guard sites** (`call $__new_TypeError`: 4,285 → **0** after `-O4`).
+   Marking it no-inline gives back 30,876 B / 18,079 WAT lines for free. A cold
+   constructor duplicated 4,285 times is pure caller bloat, and caller bloat is
+   the barrier this issue is trying to remove. **This is the only knob that
+   shrinks.**
+
+`--no-inline` has a trap worth recording: its pass-arg takes **one** pattern.
+`no-inline@__new_*` works (wildcards are supported);
+`no-inline@__new_TypeError,__new_Error` produces a **byte-identical** binary and
+still exits 0 — a comma list is silently ignored. And `--no-inline` is a PASS, so
+it must precede `-O<level>`; placed after, the marking happens once inlining has
+already run.
+
+Shipped as `JS2WASM_INLINE_HINTS` (`src/inline-hints.ts`, default OFF; `=1`
+selects `cold`). Before this, `src/optimize.ts` passed **no** inlining
+configuration at all.
+
+### Function-size distribution, and the count that was the deliverable
+
+`wasm-dis` of the same builds. "lightweight" = call-free and loop-free, i.e. the
+population `-fimfs` can act on at all.
+
+| | pre-`wasm-opt` | `-O4` | `-O4` + cold no-inline |
+| --- | ---: | ---: | ---: |
+| functions | 3,521 | 1,321 | 1,323 |
+| WAT lines | 1,154,211 | 638,106 | **620,027** |
+| mean lines/function | 328 | 483 | 469 |
+| lightweight functions | 520 | 32 | 30 |
+| **eligible at `fimfs=20`** | 38 | **1** | **2** |
+| ≥ 1001 lines | 271 | 150 | 144 |
+
+**Functions crossing under the threshold: ONE.** That is the honest answer to
+"how many cross the cliff", and it does not depend on which lever is used: the
+distribution's mass sits at 100–1000+ lines, three to thirty times the budget,
+and no lever in this issue moves a function by more than tens of lines. The `-O4`
+mean going UP (328 → 483) while the module halves is the mechanism stated
+plainly — binaryen inlines the small functions away and grows what remains.
+
+
+## 2026-08-13 — eliding provably-non-null TypeError guards is a 2-of-3,629 null, and WHY is the useful part
+
+`__new_TypeError` at 3,917 static sites is the largest emitted item in the
+program; the proposal was to elide the guard where the receiver is provably
+non-null. Built behind `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` (default OFF,
+`src/codegen/nonnull-proof.ts`), with a flag-independent census.
+
+**Where the sites actually come from** (standalone acorn, 4,122 emissions; the
+top four are 87 %):
+
+| sites | emitter |
+| ---: | --- |
+| 1,685 | `property-access-dispatch.ts` — the `__nullchk_` guard before `__extern_get` |
+| 1,378 | `emitNullGuardedStructGet`, via `property-access-exact-shapes.ts:153` |
+| 525 | `tryKnownFnctorDynamicObjectCarrierGet` |
+| 206 | `emitNullCheckThrow` from element access |
+
+**Result: 2 of 3,629 candidate guards are provable. Binary −32 B, checksum 422.**
+
+The proofs are statements about the **wasm value**, not the TypeScript type:
+`nonnull-ref` (compiled `ValType` is a non-nullable `(ref $T)`, so
+`extern.convert_any` cannot yield null), `boxed-number` (`__box_number` returns
+`ref.i31`/`struct.new` on every path — restricted to no-JS-host mode, where it is
+the in-module native), and `syntactic-producer` (`new X()`, literals, `const` of
+those). Type-level nullability was **deliberately refused**: the corpus is JS
+compiled with `skipSemanticDiagnostics` and no `strictNullChecks`, where "the
+type excludes null" is not evidence about the value, and eliding a live guard
+converts a catchable `TypeError` into an uncatchable trap.
+
+**Why it is ~zero, and it is the same wall as everything else in this file.** At
+the 1,685-site dispatch guard the compiled receiver is `externref` or `ref_null`
+— **never** a non-nullable ref. Acorn's receivers bottom out at untyped
+parameters, which is exactly the finding #4155/#743 recorded for the
+representation levers. Decline breakdown: 2,658 identifiers, 758
+property-accesses, 84 `this`.
+
+### The one proof with real headroom, priced but NOT built
+
+The census also prices a **dominance** proof this module does not implement —
+"this receiver was already guarded earlier in the same function":
+
+| | sites |
+| --- | ---: |
+| repeat guard of an identifier already guarded in this function | 1,864 |
+| repeat guard of `this` | 60 |
+| first guard of that binding | 869 |
+| receiver not a simple binding | 836 |
+
+**1,924 of 3,629 (53 %) are repeat guards** — an UPPER bound, since it ignores
+control flow and reassignment. A sound implementation must scope guards to the
+current straight-line body region (inherit into nested bodies, never propagate
+out of one), and restrict to `this` plus identifiers never assigned anywhere in
+the program (a captured `var` can be reassigned by a callee).
+
+**It should not be built for size.** 1,924 guards × ~8 instructions ≈ 2 % of the
+module, against a distribution whose mass is 100–1000+ lines per function — by
+the entry above it moves the crossing count from 1 to about 1. The correctness
+downside is turning a spec-required catchable `TypeError` into a trap. **The
+cheaper way to remove the same bloat is `no-inline@__new_*`, which takes
+30,876 B with zero semantic risk and no analysis at all** — it stops duplicating
+the cold constructor instead of removing the guard.
+
+### Gates
+
+`tests/issue-4157-nonnull-typeerror-elision.test.ts` (ON changes the binary and
+shrinks it; answers match JavaScript under both states; a genuinely null receiver
+still throws under both) and `tests/issue-4157-inline-hints.test.ts` (OFF is
+byte-identical argv; `--no-inline` lands in the pre-`-O` position; a comma list
+is refused rather than forwarded into a silent no-op).
+
+Flags unset: census **2,491,907 B / checksum 422**, byte-identical to this
+branch's base. Flag ON: 2,491,875 B / checksum 422. `tests/dogfood/acorn.test.ts`
+passes under both. The 14-file error-semantics equivalence batch is **13 failed /
+77 passed under flag OFF, flag ON, and with `origin/main`'s blobs restored for
+every edited file** — all pre-existing (`null-dereference-guards`,
+`optional-direct-closure-call`, `tdz-reference-error`).
+
+### Not built, and why
+
+The IR-level inliner (adapters-always / negative-cost specialisation / loop-depth
+frequency) is **not** in this branch. The entry above is the argument for
+building it rather than against: the two knowledge advantages that survive
+contact with binaryen's actual rule are **(a) adapters** — `__dc_*` trampolines
+contain a call by construction, so the lightweight clause excludes them
+permanently, at any budget — and **(b) negative-cost specialisation**, where a
+monomorphic member-get folds to a `struct.get` smaller than the call it replaces,
+the only shape that escapes a size budget entirely. The other two are weaker than
+they look here: **loop-depth frequency** is a *speed* heuristic, and every
+measurement in this file says the binding constraint is size; and **cold
+callees** need no IR work at all — binaryen already exposes the exact control,
+measured above at −3.03 %.
+
+## 2026-08-13 — call-site inline caching, BUILT: the read becomes machine code, not a call
+
+**LANDED flag-gated, DEFAULT OFF** (`JS2WASM_INLINE_PROP_IC`), in
+`src/codegen/member-get-inline-ic.ts`, wired into both finalize sequences.
+No wall-clock number is quoted and none was taken — the box was under concurrent
+agent load throughout, and §6 of #3927 rules anything under ~10 % unresolvable
+here even when it is quiet. What is reported is deterministic: sites,
+instructions, bytes, and correctness.
+
+> Ordering note: this lands on a base whose copy of this file ends at entry (5).
+> The dispatcher-level attempts it responds to — "outlining the cold path", the
+> "implementation spec for the surviving lever", "the spec from §10 was BUILT.
+> It is a regression", and "the gated inline cache: LANDED FLAG-OFF" — are
+> entries (9), (10), (13) and (14) in the parallel lane's copy. This entry is
+> written to merge after them.
+
+### What was built, and why it is a different lever from entries (13)/(14)
+
+Entries (13)/(14) put a cache arm INSIDE `__get_member_<name>`. The read was
+still a call. This removes the call: at every eligible
+`call $__get_member_<name>` site the dispatcher's FIRST arm is copied inline and
+the call becomes the `else`.
+
+```
+<receiver: anyref>              ;; the site's own extern.convert_any is DROPPED
+local.tee  $__ic
+ref.test   $S
+if (result externref)
+  local.get $__ic ; ref.cast $S ; struct.get $S <slot> ; <box>
+else
+  local.get $__ic ; extern.convert_any ; call $__get_member_<name>
+end
+```
+
+**9 total instructions replacing 2** for a reference-typed slot (10 with an f64
+box, 11 with an i32 widen + box), counted at FULL DEPTH — the `if` plus both of
+its arms — because entry (9) failed by counting four TOP-LEVEL instructions when
+one of them was an `if` carrying ~45. The **executed hit path is 6 instructions
+and contains no conversion at all**: `local.tee`, `ref.test`, `if`, `local.get`,
+`ref.cast`, `struct.get`. That is V8's `load map / compare / branch / load at
+fixed offset`, with `ref.test` doing in one instruction what V8 needs a map load
+plus a compare for.
+
+Both conversions are gone because the pass inspects the instruction it is
+patching in front of: the dominant read site emits `…; extern.convert_any; call
+$disp` — it *had* the anyref and converted it only to satisfy the dispatcher's
+externref ABI — so the pass **deletes the site's own conversion** and re-adds it
+in the miss arm. Worth 2 instructions per site and ~5.5 KB on acorn.
+
+### Why the #2674 hazard cannot recur, structurally
+
+#2674 removed inline multi-struct dispatch because the site froze its candidate
+set at that read's compile time; a struct registered later (`$__fnctor_Parser`
+after `$__anon_5`) was excluded, reads fell to `__extern_get` → `undefined`
+while writes hit the slot, and the expression parser never terminated. Two
+independent properties block that here:
+
+1. **No site-frozen set exists.** This is a FINALIZE pass. It calls
+   `findAlternateStructsForField(ctx, propName, -1)` — literally the same call,
+   at the same point in the pipeline, as `fillMemberGetDispatch` — and runs
+   immediately after that fill, before every index-remapping pass
+   (`brandCollidingShapeTypes`, dead-elim). The arm it copies and the copy
+   therefore live in one type/funcIdx regime, and every later remap treats them
+   identically.
+2. **A wrong guess is a branch, never an answer.** The `then` arm is a literal
+   copy of the dispatcher's arm for `candidates[0]`; the `else` arm is the
+   unmodified call. The site's answer set is IDENTICAL to the dispatcher's —
+   exactly the property the frozen chain lacked, whose set was a strict subset.
+   Even a speculation that never hit would cost only the guard.
+
+Only `candidates[0]` is ever speculated on, and that is what removes the need to
+reason about subtyping or structural canonicalization at all: the dispatcher
+tests arms in order, so any receiver satisfying the inline `ref.test $S0` would
+have taken the dispatcher's first arm anyway. The fast path is not "a case the
+dispatcher would also handle"; it is "the exact code the dispatcher would run".
+
+Where copying an arm faithfully would need more than `struct.get` + box — a
+`$shape` collision stamp, a packed presence bit, the #2979 generator-sentinel
+f64, or any get-accessor candidate (which the dispatcher tries FIRST, so an
+inline field read would shadow a getter) — the pass **declines** and the site
+keeps today's plain call. There is no half-copy.
+
+### Why it does not repeat entry (13)'s 3.50 pp regression
+
+Entry (13) taxed every dispatcher, including the majority whose reads a struct
+arm answers a few instructions later, because `reserveMemberGetDispatch` is
+unconditional. This pass fires only where a struct arm IS the answer, and by
+default only where the receiver shape is unambiguous. The 37 acorn dispatchers
+with **no** struct candidates — `locations`, `ranges`, `ecmaVersion`, `onToken`,
+the entire entry-(13)/(14) population — are declined and untouched. The two
+levers do not overlap and can be measured independently.
+
+### Why the #1269 narrowing vote cannot move
+
+The Phase-3 vote is computed during EMISSION in `property-access-dispatch.ts`
+from the field-kind finders. This pass runs after all emission is finished and
+changes no finder, no reservation and no `resultWasm`. It cannot be observed by
+the vote, because the vote has already happened. The per-field differential was
+run anyway — a structural argument is a reason to expect a gate to pass, not a
+substitute for running it.
+
+### Numbers (standalone acorn self-parse, `optimize: 0`, checksum 422 throughout)
+
+| build | bytes | Δ | sha256 | patched sites | functions |
+| --- | ---: | ---: | --- | ---: | ---: |
+| pass NOT WIRED (base) | 2,459,292 | — | `84f88c1c…b58de` | — | — |
+| wired, `JS2WASM_INLINE_PROP_IC` unset | **2,459,292** | **0** | **`84f88c1c…b58de`** | 0 | 0 |
+| `=1` (monomorphic only) | 2,497,399 | +38,107 (+1.55 %) | `9d6f2218…4e61e` | **1,497** | 329 |
+| `=4` (ceiling raised) | 2,543,189 | +83,897 (+3.41 %) | `5c789a81…0f21d` | 3,347 | 621 |
+
+**Byte-identical-when-off is proved by HASH, not by size**: the flag-off build
+and a build with the pass not wired into the finalize sequence at all are the
+same 2,459,292 bytes with the same sha256. The flag reads as a number —
+unset/`0` disables; `=1` speculates only where exactly one struct carries the
+name; `=N` raises the ceiling and still speculates on `candidates[0]`.
+
+**≈25 B per patched site**, in line with the inlining arithmetic in the
+`__box_number` entry. Code size is itself an optimisation barrier here (entry 15:
+682 WAT lines per function on average already blocks `wasm-opt` inlining), so
++1.55 % is a real cost to weigh, not a footnote — and it is the argument for
+shipping `=1` rather than a higher ceiling: `=4` more than doubles the sites for
+speculation on names where, by construction, at least one other shape exists.
+
+Declines at `=1`: 58 polymorphic, 37 no-struct-candidates (`locations`,
+`ranges`, `ecmaVersion`, `onToken` — the entry-(13)/(14) population), 14
+polymorphic on the typed-f64 twin. **Zero sites declined on producer shape**,
+after `producesExternref` was widened to resolve IMPORTED callees
+(`funcSignatureOf`, not `definedFuncAt` — `__extern_get` and friends are
+imports) and to accept a value-producing `if` of externref type, which is what
+this pass itself emits and is therefore what a chained `a.b.c` read presents.
+Before that widening the same acorn build declined 14 sites at `=1` and 1,116 at
+`=4`; the residual discipline is unchanged — the pass still refuses to
+`local.tee` any value whose type it cannot prove, exactly as `instrPopsPushes`
+refuses to model an unrecognised instruction.
+
+### Correctness
+
+- `cold-tail-census.mjs`: **checksum 422** at every setting, and an unchanged
+  allocation census — 189,977 allocations, 5,759,436 struct bytes, all 26
+  streams identical ON and OFF.
+- **Per-field differential over all 64 ESTree names, BOTH read paths**
+  (`PROBE_READ=computed` and `PROBE_READ=named`), ON vs OFF: **0 hash
+  divergences, 0 presence divergences, 32,506 nodes, body 422** in both modes.
+  This is the #4217 gate: that defect was invisible to a computed read and
+  uniform in a named one, so a single-path differential reports all-clear.
+- `tests/dogfood/acorn.test.ts`: 3 passed / 1 skipped, identical ON and OFF.
+- Property / object / struct / member / proto / hasOwn / numeric-key equivalence
+  batch, 49 files: **2 failed / 308 passed, THE SAME two either way** —
+  `tests/equivalence/new-non-constructor.test.ts` ("not-a-constructor test262
+  pattern compiles without stack underflow", "guard preamble with many exported
+  functions does not double-remap"). Attributed by re-running that file against
+  `origin/main`'s `src/codegen/index.ts` blob (file copy, never `git stash`):
+  both fail there too. **Pre-existing, unrelated.**
+- New fixture `tests/issue-4157-member-get-inline-ic.test.ts` (4/4): answers checked
+  against **native Node**, plus a mechanism assertion (the pass's own site
+  counter must be non-zero AND grow when the ceiling is raised — a gate that
+  never bites is indistinguishable from an absent gate), plus the #2674
+  read/write-agreement case (write a name onto a struct with no slot for it, so
+  it lands in the sidecar, and read it back through the guard).
+
+### Two pre-existing defects this fixture surfaced (NOT caused by this change)
+
+Both reproduce on the base build, and are recorded because they cost real time to
+rule out and will cost the next lane the same.
+
+1. **Structurally identical class structs alias in `__get_member_<name>`.** With
+   `class Mono { mv: number }` and `class Bare { other: number }` — same field
+   arity, same kinds — a dynamic read of `.mv` on a `Bare` instance answers
+   `Bare.other`, not `undefined`. WasmGC canonicalizes the two structs to one
+   heap type, so the dispatcher's `ref.test $Mono` matches a `Bare`, and no
+   `$shape` stamp guard is present on these candidates. Mechanism not diagnosed
+   beyond that; the observable is certain. Giving every fixture class a distinct
+   field arity makes it go away, which is why the committed fixture does.
+2. **A monomorphic f64-narrowed read answers `NaN` on a MISS, not `undefined`.**
+   #1269's Phase-3 narrowing collapses a single-f64-candidate read to f64, so a
+   receiver that does not carry the name unboxes `undefined` to NaN. That is why
+   the fixture splits its miss cases into a second entry point whose oracle is
+   the base build rather than Node.
+
+### What is owed, and the prior to hold while doing it
+
+One clean order-reversed ON/OFF/OFF/ON on `standalone-dynamic` with nothing else
+on the box, reporting **`dynamic-lookup` AND `cast-convert`** (the inlined arm
+boxes, so a saving may land in either) and the bucket total, not just the
+`__extern_get` frame — entry (9) moved 2.33 pp between frames for a net 0.13 pp
+and only the bucket exposed it.
+
+The prior: this is the ninth attempt recorded in this file, of which five were
+nulls and one was a regression. What is different is that the target is the
+6.38 pp cache-hit **prologue** entry (9) isolated, that the call itself goes away
+rather than being relocated, and that the hit path is 6 instructions with no
+conversion. What is the same is that this box cannot resolve small effects, and
+that +1.53 % of binary is a real cost that has to be paid back.
+
+## 2026-08-13 (20) — ToNumber fast paths: fused coercion and an i31 operand guard
+
+Entry (15) counted **2,010 static sites where a helper boxes a value the call
+site immediately unwraps**, the largest single pattern being
+`__unbox_number(__to_primitive(x))` at 1,092. Both slices below are built,
+**default OFF**, byte-identical when off (sha256-verified, not just size).
+
+### Slice A — `JS2WASM_FUSED_TONUMBER`: 1,085 sites, **−6,314 B**
+
+One fused `__to_number` replaces the pair at the single standalone
+`externref → f64` coercion site. Three fast arms, each provably equal to the
+pair **because all three early-out before `__to_primitive`'s `$Object` test**,
+so no user code runs and nothing can throw or be reordered:
+
+| value | fused arm |
+| --- | --- |
+| null extern | `f64.const 0` |
+| `ref.i31` | `i31.get_s; f64.convert_i32_s` |
+| `$BoxedNumber` | `struct.get 0` |
+
+Excluded, falling through to the unchanged pair in unchanged order: `"string"`
+and `"default"` hints, every observable ToPrimitive shape (`valueOf`/`toString`,
+class instances, arrays, wrapper `[[PrimitiveValue]]`, the `$AnyValue`
+`undefined` singleton), and **native strings** — decidable, but excluded on
+purpose because composing it means a full `__str_to_number` scan and a second
+place for §7.1.4.1 to drift.
+
+**Size sign is site-count dependent**: −6,314 B on acorn's 1,085 sites but
+**+21 B** on a small fixture, since it trades ~11 B/site against one fixed helper
+— the same break-even shape as the const-box hoist.
+
+### Slice B — `JS2WASM_SMI_FASTPATH`: 1,075 sites, **+24,358 B**
+
+`ref.test i31` on the operand, then `i31.get_s; f64.convert_i32_s`, else the
+unchanged slow chain. The **non-nullable** `ref.test` form is deliberate: a null
+externref answers 0 and takes the slow arm, which returns 0 for null — the same
+answer — so no extra null test is needed and the `then`-arm's cast cannot see
+null.
+
+**+24 KB cuts directly against entry (15)'s finding that code size is itself an
+inlining barrier.** That is a real reason the A/B may come out negative, and it
+is stated here rather than discovered later.
+
+### The i32-arithmetic half is NOT built, and the proof that it needs no range guard
+
+It is a binary-op-site transform (`binary-ops-typed-dispatch.ts:626-638`,
+`:1560-1593`), which was off-limits to that workstream. The recommendation, with
+the part worth keeping:
+
+> When both `leftType` and `rightType` are `externref`, hoist both to locals and
+> guard `ref.test i31` on both. The fast arm needs **no range guard on the
+> result**: `a, b ∈ [-2^30, 2^30-1]` gives `a ± b ∈ [-2^31, 2^31-1]`, which fits
+> i32 exactly, and `f64.convert_i32_s` is exact — so
+> `f64.convert_i32_s(i32.add(a,b)) ≡ f64.add(f64(a), f64(b))`. `-0`, `NaN` and
+> non-integers are excluded by the guard itself.
+
+Order caution for whoever builds it: today the **right** operand is coerced
+before the left; the slow arm must preserve that.
+
+### Correctness
+
+Census checksum 422 in all four flag states with allocation counts (189,977) and
+struct bytes (5,759,436) identical — no allocation change, as expected. Acorn
+dogfood 7 equal / 0 divergent. A 24-file coercion batch 160/160 and a 12-file
+standalone numeric batch 91/91, in every state.
+
+Two failures attributed, **both pre-existing**: a QuickJS-provider environmental
+failure, and `var o: any = {valueOf: …}; var s: number = o - 1;` inside a
+function body failing to compile (`local.set[0] expected (ref null 76), found
+f64.const`) — **reproduced byte-for-byte on `origin/main` blobs at the same
+offset**. A module-level binding of the same object compiles fine. Unfiled; worth
+an issue.
+
+## 2026-08-13 — lazy string flattening: two of the three named levers were already spent; the third is redundancy, and it is 403 sites
+
+Lane record for the `string-runtime` bucket (4.39 % of runtime, `__str_flatten`
+2.54 % at 2,497 static sites). Read alongside the disassembly entry that
+attributes ~55 % of those sites to the residual abstract-equality cascade —
+this entry deliberately does **not** touch `binary-ops.ts` /
+`binary-ops-typed-dispatch.ts`, and quantifies what is left after that lane
+lands.
+
+Everything below is static/structural. **No timings were taken.**
+
+### Two of the three scoped levers do not exist — they shipped years ago
+
+- **"Make `__str_flatten` cheap when already flat."** It already is. The FIRST
+  instruction of its body is `ref.test $NativeString` → `ref.cast` → return
+  (`native-strings-core.ts`, `emitStrFlattenHelpers`). There is no work to add.
+- **"Memoise the flattened form on the rope."** Already done, by #3673:
+  `flattenConsBody` rewrites the cons **in place** to `(left = flat, right = "")`
+  and the next flatten of that rope takes a two-field fast path instead of an
+  O(len) re-copy.
+- **`wrapBodyWithFlatten` goes further still** — it inlines the
+  `ref.test $NativeString` at each helper's entry, so an already-flat param
+  skips the *call itself*, not just the copy. Its own comment records why: the
+  unconditional call "was 35 % of a standalone compiled-acorn parse".
+
+So `__str_flatten` at 2.54 % is **not** ropes being copied. It is the call
+being made where it did not need to be made at all.
+
+### What IS forced: the caller-side flatten in front of a self-flattening callee
+
+Disassembled the standalone acorn build (`wasm-dis`, `optimize: 0`) and
+classified every `call $__str_flatten` by its real consumer (walking past
+`ref.cast` / `ref.as_non_null` / `local.tee` / `*.convert_*`):
+
+| consumer of the flattened value | sites | callee self-flattens? |
+| --- | ---: | --- |
+| `__str_equals` | 1,722 | **yes** (`wrapBodyWithFlatten(body, [0, 1])`) |
+| `else` (if-arm result) | 200 | — |
+| `local.set` | 192 | — (114 of them from `__extern_toString`) |
+| `__str_charAt` | 186 | **yes** `[0]` |
+| `__str_slice` | 148 | **yes** `[0]` |
+| `struct.get` / `return_call` / `then` / misc | 38 | — |
+| `__str_substr` · `__str_substring` · `__str_compare` | 9 | **yes** |
+| **total** | **2,497** | **2,065 (82.7 %) redundant** |
+
+`__str_equals`, `__str_charAt`, `__str_slice`, `__str_substring`,
+`__str_substr`, `__str_compare`, `__str_indexOf`, `__str_split`,
+`__str_replace`, `__str_replaceAll` and siblings all take `ref $AnyString` and
+flatten their own params. A `call $__str_flatten` at the call site therefore
+recomputes exactly what the callee's guard would have skipped.
+
+**And it is worse than redundant.** `__str_equals` answers three questions that
+need no flat buffer — `ref.eq` identity, the length compare, and the
+`$HashedString` hash reject — but `wrapBodyWithFlatten` prepends the flatten to
+the **top** of the function, ahead of all three. Pre-flattening at the call site
+then guarantees the helper never sees a rope, so `bigRopeA === bigRopeB` with
+differing lengths copies both ropes into fresh buffers to answer a question the
+`$AnyString` length field answers in one `struct.get`.
+
+### Landed, flag-gated: `JS2WASM_LAZY_STR_FLATTEN=1` (default OFF)
+
+New leaf `src/codegen/lazy-str-flatten.ts` (explicit `=1` opt-in, NOT the
+`derivation-flags.ts` unset-⇒-ON rule — the OFF position carries a
+byte-identity guarantee and must not be enabled by a typo).
+
+1. **`__str_equals` flattens lazily** (`native-strings-basics.ts`). The same
+   guarded preamble `wrapBodyWithFlatten` would have prepended is *relocated*,
+   byte-for-byte, to just before the character loop — the only consumer of
+   `off`/`data`. The length compare reads `$AnyString` field 0 instead of
+   `$NativeString` field 0.
+   **Soundness:** field 0 is the JS-visible code-unit count on all three
+   subtypes and immutable on all three — `$ConsString` keeps the total across
+   the in-place memoization rewrite, and `$Utf8String` field 0 is the UTF-16
+   length, not the byte length (`registry/types.ts`). `ref.eq` moved ahead of
+   the flatten can only lose true-answers, never gain them (same object ⇒ same
+   string), and every case it loses — e.g. two distinct `x + ""` conses whose
+   memoized `left` is the same flat struct — falls through to the char compare
+   and returns the identical verdict. The hash reject requires both sides to be
+   `$HashedString`, which a rope never is, so ordering cannot change it.
+2. **`__extern_get` no longer flattens its key** (`object-runtime.ts`,
+   `stringKeyArms`), and the `__fkey_ladder` scratch local widens to
+   `$AnyString`. Nothing downstream needed flat: `ref.test`/`ref.cast
+   $HashedString` and the baked-hash `struct.get` accept `$AnyString`,
+   `__obj_hash` is handed the ORIGINAL externref (`local.get 1`), and the
+   bucket probes go through `__str_equals`. A rope key fails the
+   `$HashedString` test and takes the `__obj_hash` arm — which is the arm it
+   already took, because a freshly-flattened cons carries hash 0 (uncomputed).
+   Note the **dynamic** count here is 64,680/parse, not 506,752: the round-21
+   per-key cache arm is unshifted LAST, so it returns before this on the
+   87.24 % that hit (see the per-key-cache entry above).
+3. **Redundant caller-side flattens dropped** where the immediate callee
+   self-flattens: `string-ops.ts` (`charAt`, `substring`, `slice`, `substr`,
+   `replace`/`replaceAll` ×3 params, and `emitNullableStringEquals`) and
+   `string-element-read.ts` (`__str_charAt`). Kept wherever the emitted code
+   itself needs the flat type (`at`, `codePointAt` read `struct.get
+   $NativeString` off the result) or the callee does not self-flatten
+   (`__str_repeat`, `__str_padStart`/`padEnd`, `__str_isWellFormed`,
+   `__str_toWellFormed`, `__str_to_extern`).
+
+### Result (static; no timings)
+
+| | flag OFF | flag ON |
+| --- | ---: | ---: |
+| `call $__str_flatten` sites, acorn | 2,497 | **2,094** (−403) |
+| acorn binary, `optimize: 0` | 2,459,292 B | 2,456,866 B (−2,426) |
+| `cold-tail-census` binary / checksum / allocations | 2,491,907 B / **422** / 189,977 | 2,489,481 B / **422** / 189,977 |
+
+Consumer histogram after: `__str_charAt` 186 → **0**, `__str_slice` 148 → **0**,
+`__str_substr` 4 → **0**, `__str_equals` 1,722 → 1,664. Allocation counts are
+identical, i.e. the change moves no allocation — as expected, since it removes
+calls rather than copies.
+
+**Byte-identical when OFF**: the flag-OFF build `cmp`s byte-for-byte against a
+build of the same tree taken before any edit, and the census reproduces
+pristine-HEAD's 2,491,907 B exactly.
+
+> The brief quoted **2,490,829 B** for the census baseline. Pristine
+> `da371b2e8` measures **2,491,907 B / checksum 422**, verified by reverting all
+> four touched files to `HEAD` via file copies (never `git stash`) and re-running.
+> The 1,078-byte delta predates this work.
+
+### The 1,664 remaining `__str_equals` feeders are the cascade's, and there is a one-line-each win in them for that lane
+
+Every remaining site is emitted by `binary-ops-typed-dispatch.ts` — the
+abstract-equality cascade (~line 959/962) and the mixed-externref strict-equality
+arm (~line 261/264) — both outside this lane. **Reported, not built:** those four
+`{ op: "call", funcIdx: flattenIdx }` entries can be deleted outright.
+`__str_equals` takes `ref $AnyString` and flattens its own params, so the
+operands are already type-correct without them. That single deletion:
+
+- removes ~1,364 more static `__str_flatten` sites (the largest remaining block
+  in the bucket), and
+- is what makes lever (1) above actually reachable at the hottest equality in
+  the program — today the cascade pre-flattens both operands, so the helper's
+  identity/length/hash answers never get to skip the materialization.
+
+It is **independent of, and much smaller than, removing the cascade itself**, and
+it does not relocate work into a new call the way route (a) of the cascade entry
+would. Worth taking even if the cascade work slips.
+
+### Refused, and why
+
+- **`String.prototype.at` / `codePointAt`** keep their caller-side flatten: the
+  emitted code reads `struct.get $NativeString` off the result, so the flat type
+  is load-bearing, not decorative.
+- **`trim`/`trimStart`/`trimEnd` and `toLocale{Lower,Upper}Case`** keep theirs:
+  the helper actually invoked is selected at emit time
+  (`selectProvenAsciiCaseHelper`) or is not one of the `wrapBodyWithFlatten`
+  set, so "the callee self-flattens" could not be established for every arm.
+- **`__str_concat`'s eager flatten below the 64-char rope threshold** is left
+  alone. It is the deliberate representation choice (a rope node for a 3-char
+  string is worse than the copy), the same call V8 makes, and nothing in the
+  measurement points at it.
+- **Hoisting `ref.eq` out of `__str_equals` to the call sites** was not done:
+  it would change which allocation identity is compared at 2,670 sites, and the
+  in-helper ordering achieves the same thing with one copy of the logic.
+
+### Gates
+
+- `cold-tail-census`: checksum **422** both flag positions.
+- `tests/dogfood/acorn.test.ts`: pass, flag ON.
+- 33 string-adjacent `tests/equivalence/*` files: pass OFF **and** ON.
+- 32 object / dynamic-lookup `tests/equivalence/*` files (extra net for the
+  `__extern_get` key change): pass ON.
+- Two chunks OOM-killed (exit 137) on the first attempt at
+  `maxForks=2` with other agents live; re-run one file at a time they pass in
+  **both** flag positions, so the kill is container memory, not the change.
+
+## 2026-08-13 (21) — MEASURED: the stack removes 28.6 % of executed helper calls
+
+The first non-null in this issue since #4217, and it is measured with a new
+instrument that does not depend on the machine being quiet.
+
+### Why a new instrument
+
+Every verdict in this file rests on profile bucket share with order-reversed
+blocks. Share is a RATIO, so it survives a uniformly slower box — but contention
+is **not** uniform (it perturbs memory-bound code and GC timing more than
+compute-bound code), and during this very run the same 300-iteration workload
+took **36 s, 46 s, 50 s and 71 s**. "More robust than wall clock" was being
+treated as "sound", and it is not.
+
+`src/codegen/exec-census.ts` (`JS2WASM_EXEC_CENSUS=<substr>,…`) counts **executed
+calls** instead. Exact, identical every run, immune to load. It reads
+`__extern_get` at **506,752 calls/parse**, matching the independent per-key cache
+census in entry (12) to the call — which is what validates it.
+
+**Why the existing `JS2WASM_ALLOC_CENSUS_CALLS` is broken, now diagnosed** (entry
+16 left this open and withdrew a wrong guess): it splices its increment **at each
+call site**, landing inside the callee's argument sequence. `applyRefNullFixups`
+walks backwards from a `call` mapping ~one instruction per parameter, so four
+extra instructions desynchronise it and it retypes a `ref.null.extern` against
+the wrong parameter. **Incrementing at FUNCTION ENTRY is not adjacent to any
+call**, so no argument sequence is disturbed. That is the whole design
+difference, and it is the fix for the older census too.
+
+### The result — all five flags on, acorn self-parse, checksum 422 both sides
+
+| helper | OFF | ON | Δ |
+| --- | ---: | ---: | ---: |
+| `__to_primitive` | 568,788 | **268** | **−100.0 %** |
+| `__unbox_number` | 883,318 | 314,798 | −64.4 % |
+| `__str_flatten` | 516,717 | 421,019 | −18.5 % |
+| `__is_truthy` | 997,454 | 997,454 | 0 |
+| `__extern_get` | 506,752 | 506,752 | 0 |
+| `__box_number` | 489,166 | 489,166 | 0 |
+| `__str_equals` | 254,976 | 254,976 | 0 |
+| **total** | **4,312,736** | **3,079,998** | **−1,232,738 (−28.6 %)** |
+
+Binary 2,459,686 → 2,452,499.
+
+`__to_primitive` and `__unbox_number` fall by **exactly 568,520 each** — proof
+they were a paired round trip, which entry (15) predicted statically and the
+profile could only hint at.
+
+### It cross-validates the profile rather than replacing it
+
+The order-reversed profile of the same stack put `cast-convert` at **2.13 % ON vs
+3.94 % / 3.96 % OFF (−1.83 pp)**, with the two OFF blocks agreeing to 0.02 pp,
+and `string-runtime` at **3.10 % vs 3.56 % / 3.84 % (−0.60 pp)**. Since
+`__to_primitive`'s 568,788 calls were 1.84 % of runtime, removing them predicts
+almost exactly the observed cast-convert drop. **Two independent instruments,
+one answer.** Use counts for the verdict and the profile for attribution.
+
+### What it proves negatively, and exactly
+
+- **`__extern_get` unchanged at 506,752.** The call-site inline cache patched
+  1,497 sites and eliminated **zero** calls — it speculates ahead of
+  `__get_member_<name>`, not `__extern_get`. That is the sixth null on this
+  bucket and the first one that is exact rather than inferred.
+- **`__box_number` unchanged.** The i31 slice guards an *operand*; it does not
+  reduce boxing.
+- **`__is_truthy` unchanged at 997,454 — the largest single number on the
+  board**, and nothing in this session touched it. It is the unowned
+  `dynamic-eq` bucket from entry (17), and it is now the clearest target in the
+  program.
+
+### Standing method change
+
+**Counts are the verdict; the profile is for attribution.** A count answers "does
+the emitted code do less work", which is what an optimisation actually claims.
+Wall clock on this box is not evidence, and bucket share is evidence only when
+the blocks replicate.
+
+## 2026-08-13 (22) — CORRECTION: the inline property cache works; I measured the wrong helper
+
+Entry (21) reported the call-site inline cache as eliminating **zero** calls and
+recommended leaving it off. **That verdict is withdrawn — it was measured wrong,
+twice.**
+
+1. The stack run set `JS2WASM_MEMBER_GET_IC`, **a flag that does not exist**. The
+   real name is `JS2WASM_INLINE_PROP_IC`. The cache was never enabled.
+2. After fixing the name, I checked `__extern_get` — which the cache **does not
+   target**. It speculates ahead of the per-name `__get_member_<name>`
+   dispatchers, and those were not in the census target list at all.
+
+Re-measured with `JS2WASM_EXEC_CENSUS` on the helper it actually targets, acorn
+self-parse, `optimize: 0`, checksum 422 in every row:
+
+| build | binary | `__get_member_*` executed | names | `__extern_get` |
+| --- | ---: | ---: | ---: | ---: |
+| OFF | 2,471,129 | 1,000,011 | 83 | 506,752 |
+| `=1` (default ceiling) | +38,107 | 913,260 (**−86,751**, −8.7 %) | 72 | 506,752 |
+| **`=4`** | +83,897 | **436,668 (−563,343, −56.3 %)** | 51 | 506,752 |
+
+**At ceiling 4 the cache removes 563,343 executed dispatcher calls per parse** —
+comparable to the fused-ToNumber slice's 568,520, which this file has already
+accepted as the session's clearest win.
+
+`__extern_get` really is unchanged at 506,752 in every configuration; that part
+of entry (21) stands. It is simply not the helper this optimisation addresses.
+
+### Two lessons, both about the instrument rather than the optimisation
+
+- **A flag name is part of the measurement.** Nothing in the harness objects to
+  an unrecognised environment variable, so an experiment that sets the wrong one
+  silently measures the baseline against itself and reports a confident null.
+  Assert the mechanism fired — the fire-probe technique of entry (2), or a
+  site/patch counter — before believing any negative.
+- **Measure the helper the change targets, not the one the bucket is named
+  after.** `dynamic-lookup` contains both `__extern_get` and the
+  `__get_member_*` family; the cache moves the second and not the first, and
+  looking only at the bucket's largest frame hid a 56 % reduction.
+
+### The default ceiling is wrong
+
+`=1` costs 38 KB for 8.7 %; `=4` costs 84 KB for 56 %. Whatever ships, the
+ceiling should be chosen on this curve rather than left at 1. Higher ceilings are
+unmeasured.
+
+## 2026-08-13 (22) — the specced i32-arithmetic site is DEAD; the reachable half is the box, and it removes 489,165 of 489,166 boxing calls
+
+Entry (20) handed the i32-arithmetic half to whoever owned
+`binary-ops-typed-dispatch.ts`. **That site cannot fire.** What replaces it is
+`src/codegen/smi-box-fast-path.ts`, on the same `JS2WASM_SMI_FASTPATH` flag,
+default OFF, byte-identical when off (sha256-verified).
+
+### The null first, because it invalidates the spec, not just the estimate
+
+Instrumented `compileTypedBinaryDispatch` with a per-`(op, leftKind, rightKind)`
+tally over a whole standalone acorn self-compile. Every arithmetic and
+relational dispatch — 1,617 of them — arrives **`L=f64 R=f64`**:
+
+| op | sites | L/R |
+| --- | ---: | --- |
+| `>=` · `<` · `>` · `<=` | 979 | all `f64`/`f64` |
+| `+` · `-` · `*` · `%` | 478 | all `f64`/`f64` |
+| `&` · `|` · `<<` · `>>` | 160 | all `f64`/`f64` |
+| **numeric ops with an externref operand** | **0** | — |
+
+The externref pairs at that dispatch (`===` 61, `!==` 2, plus 700-odd mixed
+`externref`/`ref`) are **equality**, which is not `isNumericOp` and never reaches
+line 626.
+
+The cause is structural, not incidental: `compileBinaryExpression` compiles both
+operands with a **numeric hint**, so the `externref → f64` ToNumber is emitted
+*inside* each operand's own compilation — at the `type-coercion.ts` site slice B
+already patches — and the dispatch only ever sees f64. Ten hand-written operand
+shapes (member read `o.x - o.y`, call result, element read, two `any` params,
+`any` vs literal in both orders, `unknown` casts, `*`, `<`, `|`) reproduce it:
+all `f64`/`f64`. So the transform was not merely low-yield, it had **no site**,
+and building it would have shipped unexercised code.
+
+### Where the boxes actually are (static, from `wasm-dis` of the acorn build)
+
+1,798 `call $__box_number` sites, by the producer feeding them:
+
+| producer | sites | | producer | sites |
+| --- | ---: | --- | --- | ---: |
+| `local.get` | 403 | | `if` | 90 |
+| `call` | 327 | | `call_ref` | 74 |
+| `struct.get` | 238 | | `f64.const` | 55 |
+| **`f64.add`** | **173** | | **`f64.sub`** | **37** |
+| **`f64.convert_i32_s`** | **138** | | `global.get` · `local.tee` · `block` · `array.get` | 263 |
+
+Arithmetic feeds **210 of 1,798 (11.7 %)**, and only **70** of those have *both*
+operands dynamic (`__unbox_number` on each side) — the shape the specced
+transform was aimed at. That is the ceiling the binary-op route was ever going
+to have, i32 operands or not.
+
+### What was built
+
+A finalize pass, not an emitter hook, because the boxing calls come from **two**
+front ends — legacy `coerceType` and the IR lowering's `emitBox`
+(`ir/integration.ts`) — and on this workload the IR is the one that matters:
+hooking `coerceType` alone reached **2** sites in a probe module. One pass over
+the finished bodies covers both, exactly as `const-box-hoist.ts` does. It runs
+right after the const hoist (so a constant box is already a `global.get` and is
+never re-expanded) and before dead elimination (so the `call $__box_number` kept
+in each else-arm is index-remapped like every other call).
+
+Two levels of the one flag, because the difference is purely a size lever:
+
+- **`=1`** — rewrites only `f64.convert_i32_s; call $__box_number`, i.e. an i32
+  that was widened solely to satisfy the helper's signature. **138 sites.** The
+  emitted guard is *only* the 31-bit range test, because `__box_number`'s other
+  two clauses are provably vacuous on an i32 source: `f64.convert_i32_s` is
+  exact and `i32.trunc_sat_f64_s` inverts it for every i32, so the round-trip
+  clause always holds; and `f64.convert_i32_s` yields `-0` for no input (`0`
+  gives `+0`), so the sign-bit clause always holds too.
+- **`=all`** — also rewrites the other 1,660 sites with `__box_number`'s own
+  predicate, inlined verbatim, delegating to the untouched call when it fails.
+
+Both failure arms call the unchanged helper, so the `$BoxedNumber` allocation
+path is never duplicated and never re-derived.
+
+### Measured — acorn self-parse, `optimize: 0`, checksum 422 everywhere
+
+Executed calls (`JS2WASM_EXEC_CENSUS`, the entry (21) instrument):
+
+| helper | OFF | `=1` before this change | **`=1`** | **`=all`** |
+| --- | ---: | ---: | ---: | ---: |
+| `__box_number` | 489,166 | 489,166 | **481,393** | **1** |
+| `__unbox_number` | 883,318 | 321,807 | 321,807 | 321,807 |
+| `__to_primitive` | 568,788 | 7,277 | 7,277 | 7,277 |
+| `__is_truthy` | 997,454 | 997,454 | 997,454 | 997,454 |
+
+Binary, `optimize: 0`, census off:
+
+| position | bytes | Δ vs OFF | Δ vs operand half alone |
+| --- | ---: | ---: | ---: |
+| OFF | 2,459,292 | — | — |
+| `=1`, before this change | 2,483,651 | +24,359 | — |
+| `=1` | 2,486,950 | +27,658 | **+3,299** (138 sites, ~24 B each) |
+| `=all` | 2,569,881 | +110,589 | **+86,230** (1,798 sites, ~48 B each) |
+
+**`__box_number` at 1 is the headline and it is worth reading twice**: across an
+entire acorn self-parse exactly ONE boxed number is not i31-able. Entry (20)'s
+premise that the box was the thing to remove was right; the mechanism was in the
+wrong place. Note also what did NOT move — `__unbox_number` is untouched,
+because guarding the box does not remove an unbox, the mirror of entry (21)'s
+finding that guarding an operand does not remove a box.
+
+`cold-tail-census` allocations are **189,977** and struct bytes **5,759,436** in
+both positions, identical: the change moves no allocation, as it must not — the
+i31 arm was already what `__box_number` returned in these 489,165 cases, so this
+removes the CALL, not an allocation. It is a call-count win, not a GC win, and
+the profile should be expected to move by roughly what 489 k eliminated calls are
+worth, no more.
+
+### Correctness
+
+- `cold-tail-census`: checksum **422** OFF and `=all`; allocations and struct
+  bytes identical.
+- `tests/dogfood/acorn.test.ts` with `DOGFOOD_ACORN=1` (the heavy compile →
+  validate → AST-diff loop): pass OFF and `=all`.
+- 28-file numeric/arith/coercion/equality/comparison equivalence batch:
+  **188/188 in all three positions**, zero failures, so nothing to attribute.
+- New `tests/issue-4157-smi-box-fast-path.test.ts` — 6 cases × 3 flag positions,
+  pinning the values where a mis-copied predicate diverges: the ±2^30 i31 edges
+  and their ±1 neighbours, `-0` (which round-trips through
+  `i32.trunc_sat_f64_s` and must **not** become `ref.i31 0` — checked via
+  `1/x === -Infinity` from inside Wasm), NaN self-inequality, both infinities,
+  non-integers, `Object.is` across boxes, `typeof`, truthiness, and dynamic
+  subtraction across the i31 edges.
+- One failure, attributed and **not a defect**:
+  `issue-4157-const-box-hoist.test.ts` "removes every constant boxing CALL"
+  expects 4 executed boxing calls per iteration with hoisting off, and sees 3
+  under `=all`. That test's own comment names the reason — "42 is i31-able and
+  never allocated" — so the guard answers exactly that one constant inline. It
+  asserts a flag-OFF baseline and passes with the flag unset, which is the
+  default.
+
+### Refused, and why
+
+- **The specced binary-op transform.** No site (above). Making one would mean
+  dropping the numeric hint for numeric ops, which moves ToNumber from
+  "eval-left, ToNumber-left, eval-right, ToNumber-right" to "eval both, then
+  ToNumber right, then left" — one non-conformant order for a different
+  non-conformant order (§13.15.3 wants left-ToNumeric first), observable
+  wherever an operand's `valueOf` runs user code. Not worth it for ≤70 sites.
+- **`*`, `/`, `%`, `**` in i32.** `a * b` on two i31 operands overflows i32
+  (2^30 × 2^30), and `/` and `%` are not closed over the integers at all. Only
+  `+`, `-` and the comparisons carry the no-range-guard proof from entry (20),
+  and none of them has a site.
+- **Boolean- and symbol-branded i32.** They box through
+  `__box_boolean`/`__box_symbol` and carry a TAG that `ref.i31` would erase
+  (#2785/#2760). Only `__box_number` is matched.
+- **JS-host mode.** `__box_number` is an `env::` import there and a boxed number
+  is a JS number, not a WasmGC `ref.i31`. Gated on `nativeBoxNumberTypeIdx >= 0`,
+  which is exactly the condition under which the i31-producing native was
+  registered.
+- **Constant boxes.** `const-box-hoist.ts` runs first and turns them into a
+  `global.get` of a once-seeded global, which is strictly better than an inline
+  `ref.i31`.
+
+### The obvious next question, unbuilt
+
+`=all` costs 86 KB to convert 481,392 calls; `=1` costs 3.3 KB for 7,773. Neither
+was timed — entry (21)'s standing rule is that counts are the verdict and this
+box cannot resolve wall clock. But entry (15) found code size is itself an
+inlining barrier, so `=all`'s +3.5 % is a real counterweight that only an A/B on
+a quiet machine can price.
+
+
+## 2026-08-13 (23) — `__is_truthy` inlined at the call site: **−757,690 executed calls (−76 %)**, and the operand mix is NOT what entry (17) predicted
+
+`__is_truthy` was the largest single executed-call figure in the programme —
+**997,454 per acorn self-parse**, 3.93 % of runtime, the unowned `dynamic-eq`
+bucket of entry (17) — and nothing had ever touched it. It is now inlined at the
+call site behind `JS2WASM_INLINE_TRUTHY_IC`, **default OFF**.
+
+**LANDED flag-gated** in `src/codegen/is-truthy-inline-ic.ts` (the rewrite) and
+`src/codegen/is-truthy-ladder.ts` (the ladder extraction), invoked from both
+finalize pipelines immediately after `inlineMemberGetCallSites`.
+
+### The result — acorn self-parse, `optimize: 0`, checksum **422** in every row
+
+| arm set | `__is_truthy` executed | Δ | removed | binary | Δ bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OFF (base) | 997,454 | — | — | 2,459,473 | — |
+| **`=1` (`anyval,boxbool`)** | **239,764** | **−757,690** | **76.0 %** | 2,541,262 | **+81,789** |
+| `anyval,boxbool,str` | 228,523 | −768,931 | 77.1 % | 2,575,947 | +116,474 |
+| `anyval,i31,boxbool,str` | 222,901 | −774,553 | 77.7 % | 2,607,346 | +147,873 |
+| `all` (6 arms) | 222,901 | −774,553 | 77.7 % | 2,707,567 | +248,094 |
+
+1,643 of the 1,655 static sites patched, in 504 functions; 12 declined on
+producer shape. `__box_boolean` (333,363), `__unbox_boolean` (2) and
+`__extern_strict_eq` (169,828) are **unchanged in every row** — this pass moves
+one helper and claims nothing about the others.
+
+On the acorn module without the census driver: `optimize: 0`
+1,841,473 → 1,923,262 (**+81,789 B, +4.4 %**); `-O4` 1,053,313 → 1,091,567
+(**+38,254 B, +3.6 %**) — `wasm-opt` recovers 53 % of the added bytes.
+
+For scale, this is a **larger** reduction than either previously-accepted win
+(the fused-ToNumber slice's −568,520 and the property cache's −563,343) and it
+costs about the same bytes as the property cache at ceiling 4 (+83,897).
+
+### The finding: entry (17) named the wrong operands
+
+Each arm was measured alone. The six singleton deltas **sum to 774,553, exactly
+the all-arms delta** — the arms are disjoint and the counts are additive, which
+is itself the cross-check that the model is right.
+
+| arm | hits/parse | share of all calls | +bytes @O0 |
+| --- | ---: | ---: | ---: |
+| `boxbool` — boxed boolean | **493,911** | **49.5 %** | +43,817 |
+| `anyval` — `$AnyValue` (`undefined` singleton) | **263,779** | **26.4 %** | +48,746 |
+| `str` — `$AnyString` (`""` vs non-empty) | 11,241 | 1.1 % | +45,460 |
+| `i31` — small-int | 5,622 | 0.6 % | +42,174 |
+| `boxnum` — heap-boxed f64 | **0** | — | +74,674 |
+| `bigint` | **0** | — | +47,103 |
+
+Entry (17) predicted "the acorn-dominant operands are i31-packed integers and
+boxed booleans". Booleans yes — but **i31 integers are 0.6 %, and heap-boxed
+numbers fire literally zero times.** ToBoolean on acorn almost never sees a
+number at all; it sees a boxed boolean or the `undefined` singleton. `boxnum` is
+also the most expensive arm to inline (+74,674 B, a 9-instruction tail with the
+`-0`/NaN test), so the intuitive arm is the worst trade on the board. Default
+is therefore `anyval,boxbool`: 76.0 % of the calls for 33 % of the all-arms
+byte cost. `str` and `i31` stay selectable by name; both are poor marginal
+trades here (+34,685 B for 1.1 pp, +31,399 B for 0.6 pp).
+
+**The real upstream finding is in the boolean number.** 493,911 boxed booleans
+reach ToBoolean per parse while only 333,363 are *created* — so acorn tests the
+same boxed flags repeatedly (parser options, `node.static`, scope flags read out
+of struct slots). Inlining the test is worth 49.5 % of this helper, but the
+larger prize is not boxing them: that is the value-representation lane's
+(`smi-arith` / #2860), not this pass's. Reported, not built — the three files
+`binary-ops-typed-dispatch.ts`, `binary-ops.ts` and `tonumber-fast-paths.ts`
+are owned elsewhere and were not touched.
+
+### Why a wrong guess cannot be a wrong answer
+
+Same safety shape as the property cache, with one addition it did not need.
+
+1. **The arms are not written by this pass.** `extractTruthyLadder` reads the
+   emitted `__is_truthy` body at finalize and copies each arm verbatim, re-homing
+   only the helper's two scratch locals. Re-deriving the ladder would have created
+   a second source of truth — the `$AnyValue` arm exists only under
+   `undefinedSingletonActive`, the `$AnyString` arm only when a native-string type
+   is registered, and #4173's `fastStrictEq` changes how the operand is
+   internalized. Any shape the extractor does not recognise declines the **whole
+   pass**; it cannot copy a stale arm.
+2. **The terminal `else` is the unmodified call**, so the site's answer set is
+   identical to the helper's rather than a subset of it.
+3. **Skipping a ladder arm is proved sound, not assumed.** The helper answers
+   with the FIRST arm that tests true, so inlining arm *k* while skipping arm
+   *j < k* is only correct if no value satisfies both. `mayAlias` refuses unless
+   the two heap types are provably unrelated — neither in the other's declared
+   supertype chain, and differing in field count/kind/mutability or in whether a
+   supertype is declared at all, which is what rules out wasm's structural
+   canonicalization silently merging two declarations. This is the check the
+   property cache never needed (it only ever speculated on `candidates[0]`).
+4. **`ref.test` is the non-null form (`0x14`)**, so `null` fails every guard and
+   reaches the helper's `ref.is_null → 0`. `-0`, `NaN`, `""` and the `$undefined`
+   singleton are not special-cased anywhere: they are answered by the copied arm,
+   which *is* the helper (`-0` is never i31-encoded, so it reaches
+   `$box_number`'s `f64.ne 0`; `""` reaches `$AnyString`'s `len != 0`;
+   `undefined` is a tag-1 `$AnyValue` answered by `tag > 1`).
+
+### The mechanism is proved live, not assumed (entry 22's lesson, applied)
+
+- **Patch-site counter**, printed unconditionally whenever the flag is on:
+  `[truthy-ic] arms=anyval,boxbool patched-sites=1643 functions=504
+  declined-producer-shape=12`.
+- **Poison probe** (`JS2WASM_INLINE_TRUTHY_IC_POISON=1` appends `i32.eqz` to
+  every fast arm): the workload no longer returns 422 — it **throws**
+  (`WebAssembly.Exception`, exit 1), because acorn's control flow inverts. With
+  the IC flag OFF, `POISON=1` reproduces the baseline byte-for-byte (checksum
+  422, 997,454 calls, 2,459,473 bytes), so the poison touches nothing but the
+  guard chain. A null on this pass is only believable after that probe changes
+  the answer.
+- **Byte-identity with the flag unset**: sha256 of the acorn binary is
+  `f01a62f1…7ef9` at `optimize: 0` and `bedb858f…beb7fd` at `-O4`, **identical**
+  to the same builds on the base commit (file-copy A/B, no `git stash`).
+
+### What is left on this helper
+
+239,764 calls survive at the default arm set — receivers that are neither a
+boxed boolean nor an `$AnyValue`: objects, arrays, functions and strings, which
+the ladder answers from its `-> truthy` default or the `$AnyString` arm. Getting
+those would mean inlining the *default*, i.e. speculating "any other non-null
+ref is truthy", which is a **negative** guard over the whole remaining type
+space and is exactly the shape that has measured null or worse in this file
+(entries 9, 13). Not attempted.
+
+## 2026-08-13 (24) — MEASURED END TO END: 5.83× → 5.58×, and the ceiling of this approach
+
+Same box, same workload, same session — a real ratio, not a cross-run inference.
+Box verifiably idle (load 0.27), 300 iterations, order-reversed ON/OFF/OFF/ON.
+
+| | ms / parse | vs Node |
+| --- | ---: | ---: |
+| Node (V8) | **17.59** | 1.00× |
+| wasm, all flags OFF | 102.55 | **5.83×** |
+| wasm, all 7 flags ON | **98.19** | **5.58×** |
+
+| bucket | ON | OFF | Δ |
+| --- | ---: | ---: | ---: |
+| cast-convert | 1.32 % | 6.03 % | −4.71 pp |
+| dynamic-eq | 3.19 % | 6.39 % | −3.20 pp |
+| dynamic-lookup | 17.55 % | 19.72 % | −2.17 pp |
+| string-runtime | 3.15 % | 4.11 % | −0.96 pp |
+| call-dispatch | 10.23 % | 11.04 % | −0.81 pp |
+| **wall** | **29,456 ms** | **30,765 ms** | **−4.3 %** |
+
+ON replicates to 0.5 %, OFF to 1.5 %. `__is_truthy` is the #2 frame in both OFF
+blocks (3.77 %, 3.62 %) and leaves the top frames entirely in both ON blocks.
+
+### The conversion rate, and why it is the important number
+
+**−59.1 % of executed helper calls bought −4.3 % of wall.** The buckets shed
+**11.85 pp** of share while wall moved a third of that. The mechanism:
+**inline caching RELOCATES work, it does not remove it.** A `ref.test` guard
+replacing a call still executes the test — it saves the call overhead and gets
+attributed to `compiled` rather than to a helper frame.
+
+This reframes the metric this issue adopted in entry (21). Counts remain the
+right *deterministic* instrument — they are exact and load-immune where wall
+clock on this box is neither — but they measure **calls avoided, not work
+avoided**, and here those differ by roughly 3×. Quote both, and never convert
+one into the other by assertion.
+
+### The ceiling of the helper-elimination program
+
+With everything on, helper buckets are ~35.4 % of 98.19 ms ≈ **34.8 ms**. Node
+spends ~93 % of its 17.59 ms inside acorn's own code. So **eliminating every
+remaining helper millisecond leaves ≈ 63 ms vs 17.6 ms — about 3.6×.**
+
+That independently reproduces the ~3× floor derived in the 2026-08-08
+cross-runtime entry, from the opposite direction: that one subtracted Node's
+buckets from ours, this one subtracts our own helper time from our total.
+
+**Parity is not reachable on this axis.** What remains here is worth perhaps
+another 1–2 %. The residual 3.6× is our compiled acorn code being that much
+slower than V8's JIT output for the same source: register allocation, inlining
+of acorn's *own* functions, and runtime type feedback an AOT compiler cannot
+obtain. That is a different program, and entry (18)/(19)'s decision — that the
+IR should own inlining, because `wasm-opt` will not inline anything containing a
+loop or a call, which is every function in acorn — is where it starts.
+
+## 2026-08-13 (25) — the IR inliner is BUILT and measured. It works, it is safe, and it does NOT hit the target entry (24) named
+
+> Ordering note: this entry answers entries (18), (19), (21) and (24), which at
+> the time of writing exist only in the shared checkout's working tree and not
+> on `main`. It is appended at the file's end and should be re-ordered after
+> those land. Branch: `worktree-agent-add66802ffbd50fc7`. Flag default OFF; no
+> PR was opened.
+
+`src/codegen/ir-inline.ts` — `JS2WASM_IR_INLINE`, default OFF, unset ⇒ binary
+**byte-identical**, verified by sha256 (`c750c6e4…` for the acorn self-parse
+binary, re-confirmed after every subsequent code change, and again in `report`
+mode which analyses without mutating).
+
+### The headline, in one line
+
+**The inliner removes 1,083,156 executed calls per acorn self-parse (−96.7 % of
+the `__dc_*` adapter layer) with the workload's checksum unchanged at 422 — but
+only 357 of its 8,016 admitted sites target compiled USER code, which is the
+population entry (24) said the remaining 3.6× lives in.**
+
+### The cost model as built, and what each rule fired on
+
+Attribution is emitted by the pass itself (`by-rule <rule>:<family>`), not
+inferred:
+
+| rule | admitted | adapter | helper | user | other |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 3 · adapters always | 3,820 | 3,820 | — | — | — |
+| 1 · loop-leaf (freq. from loop depth) | 2,379 | — | 2,003 | 331 | 45 |
+| 2 · specialisation delta | 1,175 | — | 1,169 | 5 | 1 |
+| — · single-caller | 642 | — | 618 | 21 | 3 |
+| **total** | **8,016** | 3,820 | 3,790 | **357** | 49 |
+
+of 48,046 direct call sites in a 3,521-function / 571,446-instruction module.
+
+Declines, also emitted: `no-rule` 35,189 · `cold-callee` 4,297 (rule 4, all
+`__new_*Error`) · `self-recursive` 334 · `unsafe:return-call` 203 ·
+`unsafe:try` 6 · `unsafe:multi-result` 1.
+
+**Rule 1 (frequency from loop nesting depth)** is `10^depth`, propagated one
+step across the call graph, with the body budget scaling as
+`loopMax · max(1, log10(weight))`. Stated where it appears, because a reviewer
+who knows **#3927 §7 will raise its objection first**: that section abandoned
+frequency-based *field* ranking because observed instance counts are a property
+of the **corpus**. Loop depth is read off the **source being compiled**, so it
+is a property of the **program** and remains valid for every input that program
+will ever see. The objection does not reach this.
+
+**Rule 2 (specialisation delta) is the one result that behaved exactly as
+entry (19) predicted, and it is the cheapest thing in this file**: 1,175 sites
+inlined for **+119 instructions in total** — 0.1 instructions per site, at
+`-O4` **+134 bytes on 1.69 MB (+0.008 %)**. That is inlining whose cost is
+indistinguishable from zero because the site's constant arguments fold the
+callee's branches away, which is precisely the case a size heuristic cannot
+see. Whether it *buys* anything is unmeasured (see "what is not claimed").
+
+### Proof the mechanism fired — three instruments, one number
+
+A confident null from a mechanism that never fired closes a door that was never
+opened, and this file records that failure twice in one session. So:
+
+1. **Executed-call census** (`JS2WASM_EXEC_CENSUS=__dc_`, 545 adapters
+   instrumented, 177 execute): **1,120,550 → 37,394**, Δ **−1,083,156**.
+2. **Runtime site counter** (`JS2WASM_IR_INLINE=adapters,count`, a global
+   incremented once per executed inlined body): **1,083,156**. Exact agreement
+   with (1) — two independent instruments, one number.
+3. **Poison probe** (`…,poison` replaces every inlined body with `unreachable`,
+   which is stack-polymorphic and therefore type-checks against any result
+   type — the numeric-perturbation variant covered *zero* adapters, since they
+   all return references): 3,820 sites poisoned, and the workload's answer moves
+   from **422** to `RuntimeError: unreachable`.
+
+The 37,394 survivors are **not** declines: the verbose per-callee decline list
+contains no `__dc_*` at all, so all 3,820 *direct* sites were taken. They are
+adapters reached through `call_ref` (dominated by
+`__dc_Parser_getTokenFromCode_1`, 25,705), which a direct-call inliner cannot
+see.
+
+### It is NOT overlapping with `wasm-opt` — measured statically, post-`-O4 -g`
+
+| | `__dc_*` functions surviving | `call $__dc_*` sites surviving |
+| --- | ---: | ---: |
+| `-O4` alone | 243 | 1,682 |
+| IR inliner + `-O4` | **8** | **43** |
+
+`wasm-opt` on its own leaves 1,682 adapter call sites; the IR inliner takes that
+to 43 — **97.4 % of what binaryen left**. Total functions after `-O4` fall
+1,320 → 1,196. Confirmed against binaryen 125's own `--help`: `-fimfs`
+(default 20) applies only to callees that are "lightweight (no loops or function
+calls)", and `-ocimfs` **defaults to `-1`, i.e. binaryen already inlines every
+single-caller function**. That last fact is why the `single-caller` rule is the
+weakest of the four and should be considered spent — the brief predicted this
+and it is confirmed (3,521 → 1,320 functions, 48,715 → 20,118 `Call` nodes at
+`-O4` with the inliner off).
+
+### Size, at both levels — every row checksum 422
+
+| config | `optimize: 0` | Δ | `-O4` | Δ |
+| --- | ---: | ---: | ---: | ---: |
+| base | 2,487,935 | — | 1,686,601 | — |
+| specialise only | 2,497,227 | +0.37 % | 1,686,735 | **+0.008 %** |
+| adapters only | 2,652,963 | +6.63 % | 1,725,467 | +2.30 % |
+| all rules (`on`) | 2,891,178 | +16.21 % | 1,758,507 | +4.26 % |
+
+Function-size distribution (IR instructions per function):
+
+| config | total | p50 | p90 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base | 571,446 | 28 | 376 | 1,887 | 15,790 |
+| specialise | 575,069 | 28 | 376 | 1,887 | 15,798 |
+| single-caller | 593,781 | 44 | 384 | 1,887 | 15,937 |
+| adapters | 637,256 | 33 | 428 | 2,251 | 15,790 |
+| loop-leaf | 639,283 | 32 | 410 | 2,012 | 42,925 |
+| all | 726,733 | 47 | 470 | 2,344 | 43,072 |
+
+The `loop-leaf` max (42,925) is the one number that should worry anyone: a
+single function nearly tripled. Entry (19)'s "watch the size distribution, do
+not pre-empt" obligation is discharged, and it says `loop-leaf` needs a
+per-function ceiling before it is used for anything.
+
+### The finding that matters more than the win
+
+**Executed `__closure_*` (compiled user code) calls: 1,296,951 OFF →
+1,257,245 ON, −39,706 (−3.1 %).**
+
+Only **1,242 of 48,046** direct call sites target user functions at all
+(357 admitted, 885 declined). Acorn's own call volume does not travel over
+direct `call` edges between `__closure_*` functions; it travels
+`caller → __dc_* trampoline → closure`. So an inliner that removes the
+trampoline removes a real frame — the ~4 % of pure self-time entry (18)
+attributed to `__dc_*` — but it leaves the user→user call itself intact inside
+the inlined trampoline body.
+
+**This bounds the slice honestly.** Entry (24) put the residual at ~3.6× and
+attributed it to "our compiled acorn code being slower than V8's JIT output …
+inlining of acorn's *own* functions". This pass does not do that, and the
+decline data says why: user callees are big (p90 = 376 instructions),
+multi-caller, and non-leaf, so every size-budget rule refuses them for the same
+structural reason `-fimfs` does. Inlining acorn's own functions needs a
+different admission argument than any of the four rules here — the honest
+candidates are partial inlining (hot prefix only) or specialisation on a
+receiver *type*, not on a constant.
+
+### What is NOT claimed
+
+**No wall-clock number, deliberately** — timing is serialised on this box and
+was out of scope for this run. Entry (24) is the reason that matters rather
+than being an excuse: **−59.1 % of executed helper calls bought −4.3 % of
+wall**, because inline caching relocates work instead of removing it. The same
+discount applies here, and a −1.08 M call figure must **not** be converted into
+a wall claim by assertion. The upper bound from entry (18)'s self-time
+attribution is ~4 % of runtime for the whole `__dc_*` bucket; the plausible
+realisation is a fraction of that, against **+2.30 % of `-O4` binary size**.
+Somebody with an idle box should measure `JS2WASM_IR_INLINE=adapters` at `-O4`
+order-reversed before this goes anywhere near a default.
+
+### Correctness
+
+- acorn self-parse checksum **422** for every configuration measured, at
+  `optimize: 0` and `-O4`.
+- `tests/dogfood/acorn.test.ts` with `DOGFOOD_ACORN=1` (the real
+  compile→validate→AST-diff loop): passes flag OFF and flag ON.
+- Equivalence: all 212 files under `tests/equivalence/`, batched 35 at a time
+  (`--pool=forks --poolOptions.forks.maxForks=2` — the full suite OOMs here),
+  run twice. **13 failing tests, and the failing set is byte-for-byte identical
+  ON and OFF** — same tests, same per-file counts (`arguments-nested-and-loops`,
+  `array-inline-return`, `delete-sentinel`, `logical-conditional-identity`,
+  `misc-small-patterns`, `new-non-constructor`, `null-dereference-guards`,
+  `optional-direct-closure-call`, `reflect-api`, `tdz-reference-error`,
+  `yield-as-expression`). All pre-existing on `origin/main`; zero attributable
+  to the inliner.
+- `tests/issue-4157-ir-inline.test.ts` pins the constructs the rewrite can get
+  wrong — closure captures, recursion, early `return` from a nested block,
+  loop-carried `break`/`continue`, `this`-binding through a method call, and a
+  constant-argument site sharing a callee with a non-constant one — by VALUE,
+  ON and OFF, plus the unset-flag and `report`-mode byte-identity assertions.
+
+### Two bugs found in my own pass, both worth recording
+
+1. **A shallow `f.body` snapshot made the pass silently iterative** in
+   `mod.functions` order: A inlined into B, then the already-inflated B into C.
+   Not unsound, but order-dependent and unbudgetable — and it cost **243,492
+   instructions where single-level costs 137,072**, i.e. 78 % of the growth was
+   a transitive effect nobody asked for. The snapshot is now a deep clone.
+2. **Folding a constant `if` down one structured level rewrites the meaning of
+   every branch that escaped the arm** — `br 0` that meant "leave the if" comes
+   to mean "leave the enclosing block". That is a silent miscompile, not a size
+   regression. Guarded by `escapesRegion`. (It never fires on acorn: the
+   binary is bit-identical with and without the guard. It is a net, not a
+   behaviour change — which is exactly when this class of bug ships.)
+
+Declined by construction, each because the wasm-level rewrite is not sound for
+it: `return_call`/`return_call_ref` (a tail call returns from the *enclosing*
+frame; rewriting to `call`+`br` is semantically right but converts a
+constant-stack tail call into a growing one), `try`/`rethrow`, multi-result
+callees (the wrapper block would need a `[] -> results` functype that may not
+exist), and direct self-recursion.
+
+## 2026-08-13 (26) — the four redundant caller-side flattens, deleted
+
+The lazy-flatten slice reported, but did not build, that **1,664 of the remaining
+`__str_equals` feeders are all emitted by `binary-ops-typed-dispatch.ts`** — the
+equality cascade (~959/962) and the mixed-externref strict-equality arm
+(~261/264) — and that the four `{ op: "call", funcIdx: flattenIdx }` entries
+behind them can be deleted outright. Built now, under the existing
+`JS2WASM_LAZY_STR_FLATTEN` flag via that slice's own `redundantFlattenCall`.
+
+**The claim needed checking before acting, and nearly failed.** The report said
+`__str_equals` "takes `ref $AnyString`", while `native-strings-basics.ts:437`
+documents it as `__str_equals(a: ref $NativeString, b: ref $NativeString)`. If
+the latter were the emitted signature, deleting the flattens would feed an
+`$AnyString` to a `ref $NativeString` parameter — a validation failure.
+
+It is not. `native-strings-shared.ts:69` defines
+`strRef = { kind: "ref", typeIdx: anyStrTypeIdx }` with the comment *"used in
+all helper function signatures (params and results)"*, and
+`wrapBodyWithFlatten` gives each helper its own guarded preamble. The `:437`
+comment is the **logical** contract, not the emitted one. The report was right;
+the documentation is what disagrees.
+
+### Result
+
+| | OFF | lazy-flatten only | **+ this** |
+| --- | ---: | ---: | ---: |
+| `__str_flatten` | 516,717 | 421,019 | **252,367** |
+| `__str_equals` | 254,976 | 254,976 | 254,976 |
+
+**−168,652 further calls, −264,350 against baseline (−51.2 %)**, checksum 422,
+and the binary is **smaller** (2,478,636 vs a 2,537,596 flags-off baseline).
+Byte-identical with the flag unset.
+
+`__str_equals` is unchanged, as expected — this removes flattens, not equality
+calls. The gain is larger than the site count suggests because the preamble
+`wrapBodyWithFlatten` installs sits **above** `__str_equals`'s `ref.eq`, length
+and hash rejects: a pre-flattening caller guarantees the helper never reaches
+the skips it exists to take. Removing the caller-side call restores them.
+
+## 2026-08-13 (27) — `__extern_get` static-name IC: RESCUED, UNFINISHED, does not yet fire
+
+**Status: incomplete. Do not read the presence of this code as a working
+optimisation.** It is committed flag-gated OFF and byte-identical when unset so
+that 479 lines of work survive; it currently patches **zero** sites.
+
+The agent building it was killed by a session restart before committing or
+reporting. Its files existed only as **untracked** files in an ephemeral
+worktree — the same loss pattern recorded in the 2026-08-07 handoff, where two
+branches had to be rescued the same way. Recovered, wired, and diagnosed here.
+
+### What it is meant to do
+
+`__extern_get` runs **506,752 times per parse** and has not moved by a single
+call across seven attempts, while everything around it fell 66–100 %. Its
+per-key cache already serves **87.24 %** of those calls, so the target is not a
+better cache but **removing the call** at *static-name* sites, where the key is a
+compile-time constant and the key `ref.test`/`ref.cast`/hash-load are provably
+unnecessary. `extern-get-inline-ic.ts` copies the cache-hit arm out of the
+emitted helper and splices it at the site, with the unmodified call as the miss
+arm — the shape that worked three times (`member-get-inline-ic`,
+`is-truthy-inline-ic`, `smi-box-fast-path`).
+
+### Two defects found while rescuing it
+
+1. **FIXED — helper lookup by index arithmetic.** It resolved the helper as
+   `ctx.mod.functions[getIdx - ctx.numImportFuncs]`. `ctx.funcMap` holds
+   **mint-time handles** (import-space at registration, before dead-import
+   elimination), not final list positions, so this landed on an unrelated
+   function and the pass took a **silent** early return — flag ON produced a
+   byte-identical binary, which reads exactly like "the optimisation does
+   nothing". This is the trap `alloc-census.ts` already records: *"recomputing
+   final index from list position matched zero of 261k measured calls."*
+   Replaced with the by-name lookup every other finalize fill uses.
+2. **OPEN — the arm extractor refuses.** With the lookup fixed it reports
+   `REFUSED: __extern_get body is not the cache-arm shape
+   (prefix-not-key-load)`. Its own placement comment names the cause: the arm it
+   copies must be the **first** thing in `__extern_get`, and later fills
+   (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) unshift ahead of
+   it. The pass is currently wired after `inlineUserFunctions`, which is the
+   wrong point in the finalize order. **Fixing this is finding the slot where
+   the cache arm is still the prefix** — read the placement contract in the
+   file header first.
+
+### Worth knowing before resuming
+
+- The refusal is **loud and specific**, which is the design working — it declines
+  rather than half-copying an arm it does not recognise. Contrast defect 1,
+  which was silent and therefore far more dangerous.
+- Before claiming any result, use the `JS2WASM_EXTERN_GET_IC_POISON=1` probe the
+  agent already built: corrupt the fast arm and confirm the workload's answer
+  moves off checksum 422. Two confident nulls in this issue were changes that had
+  never been enabled.
+- Expected value, stated honestly: even **total** elimination of `__extern_get`
+  is worth ~8 % of runtime, and entry (28) measures call-removal converting to
+  wall time at roughly **1:7**. This is a low-single-digit-percent lever against a
+  ~6.7–7.7× gap. It is the largest remaining helper population, not a path to
+  parity.
+
+## 2026-08-13 (29) — MORE FLAGS IS SLOWER: the set needs selecting, not maximising
+
+Asked to "just switch on ALL the flags and measure". The result inverts the
+expectation and is the most actionable finding of the session.
+
+| config | wasm ms | Δ vs OFF | binary @ `optimize: 0` |
+| --- | ---: | ---: | ---: |
+| tuned 8 flags | 93.67 | **−8.75 ms (−8.5 %)** | +134 KB |
+| **all 10 at maximum** | 87.49 | **−1.65 ms (−1.9 %)** | **+970 KB (+39 %)** |
+
+Both order-reversed ON/OFF/OFF/ON on an idle box. **At maximum settings the
+effect (1.65 ms) is smaller than the ON blocks' own spread (4.13 ms) — it is not
+resolvable.** The improvement is statistically indistinguishable from zero.
+
+Deterministic counts kept improving in the same run: **−4,409,124 executed calls,
+−69.6 %**, the best figure recorded here. So this is a clean, measured instance of
+**call reduction and wall time diverging** — the binary grew 39 % and
+instruction-cache cost consumed the gains.
+
+### The two culprits
+
+- **`JS2WASM_INLINE_TRUTHY_IC=all`** turns on six arms, but entry (23) measured
+  `boxnum` and `bigint` firing **zero times** on acorn while costing +74 KB and
+  +47 KB respectively. Maximising the flag enables arms already known never to
+  fire. `=1` (the two-arm default: `boxbool` + `anyval`, 75.9 % of the available
+  reduction) is the operating point.
+- **`JS2WASM_FNCTOR_CTOR_PARAM_SLOTS=1`** is a **pre-existing flag unrelated to
+  this work**, swept in by enumerating every `JS2WASM_*` in the touched files. It
+  contaminates the comparison and should not have been in the ON set.
+
+### What this confirms that was previously only asserted
+
+Two caveats recorded earlier said size has a cost, without testing it. This
+tests it:
+
+- entry (22)'s `INLINE_PROP_IC` ceiling curve — 8.7 % of calls for +38 KB at
+  ceiling 1 versus 66.1 % for +107 KB at ceiling 8;
+- entry (25)'s `IR_INLINE` `loop-leaf` rule taking max function size
+  15,790 → 43,072.
+
+Both are the same phenomenon this measurement makes visible in wall time.
+
+### The measured optimum
+
+`INLINE_PROP_IC=8`, `INLINE_TRUTHY_IC=1` (**not** `all`), `IR_INLINE=on`,
+`FUSED_TONUMBER=1`, `SMI_FASTPATH=all`, `LAZY_STR_FLATTEN=1`,
+`ELIDE_PROVEN_NONNULL_TYPEERROR=1`, `INLINE_HINTS=1` — **−8.5 %**.
+
+Anyone flipping defaults should start from that set and re-derive it per corpus,
+because the optimum is a *selection*, not a maximum. And the per-flag numbers in
+this file are all measured with the other flags OFF, so they do not compose
+additively — the size costs do.
+
+## 2026-08-13 (30) — fresh look at the flags-on binary: the "compiled residual" decomposes into three named defects
+
+Dissected the emitted code for **one hot JS statement** — `this.lastTokEnd =
+this.end` in `pp.next` — with the tuned flag set ON. V8's post-IC output for
+this statement is two moves. Ours is ~100+ instructions, and the excess is not
+JIT magic we lack; it is three specific code-quality defects, each quantified
+against the whole binary:
+
+| | defect | scale |
+| --- | --- | ---: |
+| **A** | **`this` is re-resolved per operand.** A ~15-instruction ladder — `global.get`, null test, undefined-singleton substitute, `ref.test`, sentinel `ref.eq` — emitted once per member operand, for a value that cannot change within the function. | **5,974 ladders** |
+| **B** | **Typed reads, boxed writes.** The get side has 19 `__get_member_*__f64` twins; the set side has **zero**. Every numeric write goes f64 → i31-range check (~20 instr) → box → `__set_member_*(externref, externref)` → unbox → f64 slot. | 424 dispatchers, **344,602 calls/parse** |
+| **C** | **No redundancy elimination between ICs.** Consecutive inlined ICs re-do `any.convert_extern` + `ref.test` on the same receiver; three consecutive `this.lastTokX = this.X` statements pay six type tests of a value whose type cannot change between them. | 6,723 `ref.test` of one struct type alone |
+
+Also newly measured: the write/dispatch populations nothing has touched —
+`__set_member_*` 344,602, `__call_m_*` 103,651, `__call_fn_method_*` 76,827,
+`__named_this_call_*` 32,468 = **560,056 executed calls/parse**.
+
+**Why this matters more than another helper slice:** these defects live in the
+`compiled` bucket — the ~40 % that was being written off as "register
+allocation, inlining and type feedback an AOT compiler cannot obtain".
+`this.lastTokEnd = this.end` needs **no type feedback**: both sides are
+statically fields of the same known struct. A, B and C are all fixable ahead of
+time — receiver CSE (hoist `this` resolution to one local per function), a
+`__set_member_<name>__f64` twin symmetric to the existing get twin, and reusing
+the IC's cast result across adjacent same-receiver ICs.
+
+## 2026-08-13 (31) — the `__extern_get` IC COMPLETED: −87.2 %, the seventh attempt finally moves it
+
+The rescued pass is finished. One character was the whole runtime bug, and the
+diagnosis route is worth keeping: `wasm-dis` on the invalid module showed a
+phantom `local.set $scratch` / `drop` pair reconstructed around the patched site
+— the signature of an extra value stranded on the stack. The site rewrite
+emitted `local.tee` for the receiver capture (per its own header sketch), which
+stores AND leaves the value on the stack under the block result. `local.set` is
+the fix; the sketch carried the bug into the implementation.
+
+### Results (flag `JS2WASM_EXTERN_GET_IC=1`, still default OFF)
+
+| | value |
+| --- | --- |
+| sites patched | **964 of 975** static-key (11 declined on producer shape; 456 computed-key untouched) |
+| `__extern_get` executed | **506,752 → 64,691 (−87.2 %)** — exactly the cache hit rate of entry (14) |
+| `__obj_find` / `__obj_hash` | unchanged (miss-path work, as expected) |
+| poison probe | flag+poison kills the workload; flag alone returns 422 — the fast path serves real hits |
+| binary | +159,680 at `optimize: 0` (+6.3 %); **+105,386 (+6.2 %) at a completed `-O4`** |
+| flag-off | byte-identical, 2,537,596 / 422 |
+
+Correctness: dogfood acorn 4/4 with `DOGFOOD_ACORN=1`; the 64-name differential
+**IDENTICAL ON vs OFF in BOTH read paths** (computed and named — hashes,
+presence counts, node counts); property/object equivalence 308/310 with the same
+2 `new-non-constructor` failures flag-off and on `origin/main` (pre-existing).
+
+### Found underneath: `wasm-opt` times out SILENTLY and ships unoptimized output
+
+The first `-O4` size reading was +961 KB (+57 %). False: `src/optimize.ts` runs
+the `wasm-opt` CLI with `timeout: 60_000`, the IC'd module pushes `-O4` past
+60 s, `execFileSync` throws, and the pipeline returns `{ binary, optimized:
+false, warning: … }` — **and the perf lane never surfaces the warning**. Running
+`wasm-opt -O4` manually on the same output: 2,647,615 → 1,792,005, i.e. the true
+cost is +6.2 %.
+
+Consequences:
+
+- **Entry (29) is partly confounded.** The "all flags at maximum" wall-clock
+  regression was attributed to instruction-cache pressure from +970 KB; some or
+  all of those measured binaries may have been silent unoptimized fallbacks,
+  which would produce the same signature. The tuned-vs-max comparison should be
+  re-run with the timeout raised or the `optimized: false` warning asserted
+  before the icache story is quoted again.
+- **Any heavy-flag measurement is suspect until the lane prints the warning.**
+  A 60 s cap on a 2.5 MB module at `-O4` is tight even without flags.
+- The IC itself remains default OFF: +6.2 % size for the largest single call
+  reduction of the programme (−442,061) is a defensible trade, but per entry
+  (29) the wall verdict must be measured with a *completed* `-O4`, not assumed
+  from counts.
+
+## 2026-08-13 (32) — flag inventory: there is no dormant stash
+
+Question asked: has anyone ever switched on ALL default-off flags? Answer: no —
+and a full inventory says there is little to switch. Of 104 non-diagnostic
+`JS2WASM_*` flags in `src/`, **51 are kill-switches for features already
+default-ON** — the compiler ships with essentially its whole optimisation
+surface enabled. The genuinely dormant opt-ins beyond this session's eight:
+
+- **`JS2WASM_IR_ESCAPE` / `JS2WASM_IR_OWNERSHIP` / `JS2WASM_IR_I32_DOMAIN`** —
+  measured together just now: **−727 bytes, checksum 422, zero movement on any
+  hot helper count**. Analyses with (almost) no consumers, exactly the #743
+  "derive always; consumers arrive later" story.
+- `JS2WASM_TS7` — alternate TypeScript backend; compile-time, not runtime.
+- `JS2WASM_FNCTOR_PAD_SLOTS` — adds padding; an experiment, not a win.
+- `JS2WASM_FORCE_DYN_*`, `JS2WASM_NO_DYNPROTO`, `JS2WASM_DISABLE_STRING_PRESIZE`
+  — pessimizer/test hooks.
+
+So the flag frontier IS this session's tuned set; there is no forgotten
+performance flag waiting. Combined with entry (29) (maximising the tuned set is
+itself a regression, timeout confound pending), flag-flipping as a strategy is
+exhausted.
+
+## 2026-08-13 (33) — the `compiled` bucket, first two slices: defect B is a call-count win, defect A is a CODE-SIZE win, and B's real finding is why the naive CSE is wrong
+
+First work against the `compiled` residual named in entry (30). Both slices are
+behind flags, DEFAULT OFF; with the flags unset the standalone acorn binary is
+sha256-identical to the pre-change build
+(`d70f9e3a7099d4997fcc5ebb3f7a25fe502c752d3edfc0731b526ef6ea80879c`, 2,487,935 B,
+checksum 422).
+
+The instrument entry (21) introduced (`src/codegen/exec-census.ts`) is not on
+`main`; the function-entry census was rebuilt here inside `alloc-census.ts`
+(`JS2WASM_EXEC_CENSUS=<substr>,…`, one exported counter per matched DEFINED
+function, incremented by a stack-neutral prologue). It reproduces entry (21)'s
+numbers to the call — `__box_number` 489,166, `__unbox_number` 883,318 — and
+entry (30)'s `__set_member_*` 344,601, which is what validates it.
+
+### Slice A — `JS2WASM_SET_MEMBER_F64`, the write-side f64 twin
+
+`__set_member_<name>__f64(recv: externref, v: f64)`, symmetric with #3673's get
+twin: same reserve-then-fill discipline, same candidate list in the same order,
+a direct `struct.set` (plus the #3780 presence bit) for an f64 slot, and the
+generic dispatcher as the delegate for everything else — which is also how the
+#3927 cold-tail / layout / resid arms and the sidecar terminal stay covered
+without re-deriving them. `src/codegen/member-set-f64.ts`.
+
+| | baseline | slice A | Δ |
+| --- | ---: | ---: | ---: |
+| `__box_number` | 489,166 | 401,521 | **−87,645 (−17.9 %)** |
+| `__unbox_number` | 883,318 | 783,197 | **−100,121 (−11.3 %)** |
+| `__set_member_*` (all) | 344,896 | 344,911 | +15 |
+| binary @ `optimize: 0` | 2,487,935 | 2,491,828 | +3,893 (+0.16 %) |
+| binary @ `-O4` | 1,686,619 | 1,688,025 | +1,406 (+0.08 %) |
+
+414 write sites patched, 23 dispatchers, 35 direct f64 arms. **83,780 of the
+executed writes moved to a twin and only 15 delegated** — so the direct arm is
+what runs, not the fallback. `lastTokEnd` and `lastTokStart` (41,890 each)
+convert 100 %; `potentialArrowAt` 3,725, `parenthesizedAssign` 3,519,
+`trailingComma` 3,442, `awaitPos`/`yieldPos` 1,888 each follow.
+
+Two things the numbers say that the plan did not predict:
+
+- **`__unbox_number` falls by MORE than `__box_number`** (100,121 vs 87,645).
+  The extra is the assignment's own RESULT: leaving it as f64 instead of a boxed
+  externref also removes the consumer-side unbox. The twin count
+  (≥103,961) is in turn LARGER than the box reduction, because a
+  constant-valued numeric write (`this.awaitPos = 0`) was already box-free —
+  the const-box hoist of entry (14) had taken it.
+- **`this.end` does NOT convert, and cannot be made to by this slice.** Its
+  32,468 executed writes live in `finishNode`-shaped code where the value is a
+  PARAMETER typed `any`, so it is an externref at the write. The remaining
+  write-side gap is a TYPING problem upstream of the write, not a dispatch
+  problem at it.
+
+### Slice B — `JS2WASM_RECEIVER_CSE`, hoisting the `this` ladder
+
+Reuse a resolved `__current_this` within one straight-line instruction sequence
+instead of re-running the ~15-instruction ladder per member operand.
+`src/codegen/receiver-cse.ts`.
+
+| | baseline | slice B | Δ |
+| --- | ---: | ---: | ---: |
+| binary @ `optimize: 0` | 2,487,935 | 2,404,901 | **−83,034 (−3.34 %)** |
+| binary @ `-O4` | 1,686,619 | 1,645,876 | **−40,743 (−2.42 %)** |
+| executed calls | — | — | **0** |
+
+2,610 ladders emitted, **1,985 reused** — 43 % of the 4,595 `this` operands in
+the standalone build. **This slice is invisible to the executed-call census by
+construction**: the ladder is inline code, not a call, so `JS2WASM_EXEC_CENSUS`
+reports zero change and the honest metric is code size. Anyone extending entry
+(21)'s "counts are the verdict" rule to this class of change will measure
+nothing and wrongly conclude it did nothing.
+
+### The load-bearing finding: `fctx.body` is NOT append-only
+
+The obvious cache key is the instruction ARRAY: a Wasm array is entered at the
+top and flows down, so an earlier instruction dominates every later one in it,
+and an emitter that builds branch arms by swapping `fctx.body` to a detached
+array gets dominance for free with no analysis. **That reasoning is wrong on
+this codebase, and the acorn self-parse proves it: with the naive rule the parse
+throws.**
+
+Bisecting the reuse count (`JS2WASM_RECEIVER_CSE_LIMIT`, `…_TRACE`) localises it
+to exactly one reuse — the 1,412th, in `__closure_528` — whose trace reads
+`gap=-5`: the recorded position is PAST the current end of the array. The array
+had SHRUNK. About eight emitters relocate an already-emitted range out of
+`fctx.body` with `fctx.body.splice(start)` (expressions.ts' async rejection
+wrap, array-methods' guard arms, char-at-transfer's deferred position), which
+moves a `local.tee` into a conditional arm where it no longer dominates what is
+emitted next. The local's default is `ref.null.extern`, so the failure is a
+silent wrong `this`, not a validation error.
+
+The fix is to re-verify the precondition at every lookup: the `tee` instruction
+OBJECT must still be at the index it was left at. A relocation then costs a
+reuse (20 of 2,005 on acorn), never correctness. **Any future value-numbering /
+CSE work in this emitter needs this guard or an equivalent — "same array" is not
+"same basic block" here.**
+
+A second hypothesis was tested and REJECTED on the way: that `__current_this`
+was being clobbered between the two reads. Restricting reuse to pairs with no
+intervening call at all (282 of 2,005) still failed, which rules the clobber out
+and is what pointed at relocation.
+
+### Correctness
+
+Checksum 422 on every configuration (A, B, A+B, both flags off). Poison probes:
+corrupting slice A's fast arm (`v + 7` into the slot) crashes the parse in
+`getLineInfo`; replacing slice B's cached read with `ref.null.extern` throws —
+both mechanisms demonstrably EXECUTE, they are not merely emitted. The 64-name
+per-field differential is clean — 0 hash divergence, 0 presence divergence, 32,506
+nodes — in **both** read paths (`computed`, `named`), at default K and `K=0`, for
+A (4 points), B (4 points) and A+B (2 points). `DOGFOOD_ACORN=1
+tests/dogfood/acorn.test.ts` passes with both flags on (110 sites patched, 2,101
+reuses inside that lane). 31 property/object/numeric/assignment equivalence files
+(192 tests) pass with both flags on.
+
+Wider: the first half of `tests/equivalence/` (106 files, 824 tests) gives
+**3 failed / 818 passed / 3 todo with both flags ON and the identical 3 failed /
+818 passed with both flags OFF** — same three files
+(`arguments-nested-and-loops`, `array-inline-return`, `delete-sentinel`), and
+each also fails with every touched file restored to its `HEAD` blob, so all
+three are **pre-existing on `origin/main`**. So is
+`optional-direct-closure-call.test.ts` (2 tests), from the closure/method
+batch. (Attributed by file copies; `git stash` is a single shared stack across
+worktrees.) The SECOND half OOMs at `maxForks=2`, as this container's notes
+predict — that half is not evidence either way.
+
+Coverage caveat worth stating: the equivalence snippets exercise slice A (twins
+reserved and filled) but reuse **zero** receivers for slice B — its ladders are
+emitted, never shared, because single-statement snippets have no repeated `this`.
+Slice B's correctness evidence is the acorn dogfood (2,101 reuses) and the eight
+per-field differentials, not the equivalence suite.
+
+### Composition, and what to do with these two
+
+A and B compose: A+B is 2,408,806 @ `optimize: 0` and 1,647,274 @ `-O4`, i.e.
+B's size win minus A's size cost, with A's call reductions intact and unchanged
+by B. Per entry (29), a flag set is a SELECTION, not a maximum — B pays no size
+and belongs in any set; A buys 187,766 fewer executed calls for +3.9 KB, which is
+a far better ratio than the arms entry (29) found to be net-negative, but it has
+not been wall-clocked and should not be defaults-flipped on a size argument
+alone.
+
+The three defects of entry (30) are now one measured, one measured, one open: A
+(typed writes) is a call-count win capped by the upstream typing gap `this.end`
+shows; B (receiver re-resolution) is a code-size win with a reusable structural
+lesson; **C (no redundancy elimination between adjacent ICs) is untouched, and B's
+relocation guard is the thing it will need first.**
+
+## 2026-08-13 (34) — the definitive wall measurement: **−12.0 %**, tuned-11, completed `-O4`
+
+The session's closing measurement, designed to answer entries (29) and (31) at
+once: order-reversed ON/OFF/OFF/ON on the lane, with `optimize.ts`'s `wasm-opt`
+timeout temporarily raised (file-copy A/B, restored after) so **no block could
+silently ship an unoptimized fallback** — the confound entry (31) exposed.
+
+ON = the tuned eight **plus** the three slices landed since:
+`JS2WASM_SET_MEMBER_F64`, `JS2WASM_RECEIVER_CSE`, `JS2WASM_EXTERN_GET_IC=1`.
+
+| block | wasm ms | node ms | ratio |
+| --- | ---: | ---: | ---: |
+| onA | 98.45 | 15.68 | 6.28× |
+| offA | 104.59 | 13.72 | 7.62× |
+| offB | 109.48 | 13.52 | 8.10× |
+| onB | 90.02 | 12.77 | 7.05× |
+| **ON mean** | **94.23** (spread 8.44) | | |
+| **OFF mean** | **107.03** (spread 4.89) | | |
+
+**−12.80 ms, −12.0 % — the largest wall improvement recorded in this issue**,
+and the effect exceeds both within-group spreads. The ratio moves ~7.9× → ~6.6×,
+quoted as ranges because the Node baseline still swings 12.8–15.7 ms between
+blocks.
+
+What changed since the −8.5 % of entry (28): the write-side f64 twin, the
+receiver CSE (which *shrinks* the binary), the extern-get IC (−87.2 % of the
+hottest helper's calls), and — likely material — a genuinely completed `-O4` on
+every ON block. This also closes entry (29)'s question: with the timeout
+confound removed and the never-firing truthiness arms left off, adding
+well-chosen flags helps; the earlier "more is slower" was a mix of genuinely
+harmful arm maximisation and silent unoptimized fallbacks.
+
+Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6–7.1×**.
+Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
+reuse), partial inlining of user functions, and receiver-type specialisation.

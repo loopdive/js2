@@ -706,7 +706,7 @@ export function collectExternDeclarations(
       // green on its own probes. Skip the stub here so the finalize owns the
       // native emit, exactly as parseInt/parseFloat do.
       if (
-        (ctx.wasi || ctx.standalone) &&
+        (ctx.targetProfile.semanticProviders === "native-first" || ctx.wasi || ctx.standalone) &&
         (name === "parseInt" ||
           name === "parseFloat" ||
           name === "decodeURI" ||

@@ -57,11 +57,20 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
   // (#4120) A reified builtin CONSTRUCTOR carrier (`Set`, `TypeError`, `Array`,
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
   // finalize alive on its own.
-  if (baseTypeIdxs.length === 0 && runtimeEvalCallbackTypeIdx === undefined && !hasBrandedBuiltinCarrier(ctx)) return;
+  if (
+    baseTypeIdxs.length === 0 &&
+    runtimeEvalCallbackTypeIdx === undefined &&
+    !hasBrandedBuiltinCarrier(ctx) &&
+    proxyTypeIdx === undefined &&
+    boundaryCallableKindIdx === undefined
+  )
+    return;
 
   const fnByName = (name: string): WasmFunction | undefined =>
     ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
@@ -92,6 +101,30 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     // natives" invariant. Deliberately NOT added to the closure-root classifier,
     // for exactly the reason stated for the runtime-eval marker above.
     arms.push(...buildBuiltinCallableTestArm(ctx, anyLocalIdx, onMatch));
+    if (proxyTypeIdx !== undefined) {
+      const proxyAnswer: Instr[] = [
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 5 },
+        ...(matchValue === 0 ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
+        { op: "return" },
+      ];
+      arms.push(
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.test", typeIdx: proxyTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: proxyAnswer },
+      );
+    }
+    if (boundaryCallableKindIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: boundaryCallableKindIdx },
+        { op: "i32.const", value: 1 },
+        { op: "i32.and" },
+        ...(matchValue === 0 ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
+        { op: "return" },
+      );
+    }
     return arms;
   };
 
@@ -185,6 +218,39 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       valueArms.push(
         ...buildBuiltinCallableTestArm(ctx, 1, [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }]),
       );
+      if (proxyTypeIdx !== undefined) {
+        valueArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: proxyTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: proxyTypeIdx },
+              { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 5 },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
+              },
+            ],
+          },
+        );
+      }
+      if (boundaryCallableKindIdx !== undefined) {
+        valueArms.push(
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: boundaryCallableKindIdx },
+          { op: "i32.const", value: 1 },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
+          },
+        );
+      }
       b.splice(spliceAt, 0, ...valueArms);
     }
   }

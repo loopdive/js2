@@ -43,6 +43,7 @@ import type { Instr, StructTypeDef } from "../ir/types.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
+import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -109,6 +110,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     forEachChild(node, visit);
   };
   visit(root);
+  planHoleyArrayCarrier(ctx, root);
 }
 
 /**
@@ -483,9 +485,13 @@ export function ensureHoleType(ctx: CodegenContext): number {
  * Stack: `[] → [externref]`.
  */
 export function emitHoleSentinel(ctx: CodegenContext, fctx: FunctionContext): void {
+  fctx.body.push(...holeSentinelInstrs(ctx));
+}
+
+/** Detached form of {@link emitHoleSentinel} for helper and branch builders. */
+export function holeSentinelInstrs(ctx: CodegenContext): Instr[] {
   const globalIdx = ensureHoleType(ctx);
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "extern.convert_any" });
+  return [{ op: "global.get", index: globalIdx }, { op: "extern.convert_any" }];
 }
 
 /**

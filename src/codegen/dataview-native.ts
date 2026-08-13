@@ -110,6 +110,11 @@ export function isDataViewAccessor(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(DV_ACCESSORS, name);
 }
 
+/** Select the Wasm-owned DataView carrier independently of the embedder. */
+export function usesNativeDataViewProvider(ctx: CodegenContext): boolean {
+  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
+}
+
 /**
  * #1698 — `ab.slice(begin?, end?)` in no-JS-host mode. Returns a new
  * ArrayBuffer (i32_byte vec struct) holding bytes `[begin, end)` of the
@@ -1630,7 +1635,7 @@ export function emitDataViewAccessor(
  * throw templates capture their ctor indices anyway.
  */
 export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
+  if (!usesNativeDataViewProvider(ctx)) return undefined;
   const acc = DV_ACCESSORS[member];
   if (!acc) return undefined;
   const helperName = `__dv_m_${member}`;
@@ -1805,7 +1810,7 @@ export function emitDataViewProtoMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
+  if (!usesNativeDataViewProvider(ctx)) return null;
   const resultType: ValType = { kind: "externref" };
 
   if (DV_GETTER_MEMBERS.has(member)) {

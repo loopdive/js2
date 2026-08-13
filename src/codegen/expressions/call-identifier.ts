@@ -35,7 +35,7 @@ import {
 } from "../linear-uint8-signatures.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
-import { calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
+import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
@@ -90,6 +90,7 @@ import {
   resolveClosureInfoFromLocal,
   tryEmitArrayToStringNative,
   tryEmitInlineDynamicCall,
+  usesNativeFunctionBindProvider,
 } from "./calls.js";
 import {
   appendArgcSetupFromExtras,
@@ -373,7 +374,7 @@ export function compileIdentifierCall(
         // path; a real string (externref / native ref) keeps the existing
         // passthrough, and a dynamic externref wrapper object is left to the
         // (separate, deferred) wrapper substrate.
-        const nativeParse = ctx.standalone || ctx.wasi;
+        const nativeParse = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
         const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
         const arg0Type = compileExpression(ctx, fctx, arg0);
         // A statically-typed `null`/`undefined`/`void` arg lowers to an externref
@@ -1153,16 +1154,26 @@ export function compileIdentifierCall(
         const nonNull = ctx.checker.getNonNullableType(calleeTsType);
         callSigs = nonNull.getCallSignatures?.();
       }
-      // (#1337) Host bound functions route through Reflect.apply; standalone
-      // degrades bind to identity and continues through its native call path.
-      if (
-        isKnownVariable &&
-        !ctx.standalone &&
-        !noJsHost(ctx) &&
-        calleeIsBoundFunctionVar(ctx.oracle, expr.expression)
-      ) {
-        const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
-        if (hostCall !== null) return hostCall;
+      // A bound result is always an externref carrier, but the carrier owner is
+      // provider-specific. Native-first/standalone dispatch `$__bound_fn`
+      // through the Wasm closure bridge; compatibility invokes the real JS
+      // bound-function exotic. If the native carrier targets a caller-owned JS
+      // function, the dynamic dispatch's miss uses the admitted callback
+      // boundary rather than a semantic host fallback.
+      if (isKnownVariable && calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) {
+        if (usesNativeFunctionBindProvider(ctx)) {
+          const nativeCall = tryEmitInlineDynamicCall(
+            ctx,
+            fctx,
+            expr,
+            true,
+            !boundFunctionTargetIsDefinitelyCompiled(ctx.oracle, expr.expression),
+          );
+          if (nativeCall !== null) return nativeCall;
+        } else {
+          const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
+          if (hostCall !== null) return hostCall;
+        }
       }
       const storedCarrierCall = tryCompileStoredStandaloneCarrierCall(ctx, fctx, expr, isKnownVariable);
       if (storedCarrierCall !== undefined) return storedCarrierCall;

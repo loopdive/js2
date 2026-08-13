@@ -24,12 +24,50 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
-import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
+import { addFuncType, getOrRegisterHoleyArrayType, getOrRegisterVecType, isHoleyArrayType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { holeSentinelInstrs } from "./array-holes.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
 export const VEC_NEW_SIZED_PREFIX = "__vec_new_sized_";
+export const HOLEY_ARRAY_NEW = "__holey_array_new";
+
+/**
+ * Materialize the dedicated `$Hole`-filled sized-array allocator. Its result
+ * has a distinct subtype brand, so the sparse representation never leaks into
+ * ordinary externref vectors in the same module.
+ */
+export function ensureHoleyArrayNew(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(HOLEY_ARRAY_NEW);
+  if (existing !== undefined) return existing;
+
+  const vecTypeIdx = getOrRegisterHoleyArrayType(ctx);
+  const arrTypeIdx =
+    ctx.mod.types[vecTypeIdx]?.kind === "struct" ? ctx.mod.types[vecTypeIdx]!.fields[1]?.type : undefined;
+  if (!arrTypeIdx || (arrTypeIdx.kind !== "ref" && arrTypeIdx.kind !== "ref_null")) {
+    throw new Error("holey array allocator requires a vec data field");
+  }
+  const dataTypeIdx = arrTypeIdx.typeIdx;
+  const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
+  const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [resultType], `$${HOLEY_ARRAY_NEW}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: HOLEY_ARRAY_NEW,
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      ...holeSentinelInstrs(ctx),
+      { op: "local.get", index: 0 },
+      { op: "array.new", typeIdx: dataTypeIdx },
+      { op: "struct.new", typeIdx: vecTypeIdx },
+    ],
+    exported: false,
+  });
+  ctx.funcMap.set(HOLEY_ARRAY_NEW, funcIdx);
+  return funcIdx;
+}
 
 function vecTypeIndexForElement(ctx: CodegenContext, elementValType: ValType): number | null {
   const elemKind =
@@ -141,6 +179,8 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   const NCAP = 4;
   const NDATA = 5;
   const OCAP = 6;
+  const OLEN = 7;
+  const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
 
   const body: Instr[] = [
     // ── Null guard (#441 parity): if (vec == null) throw TypeError ─────────
@@ -202,9 +242,12 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
             { op: "local.set", index: NCAP },
           ],
         },
-        // newData = array.new_default(newCap)
+        // Only the branded sparse carrier fills new capacity with `$Hole`.
+        ...(holeyCarrier ? holeSentinelInstrs(ctx) : []),
         { op: "local.get", index: NCAP },
-        { op: "array.new_default", typeIdx: arrTypeIdx },
+        ...(holeyCarrier
+          ? ([{ op: "array.new", typeIdx: arrTypeIdx }] satisfies Instr[])
+          : ([{ op: "array.new_default", typeIdx: arrTypeIdx }] satisfies Instr[])),
         { op: "local.set", index: NDATA },
         // array.copy newData[0..oldCap] = data[0..oldCap]
         { op: "local.get", index: NDATA },
@@ -223,6 +266,31 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
         { op: "local.set", index: DATA },
       ],
     },
+    ...(holeyCarrier
+      ? ([
+          // A write beyond logical length can land in already-allocated spare
+          // capacity. Preserve absence in the full [oldLength, idx) gap.
+          { op: "local.get", index: VEC },
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+          { op: "local.set", index: OLEN },
+          { op: "local.get", index: IDX },
+          { op: "local.get", index: OLEN },
+          { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: DATA },
+              { op: "local.get", index: OLEN },
+              ...holeSentinelInstrs(ctx),
+              { op: "local.get", index: IDX },
+              { op: "local.get", index: OLEN },
+              { op: "i32.sub" },
+              { op: "array.fill", typeIdx: arrTypeIdx },
+            ],
+          },
+        ] satisfies Instr[])
+      : []),
     // ── data[idx] = val ─────────────────────────────────────────────────────
     { op: "local.get", index: DATA },
     { op: "local.get", index: IDX },
@@ -256,6 +324,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
       { name: "$ncap", type: { kind: "i32" } },
       { name: "$ndata", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
       { name: "$ocap", type: { kind: "i32" } },
+      ...(holeyCarrier ? [{ name: "$oldlen", type: { kind: "i32" } as ValType }] : []),
     ],
     body,
     exported: false,

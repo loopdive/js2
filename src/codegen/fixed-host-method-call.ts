@@ -31,6 +31,7 @@ export function tryEmitFixedHostMethodCall(
   if (
     ctx.standalone ||
     ctx.wasi ||
+    ctx.targetProfile.semanticProviders === "native-first" ||
     process.env.JS2WASM_FIXED_HOST_METHOD_CALLS === "0" ||
     expr.arguments.length > MAX_FIXED_HOST_METHOD_CALL_ARITY ||
     expr.arguments.some((arg) => ts.isSpreadElement(arg))
