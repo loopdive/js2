@@ -79,6 +79,23 @@ export function main(): number { return probeCycle(); }
     expect((exports.main as () => number)()).toBe(42);
   });
 
+  it("materializes a cyclic function-value capture before a direct sibling call", async () => {
+    const exports = await run(`
+function recurse(count: number): number {
+  function getF() { return f; }
+  function f(_template: unknown, remaining: number): number {
+    if (remaining === 0) return 42;
+    const next = getF();
+    return next(null, remaining - 1);
+  }
+  return f(null, count);
+}
+
+export function main(): number { return recurse(3); }
+`);
+    expect((exports.main as () => number)()).toBe(42);
+  });
+
   it("a sibling that only CALLS the capturing function still gets the captures", async () => {
     const exports = await run(`
 function factory(): number {
