@@ -315,6 +315,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
+  functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
@@ -595,6 +597,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * receiver-preserving closed method dispatcher.
    */
   retainedFunctionMethodPlan?(
+    call: ts.CallExpression,
+  ): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } | null;
+  /** #4387 — stable fnctor instance inheriting one intrinsic Array prototype. */
+  fnctorArrayMethodPlan?(
     call: ts.CallExpression,
   ): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } | null;
   /** #3791 exact stable module numeric vec at a direct-call boundary. */
@@ -5902,6 +5908,41 @@ function lowerPreparedAsyncDateNow(
   return result;
 }
 
+function lowerReceiverFirstDynamicMethod(
+  expr: ts.CallExpression,
+  cx: LowerCtx,
+  plan: { readonly receiverGlobal: IrGlobalRef; readonly funcName: string },
+  description: string,
+): IrValueId {
+  const receiver = cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }));
+  const args: IrValueId[] = [receiver];
+  for (const argument of expr.arguments) {
+    if (ts.isSpreadElement(argument)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: ${description} spread is unsupported (${cx.funcName})`,
+      );
+    }
+    const value = lowerExpr(argument, cx, irDynamic());
+    const type = cx.builder.typeOf(value);
+    const scalar = asVal(type);
+    const carrier =
+      scalar?.kind === "f64" || scalar?.kind === "i32" ? boxConcreteToDynamic(value, type, argument, cx) : value;
+    if (carrier === null) {
+      throw new IrUnsupportedError(
+        "operand-coercion-unsupported",
+        "build",
+        `ir/from-ast: ${description} scalar argument has no dynamic box (${cx.funcName})`,
+      );
+    }
+    args.push(cx.builder.typeOf(carrier).kind === "dynamic" ? carrier : cx.builder.emitCoerceToExternref(carrier));
+  }
+  const result = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), args, irDynamic());
+  if (result === null) throw new Error(`ir/from-ast: ${description} returned void (${cx.funcName})`);
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -5911,8 +5952,51 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
 
+  // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
+  // object. Evaluate arguments left-to-right for effects, discard them, then
+  // call the symbolic zero-arg provider which returns the lane's real
+  // undefined carrier. Intercept before receiver lowering: ambient Function
+  // has no general IR value representation, and treating `prototype` as an
+  // instance method is the original category error.
+  if (
+    receiverIdentifier?.text === "Function" &&
+    methodName === "prototype" &&
+    !receiverIsDirectModuleBinding &&
+    cx.scope.get("Function") === undefined &&
+    cx.resolver?.isAmbientBinding?.(receiverIdentifier) !== false
+  ) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype spread call is not supported (${cx.funcName})`,
+      );
+    }
+    const target = cx.resolver?.functionPrototypeCallTarget?.();
+    if (!target) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: Function.prototype call provider unavailable (${cx.funcName})`,
+      );
+    }
+    for (const argument of expr.arguments) lowerDiscardedExpression(argument, cx);
+    const result = cx.builder.emitCall(target, [], irVal({ kind: "externref" }));
+    if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
+    return result;
+  }
+
   const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
   if (preparedDateNow !== null) return preparedDateNow;
+
+  // #4387 — a stable `var value = new F()` whose one proven `F.prototype`
+  // write installs an intrinsic Array stays in the legacy raw-fnctor global.
+  // IR owns the call by loading that exact carrier and invoking the same
+  // receiver-first closed dispatcher used by the direct path.
+  const fnctorArrayMethod = cx.resolver?.fnctorArrayMethodPlan?.(expr) ?? null;
+  if (fnctorArrayMethod !== null) {
+    return lowerReceiverFirstDynamicMethod(expr, cx, fnctorArrayMethod, "fnctor Array method");
+  }
 
   // #3793 — Acorn's public wrappers call static properties on the retained
   // `Parser` function object. Load the exact existing module carrier and
@@ -5921,35 +6005,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // does not turn the assigned FunctionExpression into a bare direct call.
   const retainedMethod = cx.resolver?.retainedFunctionMethodPlan?.(expr) ?? null;
   if (retainedMethod !== null) {
-    const receiver = cx.builder.emitGlobalGet(retainedMethod.receiverGlobal, irVal({ kind: "externref" }));
-    const args: IrValueId[] = [receiver];
-    for (const argument of expr.arguments) {
-      if (ts.isSpreadElement(argument)) {
-        throw new IrUnsupportedError(
-          "method-call-unsupported",
-          "build",
-          `ir/from-ast: retained function method spread is unsupported (${cx.funcName})`,
-        );
-      }
-      const value = lowerExpr(argument, cx, irDynamic());
-      const type = cx.builder.typeOf(value);
-      const scalar = asVal(type);
-      const carrier =
-        scalar?.kind === "f64" || scalar?.kind === "i32" ? boxConcreteToDynamic(value, type, argument, cx) : value;
-      if (carrier === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: retained function method scalar argument has no dynamic box (${cx.funcName})`,
-        );
-      }
-      args.push(cx.builder.typeOf(carrier).kind === "dynamic" ? carrier : cx.builder.emitCoerceToExternref(carrier));
-    }
-    const result = cx.builder.emitCall(irRuntimeFuncRef(retainedMethod.funcName), args, irDynamic());
-    if (result === null) {
-      throw new Error(`ir/from-ast: retained function method returned void (${cx.funcName})`);
-    }
-    return result;
+    return lowerReceiverFirstDynamicMethod(expr, cx, retainedMethod, "retained function method");
   }
 
   // #3791 — standalone native RegExp `.test` on one exact, stable top-level

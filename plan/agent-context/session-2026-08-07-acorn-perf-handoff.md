@@ -238,3 +238,92 @@ What finally converged it, named independently by both lanes:
 verified pre-existing by swapping base blobs. See #3552 for why CI does not
 surface these, and its still-open follow-up: detection exists (`issue-tests.yml`
 post-merge), nothing consumes it.
+
+---
+
+# Update — 2026-08-12
+
+**The allocation program described above is finished, and the picture has
+changed.** Full detail is in #4157 under the four `2026-08-12` headings; this is
+the short version so the next lane knows what is still true.
+
+**Standing: still ~7× on `standalone-dynamic`.** The wins landed, but they moved
+GC, not the total.
+
+## What changed
+
+| bucket | 08-07 | 08-12 |
+| --- | ---: | ---: |
+| gc-engine | 23.1 % | **2.97 %** |
+| dynamic-lookup | 13.5 % | **21.15 %** |
+| call-dispatch | 8.1 % | **11.39 %** |
+
+GC went from largest bucket to ninth. `__extern_get` (9.22 %) is now the hottest
+frame in the profile — ahead of every compiled acorn function. The two buckets
+this handoff flagged as "untouched by anything" are now 32.5 % together, and are
+the whole remaining addressable story. Of the 100.3 ms gap in the 08-08
+cross-runtime table, ~9 ms is closed; helpers with no Node counterpart carry
+about 55 % of what remains.
+
+## Do NOT re-attempt (two more nulls, same helper)
+
+The exhaustion list above grows by two, and this pair is stronger than the
+others because they attack from opposite ends and both land on zero:
+
+| lever | result |
+| --- | --- |
+| skip the declared-field ladder for plain-`$Object` receivers | null, ±0.3 pp |
+| abstract-`eq` casts instead of RTT casts on the cache hit path | null, ±0.5 pp |
+
+The first removed **14,770 instructions** of provably-dead work from the miss
+path; the second removed two RTT checks from the hit path and shrank the binary.
+Neither moved the bucket. **`__extern_get`'s 9 % is not made of instructions
+removable from inside it** — at 21.7 ns / ~45 cycles per call, what is left is
+call overhead, the props-array pointer chase, and branch behaviour. Do not spend
+another A/B cycle on the body.
+
+Both experiments are written up in #4157 in enough detail to rebuild; neither is
+in the tree.
+
+## The one thing that is priced above the measurement floor
+
+**Site- or name-local inline caching — remove the CALL, not the work inside it.**
+
+The numbers that make it the only live candidate:
+
+- **506,752 `__extern_get` calls per parse**, **87.24 % served from the existing
+  per-key cache** (#3673). First time that cache has been measured.
+- Thrash (populated but owner/props missed) is only **3.77 %**, so "make the
+  cache smarter" — N-way, shape-keyed — is priced out too.
+- Serving 87 % of half a million calls from ~10 inline instructions instead of a
+  call plus ~40 is worth **on the order of 5 % of runtime**.
+- **1,812 static call sites**, but the top **15 callers carry 90.6 %** of the
+  time — so inline at the hot callers, not everywhere (all 1,812 would cost
+  roughly +40 KB). The selection rule must be corpus-independent for the same
+  reason #3927's field ranking had to be.
+
+What it needs: an entry-returning form of `__extern_get` (caching the *value* is
+unsound — in-place value updates must stay visible, which is why the existing
+cache stores the `$PropEntry`), per-name cache globals, and correct fallback for
+accessor / tombstone / non-`$Object` receivers. Note the hot acorn names
+(`locations`, `ranges`, `ecmaVersion`, `onToken`) get **no**
+`__get_member_<name>` dispatcher today because no closed struct carries them —
+which is exactly the condition for emitting a direct `__extern_get` call, so the
+slice has to widen dispatcher reservation as well.
+
+## Instrument note
+
+**`JS2WASM_ALLOC_CENSUS_CALLS` is broken** — it instruments, then emits a module
+that fails to compile with a stack-type error at an instrumented call. It fails
+loudly rather than miscounting, but per-caller attribution is unavailable, and
+that is the instrument the slice above wants for verifying its caller targeting.
+The per-type census (`JS2WASM_ALLOC_CENSUS=1`) is unaffected. Not filed as its
+own issue: `claim-issue.mjs --allocate` reports the open-PR scan DEGRADED in this
+container (no `gh`), and reserving against a degraded universe is how #4215 was
+burned.
+
+## Still true from above
+
+`#3920` (the `in`-operator / enumeration defect) and the known-red root tests are
+unchanged. Wall-clock A/Bs under ~10 % remain unresolvable on this box — every
+number here is bucket share with order-reversal controls.

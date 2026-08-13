@@ -59,6 +59,10 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import {
+  ensureFunctionPrototypeCallHelper,
+  FUNCTION_PROTOTYPE_CALL_HELPER,
+} from "../codegen/function-prototype-callable.js";
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
 import {
@@ -195,6 +199,7 @@ import {
   makeIrRegExpExpressionPredicate,
   type IrLegacyModuleBindingIdentity,
   type IrLegacyModuleBindingResolver,
+  type IrFnctorArrayMethodPlan,
   type IrModuleBindingIdentity,
   type IrModuleBindingResolver,
   type IrRetainedFunctionMethodPlan,
@@ -858,6 +863,7 @@ export function compileIrPathFunctions(
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+    stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -3901,6 +3907,91 @@ function resolveRetainedFunctionMethod(
   return { receiverGlobal, funcName };
 }
 
+function resolveFnctorArrayMethod(
+  ctx: CodegenContext,
+  plan: IrFnctorArrayMethodPlan,
+): { readonly receiverGlobal: IrGlobalRef; readonly funcName: string } {
+  if (
+    plan.receiverGlobalBindingId === undefined ||
+    plan.receiverStorageOwnerUnitId === undefined ||
+    plan.receiverSourceId === undefined ||
+    plan.receiverDeclarationOrdinal === undefined ||
+    !ts.isIdentifier(plan.receiverDeclaration.name) ||
+    plan.receiverDeclaration.name.text !== plan.receiverName ||
+    !plan.constructorDeclaration.name ||
+    plan.constructorDeclaration.name.text !== plan.constructorName ||
+    plan.methodName !== "filter" ||
+    plan.arity !== 1 ||
+    ctx.fnctorEscapeGate?.stableArrayPrototypeNames.has(plan.constructorName) !== true
+  ) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      "fnctor Array method plan has no exact structural carrier identity",
+    );
+  }
+
+  const globalName = `__mod_${plan.receiverName}`;
+  const observed = ctx.programAbiGlobals?.moduleBinding(plan.receiverDeclaration);
+  let receiverGlobalDef: GlobalDef | undefined;
+  if (ctx.programAbiGlobals) {
+    if (!observed || observed.displayName !== plan.receiverName) {
+      throw new IrInvariantError(
+        "unknown-global-ref",
+        "build",
+        `fnctor Array receiver ${plan.receiverName} has no allocator-owned module global`,
+      );
+    }
+    receiverGlobalDef = observed.value;
+  } else {
+    const globalIdx = ctx.moduleGlobals.get(plan.receiverName);
+    receiverGlobalDef = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  }
+  if (
+    !receiverGlobalDef ||
+    receiverGlobalDef.name !== globalName ||
+    receiverGlobalDef.type.kind !== "externref" ||
+    !receiverGlobalDef.mutable
+  ) {
+    throw new IrInvariantError(
+      "unknown-global-ref",
+      "build",
+      `fnctor Array receiver ${plan.receiverName} is not the legacy externref module slot`,
+    );
+  }
+  const receiverGlobal = irSourceGlobalRef(plan.receiverGlobalBindingId, globalName);
+  planProgramAbiGlobal(ctx, {
+    ref: receiverGlobal,
+    anchor: { kind: "source", sourceId: plan.receiverSourceId },
+    storageOwnerUnitId: plan.receiverStorageOwnerUnitId,
+    roleOrdinal: PROGRAM_ABI_GLOBAL_ROLE.moduleValue,
+    derivedOrdinal: plan.receiverDeclarationOrdinal,
+    global: receiverGlobalDef,
+  });
+
+  const funcName = `__call_m_${plan.methodName}_${plan.arity}`;
+  const dispatcherIdx = ctx.funcMap.get(funcName);
+  const dispatcher = dispatcherIdx === undefined ? undefined : definedFuncAt(ctx, dispatcherIdx);
+  const signature = dispatcher ? ctx.mod.types[dispatcher.typeIdx] : undefined;
+  if (
+    !dispatcher ||
+    dispatcher.name !== funcName ||
+    !signature ||
+    signature.kind !== "func" ||
+    signature.params.length !== 2 ||
+    signature.params.some((param) => param.kind !== "externref") ||
+    signature.results.length !== 1 ||
+    signature.results[0]?.kind !== "externref"
+  ) {
+    throw new IrInvariantError(
+      "abi-type-index-mismatch",
+      "build",
+      `fnctor Array ${plan.receiverName}.${plan.methodName} dispatcher does not have the exact receiver-first externref ABI`,
+    );
+  }
+  return { receiverGlobal, funcName };
+}
+
 function resolveStaticNumericArrayGlobal(
   ctx: CodegenContext,
   plan: IrStaticNumericArrayPlan,
@@ -3975,6 +4066,17 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    fnctorArrayMethodPlan(call: ts.CallExpression) {
+      if (
+        !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
+        !supportsBackendCapability("legacy-numeric-array-global") ||
+        !moduleBindingResolver
+      ) {
+        return null;
+      }
+      const plan = moduleBindingResolver.fnctorArrayMethodPlan(call);
+      return plan ? resolveFnctorArrayMethod(ctx, plan) : null;
+    },
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
         !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
@@ -4010,6 +4112,12 @@ function makeFromAstResolver(
     objectDefinePropertyTarget() {
       if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
       return irImportFuncRef("env", "__defineProperty_desc");
+    },
+    functionPrototypeCallTarget() {
+      if (!ctx.standalone || ctx.wasi) return null;
+      return ensureFunctionPrototypeCallHelper(ctx) === undefined
+        ? null
+        : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
     },
     resolveDynamic() {
       return resolveIrDynamicCarrierType(ctx);

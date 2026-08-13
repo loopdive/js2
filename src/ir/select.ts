@@ -513,6 +513,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-date-snapshot"
       | "host-regexp-constructor"
       | "host-object-define-property"
+      | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "legacy-numeric-array-global",
   ) => boolean;
@@ -1813,7 +1814,7 @@ function whyNotIrClaimable(
     dynNames.size > 0 ||
     isDynamicReturn ||
     currentStableFunctionCallSubject !== null ||
-    containsRetainedFunctionMethodCall(body)
+    containsReceiverFirstDynamicMethodCall(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
@@ -2313,7 +2314,8 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 }
 
 /**
- * True when the current body contains a #3793 retained method call.
+ * True when the current body contains an exact receiver-first dynamic method
+ * call (#3793 retained function object or #4387 inherited Array HOF).
  *
  * Such calls always use the boxed-dynamic closed-dispatch ABI, so they must
  * run through {@link dynamicUsesAreMoveOnly} even when the enclosing
@@ -2321,12 +2323,19 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
  * result position and every argument bridge before the selector claims the
  * function.
  */
-function containsRetainedFunctionMethodCall(body: ts.Block): boolean {
+function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
+  return (
+    currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
+    currentModuleBindingResolver?.fnctorArrayMethodPlan(call)
+  );
+}
+
+function containsReceiverFirstDynamicMethodCall(body: ts.Block): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
     if (node !== body && isFunctionLike(node)) return;
-    if (ts.isCallExpression(node) && currentModuleBindingResolver?.retainedFunctionMethodPlan(node) !== undefined) {
+    if (ts.isCallExpression(node) && receiverFirstDynamicMethodPlan(node) !== undefined) {
       found = true;
       return;
     }
@@ -2393,7 +2402,7 @@ function dynamicUsesAreMoveOnly(
     if (
       ts.isCallExpression(e) &&
       ts.isPropertyAccessExpression(e.expression) &&
-      currentModuleBindingResolver?.retainedFunctionMethodPlan(e) !== undefined
+      receiverFirstDynamicMethodPlan(e) !== undefined
     ) {
       return true;
     }
@@ -2473,9 +2482,9 @@ function dynamicUsesAreMoveOnly(
       return dynNames.has(e.text) === expectDyn;
     }
     if (ts.isCallExpression(e)) {
-      const retainedMethod = currentModuleBindingResolver?.retainedFunctionMethodPlan(e);
-      if (retainedMethod !== undefined) {
-        if (!expectDyn || e.arguments.length !== retainedMethod.arity) return false;
+      const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
+      if (receiverFirstMethod !== undefined) {
+        if (!expectDyn || e.arguments.length !== receiverFirstMethod.arity) return false;
         for (const argument of e.arguments) {
           if (ts.isSpreadElement(argument)) return false;
           const dynamic = isDynShaped(argument);
@@ -6626,6 +6635,25 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
+      // #4385 — exact ambient `%Function.prototype%()` call. This is a
+      // callable intrinsic object, not a dynamic method lookup. Its arguments
+      // are still ordinary evaluated expressions; the runtime entry point
+      // ignores their values and returns undefined.
+      if (
+        ts.isIdentifier(expr.expression.expression) &&
+        expr.expression.expression.text === "Function" &&
+        expr.expression.name.text === "prototype" &&
+        selectorSeesAmbientBinding(expr.expression.expression) &&
+        !scope.has("Function")
+      ) {
+        if (currentSelectionOptions?.supportsBackendCapability?.("standalone-function-prototype-call") !== true) {
+          return capabilityNo("call-resolution-unsupported", "expr-function-prototype-call-target", expr);
+        }
+        if (expr.arguments.some(ts.isSpreadElement)) {
+          return shapeNo("expr-function-prototype-call-spread", expr);
+        }
+        return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+      }
       if (
         isPristineEs5IntrinsicIsFrozenCall(expr, (node) => selectorSeesAmbientBinding(node) && !scope.has(node.text))
       ) {
@@ -6642,8 +6670,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         currentSelectionOptions?.supportsBackendCapability?.("standalone-native-regexp-test-carrier") === true &&
         currentSelectionOptions.supportsBackendCapability?.("legacy-numeric-array-global") === true
       ) {
-        const retainedMethod = currentModuleBindingResolver?.retainedFunctionMethodPlan(expr);
-        if (retainedMethod !== undefined) {
+        const receiverFirstMethod = receiverFirstDynamicMethodPlan(expr);
+        if (receiverFirstMethod !== undefined) {
           for (const arg of expr.arguments) {
             if (ts.isSpreadElement(arg) || !isPhase1Expr(arg, scope, localClasses)) return false;
           }

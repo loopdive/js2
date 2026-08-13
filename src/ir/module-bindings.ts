@@ -11,6 +11,8 @@ import { isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
+import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
+export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -699,6 +701,8 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly staticNumericArrayPlan: (node: ts.Expression) => IrStaticNumericArrayPlan | undefined;
   /** Exact retained function-object method call whose receiver must stay live. */
   readonly retainedFunctionMethodPlan: (call: ts.CallExpression) => IrRetainedFunctionMethodPlan | undefined;
+  /** Exact inherited Array HOF call on a stable user-constructor instance. */
+  readonly fnctorArrayMethodPlan: (call: ts.CallExpression) => IrFnctorArrayMethodPlan | undefined;
   /**
    * Exact top-level function whose complete reference population is
    * fixed-arity `.call(thisArg, ...args)`. Accepts either the declaration or
@@ -731,6 +735,8 @@ export interface IrModuleBindingResolverOptions {
   readonly allowBuiltinMapExtern: boolean;
   /** Provisional selector-only access to the bounded top-level accessor family. */
   readonly allowBoundedTopLevelAccessorSelectionCandidates?: boolean;
+  /** Whole-program fnctor gate proof for one-write intrinsic Array prototypes. */
+  readonly stableFnctorArrayPrototypeNames?: ReadonlySet<string>;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -2005,6 +2011,13 @@ export function makeIrLegacyModuleBindingResolver(
         return undefined;
       }
     },
+    fnctorArrayMethodPlan(call: ts.CallExpression): IrFnctorArrayMethodPlan | undefined {
+      try {
+        return makeFnctorArrayMethodPlan(checker, call, options.stableFnctorArrayPrototypeNames);
+      } catch {
+        return undefined;
+      }
+    },
     stableFunctionCallPlan(node: ts.FunctionDeclaration | ts.CallExpression): IrStableFunctionCallPlan | undefined {
       if (options.numberStorage !== "f64") return undefined;
       try {
@@ -2219,6 +2232,19 @@ export function makeIrModuleBindingResolver(
         receiverDeclarationOrdinal: receiverLocation.declarationOrdinal,
       };
     },
+    fnctorArrayMethodPlan(call: ts.CallExpression): IrFnctorArrayMethodPlan | undefined {
+      ownerAt(call);
+      const plan = legacy.fnctorArrayMethodPlan(call);
+      if (!plan) return undefined;
+      const receiverLocation = bindingLocation(plan.receiverDeclaration);
+      return {
+        ...plan,
+        receiverGlobalBindingId: receiverLocation.globalBindingId,
+        receiverStorageOwnerUnitId: receiverLocation.storageOwnerUnitId,
+        receiverSourceId: receiverLocation.sourceId,
+        receiverDeclarationOrdinal: receiverLocation.declarationOrdinal,
+      };
+    },
     stableFunctionCallPlan(node: ts.FunctionDeclaration | ts.CallExpression): IrStableFunctionCallPlan | undefined {
       ownerAt(node);
       const plan = legacy.stableFunctionCallPlan(node);
@@ -2284,6 +2310,7 @@ export function projectIrModuleBindingResolverToLegacy(
     staticRegExpTestPlan: (node: ts.Expression) => resolver.staticRegExpTestPlan(node),
     staticNumericArrayPlan: (node: ts.Expression) => resolver.staticNumericArrayPlan(node),
     retainedFunctionMethodPlan: (call: ts.CallExpression) => resolver.retainedFunctionMethodPlan(call),
+    fnctorArrayMethodPlan: (call: ts.CallExpression) => resolver.fnctorArrayMethodPlan(call),
     stableFunctionCallPlan: (node: ts.FunctionDeclaration | ts.CallExpression) => {
       const plan = resolver.stableFunctionCallPlan(node);
       if (!plan) return undefined;
