@@ -1725,3 +1725,59 @@ principle is written as a general rule and this is one workload, dominated by
 exactly the operation the boundary punishes most. But "host imports for
 performance" should not be read as established for anything read-heavy without
 measuring it, and nobody had.
+
+## 2026-08-12 (13) — the spec from §10 was BUILT. It is a regression. Here is why.
+
+Entry (10) specced call-site inline caching as the one surviving lever. It was
+implemented, validated (checksum 422, +26,491 B / +1.06 %) and measured
+order-reversed. **It makes things worse**, consistently, in both blocks:
+
+| block | `__extern_get` | **dynamic-lookup** | wall |
+| --- | ---: | ---: | ---: |
+| onA | 8.23 % | **19.45 %** | 53,046 ms |
+| offA | 8.59 % | 16.14 % | 49,120 ms |
+| offB | 8.58 % | 16.19 % | 48,268 ms |
+| onB | 8.40 % | **19.88 %** | 50,217 ms |
+
+`__extern_get` itself barely moves (−0.27 pp), the **bucket rises 3.50 pp**
+(16.17 → 19.67) and wall clock is **~6 % worse** — far outside the noise that
+made every earlier verdict a null. Reverted.
+
+### The cause, which was foreseen and then overridden
+
+Before building, this was written down: *"the names that have a dispatcher have
+one because a closed struct carries the field, so their reads hit struct arms,
+not the cache — the arm would almost never fire."* That objection was then
+dropped on discovering `reserveMemberGetDispatch` is called **unconditionally**
+for static-name reads (`property-access-dispatch.ts:3893`), not gated on struct
+candidates.
+
+Both facts are true, and together they are the defect. Because reservation is
+unconditional, **every** static name gets a dispatcher — including the many whose
+reads are answered by a struct arm a few instructions later. Prepending the cache
+check to all of them makes those reads pay ~15 instructions of `ref.test` /
+`struct.get` / `ref.eq` that cannot possibly hit, before reaching the arm that
+was already answering them. The population that *would* hit is a minority of
+dispatchers, and it did not pay for the tax on the rest.
+
+Secondary effect, same direction: the arm inflates each dispatcher past the size
+where `wasm-opt` was inlining the trivial ones, so reads that used to fold into a
+direct call now pay a real one. That is the same sizing mistake as entry (9),
+arriving from the other end.
+
+### The refinement, and the honest caveat about it
+
+The obvious fix is to emit the arm **only for dispatchers with no struct
+candidates** — precisely acorn's `locations` / `ranges` / `ecmaVersion` /
+`onToken`, which are read off the plain `options` object and have no closed
+struct carrying them. That is a one-line gate on the existing candidate list.
+
+It is **not** validated, and it should not be assumed to work: this entry exists
+because the last confident prediction here was wrong by 3.5 pp in the wrong
+direction. It also cannot recover more than the hit path is worth, and entry (9)
+put that at 6.38 pp *including* work the check still has to do.
+
+**Sixth measured attempt, and the first regression rather than a null.** The
+value is that the surviving lever from entry (8) is no longer a hypothesis: it
+has been built and it does not work as specced. Anyone picking it up starts from
+a measured failure and a named refinement, not from §10's optimism.
