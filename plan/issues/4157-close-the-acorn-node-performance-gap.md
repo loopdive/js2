@@ -3667,3 +3667,53 @@ statically fields of the same known struct. A, B and C are all fixable ahead of
 time — receiver CSE (hoist `this` resolution to one local per function), a
 `__set_member_<name>__f64` twin symmetric to the existing get twin, and reusing
 the IC's cast result across adjacent same-receiver ICs.
+
+## 2026-08-13 (31) — the `__extern_get` IC COMPLETED: −87.2 %, the seventh attempt finally moves it
+
+The rescued pass is finished. One character was the whole runtime bug, and the
+diagnosis route is worth keeping: `wasm-dis` on the invalid module showed a
+phantom `local.set $scratch` / `drop` pair reconstructed around the patched site
+— the signature of an extra value stranded on the stack. The site rewrite
+emitted `local.tee` for the receiver capture (per its own header sketch), which
+stores AND leaves the value on the stack under the block result. `local.set` is
+the fix; the sketch carried the bug into the implementation.
+
+### Results (flag `JS2WASM_EXTERN_GET_IC=1`, still default OFF)
+
+| | value |
+| --- | --- |
+| sites patched | **964 of 975** static-key (11 declined on producer shape; 456 computed-key untouched) |
+| `__extern_get` executed | **506,752 → 64,691 (−87.2 %)** — exactly the cache hit rate of entry (14) |
+| `__obj_find` / `__obj_hash` | unchanged (miss-path work, as expected) |
+| poison probe | flag+poison kills the workload; flag alone returns 422 — the fast path serves real hits |
+| binary | +159,680 at `optimize: 0` (+6.3 %); **+105,386 (+6.2 %) at a completed `-O4`** |
+| flag-off | byte-identical, 2,537,596 / 422 |
+
+Correctness: dogfood acorn 4/4 with `DOGFOOD_ACORN=1`; the 64-name differential
+**IDENTICAL ON vs OFF in BOTH read paths** (computed and named — hashes,
+presence counts, node counts); property/object equivalence 308/310 with the same
+2 `new-non-constructor` failures flag-off and on `origin/main` (pre-existing).
+
+### Found underneath: `wasm-opt` times out SILENTLY and ships unoptimized output
+
+The first `-O4` size reading was +961 KB (+57 %). False: `src/optimize.ts` runs
+the `wasm-opt` CLI with `timeout: 60_000`, the IC'd module pushes `-O4` past
+60 s, `execFileSync` throws, and the pipeline returns `{ binary, optimized:
+false, warning: … }` — **and the perf lane never surfaces the warning**. Running
+`wasm-opt -O4` manually on the same output: 2,647,615 → 1,792,005, i.e. the true
+cost is +6.2 %.
+
+Consequences:
+
+- **Entry (29) is partly confounded.** The "all flags at maximum" wall-clock
+  regression was attributed to instruction-cache pressure from +970 KB; some or
+  all of those measured binaries may have been silent unoptimized fallbacks,
+  which would produce the same signature. The tuned-vs-max comparison should be
+  re-run with the timeout raised or the `optimized: false` warning asserted
+  before the icache story is quoted again.
+- **Any heavy-flag measurement is suspect until the lane prints the warning.**
+  A 60 s cap on a 2.5 MB module at `-O4` is tight even without flags.
+- The IC itself remains default OFF: +6.2 % size for the largest single call
+  reduction of the programme (−442,061) is a defensible trade, but per entry
+  (29) the wall verdict must be measured with a *completed* `-O4`, not assumed
+  from counts.

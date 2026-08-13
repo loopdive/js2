@@ -33,7 +33,7 @@
  * and the key work removed:
  *
  *     <receiver: externref>
- *     local.tee $__eg_r
+ *     local.set $__eg_r
  *     block (result externref)
  *       <cache arm, copied verbatim; `return` rewritten to `br 0`>
  *       local.get $__eg_r ; global.get $key ; extern.convert_any
@@ -262,7 +262,12 @@ function rewriteInstrs(
       { op: "extern.convert_any" },
       instr,
     ];
-    out.push({ op: "local.tee", index: ls.recv });
+    // local.SET, not tee: the producer's value is captured to the local and
+    // re-materialised via `local.get` in both arms. A tee leaves the receiver
+    // on the stack UNDER the block result — an extra value that surfaces as
+    // "type error in fallthru" at whatever consumer sits downstream (found via
+    // wasm-dis reconstructing a phantom scratch/drop pair around the site).
+    out.push({ op: "local.set", index: ls.recv });
     out.push({
       op: "block",
       blockType: { kind: "val", type: { kind: "externref" } },
