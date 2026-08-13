@@ -3936,8 +3936,9 @@ function withdrawDirectCallerActivationTargets(plan: IrOverlayPlan, targetUnitId
   for (const unitId of targetUnitIds) {
     const claim = plan.functionClaimsByUnitId.get(unitId);
     // The target scan covers every exact top-level declaration, while the IR
-    // claim index intentionally contains only selector-admitted owners.
-    if (!claim) continue;
+    // claim index intentionally contains only selector-admitted owners. A
+    // different early gate may already have removed a claimed owner too.
+    if (!claim || !plan.identityPlan.safeFunctionUnitIds.has(unitId)) continue;
     if (!plan.preparationFailuresByUnitId.has(unitId)) {
       plan.preparationFailuresByUnitId.set(unitId, {
         kind: "unsupported",

@@ -491,7 +491,7 @@ function collectTopLevelFunctionValueTargets(
 
 /**
  * A source that observes the active `caller` of one of its own functions keeps
- * every newly admitted function-value target direct. The caller-strictness
+ * every top-level function direct. The caller-strictness
  * hand-off is a source-wide call contract: preparing a different callable in
  * the same script can still change the final direct-call instrumentation and
  * therefore the observed activation. This gate only withholds the runtime-
@@ -513,7 +513,11 @@ export function collectDirectCallerActivationTargetUnitIds(
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
   if (!sourceObservesCurrentFunctionCaller(ctx, sourceFile)) return new Set<IrUnitId>();
-  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
+  return new Set(
+    [...topLevelFunctionUnitsByName(sourceFile, identityPlan).values()].flatMap((units) =>
+      units.map((unit) => unit.unitId),
+    ),
+  );
 }
 
 /** Exact top-level source callables materialized as runtime values anywhere in this source. */
@@ -585,7 +589,10 @@ function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration:
       receiver !== undefined &&
       (name === "caller" || name === "arguments") &&
       ts.isIdentifier(receiver) &&
-      identifierResolvesToDeclaration(ctx, receiver, declaration)
+      (identifierResolvesToDeclaration(ctx, receiver, declaration) ||
+        (declaration.name !== undefined &&
+          ts.isIdentifier(declaration.name) &&
+          receiver.text === declaration.name.text))
     ) {
       found = true;
       return;

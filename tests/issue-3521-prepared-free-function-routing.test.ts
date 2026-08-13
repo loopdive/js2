@@ -776,7 +776,29 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     });
   });
 
-  it("keeps the caller activation boundary after incremental Program reuse", async () => {
+  it.each([
+    {
+      label: "strict eval inside a sloppy script",
+      source: `
+        eval("\\\"use strict\\\";\\ngNonStrict();");
+        function gNonStrict() {
+          return gNonStrict.caller;
+        }
+      `,
+      throws: false,
+    },
+    {
+      label: "strict script and inherited strict eval callback",
+      source: `
+        "use strict";
+        (function () { eval("gNonStrict();"); })();
+        function gNonStrict() {
+          return gNonStrict.caller;
+        }
+      `,
+      throws: true,
+    },
+  ])("keeps the caller activation boundary after incremental Program reuse: $label", async ({ source, throws }) => {
     const compiler = createIncrementalCompiler({
       allowJs: true,
       deferTopLevelInit: true,
@@ -788,18 +810,13 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     const warmup = await compiler.compile(`function warmup() { return 1; } warmup();`);
     expect(warmup.success, warmup.errors.map((error) => error.message).join("\n")).toBe(true);
 
-    const source = `
-      eval("\\\"use strict\\\";\\ngNonStrict();");
-      function gNonStrict() {
-        return gNonStrict.caller;
-      }
-    `;
     const result = await compiler.compile(source);
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
     const exports = await instantiate(result);
-    expect(() => exports.__module_init!()).not.toThrow();
+    if (throws) expect(() => exports.__module_init!()).toThrow();
+    else expect(() => exports.__module_init!()).not.toThrow();
     expect(outcome(result, "gNonStrict")).toMatchObject({
       legacyBodyEmitted: true,
       irBodyEmitted: false,

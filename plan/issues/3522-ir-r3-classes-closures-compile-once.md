@@ -1669,3 +1669,15 @@ node. An incremental-compiler fixture warms and reuses the Program before
 compiling the exact strict-eval/sloppy-caller shape, then proves the function
 remains direct and module initialization does not throw. Ordinary function
 value targets are unaffected.
+
+The next merge-group rerun exposed the complementary only-strict row
+`built-ins/Function/15.3.5.4_2-11gs.js`. Incremental reuse can also return a
+same-named declaration from a different prior source shape, so even structural
+source-position comparison is not sufficient for the current function's
+syntactic self-read. The guard now recognizes a same-name self receiver
+conservatively and, for the rare source that observes this legacy activation,
+keeps every top-level function direct. This avoids relying on stale checker
+identity for either the observing function or a sibling value target. Focused
+incremental coverage now pins both complementary semantics: a strict eval in a
+sloppy script exposes its non-strict caller without throwing, while an
+inherited-strict eval callback must throw when the callee reads `caller`.
