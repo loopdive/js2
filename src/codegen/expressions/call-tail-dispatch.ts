@@ -156,6 +156,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
       : undefined,
     annexBOuterBindings: cloneNameSet(fctx.annexBOuterBindings),
     annexBRepeatedOuterBindings: cloneNameSet(fctx.annexBRepeatedOuterBindings),
+    annexBExistingDirectFunctionBindings: cloneNameSet(fctx.annexBExistingDirectFunctionBindings),
     moduleBindingShadowLocals: cloneNameMap(fctx.moduleBindingShadowLocals),
   };
 
@@ -182,6 +183,7 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.annexBCancelled?.delete(name);
     fctx.annexBOuterBindings?.delete(name);
     fctx.annexBRepeatedOuterBindings?.delete(name);
+    fctx.annexBExistingDirectFunctionBindings?.delete(name);
     fctx.moduleBindingShadowLocals?.delete(name);
   }
 
@@ -226,6 +228,11 @@ function enterInlineIifeBindingScope(fctx: FunctionContext, names: ReadonlySet<s
     fctx.annexBRepeatedOuterBindings = restoreNameSet(
       fctx.annexBRepeatedOuterBindings,
       snapshot.annexBRepeatedOuterBindings,
+      names,
+    );
+    fctx.annexBExistingDirectFunctionBindings = restoreNameSet(
+      fctx.annexBExistingDirectFunctionBindings,
+      snapshot.annexBExistingDirectFunctionBindings,
       names,
     );
     fctx.moduleBindingShadowLocals = restoreNameMap(

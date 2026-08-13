@@ -14,6 +14,7 @@ import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
+  emitCachedFuncClosureAccess,
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
 import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
@@ -73,6 +74,7 @@ import {
 import {
   annexBDeclaringRange,
   annexBHoistCancels,
+  annexBUpdatesExistingVarBinding,
   enclosingVarScope,
   hasInterveningLexicalBinder,
 } from "../annexb-cancel.js";
@@ -1749,24 +1751,28 @@ function annexBNameReassignedInRange(name: string, declaringRange: ts.Node): boo
  * outer binding on top of it either desyncs its type or masks its eagerly
  * initialized function value with `undefined`.
  */
-function annexBSameNameDirectFunctionInScope(name: string, declaringRange: ts.Node): boolean {
+function annexBSameNameDirectFunctionInScope(
+  name: string,
+  declaringRange: ts.Node,
+): ts.FunctionDeclaration | undefined {
   let scope: ts.Node = declaringRange.parent;
   while (scope && !isAnnexBScopeBoundary(scope)) scope = scope.parent;
-  if (!scope) return false;
+  if (!scope) return undefined;
   const scanRoot: ts.Node =
     !ts.isSourceFile(scope) && !ts.isModuleBlock(scope) && "body" in scope
       ? ((scope as ts.FunctionLikeDeclarationBase).body ?? scope)
       : scope;
-  if (!ts.isSourceFile(scanRoot) && !ts.isModuleBlock(scanRoot) && !ts.isBlock(scanRoot)) return false;
-  return scanRoot.statements.some((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === name);
+  if (!ts.isSourceFile(scanRoot) && !ts.isModuleBlock(scanRoot) && !ts.isBlock(scanRoot)) return undefined;
+  return scanRoot.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === name && !!statement.body,
+  );
 }
 
 function annexBSameNameVarOrFunctionInScope(name: string, declaringRange: ts.Node): boolean {
-  // B.3.4's direct `if` form must not mask an already-instantiated direct
-  // function while the recursively visited arm is hoisted. Explicit blocks and
-  // switch clauses retain their existing update path, which installs the inner
-  // declaration when control reaches it.
-  if (ts.isFunctionDeclaration(declaringRange) && annexBSameNameDirectFunctionInScope(name, declaringRange)) {
+  // No canonical Annex B declaring range may mask an already-instantiated
+  // direct function while its nested declaration is recursively hoisted.
+  if (annexBSameNameDirectFunctionInScope(name, declaringRange)) {
     return true;
   }
   let scope: ts.Node = declaringRange.parent;
@@ -2030,6 +2036,41 @@ function preRegisterCapturingSibling(
   return true;
 }
 
+/**
+ * Can an Annex B declaration safely receive a declaration-specific function
+ * index while the compiler's capture and callable metadata remain bare-name
+ * keyed? Keep the distinct-body path on ordinary, zero-parameter,
+ * capture-free functions. Other shapes retain the previous conservative path
+ * until those registries become declaration-keyed.
+ */
+export function canCompileDistinctAnnexBFunction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+): boolean {
+  if (stmt.parameters.length > 0 || stmt.asteriskToken) return false;
+  if (stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false;
+  if (!stmt.body) return false;
+
+  const ownLocals = new Set<string>();
+  addFunctionOwnLocals(stmt, ownLocals);
+  const referenced = new Set<string>();
+  for (const bodyStmt of stmt.body.statements) {
+    collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+  }
+  for (const name of referenced) {
+    if (
+      name === "eval" ||
+      name === "arguments" ||
+      fctx.localMap.has(name) ||
+      (ctx.nestedFuncCaptures.get(name)?.length ?? 0) > 0
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function hoistFunctionDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2039,9 +2080,11 @@ export function hoistFunctionDeclarations(
   // call (where this is undefined) runs the eager-capture-box pass ONCE after
   // the entire recursion completes — see the rationale at the post-pass below.
   _eagerBoxFuncNames?: Set<string>,
+  _existingDirectFuncNames?: Set<string>,
 ): void {
   const isTopLevelHoist = _eagerBoxFuncNames === undefined;
   const eagerBoxFuncNames = _eagerBoxFuncNames ?? new Set<string>();
+  const existingDirectFuncNames = _existingDirectFuncNames ?? new Set<string>();
   // (#2068/#4013) Phase 0: reserve a correctly-typed bodyless funcMap slot for
   // every direct-sibling function BEFORE compiling any body. Without this a
   // forward sibling reference
@@ -2140,15 +2183,22 @@ export function hoistFunctionDeclarations(
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
       const declaringRange = annexBDeclaringRange(stmt);
-      // A direct function declaration in the enclosing activation already owns
-      // F's instantiated binding and its eagerly-hoisted value. Do not let a
-      // recursively visited Annex B arm replace the name-keyed funcMap entry
-      // before that direct declaration is compiled.
+      const directDeclaration = declaringRange
+        ? annexBSameNameDirectFunctionInScope(stmt.name.text, declaringRange)
+        : undefined;
+      // A direct function declaration in the enclosing activation owns F's
+      // eagerly-instantiated binding. Defer this nested declaration to its
+      // textual evaluation so it cannot replace the canonical name-keyed hoist
+      // slot; the statement compiler will still compile its distinct body and
+      // update the initialized live binding when control reaches it.
       if (
         declaringRange &&
-        ts.isFunctionDeclaration(declaringRange) &&
-        annexBSameNameDirectFunctionInScope(stmt.name.text, declaringRange)
+        directDeclaration &&
+        annexBUpdatesExistingVarBinding(stmt) &&
+        canCompileDistinctAnnexBFunction(ctx, fctx, stmt) &&
+        canCompileDistinctAnnexBFunction(ctx, fctx, directDeclaration)
       ) {
+        existingDirectFuncNames.add(stmt.name.text);
         continue;
       }
       // (#3419) Earlier duplicate of a later same-name sibling — never
@@ -2269,58 +2319,70 @@ export function hoistFunctionDeclarations(
     // even when inside if-branches, try/catch blocks, etc.
     if (ts.isIfStatement(stmt)) {
       if (ts.isBlock(stmt.thenStatement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.thenStatement.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, stmt.thenStatement.statements, eagerBoxFuncNames, existingDirectFuncNames);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.thenStatement], eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.thenStatement], eagerBoxFuncNames, existingDirectFuncNames);
       }
       if (stmt.elseStatement) {
         if (ts.isBlock(stmt.elseStatement)) {
-          hoistFunctionDeclarations(ctx, fctx, stmt.elseStatement.statements, eagerBoxFuncNames);
+          hoistFunctionDeclarations(
+            ctx,
+            fctx,
+            stmt.elseStatement.statements,
+            eagerBoxFuncNames,
+            existingDirectFuncNames,
+          );
         } else if (ts.isIfStatement(stmt.elseStatement)) {
-          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames);
+          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames, existingDirectFuncNames);
         } else {
-          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames);
+          hoistFunctionDeclarations(ctx, fctx, [stmt.elseStatement], eagerBoxFuncNames, existingDirectFuncNames);
         }
       }
     }
     if (ts.isTryStatement(stmt)) {
-      hoistFunctionDeclarations(ctx, fctx, stmt.tryBlock.statements, eagerBoxFuncNames);
+      hoistFunctionDeclarations(ctx, fctx, stmt.tryBlock.statements, eagerBoxFuncNames, existingDirectFuncNames);
       if (stmt.catchClause) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.catchClause.block.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(
+          ctx,
+          fctx,
+          stmt.catchClause.block.statements,
+          eagerBoxFuncNames,
+          existingDirectFuncNames,
+        );
       }
       if (stmt.finallyBlock) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.finallyBlock.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, stmt.finallyBlock.statements, eagerBoxFuncNames, existingDirectFuncNames);
       }
     }
     if (ts.isBlock(stmt)) {
-      hoistFunctionDeclarations(ctx, fctx, stmt.statements, eagerBoxFuncNames);
+      hoistFunctionDeclarations(ctx, fctx, stmt.statements, eagerBoxFuncNames, existingDirectFuncNames);
     }
     // Recurse into loop bodies — function declarations inside loops are hoisted
     // to the enclosing function scope in JS semantics.
     if (ts.isForStatement(stmt) || ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames, existingDirectFuncNames);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames, existingDirectFuncNames);
       }
     }
     if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames, existingDirectFuncNames);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames, existingDirectFuncNames);
       }
     }
     if (ts.isSwitchStatement(stmt)) {
       for (const clause of stmt.caseBlock.clauses) {
-        hoistFunctionDeclarations(ctx, fctx, clause.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, clause.statements, eagerBoxFuncNames, existingDirectFuncNames);
       }
     }
     if (ts.isLabeledStatement(stmt)) {
       if (ts.isBlock(stmt.statement)) {
-        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, stmt.statement.statements, eagerBoxFuncNames, existingDirectFuncNames);
       } else {
-        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames);
+        hoistFunctionDeclarations(ctx, fctx, [stmt.statement], eagerBoxFuncNames, existingDirectFuncNames);
       }
     }
   }
@@ -2339,6 +2401,25 @@ export function hoistFunctionDeclarations(
   if (isTopLevelHoist) {
     for (const funcName of eagerBoxFuncNames) {
       emitEagerCaptureBoxes(ctx, fctx, funcName);
+    }
+    // An existing direct declaration initializes the shared binding at function
+    // entry. Materialize that value only after every direct body and required
+    // capture box exists, then route later reads/calls through the local that
+    // statement-position declarations update.
+    for (const funcName of existingDirectFuncNames) {
+      if (fctx.localMap.has(funcName)) continue;
+      const funcIdx = ctx.funcMap.get(funcName);
+      const owner = ctx.funcMapOwnerDecl.get(funcName);
+      if (funcIdx === undefined || !owner || annexBDeclaringRange(owner) !== null) continue;
+      const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, funcIdx);
+      if (!closureType) continue;
+      if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+      const bindingLocal = allocLocal(fctx, funcName, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: bindingLocal });
+      if (!fctx.annexBExistingDirectFunctionBindings) {
+        fctx.annexBExistingDirectFunctionBindings = new Set();
+      }
+      fctx.annexBExistingDirectFunctionBindings.add(funcName);
     }
   }
 }
