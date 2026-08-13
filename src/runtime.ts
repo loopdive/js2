@@ -12794,7 +12794,16 @@ assert._isSameValue = isSameValue;
           unwrapForHost: _unwrapForHost,
         });
       }
-      if (name === "__reflect_construct")
+      // (#4394) `__reflect_construct_newtarget` is the same operation with the
+      // third argument syntactically PRESENT at the call site. The wasm
+      // boundary is fixed-arity and pads an omitted newTarget with a null
+      // externref, so the two cases are indistinguishable here by value — but
+      // §26.1.2 treats them oppositely: absent ⇒ newTarget defaults to the
+      // target (step 2), present-and-not-a-constructor ⇒ TypeError (step 3).
+      // Collapsing both to the 2-argument form made
+      // `Reflect.construct(fn, [], null)` construct instead of throw.
+      if (name === "__reflect_construct" || name === "__reflect_construct_newtarget") {
+        const newTargetIsPresent = name === "__reflect_construct_newtarget";
         return (ctor: any, args: any, newTarget: any): any => {
           const exports = callbackState?.getExports();
           const wrappedCtor = _isWasmStruct(ctor) ? _wrapForHost(ctor, exports) : ctor;
@@ -12805,12 +12814,13 @@ assert._isSameValue = isSameValue;
           if (!_isWasmStruct(ctor) && Array.isArray(wrappedArgs)) {
             wrappedArgs = wrappedArgs.map((a: any) => _marshalHostConstructArg(a, exports, callbackState, wrappedCtor));
           }
-          if (newTarget === undefined || newTarget === null) {
+          if (!newTargetIsPresent && (newTarget === undefined || newTarget === null)) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
           }
           const wrappedNew = _isWasmStruct(newTarget) ? _wrapForHost(newTarget, exports) : newTarget;
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
+      }
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
       // compile time (e.g. `var f = String.prototype.indexOf; new f`). Per

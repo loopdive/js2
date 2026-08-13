@@ -34,6 +34,11 @@ loc-budget-allow:
   # resolution that now excludes the global object. The predicate itself lives
   # in global-environment.ts, beside the other global-object receiver gate.
   - src/codegen/object-ops.ts
+  # +9 lines: the import-name selection that encodes newTarget PRESENCE, plus
+  # the comment recording why the fixed-arity wasm boundary cannot carry it as
+  # a value. It belongs beside the Reflect.apply / Reflect.construct arms it
+  # sits among, which are all in this file.
+  - src/codegen/expressions/call-namespace-static.ts
   # +48 lines: the HOF routing arm in `emitArrayProtoMemberBody` plus its
   # receiver guard and the comments recording why each half is load-bearing.
   # It belongs beside the `slice` arm it sits in and beside the identical
@@ -66,6 +71,15 @@ func-budget-allow:
   # +3 lines: a two-line comment plus the ternary that excludes the global
   # object from struct-name resolution; the predicate is in global-environment.ts.
   - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # +9 lines: the Reflect.construct arm now selects its import NAME from the
+  # call's arity, because the fixed-arity boundary cannot carry newTarget
+  # PRESENCE as a value. Comment plus one ternary, inside the arm it belongs to.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+trap-growth-allow:
+  count: 1
+  reason: "#4394 gives the host callback bridge the source callable's own [[Construct]] (S15.2.4), so an ordinary compiled function is no longer rejected by Reflect.construct. test/built-ins/Proxy/construct/call-result.js was ALREADY failing on the merge-base and still fails — only the MECHANISM moved. Before: the arrow bridge refused construction outright with a catchable 'function () { [native code] } is not a constructor'. After: construction proceeds correctly, reaches the proxy construct trap, and hits a pre-existing illegal cast in the method-dispatch trampoline (__call_fn_method_3). A bounded fail-to-trap reclassification that is a direct consequence of the construct fix, not a pass regression; the same fix is +29 pass on a 400-file isConstructor.js sample and +2 on built-ins/{Proxy,Reflect}."
+  tests:
+    - test/built-ins/Proxy/construct/call-result.js
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -98,6 +112,8 @@ files:
   - tests/issue-4394-global-function-bindings.test.ts
   - src/codegen/hof-native.ts
   - tests/issue-4394-array-proto-hof-as-value.test.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - tests/issue-4394-reflect-construct-newtarget.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -860,6 +876,70 @@ Not attempted here: it is a behaviour change to a shared dispatcher arm in a
 3,700-line function, it affects BOTH lanes and a very common idiom, and it
 deserves its own issue with its own merge-group measurement rather than a late
 edit inside this one.
+
+## Root cause 15 (merge_group regression) — `Reflect.construct` collapsed a PRESENT `null` newTarget
+
+The `merge_group` re-validation of PR #4432 parked with one genuine host
+regression: `built-ins/Reflect/construct/newtarget-is-not-constructor-throws.js`
+went pass → fail.
+
+§26.1.2 treats an omitted and an explicit-`null` newTarget **oppositely**:
+
+- step 2 — newTarget not present ⇒ let newTarget be *target*
+- step 3 — else, if `IsConstructor(newTarget)` is false ⇒ **TypeError**
+
+The wasm import boundary is fixed-arity, and the call site pads an omitted third
+argument with a null externref, so the runtime shim could not tell them apart:
+
+```js
+if (newTarget === undefined || newTarget === null) {
+  return Reflect.construct(wrappedCtor, wrappedArgs ?? []);   // never throws
+}
+```
+
+`Reflect.construct(fn, [], null)` therefore CONSTRUCTED instead of throwing.
+
+**This bug predates the PR.** The test only passed before because the TARGET was
+itself un-constructible (the arrow bridge), so the call threw at step 1 and never
+reached step 3 — it was passing for the wrong reason. Root cause 8 made ordinary
+compiled functions constructible, which is what let execution reach the real
+defect.
+
+### Fix
+
+Encode presence in the import NAME — `__reflect_construct_newtarget` when the
+third argument is syntactically present, `__reflect_construct` otherwise. Arity
+is a compile-time fact and the fixed-arity boundary cannot carry it any other
+way. The runtime keeps the collapse only for the genuinely-absent form.
+
+### Measured
+
+`built-ins/{Proxy,Reflect}` (464 files) A/B vs `origin/main`: **0 regressions,
++2** (`Proxy/getOwnPropertyDescriptor/trap-is-missing-target-is-proxy.js`,
+`Proxy/has/trap-is-null-target-is-proxy.js`).
+
+### Also from that run — the trap-category ratchet
+
+`illegal_cast` grew 26 → 27 on `built-ins/Proxy/construct/call-result.js`.
+Verified in both arms: **already failing on main**, only the MECHANISM moved.
+
+| | status | mechanism |
+| --- | --- | --- |
+| main | `fail` | `TypeError: function () { [native code] } is not a constructor` (catchable) |
+| branch | `fail` | `illegal cast` in `__call_fn_method_3` (uncatchable trap) |
+
+Construction now correctly proceeds into the proxy construct trap and hits a
+pre-existing bad cast in the method-dispatch trampoline. That is the
+`fail`-baseline case the gate itself routes to a named `trap-growth-allow`
+(#3596), declared in this file's frontmatter with the named test.
+
+### CI note worth filing separately
+
+The failing job could not name the regressed files: the detail-report step
+crashed with `ENOENT: no such file or directory, open ''` — an empty `$BASELINE`
+in that step — so `test262-regressions-detail.txt` was never written and only
+the aggregate counts reached the log. The list had to be reconstructed by local
+A/B.
 
 ## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
 
