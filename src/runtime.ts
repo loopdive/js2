@@ -58,6 +58,7 @@ import {
   invokeNativeFunctionCallback,
   normalizeModuleCallbackException,
 } from "./runtime/native-function-source.js";
+import * as test262Host from "./runtime/test262-harness-host.js"; // (#4394)
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
@@ -1548,35 +1549,7 @@ const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
-/**
- * (#4394) The single host-side `Test262Error` class used by every
- * `new Test262Error(msg)` lowering. Hoisted to module scope so the
- * `__new_Test262Error_ctor` builtin and the generic `extern_class` arm mint
- * instances of the SAME class — otherwise `err.constructor` identity depends
- * on which import a given module happened to bind.
- */
-class _HostTest262Error extends Error {
-  constructor(msg?: string) {
-    super(msg);
-    this.name = "Test262Error";
-  }
-}
-_test262ErrorConstructors.add(_HostTest262Error);
-
-/**
- * (#4394) Every module-declared `Test262Error` carrier that has actually
- * constructed an error through `__new_Test262Error_ctor`.
- *
- * The constructed value is a real host `_HostTest262Error` — that is what makes
- * `String(err)`, `.stack` and the exception bridge work — so its prototype
- * chain can never reach the module's own compiled closure, and
- * `err instanceof Test262Error` answered `false` for an error that plainly is
- * one. Recording the carrier the construction was attributed to lets
- * `_instanceofResult` close exactly that gap and nothing wider: an unrelated
- * closure is not in the set, and a value that is not a `_HostTest262Error` is
- * still decided by the ordinary prototype walk.
- */
-const _test262ErrorModuleCarriers = new WeakSet<object>();
+_test262ErrorConstructors.add(test262Host.HostTest262Error);
 
 // (#3369) Callback bridges must remain usable while the evaluated program has
 // installed non-writable numeric properties on Array.prototype. `[].push(x)`
@@ -2479,18 +2452,9 @@ function _instanceofResult(
     }
   }
 
-  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier. The
-  // error is a host `_HostTest262Error`, so the prototype walk below can never
-  // reach a compiled closure; the carrier set records exactly which closures
-  // have minted one. See `_test262ErrorModuleCarriers`.
-  if (
-    v instanceof _HostTest262Error &&
-    rawTarget !== null &&
-    (typeof rawTarget === "object" || typeof rawTarget === "function") &&
-    _test262ErrorModuleCarriers.has(rawTarget as object)
-  ) {
-    return 1;
-  }
+  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier —
+  // the prototype walk below can never reach a compiled closure.
+  if (test262Host.isModuleTest262ErrorInstance(v, rawTarget)) return 1;
 
   try {
     return v instanceof (target as { new (...a: unknown[]): unknown }) ? 1 : 0;
@@ -9169,7 +9133,7 @@ function resolveImport(
         // (#4394) Was a fresh `class Test262Error extends Error` minted per
         // resolver call, so two modules — or two imports in one module — saw
         // different constructor identities. Bound to the hoisted single class.
-        const Test262Error = _HostTest262Error;
+        const Test262Error = test262Host.HostTest262Error;
         const builtinCtors: Record<string, Function> = {
           Number,
           Boolean,
@@ -13246,14 +13210,11 @@ assert._isSameValue = isSameValue;
           unwrapForHost: _unwrapForHost,
         });
       }
-      // (#4394) `__reflect_construct_newtarget` is the same operation with the
-      // third argument syntactically PRESENT at the call site. The wasm
-      // boundary is fixed-arity and pads an omitted newTarget with a null
-      // externref, so the two cases are indistinguishable here by value — but
-      // §26.1.2 treats them oppositely: absent ⇒ newTarget defaults to the
-      // target (step 2), present-and-not-a-constructor ⇒ TypeError (step 3).
-      // Collapsing both to the 2-argument form made
-      // `Reflect.construct(fn, [], null)` construct instead of throw.
+      // (#4394) The `_newtarget` twin is the same operation with the third
+      // argument syntactically PRESENT. §26.1.2 treats absent (step 2, defaults
+      // to target) and present-not-a-constructor (step 3, TypeError) oppositely,
+      // and the fixed-arity boundary pads an omitted newTarget with null — so
+      // presence rides on the import NAME rather than on the value.
       if (name === "__reflect_construct" || name === "__reflect_construct_newtarget") {
         const newTargetIsPresent = name === "__reflect_construct_newtarget";
         return (ctor: any, args: any, newTarget: any): any => {
@@ -13504,43 +13465,9 @@ assert._isSameValue = isSameValue;
       // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
       // symbol preserves identity/description) then `Object()` it into a wrapper
       // object. `Symbol.prototype.description` already unwraps such wrappers.
-      // (#4394) `new Test262Error(msg)` where the compiled module DECLARES its
-      // own `function Test262Error` — which the literal upstream harness
-      // (sta.js) always does. The error object itself must stay a real host
-      // `Error` subclass (the exception bridge, the failure renderer and every
-      // `String(err)` path depend on that), but §10.2.2 says the constructed
-      // object's `constructor` is the function that was invoked. The compiled
-      // module's `Test262Error` identifier reads a WasmGC closure struct, so a
-      // host class can never be `===` to it. Take that closure as a second
-      // argument and stamp it as a non-enumerable own `constructor`, which is
-      // exactly what `assert.throws` / the harness self-tests compare.
-      if (name === "__new_Test262Error_ctor") {
-        return (msg: any, ctor: any): any => {
-          const err = new _HostTest262Error(msg == null ? undefined : String(msg));
-          if (ctor != null) {
-            // (#4394) Remember the carrier so `err instanceof Test262Error`
-            // can resolve against it — see `_test262ErrorModuleCarriers`.
-            if (typeof ctor === "object" || typeof ctor === "function") {
-              try {
-                _test262ErrorModuleCarriers.add(ctor as object);
-              } catch {
-                /* a non-weakly-holdable carrier simply keeps the old answer */
-              }
-            }
-            try {
-              Object.defineProperty(err, "constructor", {
-                value: ctor,
-                writable: true,
-                enumerable: false,
-                configurable: true,
-              });
-            } catch {
-              /* a frozen Error prototype chain is not worth failing construction over */
-            }
-          }
-          return err;
-        };
-      }
+      // (#4394) `new Test262Error(msg)` in a module that DECLARES its own
+      // `function Test262Error` — see runtime/test262-harness-host.ts.
+      if (name === "__new_Test262Error_ctor") return test262Host.makeTest262ErrorWithModuleCtor;
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =
@@ -15459,15 +15386,8 @@ assert._isSameValue = isSameValue;
             }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
-            // (#4394) `err instanceof Test262Error` where the module DECLARES
-            // its own `function Test262Error` (sta.js — i.e. every assembled
-            // test262 module). The value is a real host `_HostTest262Error`
-            // (that is what makes `String(err)` and the exception bridge work),
-            // so its prototype chain can never reach the module's compiled
-            // closure. Neither the subclass registry nor `globalThis` nor
-            // `_userClassTags` knows about it, so the check answered `false` for
-            // an error that IS a Test262Error. Recognise the host class by name.
-            if (ctorName === "Test262Error" && v instanceof _HostTest262Error) return 1;
+            // (#4394) The host Test262Error by name — no registry knows it.
+            if (ctorName === "Test262Error" && test262Host.isHostTest262Error(v)) return 1;
           } catch {
             /* fall through to user-class tag check */
           }
@@ -15874,27 +15794,19 @@ assert._isSameValue = isSameValue;
       // non-harness contexts is a possible follow-up.)
       return () => {};
     }
-    case "callback_maker": {
-      // (#4394) `constructible` is set only by `__make_callback_ctor`, which
-      // the compiler picks for an ordinary function definition — the one
-      // callable form that has [[Construct]]. Everything else keeps the arrow
-      // bridge and stays correctly non-constructible.
-      const constructible = intent.constructible === true;
+    // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
+    // maker the compiler picks for an ordinary function definition — the one
+    // callable form with [[Construct]]. Everything else keeps the arrow bridge.
+    case "callback_maker":
       return (id: number, cap: any) => {
         // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
         // the checker-proven one-shot inline form. Legacy callbacks keep their
         // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return createNativeFunctionCallbackBridge(
-          id,
-          cap,
-          callbackState,
-          ASYNC_CALLBACK_EXCEPTION_POLICY,
-          constructible,
-        );
+        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
       };
-    }
     case "getter_callback_maker":
       return (id: number, cap: any) => {
         // Regular function (not arrow) so 'this' is bound to the receiver;
