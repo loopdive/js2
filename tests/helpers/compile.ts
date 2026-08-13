@@ -215,9 +215,10 @@ export async function compileAndRunBuildImportsExpect(source: string) {
 }
 
 /**
- * Cluster K (2 files — function-expressions, issue-280):
- * {@link compileAndRunStubs} plus a no-op `__make_callback` stub and an
- * instantiation try/catch that rethrows with the WAT.
+ * Cluster K (2 files — function-expressions, issue-280): compile and link the
+ * full declared runtime-import surface, then rethrow instantiation failures
+ * with the WAT. Prepared closure bodies can require string constants and
+ * arity-padding helpers even when the old direct body needed only callbacks.
  */
 export async function compileAndRunStubsCallback(source: string) {
   const result = await compile(source);
@@ -225,16 +226,10 @@ export async function compileAndRunStubsCallback(source: string) {
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
   ).toBe(true);
-  const imports = {
-    env: {
-      console_log_number: () => {},
-      console_log_string: () => {},
-      console_log_bool: () => {},
-      __make_callback: () => {},
-    },
-  };
+  const imports = buildImports(result.imports, undefined, result.stringPool);
   try {
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
     return instance.exports as Record<string, Function>;
   } catch (e) {
     throw new Error(`Instantiation failed: ${e}\nWAT:\n${result.wat}`);

@@ -1385,6 +1385,56 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
   });
 
+  it("requires exact Program ABI evidence for boxed mutable captures and each ref-cell operation", () => {
+    const f = fixture();
+    const boxedType: IrType = { kind: "boxed", inner: irVal({ kind: "f64" }) };
+    const supportRef = irSupportTypeRef(f.first.id, "test-ref-cell-f64", "__test_ref_cell_f64");
+    const refCellSet: IrInstr = {
+      kind: "refcell.set",
+      cell: asValueId(0),
+      value: asValueId(1),
+      result: null,
+      resultType: null,
+    };
+    const fn: IrFunction = {
+      ...irFunction(f.first, [refCellSet]),
+      params: [
+        { value: asValueId(0), name: "cell", type: boxedType },
+        { value: asValueId(1), name: "value", type: irVal({ kind: "f64" }) },
+      ],
+      valueCount: 2,
+    };
+    const dependencies = (instruction: IrInstr, refs: readonly IrTypeRef[]) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [fn] },
+        terminalUnitIds: new Set([f.first.id]),
+        inventory: f.inventory,
+        closureSupport: {
+          typeRefs: new Map([[boxedType, refs]]),
+          instructionRefs: new Map([[instruction, refs]]),
+          functionRefs: new Map(),
+        },
+        abi: abiLookup([sourceCallableEntry(f.first.id), supportTypeEntry(supportRef)]),
+      }).components[0]!;
+
+    expect(dependencies(refCellSet, [])).toMatchObject({ status: "blocked" });
+    const unrelated = dependencies({ ...refCellSet }, [supportRef]);
+    expect(unrelated.status).toBe("blocked");
+    expect(unrelated.failures).toContainEqual(
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("refcell.set resolves ref-cell type support"),
+      }),
+    );
+
+    const prepared = dependencies(refCellSet, [supportRef]);
+    expect(prepared.status).toBe("complete");
+    expect(prepared.failures).toEqual([]);
+    expect(prepared.abiDependencies).toContainEqual(
+      expect.objectContaining({ kind: "support", bindingId: supportRef.binding.bindingId }),
+    );
+  });
+
   it("fails closed for an unresolved exact unit ref and for a foreign terminal owner", () => {
     const f = fixture();
     const unknownUnitId = createDerivedIrUnitId({

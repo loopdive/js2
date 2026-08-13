@@ -1361,6 +1361,54 @@ nested forms and the unretired closure-literal/object-method families still use
 the same direct compiler. Delete it only when the final typed consumer reaches
 zero.
 
+### Arrow/function-expression closure-literal checkpoint (2026-08-13)
+
+Ordinary arrow functions and function expressions now join their enclosing
+terminal's prepare-before-emit component instead of forcing the owner through
+the transitional direct-body overlay. Each literal keeps its exact inventoried
+`arrow-function` or `function-expression` source ID, including checker/usage
+transforms that clone a nested node. The source span, kind, source owner, and
+terminal owner must all match; genuinely synthesized lifts still use derived
+Program ABI provenance. Exact Promise-delay and one-shot host callbacks also
+retain their preplanned derived target IDs: those are compiler-owned artifacts
+whose plans are frozen before AST lowering, even though an arrow supplies their
+syntax.
+
+Mutable primitive captures now participate in the same sealed contract. Their
+canonical physical ref-cell struct is planned by semantic inner IR type, owns
+an explicit remappable Program ABI type ref, and is attached by object identity
+to the final boxed type plus every `refcell.new/get/set`. Missing, empty, stale,
+or unrelated evidence remains a typed preparation failure. Sibling closures
+share one cell and observe each other's writes. Closure carrier structs remain
+outside the user-data struct registry, preserving the direct backend's absence
+of `__sget_cap*`, `__struct_field_names`, and GC `__is_data_struct` reflection
+helpers.
+
+The anti-vacuity proof covers one immutable captured arrow plus a no-capture
+function expression, two sibling literals that share a mutable f64 capture,
+and an outer arrow that owns another captured arrow. With direct owner emission
+poisoned, GC and standalone prepare each complete tree atomically, validate,
+and return the same values as direct codegen. Every nested literal has its exact
+source ID. Optimized IR binaries are no larger than their same-source direct
+binaries. The exact Promise-delay regression suite proves its executor and
+timer callbacks keep their derived plan identities and execute in both
+optimized and unoptimized builds.
+
+Program ABI planner and dependency fail-closed coverage is **35/35**; focused
+closure ownership is **12/12**; exact Promise planning and execution is
+**8/8**; the adjacent direct closure/function-expression matrix is **56/56**
+after its legacy bare-import helpers were updated to link the compiler-declared
+runtime imports; typecheck, formatting, and the fallback ratchet pass with no
+unintended/post-claim/module-level increase. Hybrid and strict shadows remain
+**37/37 IR bodies, 0 legacy bodies, 0 Unsupported, and 0 Invariants**.
+
+Recursive named/self-bound literals, default/destructured parameter forms,
+returned closure values, and other cross-owner callable escapes remain on the
+typed direct route. Object-literal methods/accessors are the next serial R3
+family. No shared direct closure implementation is deleted yet; retire each
+branch with the final consumer and keep its optimization/parity assertions in
+that deletion checkpoint.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

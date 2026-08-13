@@ -7,6 +7,7 @@ import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import {
   canonicalProgramAbiClosureLayoutKey,
   canonicalProgramAbiClosureSignatureKey,
+  canonicalProgramAbiRefCellKey,
   type ProgramAbiClosureSupportLayoutRequest,
 } from "../src/codegen/program-abi-type-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
@@ -258,6 +259,75 @@ describe("#4102 Program ABI prepared closure support types", () => {
     });
     expect(layout!.semanticLayoutKey).toBe(
       canonicalProgramAbiClosureLayoutKey(executor.signature, executor.captureFieldTypes),
+    );
+  });
+
+  it("plans, deduplicates, and remaps mutable-capture ref cells by semantic payload type", () => {
+    const f = fixture();
+    const f64Cell: StructTypeDef = {
+      kind: "struct",
+      name: "__ref_cell_f64",
+      fields: [{ name: "value", type: { kind: "f64" }, mutable: true }],
+    };
+    const i32Cell: StructTypeDef = {
+      kind: "struct",
+      name: "__ref_cell_i32",
+      fields: [{ name: "value", type: { kind: "i32" }, mutable: true }],
+    };
+    f.module.types.push(f64Cell, i32Cell);
+    const f64Request = { innerType: F64, cellType: f64Cell };
+    const i32Type = irVal({ kind: "i32" });
+    const i32Request = { innerType: i32Type, cellType: i32Cell };
+
+    const [f64Support, i32Support, duplicateF64] = f.registry.prepareRefCellSupportTypes([
+      f64Request,
+      i32Request,
+      f64Request,
+    ]);
+    expect(duplicateF64).toBe(f64Support);
+    expect(f64Support!.semanticInnerTypeKey).toBe(canonicalProgramAbiRefCellKey(F64));
+    expect(i32Support!.semanticInnerTypeKey).toBe(canonicalProgramAbiRefCellKey(i32Type));
+    expect(f.registry.prepareRefCellSupportTypes([i32Request, f64Request])).toEqual([i32Support, f64Support]);
+
+    const originalIndex = f.module.types.indexOf(f64Cell);
+    const replacement: StructTypeDef = { ...f64Cell, name: "__ref_cell_f64_after_remap", fields: [...f64Cell.fields] };
+    f.session.remapTypeObject(f64Cell, replacement);
+    f.module.types[originalIndex] = replacement;
+    f.registry.planRetained();
+    const publication = f.session.publish(f.module);
+    expect(publication.abi.resolveFinalIndex(f64Support!.cellTypeRef.binding.bindingId)).toEqual({
+      space: "type",
+      index: originalIndex,
+    });
+  });
+
+  it("rejects a non-canonical or conflicting physical ref-cell layout", () => {
+    const f = fixture();
+    const immutable: StructTypeDef = {
+      kind: "struct",
+      name: "bad_ref_cell",
+      fields: [{ name: "value", type: { kind: "f64" }, mutable: false }],
+    };
+    f.module.types.push(immutable);
+    expectProgramAbiInvariant(
+      () => f.registry.prepareRefCellSupportTypes([{ innerType: F64, cellType: immutable }]),
+      "type-remap-mismatch",
+    );
+
+    const first: StructTypeDef = {
+      kind: "struct",
+      name: "first_ref_cell",
+      fields: [{ name: "value", type: { kind: "f64" }, mutable: true }],
+    };
+    const second: StructTypeDef = { ...first, name: "second_ref_cell", fields: [...first.fields] };
+    f.module.types.push(first, second);
+    expectProgramAbiInvariant(
+      () =>
+        f.registry.prepareRefCellSupportTypes([
+          { innerType: F64, cellType: first },
+          { innerType: F64, cellType: second },
+        ]),
+      "type-remap-mismatch",
     );
   });
 });
