@@ -87,4 +87,22 @@ export function main(): number { return factory(); }`,
     );
     expect((exports.main as () => number)()).toBe(306);
   });
+
+  it("captures a lexical value that collides with an unrelated function name", async () => {
+    const exports = await run(
+      {
+        "./a.ts": `export function f(): number { return 99; }`,
+        "./b.ts": `export function run(): number {
+  const f = [2, 3];
+  function y(): number { return f.map((value) => value + 1).length + f[0]! * 10; }
+  return y();
+}`,
+        "./main.ts": `import { f } from "./a.js";
+import { run } from "./b.js";
+export function main(): number { return run() + f() * 0; }`,
+      },
+      "./main.ts",
+    );
+    expect((exports.main as () => number)()).toBe(22);
+  });
 });
