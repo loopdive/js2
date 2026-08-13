@@ -11151,16 +11151,25 @@ function allocateLoweredLiftedFunctionArtifact(
 function numericClosureDefaultInitializerIsIrSafe(
   initializer: ts.Expression,
   availableParamNames: ReadonlySet<string>,
+  ownParamNames: ReadonlySet<string>,
+  outerCx: LowerCtx,
 ): boolean {
   let candidate = initializer;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   if (ts.isNumericLiteral(candidate)) return true;
-  if (ts.isIdentifier(candidate)) return availableParamNames.has(candidate.text);
+  if (ts.isIdentifier(candidate)) {
+    if (availableParamNames.has(candidate.text)) return true;
+    if (ownParamNames.has(candidate.text)) return false;
+    const binding = outerCx.scope.get(candidate.text);
+    if (binding?.kind !== "local") return false;
+    const type = binding.type.kind === "boxed" ? binding.type.inner : binding.type;
+    return asVal(type)?.kind === "f64";
+  }
   if (
     ts.isPrefixUnaryExpression(candidate) &&
     (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
   ) {
-    return numericClosureDefaultInitializerIsIrSafe(candidate.operand, availableParamNames);
+    return numericClosureDefaultInitializerIsIrSafe(candidate.operand, availableParamNames, ownParamNames, outerCx);
   }
   return (
     ts.isBinaryExpression(candidate) &&
@@ -11168,14 +11177,20 @@ function numericClosureDefaultInitializerIsIrSafe(
       candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
       candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
       candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
-    numericClosureDefaultInitializerIsIrSafe(candidate.left, availableParamNames) &&
-    numericClosureDefaultInitializerIsIrSafe(candidate.right, availableParamNames)
+    numericClosureDefaultInitializerIsIrSafe(candidate.left, availableParamNames, ownParamNames, outerCx) &&
+    numericClosureDefaultInitializerIsIrSafe(candidate.right, availableParamNames, ownParamNames, outerCx)
   );
 }
 
-function closureDefaultParamStart(parameters: readonly ts.ParameterDeclaration[], funcName: string): number {
+function closureDefaultParamStart(
+  parameters: readonly ts.ParameterDeclaration[],
+  funcName: string,
+  outerCx: LowerCtx,
+): number {
   let firstDefault = parameters.length;
   const availableParamNames = new Set<string>();
+  const ownParamNames = new Set<string>();
+  for (const parameter of parameters) collectBindingNames(parameter.name, ownParamNames);
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
@@ -11185,7 +11200,7 @@ function closureDefaultParamStart(parameters: readonly ts.ParameterDeclaration[]
     } else if (
       !ts.isIdentifier(parameter.name) ||
       parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
-      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames)
+      !numericClosureDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerCx)
     ) {
       throw new Error(`ir/from-ast: closure default parameter is outside the pure numeric subset (${funcName})`);
     } else if (firstDefault === parameters.length) {
@@ -11199,7 +11214,7 @@ function closureDefaultParamStart(parameters: readonly ts.ParameterDeclaration[]
 }
 
 function lowerClosureExpression(expr: ts.ArrowFunction | ts.FunctionExpression, cx: LowerCtx): IrValueId {
-  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName);
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   const params: IrType[] = expr.parameters.map((p) => {
     if (!p.type) {
       throw new Error(`ir/from-ast: closure params must have annotations (${cx.funcName})`);
@@ -11299,7 +11314,7 @@ function lowerClosureExpressionWithSignature(
   cx: LowerCtx,
   exact?: ExactClosureLoweringOptions,
 ): IrValueId {
-  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName);
+  const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   if ((signature.defaultParamStart ?? signature.params.length) !== defaultParamStart) {
     throw new Error(`ir/from-ast: exact closure default-parameter plan diverged (${cx.funcName})`);
   }
@@ -11706,7 +11721,7 @@ function liftClosureBody(
 }
 
 /**
- * Walk a closure / nested-function body and collect identifiers that
+ * Walk a closure / nested-function's parameter initializers and body, collecting identifiers that
  * reference outer-scope `local` bindings. Classifies each capture as
  * mutable (the body OR the outer writes to it) or read-only.
  *
@@ -11754,6 +11769,9 @@ function analyseCaptures(
     }
     forEachChild(node, visit);
   };
+  for (const parameter of fn.parameters) {
+    if (parameter.initializer) visit(parameter.initializer);
+  }
   if (fn.body) {
     if (ts.isBlock(fn.body)) {
       for (const s of fn.body.statements) visit(s);

@@ -1599,6 +1599,30 @@ Invariants**. Effectful/captured defaults, optional/rest parameters,
 object-literal methods/accessors, and wider cross-owner callable escapes remain
 direct.
 
+### Captured numeric default checkpoint (2026-08-13)
+
+A pure numeric default expression may now read a checker-proven numeric outer
+binding. The AST-to-IR builder independently requires that binding to have an
+`f64` local or boxed-`f64` carrier, and capture discovery includes parameter
+initializers as well as the closure body. A mutable outer therefore uses the
+same ref cell as sibling closures, so its default is read at call time after
+earlier writes rather than frozen when the closure is allocated. An identifier
+matching any current parameter but not an earlier initialized parameter is
+rejected before build, even when a numeric outer binding has the same name;
+this preserves JavaScript's parameter-scope TDZ rather than capturing the
+outer value.
+
+The GC/standalone proof mutates the captured value through one prepared sibling
+closure, then calls the defaulted closure with an omitted and an explicit
+argument. Both prepared bodies and both lifted closures survive direct-body
+poison, validate, match same-source direct results, and keep optimized IR binary
+size no larger than direct. A self-shadowing control proves the selector fails
+closed with no post-claim error. The focused default suite is **8/8** and the
+adjacent closure/prepared matrix is **63/63**. Calls, property reads, and other
+effectful defaults remain direct; optional/rest parameters, object-literal
+methods/accessors, and wider cross-owner callable escapes remain the next R3
+families.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and

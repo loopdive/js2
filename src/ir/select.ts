@@ -4580,7 +4580,11 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       if (!isPhase1ClosureLiteral(d.initializer, initializerScope, localClasses, true))
         return shapeNo("vardecl-closure-init", d.initializer);
       scope.add(d.name.text);
-      recordCallableProjection(d.name.text, closureLiteralCallableArity(d.initializer), d.initializer.type);
+      recordCallableProjection(
+        d.name.text,
+        closureLiteralCallableArity(d.initializer, initializerScope),
+        d.initializer.type,
+      );
       continue;
     }
     if (
@@ -4761,15 +4765,20 @@ function isPhase1NestedFunc(
 function closureNumericDefaultInitializerIsIrSafe(
   initializer: ts.Expression,
   availableParamNames: ReadonlySet<string>,
+  ownParamNames: ReadonlySet<string>,
+  outerScope: ReadonlySet<string>,
 ): boolean {
   const candidate = unwrapProjectionExpression(initializer);
   if (ts.isNumericLiteral(candidate)) return true;
-  if (ts.isIdentifier(candidate)) return availableParamNames.has(candidate.text);
+  if (ts.isIdentifier(candidate)) {
+    if (availableParamNames.has(candidate.text)) return true;
+    return !ownParamNames.has(candidate.text) && outerScope.has(candidate.text) && expressionIsProvenNumber(candidate);
+  }
   if (
     ts.isPrefixUnaryExpression(candidate) &&
     (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
   ) {
-    return closureNumericDefaultInitializerIsIrSafe(candidate.operand, availableParamNames);
+    return closureNumericDefaultInitializerIsIrSafe(candidate.operand, availableParamNames, ownParamNames, outerScope);
   }
   return (
     ts.isBinaryExpression(candidate) &&
@@ -4777,17 +4786,23 @@ function closureNumericDefaultInitializerIsIrSafe(
       candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
       candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
       candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
-    closureNumericDefaultInitializerIsIrSafe(candidate.left, availableParamNames) &&
-    closureNumericDefaultInitializerIsIrSafe(candidate.right, availableParamNames)
+    closureNumericDefaultInitializerIsIrSafe(candidate.left, availableParamNames, ownParamNames, outerScope) &&
+    closureNumericDefaultInitializerIsIrSafe(candidate.right, availableParamNames, ownParamNames, outerScope)
   );
 }
 
 function closureLiteralDefaultParamStart(
   parameters: readonly ts.ParameterDeclaration[],
   allowNumericDefaultSuffix: boolean,
+  outerScope: ReadonlySet<string>,
 ): number | null {
   let firstDefault = parameters.length;
   const availableParamNames = new Set<string>();
+  const ownParamNames = new Set<string>();
+  for (const parameter of parameters) {
+    if (ts.isIdentifier(parameter.name)) ownParamNames.add(parameter.name.text);
+    else collectPatternNames(parameter.name, ownParamNames);
+  }
   for (let index = 0; index < parameters.length; index++) {
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
@@ -4796,7 +4811,7 @@ function closureLiteralDefaultParamStart(
       !allowNumericDefaultSuffix ||
       !ts.isIdentifier(parameter.name) ||
       parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
-      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames)
+      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerScope)
     ) {
       return null;
     } else if (firstDefault === parameters.length) {
@@ -4813,8 +4828,11 @@ function exactCallableArity(arity: number): CallableArityRange {
   return { min: arity, max: arity };
 }
 
-function closureLiteralCallableArity(expr: ts.ArrowFunction | ts.FunctionExpression): CallableArityRange {
-  const min = closureLiteralDefaultParamStart(expr.parameters, true);
+function closureLiteralCallableArity(
+  expr: ts.ArrowFunction | ts.FunctionExpression,
+  outerScope: ReadonlySet<string>,
+): CallableArityRange {
+  const min = closureLiteralDefaultParamStart(expr.parameters, true, outerScope);
   if (min === null) return exactCallableArity(expr.parameters.length);
   return { min, max: expr.parameters.length };
 }
@@ -4852,7 +4870,7 @@ function isPhase1ClosureLiteral(
     if (inner.has(expr.name.text)) return shapeNo("closure-name-shadow", expr.name);
     inner.add(expr.name.text);
   }
-  const defaultParamStart = closureLiteralDefaultParamStart(expr.parameters, allowNumericDefaultSuffix);
+  const defaultParamStart = closureLiteralDefaultParamStart(expr.parameters, allowNumericDefaultSuffix, scope);
   if (defaultParamStart === null) return shapeNo("closure-param-default", expr);
   for (const p of expr.parameters) {
     if (p.questionToken || p.dotDotDotToken) return shapeNo("closure-param-shape", p);
@@ -6493,7 +6511,7 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   const candidate = unwrapProjectionExpression(expression);
   if (ts.isArrowFunction(candidate) || ts.isFunctionExpression(candidate)) {
     if (hasFixedIrParameters(candidate.parameters)) return exactCallableArity(candidate.parameters.length);
-    const firstDefault = closureLiteralDefaultParamStart(candidate.parameters, true);
+    const firstDefault = closureLiteralDefaultParamStart(candidate.parameters, true, scope);
     return firstDefault === null ? undefined : { min: firstDefault, max: candidate.parameters.length };
   }
   if (!ts.isIdentifier(candidate)) return undefined;
