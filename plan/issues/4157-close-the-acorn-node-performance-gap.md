@@ -3587,3 +3587,56 @@ arm — the shape that worked three times (`member-get-inline-ic`,
   wall time at roughly **1:7**. This is a low-single-digit-percent lever against a
   ~6.7–7.7× gap. It is the largest remaining helper population, not a path to
   parity.
+
+## 2026-08-13 (29) — MORE FLAGS IS SLOWER: the set needs selecting, not maximising
+
+Asked to "just switch on ALL the flags and measure". The result inverts the
+expectation and is the most actionable finding of the session.
+
+| config | wasm ms | Δ vs OFF | binary @ `optimize: 0` |
+| --- | ---: | ---: | ---: |
+| tuned 8 flags | 93.67 | **−8.75 ms (−8.5 %)** | +134 KB |
+| **all 10 at maximum** | 87.49 | **−1.65 ms (−1.9 %)** | **+970 KB (+39 %)** |
+
+Both order-reversed ON/OFF/OFF/ON on an idle box. **At maximum settings the
+effect (1.65 ms) is smaller than the ON blocks' own spread (4.13 ms) — it is not
+resolvable.** The improvement is statistically indistinguishable from zero.
+
+Deterministic counts kept improving in the same run: **−4,409,124 executed calls,
+−69.6 %**, the best figure recorded here. So this is a clean, measured instance of
+**call reduction and wall time diverging** — the binary grew 39 % and
+instruction-cache cost consumed the gains.
+
+### The two culprits
+
+- **`JS2WASM_INLINE_TRUTHY_IC=all`** turns on six arms, but entry (23) measured
+  `boxnum` and `bigint` firing **zero times** on acorn while costing +74 KB and
+  +47 KB respectively. Maximising the flag enables arms already known never to
+  fire. `=1` (the two-arm default: `boxbool` + `anyval`, 75.9 % of the available
+  reduction) is the operating point.
+- **`JS2WASM_FNCTOR_CTOR_PARAM_SLOTS=1`** is a **pre-existing flag unrelated to
+  this work**, swept in by enumerating every `JS2WASM_*` in the touched files. It
+  contaminates the comparison and should not have been in the ON set.
+
+### What this confirms that was previously only asserted
+
+Two caveats recorded earlier said size has a cost, without testing it. This
+tests it:
+
+- entry (22)'s `INLINE_PROP_IC` ceiling curve — 8.7 % of calls for +38 KB at
+  ceiling 1 versus 66.1 % for +107 KB at ceiling 8;
+- entry (25)'s `IR_INLINE` `loop-leaf` rule taking max function size
+  15,790 → 43,072.
+
+Both are the same phenomenon this measurement makes visible in wall time.
+
+### The measured optimum
+
+`INLINE_PROP_IC=8`, `INLINE_TRUTHY_IC=1` (**not** `all`), `IR_INLINE=on`,
+`FUSED_TONUMBER=1`, `SMI_FASTPATH=all`, `LAZY_STR_FLATTEN=1`,
+`ELIDE_PROVEN_NONNULL_TYPEERROR=1`, `INLINE_HINTS=1` — **−8.5 %**.
+
+Anyone flipping defaults should start from that set and re-derive it per corpus,
+because the optimum is a *selection*, not a maximum. And the per-flag numbers in
+this file are all measured with the other flags OFF, so they do not compose
+additively — the size costs do.
