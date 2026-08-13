@@ -734,13 +734,6 @@ export interface FunctionContext {
    * void; the async result is delivered through the promise. Mirrors the
    * `isGenerator` `return` arm. Undefined on every non-resume body.
    */
-  /**
-   * (#4394) Set while emitting the lifted body of a DECLINED await-free async
-   * function expression / arrow. `return v` then coerces `v` to externref and
-   * wraps it in `Promise.resolve` before the wasm `return`, so the callee — not
-   * the call site — produces the Promise. See `async-expr-promise-wrap.ts`.
-   */
-  asyncPromiseWrapReturn?: boolean;
   asyncDriveReturn?: {
     /** Local holding the frame's result `$Promise` (loaded at resume entry). */
     resultPromiseLocal: number;

@@ -24,17 +24,6 @@ loc-budget-allow:
   # +7 lines: the new arm's body lives in its own module
   # (codegen/host-dyn-valueof.ts); what remains here is the guarded call.
   - src/codegen/expressions/call-receiver-method.ts
-  # +86 lines: the callee-side async Promise envelope touches BOTH compilations
-  # of an async fn-expr that live here — the lifted closure and the
-  # `__make_callback` trampoline — plus the shared signature oracle they must
-  # agree on. The envelope's own body is in codegen/async-expr-promise-wrap.ts;
-  # what remains here is the decision and three guarded call sites.
-  - src/codegen/closures.ts
-  # +26 lines: one more `return` arm, first in the ladder, plus the comment
-  # recording why it must precede the generator / async-drive arms.
-  - src/codegen/statements/control-flow.ts
-  # +7 lines: one documented FunctionContext flag.
-  - src/codegen/context/types.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -54,12 +43,6 @@ func-budget-allow:
   - src/codegen/literals.ts::compileArrayLiteral
   # +6 lines: the new arm is a guarded call into codegen/host-dyn-valueof.ts.
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
-  # +29 / +19 lines: the `__make_callback` trampoline and the lifted closure are
-  # the two separate compilations of one async fn-expr, so each needs the same
-  # guarded call into codegen/async-expr-promise-wrap.ts plus the comment
-  # recording why BOTH are required.
-  - src/codegen/closures.ts::compileArrowAsCallback
-  - src/codegen/closures.ts::compileLiftedClosureBody
 oracle-ratchet-allow:
   # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
   # structMap — a wasm-lowering ValType question the oracle does not express.
@@ -78,8 +61,6 @@ files:
   - src/codegen/host-dyn-valueof.ts
   - tests/issue-4394-host-dynamic-valueof.test.ts
   - tests/test262-runner.ts
-  - src/codegen/async-expr-promise-wrap.ts
-  - tests/issue-4394-async-expr-promise-envelope.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -431,76 +412,123 @@ Behind it sits a THIRD defect this exposed: a `Test262Error` thrown from inside
 an OBJECT-LITERAL METHOD is caught with `err.constructor.name === "String"` —
 the error value degrades to a string across that boundary.
 
-## Root cause 8 — async function EXPRESSIONS never produced a Promise
+## Attempted, not landed — callee-side async Promise envelope (7 tests)
 
-Async-ness was applied entirely at the CALL SITE (`wrapAsyncReturn` +
+Async-ness is applied at the CALL SITE (`wrapAsyncReturn` +
 `wrapAsyncCallInTryCatch`): the caller wraps the result in `Promise.resolve` and
 re-emits the call inside a try that converts a throw into `Promise.reject`. That
-works only when the call site can PROVE the callee is async, and it cannot for
-an INDIRECT call — which is exactly the shape `assert.throwsAsync` uses:
+cannot reach an INDIRECT call, which is the shape `assert.throwsAsync` uses
+(`res = func()` on an untyped parameter). Measured: an async function
+EXPRESSION invoked through such a parameter returns the RAW value
+(`async function () { return 1; }` → the number `1`) and a sync throw ESCAPES —
+so `throwsAsync` reports "the function threw synchronously" for a function that
+per §27.7.5.1 cannot.
+
+A callee-side envelope was implemented for the well-defined subset — a DECLINED
+async fn-expr / arrow with **no `await` of its own**, where the legacy
+synchronous pass-through is already correct apart from the Promise envelope:
+
+- `closureReturnType` forced to `externref` before the lifted func type and
+  closure struct are minted;
+- a `fctx.asyncPromiseWrapReturn` hook so `return v` coerces to externref and
+  calls `Promise.resolve` (falling off the end fulfils with `undefined`, not
+  `null` — a raw `ref.null.extern` reads back as `null`);
+- the whole lifted body re-emitted inside a `try` whose `$exn` / `catch_all`
+  handlers call `Promise.reject`, mirroring `wrapAsyncCallInTryCatch`.
+
+**It works for a direct call and for a closure held in a variable** — verified
+in the assembled harness: `assert.throwsAsync(Error, inner)` passes. **It does
+NOT work when the async fn-expr is passed INLINE as an argument**, which is
+exactly how the tests spell it:
 
 ```js
-try { res = func(); }                       // ← `func` is an untyped parameter
-catch (thrown) { fail(… + " but the function threw synchronously"); }
+var p = assert.throwsAsync(Error, async function () { throw new Error(); });
 ```
 
-Measured: `async function () { return 1; }` invoked through such a parameter
-returned the NUMBER `1`, and `async function () { throw x; }` threw
-SYNCHRONOUSLY — so `throwsAsync` reported "the function threw synchronously" for
-a function that per §27.7.5.1 cannot.
+The blocker is the dynamic-closure-call lowering. `func()` inside `throwsAsync`
+emits a `ref.test`/`call_ref` chain over a FIXED list of candidate lifted func
+types; forcing the async closure's result to `externref` gives it a type that is
+not in that list, so the call falls through to the host bridge and the throw
+escapes the callee's `try` after all. Net effect on the harness: **0 fixed, 0
+broken** — so the work was reverted rather than landed.
 
-### Fix
+Closing it needs the candidate-type list at a dynamic call site to admit the
+closure's actual lifted type (or the wrapper-struct sharing to be keyed so the
+async signature participates), which is a change to the dynamic-dispatch
+substrate, not to async lowering.
 
-Build the Promise in the CALLEE for the well-defined subset: a DECLINED async
-fn-expr / arrow with no `await` and no `try` of its own. That is the population
-where the legacy synchronous pass-through is already correct apart from the
-envelope — with no suspension point the body runs to completion synchronously.
+## Attempted and REVERTED — callee-side async Promise envelope (7 tests)
 
-Three things had to line up, and each was found by a measurement:
+Async-ness is applied entirely at the CALL SITE, which cannot reach the indirect
+call `assert.throwsAsync` makes (`res = func()` on an untyped parameter).
+Measured: `async function () { return 1; }` invoked that way returned the NUMBER
+`1` and `async function () { throw x; }` threw SYNCHRONOUSLY — a §27.7.5.1
+violation.
 
-1. **The decision lives in `computeClosureWrapperSig`, not at the compile site.**
-   That function is the shared signature oracle: the #2939 dynamic-dispatch
-   candidate PRE-SCAN and the real compile both call it. With the decision made
-   only at the compile site, the closure's actual lifted type was absent from
-   every candidate list, so an indirect `func()` fell through to the host bridge
-   and the throw escaped anyway — a closure held in a VARIABLE worked while the
-   same closure passed INLINE did not.
+A callee-side envelope was built for the await-free, try-free subset and it
+WORKS. Three things had to line up, each found by a measurement, and all three
+are worth keeping for whoever revisits this:
+
+1. **The decision must live in `computeClosureWrapperSig`**, the shared
+   signature oracle. The #2939 dynamic-dispatch candidate PRE-SCAN and the real
+   compile both call it; deciding only at the compile site left the closure's
+   lifted type out of every candidate list, so an indirect `func()` fell through
+   to the host bridge and the throw escaped anyway — a closure held in a
+   VARIABLE worked while the same closure passed INLINE did not.
 2. **The `__make_callback` trampoline needs the same envelope.** An inline async
-   fn-expr ARGUMENT is compiled a second time, separately, as `__cb_N` — which
-   was a bare `throw` with no wrap. This is the spelling every asyncHelpers test
-   uses.
-3. **`try` bodies are excluded.** The per-`return` wrap emits a wasm `return`,
-   which unwinds past a `finally` instead of running it; with `try` bodies
-   admitted, `language/expressions/async-arrow-function/try-return-finally-throw.js`
-   regressed pass → fail. Return-through-finally has its own replay machinery on
-   the engine path (`asyncDriveReturn.pendingFinalizer`); until this wrap
-   participates in it, a `try` body stays on the legacy lowering.
+   fn-expr ARGUMENT is compiled a SECOND time, separately, as `__cb_N` — which
+   was a bare `throw`. That is the spelling every asyncHelpers test uses; the
+   WAT is what showed it.
+3. **`try` bodies must be excluded.** The per-`return` wrap emits a wasm
+   `return`, which unwinds past a `finally`; a 220-file sample caught
+   `language/expressions/async-arrow-function/try-return-finally-throw.js`
+   regressing pass → fail.
 
-Falling off the end fulfils with `undefined`, not `null` — a raw
-`ref.null.extern` reads back as `null` in JS.
+### Why it was reverted
 
-### Measured
+**It is depended upon.** `tests/equivalence/promise-chains.test.ts :: async
+arrow function` asserts
 
-Harness: **0 fixed, 0 broken** — but the async cluster moved forward. Both
-`throwsAsync` tests now fail LATER and differently ("did not reject a collision
-of constructor names", "Cannot access property on null or undefined") instead of
-"the function threw synchronously", i.e. the §27.7.5.1 violation is gone and
-what remains behind it is a different defect.
+```ts
+const double = async (x: number): Promise<number> => x * 2;
+export function main(): number { return double(21) as any as number; }
+// expect(wasm.main()).toBe(42)
+```
 
-Regression samples, **0 status changes** on each: a 400-file sample of
-`flags: [async]` tests across the suite; a 220-file sample of
-`built-ins/Promise` + `language/expressions` files containing async
-functions/arrows (the sample that caught the try/finally regression above).
+i.e. it CODIFIES the legacy synchronous pass-through. Under the envelope
+`double(21)` is a Promise — spec-correct — and the cast yields `NaN`, so the
+required `equivalence-gate` check failed. Landing the envelope means amending
+that expectation, which is a deliberate project-level behaviour decision, and it
+would be made for **0 harness tests gained**: the envelope removes the
+"threw synchronously" failure but both `throwsAsync` tests then fail on the NEXT
+defect instead.
 
-Landed on its own merits — a §27.7.5.1 conformance fix with a reproducer, a
-regression test, and clean evidence — rather than on a harness-count delta.
+Local sampling did not catch this: 620 async test262 files showed 0 status
+changes, and the `tests/equivalence` slices run locally were the array / object /
+coercion ones, not `promise-chains`. **The equivalence gate is the check that
+sees this class of change — test262 sampling cannot.**
+
+### The next defect behind it, already isolated
+
+With the envelope in place the async cluster fails on a DIFFERENT, pre-existing
+bug — confirmed identical on the baseline, so it is not caused by the envelope:
+
+```js
+asyncTest(async function () { await Promise.resolve(1); });
+// TypeError: Cannot read properties of null (reading 'then')
+asyncTest(async function () { var a = Promise.resolve(1); await a; });   // passes
+```
+
+`await <call-expression>` inside an async fn-expr yields a null operand, while
+hoisting the operand into a variable first works. That, not the envelope, is
+what now gates the `throwsAsync` tests.
 
 ## Remaining buckets (GC lane, 23 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
 | `deepEqual` (residual) | 1 | deep structural compare of nested objects/arrays |
-| asyncHelpers / `asyncTest` / `throwsAsync` | 7 | the §27.7.5.1 envelope is fixed (root cause 8); what remains behind it is per-test — constructor-name collision detection, a null property read, `$DONE` value plumbing, one null-deref trap |
+| asyncHelpers / `asyncTest` / `throwsAsync` | 7 | an async function EXPRESSION compiles as a plain sync function (the Promise wrap is call-site-driven and an indirect call never gets it); plus one null-deref trap |
 | propertyHelper, symbol-keyed | 3 | root cause 6 above — blocked on the #2610 symbol value-rep pass |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
 | singletons | 9 | `isConstructor`, `testTypedArray`, `wellKnownIntrinsicObjects`, `fnGlobalObject`, `detachArrayBuffer` ×2, `assert-throws-native`, `assert-throws-custom-typeerror`, `verifyProperty-value`, `verifyProperty-desc-is-not-object` |

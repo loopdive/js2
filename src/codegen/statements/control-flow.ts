@@ -28,7 +28,6 @@ import {
   isAnyValue,
   valTypesMatch,
 } from "../shared.js";
-import { emitPromiseResolveWrap } from "../async-expr-promise-wrap.js"; // (#4394) callee-side async Promise wrap
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
 import { adjustRethrowDepth } from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
@@ -142,31 +141,6 @@ function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionC
 }
 
 export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ReturnStatement): void {
-  // (#4394) A DECLINED await-free async function expression / arrow builds its
-  // Promise HERE, in the callee, because an indirect call site (`func()` on an
-  // untyped parameter — the `assert.throwsAsync` shape) can never prove the
-  // callee is async and so never applies the call-site wrap. Coerce the
-  // completion value to externref and hand it to `Promise.resolve`; the
-  // surrounding try (`wrapLiftedAsyncBodyInPromise`) turns a throw into
-  // `Promise.reject`. First arm, so no later one can claim the return.
-  if (fctx.asyncPromiseWrapReturn === true) {
-    if (stmt.expression) {
-      const valueType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
-      if (valueType === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (valueType.kind !== "externref") {
-        coerceType(ctx, fctx, valueType, { kind: "externref" });
-      }
-    } else {
-      // §27.7.5.1: `return;` fulfils with `undefined`, not `null` — a raw
-      // `ref.null.extern` reads back as `null` in JS.
-      emitUndefined(ctx, fctx);
-    }
-    emitPromiseResolveWrap(ctx, fctx);
-    fctx.body.push({ op: "return" });
-    return;
-  }
-
   // Inside a generator function, `return expr` should push the return value
   // into the generator buffer (so .next().value sees it), then break out of
   // the body block (not use the wasm `return` opcode, which would skip __create_generator).

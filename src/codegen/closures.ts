@@ -103,12 +103,6 @@ import {
   emitAsyncClosureBody,
   reportDeclinedAsyncRejectionHazard,
 } from "./async-activation.js";
-// (#4394) Callee-side Promise envelope for a DECLINED await-free async fn-expr.
-import {
-  asyncClosureNeedsPromiseWrap,
-  emitPromiseResolveWrap,
-  wrapLiftedAsyncBodyInPromise,
-} from "./async-expr-promise-wrap.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
 // (#3164) Native generator FUNCTION EXPRESSIONS (standalone/wasi): the lifted
 // closure body emits the state-struct factory instead of the eager-buffer host
@@ -1778,26 +1772,6 @@ export function computeClosureWrapperSig(
     }
   }
 
-  // (#4394) A DECLINED await-free async fn-expr / arrow builds its Promise in
-  // the CALLEE (see async-expr-promise-wrap.ts), so its result is `externref`.
-  // The decision MUST live here, in the shared signature oracle: the #2939
-  // dynamic-dispatch candidate pre-scan and the real compile both call this, and
-  // a disagreement leaves the closure's actual lifted type out of every
-  // candidate list — an indirect `func()` then falls through to the host bridge
-  // and the throw escapes the callee's `try` after all.
-  if (
-    !isGenerator &&
-    asyncClosureNeedsPromiseWrap(
-      ctx,
-      arrow,
-      isAsync,
-      isGenerator,
-      planAsyncClosureActivation(ctx, arrow, isAsync) !== null,
-    )
-  ) {
-    return { params: arrowParams, returnType: { kind: "externref" } };
-  }
-
   return { params: arrowParams, returnType: closureReturnType };
 }
 
@@ -2138,13 +2112,6 @@ export interface LiftedClosureBodyOptions {
   isGenerator: boolean;
   isAsync: boolean;
   asyncDecision: ReturnType<typeof planAsyncClosureActivation>;
-  /**
-   * (#4394) The engine declined this await-free async fn-expr / arrow, so the
-   * CALLEE builds the Promise: every `return` wraps in `Promise.resolve` and the
-   * whole body is re-emitted inside a try that rejects on a synchronous throw.
-   * `computeClosureWrapperSig` already put `externref` in the signature.
-   */
-  asyncPromiseWrap?: boolean;
   isNamedFuncExpr: boolean;
   /**
    * (#3683 S2) When set, compile this body as the TYPED TWIN of an admitted
@@ -2197,7 +2164,6 @@ export function compileLiftedClosureBody(
     asyncDecision,
     isNamedFuncExpr,
   } = opts;
-  const asyncPromiseWrap = opts.asyncPromiseWrap === true;
   let { closureReturnType, liftedFuncTypeIdx } = opts;
 
   // 5. Build the lifted function body
@@ -2231,8 +2197,6 @@ export function compileLiftedClosureBody(
     locals: [],
     localMap: new Map(),
     returnType: closureReturnType,
-    // (#4394) `return v` in this body wraps `v` in `Promise.resolve`.
-    ...(asyncPromiseWrap ? { asyncPromiseWrapReturn: true as const } : {}),
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -2527,10 +2491,6 @@ export function compileLiftedClosureBody(
   }
 
   let conciseBodyHasValue = false;
-  // (#4394) Where the lifted body's own instructions start — everything from
-  // here is re-emitted inside the rejecting `try` when the callee owns the
-  // Promise.
-  const asyncWrapBodyStart = liftedFctx.body.length;
 
   // #1210: detect string-builder patterns BEFORE hoisting so the hoist
   // pass can skip pre-allocating the matched binding's local.
@@ -2843,18 +2803,6 @@ export function compileLiftedClosureBody(
     }
   }
 
-  // (#4394) A CONCISE async body (`async () => expr`) left its value on the
-  // stack coerced to externref; a BLOCK body's fall-through completion has
-  // nothing yet (§27.7.5.1: `undefined`, not `null`). Either way what leaves
-  // this function must be a Promise, so wrap before the default-return tail
-  // sees it, then re-emit the whole body inside the rejecting try.
-  if (asyncPromiseWrap) {
-    if (!conciseBodyHasValue) emitUndefined(ctx, liftedFctx);
-    emitPromiseResolveWrap(ctx, liftedFctx);
-    conciseBodyHasValue = true;
-    wrapLiftedAsyncBodyInPromise(ctx, liftedFctx, asyncWrapBodyStart);
-  }
-
   // Ensure return value for non-void functions (skip if concise body already left a value)
   emitClosureDefaultReturnValue(ctx, liftedFctx, closureReturnType, conciseBodyHasValue);
 
@@ -3031,10 +2979,6 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
-  // (#4394) Same predicate `computeClosureWrapperSig` already applied to the
-  // SIGNATURE — asked again here only to drive body emission. Keeping one
-  // predicate is what keeps the two in lockstep (see the module header).
-  const asyncPromiseWrap = asyncClosureNeedsPromiseWrap(ctx, arrow, isAsync, isGenerator, asyncDecision !== null);
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
   } else if (isAsync && !isGenerator) {
@@ -3095,7 +3039,6 @@ export function compileArrowAsClosure(
     isGenerator,
     isAsync,
     asyncDecision,
-    asyncPromiseWrap,
     isNamedFuncExpr: !!isNamedFuncExpr,
   });
   const liftedFctx = generic.liftedFctx;
@@ -3657,23 +3600,6 @@ export function compileArrowAsCallback(
     cbReturnType = null;
   }
 
-  // (#4394) An inline async function EXPRESSION passed as an ARGUMENT is
-  // compiled HERE, through the `__make_callback` trampoline — a second, separate
-  // compilation of the same AST from the lifted-closure path. Without the same
-  // callee-side Promise envelope, `__cb_N` is a bare `throw`, so
-  // `assert.throwsAsync(Error, async function () { throw new Error(); })` —
-  // the exact spelling every asyncHelpers test uses — saw the throw escape
-  // SYNCHRONOUSLY even after the closure path was fixed.
-  const cbIsAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-  const cbAsyncPromiseWrap = asyncClosureNeedsPromiseWrap(
-    ctx,
-    arrow,
-    cbIsAsync,
-    ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined,
-    planAsyncClosureActivation(ctx, arrow, cbIsAsync) !== null,
-  );
-  if (cbAsyncPromiseWrap) cbReturnType = { kind: "externref" };
-
   const cbResults: ValType[] = cbReturnType ? [cbReturnType] : [];
   const cbTypeIdx = addFuncType(ctx, cbParams, cbResults, `${cbName}_type`);
 
@@ -3699,7 +3625,6 @@ export function compileArrowAsCallback(
     locals: [],
     localMap: new Map(),
     returnType: cbReturnType,
-    ...(cbAsyncPromiseWrap ? { asyncPromiseWrapReturn: true as const } : {}),
     body: [],
     blockDepth: 0,
     breakStack: [],
@@ -3838,8 +3763,6 @@ export function compileArrowAsCallback(
   }
 
   let exprBodyHasReturnValue = false;
-  // (#4394) Everything from here is re-emitted inside the rejecting `try`.
-  const cbAsyncWrapStart = cbFctx.body.length;
   if (ts.isBlock(body)) {
     for (const stmt of body.statements) {
       compileStatement(ctx, cbFctx, stmt);
@@ -3859,15 +3782,6 @@ export function compileArrowAsCallback(
     } else if (exprType !== null) {
       cbFctx.body.push({ op: "drop" });
     }
-  }
-
-  // (#4394) §27.7.5.1: the completion becomes a Promise, fulfilling with
-  // `undefined` when the body falls off the end.
-  if (cbAsyncPromiseWrap) {
-    if (!exprBodyHasReturnValue) emitUndefined(ctx, cbFctx);
-    emitPromiseResolveWrap(ctx, cbFctx);
-    exprBodyHasReturnValue = true;
-    wrapLiftedAsyncBodyInPromise(ctx, cbFctx, cbAsyncWrapStart);
   }
 
   emitClosureDefaultReturnValue(ctx, cbFctx, cbReturnType, exprBodyHasReturnValue);
