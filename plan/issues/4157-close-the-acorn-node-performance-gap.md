@@ -1690,3 +1690,38 @@ assumed: **parity with Node on acorn is unreachable by helper elision**, because
 2.78× of it is the quality of the code emitted for acorn's own scanner and
 parser — register allocation, inlining, inline caches — and nothing in this
 umbrella targets that.
+
+## 2026-08-12 (12) — the OTHER lane, measured for the first time: JS-host is 342×
+
+Every number in this file is `standalone-dynamic`. The handoff calls that "the
+only quotable lane", but the reason given only ever covered `standalone`
+(compile-time-static, whose huge ratios are the parse being constant-folded).
+**The `js-host` lane had never been measured**, and if acorn were materially
+closer to Node there, every conclusion in entries (8)–(11) would be answering
+about the wrong lane. So it was run.
+
+| lane | wasm median | node median | ratio |
+| --- | ---: | ---: | ---: |
+| `standalone-dynamic` | 138.3 ms | 19.9 ms | **6.96×** |
+| `js-host` | **5,357.2 ms** | 15.6 ms | **342.6×** |
+
+Checksum 422 on both — the JS-host build is correct, just catastrophically slow.
+
+**Two conclusions, one of them uncomfortable for the architecture doc.**
+
+1. **`standalone-dynamic` is not merely the quotable lane, it is by far the best
+   one.** The 6.96× figure is the honest best case, and every verdict in this
+   file is about the right target. That question is now closed with a number.
+2. **CLAUDE.md describes JS-host mode as using "host imports for
+   performance/completeness."** On acorn that is inverted by a factor of **39×**:
+   the same workload runs 138 ms pure-Wasm and 5,357 ms through host imports.
+   Every dynamic property read that becomes a host call pays a wasm↔JS boundary
+   crossing, and acorn does ~506 k of them per parse — the same population entry
+   (1) identified. Pure WasmGC is not the fallback for this workload; it is the
+   fast path, by a wide margin.
+
+(2) deserves its own issue and is out of this umbrella's scope — the architecture
+principle is written as a general rule and this is one workload, dominated by
+exactly the operation the boundary punishes most. But "host imports for
+performance" should not be read as established for anything read-heavy without
+measuring it, and nobody had.
