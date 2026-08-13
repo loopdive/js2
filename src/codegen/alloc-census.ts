@@ -33,6 +33,7 @@
  */
 import type { Instr, TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { reportReceiverCse } from "./receiver-cse.js"; // (#4157 B)
 import { walkChildren } from "./walk-instructions.js";
 
 /** Export-name prefix for a per-type counter. */
@@ -86,6 +87,30 @@ function callCensusTargets(): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * (#4157) Comma-separated substrings. Every DEFINED function whose name
+ * contains one of them gets an exported counter incremented at FUNCTION ENTRY.
+ *
+ * Entry — not call site — is the whole design: the older per-call-site census
+ * (`JS2WASM_ALLOC_CENSUS_CALLS`) splices its increment INTO the callee's
+ * argument sequence, which desynchronises `applyRefNullFixups` (it walks
+ * backwards from a `call` mapping ~one instruction per parameter) and retypes a
+ * `ref.null.extern` against the wrong parameter. An entry increment is adjacent
+ * to no argument sequence, so nothing is disturbed. Counts are exact and
+ * identical every run — immune to the box being loaded, unlike wall clock.
+ */
+function execCensusTargets(): string[] {
+  const raw = process.env.JS2WASM_EXEC_CENSUS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** (#4157) Export-name prefix for a per-function executed-entry counter. */
+export const EXEC_CENSUS_PREFIX = "__exec_count_";
+
 /** The allocation opcodes worth counting — every WasmGC heap producer. */
 const ALLOC_OPS = new Set([
   "struct.new",
@@ -118,6 +143,26 @@ function censusName(ctx: CodegenContext, typeIdx: number): string {
 export function installAllocCensus(ctx: CodegenContext): void {
   if (allocCensusEnabled()) installTypeCensus(ctx);
   installCallCensus(ctx);
+  installExecCensus(ctx);
+  reportReceiverCse(); // (#4157 B) one line of evidence that the CSE fired
+}
+
+/**
+ * (#4157) Executed-entry census — one exported counter per matched DEFINED
+ * function, incremented by a stack-neutral prologue. Off unless
+ * `JS2WASM_EXEC_CENSUS` names substrings.
+ */
+function installExecCensus(ctx: CodegenContext): void {
+  const targets = execCensusTargets();
+  if (targets.length === 0) return;
+  let instrumented = 0;
+  for (let i = 0; i < ctx.mod.functions.length; i++) {
+    const fn = ctx.mod.functions[i]!;
+    if (!targets.some((t) => fn.name.includes(t))) continue;
+    fn.body.unshift(...incrementInstrs(newCounterGlobal(ctx, `${EXEC_CENSUS_PREFIX}${sanitize(fn.name)}_${i}`)));
+    instrumented++;
+  }
+  process.stderr.write(`[exec-census] instrumented ${instrumented} function(s) for [${targets.join(",")}]\n`);
 }
 
 function installTypeCensus(ctx: CodegenContext): void {

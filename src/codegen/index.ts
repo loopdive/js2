@@ -218,6 +218,7 @@ import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) ho
 import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
+import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
@@ -5255,6 +5256,7 @@ export function generateModule(
     // hits collapse to a bare `struct.get` arm; misses fall back to the
     // generic dispatcher body filled just above.
     fillTypedMemberGetF64Dispatch(ctx);
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
@@ -7606,6 +7608,7 @@ export function generateMultiModule(
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
+    fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillErrorPropHelpers(ctx); // (#4098) multi-source parity for the shared Error bag ABI
