@@ -10,6 +10,7 @@ import type { WasmModule } from "../../ir/types.js";
 import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
 import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
+import { resolveCompileTargetProfile, type CompileTargetProfile } from "../../target-profile.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
@@ -24,6 +25,13 @@ import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable
 import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
+function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
+  return targetProfile.target === "standalone" ||
+    (targetProfile.environment === "javascript" && targetProfile.semanticProviders === "native-first")
+    ? nativeLiteralRegExpEngineConfig()
+    : null;
+}
+
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
@@ -32,12 +40,13 @@ export function createCodegenContext(
   irPlanningIdentityContext?: IrPlanningIdentityContext,
 ): CodegenContext {
   programAbiSession?.assertModule(mod);
+  const targetProfile = resolveCompileTargetProfile(options);
   // #1524 — strict-mode default policy. WASI builds enforce the dual-mode
   // architectural principle by default (`CLAUDE.md` → "JS host optional");
   // pass `strictNoHostImports: false` to opt out (the CLI's
   // `--allow-host-imports` does this). Strict mode also implies
   // `nativeStrings` so the wasm:js-string namespace is not requested.
-  const strictNoHostImports = options?.strictNoHostImports ?? options?.wasi ?? false;
+  const strictNoHostImports = targetProfile.strictEnvImportGate;
   // #1470 — standalone target forces nativeStrings:true so the module has
   // no `wasm:js-string` and no env JS-host string helpers. Use logical OR
   // for the implication chain so `wasi: false` doesn't short-circuit
@@ -45,16 +54,17 @@ export function createCodegenContext(
   // #1588 PR-B: `utf8Storage` implies nativeStrings on the WasmGC backend —
   // host-string mode has no in-heap bytes to choose a width for.
   const nativeStrings =
-    options?.nativeStrings ??
-    !!(options?.fast || options?.wasi || options?.standalone || strictNoHostImports || options?.utf8Storage);
+    options?.nativeStrings ?? !!(options?.fast || targetProfile.nativeStringsRequiredByPolicy || options?.utf8Storage);
   // #2783 — the dynamic-linking set: external namespaces left as link-time
   // imports (satisfied by a preloaded provider) instead of inline-lowering.
-  // WASI-gated — ignored for non-WASI targets. The internal `ctx.linkNodeShims`
-  // convenience boolean is derived from `node:fs` membership (below) so the ~30
-  // codegen read-sites stay zero-churn and the two can never drift.
-  const linkedNamespaces: ReadonlySet<string> = new Set(options?.wasi ? (options?.link ?? []) : []);
+  // Namespace authority is target-neutral: standalone and JS-hosted modules can
+  // both link an explicit Wasm/embedder provider. The internal node:fs lowering
+  // remains WASI-specific below so existing non-WASI code generation is byte
+  // neutral when the namespace is merely declared as externally provided.
+  const linkedNamespaces: ReadonlySet<string> = new Set(options?.link ?? []);
   const ctx: CodegenContext = {
     mod,
+    targetProfile,
     programAbiSession,
     irPlanningIdentityContext,
     checker,
@@ -128,6 +138,9 @@ export function createCodegenContext(
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
+    holeyArrayDeclarations: new Set(), // (#4222) exact bounded sized-Array bindings
+    holeyArrayConstructorNodes: new Set(), // (#4222) exact sparse carrier constructors
+    holeyArrayFilterCallNodes: new Set(), // (#4222) exact direct filter consumers
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
@@ -138,10 +151,7 @@ export function createCodegenContext(
     // (#4035) "auto" = the JS host needs the bridge as its calling convention,
     // a JS-free host does not. Standalone/WASI callers that DO inspect the
     // module (the test262 harness) pass hostBridge: "always".
-    emitHostBridge:
-      (options?.hostBridge ?? "auto") === "auto"
-        ? !(options?.standalone || options?.wasi)
-        : options?.hostBridge === "always",
+    emitHostBridge: targetProfile.hostValueInterop !== "off",
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
@@ -257,6 +267,7 @@ export function createCodegenContext(
     shapeMap: new Map(),
     templateCacheCounter: 0,
     templateVecTypeIdx: -1,
+    holeyArrayTypeIdx: -1, // (#4222) dedicated sparse new Array(n) carrier, lazy
     vecBaseTypeIdx: -1, // (#2186) shared $__vec_base length supertype, lazy
     dvWindowTypeIdx: -1, // (#2159/#38) standalone DataView windowing wrapper, lazy
     subviewTypeIdx: -1, // (#2159/#2357/#47) standalone TypedArray subarray view, lazy
@@ -322,16 +333,16 @@ export function createCodegenContext(
     methodClosureGlobals: new Map(),
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
-    wasi: options?.wasi ?? false,
+    wasi: targetProfile.target === "wasi",
     nodeGlobals: options?.nodeGlobals ?? false,
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
     // #2625/#2783 — the linkable js2wasm:node-<mod> std-IO path only applies under
     // WASI; derived from `node:fs` membership in the (already WASI-gated) link set.
-    linkNodeShims: linkedNamespaces.has("node:fs"),
+    linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
-    standalone: options?.standalone ?? false,
+    standalone: targetProfile.target === "standalone",
     directEvalMode: options?.directEval ?? "legacy",
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.
@@ -364,10 +375,11 @@ export function createCodegenContext(
     // (#2796) Diff-test-harness fidelity — export __module_init + skip the wasm
     // start section so the host runs top-level code after setExports.
     deferTopLevelInit: options?.deferTopLevelInit ?? false,
-    // #682 — native standalone RegExp engine hook. Standalone mode enables the
-    // reduced literal-substring backend; broader QuickJS libregexp ABI linking
-    // remains the follow-up path for near-JS parity.
-    standaloneRegExpEngine: options?.standalone ? nativeLiteralRegExpEngineConfig() : null,
+    // #682/#4397 — native RegExp engine hook. Standalone and native-first JS
+    // enable the reduced literal-substring backend; WASI retains its existing
+    // narrowed refusals. Broader QuickJS libregexp ABI linking remains the
+    // follow-up path for near-JS parity.
+    standaloneRegExpEngine: selectNativeRegExpEngine(targetProfile),
     // (#1373b C-1) ON by default. The gate is narrow by construction: the IR
     // claims an async fn ONLY when the ONE async engine declines it
     // (`asyncEngineClaims` — sync-pass-through population), it is a top-level

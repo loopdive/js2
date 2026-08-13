@@ -419,6 +419,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
+  /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
+  readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
+  /** Exact direct filter consumers of that sparse carrier. */
+  readonly isHoleyArrayFilterCall?: (expr: ts.CallExpression) => boolean;
+  /** True only when this backend owns the dedicated sparse filter provider. */
+  readonly supportsHoleyArrayFilter?: boolean;
   /**
    * Checker-backed proof that an expression has the ambient lib `RegExp`
    * type. Host-free targets use it to defer `.test`/`.exec` to native
@@ -6985,12 +6991,29 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
       const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
       if (currentSelectionOptions?.isArrayExpression?.(builtinReceiver) === true) {
-        if (expr.expression.name.text !== "push") {
+        const isHoleyFilter =
+          expr.expression.name.text === "filter" &&
+          currentSelectionOptions.supportsHoleyArrayFilter === true &&
+          currentSelectionOptions.isHoleyArrayFilterCall?.(expr) === true;
+        if (expr.expression.name.text !== "push" && !isHoleyFilter) {
           return capabilityNo("array-method-unsupported", "expr-array-method-not-lowerable", expr);
         }
         if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
-          return capabilityNo("array-method-unsupported", "expr-array-push-shape", expr);
+          return capabilityNo(
+            "array-method-unsupported",
+            isHoleyFilter ? "expr-array-filter-shape" : "expr-array-push-shape",
+            expr,
+          );
         }
+        if (
+          isHoleyFilter &&
+          (!ts.isIdentifier(expr.arguments[0]!) ||
+            !scope.has(expr.arguments[0]!.text) ||
+            knownCallableArity(expr.arguments[0]!, scope) === undefined)
+        ) {
+          return capabilityNo("array-method-unsupported", "expr-array-filter-callback", expr.arguments[0]!);
+        }
+        if (isHoleyFilter) return isPhase1Expr(builtinReceiver, scope, localClasses);
       }
       if (
         (expr.expression.name.text === "call" || expr.expression.name.text === "apply") &&
@@ -7252,6 +7275,23 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const ctorName = expr.expression.text;
     const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
     const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
+    if (currentSelectionOptions?.isHoleyArrayConstructor?.(expr) === true) {
+      if (ctorName !== "Array" || isLocalClass || scope.has("Array")) {
+        return capabilityNo("constructor-resolution-unsupported", "expr-new-holey-array-identity", expr);
+      }
+      if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
+        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-shape", expr);
+      }
+      const length = expr.arguments[0]!;
+      if (ts.isSpreadElement(length) || !ts.isNumericLiteral(length)) {
+        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+      }
+      const numericLength = Number(length.text.replace(/_/g, ""));
+      if (!Number.isInteger(numericLength) || numericLength < 0 || numericLength > 0x7fff_ffff) {
+        return capabilityNo("constructor-arity-unsupported", "expr-new-holey-array-length", length);
+      }
+      return true;
+    }
     // The IR slice lowers RegExp construction through the host `RegExp_new`
     // extern-class ABI. Host-free targets own RegExp in legacy native codegen,
     // including its runtime pattern compiler, so defer the whole function
@@ -7855,6 +7895,12 @@ export function buildLocalCallGraph(
         // resolve as external identifier calls.  Uncertified `new Promise`
         // shapes retain the ordinary graph behavior below.
         if (currentSelectionOptions?.promiseDelays?.resolve(node)) return;
+        if (currentSelectionOptions?.isHoleyArrayConstructor?.(node) === true) {
+          if (node.arguments) {
+            for (const argument of node.arguments) visit(argument);
+          }
+          return;
+        }
         if (
           ts.isIdentifier(node.expression) &&
           (localClasses.has(node.expression.text) ||

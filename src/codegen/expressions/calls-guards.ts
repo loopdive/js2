@@ -341,7 +341,7 @@ export function tryRegExpConstructorCall(
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (
-    ctx.standalone &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
     !expr.questionDotToken &&
     ts.isIdentifier(expr.expression) &&
     isGlobalRegExpIdentifier(ctx, expr.expression)

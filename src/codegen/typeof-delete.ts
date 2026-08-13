@@ -900,7 +900,7 @@ export function compileRegExpLiteral(ctx: CodegenContext, fctx: FunctionContext,
   // #682 — standalone mode has a reduced native literal-substring backend.
   // Unsupported syntax still reports #1474-compatible diagnostics rather than
   // falling back to a JS-host RegExp import.
-  if (ctx.standalone) {
+  if (ctx.targetProfile.semanticProviders === "native-first") {
     return compileStandaloneRegExpLiteral(ctx, fctx, pattern, flags, expr);
   }
 

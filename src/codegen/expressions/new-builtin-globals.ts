@@ -24,13 +24,13 @@ import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
-import { ensureObjectRuntime } from "../object-runtime.js";
+import { ensureNativeProxyRuntime } from "../object-runtime.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
 import { errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { coerceType as coerceTypeImpl } from "../type-coercion.js";
@@ -385,7 +385,11 @@ export function tryCompileBuiltinGlobalNew(
       // #3032). Host mode's `__new_<Name>` import does ToString in JS, so only
       // the native path needs this. Applies to both the WASI-error and
       // Test262Error branches below (both native, both standalone/WASI).
-      if ((ctx.wasi || ctx.standalone) && args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
+      if (
+        ctx.targetProfile.semanticProviders === "native-first" &&
+        args.length >= 1 &&
+        !isStaticUndefinedExpr(args[0]!, fctx)
+      ) {
         // Force `number_toString` before `__any_to_string` bakes so its number
         // arm renders a raw numeric message ("42") instead of degrading to
         // "[object Object]" (a module that only constructs `new Error(n)` never
@@ -419,7 +423,7 @@ export function tryCompileBuiltinGlobalNew(
       // module unsatisfiable at instantiation time. JS-host mode is unchanged.
       const importName = `__new_${ctorName}`;
       // #1473 — standalone mode also has no JS host; build the Error in-module.
-      if ((ctx.wasi || ctx.standalone) && isWasiErrorName(ctorName)) {
+      if (ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(ctorName)) {
         emitWasiErrorConstructor(ctx, ctorName, 1);
         const internalFuncIdx = ctx.funcMap.get(importName);
         if (internalFuncIdx !== undefined) {
@@ -582,11 +586,11 @@ export function tryCompileBuiltinGlobalNew(
   // dispatch reads/writes/has through the traps. Both modes share the same
   // `(target, handler) -> externref` signature, so the call site is uniform.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy") {
-    if (ctx.standalone) {
+    if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
       const args = expr.arguments ?? [];
       // Force the object runtime (which registers the native __proxy_create +
       // the trap dispatch helpers + the front-guards) before we look up the idx.
-      ensureObjectRuntime(ctx);
+      ensureNativeProxyRuntime(ctx);
       const compileToExternref = (arg: ts.Expression | undefined): void => {
         if (arg === undefined) {
           fctx.body.push({ op: "ref.null.extern" });
@@ -607,7 +611,16 @@ export function tryCompileBuiltinGlobalNew(
           }
           return;
         }
-        const r = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        // Inline functions must become the same module-owned closure values
+        // used everywhere else in native semantics. Compiling them through the
+        // generic externref expectation selects the callback/host lane and can
+        // leave a null placeholder as the Proxy target. ProxyCreate then sees a
+        // primitive even though the source value is callable. Keep the closure
+        // live and cross only its canonical externref carrier here.
+        const r =
+          ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
+            ? compileArrowAsClosure(ctx, fctx, arg)
+            : compileExpression(ctx, fctx, arg, { kind: "externref" });
         if (r && r.kind !== "externref") {
           if (r.kind === "ref" || r.kind === "ref_null") {
             fctx.body.push({ op: "extern.convert_any" });

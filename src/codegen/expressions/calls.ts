@@ -289,6 +289,7 @@ import {
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
   tryCompileStandaloneRegExpToString,
+  usesNativeRegExpProvider,
 } from "../regexp-standalone.js";
 import {
   buildThrowJsErrorInstrs,
@@ -442,6 +443,18 @@ function sourceHasBindCall(sf: ts.SourceFile): boolean {
   sourceHasBindCallCache.set(sf, found);
   return found;
 }
+
+/**
+ * Select the Wasm-owned Function.prototype.bind provider.
+ *
+ * Native-first JavaScript targets use the same `$__bound_fn` carrier as
+ * standalone/WASI. Only a bound target that is itself an admitted caller-owned
+ * JavaScript function crosses the explicit callback boundary when invoked.
+ */
+export function usesNativeFunctionBindProvider(ctx: CodegenContext): boolean {
+  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
+}
+
 function sourceCreatesProxy(sf: ts.SourceFile): boolean {
   const cached = sourceCreatesProxyCache.get(sf);
   if (cached !== undefined) return cached;
@@ -496,15 +509,16 @@ function sourceCreatesProxy(sf: ts.SourceFile): boolean {
  * (no accessors, methods, or computed/symbol keys — the same shapes the
  * `$Object` builder accepts at literals.ts:870-874), build it directly as a
  * native `$Object` via `compileObjectLiteralAsExternref` so `__object_assign`
- * recognises it. Any other argument (identifiers, calls, accessor-bearing
- * literals) keeps the ordinary `compileExpression` path. Standalone-only — host
- * / WASI mode owns the `__object_assign` JS import and is untouched.
+ * recognises it. This includes `{}` when used as the target: the native helper
+ * must be able to insert the copied fields into it. Any other argument
+ * (identifiers, calls, accessor-bearing literals) keeps the ordinary
+ * `compileExpression` path. Host-assisted mode keeps the JS import unchanged;
+ * all native-first environments share the Wasm helper.
  */
 export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
-    ctx.standalone &&
+    (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone) &&
     ts.isObjectLiteralExpression(arg) &&
-    arg.properties.length > 0 &&
     arg.properties.every(
       (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
     ) &&
@@ -2061,7 +2075,7 @@ function tryCompileIndirectFunctionBindCall(
   const fnExpr = expr.arguments[0]!;
   // ES5 §15.3.4.5 step 2 / current §20.2.3.2 step 2: IsCallable(Target)
   // false must throw TypeError. Outer-call arguments are evaluated first.
-  if (ctx.standalone && isStaticallyNonCallableBindTarget(ctx, fctx, fnExpr)) {
+  if (usesNativeFunctionBindProvider(ctx) && isStaticallyNonCallableBindTarget(ctx, fctx, fnExpr)) {
     for (const arg of expr.arguments) {
       const argType = compileExpression(ctx, fctx, arg);
       if (argType !== null) fctx.body.push({ op: "drop" });
@@ -2090,11 +2104,9 @@ function tryCompileIndirectFunctionBindCall(
  * import call. The host delegates to `Function.prototype.bind.apply(wrapped,
  * [thisArg, ...partial])` and returns a real JS bound-function exotic.
  *
- * Standalone mode falls back to identity-bind (drops partial args, returns
- * the receiver). Returns `undefined` to signal "no codegen happened, caller
- * should fall through" — this can only happen if `compileExpression` for the
- * receiver returns null (e.g. unresolvable identifier); callers retain the
- * old "throws on missing receiver" behaviour in that case.
+ * Native-first/standalone targets mint the Wasm-owned `$__bound_fn` carrier;
+ * compatibility targets retain the real JS bound-function exotic. Returns
+ * `undefined` to signal "no codegen happened, caller should fall through".
  */
 /**
  * (#3140) Mint a native `$__bound_fn` value from PRE-EVALUATED externref
@@ -2103,7 +2115,7 @@ function tryCompileIndirectFunctionBindCall(
  * The carrier is unwrapped by the `__apply_closure` front-guard (boundArgs
  * prepended, recursion on target — bound-of-bound composes) and classified
  * callable by `closure-classifier.ts` (`typeof bound === "function"`).
- * Standalone/WASI lane only (the $ObjVec builders are the native ones).
+ * Native semantic-provider lane only (the $ObjVec builders are native).
  */
 function emitBoundFnValueFromLocals(
   ctx: CodegenContext,
@@ -2148,14 +2160,14 @@ export function compileFunctionBind(
   const externRef: ValType = { kind: "externref" };
   const i32Ty: ValType = { kind: "i32" };
 
-  // (#3140) Standalone (--target wasi / noJsHost): no JS host — mint the native
+  // (#3140/#4397) Native semantic provider: mint the native
   // `$__bound_fn` carrier {target, thisArg, boundArgs}. Replaces the #1632a
   // identity-bind degrade (which DROPPED the partial args, so the test262
   // TypedArray harness `argFactory.bind(undefined, constructor)` lost the bound
   // ctor and every makeCtorArg-style test failed at the harness level).
   // Evaluation order per §20.2.3.2: target (receiver), then thisArg, then
   // partials — each exactly once, into externref locals.
-  if (ctx.standalone || noJsHost(ctx)) {
+  if (usesNativeFunctionBindProvider(ctx)) {
     const recvType = compileExpression(ctx, fctx, propAccess.expression, externRef);
     if (recvType === null) {
       fctx.body.push({ op: "ref.null.extern" });
@@ -2277,14 +2289,6 @@ export function compileFunctionBind(
   return externRef;
 }
 
-/**
- * (#1337) True when the callee expression denotes a variable whose initializer
- * is a `Function.prototype.bind` result — i.e. its runtime value is a host
- * bound-function externref. Mirrors the `isBindHostCall` detector in
- * statements/variables.ts (which forces the local to externref). Only the
- * single-assignment `const`/`let`/`var = fn.bind(...)` form is recognised; this
- * matches the bulk of the test262 bound-function-invocation corpus.
- */
 /**
  * (#1712 / #1941) Static gate for the host-callable dispatch fallback.
  *
@@ -3516,6 +3520,7 @@ export function tryEmitInlineDynamicCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   isKnownVariable: boolean,
+  allowHostBoundaryFallback = true,
 ): InnerResult | null {
   if (!isKnownVariable) return null;
 
@@ -3537,7 +3542,7 @@ export function tryEmitInlineDynamicCall(
   ensureFuncValueWrappersRegistered(ctx, expr.getSourceFile());
 
   const arity = expr.arguments.length;
-  const hostCallPlan = planHostCallFallback(arity);
+  const hostCallPlan = planHostCallFallback(arity, ctx.targetProfile.semanticProviders === "native-first");
 
   // Pre-filter candidates: formal-param count must be able to satisfy the
   // call arity (>= arity — missing trailing args are padded with `undefined`,
@@ -3618,13 +3623,13 @@ export function tryEmitInlineDynamicCall(
   // untouched: a host proxy is a host externref whose [[Call]] belongs to the
   // K1 inbound-marshalling keystone, not this dispatch.
   const wantProxyArm =
-    ctx.standalone === true && (ctx.funcMap.has("__proxy_create") || sourceCreatesProxy(expr.getSourceFile()));
+    (ctx.standalone === true || ctx.targetProfile.semanticProviders === "native-first") &&
+    (ctx.funcMap.has("__proxy_create") || sourceCreatesProxy(expr.getSourceFile()));
   // (#3140) A `$__bound_fn` (native Function.prototype.bind carrier) may reach a
   // bare dynamic call (`bound(...)`) — add an unwrap arm when a bind site minted
   // the carrier in this module.
   const wantBoundArm =
-    (ctx.standalone === true || ctx.wasi === true) &&
-    (ctx.boundFnTypeIdx >= 0 || sourceHasBindCall(expr.getSourceFile()));
+    usesNativeFunctionBindProvider(ctx) && (ctx.boundFnTypeIdx >= 0 || sourceHasBindCall(expr.getSourceFile()));
   // (#3177 slice 3) §23.2.5.1 step 1: CALLING a TypedArray-constructor VALUE
   // without `new` (undefined NewTarget) must throw TypeError — `TA(1)` inside
   // `assert.throws(TypeError, …)` is the undefined-newtarget-throws corpus
@@ -3667,7 +3672,7 @@ export function tryEmitInlineDynamicCall(
   // below): ensure the imports HERE, before the box/unbox indices are
   // captured, so the capture happens after every import insertion this
   // function performs (the stale-capture hazard the note above describes).
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
     ensureHostCallFallbackImports(ctx, hostCallPlan);
   }
@@ -3684,7 +3689,11 @@ export function tryEmitInlineDynamicCall(
   // null externref alike).
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
-  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback || (!ctx.standalone && !ctx.wasi);
+  const needsUndefined =
+    needsUndefinedPad ||
+    wantProxyArm ||
+    wantApplyFallback ||
+    (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback);
   const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
   const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
@@ -3823,7 +3832,7 @@ export function tryEmitInlineDynamicCall(
   // so the failure mode is deterministic and catchable. Standalone/WASI have
   // no host: they keep the legacy null default (their callable shapes are the
   // dedicated proxy/bound/ta-ctor arms above).
-  if (!ctx.standalone && !ctx.wasi) {
+  if (!ctx.standalone && !ctx.wasi && allowHostBoundaryFallback) {
     // Imports were ensured (and flushed) before box/unbox indices were captured.
     // (#4313) A bare call's `thisArg` is `undefined`, not a null externref, so it
     // is materialized here and handed to the helper rather than hardcoded there.
@@ -6729,16 +6738,12 @@ function compileCallExpression(
 
     // Handle fn.bind(thisArg, ...partialArgs).
     //
-    // (#1632a) JS-host mode: lower to `__bind_function(target, thisArg, argsArray,
-    // nameHint, lengthHint)` which delegates to `Function.prototype.bind` on the host.
-    // The host owns [[BoundTargetFunction]] / [[BoundThis]] / [[BoundArguments]] /
-    // .name (`"bound " + target.name`) / .length (max(0, target.length - bound.length)) /
-    // [[Call]] / [[Construct]] — see runtime.ts:__bind_function. Wasm closure structs
-    // are wrapped via `_wrapWasmClosure` so the host receives a real JS callable.
-    //
-    // Standalone (--target wasi / noJsHost): fall back to identity-bind (drop partial
-    // args, return target unchanged). Documented gap: standalone needs a native
-    // bound-function struct, tracked as a follow-up to #1632a.
+    // Native-first/standalone: mint a Wasm-owned `$__bound_fn` carrying target,
+    // bound receiver and partial arguments. A definitely compiled target stays
+    // entirely in Wasm; a dynamic caller-owned JS target is serviced only by
+    // the admitted boundary path. Compatibility keeps `__bind_function` and
+    // the engine-owned bound-function exotic, including `.name`, `.length`,
+    // [[Call]] and [[Construct]].
     //
     // Narrowing: only fires when the receiver's TS type has call signatures. This
     // preserves the legacy "throws on non-function receiver" behavior that a
@@ -7429,7 +7434,7 @@ function compileCallExpression(
           }
 
           const isBuiltinRegExpPrototype = typeName === "RegExp" && isGlobalRegExpIdentifier(ctx, objExpr.expression);
-          if (ctx.standalone && isBuiltinRegExpPrototype) {
+          if (usesNativeRegExpProvider(ctx) && isBuiltinRegExpPrototype) {
             if (methodName === "test" || methodName === "exec") {
               const receiverArg = expr.arguments[0]!;
               const syntheticProp = ts.factory.createPropertyAccessExpression(receiverArg, methodName);

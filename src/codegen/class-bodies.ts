@@ -346,11 +346,13 @@ function resolveStandaloneBuiltinSuperCtorIdx(
   parentName: string,
   arity: number,
 ): number | null | undefined {
-  if (!(ctx.wasi || ctx.standalone)) return undefined;
+  const hostFree = ctx.wasi || ctx.standalone;
+  if (!hostFree && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (isWasiErrorName(parentName)) {
     emitWasiErrorConstructor(ctx, parentName, arity);
     return ctx.funcMap.get(`__new_${parentName}`) ?? null;
   }
+  if (!hostFree) return undefined;
   if (parentName === "Object") {
     return emitStandaloneObjectConstructor(ctx, arity) ?? null;
   }

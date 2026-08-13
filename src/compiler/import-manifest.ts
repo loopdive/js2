@@ -134,6 +134,58 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   }
   if (name === "__extern_set") return { type: "extern_set" };
   if (name === "__extern_set_strict") return { type: "extern_set_strict" }; // (#2017) strict [[Set]]
+  if (name.startsWith("__boundary_callback_call_")) {
+    return { type: "boundary_callback", arity: Number.parseInt(name.slice("__boundary_callback_call_".length), 10) };
+  }
+  if (name === "__boundary_promise_resolve") return { type: "boundary_promise", operation: "resolve" };
+  if (name === "__boundary_promise_reject") return { type: "boundary_promise", operation: "reject" };
+  if (name === "__get_caught_exception") return { type: "caught_exception" };
+  if (name === "__boundary_object_get") return { type: "boundary_object", operation: "get" };
+  if (name === "__boundary_object_set") return { type: "boundary_object", operation: "set" };
+  if (name === "__boundary_object_has") return { type: "boundary_object", operation: "has" };
+  if (name === "__boundary_object_delete") return { type: "boundary_object", operation: "delete" };
+  if (name === "__boundary_object_keys") return { type: "boundary_object", operation: "keys" };
+  if (name === "__boundary_object_call") return { type: "boundary_object", operation: "call" };
+  if (name === "__boundary_object_apply") return { type: "boundary_object", operation: "apply" };
+  if (name === "__boundary_object_construct") return { type: "boundary_object", operation: "construct" };
+  if (name === "__boundary_object_reflect_get") return { type: "boundary_object", operation: "reflectGet" };
+  if (name === "__boundary_object_reflect_set") return { type: "boundary_object", operation: "reflectSet" };
+  if (name === "__boundary_object_get_prototype") return { type: "boundary_object", operation: "getPrototypeOf" };
+  if (name === "__boundary_object_set_prototype") return { type: "boundary_object", operation: "setPrototypeOf" };
+  if (name === "__boundary_object_get_own_property_descriptor") {
+    return { type: "boundary_object", operation: "getOwnPropertyDescriptor" };
+  }
+  if (name === "__boundary_object_define_property_value") {
+    return { type: "boundary_object", operation: "definePropertyValue" };
+  }
+  if (name === "__boundary_object_define_property_accessor") {
+    return { type: "boundary_object", operation: "definePropertyAccessor" };
+  }
+  if (name === "__boundary_object_get_own_property_names") {
+    return { type: "boundary_object", operation: "getOwnPropertyNames" };
+  }
+  if (name === "__boundary_object_get_own_property_symbols") {
+    return { type: "boundary_object", operation: "getOwnPropertySymbols" };
+  }
+  if (name === "__boundary_object_own_keys") return { type: "boundary_object", operation: "ownKeys" };
+  if (name === "__boundary_object_is_admitted") return { type: "boundary_object", operation: "isAdmitted" };
+  if (name === "__boundary_object_callable_kind") {
+    return { type: "boundary_object", operation: "callableKind" };
+  }
+  if (name === "__boundary_object_prevent_extensions") {
+    return { type: "boundary_object", operation: "preventExtensions" };
+  }
+  if (name === "__boundary_object_reflect_prevent_extensions") {
+    return { type: "boundary_object", operation: "reflectPreventExtensions" };
+  }
+  if (name === "__boundary_object_seal") return { type: "boundary_object", operation: "seal" };
+  if (name === "__boundary_object_freeze") return { type: "boundary_object", operation: "freeze" };
+  if (name === "__boundary_object_is_extensible") return { type: "boundary_object", operation: "isExtensible" };
+  if (name === "__boundary_object_is_sealed") return { type: "boundary_object", operation: "isSealed" };
+  if (name === "__boundary_object_is_frozen") return { type: "boundary_object", operation: "isFrozen" };
+  if (name === "__boundary_object_for_in_keys") {
+    return { type: "boundary_object", operation: "forInKeys" };
+  }
 
   // Host strict-equality for two externref operands that are not WasmGC eqrefs
   // (e.g. host functions like `Array === Array`). (#1065)

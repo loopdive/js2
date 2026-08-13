@@ -9,7 +9,7 @@ import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
-import { emitHoleToUndefined } from "../array-holes.js";
+import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -31,15 +31,16 @@ import {
   resolveWasmType,
   TYPED_ARRAY_NAMES,
 } from "../index.js";
-import { getSubviewArrTypeIdx, isSubviewTypeIdx, isTaViewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write
+import { getSubviewArrTypeIdx, isHoleyArrayType, isSubviewTypeIdx, isTaViewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
-import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
+import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { tryEmitFnctorTypedFieldSet } from "../fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
 import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
+import { tryEmitTypedF64MemberSet } from "../member-set-f64.js"; // (#4157 A) typed f64 write twin
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
   emitAlternateStructSetDispatch,
@@ -55,7 +56,14 @@ import {
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, skipTransparentExpressions, valTypesMatch, VOID_RESULT } from "../shared.js";
+import {
+  coerceType,
+  compileExpression,
+  materializeStructAsObject,
+  skipTransparentExpressions,
+  valTypesMatch,
+  VOID_RESULT,
+} from "../shared.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { compileProtoArg } from "./calls.js";
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
@@ -1618,7 +1626,23 @@ function compileDestructuringAssignment(
             else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
           }
         }
-        // Use __extern_rest_object(externObj, excludedKeysStr)
+        if (ctx.targetProfile.semanticProviders === "native-first") {
+          const emitted = emitNativeObjectRest(
+            ctx,
+            fctx,
+            () => {
+              fctx.body.push({ op: "local.get", index: tmpLocal });
+              if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+                fctx.body.push({ op: "extern.convert_any" });
+              }
+            },
+            excludedKeys,
+            restIdx,
+          );
+          if (emitted) continue;
+        }
+
+        // Host-assisted compatibility ABI: comma-joined exclusion keys.
         let restObjIdx = ctx.funcMap.get("__extern_rest_object");
         if (restObjIdx === undefined) {
           const importsBefore = ctx.numImportFuncs;
@@ -3370,6 +3394,9 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
+  // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
+  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, /*strict*/ true);
+  if (f64Set !== undefined) return f64Set;
   if (valResult && ctx.booleanPropertyNames.has(propName)) {
     // #2847: a dynamic method bridge may already have boxed an untyped
     // boolean-returning closure as numeric externref 0/1. The whole-program
@@ -4240,6 +4267,14 @@ function compilePropertyAssignmentExternSet(
   // Compile value as externref and save
   const valResult = compileExpression(ctx, fctx, value);
   if (!valResult) return null;
+  // (#3374) PutValue throws only when [[Set]] returns false AND the Reference is
+  // strict (§6.2.5.6 steps 3.d-e). Preserve that source-level bit instead of
+  // treating the compiler's synthetic ESM wrapper as strict JavaScript.
+  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
+  // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
+  const dyn = forceRuntimeSet || wrapRuntimeEvalCallable;
+  const f64Set = dyn ? undefined : tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, strict);
+  if (f64Set !== undefined) return f64Set;
   if (ctx.booleanPropertyNames.has(propName)) {
     ensureI32Condition(fctx, valResult, ctx);
     coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
@@ -4259,10 +4294,6 @@ function compilePropertyAssignmentExternSet(
   const valLocal = allocLocal(fctx, `__paset_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
 
-  // (#3374) PutValue throws only when [[Set]] returns false AND the Reference is
-  // strict (§6.2.5.6 steps 3.d-e). Preserve that source-level bit instead of
-  // treating the compiler's synthetic ESM wrapper as strict JavaScript.
-  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
   const setName = strict ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
@@ -4843,6 +4874,7 @@ function compileElementAssignment(
       reportError(ctx, target, "Assignment: vec data is not array");
       return null;
     }
+    const holeyCarrier = isHoleyArrayType(ctx, typeIdx) && arrDef.element.kind === "externref";
     // (#4247) §10.4.2.2 — a constant numeric key that is NOT an array index
     // (`4294967295`, `4294967296`, `-1`, `1.1`, `NaN`, `Infinity`) is an
     // ordinary NAMED property: it goes to the #3537 expando bag and must leave
@@ -5058,9 +5090,14 @@ function compileElementAssignment(
           ],
         },
 
-        // newData = array.new_default(newCap)
+        // The dedicated sparse carrier, and only it, fills new capacity with
+        // absence sentinels. Ordinary externref vectors retain their exact
+        // default-filled allocation.
+        ...(holeyCarrier ? holeSentinelInstrs(ctx) : []),
         { op: "local.get", index: newCapLocal },
-        { op: "array.new_default", typeIdx: arrTypeIdx },
+        ...(holeyCarrier
+          ? ([{ op: "array.new", typeIdx: arrTypeIdx }] satisfies Instr[])
+          : ([{ op: "array.new_default", typeIdx: arrTypeIdx }] satisfies Instr[])),
         { op: "local.set", index: newDataLocal },
 
         // array.copy newData[0..oldCap] = data[0..oldCap]
@@ -5095,17 +5132,15 @@ function compileElementAssignment(
     // (test262 reduceRight "-c-ii-5": `kIndex[3]=1` on an empty tracking array,
     // then `typeof kIndex[2]` must be "undefined"). Fill the gap with the JS
     // `undefined` value so the length-bounded read (property-access) returns it
-    // directly. True HOLE fidelity ($Hole sentinel + HOF visit-skip) is #2001
-    // S2/S3 — out of scope here; `undefined` is what §OrdinaryGet reads either
-    // way. Externref elements only: an f64/i32 slot cannot hold `undefined`
-    // (its gap stays the numeric default — #2001 S3 boundary). Standalone is
-    // neutral: `emitUndefined` falls back to `ref.null.extern` there, which is
-    // what `array.new_default` already produced.
+    // directly. The #4222 branded carrier instead needs genuine absence so its
+    // dedicated filter provider can apply HasProperty before Get. Externref
+    // elements only: an f64/i32 slot cannot hold either representation.
     if (arrDef.element.kind === "externref" || arrDef.element.kind === "ref_extern") {
       // undefined → local, emitted IMPERATIVELY so the `__get_undefined` late
       // import registers/shifts through the normal path (never baked inside a
       // detached branch array).
-      emitUndefined(ctx, fctx);
+      if (holeyCarrier) fctx.body.push(...holeSentinelInstrs(ctx));
+      else emitUndefined(ctx, fctx);
       const gapUndefLocal = allocLocal(fctx, `__gap_undef_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: gapUndefLocal });
       const gapOldLenLocal = allocLocal(fctx, `__gap_len_${fctx.locals.length}`, { kind: "i32" });

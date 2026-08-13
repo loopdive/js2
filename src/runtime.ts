@@ -15,7 +15,15 @@
  * @module
  */
 import { compileSource } from "./compiler.js";
-import type { ImportDescriptor, ImportIntent, ImportPolicy } from "./index.js";
+import type { CompileResult, ImportDescriptor, ImportIntent, ImportPolicy } from "./index.js";
+import { validateExportBoundaryPolicies } from "./boundary-policy.js";
+import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
+import { classifyHostImport } from "./host-import-policy.js";
+import {
+  createJavaScriptAdapterManifest,
+  validateJavaScriptAdapterManifest,
+  type JavaScriptAdapterManifestV1,
+} from "./adapter-manifest.js";
 import {
   createEvalShim,
   createNewFunctionShim,
@@ -50,15 +58,23 @@ import {
   invokeNativeFunctionCallback,
   normalizeModuleCallbackException,
 } from "./runtime/native-function-source.js";
+import * as test262Host from "./runtime/test262-harness-host.js"; // (#4394)
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
+import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
+import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
+import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
+import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
+import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
+import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
+import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
   _updateLegacyRegExpState,
-  _installLegacyRegExpAccessors,
   type LegacyRegExpState,
 } from "./runtime/legacy-regexp.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
@@ -1533,35 +1549,7 @@ const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
-/**
- * (#4394) The single host-side `Test262Error` class used by every
- * `new Test262Error(msg)` lowering. Hoisted to module scope so the
- * `__new_Test262Error_ctor` builtin and the generic `extern_class` arm mint
- * instances of the SAME class — otherwise `err.constructor` identity depends
- * on which import a given module happened to bind.
- */
-class _HostTest262Error extends Error {
-  constructor(msg?: string) {
-    super(msg);
-    this.name = "Test262Error";
-  }
-}
-_test262ErrorConstructors.add(_HostTest262Error);
-
-/**
- * (#4394) Every module-declared `Test262Error` carrier that has actually
- * constructed an error through `__new_Test262Error_ctor`.
- *
- * The constructed value is a real host `_HostTest262Error` — that is what makes
- * `String(err)`, `.stack` and the exception bridge work — so its prototype
- * chain can never reach the module's own compiled closure, and
- * `err instanceof Test262Error` answered `false` for an error that plainly is
- * one. Recording the carrier the construction was attributed to lets
- * `_instanceofResult` close exactly that gap and nothing wider: an unrelated
- * closure is not in the set, and a value that is not a `_HostTest262Error` is
- * still decided by the ordinary prototype walk.
- */
-const _test262ErrorModuleCarriers = new WeakSet<object>();
+_test262ErrorConstructors.add(test262Host.HostTest262Error);
 
 // (#3369) Callback bridges must remain usable while the evaluated program has
 // installed non-writable numeric properties on Array.prototype. `[].push(x)`
@@ -1785,7 +1773,9 @@ function _wrapWasmClosure(
   };
   const wrapped = function wasmClosureBridge(this: any, ...args: any[]): any {
     try {
-      return _intrinsicReflectApply(dispatch, this, args);
+      const result = _intrinsicReflectApply(dispatch, this, args);
+      _drainNativePromiseBoundary(callbackState);
+      return result;
     } catch (error) {
       throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
     }
@@ -1801,6 +1791,22 @@ function _wrapWasmClosure(
     _wasmClosureWrapperTargets.set(wrapped, closure as object);
   }
   return wrapped;
+}
+
+function _drainNativePromiseBoundary(
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): void {
+  const exports = callbackState?.getExports();
+  const drain = exports?.__drain_microtasks as (() => void) | undefined;
+  if (typeof exports?.__promise_boundary_observe !== "function" || typeof drain !== "function") return;
+  const authority = _nativeBoundaryAuthority(exports);
+  if (_nativePromiseBoundaryDraining.has(authority)) return;
+  _nativePromiseBoundaryDraining.add(authority);
+  try {
+    drain();
+  } finally {
+    _nativePromiseBoundaryDraining.delete(authority);
+  }
 }
 
 function _wrapWasmClosureUnknownArity(
@@ -1918,9 +1924,12 @@ function _wrapWasmClosureUnknownArity(
   };
   const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {
     try {
-      return new.target === undefined
-        ? _intrinsicReflectApply(dispatch, this, args)
-        : _intrinsicReflectConstruct(dispatch, args, new.target);
+      const result =
+        new.target === undefined
+          ? _intrinsicReflectApply(dispatch, this, args)
+          : _intrinsicReflectConstruct(dispatch, args, new.target);
+      _drainNativePromiseBoundary(callbackState);
+      return result;
     } catch (error) {
       throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
     }
@@ -2443,18 +2452,9 @@ function _instanceofResult(
     }
   }
 
-  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier. The
-  // error is a host `_HostTest262Error`, so the prototype walk below can never
-  // reach a compiled closure; the carrier set records exactly which closures
-  // have minted one. See `_test262ErrorModuleCarriers`.
-  if (
-    v instanceof _HostTest262Error &&
-    rawTarget !== null &&
-    (typeof rawTarget === "object" || typeof rawTarget === "function") &&
-    _test262ErrorModuleCarriers.has(rawTarget as object)
-  ) {
-    return 1;
-  }
+  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier —
+  // the prototype walk below can never reach a compiled closure.
+  if (test262Host.isModuleTest262ErrorInstance(v, rawTarget)) return 1;
 
   try {
     return v instanceof (target as { new (...a: unknown[]): unknown }) ? 1 : 0;
@@ -3754,6 +3754,64 @@ function _structToPlainObject(
 }
 
 /**
+ * Bind imports from the complete frozen compile result rather than from an
+ * unqualified compatibility manifest. Native-first modules disable ambient
+ * semantic shims, and invalid capability/provider bindings fail before a Wasm
+ * instance is published.
+ */
+export function buildCompiledImports(
+  result: CompileResult,
+  deps?: Record<string, any>,
+  options: BuildImportsOptions = {},
+): ReturnType<typeof buildImports> {
+  if (!result.success) {
+    throw new Error(
+      `Cannot build imports for a failed compile: ${result.errors.map((error) => error.message).join("; ")}`,
+    );
+  }
+  const providerDiagnostics = result.capabilityProviderDiagnostics ?? [];
+  if (providerDiagnostics.length > 0) {
+    throw new Error(
+      `Capability provider validation failed: ${providerDiagnostics.map((diagnostic) => diagnostic.message).join("; ")}`,
+    );
+  }
+  if (result.adapterManifest) return buildCompiledAdapterImports(result.adapterManifest, deps, options);
+  if (!result.targetProfile) {
+    return buildImports(result.imports, deps, result.stringPool, options);
+  }
+  return buildCompiledAdapterImports(
+    createJavaScriptAdapterManifest({
+      targetProfile: result.targetProfile,
+      imports: result.imports,
+      stringPool: result.stringPool,
+      capabilities: result.capabilityRequirements,
+      exportSignatures: result.exportSignatures,
+      exportBoundaries: result.exportBoundaryPolicies,
+    }),
+    deps,
+    options,
+  );
+}
+
+/** Bind exactly the imports/capabilities declared by a generated adapter plan. */
+export function buildCompiledAdapterImports(
+  manifest: JavaScriptAdapterManifestV1,
+  deps?: Record<string, any>,
+  options: BuildImportsOptions = {},
+): ReturnType<typeof buildImports> {
+  const frozenManifest = createJavaScriptAdapterManifest(manifest);
+  const diagnostics = validateJavaScriptAdapterManifest(frozenManifest);
+  if (diagnostics.length > 0) {
+    throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
+  }
+  return buildImports(frozenManifest.imports, deps, frozenManifest.stringPool, {
+    ...options,
+    ambientCompatibility:
+      options.ambientCompatibility ?? frozenManifest.targetProfile.semanticProviders !== "native-first",
+  });
+}
+
+/**
  * (#1634) Spec InstallErrorCause(O, options) — §20.5.8.1. If `options` is an
  * object and HasProperty(options, "cause") is true, set a non-enumerable own
  * data property `cause` on `O` with the value Get(options, "cause").
@@ -4809,12 +4867,13 @@ function _trySetWasmVecElement(
   const index = _asArrayIndex(String(key));
   if (index === undefined) return false;
   const vecExports = exports ?? callbackState?.getExports();
+  if (!vecExports) return false;
   const isVec = vecExports?.__is_vec as ((v: any) => number) | undefined;
   const setElem = vecExports?.__vec_set_elem as ((v: any, i: number, x: any) => number) | undefined;
   if (typeof isVec !== "function" || typeof setElem !== "function") return false;
   try {
     if (isVec(obj) !== 1) return false;
-    const rawValue = _unwrapForHost(val);
+    const rawValue = _nativeDynamicFromHost(val, vecExports);
     const setResult = setElem(obj, index, rawValue);
     if (setResult !== 1) return false;
     const sc = _wasmStructProps.get(obj);
@@ -5168,6 +5227,21 @@ const _fnctorInstanceofHooks: FnctorIoHooks = {
   instancePrototype: _fnctorCtorProto,
   parentPrototype: _structUserProto,
 };
+/** JS-owned objects explicitly admitted through a native dynamic export. */
+const _nativeBoundaryHostObjects = new WeakMap<object, WeakSet<object>>();
+interface NativeBoundarySymbolState {
+  readonly byId: Map<number, symbol>;
+  readonly byHost: Map<symbol, number>;
+}
+const _nativeBoundarySymbols = new WeakMap<object, NativeBoundarySymbolState>();
+interface NativeBoundaryPromiseState {
+  nextId: number;
+  readonly observers: Map<number, { resolve(value: unknown): void; reject(reason: unknown): void }>;
+}
+const _nativeBoundaryPromises = new WeakMap<object, NativeBoundaryPromiseState>();
+const _nativePromiseBoundaryDraining = new WeakSet<object>();
+const _nativeErrorHostCache = new WeakMap<object, Error>();
+const _nativePromiseHostCache = new WeakMap<object, Promise<unknown>>();
 // A proxy may be created while the module start function is still running,
 // before buildImports.setInstance() can expose the module's generated struct
 // getters. Keep the export view in a mutable slot so the identity-cached proxy
@@ -5813,6 +5887,359 @@ function _invokeSidecarGetter(g: any, obj: any, exports: Record<string, Function
   return _MISS;
 }
 
+/** Convert a native `$AnyString` carrier to its JS primitive at the edge. */
+function _nativeStringToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !exports) return _MISS;
+  const isNative = exports.__str_is_native as ((value: any) => number) | undefined;
+  const toHost = exports.__str_to_extern as ((value: any) => string) | undefined;
+  if (typeof isNative !== "function" || typeof toHost !== "function") return _MISS;
+  try {
+    return isNative(value) === 1 ? toHost(value) : _MISS;
+  } catch {
+    return _MISS;
+  }
+}
+
+/** Recover primitive values stored in Wasm-native boxed carriers. */
+function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
+  const stringValue = _nativeStringToHost(value, exports);
+  if (stringValue !== _MISS) return stringValue;
+  const symbolValue = _nativeSymbolToHost(value, exports);
+  if (symbolValue !== _MISS) return symbolValue;
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !exports) return _MISS;
+  const boundaryTag = exports.__dynamic_boundary_tag as ((value: any) => number) | undefined;
+  if (typeof boundaryTag === "function") {
+    try {
+      const tag = boundaryTag(value);
+      if (tag === 1) return null;
+      if (tag === 2) return undefined;
+    } catch {
+      /* try the remaining native carrier families */
+    }
+  }
+  const probes: ReadonlyArray<readonly [string, string, (value: any) => any]> = [
+    ["__typeof_number", "__unbox_number", (result) => result],
+    ["__typeof_boolean", "__unbox_boolean", (result) => result !== 0],
+    ["__typeof_bigint", "__to_bigint", (result) => result],
+  ];
+  for (const [classifyName, readName, normalize] of probes) {
+    const classify = exports[classifyName] as ((value: any) => number) | undefined;
+    const read = exports[readName] as ((value: any) => any) | undefined;
+    if (typeof classify !== "function" || typeof read !== "function") continue;
+    try {
+      if (classify(value) === 1) return normalize(read(value));
+    } catch {
+      /* try the next carrier family */
+    }
+  }
+  return _MISS;
+}
+
+/** Present a Wasm-owned `$Promise` as a real JS Promise at the value boundary. */
+function _nativePromiseToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !exports) return _MISS;
+  const cached = _nativePromiseHostCache.get(value);
+  if (cached) return cached;
+  const readState = exports.__promise_boundary_state as ((value: any) => number) | undefined;
+  const readValue = exports.__promise_boundary_value as ((value: any) => any) | undefined;
+  if (typeof readState !== "function" || typeof readValue !== "function") return _MISS;
+  try {
+    if (readState(value) < 0) return _MISS;
+  } catch {
+    return _MISS;
+  }
+
+  let resolveHost!: (value: unknown) => void;
+  let rejectHost!: (reason: unknown) => void;
+  const hostPromise = new Promise<unknown>((resolve, reject) => {
+    resolveHost = resolve;
+    rejectHost = reject;
+  });
+  _nativePromiseHostCache.set(value, hostPromise);
+  _hostProxyReverse.set(hostPromise, value);
+
+  try {
+    const observe = exports.__promise_boundary_observe as ((value: any, id: number) => number) | undefined;
+    if (typeof observe === "function") {
+      const state = _nativeBoundaryPromiseState(exports);
+      const id = state.nextId++;
+      state.observers.set(id, { resolve: resolveHost, reject: rejectHost });
+      if (observe(value, id) !== 1) {
+        state.observers.delete(id);
+        rejectHost(new TypeError("native Promise boundary observer rejected a non-Promise value"));
+      } else {
+        const drain = exports.__drain_microtasks as (() => void) | undefined;
+        if (typeof drain === "function") drain();
+      }
+      return hostPromise;
+    }
+    const drain = exports.__drain_microtasks as (() => void) | undefined;
+    if (typeof drain === "function") drain();
+    const state = readState(value);
+    if (state === 1) resolveHost(_nativeBoundaryToHost(readValue(value), exports));
+    else if (state === 2) rejectHost(_nativeBoundaryToHost(readValue(value), exports));
+    // A still-pending native Promise remains pending. Platform-driven native
+    // settlement needs an explicit subscription ABI; do not simulate it with
+    // ambient timers or a host-side semantic Promise chain.
+  } catch (error) {
+    rejectHost(error);
+  }
+  return hostPromise;
+}
+
+/** Translate a Wasm-owned `$Error_struct` into a real JS Error boundary view. */
+function _nativeErrorToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !exports) return _MISS;
+  const cached = _nativeErrorHostCache.get(value);
+  if (cached) return cached;
+  const isNative = exports.__error_boundary_is_native as ((value: any) => number) | undefined;
+  const readName = exports.__error_boundary_name as ((value: any) => any) | undefined;
+  const readMessage = exports.__error_boundary_message as ((value: any) => any) | undefined;
+  if (typeof isNative !== "function" || typeof readName !== "function" || typeof readMessage !== "function") {
+    return _MISS;
+  }
+  try {
+    if (isNative(value) !== 1) return _MISS;
+    const rawName = readName(value);
+    const rawMessage = readMessage(value);
+    const convertedName = _nativeStringToHost(rawName, exports);
+    const convertedMessage = _nativeStringToHost(rawMessage, exports);
+    const name = convertedName === _MISS ? "Error" : String(convertedName);
+    const message = convertedMessage === _MISS ? undefined : String(convertedMessage);
+    const constructors: Record<string, new (message?: string) => Error> = {
+      Error,
+      EvalError,
+      RangeError,
+      ReferenceError,
+      SyntaxError,
+      TypeError,
+      URIError,
+    };
+    let result: Error;
+    if (name === "AggregateError" && typeof AggregateError === "function") {
+      result = message === undefined ? new AggregateError([]) : new AggregateError([], message);
+    } else {
+      const ErrorCtor = constructors[name] ?? Error;
+      result = message === undefined ? new ErrorCtor() : new ErrorCtor(message);
+      if (!(name in constructors)) result.name = name;
+    }
+    _nativeErrorHostCache.set(value, result);
+    _hostProxyReverse.set(result, value);
+    return result;
+  } catch {
+    return _MISS;
+  }
+}
+
+function _isNativeOpenObject(value: any, exports: Record<string, Function> | undefined): boolean {
+  const classify = exports?.__object_is_native_open as ((value: any) => number) | undefined;
+  if (typeof classify !== "function") return false;
+  try {
+    return classify(value) === 1;
+  } catch {
+    return false;
+  }
+}
+
+function _nativeBoundaryKey(key: string | number, exports: Record<string, Function>): any {
+  const fromHost = exports.__str_from_extern as ((value: string) => any) | undefined;
+  return typeof fromHost === "function" ? fromHost(String(key)) : String(key);
+}
+
+function _nativeBoundaryValue(value: any, exports: Record<string, Function>): any {
+  const raw = _unwrapForHost(value);
+  const fromHost = exports.__str_from_extern as ((value: string) => any) | undefined;
+  return typeof raw === "string" && typeof fromHost === "function" ? fromHost(raw) : raw;
+}
+
+function _nativeBoundaryAuthority(exports: Record<string, Function>): object {
+  const helper = exports.__dynamic_boundary_tag ?? exports.__str_from_extern ?? exports.__symbol_boundary_is_native;
+  return (typeof helper === "function" ? helper : exports) as object;
+}
+
+function _nativeBoundarySymbolState(exports: Record<string, Function>): NativeBoundarySymbolState {
+  const authority = _nativeBoundaryAuthority(exports);
+  let state = _nativeBoundarySymbols.get(authority);
+  if (!state) {
+    state = { byId: new Map<number, symbol>(), byHost: new Map<symbol, number>() };
+    _nativeBoundarySymbols.set(authority, state);
+  }
+  return state;
+}
+
+function _nativeBoundaryPromiseState(exports: Record<string, Function>): NativeBoundaryPromiseState {
+  const authority = _nativeBoundaryAuthority(exports);
+  let state = _nativeBoundaryPromises.get(authority);
+  if (!state) {
+    state = { nextId: 1, observers: new Map() };
+    _nativeBoundaryPromises.set(authority, state);
+  }
+  return state;
+}
+
+function _nativeSymbolFromId(id: number, exports: Record<string, Function>): symbol | typeof _MISS {
+  const state = _nativeBoundarySymbolState(exports);
+  const cached = state.byId.get(id);
+  if (cached !== undefined) return cached;
+
+  const wellKnown = _symbolIdToKeys.get(id)?.sym;
+  if (wellKnown !== undefined) {
+    state.byId.set(id, wellKnown);
+    state.byHost.set(wellKnown, id);
+    return wellKnown;
+  }
+
+  const keyFor = exports.__symbol_boundary_key_for as ((id: number) => any) | undefined;
+  const description = exports.__symbol_boundary_description as ((id: number) => any) | undefined;
+  if (typeof keyFor !== "function" || typeof description !== "function") return _MISS;
+  try {
+    const keyValue = _nativeStringToHost(keyFor(id), exports);
+    const symbolValue =
+      keyValue !== _MISS
+        ? Symbol.for(String(keyValue))
+        : (() => {
+            const descriptionValue = _nativeStringToHost(description(id), exports);
+            return descriptionValue === _MISS ? Symbol() : Symbol(String(descriptionValue));
+          })();
+    state.byId.set(id, symbolValue);
+    state.byHost.set(symbolValue, id);
+    return symbolValue;
+  } catch {
+    return _MISS;
+  }
+}
+
+function _nativeSymbolToHost(value: any, exports: Record<string, Function> | undefined): symbol | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !exports) return _MISS;
+  const isNative = exports.__symbol_boundary_is_native as ((value: any) => number) | undefined;
+  const readId = exports.__symbol_boundary_id as ((value: any) => number) | undefined;
+  if (typeof isNative !== "function" || typeof readId !== "function") return _MISS;
+  try {
+    return isNative(value) === 1 ? _nativeSymbolFromId(readId(value), exports) : _MISS;
+  } catch {
+    return _MISS;
+  }
+}
+
+function _nativeSymbolIdFromHost(value: any, exports: Record<string, Function>): number | typeof _MISS {
+  const raw = _unwrapForHost(value);
+  if (typeof raw !== "symbol") return _MISS;
+  const state = _nativeBoundarySymbolState(exports);
+  const cached = state.byHost.get(raw);
+  if (cached !== undefined) return cached;
+
+  for (const [id, entry] of _symbolIdToKeys) {
+    if (entry.sym === raw) {
+      state.byHost.set(raw, id);
+      state.byId.set(id, raw);
+      return id;
+    }
+  }
+
+  const fromHostString = exports.__str_from_extern as ((value: string) => any) | undefined;
+  const symbolFor = exports.__symbol_boundary_for as ((key: any) => number) | undefined;
+  const symbolNew = exports.__symbol_boundary_new as ((description: any) => number) | undefined;
+  if (typeof fromHostString !== "function" || typeof symbolFor !== "function" || typeof symbolNew !== "function") {
+    return _MISS;
+  }
+  try {
+    const registryKey = Symbol.keyFor(raw);
+    const id =
+      registryKey !== undefined
+        ? symbolFor(fromHostString(registryKey))
+        : symbolNew(raw.description === undefined ? null : fromHostString(raw.description));
+    state.byHost.set(raw, id);
+    state.byId.set(id, raw);
+    return id;
+  } catch {
+    return _MISS;
+  }
+}
+
+/** Per-instance authority for the JS-owned objects admitted at its boundary. */
+function _nativeBoundaryHostObjectSet(exports: Record<string, Function>): WeakSet<object> {
+  // Export views may be distinct wrapper objects. A generated function is a
+  // stable, instance-unique identity shared by both the wrapper and imports.
+  const authority = _nativeBoundaryAuthority(exports);
+  let objects = _nativeBoundaryHostObjects.get(authority);
+  if (!objects) {
+    objects = new WeakSet<object>();
+    _nativeBoundaryHostObjects.set(authority, objects);
+  }
+  return objects;
+}
+
+/** Adapt a JS primitive into the native carrier used by an `any`/`unknown` slot. */
+function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): any {
+  const raw = _unwrapForHost(value);
+  if (raw === null) {
+    const box = exports.__any_box_null as (() => any) | undefined;
+    return typeof box === "function" ? box() : raw;
+  }
+  if (raw === undefined) {
+    const box = exports.__any_box_undefined as (() => any) | undefined;
+    return typeof box === "function" ? box() : raw;
+  }
+  if (typeof raw === "string") {
+    const box = exports.__str_from_extern as ((value: string) => any) | undefined;
+    return typeof box === "function" ? box(raw) : raw;
+  }
+  if (typeof raw === "number") {
+    const box = exports.__box_number as ((value: number) => any) | undefined;
+    return typeof box === "function" ? box(raw) : raw;
+  }
+  if (typeof raw === "boolean") {
+    const box = exports.__box_boolean as ((value: number) => any) | undefined;
+    return typeof box === "function" ? box(raw ? 1 : 0) : raw;
+  }
+  if (typeof raw === "bigint") {
+    const box = exports.__box_bigint as ((value: bigint) => any) | undefined;
+    return typeof box === "function" ? box(raw) : raw;
+  }
+  if (typeof raw === "symbol") {
+    const id = _nativeSymbolIdFromHost(raw, exports);
+    const box = exports.__box_symbol as ((id: number) => any) | undefined;
+    return id !== _MISS && typeof box === "function" ? box(id) : raw;
+  }
+  if ((typeof raw === "object" && raw !== null) || typeof raw === "function") {
+    if (!_isWasmStruct(raw)) _nativeBoundaryHostObjectSet(exports).add(raw);
+  }
+  return raw;
+}
+
+/** Convert one native boundary carrier into its JS-side value/view. */
+function _nativeBoundaryToHost(value: any, exports: Record<string, Function>): any {
+  const primitive = _nativePrimitiveToHost(value, exports);
+  return primitive !== _MISS ? primitive : _isWasmStruct(value) ? _wrapForHost(value, exports) : _unwrapForHost(value);
+}
+
+/** Materialize host-produced boundary keys into the native dynamic vector. */
+function _nativeBoundaryVector(values: readonly any[], exports: Record<string, Function>): any {
+  const create = exports.__objvec_new as (() => any) | undefined;
+  const push = exports.__objvec_push as ((vec: any, value: any) => void) | undefined;
+  if (typeof create !== "function" || typeof push !== "function") {
+    return _nativeDynamicFromHost(Array.from(values), exports);
+  }
+  const vec = create();
+  for (const value of values) push(vec, _nativeDynamicFromHost(value, exports));
+  return vec;
+}
+
+function _nativeOpenObjectKeys(obj: any, exports: Record<string, Function> | undefined): string[] {
+  if (!exports || !_isNativeOpenObject(obj, exports)) return [];
+  const keys = exports.__object_keys as ((value: any) => any) | undefined;
+  if (typeof keys !== "function") return [];
+  try {
+    const view = _wrapForHost(keys(obj), exports);
+    if (!Array.isArray(view)) return [];
+    const out: string[] = [];
+    for (const key of view) if (typeof key === "string") out.push(key);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 function _resolveHostField(obj: any, key: any, exports: Record<string, Function> | undefined): any {
   // #1336 / #1935 — see `_invokeSidecarGetter` above.
   if (typeof key === "string") {
@@ -5832,6 +6259,23 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   // Sidecar first (handles both string and symbol keys)
   const sc = _sidecarGet(obj, key);
   if (sc !== undefined) return sc;
+  // An open `$Object`'s source properties live in its native MOP, never in its
+  // physical Wasm struct fields. Consult that MOP before the per-shape
+  // `__sget_<name>` family: numeric typed getters use `0` as their shape-miss
+  // default, so a module that also contains a closed `{ value: number }` shape
+  // could otherwise mask a real `$Object.value` with a false `0` hit. This also
+  // keeps `$Object`'s implementation fields permanently outside the boundary
+  // surface.
+  if (exports && (typeof key === "string" || typeof key === "number") && _isNativeOpenObject(obj, exports)) {
+    const get = exports.__extern_get as ((value: any, key: any) => any) | undefined;
+    if (typeof get === "function") {
+      try {
+        return get(obj, _nativeBoundaryKey(key, exports));
+      } catch {
+        /* fall through to prototype lookup */
+      }
+    }
+  }
   // Wasm struct field getter
   if (exports && (typeof key === "string" || typeof key === "number")) {
     const getter = exports[`__sget_${String(key)}`];
@@ -6304,11 +6748,20 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
   // Defensive: if the read exports are missing, fall back to the generic
   // object proxy rather than producing a broken array view.
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
+  // Keep the real-array target's non-configurable `length` slot aligned with
+  // the live vec. Engines and assertion/inspection tooling may consult the
+  // target's array exotic state directly instead of invoking every Proxy trap;
+  // a permanently-empty target therefore made a valid live vec appear as `[]`.
+  // Elements remain trap-backed—only the target's shape length is mirrored.
+  const target: any[] = [];
   const liveLen = (): number => {
     try {
       const n = lenFn(vec);
-      return typeof n === "number" && n >= 0 ? n : 0;
+      const len = typeof n === "number" && n >= 0 ? n : 0;
+      if (target.length !== len) target.length = len;
+      return len;
     } catch {
+      if (target.length !== 0) target.length = 0;
       return 0;
     }
   };
@@ -6319,7 +6772,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       return undefined;
     }
   };
-  const target: any[] = [];
+  liveLen();
   // (#3201) Expando sidecar lookup. Compiled writes of non-index properties
   // onto a vec (`arr.getClass = Object.prototype.toString;` — the Sputnik
   // classifier idiom, 65+ test262 files across splice/slice/concat) land in
@@ -6384,11 +6837,22 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
       }
       return undefined;
     },
-    // Host-side writes are not part of the AST-read contract and the vec has no
-    // general element-setter export; accept silently (keep the target clean) so
-    // a stray host write neither throws nor leaves a phantom element. acorn's
-    // own mutations go through `__extern_method_call` (unwrap → `__vec_push`).
-    set() {
+    // Keep the array facade live in both directions. The target stays a shape
+    // facade; values and length are written through the generated vec bridge so
+    // JS mutation is immediately visible to compiled code and identity never
+    // moves to a copied mirror.
+    set(_t, key, value) {
+      if (key === "length") {
+        const next = Number(value);
+        const uint32 = next >>> 0;
+        if (next !== uint32) throw new RangeError("Invalid array length");
+        const setLen = exports.__vec_set_len as ((v: any, n: number) => number) | undefined;
+        return typeof setLen === "function" && setLen(vec, uint32) === 1;
+      }
+      if (typeof key === "string" && _asArrayIndex(key) !== undefined) {
+        return _trySetWasmVecElement(vec, key, value, exports);
+      }
+      _safeSet(vec, key, value, exports);
       return true;
     },
   };
@@ -6478,6 +6942,13 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
 
+  const primitiveValue = _nativePrimitiveToHost(obj, exports);
+  if (primitiveValue !== _MISS) return primitiveValue;
+  const errorValue = _nativeErrorToHost(obj, exports);
+  if (errorValue !== _MISS) return errorValue;
+  const promiseValue = _nativePromiseToHost(obj, exports);
+  if (promiseValue !== _MISS) return promiseValue;
+
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
@@ -6526,7 +6997,12 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // proto / class object so subsequent enumeration matches spec.
       return protoMethods.filter((n) => !_isDeletedClassProp(obj, n));
     }
-    return (_getStructFieldNames(obj, currentExports()) ?? []).filter((name) => !isTombstoned(name));
+    const liveExports = currentExports();
+    const names = _getStructFieldNames(obj, liveExports) ?? [];
+    for (const key of _nativeOpenObjectKeys(obj, liveExports)) {
+      if (!names.includes(key)) names.push(key);
+    }
+    return names.filter((name) => !isTombstoned(name));
   };
 
   const collectKeys = (): (string | symbol)[] => {
@@ -6566,6 +7042,8 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   const handler: ProxyHandler<any> = {
     get(_t, key) {
       const val = safeGetField(key);
+      const primitiveValue = _nativePrimitiveToHost(val, currentExports());
+      if (primitiveValue !== _MISS) return primitiveValue;
       if (process.env.JS2WASM_DEBUG_3051) {
         console.error(
           "[3051] proxy.get",
@@ -6722,6 +7200,14 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       return val;
     },
     set(_t, key, val) {
+      const liveExports = currentExports();
+      if (_isNativeOpenObject(obj, liveExports) && (typeof key === "string" || typeof key === "number")) {
+        const set = liveExports?.__extern_set as ((value: any, key: any, next: any) => void) | undefined;
+        if (typeof set === "function") {
+          set(obj, _nativeBoundaryKey(key, liveExports!), _nativeBoundaryValue(val, liveExports!));
+          return true;
+        }
+      }
       _safeSet(obj, key, val, currentExports());
       return true;
     },
@@ -6738,6 +7224,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // #1364b — class object: a deleted static-method name must not appear in
       // `obj.method in C` checks anymore.
       if (typeof key === "string" && _isDeletedClassProp(obj, key)) return false;
+      const liveExports = currentExports();
+      if (_isNativeOpenObject(obj, liveExports) && (typeof key === "string" || typeof key === "number")) {
+        const has = liveExports?.__extern_has as ((value: any, key: any) => number) | undefined;
+        if (typeof has === "function") {
+          try {
+            return has(obj, _nativeBoundaryKey(key, liveExports!)) === 1;
+          } catch {
+            return false;
+          }
+        }
+      }
       // (#3479 Slice C / #3512) Registered class OBJECT: the static-method
       // allowlist + sidecar are AUTHORITATIVE — mirrors the #1047 class-prototype
       // branch above and the class-object arm of `_wasmStructHasOwn` (2778). The
@@ -6761,6 +7258,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       return typeof key === "string" && fieldNames.includes(key);
     },
     deleteProperty(_t, key) {
+      const liveExports = currentExports();
+      if (_isNativeOpenObject(obj, liveExports) && (typeof key === "string" || typeof key === "number")) {
+        const del = liveExports?.__delete_property as ((value: any, key: any) => number) | undefined;
+        if (typeof del === "function") {
+          try {
+            return del(obj, _nativeBoundaryKey(key, liveExports!)) !== 0;
+          } catch {
+            return false;
+          }
+        }
+      }
       // Always report success — Array.prototype.pop etc. call
       // `delete O[len-1]` on sparse arrayLikes where the index may not be
       // present in the sidecar. Returning false here throws a Proxy
@@ -7661,7 +8169,7 @@ interface InstanceState {
    */
   symbolForIds?: Map<string, number>;
   /** legacy RegExp static state (`RegExp.$1` etc.) — per instance, not shared. */
-  legacyRegExpState?: LegacyRegExpState;
+  legacyRegExpState: LegacyRegExpState;
   /** user-class name → registered subclass constructors (#1933 retention leak). */
   subclassCtors?: Map<string, Function[]>;
   /** user-class name → parent class name (or null). */
@@ -7677,141 +8185,6 @@ interface InstanceState {
   /** (#2637 B2) `class extends Promise` name → synthesized JS subclass ctor (cached). */
   promiseSubclassCtors?: Map<string, any>;
 }
-
-function makeWebStoragePolyfill(): any {
-  const store = new Map<string, string>();
-  return {
-    get length(): number {
-      return store.size;
-    },
-    clear(): void {
-      store.clear();
-    },
-    getItem(k: any): string | null {
-      const key = String(k);
-      return store.has(key) ? store.get(key)! : null;
-    },
-    setItem(k: any, v: any): void {
-      store.set(String(k), String(v));
-    },
-    removeItem(k: any): void {
-      store.delete(String(k));
-    },
-    key(i: any): string | null {
-      const idx = Number(i);
-      if (!Number.isFinite(idx) || idx < 0) return null;
-      let n = 0;
-      for (const k of store.keys()) {
-        if (n === idx) return k;
-        n++;
-      }
-      return null;
-    },
-  };
-}
-
-let _warnedTimerCallbackUnresolvable = false;
-function _warnTimerCallbackUnresolvable(mode: "timeout" | "interval"): void {
-  if (_warnedTimerCallbackUnresolvable) return;
-  _warnedTimerCallbackUnresolvable = true;
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[js2wasm] ${mode === "interval" ? "setInterval" : "setTimeout"} callback could not be wrapped as a JS function ` +
-      `(WasmGC closure bridge unavailable — likely missing __call_fn_0 export, see #1382). ` +
-      `The call is being dropped to avoid a host coercion error. Provide a real JS function via deps to test in the meantime.`,
-  );
-}
-
-/**
- * #1492 — Adapt a raw Node-builtin function into the JS-host calling
- * convention used by compiled Wasm.
- *
- * - `randomBytes` may return a Node `Buffer`. We normalize to a plain
- *   `Uint8Array` so `.length` and indexed reads behave identically across
- *   Node and browser backends — and so the compiled `Uint8Array` runtime
- *   shim does not have to special-case Buffer.
- * - All other functions are passed through unchanged.
- */
-function makeNodeBuiltinFnAdapter(
-  moduleName: string,
-  fnName: string,
-  raw: (...args: any[]) => any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): Function {
-  if (moduleName === "crypto" && fnName === "randomBytes") {
-    return (n: number) => {
-      const out = raw(n);
-      if (out instanceof Uint8Array) return out;
-      // Node Buffer is a Uint8Array subclass, but copy to a plain Uint8Array
-      // to strip Buffer-specific prototype and ensure compiler shims see
-      // a vanilla typed array.
-      if (out && typeof out.length === "number") {
-        return new Uint8Array(out.buffer ?? out, out.byteOffset ?? 0, out.length);
-      }
-      return new Uint8Array(0);
-    };
-  }
-  if (!callbackState) return raw;
-  // (#1795) Callback-taking node-builtin functions (http/https get/request,
-  // and any future callback-shaped surface): a compiled callback arrives as a
-  // WasmGC closure STRUCT (no [[Call]]); Node either throws on it or silently
-  // never invokes it. Wrap closure-shaped args as JS callables via the
-  // identity-cached dynamic bridge; non-closure args pass through untouched
-  // (`_maybeWrapCallableUnknownArity` uses the `__is_closure` export as the
-  // authoritative discriminator, so plain structs/values are unaffected).
-  return (...args: any[]) => raw(...args.map((a) => _maybeWrapCallableUnknownArity(a, callbackState)));
-}
-
-let _warnedNodeBuiltinFnFallback = false;
-/**
- * #1492 — Last-resort shim when neither Node `require` nor `globalThis.crypto`
- * are available (e.g. pure standalone Wasm with no JS host bridge supplied).
- * Returns a deterministic, NON-CRYPTOGRAPHIC result so the call doesn't
- * throw. Logs once.
- */
-function makeNodeBuiltinFnStandaloneFallback(moduleName: string, fnName: string): Function {
-  return (..._args: any[]) => {
-    if (!_warnedNodeBuiltinFnFallback) {
-      _warnedNodeBuiltinFnFallback = true;
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[js2wasm] node:${moduleName}.${fnName} called without a host runtime — ` +
-          `using Math.random fallback (NOT cryptographically secure). ` +
-          `Provide a deps override or run under Node/Browser with crypto support.`,
-      );
-    }
-    if (moduleName === "crypto" && fnName === "randomBytes") {
-      const n = Number(_args[0] ?? 0);
-      const out = new Uint8Array(Math.max(0, n | 0));
-      for (let i = 0; i < out.length; i++) out[i] = Math.floor(Math.random() * 256);
-      return out;
-    }
-    if (moduleName === "crypto" && fnName === "randomUUID") {
-      // RFC4122 v4 layout (NON-secure source).
-      const hex = "0123456789abcdef";
-      const rb = (): string => hex[Math.floor(Math.random() * 16)]!;
-      let s = "";
-      for (let i = 0; i < 36; i++) {
-        if (i === 8 || i === 13 || i === 18 || i === 23) s += "-";
-        else if (i === 14) s += "4";
-        else if (i === 19) s += hex[(Math.floor(Math.random() * 16) & 0x3) | 0x8]!;
-        else s += rb();
-      }
-      return s;
-    }
-    return undefined;
-  };
-}
-
-/**
- * Built-in JSX runtime sentinels (#1540). Matches React's `REACT_ELEMENT_TYPE`
- * marker so genuine React tooling (e.g. `React.isValidElement`,
- * `react-test-renderer`) recognises elements produced by our built-in
- * fallback without needing the React module loaded.
- */
-const _builtinJsxTypeof: symbol | number = typeof Symbol === "function" ? Symbol.for("react.element") : 0xeac7;
-const _builtinFragmentSym: symbol | object =
-  typeof Symbol === "function" ? Symbol.for("react.fragment") : { __jsx_fragment: true };
 
 // (#1638) Date.prototype string-formatter mode selectors. Kept in sync with
 // DATE_FORMAT_MODE in src/codegen/expressions/builtins.ts.
@@ -8490,6 +8863,70 @@ function _makeRawCallableInvoker(
   };
 }
 
+function _createBoundaryObjectImport(
+  operation: Extract<ImportIntent, { type: "boundary_object" }>["operation"],
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): Function {
+  return createBoundaryObjectAdapter(operation, {
+    getExports: () => callbackState?.getExports(),
+    isAdmitted: (obj, exports) => _canBeWeakKey(obj) && _nativeBoundaryHostObjectSet(exports).has(obj as object),
+    toPropertyKey: (value, exports) => _nativeBoundaryToHost(value, exports) as PropertyKey,
+    toHostValue: _nativeBoundaryToHost,
+    fromHostValue: _nativeDynamicFromHost,
+    toNativeVector: _nativeBoundaryVector,
+    readArguments: (args, exports) => {
+      const rawArgs = _unwrapForHost(args);
+      if (Array.isArray(rawArgs)) {
+        return Array.from(rawArgs, (value) => _nativeBoundaryToHost(_nativeDynamicFromHost(value, exports), exports));
+      }
+      const values: any[] = [];
+      const length = exports.__extern_length as ((value: any) => number) | undefined;
+      const getIndex = exports.__extern_get_idx as ((value: any, index: number) => any) | undefined;
+      if (typeof length !== "function" || typeof getIndex !== "function") return values;
+      const count = Math.max(0, Math.trunc(length(args)));
+      for (let index = 0; index < count; index++) {
+        values.push(_nativeBoundaryToHost(getIndex(args, index), exports));
+      }
+      return values;
+    },
+    toAccessor: (value, arity, markGetterReturn, exports) => {
+      const primitive = _nativePrimitiveToHost(value, exports);
+      if (primitive !== _MISS) return primitive;
+      if (!_isWasmStruct(value)) return _unwrapForHost(value);
+      const callable = _maybeWrapCallable(value, arity, callbackState);
+      return markGetterReturn ? _markAccessorGetterReturn(callable) : callable;
+    },
+  });
+}
+
+function _createBoundaryCallbackImport(
+  arity: number,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): Function {
+  return createBoundaryCallbackAdapter(arity, {
+    getExports: () => callbackState?.getExports(),
+    isAdmitted: (value, exports) => _canBeWeakKey(value) && _nativeBoundaryHostObjectSet(exports).has(value as object),
+    toHostValue: _nativeBoundaryToHost,
+    fromHostValue: _nativeDynamicFromHost,
+  });
+}
+
+function _createBoundaryPromiseImport(
+  operation: "resolve" | "reject",
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): Function {
+  return createBoundaryPromiseAdapter(operation, {
+    getExports: () => callbackState?.getExports(),
+    takeObserver: (id, exports) => {
+      const state = _nativeBoundaryPromiseState(exports);
+      const observer = state.observers.get(id);
+      if (observer) state.observers.delete(id);
+      return observer;
+    },
+    toHostValue: _nativeBoundaryToHost,
+  });
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -8502,55 +8939,34 @@ function resolveImport(
   paramCount?: number,
   dynamicCode: DynamicCodePolicy = "compat",
   dynamicCodeEvaluator?: DynamicCodeEvaluator,
+  getCaughtException?: () => unknown,
 ): Function {
+  if (isBoundaryValueImportIntent(intent)) {
+    return createBoundaryValueAdapter(intent, {
+      object: (operation) => _createBoundaryObjectImport(operation, callbackState),
+      callback: (arity) => _createBoundaryCallbackImport(arity, callbackState),
+      promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
+    });
+  }
+  const capability = resolvePlatformCapabilityImport(intent, {
+    deps,
+    globalSandbox,
+    instanceState,
+    getNodeRequire: _getNodeRequire,
+    wrapWasmClosure: (value, arity) => _wrapWasmClosure(value, arity, callbackState),
+    wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
+  });
+  if (capability) return capability;
+  const compatibilitySemantic = resolveCompatibilitySemanticImport(intent, {
+    strictEqual: _hostStrictEqual,
+    isWasmStruct: _isWasmStruct,
+    toPrimitive: (value, hint) => _toPrimitiveSync(value, hint, callbackState),
+    createProxy: (target, handler) => _hostProxyConstruct(target, handler, callbackState, "Proxy"),
+  });
+  if (compatibilitySemantic) return compatibilitySemantic;
   switch (intent.type) {
-    case "string_literal":
-      return () => intent.value;
-    case "math":
-      return (Math as any)[intent.method];
-    case "console_log": {
-      // variant format: "bool" (legacy) or "{method}_{type}" e.g. "warn_number"
-      const variant = intent.variant;
-      // #3428 — resolve the console off the caller-supplied `deps.console`
-      // override when present, falling back to the global console otherwise.
-      // The compiler lowers `console.log(x)` to this host import; the test262
-      // worker injects a capture proxy via `buildImports(imports, { console },
-      // …)` so it can observe the harness's async completion marker
-      // (`$DONE → __consolePrintHandle__ → print → console.log(marker)`).
-      // Before this, the marker went to the REAL stdout and `harnessOutput`
-      // stayed empty, so the async poll timed out ("async completion marker
-      // not observed"). Playground / normal runs pass no override → global
-      // console, so their behaviour is byte-identical.
-      const con: Record<string, any> = deps?.console ?? console;
-      // Determine the console method for this variant. The override proxy only
-      // wires log/warn/error; fall back to the global console's method when the
-      // override omits the requested one (e.g. info/debug).
-      let method = "log";
-      let isBool = variant === "bool";
-      if (variant.startsWith("warn_")) {
-        method = "warn";
-        isBool = variant === "warn_bool";
-      } else if (variant.startsWith("error_")) {
-        method = "error";
-        isBool = variant === "error_bool";
-      } else if (variant.startsWith("info_")) {
-        method = "info";
-        isBool = variant === "info_bool";
-      } else if (variant.startsWith("debug_")) {
-        method = "debug";
-        isBool = variant === "debug_bool";
-      } else if (variant.startsWith("log_")) {
-        isBool = variant === "log_bool";
-      } else if (variant === "bool") {
-        isBool = true;
-      }
-      const consoleFn = (v: any): void => {
-        const globalConsole = console as unknown as Record<string, any>;
-        const target: Record<string, any> = typeof con[method] === "function" ? con : globalConsole;
-        (target[method] as (...a: any[]) => void).call(target, v);
-      };
-      return isBool ? (v: number) => consoleFn(Boolean(v)) : (v: any) => consoleFn(v);
-    }
+    case "caught_exception":
+      return () => getCaughtException?.();
     case "string_method": {
       const method = intent.method;
       // Methods whose first argument participates in Symbol.* protocol
@@ -8717,7 +9133,7 @@ function resolveImport(
         // (#4394) Was a fresh `class Test262Error extends Error` minted per
         // resolver call, so two modules — or two imports in one module — saw
         // different constructor identities. Bound to the hoisted single class.
-        const Test262Error = _HostTest262Error;
+        const Test262Error = test262Host.HostTest262Error;
         const builtinCtors: Record<string, Function> = {
           Number,
           Boolean,
@@ -12794,14 +13210,11 @@ assert._isSameValue = isSameValue;
           unwrapForHost: _unwrapForHost,
         });
       }
-      // (#4394) `__reflect_construct_newtarget` is the same operation with the
-      // third argument syntactically PRESENT at the call site. The wasm
-      // boundary is fixed-arity and pads an omitted newTarget with a null
-      // externref, so the two cases are indistinguishable here by value — but
-      // §26.1.2 treats them oppositely: absent ⇒ newTarget defaults to the
-      // target (step 2), present-and-not-a-constructor ⇒ TypeError (step 3).
-      // Collapsing both to the 2-argument form made
-      // `Reflect.construct(fn, [], null)` construct instead of throw.
+      // (#4394) The `_newtarget` twin is the same operation with the third
+      // argument syntactically PRESENT. §26.1.2 treats absent (step 2, defaults
+      // to target) and present-not-a-constructor (step 3, TypeError) oppositely,
+      // and the fixed-arity boundary pads an omitted newTarget with null — so
+      // presence rides on the import NAME rather than on the value.
       if (name === "__reflect_construct" || name === "__reflect_construct_newtarget") {
         const newTargetIsPresent = name === "__reflect_construct_newtarget";
         return (ctor: any, args: any, newTarget: any): any => {
@@ -13052,43 +13465,9 @@ assert._isSameValue = isSameValue;
       // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
       // symbol preserves identity/description) then `Object()` it into a wrapper
       // object. `Symbol.prototype.description` already unwraps such wrappers.
-      // (#4394) `new Test262Error(msg)` where the compiled module DECLARES its
-      // own `function Test262Error` — which the literal upstream harness
-      // (sta.js) always does. The error object itself must stay a real host
-      // `Error` subclass (the exception bridge, the failure renderer and every
-      // `String(err)` path depend on that), but §10.2.2 says the constructed
-      // object's `constructor` is the function that was invoked. The compiled
-      // module's `Test262Error` identifier reads a WasmGC closure struct, so a
-      // host class can never be `===` to it. Take that closure as a second
-      // argument and stamp it as a non-enumerable own `constructor`, which is
-      // exactly what `assert.throws` / the harness self-tests compare.
-      if (name === "__new_Test262Error_ctor") {
-        return (msg: any, ctor: any): any => {
-          const err = new _HostTest262Error(msg == null ? undefined : String(msg));
-          if (ctor != null) {
-            // (#4394) Remember the carrier so `err instanceof Test262Error`
-            // can resolve against it — see `_test262ErrorModuleCarriers`.
-            if (typeof ctor === "object" || typeof ctor === "function") {
-              try {
-                _test262ErrorModuleCarriers.add(ctor as object);
-              } catch {
-                /* a non-weakly-holdable carrier simply keeps the old answer */
-              }
-            }
-            try {
-              Object.defineProperty(err, "constructor", {
-                value: ctor,
-                writable: true,
-                enumerable: false,
-                configurable: true,
-              });
-            } catch {
-              /* a frozen Error prototype chain is not worth failing construction over */
-            }
-          }
-          return err;
-        };
-      }
+      // (#4394) `new Test262Error(msg)` in a module that DECLARES its own
+      // `function Test262Error` — see runtime/test262-harness-host.ts.
+      if (name === "__new_Test262Error_ctor") return test262Host.makeTest262ErrorWithModuleCtor;
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =
@@ -15007,15 +15386,8 @@ assert._isSameValue = isSameValue;
             }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
-            // (#4394) `err instanceof Test262Error` where the module DECLARES
-            // its own `function Test262Error` (sta.js — i.e. every assembled
-            // test262 module). The value is a real host `_HostTest262Error`
-            // (that is what makes `String(err)` and the exception bridge work),
-            // so its prototype chain can never reach the module's compiled
-            // closure. Neither the subclass registry nor `globalThis` nor
-            // `_userClassTags` knows about it, so the check answered `false` for
-            // an error that IS a Test262Error. Recognise the host class by name.
-            if (ctorName === "Test262Error" && v instanceof _HostTest262Error) return 1;
+            // (#4394) The host Test262Error by name — no registry knows it.
+            if (ctorName === "Test262Error" && test262Host.isHostTest262Error(v)) return 1;
           } catch {
             /* fall through to user-class tag check */
           }
@@ -15422,27 +15794,19 @@ assert._isSameValue = isSameValue;
       // non-harness contexts is a possible follow-up.)
       return () => {};
     }
-    case "callback_maker": {
-      // (#4394) `constructible` is set only by `__make_callback_ctor`, which
-      // the compiler picks for an ordinary function definition — the one
-      // callable form that has [[Construct]]. Everything else keeps the arrow
-      // bridge and stays correctly non-constructible.
-      const constructible = intent.constructible === true;
+    // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
+    // maker the compiler picks for an ordinary function definition — the one
+    // callable form with [[Construct]]. Everything else keeps the arrow bridge.
+    case "callback_maker":
       return (id: number, cap: any) => {
         // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
         // the checker-proven one-shot inline form. Legacy callbacks keep their
         // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return createNativeFunctionCallbackBridge(
-          id,
-          cap,
-          callbackState,
-          ASYNC_CALLBACK_EXCEPTION_POLICY,
-          constructible,
-        );
+        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
       };
-    }
     case "getter_callback_maker":
       return (id: number, cap: any) => {
         // Regular function (not arrow) so 'this' is bound to the receiver;
@@ -15468,10 +15832,6 @@ assert._isSameValue = isSameValue;
         _wasmGetterCallbackWrappers.add(bridge);
         return bridge;
       };
-    case "await":
-      return (v: any) => v;
-    case "dynamic_import":
-      return (specifier: any) => import(/* @vite-ignore */ specifier);
     case "typeof_check": {
       // (#3996) A compiled closure crossing an externref boundary is an opaque
       // WasmGC object to JavaScript, so the host's native `typeof` reports
@@ -15775,379 +16135,6 @@ assert._isSameValue = isSameValue;
         }
         _safeSet(obj, key, wrappedVal, undefined, callbackState, /* strict */ true);
       };
-    case "host_eq":
-      // #1065 — strict equality for two externref operands that the GC path
-      // could not compare via ref.eq (e.g. host functions like `Array === Array`).
-      return (a: any, b: any) => (_hostStrictEqual(a, b) ? 1 : 0);
-    case "host_loose_eq":
-      // #1134 — loose equality for two externref operands (§7.2.15).
-      // Handles null == undefined → true and other JS coercion rules.
-      return (a: any, b: any) => {
-        // #1990 — IsLooselyEqual §7.2.15 steps 8-9: `object == primitive`
-        // coerces the object via ToPrimitive (no hint → "default"). For a
-        // WasmGC struct carrying a compiled valueOf/toString, host `==` would
-        // throw "Cannot convert object to primitive value" because the funcref
-        // field isn't a JS-callable method. Route struct operands through
-        // `_toPrimitiveSync` first — the same fix `__extern_has` already uses —
-        // BUT only when the other operand is a primitive (object == object is
-        // reference identity per steps 1-2, no coercion). A no-method struct
-        // resolves to "[object Object]", preserving `{} == "[object Object]"`.
-        const aStruct = a != null && typeof a === "object" && _isWasmStruct(a);
-        const bStruct = b != null && typeof b === "object" && _isWasmStruct(b);
-        let av = a;
-        let bv = b;
-        if (aStruct && !bStruct && (b == null || typeof b !== "object")) {
-          av = _toPrimitiveSync(a, "default", callbackState);
-        }
-        if (bStruct && !aStruct && (a == null || typeof a !== "object")) {
-          bv = _toPrimitiveSync(b, "default", callbackState);
-        }
-        // biome-ignore lint/suspicious/noDoubleEquals: §7.2.15 IsLooselyEqual requires == semantics (null == undefined, type coercion)
-        return av == bv ? 1 : 0;
-      };
-    case "host_add":
-      // #2058 — `+` for two externref operands (§13.15.3
-      // ApplyStringOrNumericBinaryOperator). JS `+` gives us the "concatenate if
-      // either primitive is a string" rule and primitive valueOf/toString
-      // ordering for free, so `1 + "2"` → `"12"` and `1 + 2` → `3`. Returns a
-      // boxed any (number or string) the caller stores back into the `any` slot.
-      //
-      // #1989/#1988 — but a WasmGC struct operand carrying a COMPILED
-      // valueOf/toString (the funcref field isn't a JS-callable method) makes
-      // native JS `a + b` throw "Cannot convert object to primitive value". Per
-      // §13.15.3 step 1, `+` runs ToPrimitive(operand, "default") on each side
-      // FIRST. Route struct operands through `_toPrimitiveSync` (the same proxy
-      // `host_loose_eq` uses) so the per-instance compiled valueOf/toString is
-      // dispatched in-module; a no-method struct resolves to "[object Object]".
-      return (a: any, b: any) => {
-        const av =
-          a != null && typeof a === "object" && _isWasmStruct(a) ? _toPrimitiveSync(a, "default", callbackState) : a;
-        const bv =
-          b != null && typeof b === "object" && _isWasmStruct(b) ? _toPrimitiveSync(b, "default", callbackState) : b;
-        return av + bv;
-      };
-    case "host_bigint_binop":
-      // #3481 — a BigInt combined with a dynamically-object/any operand whose
-      // ToNumeric (§7.1.3) may reduce to a BigInt: `Object(2n) * 2n === 4n`,
-      // `{valueOf(){return 2n}} - 2n === 0n`, `{[Symbol.toPrimitive](){return
-      // 2n}} ** 2n === 4n`. The compiler can't decide statically whether this is
-      // a real BigInt/Number *mix* (a TypeError) or a valid BigInt op, so it
-      // delegates the operator to JS here. A WasmGC-struct operand (an object
-      // literal / class instance carrying a COMPILED valueOf / toString /
-      // @@toPrimitive) is first reduced via `_toPrimitiveSync` — the same proxy
-      // `host_add` uses — because native JS `a * b` would otherwise throw
-      // "Cannot convert object to primitive value" on the opaque struct. `+`
-      // takes the "default" hint (string-if-either-is-string), every other
-      // operator the "number" hint, per §13.15.3 / §7.1.3. Once both operands
-      // are primitives, the JS operator gives ToNumeric + the mix-TypeError
-      // check + BigInt arithmetic for free (a Number-vs-BigInt mix throws a real
-      // `instanceof TypeError`; `>>>` on BigInt throws, matching the spec).
-      // The i32 opcode is a private ABI shared with `bigIntHostBinopOpcode` in
-      // binary-ops.ts — keep them in lockstep.
-      return (op: number, a: any, b: any) => {
-        const hint = op === 0 ? "default" : "number";
-        const av =
-          a != null && typeof a === "object" && _isWasmStruct(a) ? _toPrimitiveSync(a, hint, callbackState) : a;
-        const bv =
-          b != null && typeof b === "object" && _isWasmStruct(b) ? _toPrimitiveSync(b, hint, callbackState) : b;
-        switch (op) {
-          case 0:
-            return av + bv;
-          case 1:
-            return av - bv;
-          case 2:
-            return av * bv;
-          case 3:
-            return av / bv;
-          case 4:
-            return av % bv;
-          case 5:
-            return av ** bv;
-          case 6:
-            return av & bv;
-          case 7:
-            return av | bv;
-          case 8:
-            return av ^ bv;
-          case 9:
-            return av << bv;
-          case 10:
-            return av >> bv;
-          case 11:
-            return av >>> bv;
-          default:
-            throw new TypeError("Cannot mix BigInt and other types, use explicit conversions");
-        }
-      };
-    case "host_compare":
-      // #2059 — relational compare for two externref operands (§7.2.13
-      // IsLessThan). JS `<`/`>` give ToPrimitive (hint "number"), the
-      // string-vs-string lexicographic / string-vs-number numeric dispatch, and
-      // object valueOf ordering for free. Returns a 4-way result so all four
-      // relational operators map from one import:
-      //   -1  a < b      0  a == b (neither < nor >)      1  a > b
-      //    2  incomparable — a NaN/undefined ToNumber operand. Per §7.2.13 a
-      //        comparison yielding `undefined` makes the relational expression
-      //        false, so callers treat 2 as "no operator matches".
-      return (a: any, b: any) => {
-        if (a < b) return -1;
-        if (a > b) return 1;
-        // Equal, OR incomparable (NaN involved). `a <= b` distinguishes:
-        // `a <= b` is true only when equal; false when a NaN/undefined operand
-        // makes every comparison false.
-        return a <= b ? 0 : 2;
-      };
-    case "same_value_zero":
-      // #1360 — SameValueZero comparison (§7.2.11).
-      // Same as Strict Equality except NaN === NaN is true.
-      // +0 and -0 compare equal (unlike SameValue / Object.is).
-      // Used by Array.prototype.includes for array-like receivers.
-      return (a: any, b: any) => {
-        if (a === b) return 1;
-        // biome-ignore lint/suspicious/noSelfCompare: NaN detection — x !== x is the canonical NaN test (NaN is the only value not equal to itself per IEEE 754)
-        if (typeof a === "number" && typeof b === "number" && a !== a && b !== b) return 1;
-        return 0;
-      };
-    case "date_new":
-      return () => new Date();
-    case "date_now":
-      return () => Date.now();
-    case "date_method": {
-      const m = intent.method;
-      return (d: any) => d[m]();
-    }
-    case "declared_global": {
-      const val = deps?.[intent.name];
-      if (val !== undefined) return () => val;
-      // #1310: when a sandbox is supplied (e.g. by the test262 runner that
-      // wants per-test isolation against `Array.prototype.push` mutation),
-      // resolve `globalThis` and ambient globals against the sandbox first.
-      // Falls through to the real host globals when no sandbox is given,
-      // preserving the historical fast path.
-      const g = globalSandbox ?? (globalThis as any);
-      if (intent.name === "globalThis") return () => g;
-      // Fall back to the host's ambient global (e.g. `Array`, `Object`) when
-      // deps does not override it. This makes `x.constructor === Array`
-      // compare against the real host Array constructor. (#1065)
-      const ambient = g[intent.name];
-      if (ambient !== undefined) return () => ambient;
-      return () => {};
-    }
-    case "node_builtin": {
-      // #1044 — Return the Node.js builtin module as an externref.
-      // First check deps override, then try _getNodeRequire().
-      const modName = intent.moduleName;
-      const depVal = deps?.[modName];
-      if (depVal !== undefined) return () => depVal;
-      const req = _getNodeRequire();
-      if (req) {
-        try {
-          const mod = req(modName);
-          return () => mod;
-        } catch {
-          return () => {};
-        }
-      }
-      return () => {};
-    }
-    case "web_storage": {
-      // #1502 — Browser Storage interface (localStorage / sessionStorage).
-      // Prefer the real host global (works in browser + jsdom); fall back to
-      // an in-memory Map-based polyfill for Node / Bun / WASI so compiled
-      // code that uses these globals still runs end-to-end. The polyfill is
-      // memoised per `buildImports()` call so repeated reads / writes share
-      // a single store and `localStorage` / `sessionStorage` remain
-      // distinct stores (mirroring browser semantics).
-      const which = intent.which;
-      return () => {
-        const cached = instanceState?.webStorage[which];
-        if (cached !== undefined) return cached;
-        // deps override allows tests / runners to inject a custom Storage.
-        const depKey = which === "local" ? "localStorage" : "sessionStorage";
-        const depVal = deps?.[depKey];
-        if (depVal !== undefined) {
-          if (instanceState) instanceState.webStorage[which] = depVal;
-          return depVal;
-        }
-        // Prefer the real host global when available (browser / jsdom).
-        const g: any = globalThis as any;
-        const real = g?.[depKey];
-        if (real !== undefined && real !== null) {
-          if (instanceState) instanceState.webStorage[which] = real;
-          return real;
-        }
-        // Standalone fallback.
-        const polyfill = makeWebStoragePolyfill();
-        if (instanceState) instanceState.webStorage[which] = polyfill;
-        return polyfill;
-      };
-    }
-    case "timer_set": {
-      // #1501 — Bind setTimeout / setInterval as host imports.
-      //
-      // Callback may be a real JS function (e.g. host-injected via deps) or
-      // a WasmGC closure struct (compiled code captures + passes a lambda).
-      // For the closure case, `_wrapWasmClosure` materialises a JS callable
-      // that dispatches through the module's `__call_fn_0` export. When the
-      // bridge is not yet available (e.g. exports not wired, see #1382),
-      // the call is logged once and dropped — no throw, no silent
-      // "[object Object]" coerce — so a compiled program calling
-      // `setTimeout(cb, ms)` doesn't crash the host.
-      const host = intent.mode === "interval" ? setInterval : setTimeout;
-      const intentMode = intent.mode;
-      return (cb: any, ms: any) => {
-        let fn: ((...args: any[]) => any) | null = typeof cb === "function" ? cb : null;
-        if (!fn) {
-          fn = _wrapWasmClosure(cb, 0, callbackState);
-        }
-        if (!fn) {
-          _warnTimerCallbackUnresolvable(intentMode);
-          return 0;
-        }
-        return host(fn, Number(ms));
-      };
-    }
-    case "timer_clear": {
-      // #1501 — Bind clearTimeout / clearInterval. Pass the externref handle
-      // straight through; the host accepts numbers (browser) and Timeout
-      // objects (Node 18+) interchangeably.
-      const host = intent.mode === "interval" ? clearInterval : clearTimeout;
-      return (h: any) => {
-        try {
-          host(h);
-        } catch {
-          // Defensive: invalid handle (e.g. undefined from a failed
-          // setTimeout where the closure bridge wasn't available). The
-          // browser also silently ignores invalid handles.
-        }
-      };
-    }
-    case "node_dirname": {
-      // #1494 — `__dirname` for compiled modules. Prefer an explicit override
-      // from `deps`, then fall back to the host's ambient CJS `__dirname` when
-      // running inside a Node CommonJS module (otherwise undefined).
-      return () => {
-        if (deps && deps.__dirname !== undefined) return deps.__dirname;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const g: any = globalThis as any;
-        if (typeof g.__dirname !== "undefined") return g.__dirname;
-        return undefined;
-      };
-    }
-    case "node_filename": {
-      // #1494 — `__filename` for compiled modules.
-      return () => {
-        if (deps && deps.__filename !== undefined) return deps.__filename;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const g: any = globalThis as any;
-        if (typeof g.__filename !== "undefined") return g.__filename;
-        return undefined;
-      };
-    }
-    case "node_import_meta_url": {
-      // #1494 — `import.meta.url` for compiled modules. The compiled Wasm has
-      // no intrinsic notion of its own URL, so the generated loader must pass
-      // it explicitly via deps.importMetaUrl.
-      return () => {
-        if (deps && deps.importMetaUrl !== undefined) return deps.importMetaUrl;
-        return undefined;
-      };
-    }
-    case "node_builtin_fn": {
-      // #1491 / #1492 — Bind a single function exported by a Node.js builtin
-      // module (e.g. `fs.readFileSync`, `crypto.randomUUID`). Resolution order:
-      //   1. `deps[moduleName][name]` — explicit dep override (test injection).
-      //   2. `require(moduleName)[name]` — Node.js runtime.
-      //   3. `globalThis.crypto[name]` / `getRandomValues` — browser fallback
-      //      for the crypto module (#1492).
-      //   4. Last-resort non-crypto shim — keeps the call non-throwing under
-      //      pure standalone Wasm but the result is NOT cryptographically
-      //      strong (logged once for visibility) (#1492).
-      //
-      // `randomBytes(n)` returns a `Uint8Array` (Node returns a Buffer; we
-      // wrap it so .length and indexed reads behave identically on both
-      // backends). `randomUUID()` returns a string.
-      const moduleName = intent.moduleName;
-      const fnName = intent.name;
-      const depMod = deps?.[moduleName] as Record<string, unknown> | undefined;
-      if (depMod && typeof depMod[fnName] === "function") {
-        return makeNodeBuiltinFnAdapter(moduleName, fnName, (depMod[fnName] as Function).bind(depMod), callbackState);
-      }
-      const req = _getNodeRequire();
-      if (req) {
-        try {
-          const mod = req(moduleName);
-          const raw = mod?.[fnName];
-          if (typeof raw === "function") {
-            return makeNodeBuiltinFnAdapter(moduleName, fnName, raw.bind(mod), callbackState);
-          }
-        } catch {
-          // fall through to browser / standalone fallback
-        }
-      }
-      // Browser fallback: globalThis.crypto.{randomUUID, getRandomValues}
-      const gCrypto = (globalThis as any)?.crypto;
-      if (moduleName === "crypto" && gCrypto) {
-        if (fnName === "randomUUID" && typeof gCrypto.randomUUID === "function") {
-          return makeNodeBuiltinFnAdapter("crypto", "randomUUID", () => gCrypto.randomUUID());
-        }
-        if (fnName === "randomBytes" && typeof gCrypto.getRandomValues === "function") {
-          return makeNodeBuiltinFnAdapter("crypto", "randomBytes", (n: number) => {
-            const buf = new Uint8Array(n);
-            gCrypto.getRandomValues(buf);
-            return buf;
-          });
-        }
-      }
-      // Last-resort: non-crypto shim (warn once).
-      return makeNodeBuiltinFnStandaloneFallback(moduleName, fnName);
-    }
-    case "jsx_runtime": {
-      // #1540 — JSX runtime binding. Priority order:
-      //   1. deps.jsxRuntime?.[method]  — user-supplied React/Preact/etc.
-      //   2. deps[intent.specifier]?.[method] — module-shaped dep
-      //   3. built-in minimal implementation (creates React-shaped elements)
-      const method = intent.method;
-      const userRuntime = (deps as { jsxRuntime?: Record<string, unknown> })?.jsxRuntime;
-      if (userRuntime && method in userRuntime) {
-        const v = userRuntime[method];
-        if (method === "Fragment") {
-          const cached = v;
-          return () => cached;
-        }
-        return typeof v === "function" ? (v as (...a: unknown[]) => unknown) : () => v;
-      }
-      const modDep = (deps as Record<string, unknown> | undefined)?.[intent.specifier] as
-        | Record<string, unknown>
-        | undefined;
-      if (modDep) {
-        const v = modDep[method];
-        if (v !== undefined) {
-          if (method === "Fragment") {
-            const cached = v;
-            return () => cached;
-          }
-          return typeof v === "function" ? (v as (...a: unknown[]) => unknown) : () => v;
-        }
-      }
-      // Built-in React-shaped fallback. The Fragment is a stable Symbol so
-      // identity comparisons (`el.type === _Fragment`) hold across calls.
-      if (method === "Fragment") {
-        const sym = _builtinFragmentSym;
-        return () => sym;
-      }
-      // jsx / jsxs / jsxDEV share the same shape — `_jsxDEV` may pass extra
-      // (isStatic, source, self) args; we drop them.
-      return (type: unknown, props: unknown, key: unknown) => ({
-        $$typeof: _builtinJsxTypeof,
-        type,
-        props: props ?? {},
-        key: key ?? null,
-        ref: null,
-      });
-    }
-    case "proxy_create":
-      return (target: any, handler: any) => _hostProxyConstruct(target, handler, callbackState, "Proxy");
     default:
       // #1858 C9a: fail loud instead of silently binding an unhandled import
       // intent to a no-op. A no-op `() => {}` returns `undefined` for every
@@ -16334,6 +16321,12 @@ export interface BuildImportsOptions {
   domRoot?: Element | ShadowRoot;
   globalSandbox?: Record<string, any>;
   /**
+   * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
+   * true for the historical low-level API; {@link buildCompiledImports}
+   * derives false for native-first modules from their frozen target profile.
+   */
+  ambientCompatibility?: boolean;
+  /**
    * Runtime implementation for dynamic eval and new Function.
    *
    * `compat` preserves the existing meta-circular-first path and its native
@@ -16367,9 +16360,9 @@ export interface DynamicCodeEvaluator {
 }
 
 export function buildImports(
-  manifest: ImportDescriptor[],
+  manifest: readonly ImportDescriptor[],
   deps?: Record<string, any>,
-  stringPool?: string[],
+  stringPool?: readonly string[],
   options?: BuildImportsOptions,
 ): {
   env: Record<string, Function>;
@@ -16394,37 +16387,31 @@ export function buildImports(
     userClassParents: new Map<string, string | null>(),
   };
 
-  // #1464 — install ES2025 Iterator.zip / zipKeyed / concat polyfills on
-  // the host's `Iterator` global if missing. Idempotent and safe to call
-  // unconditionally; older Node / V8 versions need it, newer hosts skip.
-  _installIteratorHelperPolyfills();
-
-  // (#1333) Annex B §B.2.2 — install our spec-compliant legacy RegExp
-  // static-property accessors (RegExp.input / $_ / $1..$9 / lastMatch /
-  // leftContext / rightContext / lastParen) on the resolved %RegExp%
-  // constructor. V8's native accessors silently allow non-RegExp receivers;
-  // the spec requires TypeError, so we override. Idempotent per RegExp identity.
-  {
-    const RegExpCtor = (deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined)) as unknown;
-    if (RegExpCtor) _installLegacyRegExpAccessors(RegExpCtor, instanceState.legacyRegExpState);
-  }
+  installAmbientCompatibility({
+    enabled: options?.ambientCompatibility !== false,
+    deps,
+    legacyRegExpState: instanceState.legacyRegExpState,
+  });
 
   const env: Record<string, Function> = {};
-  let wasmExports: Record<string, Function> | undefined;
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
   // function park themselves here and are replayed the moment setExports
   // wires the instance.
-  const pendingExportsDeferred: Array<() => void> = [];
-  const callbackState = {
-    getExports: () => wasmExports,
-    deferToExports: (fn: () => void) => {
-      pendingExportsDeferred.push(fn);
-    },
-  };
-  let hasCallbacks = false;
+  const lifecycle = createInstanceLifecycleAdapter({
+    brandedExports: _brandedInstanceExports,
+    prepareExports: (exports, mayEstablishDataStructAuthority) =>
+      _hostBridgeExportView(
+        exports,
+        dataStructHostBridgeAuthority,
+        dataStructHostBridgeToken,
+        mayEstablishDataStructAuthority ? (authority) => (dataStructHostBridgeAuthority ??= authority) : undefined,
+        mayEstablishDataStructAuthority,
+      ),
+  });
+  const callbackState = lifecycle.callbackState;
   let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
@@ -16447,15 +16434,18 @@ export function buildImports(
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
+    if (options?.ambientCompatibility === false) {
+      const policy = classifyHostImport(imp);
+      if (policy.classification === "legacy-semantic" || policy.classification === "unknown") {
+        throw new Error(
+          `Native-first adapter cannot bind ${imp.module}::${imp.name}: ` +
+            `${policy.classification} import owned by #${policy.ownerIssue}. ` +
+            `Use the explicit compatibility profile until this semantic provider is native.`,
+        );
+      }
+    }
     const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
-
-    // __get_caught_exception needs closure access to lastCaughtException
-    if (imp.name === "__get_caught_exception") {
-      fn = () => lastCaughtException;
-      env[imp.name] = fn;
-      continue;
-    }
 
     fn = resolveImport(
       imp.intent,
@@ -16466,6 +16456,7 @@ export function buildImports(
       imp.paramCount,
       options?.dynamicCode,
       options?.dynamicCodeEvaluator,
+      () => lastCaughtException,
     );
 
     // DOM containment wrapping
@@ -16617,11 +16608,7 @@ export function buildImports(
         };
       }
     }
-
     env[imp.name] = fn;
-    if (imp.intent.type === "callback_maker" || imp.intent.type === "getter_callback_maker") hasCallbacks = true;
-    // Native string marshal helpers need late-bound exports (for memory access)
-    if (imp.name === "__str_from_mem" || imp.name === "__str_to_mem") hasCallbacks = true;
   }
 
   const result: {
@@ -16642,35 +16629,11 @@ export function buildImports(
     string_constants16: buildStringConstants16(stringPool),
   };
   const dataStructHostBridgeToken = result.string_constants[_DATA_STRUCT_HOST_BRIDGE_TOKEN_VALUE];
-  const installExports = (exports: Record<string, Function>, mayEstablishDataStructAuthority: boolean): void => {
-    wasmExports = _hostBridgeExportView(
-      exports,
-      dataStructHostBridgeAuthority,
-      dataStructHostBridgeToken,
-      mayEstablishDataStructAuthority ? (authority) => (dataStructHostBridgeAuthority ??= authority) : undefined,
-      mayEstablishDataStructAuthority,
-    );
-    // (#1712) Replay operations parked during the module START function (see
-    // pendingExportsDeferred above) now that struct introspection exports
-    // are reachable.
-    while (pendingExportsDeferred.length > 0) {
-      const fn = pendingExportsDeferred.shift()!;
-      fn();
-    }
-  };
   // Always provide setExports — needed for callbacks, native string marshaling,
   // and struct field getter discovery (__sget_*). Raw records cannot establish
   // first data-struct authority.
-  result.setExports = (exports: Record<string, Function>) => {
-    installExports(exports, false);
-  };
-  result.setInstance = (instance: WebAssembly.Instance) => {
-    const exports = _brandedInstanceExports(instance);
-    if (exports === undefined) {
-      throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
-    }
-    installExports(exports as Record<string, Function>, true);
-  };
+  result.setExports = lifecycle.setExports;
+  result.setInstance = lifecycle.setInstance;
   result.startImportCounting = () => {
     importCounts = new Uint32Array(envImportNames.length);
   };
@@ -16715,18 +16678,15 @@ export function buildImports(
  * ```
  */
 /**
- * (#1700) TS-level classification of a single export param or result slot
- * surfaced via `CompileResult.exportSignatures`. The Wasm signature alone
- * is ambiguous for TypedArray vs `number[]` — both lower to
- * `(ref null $Vec[f64])` — so the JS-host wrapper consults this metadata
- * to (a) copy a JS `Uint8Array` into a fresh Wasm vec before the call and
- * (b) wrap the returned plain `Array<number>` back into a `Uint8Array`.
+ * TS-level classification of a single export param or result slot surfaced
+ * via `CompileResult.exportSignatures`. It distinguishes source strings from
+ * their native Wasm carrier as well as TypedArray from `number[]`.
  */
 export interface WrapExportsSignature {
-  /** Per-parameter TypedArray kind, positionally. */
-  params: ("uint8array" | "typed-array" | "other")[];
-  /** TypedArray kind of the return value. */
-  result: "uint8array" | "typed-array" | "other";
+  /** Per-parameter boundary kind, positionally. */
+  params: ("uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other")[];
+  /** Boundary kind of the return value. */
+  result: "uint8array" | "typed-array" | "string" | "symbol" | "promise" | "dynamic" | "aggregate" | "other";
 }
 
 /**
@@ -16791,19 +16751,35 @@ function marshalTypedArrayArgs(
  * as `options.signatures`; without it the wrapper is a passthrough. Returns a
  * new exports object; the original is left untouched.
  */
+export interface WrapExportsOptions {
+  /**
+   * Result-object boundary policy:
+   * - `"copy"` (compatibility default) materializes a detached JS value;
+   * - `"live"` exposes the identity-cached `_wrapForHost` view and unwraps
+   *   that view when it crosses back into Wasm;
+   * - `false` exposes the raw opaque WasmGC handle.
+   */
+  marshal?: "copy" | "live" | false;
+  /** Per-export TS-level type metadata used for TypedArray boundary fidelity. */
+  signatures?: Record<string, WrapExportsSignature>;
+  /** Generated per-slot value policies. Used unless `marshal` explicitly overrides them. */
+  boundaryPolicies?: Readonly<Record<string, ExportBoundaryPolicy>>;
+}
+
+function marshalModeForBoundaryPolicy(policy: BoundaryValuePolicy | undefined): "copy" | "live" | false | undefined {
+  if (policy === "copied-value") return "copy";
+  if (policy === "live-view") return "live";
+  if (policy === "opaque-handle") return false;
+  return undefined;
+}
+
 export function wrapExports(
   instanceOrExports: WebAssembly.Instance | WebAssembly.Exports,
-  options?: {
-    marshal?: "copy" | false;
-    /** Per-export TS-level type metadata from `CompileResult.exportSignatures`
-     *  (#1700). When provided, Uint8Array arguments are copied into a Wasm
-     *  vec before the call and Uint8Array-typed returns are wrapped on the
-     *  way out. Omitted ⇒ legacy behaviour (no per-call marshalling). */
-    signatures?: Record<string, WrapExportsSignature>;
-  },
+  options?: WrapExportsOptions,
 ): Record<string, any> {
   // #1504: marshal by default; `marshal: false` keeps raw WasmGC handles.
-  const marshal: "copy" | false = options?.marshal === false ? false : "copy";
+  const hasMarshalOverride = options !== undefined && Object.prototype.hasOwnProperty.call(options, "marshal");
+  const marshal: "copy" | "live" | false = options?.marshal ?? "copy";
   const brandedExports = _brandedInstanceExports(instanceOrExports);
   const rawExports = brandedExports ?? (instanceOrExports as WebAssembly.Exports);
   const exportsForMarshal = _hostBridgeExportView(
@@ -16824,6 +16800,7 @@ export function wrapExports(
     | ((vec: any, idx: number, byte: number) => void)
     | undefined;
   const signatures = options?.signatures;
+  const boundaryPolicies = options?.boundaryPolicies;
 
   // Build a JS-callable wrapper around a Wasm closure struct.
   const makeCallableClosureWrapper = (closure: any): ((...args: any[]) => any) => {
@@ -16903,16 +16880,73 @@ export function wrapExports(
     // Wrap user exports: closures become callables; structs/vecs marshal to JS;
     // primitives, strings, and raw externrefs pass through.
     const sig = signatures ? signatures[key] : undefined;
+    const exportBoundaryPolicy = boundaryPolicies?.[key];
     const invoke = function (this: any, ...args: any[]): any {
+      // A live boundary view is only a JS façade. Recover its canonical WasmGC
+      // identity before calling a typed export; ordinary JS values are no-ops.
+      let boundaryArgs = args.map((arg, index) => {
+        const paramMode = hasMarshalOverride
+          ? marshal
+          : marshalModeForBoundaryPolicy(exportBoundaryPolicy?.params[index]?.policy);
+        return paramMode === "live" ? _unwrapForHost(arg) : arg;
+      });
+      const stringFromHost = exportsForMarshal.__str_from_extern as ((value: string) => any) | undefined;
+      if (sig) {
+        boundaryArgs = boundaryArgs.map((arg, index) => {
+          if (sig.params[index] === "string" && typeof arg === "string" && typeof stringFromHost === "function") {
+            return stringFromHost(arg);
+          }
+          if (sig.params[index] === "symbol") {
+            const symbolId = _nativeSymbolIdFromHost(arg, exportsForMarshal);
+            if (symbolId === _MISS) {
+              throw new TypeError(`wrapExports: export "${key}" expects symbol for arg #${index}, got ${typeof arg}`);
+            }
+            return symbolId;
+          }
+          if (sig.params[index] === "promise") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          if (sig.params[index] === "dynamic") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          return arg;
+        });
+      }
       // (#1700) Argument marshalling: copy JS Uint8Array → Wasm vec via
       // `__new_vec_f64` + `__vec_set_byte`. Runs even under `marshal: false`
       // because the user must be able to call the export at all.
       const marshalled =
-        sig && newVecF64 && vecSetByte ? marshalTypedArrayArgs(args, sig, key, newVecF64, vecSetByte) : args;
-      const result = (val as Function).apply(this, marshalled);
+        sig && newVecF64 && vecSetByte
+          ? marshalTypedArrayArgs(boundaryArgs, sig, key, newVecF64, vecSetByte)
+          : boundaryArgs;
+      let result: any;
+      try {
+        result = (val as Function).apply(this, marshalled);
+      } catch (error) {
+        const payload = normalizeModuleCallbackException(
+          error,
+          { getExports: () => exportsForMarshal },
+          "module-tag-payload",
+        );
+        const translated = _nativeErrorToHost(payload, exportsForMarshal);
+        throw translated === _MISS ? payload : translated;
+      }
+      if (sig?.result === "string" && result != null) {
+        const stringToHost = exportsForMarshal.__str_to_extern as ((value: any) => string) | undefined;
+        if (typeof stringToHost === "function") return stringToHost(result);
+      }
+      if (sig?.result === "symbol") {
+        const symbolValue = _nativeSymbolFromId(Number(result), exportsForMarshal);
+        if (symbolValue !== _MISS) return symbolValue;
+      }
       if (result == null || !_isWasmStruct(result)) return result;
+      const boundaryError = _nativeErrorToHost(result, exportsForMarshal);
+      if (boundaryError !== _MISS) return boundaryError;
+      const boundaryPrimitive = _nativePrimitiveToHost(result, exportsForMarshal);
+      if (boundaryPrimitive !== _MISS) return boundaryPrimitive;
+      const boundaryPromise = _nativePromiseToHost(result, exportsForMarshal);
+      if (boundaryPromise !== _MISS) return boundaryPromise;
       const marshalable = looksMarshalable(result);
-      if (marshal === "copy" && marshalable) {
+      const resultMarshal = hasMarshalOverride
+        ? marshal
+        : (marshalModeForBoundaryPolicy(exportBoundaryPolicy?.result.policy) ?? marshal);
+      if (resultMarshal === "copy" && marshalable) {
         const plain = _wasmToPlain(result, exportsForMarshal);
         // (#1700) Uint8Array fidelity on the return side. The Wasm signature
         // is ambiguous (Uint8Array and number[] share `(ref null $Vec[f64])`)
@@ -16921,6 +16955,9 @@ export function wrapExports(
           return new Uint8Array(plain as number[]);
         }
         return plain;
+      }
+      if (resultMarshal === "live" && marshalable) {
+        return _wrapForHost(result, exportsForMarshal);
       }
       if (marshalable) {
         // Struct/vec but `marshal: false` → return the raw WasmGC handle
@@ -16934,6 +16971,32 @@ export function wrapExports(
     wrapped[key] = invoke;
   }
   return wrapped;
+}
+
+/**
+ * Wrap an instance using the provider/interop policy captured at compile time.
+ * Compatibility builds retain detached copies. A native-first JS build uses
+ * live boundary objects automatically: Wasm owns state and identity, while
+ * JavaScript sees `_wrapForHost` only at the edge.
+ */
+export function wrapCompiledExports(
+  result: CompileResult,
+  instanceOrExports: WebAssembly.Instance | WebAssembly.Exports,
+  options: Omit<WrapExportsOptions, "signatures" | "boundaryPolicies"> = {},
+): Record<string, any> {
+  const profile = result.targetProfile;
+  const policyDiagnostics = validateExportBoundaryPolicies(result.exportSignatures, result.exportBoundaryPolicies);
+  if (policyDiagnostics.length > 0) {
+    throw new Error(`Invalid export boundary policy manifest: ${policyDiagnostics.join("; ")}`);
+  }
+  if (options.marshal === "live" && profile?.hostValueInterop === "off") {
+    throw new Error('Live JS boundary objects require hostBridge: "always" for this target');
+  }
+  return wrapExports(instanceOrExports, {
+    ...options,
+    signatures: result.exportSignatures,
+    boundaryPolicies: result.exportBoundaryPolicies,
+  });
 }
 
 /** Instantiate a Wasm module, trying native wasm:js-string builtins first
@@ -17029,7 +17092,7 @@ export async function compileAndInstantiate(source: string, deps?: Record<string
   if (!result.success) {
     throw new Error(result.errors.map((e) => e.message).join("\n"));
   }
-  const imports = buildImports(result.imports, deps, result.stringPool);
+  const imports = buildCompiledImports(result, deps);
   const binary = new Uint8Array(result.binary);
   const { instance } = await instantiateWasm(binary, imports.env, imports.string_constants, imports.string_constants16);
   imports.setInstance?.(instance);

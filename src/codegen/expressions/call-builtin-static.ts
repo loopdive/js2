@@ -67,7 +67,12 @@ import {
 } from "../index.js";
 import { ensureNativeArrayFromMapped, ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { ensureUint8FromBase64, ensureUint8FromHex } from "../uint8-codec.js";
-import { compileArrayConstructorCall, compileArrayLiteral, compileObjectLiteralAsExternref } from "../literals.js";
+import {
+  compileArrayConstructorCall,
+  compileArrayLiteral,
+  compileObjectLiteralAsExternref,
+  materializeStructAsDynamicObject,
+} from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
 import {
   emitBrandCheckTypeError,
@@ -87,7 +92,12 @@ import {
   compileObjectDefineProperty,
   compileObjectKeysOrValues,
 } from "../object-ops.js";
-import { ensureObjVecBuilders, ensureObjectGroupBy, ensureObjectRuntime } from "../object-runtime.js";
+import {
+  ensureNativeProxyRuntime,
+  ensureObjVecBuilders,
+  ensureObjectGroupBy,
+  ensureObjectRuntime,
+} from "../object-runtime.js";
 import {
   BUILTIN_CTOR_NAMES,
   emitArrayIsArrayExternrefPredicate,
@@ -708,16 +718,18 @@ export function compileBuiltinStaticCall(
     }
   }
 
-  // (#3147) Standalone-native `String.raw(template, ...substitutions)` — the
+  // (#3147/#4397) Native `String.raw(template, ...substitutions)` — the
   // ordinary FUNCTION-CALL form (§22.1.2.4). The tagged-template form
   // `String.raw\`...\`` is a TaggedTemplateExpression and never reaches this
   // CallExpression path (#2008/#2510). Without this arm the call falls to the
   // generic member-call path → `__get_builtin` → #1472 Phase B refusal
-  // (22 hard CEs under built-ins/String/raw/). Host mode is untouched. A
+  // (22 hard CEs under built-ins/String/raw/). Compatibility host-assisted
+  // mode is untouched; native-first selects this in-module provider even when
+  // JavaScript supplies boundary/capability adapters. A
   // spread argument (`String.raw(...args)`) keeps today's refusal — the
   // substitution list must be statically enumerable to build the $ObjVec.
   if (
-    ctx.standalone &&
+    (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "String" &&
     propAccess.name.text === "raw" &&
@@ -732,9 +744,23 @@ export function compileBuiltinStaticCall(
     // undefined) throws; the null externref is the nullish carrier the
     // helper's TypeError check reads.
     if (expr.arguments.length >= 1) {
-      const tType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
-      if (tType === null) fctx.body.push({ op: "ref.null.extern" });
-      else if (tType.kind !== "externref") coerceType(ctx, fctx, tType, { kind: "externref" });
+      const template = expr.arguments[0]!;
+      // The helper performs dynamic Get(template, "raw"), so a direct typed
+      // object literal must use the open `$Object` representation rather than
+      // a closed anonymous struct that `__extern_get` cannot inspect. A typed
+      // struct value is materialized into that same in-module representation;
+      // this is an internal semantic adapter, not a JS-boundary copy.
+      const tType = ts.isObjectLiteralExpression(template)
+        ? compileObjectLiteralAsExternref(ctx, fctx, template)
+        : compileExpression(ctx, fctx, template);
+      if (tType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (
+        (tType.kind !== "ref" && tType.kind !== "ref_null") ||
+        !materializeStructAsDynamicObject(ctx, fctx, tType.typeIdx, { skipInternalFields: true })
+      ) {
+        if (tType.kind !== "externref") coerceType(ctx, fctx, tType, { kind: "externref" });
+      }
     } else {
       fctx.body.push({ op: "ref.null.extern" });
     }
@@ -1508,6 +1534,59 @@ export function compileBuiltinStaticCall(
   // `isExtensible`→0 / `isFrozen`,`isSealed`→1 and never reached the runtime.
   const isObjectRef = (t: ValType): boolean =>
     t.kind === "ref" || t.kind === "ref_null" || t.kind === "anyref" || t.kind === "eqref" || t.kind === "externref";
+  const boundaryObjectInterop =
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    ctx.targetProfile.environment === "javascript" &&
+    ctx.targetProfile.hostValueInterop !== "off" &&
+    !ctx.strictNoHostImports;
+  const emitIntegrityPredicateCall = (
+    arg0: ts.Expression,
+    argType: ValType,
+    method: "isFrozen" | "isSealed" | "isExtensible",
+  ): InnerResult => {
+    if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+    const objLocal = allocTempLocal(fctx, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: objLocal });
+    if (boundaryObjectInterop) ensureObjectRuntime(ctx);
+    const nativeIdx = ensureIntegrityPredicate(ctx, arg0, method);
+    flushLateImportShifts(ctx, fctx);
+    const boundaryIdx = boundaryObjectInterop
+      ? ctx.funcMap.get(
+          method === "isFrozen"
+            ? "__boundary_object_is_frozen"
+            : method === "isSealed"
+              ? "__boundary_object_is_sealed"
+              : "__boundary_object_is_extensible",
+        )
+      : undefined;
+    if (nativeIdx !== undefined && boundaryIdx !== undefined) {
+      const boundaryResultLocal = allocTempLocal(fctx, { kind: "i32" });
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+      fctx.body.push({ op: "local.tee", index: boundaryResultLocal });
+      fctx.body.push({ op: "i32.eqz" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: objLocal },
+          { op: "call", funcIdx: nativeIdx },
+        ],
+        else: [{ op: "local.get", index: boundaryResultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
+      });
+      releaseTempLocal(fctx, boundaryResultLocal);
+      releaseTempLocal(fctx, objLocal);
+      return { kind: "i32" };
+    }
+    fctx.body.push({ op: "local.get", index: objLocal });
+    if (nativeIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nativeIdx });
+    else {
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: method === "isExtensible" ? 1 : 0 });
+    }
+    releaseTempLocal(fctx, objLocal);
+    return { kind: "i32" };
+  };
 
   // Handle Object.freeze/seal/preventExtensions — compile-away strategy
   if (
@@ -1591,9 +1670,37 @@ export function compileBuiltinStaticCall(
       // Use the actual JS Object.freeze/seal/preventExtensions via host import
       const importName =
         method === "freeze" ? "__object_freeze" : method === "seal" ? "__object_seal" : "__object_preventExtensions";
+      if (boundaryObjectInterop) ensureObjectRuntime(ctx);
       const hostIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
+      const boundaryIdx = boundaryObjectInterop
+        ? ctx.funcMap.get(
+            method === "freeze"
+              ? "__boundary_object_freeze"
+              : method === "seal"
+                ? "__boundary_object_seal"
+                : "__boundary_object_prevent_extensions",
+          )
+        : undefined;
 
+      if (hostIdx !== undefined && boundaryIdx !== undefined) {
+        const boundaryResultLocal = allocTempLocal(fctx, { kind: "externref" });
+        fctx.body.push({ op: "local.get", index: objLocal });
+        fctx.body.push({ op: "call", funcIdx: boundaryIdx });
+        fctx.body.push({ op: "local.tee", index: boundaryResultLocal });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "local.get", index: objLocal },
+            { op: "call", funcIdx: hostIdx },
+          ],
+          else: [{ op: "local.get", index: boundaryResultLocal }],
+        });
+        releaseTempLocal(fctx, boundaryResultLocal);
+        return { kind: "externref" };
+      }
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1646,16 +1753,7 @@ export function compileBuiltinStaticCall(
       // _isWasmStruct; NOT coerceType, which would materialize a vec into a
       // fresh JS array and lose the WeakSet/descriptor identity) and delegate to
       // the runtime TestIntegrityLevel query.
-      if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const hostIdx = ensureIntegrityPredicate(ctx, arg0, method);
-      flushLateImportShifts(ctx, fctx);
-      if (hostIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: hostIdx });
-        return { kind: "i32" };
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "i32.const", value: 0 });
-      return { kind: "i32" };
+      return emitIntegrityPredicateCall(arg0, argType, method);
     } else if (argType) {
       fctx.body.push({ op: "drop" });
       // (#1462) Primitive (f64/i32/i64) is not an Object per ES2015+ §19.1.2.13/14;
@@ -1689,16 +1787,7 @@ export function compileBuiltinStaticCall(
       // recognized by _isWasmStruct; NOT coerceType, which would materialize a
       // vec into a fresh JS array and lose identity) and delegate to the runtime
       // query.
-      if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const hostIdx = ensureIntegrityPredicate(ctx, arg0, "isExtensible");
-      flushLateImportShifts(ctx, fctx);
-      if (hostIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: hostIdx });
-        return { kind: "i32" };
-      }
-      fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "i32.const", value: 1 });
-      return { kind: "i32" };
+      return emitIntegrityPredicateCall(arg0, argType, "isExtensible");
     } else if (argType) {
       fctx.body.push({ op: "drop" });
       // (#1462) Primitive (f64/i32/i64) is not an Object per ES2015+ §19.1.2.12;
@@ -1725,7 +1814,7 @@ export function compileBuiltinStaticCall(
     propAccess.name.text === "setPrototypeOf" &&
     expr.arguments.length >= 2
   ) {
-    if (ctx.standalone) {
+    if (ctx.targetProfile.semanticProviders === "native-first") {
       // obj (externref)
       const objType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (!objType) {
@@ -3049,16 +3138,16 @@ export function compileBuiltinStaticCall(
     // (#2076) Object-literal operands must build as native $Objects in
     // standalone so __object_assign's `ref.test $Object` recognises them.
     compileObjectAssignArg(ctx, fctx, targetArg);
-    // Build the variadic `...sources` list. Under --target standalone there is
-    // no JS array, so the native __object_assign iterates a $ObjVec built by
+    // Build the variadic `...sources` list. Under the native semantic provider
+    // the native __object_assign iterates a $ObjVec built by
     // the native $ObjVec builders (__objvec_new / __objvec_push) instead of the
-    // host __js_array_new / __js_array_push. JS-host / WASI keep the host
+    // host __js_array_new / __js_array_push. Compatibility mode keeps the host
     // imports unchanged (byte-for-byte). Per the #1472 S3 note the __js_array_*
     // builders are NOT globally safe to alias (real JS arrays elsewhere depend
     // on them) — so this is a per-call-site swap.
     let arrNewIdx: number | undefined;
     let arrPushIdx: number | undefined;
-    if (ctx.standalone) {
+    if (ctx.targetProfile.semanticProviders === "native-first") {
       const b = ensureObjVecBuilders(ctx);
       arrNewIdx = b.newIdx;
       arrPushIdx = b.pushIdx;
@@ -3311,16 +3400,41 @@ export function compileBuiltinStaticCall(
     return { kind: "externref" };
   }
 
-  // Standalone has no JS Proxy machinery, so reject Proxy.revocable before
-  // argument lowering or generic built-in lookup can register host imports.
+  // Standalone and native-first use the Wasm-owned Proxy/revoker carriers.
+  // Compatibility mode keeps the existing real-JS Proxy.revocable provider.
   if (
-    ctx.standalone &&
+    (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") &&
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Proxy" &&
     propAccess.name.text === "revocable"
   ) {
-    reportError(ctx, expr, "Codegen error: Proxy not supported in standalone mode (#1472 Phase C).");
-    fctx.body.push({ op: "ref.null.extern" });
+    ensureNativeProxyRuntime(ctx);
+    const compileProxyInput = (arg: ts.Expression | undefined): void => {
+      if (arg === undefined) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return;
+      }
+      const result = ts.isObjectLiteralExpression(arg)
+        ? compileObjectLiteralAsExternref(ctx, fctx, arg)
+        : ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)
+          ? compileArrowAsClosure(ctx, fctx, arg)
+          : compileExpression(ctx, fctx, arg);
+      if (result === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (result.kind !== "externref") {
+        coerceType(ctx, fctx, result, { kind: "externref" });
+      }
+    };
+    compileProxyInput(expr.arguments[0]);
+    compileProxyInput(expr.arguments[1]);
+    const nativeRevocableIdx = ctx.funcMap.get("__proxy_revocable");
+    if (nativeRevocableIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nativeRevocableIdx });
+    } else {
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "ref.null.extern" });
+    }
     return { kind: "externref" };
   }
 

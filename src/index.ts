@@ -63,6 +63,41 @@ export type ImportIntent =
   | { type: "extern_call_raw_callable"; arity: number }
   | { type: "extern_set" }
   | { type: "extern_set_strict" } // (#2017) strict-mode [[Set]] — throws on getter-only / non-writable
+  | { type: "boundary_callback"; arity: number }
+  | { type: "boundary_promise"; operation: "resolve" | "reject" }
+  | { type: "caught_exception" }
+  | {
+      type: "boundary_object";
+      operation:
+        | "get"
+        | "set"
+        | "has"
+        | "delete"
+        | "keys"
+        | "call"
+        | "apply"
+        | "construct"
+        | "reflectGet"
+        | "reflectSet"
+        | "getPrototypeOf"
+        | "setPrototypeOf"
+        | "getOwnPropertyDescriptor"
+        | "definePropertyValue"
+        | "definePropertyAccessor"
+        | "getOwnPropertyNames"
+        | "getOwnPropertySymbols"
+        | "ownKeys"
+        | "isAdmitted"
+        | "callableKind"
+        | "preventExtensions"
+        | "reflectPreventExtensions"
+        | "seal"
+        | "freeze"
+        | "isExtensible"
+        | "isSealed"
+        | "isFrozen"
+        | "forInKeys";
+    }
   | { type: "truthy_check" }
   | { type: "date_new" }
   | { type: "date_method"; method: string }
@@ -123,7 +158,38 @@ export interface ImportDescriptor {
   paramCount?: number;
 }
 
-export type { ExportSignature, TypedArrayKind } from "./ir/types.js";
+export type { ExportBoundaryKind, ExportSignature, TypedArrayKind } from "./ir/types.js";
+export type {
+  HostImportInventoryEntry,
+  HostImportInventorySummary,
+  HostImportPolicy,
+  HostImportPolicyClass,
+} from "./host-import-policy.js";
+export type {
+  CapabilityImportRequirement,
+  CapabilityProviderDefinition,
+  CapabilityProviderDiagnostic,
+  CapabilityProviderDiagnosticCode,
+  CapabilityProviderId,
+  CapabilityProviderImportContract,
+  PlatformCapabilityDefinition,
+  PlatformCapabilityRequirement,
+} from "./capability-registry.js";
+export { PLATFORM_CAPABILITY_REGISTRY, validatePlatformCapabilityRequirements } from "./capability-registry.js";
+export {
+  buildCompileExplanation,
+  COMPILE_EXPLANATION_SCHEMA_VERSION,
+  formatCompileExplanation,
+} from "./compile-explain.js";
+export type { CompileExplanationInput, CompileExplanationStatus, CompileExplanationV1 } from "./compile-explain.js";
+export { validateExportBoundaryPolicies } from "./boundary-policy.js";
+export type { BoundarySlotPolicy, BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
+export {
+  createJavaScriptAdapterManifest,
+  JAVASCRIPT_ADAPTER_MANIFEST_SCHEMA_VERSION,
+  validateJavaScriptAdapterManifest,
+} from "./adapter-manifest.js";
+export type { JavaScriptAdapterManifestInput, JavaScriptAdapterManifestV1 } from "./adapter-manifest.js";
 export type {
   IrInvariantCode,
   IrObservedOutcome,
@@ -160,6 +226,23 @@ export interface CompileResult {
   sourceMap?: string;
   /** Import descriptors for closed import building */
   imports: ImportDescriptor[];
+  /** Frozen compile policy used for provider and interop decisions (#4396). */
+  targetProfile?: import("./target-profile.js").CompileTargetProfile;
+  /**
+   * Every emitted import classified as platform capability, boundary adapter,
+   * lifecycle support, replaceable accelerator, legacy semantics, or unknown
+   * (#4401). Successful compiler results always populate this inventory;
+   * `unknown` is actionable debt, never implicit approval.
+   */
+  hostImportInventory?: import("./host-import-policy.js").HostImportInventoryEntry[];
+  /** Deterministic inventory counts for explain output and migration ratchets (#4401). */
+  hostImportSummary?: import("./host-import-policy.js").HostImportInventorySummary;
+  /** Versioned, provider-neutral platform authority requested by this module (#4398). */
+  capabilityRequirements?: import("./capability-registry.js").PlatformCapabilityRequirement[];
+  /** Fail-loud ABI/provider validation for the selected capability bindings (#4398). */
+  capabilityProviderDiagnostics?: readonly import("./capability-registry.js").CapabilityProviderDiagnostic[];
+  /** Stable provider/capability/value-boundary explanation derived from the frozen compile plan (#4382/#4398). */
+  explanation?: import("./compile-explain.js").CompileExplanationV1;
   /** C header file content (only present when abi: "c") */
   cHeader?: string;
   /** WIT interface definition (only present when wit option is enabled) */
@@ -169,17 +252,20 @@ export interface CompileResult {
   /** Whether the source has top-level executable statements (module init code) */
   hasTopLevelStatements: boolean;
   /**
-   * Per-export TypedArray classifications (#1700). Surfaced so
-   * {@link wrapExports} can marshal `Uint8Array` (and other TypedArray)
-   * params/results across the JS↔Wasm boundary — the Wasm signature is
-   * ambiguous (`Uint8Array` and `number[]` share the same `(ref null $Vec[f64])`
-   * lowering), so we expose the TS-level distinction as metadata.
+   * Per-export boundary classifications (#1700/#4399). Surfaced so
+   * {@link wrapExports} can marshal typed arrays and native strings across the
+   * JS↔Wasm boundary. The Wasm signature alone does not retain every
+   * source-level boundary distinction, so codegen exposes it as metadata.
    *
    * Only present (and even then, possibly an empty object) when at least
-   * one exported function has a TypedArray param or return. Forward the
+   * one exported function has a classified param or return. Forward the
    * value to `wrapExports(instance, { signatures: result.exportSignatures })`.
    */
   exportSignatures?: Record<string, ExportSignature>;
+  /** Frozen copy/live/opaque policy for every classified export value (#4399). */
+  exportBoundaryPolicies?: Readonly<Record<string, import("./boundary-policy.js").ExportBoundaryPolicy>>;
+  /** Frozen v1 plan consumed by the generated JavaScript value/capability adapter (#4399). */
+  adapterManifest?: import("./adapter-manifest.js").JavaScriptAdapterManifestV1;
   /**
    * Ready-to-pass JS-host import object for default/JS-host mode (#1667).
    *
@@ -375,6 +461,18 @@ export interface CompileOptions {
    * `typeof exports.__x === "function"` check, so absence is safe.
    */
   hostBridge?: "auto" | "always" | "off";
+  /**
+   * Semantic implementation policy, independent of the execution environment,
+   * platform capabilities, and the JS value bridge (#4397).
+   *
+   * `"auto"` (default) preserves the current target-specific providers.
+   * `"native-first"` selects each migrated Wasm-native provider family even
+   * when JavaScript instantiates the module. Today this includes the complete
+   * native-string family; additional families join this policy as they pass
+   * their differential gates. JS boundary wrappers remain enabled according
+   * to `hostBridge`, and explicit platform APIs remain available.
+   */
+  semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:
    * true })` is a TypeScript excess-property error. The standalone codegen
@@ -686,8 +784,10 @@ export interface CompileOptions {
    * `wasi_snapshot_preview1` import for stream IO; console.log /
    * process.std*.write lower to `writeSync(1|2, …)`, stdin is `readSync(0, …)`).
    *
-   * WASI-gated: ignored for non-WASI targets. Default empty — every namespace
-   * stays standalone / inline-lowered. CLI: `--link <ns>` (repeatable).
+   * Target-neutral: any target may retain a declared provider namespace as an
+   * explicit link-time import. The special `node:fs` std-IO rewrite remains
+   * WASI-only. Default empty — every namespace stays on its existing
+   * standalone / inline-lowered path. CLI: `--link <ns>` (repeatable).
    */
   link?: string[];
   /**
@@ -773,7 +873,7 @@ import * as path from "path";
 import { IncrementalLanguageService, IncrementalProjectLanguageService } from "./checker/index.js";
 import { compileFilesSource, compileMultiSource, compileSource, compileToObjectSource } from "./compiler.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
-import { buildImports as buildImportsRuntime } from "./runtime.js";
+import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
 
 /**
  * Compile TypeScript source to Wasm GC binary.
@@ -831,7 +931,7 @@ function withImportObject(result: CompileResult): CompileResult {
         cached = {};
         return cached;
       }
-      const built = buildImportsRuntime(result.imports, undefined, result.stringPool);
+      const built = buildCompiledImportsRuntime(result);
       cached = {
         env: built.env,
         "wasm:js-string": built["wasm:js-string"],
@@ -1069,6 +1169,8 @@ export {
 export type { RuntimeGroupFingerprint, RuntimeGroupMember } from "./emit/canonical-recgroup.js";
 
 export {
+  buildCompiledAdapterImports,
+  buildCompiledImports,
   buildImports,
   buildStringConstants,
   buildWasiPolyfill,
@@ -1077,4 +1179,6 @@ export {
   instantiateWasm,
   instantiateWasmStreaming,
   jsString,
+  wrapCompiledExports,
+  wrapExports,
 } from "./runtime.js";

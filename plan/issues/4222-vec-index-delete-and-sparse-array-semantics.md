@@ -1,8 +1,8 @@
 ---
 id: 4222
 title: "Standalone array semantics: `delete arr[k]` never makes the index absent, `new Array(n)` fills `undefined` instead of holes"
-status: done
-completed: 2026-08-08
+status: in-review
+pr: 4450
 sprint: current
 created: 2026-08-08
 updated: 2026-08-13
@@ -37,11 +37,30 @@ loc-budget-allow:
   - src/codegen/statements/loops.ts
   - src/codegen/vec-overlay.ts
   - src/codegen/context/types.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/declarations.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/statements/variables.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/select.ts
 func-budget-allow:
   - src/codegen/binary-ops-in.ts::compileInOperator
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/codegen/hof-native.ts::ensureNativeArrayHof
+  - src/codegen/index.ts::generateModule
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4222 — the array-semantics leftovers WP4-filter exposed
@@ -165,7 +184,9 @@ HOF gates (already routed by Wave 1's `overlayFilterAccess`).
 vec representation for the `defineProperty` forms), called from the assignment
 path. `new Array(n)` already threw correctly; only the assignment form clamped.
 
-**Items 2 and 3 — NOT shipped.** See "Leftovers".
+**Item 2 (`new Array(n)` holes) — DONE for a deliberately bounded carrier
+slice.** Item 3 remains not shipped. See "Leftovers" for the wider forms that
+still conservatively demote.
 
 ### Measured
 
@@ -202,17 +223,21 @@ the non-trapping property; the RangeError identity is pinned separately in
 
 ## Leftovers (deliberately not shipped)
 
-**Item 2 — `new Array(n)` holes.** Blocked on a decision this issue should not
-make unilaterally. `usesArrayHoles`'s `$Hole` machinery is uniformly gated on
-`elemType.kind === "externref"` (28 read sites in `array-methods.ts` alone), so
-making `new Array(n)` sparse needs the constructor to mint an **externref**
-carrier. Usage inference currently mints `__vec_f64` for
-`new Array(n); a[0] = 5` — the common numeric-buffer idiom — and forcing
-externref for every `new Array(n)` in a module is a per-module perf regression
-that needs benchmark evidence before it lands. Setting the flag WITHOUT the
-carrier change flips nothing and arms the module-wide read guard for no gain,
-so nothing was changed here. Affects `filter` 9-5 / 9-b-1 and
-`built-ins/Array/S15.4_A1.1_T4…T9`.
+**Item 2 — `new Array(n)` holes.** The exact direct-binding, bounded-literal
+`new Array(n) → .filter(...)` path now has its own nominal
+`$__holey_array` carrier. Its allocator fills only that carrier with `$Hole`,
+and the carrier's `filter` path uses `HasProperty` semantics. The global
+`usesArrayHoles` flag and generic vec representation remain unchanged, so a
+filter-free numeric buffer such as `new Array(n); a[0] = 5` retains
+`$__vec_f64`.
+
+This is intentionally not a general sparse-array claim. Aliases,
+reassignment/escape, computed method access, dynamic keys, non-literal lengths,
+and any reachable dynamic or prototype-sensitive effect fail the eligibility
+proof and use the existing generic path. The bounded slice covers the two
+original Test262 filter rows (`9-5` and `9-b-1`) without giving unrelated vecs
+a module-wide `$Hole` read guard. Broader sparse-array surfaces, including
+`built-ins/Array/S15.4_A1.1_T4…T9`, remain follow-up work.
 
 **Item 3 — OOB reads.** The `oob:array element access out of bounds` cluster is
 NOT a generic out-of-range read. Measured, all six are the **huge-index** rule:
@@ -472,3 +497,59 @@ harness in each lane, including eval, `Function`, and `with`:
 - Keep the change proportional. Every touched compiler file must be justified
   by the carrier dataflow above; if the two-row slice still needs broad generic
   rewrites, stop and return an architecture blocker rather than landing it.
+
+## Bounded carrier implementation result — 2026-08-13
+
+Implementation commit `53a2d52f43b35c02f485013d28f03f8e842301c6` was rebased
+onto verified `origin/main`
+`f8d47c3a3cfb38f84e2b9df2a0c21f4ff2287b23` (PR #4447's class-expression
+IR ownership work). It adds the nominal
+`$__holey_array` representation only for a statically proven direct,
+bounded-literal `new Array(n)` binding whose only relevant uses are safe index
+stores and direct `.filter(...)` calls. The allocator and gap-growth path fill
+that carrier with `$Hole`; ordinary vectors, including filter-free numeric
+buffers, stay on their existing representation.
+
+Standalone lowers the selected constructor and filter through the IR runtime
+symbols. The focused IR test confirms the supported function appears in
+`irCompiledFuncs`, has no post-claim errors, and emits `$__holey_array`. The
+host original-harness shape retains its existing legacy emission path while
+using the same nominal carrier and hole-skipping filter semantics.
+
+### Focused verification
+
+- `pnpm run typecheck` passed.
+- `pnpm exec vitest run tests/es5-array-new-filter-holes.test.ts
+  tests/es5-standalone-array-semantics-prescan.test.ts
+  tests/issue-4159-4160-prescan-flags.test.ts --reporter=verbose` passed:
+  **41/41** tests. This includes host/gc and standalone semantics, growth and
+  captured-length behavior, the authentic assembled-harness binding, unsafe
+  prototype/dynamic-code demotions, the f64 control, and standalone IR
+  ownership.
+- `pnpm run check:loc-budget`, `pnpm run check:func-budget`, and
+  `pnpm run check:ir-fallbacks` passed.
+
+### Same-population original-harness A/B
+
+This comparison was refreshed after the `f8d47c3…` rebase. Both arms used
+`scripts/harness-flip-probe.ts`, the pinned Test262 corpus
+`b363f29d3c43c626dc852744ad64a0b48a003693`, and the exact 44-row
+`built-ins/Array/prototype/**` residual list in
+`/private/tmp/array-prototype-es5-residual-44.txt`. In both lanes the probe's
+positive control remained `must-pass → pass` and its negative control remained
+`must-fail → fail`.
+
+| lane | current-main baseline | carrier implementation | transitions |
+| --- | --- | --- | --- |
+| host/gc | 42 fail, 2 error | 40 fail, 2 pass, 2 error | 2 fail → pass; 0 pass → non-pass; 0 other changes |
+| standalone | 34 fail, 10 pass | 32 fail, 12 pass | 2 fail → pass; 0 pass → non-pass; 0 other changes |
+
+The only changed rows in each lane are:
+
+- `test/built-ins/Array/prototype/filter/15.4.4.20-9-5.js`
+- `test/built-ins/Array/prototype/filter/15.4.4.20-9-b-1.js`
+
+All 44 rows were present in both artifacts; 42 were unchanged in each lane.
+The two host error rows and their detail strings were identical between arms.
+This validates the bounded carrier slice, not the still-open general
+sparse-array surfaces listed above.

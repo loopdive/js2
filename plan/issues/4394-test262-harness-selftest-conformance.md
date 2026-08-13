@@ -71,6 +71,12 @@ func-budget-allow:
   # +3 lines: a two-line comment plus the ternary that excludes the global
   # object from struct-name resolution; the predicate is in global-environment.ts.
   - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # +10 lines: two more arms in this flat name→intent dispatch — the
+  # constructible callback maker and the `__new_Test262Error_ctor` builtin,
+  # which must precede the generic `__new_` extern_class arm to avoid being
+  # resolved as a class named `Test262Error_ctor`. Arm ORDER is load-bearing,
+  # so the arms cannot move out of the ladder.
+  - src/compiler/import-manifest.ts::classifyImport
   # +9 lines: the Reflect.construct arm now selects its import NAME from the
   # call's arity, because the fixed-arity boundary cannot carry newTarget
   # PRESENCE as a value. Comment plus one ternary, inside the arm it belongs to.

@@ -3080,7 +3080,7 @@ function emitArrayForIn(
   // host helper, driven by the shared `__for_in_len`/`__for_in_get` loop. The
   // pure-native index loop below (kept for standalone / wasi, where the sidecar
   // is unavailable) only emits the integer indices and drops the string keys.
-  const useHostKeys = !ctx.standalone && !ctx.wasi;
+  const useHostKeys = ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone && !ctx.wasi;
   const NUM_FMT = "number_toString";
   if (useHostKeys) {
     addForInImports(ctx);
@@ -3474,7 +3474,10 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   let getIdx = ctx.funcMap.get("__for_in_get");
   let hasIdx = ctx.funcMap.get("__for_in_has");
 
-  if ((keysIdx === undefined || lenIdx === undefined || getIdx === undefined) && (ctx.standalone || ctx.wasi)) {
+  if (
+    (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) &&
+    (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first")
+  ) {
     // No-JS-host target: the `__for_in_*` host imports are intentionally not
     // registered (#2572, declarations.ts). For a receiver that lowers to the
     // dynamic `$Object` representation (an `any`/index-signature object whose
