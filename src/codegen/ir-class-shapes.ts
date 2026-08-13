@@ -327,6 +327,29 @@ export function orderIrClassShapeDeclarationsForProjection(
       }
     };
 
+    // A derived descriptor consumes its exact parent shape in addition to its
+    // annotated member types. Keep the source-authoritative earlier-parent
+    // policy in buildIrClassShapes, but order an admitted parent before its
+    // child so implicit constructor forwarding never observes an unpopulated
+    // provisional cell.
+    const heritage = entry.declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+    const parentExpression = heritage?.types[0]?.expression;
+    if (parentExpression) {
+      const parentDeclarations = oracle.declarationsOf(parentExpression);
+      if (parentDeclarations.length === 1) {
+        const parentDeclaration = parentDeclarations[0];
+        if (
+          parentDeclaration &&
+          (ts.isClassDeclaration(parentDeclaration) || ts.isClassExpression(parentDeclaration))
+        ) {
+          const dependency = context.classIdByDeclaration.get(parentDeclaration);
+          if (dependency !== undefined && dependency !== entry.classId && byClassId.has(dependency)) {
+            required.add(dependency);
+          }
+        }
+      }
+    }
+
     for (const member of entry.declaration.members) {
       if (ts.isConstructorDeclaration(member)) {
         if (hasFixedClassShapeParameters(member.parameters)) {
