@@ -783,6 +783,28 @@ export function chainRootIsGrowable(ctx: CodegenContext, expr: ts.Expression): b
 }
 
 /**
+ * (#671 W1) Is this direct member receiver the exact declaration selected by
+ * the IR `with` planner? Unlike `chainRootIsGrowable`, this is deliberately
+ * declaration-keyed: opening `outer.target` must not change a shadowed
+ * `target` in another function.
+ */
+export function isIrWithOpenObjectTargetReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let e = expr;
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isSatisfiesExpression(e) ||
+    ts.isTypeAssertionExpression(e)
+  ) {
+    e = e.expression;
+  }
+  if (!ts.isIdentifier(e)) return false;
+  const key = resolveWidenedVarKey(ctx, e);
+  return key !== undefined && ctx.irWithOpenObjectTargetKeys.has(key);
+}
+
+/**
  * Resolve a struct name for a property access/assignment target expression,
  * with fallbacks for widened variables and `this` in function constructors.
  */
@@ -3048,33 +3070,30 @@ export function taViewReceiverTypeIdx(
 }
 
 /**
- * (#2992 S6, standalone) Dynamic member READ off a growable-object-literal
- * receiver (a non-empty pure-data literal var poisoned by the S6 delete /
- * accessor-define pre-pass in object-shape-widening.ts). The receiver is an
- * externref `$Object`, but the CHECKER still types `o.a` with the literal's
- * static prop type — so the default read coerces the native `__extern_get`
- * result to f64 (`__unbox_number`), turning a tombstoned/undefined read into
- * NaN, and the `!== undefined` comparison arm then const-folds on the number
- * type (the exact #2179 gc-lane bug, which is `!ctx.standalone`-gated). Return
- * the RAW externref instead — real `undefined` stays observable, `typeof`
- * stays dynamic, and numeric consumers coerce through the normal any→f64
- * path. Reserved accessors and callable props keep their dedicated lowerings
- * (mirrors tryEmitDeleteAwareDynamicGet's gates).
+ * Dynamic member READ off an open-object carrier. The established standalone
+ * growable-object case keeps its reserved-accessor/callable exclusions. The
+ * #671 W1 case is stricter: the exact planner-selected declaration has already
+ * abandoned its checker-derived closed shape, so every public direct member
+ * read must return the raw MOP value in both lanes. In particular, a host
+ * harness can otherwise contribute an unrelated numeric `p1` field candidate
+ * and make a string read run through `__unbox_number` ("x1" → NaN).
  */
-function tryStandaloneGrowableDynamicGet(
+function tryOpenObjectDynamicGet(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null | undefined {
-  if (!ctx.standalone) return undefined;
-  if (!chainRootIsGrowable(ctx, expr.expression)) return undefined;
+  const irWithTarget = isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
+  if (!irWithTarget && !ctx.standalone) return undefined;
+  if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression)) return undefined;
   if (
-    propName === "length" ||
-    propName === "constructor" ||
-    propName === "__proto__" ||
-    propName === "prototype" ||
-    propName === "name"
+    !irWithTarget &&
+    (propName === "length" ||
+      propName === "constructor" ||
+      propName === "__proto__" ||
+      propName === "prototype" ||
+      propName === "name")
   ) {
     return undefined;
   }
@@ -3082,7 +3101,7 @@ function tryStandaloneGrowableDynamicGet(
   // (#1930): `signatureOf` is `undefined` exactly when the checker type has no
   // call signature — the same gate tryEmitDeleteAwareDynamicGet expresses via
   // the raw checker's `getCallSignatures().length > 0`.
-  if (ctx.oracle.signatureOf(expr) !== undefined) return undefined;
+  if (!irWithTarget && ctx.oracle.signatureOf(expr) !== undefined) return undefined;
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",
@@ -3264,7 +3283,7 @@ export function compilePropertyAccess(
   }
 
   {
-    const __r = tryStandaloneGrowableDynamicGet(ctx, fctx, expr, propName);
+    const __r = tryOpenObjectDynamicGet(ctx, fctx, expr, propName);
     if (__r !== undefined) return __r;
   }
 
