@@ -5,6 +5,7 @@ import { addFunctionOwnLocals } from "./binding-info.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
+import { getOrRegisterRefCellType } from "./registry/types.js";
 
 /** Whether a closure observes a binding outside a direct call position. */
 export function closureObservesBindingValue(closure: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
@@ -226,9 +227,23 @@ export function prepareHoistedFunctionValueBindings(
     ) {
       continue;
     }
-    if (!hasStableFunctionValueCaptureAbi(ctx, fctx, stmt, stmts)) continue;
+    if (!hasStableFunctionValueCaptureAbi(fctx, stmt)) continue;
     if (!fctx.localMap.has(stmt.name.text)) {
-      allocLocal(fctx, stmt.name.text, { kind: "externref" });
+      const cyclic = functionValueDependencyIsCyclic(ctx, stmt, stmts);
+      if (cyclic) {
+        const valueType = { kind: "externref" } as const;
+        const refCellTypeIdx = getOrRegisterRefCellType(ctx, valueType);
+        const localIdx = allocLocal(fctx, stmt.name.text, { kind: "ref", typeIdx: refCellTypeIdx });
+        // Allocate the live binding before constructing any closure in this
+        // reachable cycle. Every edge can carry the cell first; the recursive
+        // materializer then fills closure values without recursing forever.
+        fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+        fctx.body.push({ op: "local.set", index: localIdx });
+        (fctx.boxedCaptures ??= new Map()).set(stmt.name.text, { refCellTypeIdx, valType: valueType });
+      } else {
+        allocLocal(fctx, stmt.name.text, { kind: "externref" });
+      }
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
@@ -247,7 +262,7 @@ export function canHoistFunctionDeclarationInLiftedFrame(
     !stmt.body ||
     !functionDeclarationValueIsObserved(ctx, stmt) ||
     !declarationOwnerIsAsync(stmt) ||
-    hasStableFunctionValueCaptureAbi(ctx, fctx, stmt, siblings)
+    hasStableFunctionValueCaptureAbi(fctx, stmt)
   );
 }
 
@@ -306,18 +321,12 @@ export function liftedFrameHoistableStatements(
 /**
  * The stable declaration-value carrier snapshots capture fields using the
  * declaring frame's current Wasm representation. GC references may be rebuilt
- * with a different concrete type in a lifted/async frame, and cyclic function
- * values need two-phase initialization. Keep both on the established direct
- * declaration route until those carriers have an ABI-compatible/cyclic form.
+ * with a different concrete type in a lifted/async frame. Keep those on the
+ * established direct declaration route until the carriers have a compatible
+ * ABI. Cyclic function values are safe because their live cells are allocated
+ * before closure construction begins.
  */
-function hasStableFunctionValueCaptureAbi(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  decl: ts.FunctionDeclaration,
-  siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
-): boolean {
-  if (functionValueDependencyIsCyclic(ctx, decl, siblings)) return false;
-
+function hasStableFunctionValueCaptureAbi(fctx: FunctionContext, decl: ts.FunctionDeclaration): boolean {
   const ownLocals = new Set<string>();
   addFunctionOwnLocals(decl, ownLocals);
   let stable = true;
@@ -340,6 +349,7 @@ function hasStableFunctionValueCaptureAbi(
   return stable;
 }
 
+/** Whether materializing target can reach any recursive value dependency. */
 function functionValueDependencyIsCyclic(
   ctx: CodegenContext,
   target: ts.FunctionDeclaration,
@@ -365,40 +375,37 @@ function functionValueDependencyIsCyclic(
   if (!targetName || !dependencyRoots.has(targetName)) return false;
   const edges = new Map<string, Set<string>>();
   for (const [name, root] of dependencyRoots) {
-    const deps = new Set<string>();
+    const dependencies = new Set<string>();
     const visit = (node: ts.Node): void => {
       if (node !== root && ts.isFunctionLike(node)) return;
       if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node)) {
         const declaration = ctx.oracle.valueDeclarationOf(node);
-        if (declaration) {
-          const dependency = namedDeclarations.get(declaration);
-          if (dependency) deps.add(dependency);
-        }
+        const resolved = declaration ? namedDeclarations.get(declaration) : undefined;
+        // Large diagnostic-free CJS programs occasionally leave an otherwise
+        // unique sibling reference unresolved. The lexical-name fallback is
+        // conservative within this one declaration set.
+        const dependency = resolved ?? (dependencyRoots.has(node.text) ? node.text : undefined);
+        if (dependency) dependencies.add(dependency);
       }
       ts.forEachChild(node, visit);
     };
     visit(root);
-    edges.set(name, deps);
+    edges.set(name, dependencies);
   }
 
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const reachesTarget = (name: string): boolean => {
-    if (visiting.has(name)) return name === targetName;
-    if (visited.has(name)) return false;
-    visiting.add(name);
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (name: string): boolean => {
+    const current = state.get(name);
+    if (current === "visiting") return true;
+    if (current === "done") return false;
+    state.set(name, "visiting");
     for (const dependency of edges.get(name) ?? []) {
-      if (dependency === targetName || reachesTarget(dependency)) return true;
+      if (visit(dependency)) return true;
     }
-    visiting.delete(name);
-    visited.add(name);
+    state.set(name, "done");
     return false;
   };
-  visiting.add(targetName);
-  for (const dependency of edges.get(targetName) ?? []) {
-    if (dependency === targetName || reachesTarget(dependency)) return true;
-  }
-  return false;
+  return visit(targetName);
 }
 
 /** Prepare stable values and return the shared Annex B name accumulator. */

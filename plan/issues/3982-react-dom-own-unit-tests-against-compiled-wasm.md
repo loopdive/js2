@@ -1,10 +1,10 @@
 ---
 id: 3982
 title: "Run react-dom's own unit tests against compiled react-dom"
-status: backlog
+status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-09
+updated: 2026-08-13
 priority: high
 horizon: m
 feasibility: medium
@@ -26,6 +26,9 @@ loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/registry/imports.ts
   - src/codegen/closures.ts
+  - src/codegen/closures/arrow-phases.ts
+  - src/codegen/closures/funcref-as-closure.ts
+  - src/codegen/function-declaration-observation.ts
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/stack-balance.ts
   - src/codegen/context/types.ts
@@ -47,6 +50,7 @@ func-budget-allow:
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/closures.ts::compileLiftedClosureBody
   - src/runtime.ts::resolveImport
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/statements/variables.ts::compileVariableStatement
@@ -194,9 +198,56 @@ the tiny entry-barrel validation must not be presented as ReactDOM support.
 The reporting/harness state is on `codex/npm-compat-handoff`; there is no
 separate uncommitted ReactDOM fix to recover.
 
-Resume by mapping local 202 back to its capture owner and freezing the relevant
-deferred capture ABI before emission. Keep the invariant loud—formatting or
-quarantining the malformed body would only hide the invalid module.
+## Resumed compiler frontier (2026-08-13)
+
+The implementation lane uses React's published production CJS output because
+the upstream repository source contains Flow/JSX and is itself built before it
+is published. This is still React and ReactDOM executing inside Wasm: the
+harness rewires their package-local imports and compiles the complete shared +
+client renderer (561,425 source characters), not the tiny `index.js` selector.
+jsdom currently supplies the native DOM oracle/host environment; compiling
+jsdom itself is the separate [#4299](4299-jsdom-original-api-suite.md) lane.
+
+This continuation clears two generic compiler failures in the unchanged real
+renderer:
+
+1. A transitive function-value cycle recursively materialized closures until
+   the compiler exhausted Node's stack. Observable cyclic function bindings
+   now allocate live cells before closure construction.
+2. A returned function expression forwarded `onUnsuspend` using owner-frame
+   local 350 from its own 46-slot frame. Lifted capture slots are now frozen
+   after their prologue locals exist, and transitive sibling function values
+   are retained in the returned closure's capture ABI.
+
+The same bounded implementation-only run now completes code generation and
+reaches WebAssembly validation after about 74 seconds. The next exact blocker
+is:
+
+```text
+WebAssembly.compile(): Compiling function #620:"forceStoreRerender" failed:
+call[262] expected type (ref null 49), found local.get of type externref
+```
+
+No upstream ReactDOM test executes until that module validates. The harness and
+npm-compat report now classify those tests as implementation-blocked (0
+executed), not as 294/294 or 1/1 behavioral failures. The package card also
+uses the real renderer's compile/validation result instead of the small entry
+selector's result.
+
+### Host boundary
+
+The intended end state is not to leave jsdom as one opaque host call. React,
+ReactDOM, and jsdom's JavaScript/dependency graph should compile into Wasm.
+Only concrete Node capabilities that JavaScript cannot provide itself—such as
+filesystem, networking, timers, and process services—remain explicit host
+imports. The browser DOM API exposed by compiled jsdom is then the interface
+ReactDOM uses inside Wasm.
+
+Resume at the `forceStoreRerender` call ABI: trace the expected `(ref null 49)`
+parameter back to the inferred fiber representation and insert the generic
+dynamic-to-typed nullable narrowing at the producer/call boundary. Keep Wasm
+validation authoritative; coercing the signature or suppressing the error
+would only hide an invalid module.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
@@ -251,6 +302,8 @@ add binding-aware slots on top of main's design, not restore that one.
 - [ ] Capture a nested `async function` declaration inside an `async` parent.
 - [ ] Key cross-frame capture slots on the owning frame, not the capture name.
 - [ ] Make the admitted upstream ReactDOM tests green against compiled Wasm.
+- [x] Tests blocked before a valid implementation exists are reported as not
+      executed, never as behavioral divergences.
 
 ## Permanent test reference
 

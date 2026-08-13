@@ -36,6 +36,7 @@ import { allocLocal } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
 import { emitBoundsCheckedArrayGet } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
+import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -612,8 +613,8 @@ export function planClosureCaptures(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
-      (!fctx.hoistedFunctionValueBindings?.has(name) ||
-        (!transitivelyRequiredNames.has(name) && !closureObservesBindingValue(arrow, name)))
+      !transitivelyRequiredNames.has(name) &&
+      (!fctx.hoistedFunctionValueBindings?.has(name) || !closureObservesBindingValue(arrow, name))
     ) {
       continue;
     }
@@ -1096,6 +1097,11 @@ export function emitClosureConstruction(
   fctx.body.push({ op: "i32.const", value: arity });
   fctx.body.push(closureBagInitInstr()); // (#4241) $bag — no expandos at birth
   for (const cap of captures) {
+    // A transitive nested-call dependency can require a sibling declaration's
+    // Function value even when this closure never names it directly. Fill the
+    // hoisted binding before the closure snapshots/passes its slot; otherwise
+    // the lifted caller receives the preallocated null value.
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {

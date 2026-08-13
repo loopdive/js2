@@ -63,6 +63,20 @@ describe("#1918 stack-balance fixup telemetry", () => {
     Reflect.deleteProperty(process.env, "JS2WASM_LOG_STACK_BALANCE");
   });
 
+  it("reports out-of-range locals even when the body contains i64 constants", () => {
+    const mod = emptyModule();
+    mod.types.push({ kind: "func", params: [], results: [] });
+    mod.functions.push({
+      name: "bigint-diagnostic",
+      typeIdx: 0,
+      locals: [],
+      body: [{ op: "i64.const", value: 1n }, { op: "drop" }, { op: "local.get", index: 1 }, { op: "drop" }],
+      exported: false,
+    } as never);
+
+    expect(() => stackBalance(mod)).toThrow(/references local 1[\s\S]*i64\.const[\s\S]*1n/);
+  });
+
   it("records a located FixupEvent for a lossy const-default repair", () => {
     const mod = moduleWithLossyDefault();
     stackBalance(mod);

@@ -704,6 +704,8 @@ export interface FunctionContext {
   hoistedFunctionValueBindings?: Set<string>;
   /** Hoisted Function bindings whose singleton closure has been emitted in this frame. */
   materializedHoistedFunctionValueBindings?: Set<string>;
+  /** Hoisted Function bindings currently constructing a mutually recursive closure value. */
+  materializingHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
   /** Whether this constructor belongs to a class declared with `extends`. Spec §10.2.1.3

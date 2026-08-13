@@ -2247,11 +2247,6 @@ export function compileLiftedClosureBody(
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
-  recordCaptureSlots(
-    liftedFctx,
-    captures.map((capture) => capture.name),
-  );
-
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
   // is live for every subsequent statement. Since S3 this emits NO instructions
   // at all — the receiver arrives as param 0 — see typed-this.ts.
@@ -2362,6 +2357,16 @@ export function compileLiftedClosureBody(
     }
   }
   rehydrateWithEnvironmentScopes(fctx, liftedFctx, closureName, arrowOwnLocals(arrow));
+  // The capture bindings do not exist in localMap until the prologue above
+  // allocates and fills them. Freeze their lifted-frame slots now, before body
+  // declarations can shadow the names. Recording them immediately after the
+  // parameter setup produced an empty map, so a transitive sibling call from a
+  // closure reused the declaring frame's outerLocalIdx (ReactDOM read local
+  // 350 from a 46-slot closure frame).
+  recordCaptureSlots(
+    liftedFctx,
+    captures.map((capture) => capture.name),
+  );
   // #1177: For TDZ-flagged captures, also extract the boxed flag ref into a
   // local in the lifted fctx and register it in `boxedTdzFlags` +
   // `tdzFlagLocals`. This makes existing TDZ-check call sites (calls.ts,
