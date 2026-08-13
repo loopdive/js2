@@ -12,7 +12,7 @@ polling:
   interval_ms: 30000
 pull_requests:
   enabled: true
-  repository: loopdive/js2
+  repository: loopdive/js2wasm
   command: gh
   poll_interval_ms: 30000
   timeout_ms: 30000

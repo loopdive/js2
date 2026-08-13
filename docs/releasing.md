@@ -9,14 +9,14 @@ This repo publishes two npm packages in lockstep:
 Both are published by `.github/workflows/publish-npm.yml`, which triggers on a
 `v*` git tag push and also publishes to JSR.
 
-## The drift bug this flow fixes (loopdive/js2#389)
+## The drift bug this flow fixes (loopdive/js2wasm#389)
 
 Releases used to be cut as a bare lightweight tag — `git tag vX.Y.Z` — that
 **never bumped `package.json`**. But `publish-npm.yml` publishes **whatever
 `version` field `package.json` carries at the tagged commit**, not the tag name.
 So the published version stayed pinned at `0.52.0` across thousands of commits,
 and anyone building from the clone read a stale `0.52.0`. An external tester hit
-this on loopdive/js2#389.
+this on loopdive/js2wasm#389.
 
 The fix has two parts:
 

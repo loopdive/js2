@@ -867,21 +867,83 @@ the DIRECT `o.toString()` call is wrong, because the fallback arm in
 `call-receiver-method.ts` claims `.toString()` by name and emits the constant
 `"[object Object]"` for a struct-shaped receiver.
 
-### Shape of the fix
+### Shape of the fix — the obvious one was ATTEMPTED and does NOT work
 
-The arm is a fallback `if (propAccess.name.text === "toString" && …)`, so a
-single added condition makes it DECLINE into the generic dynamic method
-dispatch, which resolves the real property. The predicate needed is "the
-receiver's type has an own `toString` declared in user source", and that is the
-part with a cost: `ctx.oracle.propertyFactOf(recv, "toString")` cannot tell a
-user-own `toString` apart from the inherited lib one (both answer "function"),
-so it needs either an oracle extension or an `oracle-ratchet-allow` grant for a
-raw symbol/declaration query.
+This section previously claimed that "a single added condition makes it DECLINE
+into the generic dynamic method dispatch, **which resolves the real property**."
+That premise is **wrong**, and it was measured wrong the way premises usually
+are — by never running it. Implemented (`expressions/user-declared-tostring.ts`,
+a declaration-provenance predicate: does the receiver's type carry a `toString`
+whose declaration is in user source rather than an ambient `lib.*.d.ts`?), wired
+as the extra condition on the arm, and measured:
 
-Not attempted here: it is a behaviour change to a shared dispatcher arm in a
-3,700-line function, it affects BOTH lanes and a very common idiom, and it
-deserves its own issue with its own merge-group measurement rather than a late
-edit inside this one.
+| receiver | before | after declining |
+| --- | --- | --- |
+| `P.prototype.toString = function () { … }` | `[object Object]` | **`null`** |
+| `{ toString: function () { … } }` | `[object Object]` | **`null`** |
+| `{ toString: fn }` | `[object Object]` | **`null`** |
+| `{ toString() { … } }` | `"MS"` ✓ | `"MS"` ✓ |
+
+The generic dispatch does not resolve it either — it produces a null string ref,
+which is strictly worse than a wrong constant because it can null-deref
+downstream. **Reverted.** The predicate module is not on the branch; rebuild it
+from this description if the next attempt wants it.
+
+### What the probes actually established
+
+Each case compiled as its own module (see below for why that matters):
+
+| probe | result | |
+| --- | --- | --- |
+| `{ foo: function () { … } }` → `o.foo()` | `"F"` | ✓ a function-valued property call works in general |
+| `{ valueOf: function () { … } }` → `o.valueOf()` | `7` | ✓ (#4201) |
+| `{ toString: fn }` → `var f = o.toString; f()` | `"OL"` | ✓ **the struct holds the right function value** |
+| `{ hasOwnProperty: fn }` → `o.hasOwnProperty()` | `false` | ✗ the builtin answers; the own property is ignored |
+| `{ toString: fn }` → `o["toString"]()` | — | ✗ **invalid Wasm**: `call[0] expected …` |
+| `P.prototype.greet = function () { … }` → `p.greet()` | `null` | ✗ |
+
+Two conclusions the old write-up missed:
+
+1. **The prototype-assignment idiom is broken for ANY method name, not just
+   `toString`.** `P.prototype.greet = function () {}` then `p.greet()` is
+   `null`. So this is not a `toString` bug with a prototype-assignment corner —
+   it is a prototype-assignment bug that `toString` happens to expose. That is a
+   much larger blast radius than "the harness's `deepEqual` family", and it
+   wants its own issue.
+2. **The property is stored correctly; only the direct-CALL dispatch misses it.**
+   Reading `o.toString` and calling the result gives the right answer. So the
+   defect is entirely in method-call lowering, not in object layout — which
+   means the fix is in the dispatcher, but it cannot simply be "decline", since
+   the path being declined INTO is itself the broken one.
+
+The name matters, too: `foo` works, `valueOf` works, `toString` and
+`hasOwnProperty` do not. So the failing set is lib-inherited names that some
+earlier arm claims by name — `valueOf` being the one that has already been
+fixed (#4201) and is therefore the template to follow.
+
+### A separate defect found in passing — structurally identical literals collide
+
+The first probe put several cases in ONE module and produced a result that no
+single-case probe reproduces:
+
+```js
+var o = { toString: function () { return "OL"; } };
+var m = { toString() { return "MS"; } };
+o.toString();   // → "MS"   ← m's method body
+```
+
+Two object literals with the same structural type appear to share one struct and
+one method body, so the wrong one is called. This is not a `toString` issue and
+is not covered anywhere in this file; it needs its own issue and its own probe.
+It also means **any multi-case probe in this area is untrustworthy** — measure
+one shape per compiled module.
+
+### Still not attempted
+
+For the same reasons as before, now better evidenced: it is a behaviour change
+to a shared dispatcher arm in a 3,700-line function, it affects BOTH lanes and a
+very common idiom, the decline target needs fixing first, and it deserves its
+own issue with its own merge-group measurement.
 
 ## Root cause 15 (merge_group regression) — `Reflect.construct` collapsed a PRESENT `null` newTarget
 

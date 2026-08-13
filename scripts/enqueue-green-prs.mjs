@@ -87,7 +87,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO = process.env.GH_REPO || "loopdive/js2";
+const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 // GRACE default is now 0 (#2786): dev agents no longer self-enqueue, so there is
 // no fresh dev GraphQL enqueue to race. A non-zero grace would make the responsive
@@ -667,7 +667,7 @@ function freshPrForEnqueue(number) {
 // for all open PRs in one GraphQL page and return a { prNumber -> assoc } map.
 // `authorAssociation` is OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR /
 // FIRST_TIME_CONTRIBUTOR / FIRST_TIMER / MANNEQUIN / NONE (the actor's relation
-// to the BASE repo, loopdive/js2). A number missing from the map (e.g. >100 open
+// to the BASE repo, loopdive/js2wasm). A number missing from the map (e.g. >100 open
 // PRs, or a transient GraphQL hiccup) is treated as untrusted by the caller —
 // fail closed, never enqueue a PR whose association we could not confirm.
 function authorAssociations() {

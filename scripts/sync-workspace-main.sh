@@ -49,7 +49,7 @@ if ! flock -n 9; then say "another sync in progress — skipping"; exit 0; fi
 
 # Keep the FORK's main synced with upstream (clean fast-forward ONLY). Agents
 # branch from origin/main and the statusline reads /workspace, so when the fork
-# (origin = ttraenkler/js2) lags upstream (loopdive/js2 — where PRs actually
+# (origin = ttraenkler/js2) lags upstream (loopdive/js2wasm — where PRs actually
 # merge) everything downstream silently rots: stale-base PRs go DIRTY, the
 # id-allocator collides, the statusline shows an old sprint. This advances
 # origin/main to upstream/main ONLY when origin is a strict ANCESTOR of upstream

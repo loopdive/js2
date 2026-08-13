@@ -102,7 +102,7 @@ measured in one session:
    `git add` silently reverts your own committed work.
 3. `git fetch origin main` leaves `origin/main` **stale** (hit 3× in one session).
    Use `git fetch origin '+refs/heads/main:refs/remotes/origin/main'` and verify
-   against `gh api repos/loopdive/js2/commits/main --jq .sha`.
+   against `gh api repos/loopdive/js2wasm/commits/main --jq .sha`.
 4. **This one** — a budget grant borrowed from a neighbouring issue.
 
 Also related: `actions/runs?head_sha=` silently returns 0 for a **short** sha

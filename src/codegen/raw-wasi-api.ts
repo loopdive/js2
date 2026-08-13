@@ -39,7 +39,7 @@
  *       store8 (addr, value) -> void   (i32.store8,  low byte)
  *       load8  (addr)        -> i32     (i32.load8_u, zero-extended)
  *
- * No `node:fs` surface at all (loopdive/js2#389).
+ * No `node:fs` surface at all (loopdive/js2wasm#389).
  */
 import type { Instr } from "../ir/types.js";
 import { ts } from "../ts-api.js";

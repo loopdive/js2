@@ -1,6 +1,6 @@
 // #2631 — node:fs fd-based readSync / writeSync via the linkable `node:fs` shim.
 //
-// loopdive/js2#389: the Native Messaging example used
+// loopdive/js2wasm#389: the Native Messaging example used
 // `process.stdin.read(buffer, offset)`, which matches NO real Node API
 // (process.stdin is an async Duplex stream with no synchronous buffer-filling
 // read). The faithful synchronous primitives are `fs.readSync(fd, …)` /

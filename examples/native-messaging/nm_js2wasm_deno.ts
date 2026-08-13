@@ -6,7 +6,7 @@
 // `--target wasi` emits a SELF-CONTAINED WASI Preview-1 command module: it
 // imports ONLY `wasi_snapshot_preview1` (fd_read / fd_write), owns + exports its
 // own `memory`, and runs directly under a WASI host such as wasmtime — no Deno
-// runtime, no JS host (#2684). This is the loopdive/js2#389 reporter's exact use
+// runtime, no JS host (#2684). This is the loopdive/js2wasm#389 reporter's exact use
 // case: a host that runs under a WASI host, explicitly "not chasing Node.js".
 //
 // This source uses REAL Deno synchronous fd-based IO — `Deno.stdin.readSync` /
@@ -39,7 +39,7 @@
 // form (it re-chunks too, in linear memory). All compile to the SAME pure-WASI-P1
 // shape; they differ only in which runtime's source-level API they additionally
 // run under, unmodified. NO Native-Messaging host echoes a single >1 MiB frame
-// (#2814 — re-chunking is not optional; loopdive/js2#389).
+// (#2814 — re-chunking is not optional; loopdive/js2wasm#389).
 //
 // The seam is two FUNCTION references (`denoRead` / `denoWrite`), not an object:
 // passing a struct value across the bundled-module boundary traps at runtime

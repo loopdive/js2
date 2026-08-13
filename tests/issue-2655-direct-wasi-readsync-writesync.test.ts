@@ -1,6 +1,6 @@
 // #2655 — DIRECT WASI Preview-1 fd_read/fd_write for node:fs readSync/writeSync.
 //
-// loopdive/js2#389: the Native Messaging host reporter runs directly under a
+// loopdive/js2wasm#389: the Native Messaging host reporter runs directly under a
 // WASI host (wasmtime) and is explicitly "not chasing Node.js". They want a
 // SELF-CONTAINED WASI P1 command module that imports ONLY
 // `wasi_snapshot_preview1` — no node:fs shim (`--link node:fs`), no Node

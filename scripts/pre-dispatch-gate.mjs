@@ -142,7 +142,7 @@ const prJson = sh("gh", [
   "pr",
   "list",
   "-R",
-  "loopdive/js2",
+  "loopdive/js2wasm",
   "--state",
   "open",
   "--limit",

@@ -2,7 +2,7 @@
 /**
  * Deno synchronous stdio lowering for WASI (#2684).
  *
- * Deno is the other runtime in loopdive/js2#389's "runs under the runtime + also
+ * Deno is the other runtime in loopdive/js2wasm#389's "runs under the runtime + also
  * compiles to wasi" story. Its synchronous stdio is a different SURFACE from
  * `node:fs` but the same PRIMITIVE: fd-based blocking IO over fd 0/1/2.
  *

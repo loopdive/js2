@@ -668,7 +668,7 @@ export function collectExternDeclarations(
       // host imports — spuriously firing the "not on the dual-mode allowlist"
       // drop warning on the clean nm_wasi.ts compile, and (on the npm/bun path,
       // where the stub survives) leaking an unsatisfiable `env.store32` import
-      // that breaks wasmtime instantiation (loopdive/js2#389 bug 1).
+      // that breaks wasmtime instantiation (loopdive/js2wasm#389 bug 1).
       // tryCompileRawWasiCall (raw-wasi-api.ts) already handles every call site,
       // so skip the stub entirely under `--target wasi`.
       // (#4238) `ctx.importMemory` is the second regime in which the
@@ -685,7 +685,7 @@ export function collectExternDeclarations(
       // `ctx.wasi`. Registering them as `env.*` host imports here therefore only
       // leaks a spurious "not on the dual-mode allowlist" dropped-import warning
       // on the otherwise-runnable standalone nm_js2wasm_node_process.ts module
-      // (loopdive/js2#389 bug 2). Skip the stub under WASI.
+      // (loopdive/js2wasm#389 bug 2). Skip the stub under WASI.
       if (ctx.wasi && WASI_STDIN_REACTOR_INTRINSICS.has(name)) continue;
       // #1663: parseInt / parseFloat have no JS host under WASI / standalone —
       // skip the stub so the unified-collector finalize can emit the WasmGC
@@ -1294,7 +1294,7 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
     // already a no-op EXCEPT for the spurious "not on the dual-mode allowlist"
     // warning it emits. nm_js2wasm_node_process.ts trips this via the
     // `String.fromCharCode` receiver in the injected process.stdin prelude
-    // (loopdive/js2#389 bug 2: `env.global_String`). Skip it so the standalone
+    // (loopdive/js2wasm#389 bug 2: `env.global_String`). Skip it so the standalone
     // module compiles cleanly; bare identity uses already had no host global
     // under strict mode, so behavior is unchanged.
     // #2907 — `ctx.standalone` is a SEPARATE flag from `strictNoHostImports`

@@ -39,7 +39,7 @@ success+(missing) jobs.
   RUNNING (not wedged), that dequeue/requeue **cancels its in-flight run** →
   head goes AWAITING_CHECKS again → unstick fires again → perpetual churn. It
   cannot tell "wedged" (needs a nudge) from "running" (must be left alone). FIX:
-  `gh api -X PUT repos/loopdive/js2/actions/workflows/queue-unstick.yml/disable`
+  `gh api -X PUT repos/loopdive/js2wasm/actions/workflows/queue-unstick.yml/disable`
   while draining; verify `.state == disabled_manually` (a `gh workflow disable`
   can silently not stick — confirm via API). The unstick script needs a guard:
   only nudge a head whose AWAITING_CHECKS age exceeds a run's worth of time AND

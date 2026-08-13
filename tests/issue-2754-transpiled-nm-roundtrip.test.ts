@@ -3,7 +3,7 @@
  * #2754 — a `bun build` / esbuild **type-stripped + bundled** `.js` of the
  * SYNCHRONOUS Native-Messaging hosts (`nm_js2wasm_deno.ts`, `nm_js2wasm_node_fs.ts`) must
  * round-trip a framed message exactly the way the direct `.ts` does. This is
- * loopdive/js2#389's exact pipeline:
+ * loopdive/js2wasm#389's exact pipeline:
  *
  *   bun build examples/native-messaging/nm_js2wasm_deno.ts --outfile nm_js2wasm_deno.js  # strips types + bundles
  *   js2wasm nm_js2wasm_deno.js --target wasi

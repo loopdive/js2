@@ -8,7 +8,7 @@ metadata:
 ---
 
 A `hold` label has TWO distinct meanings; tell them apart by **who applied it**
-(`gh api repos/loopdive/js2/issues/<N>/timeline` → last `labeled`/`hold`
+(`gh api repos/loopdive/js2wasm/issues/<N>/timeline` → last `labeled`/`hold`
 event's `.actor.login`, or `/issues/<N>/events`):
 
 1. **Bot park-hold** — actor `github-actions[bot]`, accompanied by an

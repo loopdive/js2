@@ -404,7 +404,7 @@ if (!emulateExplicit && !emulateNode && /['"]node:[A-Za-z0-9_./-]+['"]/.test(sou
 const name = basename(absInput).replace(/\.(ts|mts|cts|js|mjs|cjs)$/i, "");
 // #2816 — default output to the CWD, not the input's directory. The examples
 // ship INSIDE the installed package, so a bare `js2wasm node_modules/.../ex.ts`
-// used to dump artifacts into `node_modules` (loopdive/js2#389). Writing to the
+// used to dump artifacts into `node_modules` (loopdive/js2wasm#389). Writing to the
 // CWD keeps output in the user's working tree; `-o <dir>` still overrides.
 const dir = outDir ? resolve(outDir) : process.cwd();
 

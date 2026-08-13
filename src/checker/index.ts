@@ -808,7 +808,7 @@ function findNodeAtPosition(sf: ts.SourceFile, pos: number): ts.Node | undefined
  * #2815 — js2wasm natively recognizes the ambient `Deno.{stdin,stdout,stderr}`
  * synchronous-stdio surface and lowers it to WASI fd IO (src/codegen/deno-api.ts),
  * so the checker's TS2304 "Cannot find name 'Deno'" on that recognized shape is
- * pure noise — the same class as the `process` TS2580 that loopdive/js2#389 asked
+ * pure noise — the same class as the `process` TS2580 that loopdive/js2wasm#389 asked
  * about (downgraded in #1951/#2603) and the ambient `Deno` d.ts the single-source
  * path injects (#2684). The multi-file paths (analyzeMultiSource / analyzeFiles)
  * don't inject that d.ts, so the warning still leaks for a real Deno program that

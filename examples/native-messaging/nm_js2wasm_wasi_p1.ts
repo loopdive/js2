@@ -6,7 +6,7 @@
 // This is the MOST honest pure-WASI-Preview-1 expression of the host: it imports
 // `fd_read` / `fd_write` DIRECTLY from `wasi_snapshot_preview1` — the real WASI
 // P1 core module a runtime such as wasmtime satisfies — with NO `node:fs` surface
-// at all (loopdive/js2#389, the reporter is "not chasing Node.js"). The emitted
+// at all (loopdive/js2wasm#389, the reporter is "not chasing Node.js"). The emitted
 // module imports ONLY `wasi_snapshot_preview1`, owns + exports its own `memory`,
 // and runs directly under wasmtime.
 //

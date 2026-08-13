@@ -30,7 +30,7 @@ more dispatches, under any queue activity.
 
 ## Mitigation (reversible)
 
-- `gh workflow disable baseline-floor-staleness-alert.yml -R loopdive/js2`
+- `gh workflow disable baseline-floor-staleness-alert.yml -R loopdive/js2wasm`
   (surgical — stops the loop source; leaves refresh-baseline available for its
   legit 8h-scheduled + emergency use). Verify: `gh workflow list --all` shows
   `disabled_manually`.

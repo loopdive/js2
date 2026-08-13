@@ -140,7 +140,7 @@ Compute-intensive workloads (fibonacci, loops, array operations) already match o
 
 ## Get Involved
 
-- **Repository**: [github.com/loopdive/js2](https://github.com/loopdive/js2)
+- **Repository**: [github.com/loopdive/js2wasm](https://github.com/loopdive/js2wasm)
 - **Playground**: [Live demo](https://js2wasm.loopdive.com/playground/)
 - **Conformance report**: [Historical compatibility tracking](https://js2wasm.loopdive.com/benchmarks/report.html)
 - **License**: Apache 2.0 with LLVM Exceptions

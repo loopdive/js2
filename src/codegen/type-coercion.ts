@@ -727,7 +727,7 @@ export function buildVecFromExternref(
   // `__array_from_iter` is only ever a host import — emitting it makes the WASI
   // module fail instantiation (`unknown import: env::__array_from_iter`). #2311
   // gated this on `ctx.standalone` alone, which left the WASI nm_js2wasm_node_*
-  // hosts importing `__array_from_iter` (loopdive/js2#389 / #2311 regression);
+  // hosts importing `__array_from_iter` (loopdive/js2wasm#389 / #2311 regression);
   // `ctx.standalone || ctx.wasi` is the established host-free idiom used
   // throughout codegen (and elsewhere in this file). (#2839)
   // Native-first JS can reach this coercion with a typed Wasm vector (for
@@ -748,7 +748,7 @@ export function buildVecFromExternref(
   // (`__box_number`, a defined func) and only THEN registered `__array_from_iter`
   // / `__extern_get_idx`, shifting `boxIdx` by one onto `__str_to_number` — which
   // emitted `call $__str_to_number` with an f64 index argument where an externref
-  // is required, producing invalid Wasm (loopdive/js2#389 bug 3, nm_js2wasm_wasi_p3.ts:
+  // is required, producing invalid Wasm (loopdive/js2wasm#389 bug 3, nm_js2wasm_wasi_p3.ts:
   // `type mismatch: expected externref, found f64`). Mirror
   // buildTupleFromIterableFallback's register-all-then-freeze discipline.
   ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
@@ -806,7 +806,7 @@ export function buildVecFromExternref(
     // elsewhere by the view name. Without this arm the externref falls through
     // to the empty `return []`, leaving an externref on the stack where the
     // packed `array.set` expects i32 → `array.set must have the proper type`
-    // (loopdive/js2#389 / #2311 regression — buildElemCoerce only handled
+    // (loopdive/js2wasm#389 / #2311 regression — buildElemCoerce only handled
     // f64/i32/externref/ref). (#2839)
     if ((et.kind === "i32" || et.kind === "i8" || et.kind === "i16") && unboxIdx !== undefined) {
       // (#2866 slice 3) In a symbol-bearing module the externref element may be a

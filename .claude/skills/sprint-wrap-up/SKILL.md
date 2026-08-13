@@ -70,7 +70,7 @@ git push origin sprint/N
 > Sprint-end tags ONLY `sprint/N` — it does **not** tag a version. Never
 > `git tag vX.Y.Z` at sprint end. Version tags are cut exclusively via
 > `node scripts/release.mjs <x.y.z>` (the deliberate, reviewed release flow);
-> see `docs/releasing.md` and loopdive/js2#389.
+> see `docs/releasing.md` and loopdive/js2wasm#389.
 
 Then set `end_tag_pushed: true` in the `wrap_checklist` in `plan/issues/sprints/{N}/sprint.md`.
 

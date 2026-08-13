@@ -23,7 +23,7 @@ name: CLA Check
 #
 # THIS IS A REQUIRED CHECK. The promotion contemplated by #1660 has happened:
 # `cla-check` is one of the six contexts in the live `main` ruleset (verified
-# 2026-08-08 against `gh api repos/loopdive/js2/rules/branches/main`; see
+# 2026-08-08 against `gh api repos/loopdive/js2wasm/rules/branches/main`; see
 # docs/ci-policy.md §7 for the full list). The note in
 # plan/issues/1660-real-cla-gate.md calling this gate "informational" is a
 # record of May 2026 and no longer describes enforcement. Two consequences:

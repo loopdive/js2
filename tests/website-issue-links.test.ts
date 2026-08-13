@@ -3,7 +3,7 @@
 //
 // Why this matters more than a normal broken link: the repo has no GitHub
 // issues at all, and — per CLAUDE.md — issue ids share ONE number sequence with
-// pull requests. So github.com/loopdive/js2/issues/661 does not 404. GitHub
+// pull requests. So github.com/loopdive/js2wasm/issues/661 does not 404. GitHub
 // redirects it to PR #661, an unrelated page that looks entirely legitimate.
 // Measured before this fix:
 //   report.html  #661  "Temporal proposal/polyfill gap"

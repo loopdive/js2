@@ -23,7 +23,7 @@ git -c credential.helper='!gh auth git-credential' push --no-verify fork HEAD:<b
 ```
 
 (`gh` is authed as `ttraenkler` for https.) Confirm with
-`gh pr view <N> -R loopdive/js2 --json headRepositoryOwner` BEFORE pushing — if
+`gh pr view <N> -R loopdive/js2wasm --json headRepositoryOwner` BEFORE pushing — if
 owner is `ttraenkler`, push to `fork`; if `loopdive`, push to `origin`.
 
 To fetch a fork-headed PR locally when the branch name isn't resolvable on origin:

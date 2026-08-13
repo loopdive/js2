@@ -39,7 +39,7 @@
 
 import { execFileSync } from "node:child_process";
 
-const REPO = process.env.GH_REPO || "loopdive/js2";
+const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 const HOLD_LABEL = "hold"; // matches enqueue-green-prs.mjs HOLD_LABELS
 const MARKER = "<!-- auto-park-bot:merge-group-failure -->";

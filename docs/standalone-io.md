@@ -133,7 +133,7 @@ source uses `readSync`/`writeSync` from `node:fs`), there are two ways to run it
   `node:fs` → WASI `fd_read`/`fd_write`), a native WASI host, or the real
   `node:fs` module under a JS host. Running a `--link node:fs` module under bare
   `wasmtime` with no link step fails with `unknown import: node:fs::readSync`
-  (loopdive/js2#389 bug 2) — link it first. See
+  (loopdive/js2wasm#389 bug 2) — link it first. See
   [`examples/native-messaging/README.md`](../examples/native-messaging/README.md)
   for the full recipe.
 

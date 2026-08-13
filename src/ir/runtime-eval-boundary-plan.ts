@@ -179,7 +179,21 @@ export function buildIrRuntimeEvalBoundaryPlan(
         const isMemberName =
           (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
           (ts.isElementAccessExpression(parent) && parent.argumentExpression === node);
-        if (!isMemberName) {
+        // (#2960) `Function` as the RECEIVER of a member read
+        // (`Function.prototype.call`, `Function.name`) is not an escape of the
+        // eval-capable constructor: the value that flows onward is the read
+        // property, not `Function` itself. Treating it as one armed
+        // `callableBoundaryRequired` for any module that merely touches
+        // `Function.prototype`, demoting every standalone IR unit
+        // (tests/issue-2960.test.ts pins the contract). `eval` stays a site in
+        // receiver position on purpose — `eval.call(null, src)` performs a real
+        // indirect eval, so a member read THROUGH `eval` still routes the
+        // provider.
+        const isFunctionReceiverRead =
+          node.text === "Function" &&
+          ((ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
+            (ts.isElementAccessExpression(parent) && parent.expression === node));
+        if (!isMemberName && !isFunctionReceiverRead) {
           addSite(sourceFile, id, node, "intrinsic-value", "required");
           unknownDynamicSource = true;
         }

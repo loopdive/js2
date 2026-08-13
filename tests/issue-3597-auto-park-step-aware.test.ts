@@ -203,13 +203,13 @@ describe("#3597 — auto-park step awareness", () => {
           "check for test262 regressions",
           "failure",
           [{ name: "Compare against baseline", conclusion: "failure" }],
-          "https://github.com/loopdive/js2/actions/runs/1/job/2",
+          "https://github.com/loopdive/js2wasm/actions/runs/1/job/2",
         ),
       ]);
       const line = renderFailureLines(r.failedDetails);
       expect(line).toContain("check for test262 regressions");
       expect(line).toContain("Compare against baseline");
-      expect(line).toContain("https://github.com/loopdive/js2/actions/runs/1/job/2");
+      expect(line).toContain("https://github.com/loopdive/js2wasm/actions/runs/1/job/2");
     });
 
     it("says 'unknown' rather than lying when the step cannot be identified", () => {

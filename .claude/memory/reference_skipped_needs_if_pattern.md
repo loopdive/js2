@@ -17,6 +17,6 @@ if: |
   needs.A.result != 'cancelled'
 ```
 
-Used in `.github/workflows/publish-npm.yml` (#2196 / loopdive/js2#389): `verify-version` is `if: github.event_name == 'push'` (tag-publish only); `publish-npm needs: verify-version` uses the pattern above so the `workflow_dispatch` dry-run (where verify-version is skipped) still runs, while a real version-mismatch failure on a tag push blocks the publish.
+Used in `.github/workflows/publish-npm.yml` (#2196 / loopdive/js2wasm#389): `verify-version` is `if: github.event_name == 'push'` (tag-publish only); `publish-npm needs: verify-version` uses the pattern above so the `workflow_dispatch` dry-run (where verify-version is skipped) still runs, while a real version-mismatch failure on a tag push blocks the publish.
 
 To parse a workflow YAML locally in this repo (no `pyyaml`, `yaml` is only a pnpm-nested dep): `import('/workspace/node_modules/.pnpm/yaml@*/node_modules/yaml/dist/index.js')` — glob the `.pnpm` path. See [[reference_no_rebuild_helper_body_at_finalize]] for other CI/build gotchas.

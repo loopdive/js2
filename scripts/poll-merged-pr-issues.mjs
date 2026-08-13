@@ -4,7 +4,7 @@
 // This is intentionally a narrow reader/updater:
 // - reads only issues currently marked `status: in-review`
 // - requires an explicit PR reference (`pr: 123`, `pr_url: ...`, or a body line
-//   such as `PR: https://github.com/loopdive/js2/pull/123`)
+//   such as `PR: https://github.com/loopdive/js2wasm/pull/123`)
 // - marks the issue `done` only after every linked PR has merged
 // - never merges PRs, comments on GitHub, or pushes by itself
 
@@ -25,7 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_REPO = "loopdive/js2";
+const DEFAULT_REPO = "loopdive/js2wasm";
 const DEFAULT_INTERVAL_MS = 60_000;
 const ISSUE_FILE_RE = /^\d+[a-z]?(?:[-_].+)?\.md$/i;
 const EXPLICIT_PR_KEYS = ["pr", "merged_pr", "resolved_by_pr", "pull_request", "pr_url", "github_pr"];

@@ -126,7 +126,7 @@ describe("Symphony pull-request reconciliation", () => {
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr view 99"*"--repo loopdive/js2"*)
+  *"pr view 99"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '{"number":99,"state":"OPEN","url":"https://example.test/99","headRefName":"agent/99","headRefOid":"sha99","statusCheckRollup":[{"name":"quality","status":"COMPLETED","conclusion":"TIMED_OUT"}]}'
     ;;
   *) exit 64 ;;
@@ -135,7 +135,9 @@ esac
     );
     chmodSync(fakeGh, 0o755);
 
-    expect(readPullRequest({ command: fakeGh, cwd: tempDir, number: 99, repository: "loopdive/js2" })).toMatchObject({
+    expect(
+      readPullRequest({ command: fakeGh, cwd: tempDir, number: 99, repository: "loopdive/js2wasm" }),
+    ).toMatchObject({
       number: 99,
       status: "failed",
       headBranch: "agent/99",
@@ -151,7 +153,7 @@ esac
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr list --head agent/100"*"--repo loopdive/js2"*)
+  *"pr list --head agent/100"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '[{"number":100,"state":"OPEN","headRefName":"agent/100","headRefOid":"sha100","statusCheckRollup":[]}]'
     ;;
   *) exit 64 ;;
@@ -165,7 +167,7 @@ esac
         branch: "agent/100",
         command: fakeGh,
         cwd: tempDir,
-        repository: "loopdive/js2",
+        repository: "loopdive/js2wasm",
       }),
     ).toMatchObject({ number: 100, status: "pending", headBranch: "agent/100" });
   });
@@ -177,7 +179,7 @@ esac
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr list --head symphony/porffor/2953"*"--repo loopdive/js2"*)
+  *"pr list --head symphony/porffor/2953"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '[{"number":3128,"state":"MERGED","mergedAt":"2026-07-16T08:00:00Z","headRefName":"symphony/porffor/2953","headRefOid":"old-sha","statusCheckRollup":[]}]'
     ;;
   *) exit 64 ;;
@@ -191,7 +193,7 @@ esac
         branch: "symphony/porffor/2953",
         command: fakeGh,
         cwd: tempDir,
-        repository: "loopdive/js2",
+        repository: "loopdive/js2wasm",
         excludeNumbers: [3128],
       }),
     ).toBeNull();
@@ -204,7 +206,7 @@ esac
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr list --head symphony/porffor/2953-after-pr-3128"*"--repo loopdive/js2"*)
+  *"pr list --head symphony/porffor/2953-after-pr-3128"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '[{"number":3128,"state":"MERGED","mergedAt":"2026-07-16T08:00:00Z","headRefName":"symphony/porffor/2953-after-pr-3128","headRefOid":"old-sha","statusCheckRollup":[]},{"number":3130,"state":"OPEN","headRefName":"symphony/porffor/2953-after-pr-3128","headRefOid":"new-sha","statusCheckRollup":[]}]'
     ;;
   *) exit 64 ;;
@@ -218,7 +220,7 @@ esac
         branch: "symphony/porffor/2953-after-pr-3128",
         command: fakeGh,
         cwd: tempDir,
-        repository: "loopdive/js2",
+        repository: "loopdive/js2wasm",
         excludeNumbers: [3128],
       }),
     ).toMatchObject({ number: 3130, status: "pending", headBranch: "symphony/porffor/2953-after-pr-3128" });
@@ -265,7 +267,7 @@ polling:
   interval_ms: 10
 pull_requests:
   enabled: true
-  repository: loopdive/js2
+  repository: loopdive/js2wasm
   command: ${fakeGh}
   poll_interval_ms: 10
   review_states: [in-progress, in-review]
@@ -292,7 +294,7 @@ Issue {{ issue.identifier }} branch {{ workspace.branch }}
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr view 3128"*"--repo loopdive/js2"*) cat "$PR_RESPONSE" ;;
+  *"pr view 3128"*"--repo loopdive/js2wasm"*) cat "$PR_RESPONSE" ;;
   *) exit 64 ;;
 esac
 `,
@@ -373,7 +375,7 @@ polling:
   interval_ms: 10
 pull_requests:
   enabled: true
-  repository: loopdive/js2
+  repository: loopdive/js2wasm
   command: ${fakeGh}
   poll_interval_ms: 10
   review_states: [in-progress, in-review]
@@ -400,8 +402,8 @@ Issue {{ issue.identifier }} branch {{ workspace.branch }}
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr view 3128"*"--repo loopdive/js2"*) cat "$PR_RESPONSE" ;;
-  *"pr list --head symphony/porffor/2953-after-pr-3128"*"--repo loopdive/js2"*)
+  *"pr view 3128"*"--repo loopdive/js2wasm"*) cat "$PR_RESPONSE" ;;
+  *"pr list --head symphony/porffor/2953-after-pr-3128"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '[{"number":3130,"state":"OPEN","headRefName":"symphony/porffor/2953-after-pr-3128","headRefOid":"slice-two-sha","statusCheckRollup":[]}]'
     ;;
   *) exit 64 ;;
@@ -483,7 +485,7 @@ polling:
   interval_ms: 10
 pull_requests:
   enabled: true
-  repository: loopdive/js2
+  repository: loopdive/js2wasm
   command: ${fakeGh}
   poll_interval_ms: 10
   review_states: [in-progress, in-review]
@@ -510,7 +512,7 @@ Issue {{ issue.identifier }}
       fakeGh,
       `#!/bin/sh
 case "$*" in
-  *"pr list --head symphony/porffor/2953"*"--repo loopdive/js2"*)
+  *"pr list --head symphony/porffor/2953"*"--repo loopdive/js2wasm"*)
     printf '%s\\n' '[{"number":3128,"state":"MERGED","mergedAt":"2026-07-16T08:00:00Z","headRefName":"symphony/porffor/2953","headRefOid":"slice-one-sha","statusCheckRollup":[]}]'
     ;;
   *) exit 64 ;;
@@ -600,7 +602,7 @@ polling:
   interval_ms: 10
 pull_requests:
   enabled: true
-  repository: loopdive/js2
+  repository: loopdive/js2wasm
   command: ${fakeGh}
   poll_interval_ms: 10
   review_states: [in-review, in-progress]

@@ -5,7 +5,7 @@
 // WHY THIS EXISTS (#1958c): workflow runs triggered by PRs from a fork need a
 // maintainer to click "Approve and run" the first time (GitHub's fork-PR
 // safety gate). Our dev agents all push to the `ttraenkler/js2` fork and open
-// PRs against `loopdive/js2`, so EVERY one of their CI runs lands in
+// PRs against `loopdive/js2wasm`, so EVERY one of their CI runs lands in
 // `action_required` until a human approves it. On 2026-06-12 ~90 runs stranded
 // this way until a tech-lead session swept them by hand — and that manual sweep
 // dies with the session. This script approves the backlog automatically on a
@@ -34,7 +34,7 @@
 import { execFileSync } from "node:child_process";
 
 const DRY = process.env.DRY_RUN === "1" || process.argv.includes("--dry-run");
-const REPO = process.env.GH_REPO || "loopdive/js2";
+const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const TRUSTED_FORK = process.env.TRUSTED_FORK || "ttraenkler/js2";
 const MAX_APPROVE = Number(process.env.MAX_APPROVE || 100);
 

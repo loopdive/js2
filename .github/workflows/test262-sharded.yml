@@ -2913,7 +2913,7 @@ jobs:
       #
       # Only the *small* JSON files go to main (the large jsonl lives only in the
       # baselines repo, per #1528). MAIN_DEPLOY_KEY is the private half of the
-      # write-access deploy key registered on loopdive/js2; it is what the ruleset
+      # write-access deploy key registered on loopdive/js2wasm; it is what the ruleset
       # bypass relies on — do NOT swap this back to GITHUB_TOKEN/HTTPS or GH013
       # returns (#1861).
       - name: Commit refreshed summary JSON to main repo
@@ -2967,7 +2967,7 @@ jobs:
           # --- Set up the SSH deploy key for the main-repo push so it bypasses
           # the ruleset's GH013 block. Mirrors the baselines-repo push step. ---
           if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
-            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset. The main-repo baseline push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key (GITHUB_TOKEN is blocked by ruleset GH013). Add it as an Actions secret named MAIN_DEPLOY_KEY."
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset. The main-repo baseline push needs the private half of the loopdive/js2wasm 'MAIN_DEPLOY_KEY' deploy key (GITHUB_TOKEN is blocked by ruleset GH013). Add it as an Actions secret named MAIN_DEPLOY_KEY."
             exit 1
           fi
           eval "$(ssh-agent -s)"
@@ -2976,7 +2976,7 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           # Add a dedicated SSH remote for the deploy-key push + its rebase fetch.
           # The checkout's origin is HTTPS; we don't rewrite it (other steps may
-          # rely on it). github.repository is owner/name (e.g. loopdive/js2).
+          # rely on it). github.repository is owner/name (e.g. loopdive/js2wasm).
           MAIN_SSH_REMOTE="git@github.com:${{ github.repository }}.git"
           git remote remove deploykey 2>/dev/null || true
           git remote add deploykey "$MAIN_SSH_REMOTE"

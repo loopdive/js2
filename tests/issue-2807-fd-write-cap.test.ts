@@ -48,7 +48,7 @@ function frame(body: Uint8Array): Uint8Array {
 
 const MiB = 1024 * 1024;
 
-// A valid JSON-array body `[null,null,…]` of ~`approx` bytes — the loopdive/js2#389
+// A valid JSON-array body `[null,null,…]` of ~`approx` bytes — the loopdive/js2wasm#389
 // payload shape the re-chunker splits on. nm_js2wasm_node_process now re-chunks a
 // body > 1 MiB into a sequence of valid <=1 MiB `[run]` frames (#2810), so the
 // #2807 coverage drives a JSON body (not arbitrary bytes) and asserts re-chunk

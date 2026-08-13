@@ -34,12 +34,12 @@ on it** — it drifted once already (`linear-tests` was listed here as required
 for months while the ruleset had six contexts without it, #3934):
 
 ```sh
-gh api repos/loopdive/js2/rules/branches/main \
+gh api repos/loopdive/js2wasm/rules/branches/main \
   --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
 ```
 
 Enforcement lives in a repo **ruleset**, not classic branch protection — the
-classic endpoint (`gh api repos/loopdive/js2/branches/main/protection`) answers
+classic endpoint (`gh api repos/loopdive/js2wasm/branches/main/protection`) answers
 `404 Branch not protected`, which is not the same as "unprotected". Verified
 2026-08-01; the ruleset returned exactly the six rows below.
 
@@ -90,7 +90,7 @@ skip inside a run that did start is satisfied, not missing.
 only `{CLEAN, HAS_HOOKS}` — `UNSTABLE` is deliberately excluded. A PR can
 therefore have every required check green and never be enqueued, indefinitely,
 with nothing naming the cause (#3878, #3904, #3919/#3934). Re-run the failed job
-(`gh run rerun <run-id> -R loopdive/js2 --failed`) to get back to `CLEAN`.
+(`gh run rerun <run-id> -R loopdive/js2wasm --failed`) to get back to `CLEAN`.
 
 **3. `auto-refresh-prs` SKIPS DRAFTS.** `.github/workflows/auto-refresh-prs.yml`
 filters to `BEHIND`, non-draft, non-`hold` PRs, so a **draft PR is never
@@ -223,10 +223,10 @@ Two test262 workflows currently run on PRs:
     regressed one of these back onto `GITHUB_TOKEN`; do NOT swap any of them
     back. If GH013 recurs, first confirm the ruleset still lists the
     `DeployKey: always` bypass actor
-    (`gh api /repos/loopdive/js2/rulesets/16700772 --jq .bypass_actors`).
+    (`gh api /repos/loopdive/js2wasm/rulesets/16700772 --jq .bypass_actors`).
   - ⚠️ **`refresh-baseline.yml` is `state=disabled_manually` and CANNOT be
     dispatched** (verified 2026-07-25 and again 2026-08-01:
-    `gh api repos/loopdive/js2/actions/workflows/265204741 --jq .state`; a
+    `gh api repos/loopdive/js2wasm/actions/workflows/265204741 --jq .state`; a
     `workflow_dispatch` returns **HTTP 422 "Cannot trigger a
     'workflow_dispatch' on a disabled workflow"** — it fails before doing
     anything). It is the only non-active workflow in the repo. Any runbook
@@ -240,7 +240,7 @@ Two test262 workflows currently run on PRs:
     there is not evidence of non-existence — query the API by id or path.
   - **Before relying on ANY documented lever, check it is enabled**, not just
     that it exists:
-    `gh api repos/loopdive/js2/actions/workflows --jq '.workflows[]|"\(.state) \(.path)"' | grep -v '^active'`.
+    `gh api repos/loopdive/js2wasm/actions/workflows --jq '.workflows[]|"\(.state) \(.path)"' | grep -v '^active'`.
     Disabling a workflow silently invalidates every runbook line naming it and
     nothing links the two, so an untested recovery path is indistinguishable
     from a working one until the moment it is needed. When disabling a
@@ -470,7 +470,7 @@ label. Ordinary in-flight PRs log `BLOCKED — transient (...)` and stay quiet.
 **Shepherd/lead action on that label — read it every sweep:**
 
 ```bash
-gh pr list -R loopdive/js2 --state open --label needs-manual-enqueue
+gh pr list -R loopdive/js2wasm --state open --label needs-manual-enqueue
 ```
 
 Each such PR needs **one** deliberate enqueue with a user PAT (the GraphQL
@@ -721,7 +721,7 @@ rather than trusting the date** (this table said seven — it carried
 `linear-tests`, which the ruleset has never contained, #3934):
 
 ```sh
-gh api repos/loopdive/js2/rules/branches/main \
+gh api repos/loopdive/js2wasm/rules/branches/main \
   --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
 ```
 
@@ -746,7 +746,7 @@ checks list but its `pull_request` event path is a hard fail on regression
 ## 8. How an admin applies this policy
 
 The script `scripts/enable-branch-protection.sh` PUTs the repo **ruleset**
-(`/repos/loopdive/js2/rulesets/16700772`) with the JSON payload corresponding to
+(`/repos/loopdive/js2wasm/rulesets/16700772`) with the JSON payload corresponding to
 the rules above. It reads the live ruleset first and replaces only the
 required-check list, preserving merge-queue parameters, conditions, enforcement
 and bypass actors. Usage:
@@ -781,7 +781,7 @@ Verification is still the rule over trust, since the ruleset can be edited in
 the GitHub UI without touching this repo:
 
 ```sh
-gh api repos/loopdive/js2/rules/branches/main \
+gh api repos/loopdive/js2wasm/rules/branches/main \
   --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
 ```
 

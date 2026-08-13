@@ -34,7 +34,7 @@ but the failing line is `DUPLICATE IDs (N):` just above `--check FAILED`.
 hold/do-not-merge/wip) and dequeue it, so the non-colliding PRs drain instead of
 churning. NB: **`gh pr edit --add-label` fails** on this repo (aborts on a
 Projects-classic GraphQL deprecation error) — use the REST endpoint instead:
-`gh api -X POST repos/loopdive/js2/issues/<pr>/labels -f 'labels[]=hold'`.
+`gh api -X POST repos/loopdive/js2wasm/issues/<pr>/labels -f 'labels[]=hold'`.
 The merge queue does NOT read the label (only auto-enqueue does), so dequeue
 once AFTER the label lands or auto-enqueue re-adds within ~1 min.
 

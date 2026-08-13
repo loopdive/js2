@@ -17,7 +17,7 @@ regressions"). A diagnosis based on the truncated list falsely reads as
 **Reliable path**: list check-runs on the queue ref's commit SHA:
 
 ```bash
-gh api "repos/loopdive/js2/commits/<sha-of-gh-readonly-queue-ref>/check-runs" \
+gh api "repos/loopdive/js2wasm/commits/<sha-of-gh-readonly-queue-ref>/check-runs" \
   --paginate --jq '.check_runs[] | .name + " " + .conclusion'
 ```
 

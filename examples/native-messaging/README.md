@@ -33,7 +33,7 @@ Messaging wire protocol, so a single framed request comes back **byte-identical*
 from every one (pinned by [`tests/native-messaging-comparison.test.ts`](../../tests/native-messaging-comparison.test.ts)).
 What differs is the API each reaches for to touch stdio — and therefore the wasm
 imports it emits, whether the read loop is synchronous or event-driven, and which
-runtimes can launch the result. The original report ([loopdive/js2#389](https://github.com/loopdive/js2/issues/389))
+runtimes can launch the result. The original report ([loopdive/js2wasm#389](https://github.com/loopdive/js2wasm/issues/389))
 asked for a host that runs under a WASI runtime, "not chasing Node.js" — the raw
 `nm_js2wasm_wasi_p1.ts` is that answer; the others show the same protocol expressed through
 progressively higher-level (and more Node-shaped) surfaces.
@@ -77,14 +77,14 @@ As of **#2631** the host uses the **real Node fd-based synchronous primitives**
 `fs.readSync(fd, …)` / `fs.writeSync(fd, …)` from `node:fs` instead of the
 js2wasm-specific `process.stdin.read(buf, offset)` shape — which matched **no**
 real Node API (`process.stdin` is an async Duplex stream with no synchronous
-buffer-filling `read`; loopdive/js2#389). The same source now (a) compiles via
+buffer-filling `read`; loopdive/js2wasm#389). The same source now (a) compiles via
 js2wasm to standalone WASI **and** (b) runs **unmodified** under real `node`.
 
 **To get a module you can run directly under `wasmtime`, compile with `--target
 wasi` ALONE** (no `--link node:fs`): the `node:fs` `readSync`/`writeSync` calls
 lower **inline** to `wasi_snapshot_preview1` `fd_read`/`fd_write`, so the emitted
 module imports ONLY `wasi_snapshot_preview1` and owns its own memory (#2655). This
-is the runnable standalone path the loopdive/js2#389 reporter wanted.
+is the runnable standalone path the loopdive/js2wasm#389 reporter wanted.
 
 `--link node:fs` is a **separate modular-linking variant**, NOT a
 run-directly-under-bare-wasmtime flag: it makes the module _import_ a stable
@@ -92,7 +92,7 @@ run-directly-under-bare-wasmtime flag: it makes the module _import_ a stable
 against [`node-fs.wat`](./node-fs.wat) (which maps them to WASI `fd_read`/
 `fd_write`) — or satisfy from a JS host's real `node:fs`. A `--link node:fs`
 module run under bare `wasmtime` with no link step fails with `unknown import:
-node:fs::readSync` (loopdive/js2#389 bug 2) — that is expected; link it first. See
+node:fs::readSync` (loopdive/js2wasm#389 bug 2) — that is expected; link it first. See
 [`NODE-FS-SHIM.md`](./NODE-FS-SHIM.md) for the link step.
 
 | Capability                                            | Status | Detail                                                                                                                                                                                                                             |
@@ -181,7 +181,7 @@ satisfied — so you must **link** it against `node-fs.wasm` (built from
 [`node-fs.wat`](./node-fs.wat), which maps `node:fs` → WASI `fd_read`/`fd_write`),
 a native WASI host, or the real `node:fs` module under a JS host BEFORE it can
 run. Running a `--link node:fs` module directly under bare `wasmtime` with no
-link step fails with `unknown import: node:fs::readSync` (loopdive/js2#389 bug 2)
+link step fails with `unknown import: node:fs::readSync` (loopdive/js2wasm#389 bug 2)
 — that is by design; link it first. See [`NODE-FS-SHIM.md`](./NODE-FS-SHIM.md) for
 the link step. Use this variant only when you want the same binary to link against
 an external `node:fs` provider; for a drop-in standalone host, prefer `--target
@@ -221,7 +221,7 @@ in Node via `WebAssembly.instantiate`), where the import wiring it provides is
 required. Treat it as the JS-host on-ramp for the module; for the standalone
 WASI path it is a harmless extra artifact you can ignore or delete.
 
-### Bundling `nm_js2wasm_wasi_p1.ts`: the `wasm:memory` / `wasi_snapshot_preview1` ghost imports (loopdive/js2#389)
+### Bundling `nm_js2wasm_wasi_p1.ts`: the `wasm:memory` / `wasi_snapshot_preview1` ghost imports (loopdive/js2wasm#389)
 
 The raw-WASI host [`nm_js2wasm_wasi_p1.ts`](./nm_js2wasm_wasi_p1.ts) imports from
 two module specifiers that **have no resolvable JS module** — they are

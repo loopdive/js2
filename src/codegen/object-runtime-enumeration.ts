@@ -1149,7 +1149,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // `ctx.wasi` but leaves `ctx.standalone` false), so gating this registration on
   // `ctx.standalone` alone left `funcMap.get("__object_is")` undefined in WASI,
   // and the define helper baked an undefined funcIdx → "function index out of
-  // range — undefined at __defineProperty_value" hard emit error (loopdive/js2#389).
+  // range — undefined at __defineProperty_value" hard emit error (loopdive/js2wasm#389).
   // The compatibility-provider path still owns `__object_is` via its JS import,
   // so its output stays byte-identical.
   if (ctx.targetProfile.semanticProviders === "native-first") {
