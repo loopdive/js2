@@ -58,6 +58,7 @@ import {
   invokeNativeFunctionCallback,
   normalizeModuleCallbackException,
 } from "./runtime/native-function-source.js";
+import * as test262Host from "./runtime/test262-harness-host.js"; // (#4394)
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./ir/async-runtime-providers.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
@@ -1548,6 +1549,8 @@ const _wasmGetterCallbackWrappers = new WeakSet<Function>();
 const _wasmVoidHostCallbackCache = new WeakMap<object, Function>();
 const _test262ErrorConstructors = new WeakSet<Function>();
 
+_test262ErrorConstructors.add(test262Host.HostTest262Error);
+
 // (#3369) Callback bridges must remain usable while the evaluated program has
 // installed non-writable numeric properties on Array.prototype. `[].push(x)`
 // and direct indexed assignment perform [[Set]] and can be rejected by such an
@@ -2448,6 +2451,10 @@ function _instanceofResult(
       return 0;
     }
   }
+
+  // (#4394) `err instanceof Test262Error` against the MODULE's own carrier —
+  // the prototype walk below can never reach a compiled closure.
+  if (test262Host.isModuleTest262ErrorInstance(v, rawTarget)) return 1;
 
   try {
     return v instanceof (target as { new (...a: unknown[]): unknown }) ? 1 : 0;
@@ -9123,15 +9130,10 @@ function resolveImport(
           return (v: any): any => Object(v);
         }
         // Test262Error is a simple Error subclass used by the test262 harness
-        class Test262Error extends Error {
-          constructor(msg?: string) {
-            super(msg);
-            this.name = "Test262Error";
-          }
-        }
-        if (intent.className === "Test262Error") {
-          _test262ErrorConstructors.add(Test262Error);
-        }
+        // (#4394) Was a fresh `class Test262Error extends Error` minted per
+        // resolver call, so two modules — or two imports in one module — saw
+        // different constructor identities. Bound to the hoisted single class.
+        const Test262Error = test262Host.HostTest262Error;
         const builtinCtors: Record<string, Function> = {
           Number,
           Boolean,
@@ -13208,7 +13210,13 @@ assert._isSameValue = isSameValue;
           unwrapForHost: _unwrapForHost,
         });
       }
-      if (name === "__reflect_construct")
+      // (#4394) The `_newtarget` twin is the same operation with the third
+      // argument syntactically PRESENT. §26.1.2 treats absent (step 2, defaults
+      // to target) and present-not-a-constructor (step 3, TypeError) oppositely,
+      // and the fixed-arity boundary pads an omitted newTarget with null — so
+      // presence rides on the import NAME rather than on the value.
+      if (name === "__reflect_construct" || name === "__reflect_construct_newtarget") {
+        const newTargetIsPresent = name === "__reflect_construct_newtarget";
         return (ctor: any, args: any, newTarget: any): any => {
           const exports = callbackState?.getExports();
           const wrappedCtor = _isWasmStruct(ctor) ? _wrapForHost(ctor, exports) : ctor;
@@ -13219,12 +13227,13 @@ assert._isSameValue = isSameValue;
           if (!_isWasmStruct(ctor) && Array.isArray(wrappedArgs)) {
             wrappedArgs = wrappedArgs.map((a: any) => _marshalHostConstructArg(a, exports, callbackState, wrappedCtor));
           }
-          if (newTarget === undefined || newTarget === null) {
+          if (!newTargetIsPresent && (newTarget === undefined || newTarget === null)) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
           }
           const wrappedNew = _isWasmStruct(newTarget) ? _wrapForHost(newTarget, exports) : newTarget;
           return Reflect.construct(wrappedCtor, wrappedArgs ?? [], wrappedNew);
         };
+      }
       // (#1732 S1) __construct(callee, argsArray) — runtime [[Construct]] for a
       // `new f(...)` whose callee value cannot be proven constructable at
       // compile time (e.g. `var f = String.prototype.indexOf; new f`). Per
@@ -13456,6 +13465,9 @@ assert._isSameValue = isSameValue;
       // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
       // symbol preserves identity/description) then `Object()` it into a wrapper
       // object. `Symbol.prototype.description` already unwraps such wrappers.
+      // (#4394) `new Test262Error(msg)` in a module that DECLARES its own
+      // `function Test262Error` — see runtime/test262-harness-host.ts.
+      if (name === "__new_Test262Error_ctor") return test262Host.makeTest262ErrorWithModuleCtor;
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =
@@ -15374,6 +15386,8 @@ assert._isSameValue = isSameValue;
             }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
+            // (#4394) The host Test262Error by name — no registry knows it.
+            if (ctorName === "Test262Error" && test262Host.isHostTest262Error(v)) return 1;
           } catch {
             /* fall through to user-class tag check */
           }
@@ -15780,6 +15794,9 @@ assert._isSameValue = isSameValue;
       // non-harness contexts is a possible follow-up.)
       return () => {};
     }
+    // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the
+    // maker the compiler picks for an ordinary function definition — the one
+    // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
       return (id: number, cap: any) => {
         // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
@@ -15787,7 +15804,8 @@ assert._isSameValue = isSameValue;
         // non-negative `__cb_N` ids and remain on the existing dispatch path.
         if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {

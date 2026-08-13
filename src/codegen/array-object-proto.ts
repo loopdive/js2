@@ -33,6 +33,7 @@ import {
 } from "./native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
+import { ensureNativeArrayHof, NATIVE_HOF_METHODS, NATIVE_HOF_REDUCE } from "./hof-native.js"; // (#4394)
 import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody } from "./dataview-native.js";
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
@@ -703,6 +704,49 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
  * compile refusal). Returns externref (the uniform closure-call result type).
  */
 function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  // (#4394) The higher-order members already have a native standalone loop —
+  // `__hof_<name>`, emitted by `ensureNativeArrayHof` for the DYNAMIC receiver
+  // arm. It reads its receiver through `__extern_length` / `__extern_get_idx`,
+  // so it serves an arbitrary array-LIKE, which is exactly what the reflective
+  // `Array.prototype.map.call(arguments, String)` form needs. Route to it
+  // instead of throwing; `compareArray.format` in the test262 harness is that
+  // exact call, and its TypeError was surfacing as a bogus `error.constructor`
+  // on nine standalone harness tests.
+  //
+  // The reduce family takes `(recv, cb, init, hasInit)` rather than
+  // `(recv, cb, thisArg)`, so it stays on the refusal until its own arg
+  // marshalling is written.
+  if (member !== "slice" && NATIVE_HOF_METHODS.has(member) && !NATIVE_HOF_REDUCE.has(member)) {
+    const hofIdx = ensureNativeArrayHof(ctx, member);
+    if (hofIdx !== undefined) {
+      // §23.1.3 step 1: ToObject(this) — a null/undefined receiver is a
+      // TypeError BEFORE any iteration. The old refusal threw for every
+      // receiver, so `Array.prototype.map.call(undefined)` passed by accident;
+      // routing to the loop without this guard silently returns an empty
+      // result instead (measured: 3 regressions in the map/filter suites).
+      // Mirrors the `String.prototype.<member>` receiver guard below: under the
+      // undefined-singleton regime `undefined` is a NON-null sentinel externref,
+      // so `ref.is_null` alone misses `.call(undefined)`.
+      const thisThrow: Instr[] = [];
+      emitBrandCheckTypeError(ctx, thisThrow, `Array.prototype.${member} called on null or undefined`);
+      fctx.body.push({ op: "local.get", index: 1 }, { op: "ref.is_null" });
+      const isUndefinedIdx = undefinedSingletonActive(ctx) ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+      if (isUndefinedIdx !== undefined) {
+        fctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
+      }
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thisThrow });
+      // The closure ABI declares only as many params as the member's own
+      // `.length`, so `thisArg` (param 3) exists for `map`/`forEach`/… but not
+      // for the 1-arity members. Substitute a null externref when absent
+      // rather than reading a slot that was never declared.
+      const paramCount = fctx.params.length;
+      fctx.body.push({ op: "local.get", index: 1 }); // receiver (`this`)
+      fctx.body.push(paramCount > 2 ? { op: "local.get", index: 2 } : { op: "ref.null.extern" }); // callback
+      fctx.body.push(paramCount > 3 ? { op: "local.get", index: 3 } : { op: "ref.null.extern" }); // thisArg
+      fctx.body.push({ op: "call", funcIdx: hofIdx });
+      return { kind: "externref" };
+    }
+  }
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
     // then, a reflective call degrades to a catchable TypeError, not a compile error.
