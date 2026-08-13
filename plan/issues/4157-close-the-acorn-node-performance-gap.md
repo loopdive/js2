@@ -3528,3 +3528,62 @@ calls. The gain is larger than the site count suggests because the preamble
 `wrapBodyWithFlatten` installs sits **above** `__str_equals`'s `ref.eq`, length
 and hash rejects: a pre-flattening caller guarantees the helper never reaches
 the skips it exists to take. Removing the caller-side call restores them.
+
+## 2026-08-13 (27) — `__extern_get` static-name IC: RESCUED, UNFINISHED, does not yet fire
+
+**Status: incomplete. Do not read the presence of this code as a working
+optimisation.** It is committed flag-gated OFF and byte-identical when unset so
+that 479 lines of work survive; it currently patches **zero** sites.
+
+The agent building it was killed by a session restart before committing or
+reporting. Its files existed only as **untracked** files in an ephemeral
+worktree — the same loss pattern recorded in the 2026-08-07 handoff, where two
+branches had to be rescued the same way. Recovered, wired, and diagnosed here.
+
+### What it is meant to do
+
+`__extern_get` runs **506,752 times per parse** and has not moved by a single
+call across seven attempts, while everything around it fell 66–100 %. Its
+per-key cache already serves **87.24 %** of those calls, so the target is not a
+better cache but **removing the call** at *static-name* sites, where the key is a
+compile-time constant and the key `ref.test`/`ref.cast`/hash-load are provably
+unnecessary. `extern-get-inline-ic.ts` copies the cache-hit arm out of the
+emitted helper and splices it at the site, with the unmodified call as the miss
+arm — the shape that worked three times (`member-get-inline-ic`,
+`is-truthy-inline-ic`, `smi-box-fast-path`).
+
+### Two defects found while rescuing it
+
+1. **FIXED — helper lookup by index arithmetic.** It resolved the helper as
+   `ctx.mod.functions[getIdx - ctx.numImportFuncs]`. `ctx.funcMap` holds
+   **mint-time handles** (import-space at registration, before dead-import
+   elimination), not final list positions, so this landed on an unrelated
+   function and the pass took a **silent** early return — flag ON produced a
+   byte-identical binary, which reads exactly like "the optimisation does
+   nothing". This is the trap `alloc-census.ts` already records: *"recomputing
+   final index from list position matched zero of 261k measured calls."*
+   Replaced with the by-name lookup every other finalize fill uses.
+2. **OPEN — the arm extractor refuses.** With the lookup fixed it reports
+   `REFUSED: __extern_get body is not the cache-arm shape
+   (prefix-not-key-load)`. Its own placement comment names the cause: the arm it
+   copies must be the **first** thing in `__extern_get`, and later fills
+   (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) unshift ahead of
+   it. The pass is currently wired after `inlineUserFunctions`, which is the
+   wrong point in the finalize order. **Fixing this is finding the slot where
+   the cache arm is still the prefix** — read the placement contract in the
+   file header first.
+
+### Worth knowing before resuming
+
+- The refusal is **loud and specific**, which is the design working — it declines
+  rather than half-copying an arm it does not recognise. Contrast defect 1,
+  which was silent and therefore far more dangerous.
+- Before claiming any result, use the `JS2WASM_EXTERN_GET_IC_POISON=1` probe the
+  agent already built: corrupt the fast arm and confirm the workload's answer
+  moves off checksum 422. Two confident nulls in this issue were changes that had
+  never been enabled.
+- Expected value, stated honestly: even **total** elimination of `__extern_get`
+  is worth ~8 % of runtime, and entry (28) measures call-removal converting to
+  wall time at roughly **1:7**. This is a low-single-digit-percent lever against a
+  ~6.7–7.7× gap. It is the largest remaining helper population, not a path to
+  parity.

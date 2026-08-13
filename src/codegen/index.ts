@@ -285,6 +285,7 @@ import { peepholeOptimize } from "./peephole.js";
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
+import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5527,7 +5528,14 @@ export function generateModule(
     // is set, so the default binary stays byte-identical. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    inlineUserFunctions(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
+    inlineUserFunctions(ctx);
+    // (#4157) Inline `__extern_get`'s per-key cache-hit arm at static-name call
+    // sites. Deliberately the LAST body-reading pass before branding: the arm it
+    // copies must be the first thing in `__extern_get`, and later fills
+    // (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) can unshift in
+    // front of it — the extractor's shape check is what detects that and
+    // declines. Default OFF ⇒ byte-identical.
+    inlineExternGetCallSites(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -7888,7 +7896,14 @@ export function generateMultiModule(
     // is set, so the default binary stays byte-identical. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
-    inlineUserFunctions(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
+    inlineUserFunctions(ctx);
+    // (#4157) Inline `__extern_get`'s per-key cache-hit arm at static-name call
+    // sites. Deliberately the LAST body-reading pass before branding: the arm it
+    // copies must be the first thing in `__extern_get`, and later fills
+    // (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) can unshift in
+    // front of it — the extractor's shape check is what detects that and
+    // declines. Default OFF ⇒ byte-identical.
+    inlineExternGetCallSites(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     finalizeFunctionPoisonPillCalls(ctx);
