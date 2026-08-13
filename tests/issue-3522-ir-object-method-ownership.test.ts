@@ -33,6 +33,26 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectMeasuredImportSurface(
+  prepared: CompileResult,
+  direct: CompileResult,
+  target: (typeof TARGETS)[number],
+): void {
+  const preparedImports = importLabels(prepared);
+  const directImports = importLabels(direct);
+  if (target === "standalone") {
+    expect(directImports).toEqual([]);
+    expect(preparedImports).toEqual([]);
+    return;
+  }
+  expect(directImports).toEqual(["env::__box_number"]);
+  expect(preparedImports).toEqual(["env::__box_number"]);
+}
+
 describe("#3522 object-method ownership", () => {
   it("keeps the lifted method on its exact inventoried object-method unit", () => {
     const sourceFile = ts.createSourceFile("object-method-identity.ts", SOURCE, ts.ScriptTarget.Latest, true);
@@ -71,16 +91,18 @@ describe("#3522 object-method ownership", () => {
       fileName: `object-method-direct-${target}.ts`,
       experimentalIR: false,
       optimize: true,
+      emitWat: true,
       target,
     });
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
       prepared = await compile(SOURCE, {
         fileName: `object-method-prepared-${target}.ts`,
         experimentalIR: true,
         optimize: true,
+        emitWat: true,
         target,
         trackIrOutcomes: true,
       });
@@ -101,8 +123,10 @@ describe("#3522 object-method ownership", () => {
       preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
-    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]));
     expect(prepared.wat).toContain("(field $$shapeBrand");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectMeasuredImportSurface(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 

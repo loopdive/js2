@@ -43,23 +43,40 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectNoNewImports(prepared: CompileResult, direct: CompileResult, target: (typeof TARGETS)[number]): void {
+  const preparedImports = importLabels(prepared);
+  const directImports = importLabels(direct);
+  expect(preparedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+  expect(preparedImports.length).toBeLessThanOrEqual(directImports.length);
+  if (target === "standalone") {
+    expect(preparedImports).toEqual(directImports);
+    expect(preparedImports).toEqual([]);
+  }
+}
+
 describe("#3522 returned closure ownership", () => {
   it.each(TARGETS)("prepares a returned captured closure and its caller in the %s lane", async (target) => {
     const direct = await compile(SOURCE, {
       fileName: `returned-closure-direct-${target}.ts`,
       experimentalIR: false,
       optimize: true,
+      emitWat: true,
       target,
     });
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "make,run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "make,make__closure_0,run";
       prepared = await compile(SOURCE, {
         fileName: `returned-closure-prepared-${target}.ts`,
         experimentalIR: true,
         trackIrOutcomes: true,
         optimize: true,
+        emitWat: true,
         target,
       });
     } finally {
@@ -85,6 +102,9 @@ describe("#3522 returned closure ownership", () => {
     expect(make.preparedComponentId).toBe(run.preparedComponentId);
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["make", "make__closure_0", "run"]));
+    expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -120,7 +140,7 @@ describe("#3522 returned closure ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "makeAdder,run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "makeAdder,makeAdder__closure_0,run";
       prepared = await compile(VAR_BOUND_SOURCE, {
         fileName: `returned-closure-var-prepared-${target}.ts`,
         experimentalIR: true,
@@ -153,6 +173,7 @@ describe("#3522 returned closure ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(
       expect.arrayContaining(["makeAdder", "makeAdder__closure_0", "run"]),
     );
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 });

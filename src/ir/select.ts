@@ -8247,12 +8247,18 @@ export function buildLocalCallGraph(
             return;
           }
           const callee = node.expression.text;
-          if (decls.has(callee)) {
+          const localVariable = currentModuleBindingResolver?.localVariableDeclaration(node.expression);
+          if (
+            localBindings.names.has(callee) ||
+            (localVariable !== undefined && localClosureDeclarationsContain(localBindings.declarations, localVariable))
+          ) {
+            // Slice 3: closure / nested-fn binding within this outer.
+            // Variable-backed callables use checker-resolved declaration
+            // identity so a block-local alias cannot hide an ambient or
+            // top-level call with the same text elsewhere in the function.
+          } else if (decls.has(callee)) {
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
-          } else if (localBindings.has(callee)) {
-            // Slice 3: closure / nested-fn binding within this outer.
-            // Intra-function call, dispatched by the IR lowerer.
           } else if (
             currentDynamicRuntimeBuildable &&
             callerName === "stringToNumber" &&
@@ -8433,9 +8439,14 @@ function collectLocalClassDeclarations(
  * Walks only the OUTER body — nested closures' own bindings are
  * captured at lift time, not visible here.
  */
-function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
+function collectLocalClosureBindings(fn: ts.FunctionDeclaration): {
+  readonly names: Set<string>;
+  readonly declarations: Set<ts.VariableDeclaration>;
+} {
   const names = new Set<string>();
-  if (!fn.body) return names;
+  const materializableNames = new Set<string>();
+  const declarations = new Set<ts.VariableDeclaration>();
+  if (!fn.body) return { names, declarations };
   const localValueNames = new Set<string>();
   for (const parameter of fn.parameters) collectBindingNameTexts(parameter.name, localValueNames);
   const collectLocalValueName = (node: ts.Node): void => {
@@ -8461,6 +8472,7 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
       irClosureSignatureFromFunctionTypeNode(p.type)
     ) {
       names.add(p.name.text);
+      materializableNames.add(p.name.text);
     }
   }
   // Top-level walk: only direct children of the outer body. Nested
@@ -8483,7 +8495,14 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
         const literal = ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer);
         const objectMethodValue = isConst && directObjectMethodValueProjection(d.initializer, localValueNames) !== null;
         const aliasInitializer = unwrapProjectionExpression(d.initializer);
-        const callableAlias = isConst && ts.isIdentifier(aliasInitializer) && names.has(aliasInitializer.text);
+        const aliasDeclaration = ts.isIdentifier(aliasInitializer)
+          ? currentModuleBindingResolver?.localVariableDeclaration(aliasInitializer)
+          : undefined;
+        const callableAlias =
+          isConst &&
+          ts.isIdentifier(aliasInitializer) &&
+          ((aliasDeclaration !== undefined && localClosureDeclarationsContain(declarations, aliasDeclaration)) ||
+            materializableNames.has(aliasInitializer.text));
         // Literal closures retain the existing const-only rule. A direct
         // returned-callable binding already passed the ordinary variable
         // statement shape walk for var/let as well; an exact const
@@ -8498,14 +8517,36 @@ function collectLocalClosureBindings(fn: ts.FunctionDeclaration): Set<string> {
           callableAlias ||
           directReturnedCallableSignature(d.initializer, localValueNames) !== null
         ) {
-          names.add(d.name.text);
+          declarations.add(d);
         }
       }
     }
     forEachChild(node, visit);
   };
   forEachChild(fn.body, visit);
-  return names;
+  return { names, declarations };
+}
+
+/**
+ * Incremental TypeScript Programs may retain an equivalent declaration node
+ * from a prior snapshot. Match the stable source site as well as object
+ * identity, while still excluding unrelated same-text bindings.
+ */
+function localClosureDeclarationsContain(
+  declarations: ReadonlySet<ts.VariableDeclaration>,
+  candidate: ts.VariableDeclaration,
+): boolean {
+  for (const declaration of declarations) {
+    if (declaration === candidate) return true;
+    if (
+      declaration.pos === candidate.pos &&
+      declaration.end === candidate.end &&
+      declaration.getSourceFile().fileName === candidate.getSourceFile().fileName
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isFunctionLike(node: ts.Node): boolean {

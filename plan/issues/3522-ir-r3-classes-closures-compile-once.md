@@ -2037,3 +2037,20 @@ executes `const alias = add; alias(input)` through the direct body, requires a
 typed select-stage `call-resolution-unsupported` outcome, and requires zero
 post-claim errors. The valid object-method alias chain remains IR-owned and
 the focused object-method suite is **11/11**.
+
+The call-graph half now resolves every variable-backed callable by exact
+declaration identity as well. Its former function-wide name set could treat a
+later ambient call as local when an earlier block happened to declare a
+same-named callable alias. The regression fixture combines a block-local
+`parseInt` alias with a later ambient `parseInt("42")` call; the function now
+falls back cleanly at selection and executes through the direct body with zero
+post-claim errors. This keeps lexical scope and graph ownership aligned rather
+than letting a name collision surface as a build invariant.
+
+The closure-family parity fixtures now poison every expected lifted body as
+well as its source owner, so a hidden direct compile followed by an IR patch
+cannot satisfy the tests. They also compare the optimized import surfaces:
+standalone remains zero-import, GC introduces no import absent from the direct
+control (and commonly removes generic call/destructuring bridges), and the WAT
+checks reject `__call_m_*` dispatch. All admitted fixtures retain runtime,
+validation, exact IR ownership, and optimized-size parity.

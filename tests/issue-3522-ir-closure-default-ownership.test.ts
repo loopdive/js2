@@ -28,18 +28,34 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectNoNewImports(prepared: CompileResult, direct: CompileResult, target: (typeof TARGETS)[number]): void {
+  const preparedImports = importLabels(prepared);
+  const directImports = importLabels(direct);
+  expect(preparedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+  expect(preparedImports.length).toBeLessThanOrEqual(directImports.length);
+  if (target === "standalone") {
+    expect(preparedImports).toEqual(directImports);
+    expect(preparedImports).toEqual([]);
+  }
+}
+
 describe("#3522 closure default-parameter ownership", () => {
   it.each(TARGETS)("prepares a numeric constant-default suffix in the %s lane", async (target) => {
     const direct = await compile(SOURCE, {
       fileName: `closure-default-direct-${target}.ts`,
       experimentalIR: false,
       optimize: true,
+      emitWat: true,
       target,
     });
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(SOURCE, {
         fileName: `closure-default-prepared-${target}.ts`,
         emitWat: true,
@@ -69,7 +85,9 @@ describe("#3522 closure default-parameter ownership", () => {
     expect(prepared.wat).toContain("i64.reinterpret_f64");
     expect(prepared.wat).toContain("i64.eq");
     expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
     expect(prepared.wat).toMatch(/ref\.func \d+\s+i32\.const 0\s+ref\.null extern\s+local\.get \d+\s+struct\.new \d+/);
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -108,7 +126,7 @@ describe("#3522 closure default-parameter ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(source, {
         fileName: `closure-cross-default-prepared-${target}.ts`,
         experimentalIR: true,
@@ -129,6 +147,7 @@ describe("#3522 closure default-parameter ownership", () => {
     expect(outcome(prepared)).toMatchObject({ legacyBodyEmitted: false, irBodyEmitted: true });
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -153,7 +172,7 @@ describe("#3522 closure default-parameter ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
       prepared = await compile(source, {
         fileName: `closure-captured-default-prepared-${target}.ts`,
         experimentalIR: true,
@@ -174,6 +193,7 @@ describe("#3522 closure default-parameter ownership", () => {
     expect(outcome(prepared)).toMatchObject({ legacyBodyEmitted: false, irBodyEmitted: true });
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]));
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 

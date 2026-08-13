@@ -56,6 +56,25 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectNoImportRegression(
+  direct: CompileResult,
+  prepared: CompileResult,
+  target: (typeof TARGETS)[number],
+): void {
+  const directImports = importLabels(direct);
+  const preparedImports = importLabels(prepared);
+  expect(preparedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+  expect(preparedImports.length).toBeLessThanOrEqual(directImports.length);
+  expect(preparedImports).not.toContain("env::__call_function");
+  expect(preparedImports).not.toContain("env::__js_array_new");
+  expect(preparedImports).not.toContain("env::__js_array_push");
+  if (target === "standalone") expect(preparedImports).toEqual([]);
+}
+
 describe("#3522 object-method call ownership", () => {
   it.each(TARGETS)("prepares parameterized direct object-method calls in the %s lane", async (target) => {
     const direct = await compile(SOURCE, {
@@ -67,7 +86,7 @@ describe("#3522 object-method call ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0,run__closure_1";
       prepared = await compile(SOURCE, {
         fileName: `object-method-call-prepared-${target}.ts`,
         experimentalIR: true,
@@ -95,6 +114,7 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0", "run__closure_1"]));
     expect(prepared.wat).toContain("call_ref");
     expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -108,7 +128,7 @@ describe("#3522 object-method call ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(METHOD_VALUE_SOURCE, {
         fileName: `object-method-value-prepared-${target}.ts`,
         experimentalIR: true,
@@ -136,6 +156,7 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
     expect(prepared.wat).toContain("call_ref");
     expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -149,7 +170,7 @@ describe("#3522 object-method call ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(CHAINED_METHOD_VALUE_SOURCE, {
         fileName: `object-method-value-alias-prepared-${target}.ts`,
         experimentalIR: true,
@@ -177,6 +198,7 @@ describe("#3522 object-method call ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
     expect(prepared.wat).toContain("call_ref");
     expect(prepared.wat).not.toContain("__call_m_");
+    expectNoImportRegression(direct, prepared, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -256,6 +278,34 @@ describe("#3522 object-method call ownership", () => {
     expect(outcome(result)).toMatchObject({
       kind: "unsupported",
       code: "call-resolution-unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("does not let a block-local callable alias hide a later ambient call", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        for (let i: number = 0; i < 1; i++) {
+          const local = (value: number): number => value + 1;
+          const parseInt = local;
+          parseInt(input);
+        }
+        return parseInt("42");
+      }`,
+      {
+        fileName: "block-local-callable-alias-shadow.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect((await instantiate(result)).run!(0)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,

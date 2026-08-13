@@ -42,6 +42,21 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectNoNewImports(prepared: CompileResult, direct: CompileResult, target: (typeof TARGETS)[number]): void {
+  const preparedImports = importLabels(prepared);
+  const directImports = importLabels(direct);
+  expect(preparedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+  expect(preparedImports.length).toBeLessThanOrEqual(directImports.length);
+  if (target === "standalone") {
+    expect(preparedImports).toEqual(directImports);
+    expect(preparedImports).toEqual([]);
+  }
+}
+
 describe("#3522 recursive closure ownership", () => {
   it.each(TARGETS)("prepares a named recursive function expression in the %s lane", async (target) => {
     const direct = await compile(SOURCE, {
@@ -54,7 +69,7 @@ describe("#3522 recursive closure ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(SOURCE, {
         fileName: `recursive-closure-prepared-${target}.ts`,
         experimentalIR: true,
@@ -82,6 +97,8 @@ describe("#3522 recursive closure ownership", () => {
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
     expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -95,7 +112,7 @@ describe("#3522 recursive closure ownership", () => {
     const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
     let prepared: CompileResult;
     try {
-      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+      process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
       prepared = await compile(CAPTURED_SOURCE, {
         fileName: `recursive-captured-closure-prepared-${target}.ts`,
         experimentalIR: true,
@@ -121,6 +138,7 @@ describe("#3522 recursive closure ownership", () => {
     });
     expect(prepared.irPostClaimErrors ?? []).toEqual([]);
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 });

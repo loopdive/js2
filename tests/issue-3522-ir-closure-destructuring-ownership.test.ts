@@ -36,10 +36,25 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
   return exports;
 }
 
+function importLabels(result: CompileResult): string[] {
+  return result.imports.map((entry) => `${entry.module}::${entry.name}`).sort();
+}
+
+function expectNoNewImports(prepared: CompileResult, direct: CompileResult, target: (typeof TARGETS)[number]): void {
+  const preparedImports = importLabels(prepared);
+  const directImports = importLabels(direct);
+  expect(preparedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+  expect(preparedImports.length).toBeLessThanOrEqual(directImports.length);
+  if (target === "standalone") {
+    expect(preparedImports).toEqual(directImports);
+    expect(preparedImports).toEqual([]);
+  }
+}
+
 async function compilePrepared(source: string, target: (typeof TARGETS)[number]): Promise<CompileResult> {
   const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
   try {
-    process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run";
+    process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
     return await compile(source, {
       fileName: `closure-destructuring-prepared-${target}.ts`,
       experimentalIR: true,
@@ -60,6 +75,7 @@ describe("#3522 closure destructuring ownership", () => {
       fileName: `closure-object-destructuring-direct-${target}.ts`,
       experimentalIR: false,
       optimize: true,
+      emitWat: true,
       target,
     });
     const prepared = await compilePrepared(OBJECT_SOURCE, target);
@@ -79,6 +95,8 @@ describe("#3522 closure destructuring ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
     expect(prepared.wat).toContain("struct.get");
     expect(prepared.wat).toContain("call_ref");
+    expect(prepared.wat).not.toContain("__call_m_");
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
@@ -87,6 +105,7 @@ describe("#3522 closure destructuring ownership", () => {
       fileName: `closure-array-destructuring-direct-${target}.ts`,
       experimentalIR: false,
       optimize: true,
+      emitWat: true,
       target,
     });
     const prepared = await compilePrepared(ARRAY_SOURCE, target);
@@ -106,6 +125,7 @@ describe("#3522 closure destructuring ownership", () => {
     expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
     expect(prepared.wat).toContain("array.get");
     expect(prepared.wat).toContain("call_ref");
+    expectNoNewImports(prepared, direct, target);
     expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 });
