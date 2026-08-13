@@ -677,14 +677,20 @@ export function compileBinaryExpression(
       // incorrectly constant-folds `missing != null` to true. Closed struct
       // reads remain semantically identical after boxing, while open/dynamic
       // receivers retain the required nullish distinction.
-      const valType = ts.isPropertyAccessExpression(nonNullExpr)
-        ? compilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
-        : compileExpression(
-            ctx,
-            fctx,
-            nonNullExpr,
-            ts.isElementAccessExpression(nonNullExpr) ? ({ kind: "externref" } as const) : undefined,
-          );
+      // A delete-using module must retain the ordinary property route: it is
+      // the path that consults a receiver's tombstone before reading a static
+      // backing field. The boxed nullish-observation shortcut deliberately
+      // bypasses that route for collision-safe dynamic reads and would
+      // otherwise resurrect a deleted field.
+      const valType =
+        ts.isPropertyAccessExpression(nonNullExpr) && !ctx.moduleUsesDelete
+          ? compilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
+          : compileExpression(
+              ctx,
+              fctx,
+              nonNullExpr,
+              ts.isElementAccessExpression(nonNullExpr) ? ({ kind: "externref" } as const) : undefined,
+            );
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
         // void returns undefined, so undefined == undefined/null is true (loose)

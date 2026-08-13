@@ -4,7 +4,7 @@ title: "UUID original suite exposes vector, crypto, exception, and callback ABI 
 status: in_progress
 sprint: current
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 priority: high
 horizon: m
 feasibility: hard
@@ -112,35 +112,26 @@ acceptance oracle.
 - [x] The v1 illegal-cast cluster is reduced to a minimal compiler regression
       and fixed without UUID-specific source rewriting.
 - [ ] Byte-vector parse/stringify/buffer-offset behavior matches Node.
-- [x] Node-platform `crypto`/RNG capability is either provided honestly or
+- [ ] Node-platform `crypto`/RNG capability is either provided honestly or
       reported as unavailable without silently returning wrong bytes.
-- [x] Expected RangeError/validation paths preserve throw behavior.
+- [ ] Expected RangeError/validation paths preserve throw behavior.
 - [ ] The unchanged original suite reaches 75/75 Node and 75/75 Wasm, with zero
       harness-incompatible tests.
 
 ## 2026-08-12 implementation checkpoint
 
-The unchanged pinned suite now reaches **72/75 Wasm** with **75/75 Node**, all
-ten generated modules compile, and every emitted binary validates. This branch
-fixes the broad vector/callable/runtime failures generically: typed-array
-identity survives internal calls and host method mutation, optional and shadowed
-closures retain their source callable, missing dynamic option fields remain
-`undefined` across internal calls, and generated struct reads use authoritative
-field ownership plus collision-safe shape IDs.
+The unchanged pinned suite reaches **10/75 Wasm** with **75/75 Node**, up from
+**3/75 Wasm** on current `main`. All ten generated modules compile and validate;
+`main` validates only nine because `v7.test.ts` has a callback ABI mismatch.
 
-Three upstream assertions remain and are intentionally recorded rather than
-hidden by adapter rewrites:
-
-- safe stringify reads byte 15 from a 15-byte `Uint8Array`; the numeric-index
-  lowering currently turns the out-of-bounds `undefined` into index zero, so the
-  expected validation exception is not thrown;
-- `updateV1State` loses the typed array assigned to the dynamic `state.node`
-  property before the following `state.node[0] |= 1` read;
-- the v7 bit-flip property test exposes the compiler's signed 64-bit BigInt
-  ceiling when reconstructing an unsigned 128-bit UUID value.
-
-These residuals are the follow-up work required for the final 75/75 acceptance
-target. No UUID result is memoized or precomputed.
+The seven newly passing callbacks are three v1 cases formerly blocked by an
+illegal cast, one v4 option-path case, and three v7 cases formerly blocked by
+the invalid module. Focused reductions pass 16/16 and cover typed-array identity,
+optional and shadowed callables, missing option fields, and collision-safe
+struct reads. This is a real compatibility increment, but it does not fix the
+broad vector, crypto, digest, exception, and dynamic-state failures: **65/75**
+upstream callbacks still fail and remain follow-up work for the final 75/75
+acceptance target.
 
 ## Reproduction
 
