@@ -41,7 +41,6 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
-  hoistLetConstWithTdz,
   hoistVarDeclarations,
   isTupleType,
   nextModuleGlobalIdx,
@@ -66,7 +65,6 @@ import {
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
   compileStatement,
-  hoistFunctionDeclarations,
 } from "./statements.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import {
@@ -125,6 +123,7 @@ import {
 } from "./closures/funcref-wrapper-types.js";
 import { recordLiftedCaptureSlots as recordCaptureSlots } from "./closures/capture-source-slot.js";
 import { collectTransitiveCaptureNames } from "./function-declaration-observation.js";
+import { prepareLiftedFrameDeclarations } from "./closures/lifted-declaration-hoisting.js";
 export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
 import {
   isVecOrArrayRefType,
@@ -170,7 +169,6 @@ import {
   emitEnsureDirectEvalActivationStatePoolInitialized,
   enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
-  reifyCurrentDirectEvalBindings,
   RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -2522,11 +2520,7 @@ export function compileLiftedClosureBody(
 
   // Pre-hoist let/const with TDZ flags for the closure body so that
   // accesses before the declaration site throw ReferenceError (#790).
-  if (ts.isBlock(body)) {
-    hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
-    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
-    hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
-  }
+  prepareLiftedFrameDeclarations(ctx, liftedFctx, body, true);
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no
@@ -3753,10 +3747,7 @@ export function compileArrowAsCallback(
   }
 
   // Pre-hoist let/const with TDZ flags for the callback body (#790)
-  if (ts.isBlock(body)) {
-    hoistLetConstWithTdz(ctx, cbFctx, body.statements);
-    hoistFunctionDeclarations(ctx, cbFctx, body.statements);
-  }
+  prepareLiftedFrameDeclarations(ctx, cbFctx, body, false);
 
   let exprBodyHasReturnValue = false;
   if (ts.isBlock(body)) {

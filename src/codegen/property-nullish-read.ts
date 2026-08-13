@@ -10,6 +10,17 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compilePropertyAccess, typeErrorThrowInstrs } from "./property-access.js";
 import { coerceType, compileExpression } from "./shared.js";
 
+function readsCallerFromArgumentsCallee(expr: ts.PropertyAccessExpression): boolean {
+  const receiver = expr.expression;
+  return (
+    expr.name.text === "caller" &&
+    ts.isPropertyAccessExpression(receiver) &&
+    receiver.name.text === "callee" &&
+    ts.isIdentifier(receiver.expression) &&
+    receiver.expression.text === "arguments"
+  );
+}
+
 /** Read a property as its boxed JavaScript value for a nullish comparison. */
 export function compilePropertyAccessForNullishObservation(
   ctx: CodegenContext,
@@ -56,7 +67,9 @@ export function compileNullishObservedExpression(
   // receiver's deletion tombstone is observed before its static backing field.
   // The boxed observation route intentionally bypasses that representation for
   // collision-safe dynamic reads and would otherwise resurrect deleted values.
-  if (ts.isPropertyAccessExpression(expr) && !ctx.moduleUsesDelete) {
+  const preserveMissingHostArgumentsCallee =
+    !ctx.standalone && !ctx.wasi && ts.isPropertyAccessExpression(expr) && readsCallerFromArgumentsCallee(expr);
+  if (ts.isPropertyAccessExpression(expr) && !ctx.moduleUsesDelete && !preserveMissingHostArgumentsCallee) {
     return compilePropertyAccessForNullishObservation(ctx, fctx, expr);
   }
   return compileExpression(ctx, fctx, expr, ts.isElementAccessExpression(expr) ? { kind: "externref" } : undefined);

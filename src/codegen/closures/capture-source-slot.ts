@@ -36,6 +36,7 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
   const capturedSlot = fctx.liftedCaptureSlots?.get(cap.name);
   if (capturedSlot !== undefined) return capturedSlot;
   const inFrameIdx = fctx.localMap.get(cap.name);
+  if (fctx.asyncDriveReturn && inFrameIdx !== undefined) return inFrameIdx;
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 
   const existsHere = cap.outerLocalIdx < fctx.params.length + fctx.locals.length;

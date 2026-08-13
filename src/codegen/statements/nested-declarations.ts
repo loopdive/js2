@@ -28,6 +28,7 @@ import {
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -707,6 +708,7 @@ export function compileNestedFunctionDeclaration(
       : undefined;
     if (enclosingBody) mutatedInSiblingScope = collectNamesMutatedInNestedFunctions(enclosingBody);
   }
+  const writtenAfterDeclaration = collectOwnerBindingsWrittenAfterDeclaration(stmt);
 
   const captures: {
     name: string;
@@ -804,7 +806,7 @@ export function compileNestedFunctionDeclaration(
     // (`localMap.get(cap.name) ?? cap.outerLocalIdx`) to be re-applied AND
     // the destructure-assign path to be box-aware. Both are out of scope
     // for this PR; the test is marked `.todo` until that follow-up lands.
-    const isMutable = writtenInBody.has(name) || mutatedInSiblingScope.has(name);
+    const isMutable = writtenInBody.has(name) || mutatedInSiblingScope.has(name) || writtenAfterDeclaration.has(name);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a

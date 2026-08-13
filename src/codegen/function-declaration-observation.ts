@@ -2,7 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import { addFunctionOwnLocals } from "./binding-info.js";
-import { allocLocal } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
 
@@ -209,15 +209,183 @@ export function prepareHoistedFunctionValueBindings(
       !stmt.body ||
       annexBDeclaringRange(stmt) !== null ||
       functionDeclarationHasAnnexBUpdater(stmt) ||
-      !declarationValueIsObserved(ctx, stmt)
+      !functionDeclarationValueIsObserved(ctx, stmt)
     ) {
       continue;
     }
+    if (!hasStableFunctionValueCaptureAbi(ctx, fctx, stmt, stmts)) continue;
     if (!fctx.localMap.has(stmt.name.text)) {
       allocLocal(fctx, stmt.name.text, { kind: "externref" });
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
+}
+
+/** Keep unsafe declaration-value captures on statement-position lowering. */
+export function canHoistFunctionDeclarationInLiftedFrame(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.Statement,
+  siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+): boolean {
+  return (
+    !ts.isFunctionDeclaration(stmt) ||
+    !stmt.name ||
+    !stmt.body ||
+    !functionDeclarationValueIsObserved(ctx, stmt) ||
+    !declarationOwnerIsAsync(stmt) ||
+    hasStableFunctionValueCaptureAbi(ctx, fctx, stmt, siblings)
+  );
+}
+
+function declarationOwnerIsAsync(stmt: ts.FunctionDeclaration): boolean {
+  let owner: ts.Node | undefined = stmt.parent;
+  while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+  return (
+    !!owner &&
+    !!ts.getModifiers(owner as ts.HasModifiers)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  );
+}
+
+export function liftedFrameHoistableStatements(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  statements: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+): ts.Statement[] {
+  const unsafe = new Set<ts.FunctionDeclaration>();
+  const unsafeNames = new Set<string>();
+  for (const statement of statements) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      !canHoistFunctionDeclarationInLiftedFrame(ctx, fctx, statement, statements)
+    ) {
+      unsafe.add(statement);
+      if (statement.name) unsafeNames.add(statement.name.text);
+    }
+  }
+
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const statement of statements) {
+      if (!ts.isFunctionDeclaration(statement) || unsafe.has(statement)) continue;
+      let reachesUnsafeSibling = false;
+      const visit = (node: ts.Node): void => {
+        if (reachesUnsafeSibling) return;
+        if (node !== statement && ts.isFunctionLike(node)) return;
+        if (ts.isIdentifier(node) && unsafeNames.has(node.text) && isRuntimeIdentifierReference(node)) {
+          reachesUnsafeSibling = true;
+          return;
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(statement);
+      if (reachesUnsafeSibling) {
+        unsafe.add(statement);
+        if (statement.name) unsafeNames.add(statement.name.text);
+        changed = true;
+      }
+    }
+  }
+
+  return statements.filter((statement) => !ts.isFunctionDeclaration(statement) || !unsafe.has(statement));
+}
+
+/**
+ * The stable declaration-value carrier snapshots capture fields using the
+ * declaring frame's current Wasm representation. GC references may be rebuilt
+ * with a different concrete type in a lifted/async frame, and cyclic function
+ * values need two-phase initialization. Keep both on the established direct
+ * declaration route until those carriers have an ABI-compatible/cyclic form.
+ */
+function hasStableFunctionValueCaptureAbi(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.FunctionDeclaration,
+  siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+): boolean {
+  if (functionValueDependencyIsCyclic(ctx, decl, siblings)) return false;
+
+  const ownLocals = new Set<string>();
+  addFunctionOwnLocals(decl, ownLocals);
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (node !== decl && ts.isFunctionLike(node)) return;
+    if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node) && !ownLocals.has(node.text)) {
+      const localIdx = fctx.localMap.get(node.text);
+      if (localIdx !== undefined) {
+        const type = getLocalType(fctx, localIdx);
+        if (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64")) {
+          stable = false;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(decl);
+  return stable;
+}
+
+function functionValueDependencyIsCyclic(
+  ctx: CodegenContext,
+  target: ts.FunctionDeclaration,
+  siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+): boolean {
+  const namedDeclarations = new Map<ts.Declaration, string>();
+  const dependencyRoots = new Map<string, ts.Node>();
+  for (const stmt of siblings) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
+      namedDeclarations.set(stmt, stmt.name.text);
+      dependencyRoots.set(stmt.name.text, stmt);
+      continue;
+    }
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const variable of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(variable.name) || !variable.initializer) continue;
+      namedDeclarations.set(variable, variable.name.text);
+      dependencyRoots.set(variable.name.text, variable.initializer);
+    }
+  }
+
+  const targetName = target.name?.text;
+  if (!targetName || !dependencyRoots.has(targetName)) return false;
+  const edges = new Map<string, Set<string>>();
+  for (const [name, root] of dependencyRoots) {
+    const deps = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (node !== root && ts.isFunctionLike(node)) return;
+      if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node)) {
+        const declaration = ctx.oracle.valueDeclarationOf(node);
+        if (declaration) {
+          const dependency = namedDeclarations.get(declaration);
+          if (dependency) deps.add(dependency);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+    edges.set(name, deps);
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const reachesTarget = (name: string): boolean => {
+    if (visiting.has(name)) return name === targetName;
+    if (visited.has(name)) return false;
+    visiting.add(name);
+    for (const dependency of edges.get(name) ?? []) {
+      if (dependency === targetName || reachesTarget(dependency)) return true;
+    }
+    visiting.delete(name);
+    visited.add(name);
+    return false;
+  };
+  visiting.add(targetName);
+  for (const dependency of edges.get(targetName) ?? []) {
+    if (dependency === targetName || reachesTarget(dependency)) return true;
+  }
+  return false;
 }
 
 /** Prepare stable values and return the shared Annex B name accumulator. */
@@ -263,7 +431,7 @@ function functionDeclarationHasAnnexBUpdater(decl: ts.FunctionDeclaration): bool
   return found;
 }
 
-function declarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
+export function functionDeclarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
   let observed = false;
   const visit = (node: ts.Node): void => {
     if (observed) return;

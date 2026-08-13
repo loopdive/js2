@@ -18,10 +18,18 @@ related: [1282, 2930, 3747, 3995]
 files:
   - src/resolve.ts
   - src/codegen/index.ts
+  - src/codegen/async-frame.ts
   - src/codegen/closures.ts
+  - src/codegen/closures/capture-source-slot.ts
+  - src/codegen/closures/declaration-write-analysis.ts
+  - src/codegen/closures/lifted-declaration-hoisting.ts
+  - src/codegen/context/types.ts
+  - src/codegen/function-declaration-observation.ts
+  - src/codegen/property-nullish-read.ts
   - src/codegen/statements/nested-declarations.ts
   - src/runtime.ts
   - tests/dogfood/moment-upstream-suite.mjs
+  - tests/issue-4384-merge-group-regressions.test.ts
 ---
 
 # Moment runtime import resolves to adjacent declaration instead of JavaScript implementation
@@ -122,3 +130,30 @@ Validation after the remediation:
 - Exact Test262 canaries: JS-host `S13_A3_T1`, array `filter` callback routing,
   and symbolic-length `copyWithin`; standalone tail-call and array `every`
   receiver routing all pass.
+
+The subsequent merge-group run found four JS-host pass regressions and six
+ordinary-failure-to-Wasm-trap transitions. Async resume frames had rebuilt
+source locals at new slots while nested declaration captures still read the
+declaring frame's numeric slot. Host `arguments.callee.caller` also entered a
+new nullish property route even though the host lane intentionally exposes the
+unsupported extension as `undefined`.
+
+The final remediation opts async resume frames into name-remapped capture
+sources and keeps that routing narrower than the legacy capture rule. Stable
+FunctionDeclaration values are now admitted in lifted frames only for acyclic,
+scalar capture ABIs; reference/vector captures remain on statement-position
+lowering. Captures written after a declaration use a live cell, preventing a
+later callable alias from remaining null inside the closure.
+
+Final focused validation:
+
+- Exact Test262 pass regressions: `10.6-13-a-{2,3}` and
+  `Array/fromAsync/async-iterable-input.js` pass; the await-using completion
+  case passes through the same remapped async-frame route.
+- Exact trap canaries: Array.fromAsync returns to its baseline assertion,
+  three AsyncDisposableStack cases return to their baseline missing-builtin
+  failures, and both TCO cases are ordinary `RangeError`s rather than Wasm
+  null dereferences.
+- Focused #4384 suites: 28/28 pass.
+- Moment pinned upstream slice remains 10/10 Node and 10/10 Wasm, with all six
+  generated modules compiling and validating.
