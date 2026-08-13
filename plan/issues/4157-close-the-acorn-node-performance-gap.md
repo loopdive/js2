@@ -33,6 +33,13 @@ loc-budget-allow:
   # from this file's presence-slot and struct-field state.
   - src/codegen/property-access.ts
   - src/codegen/property-access-dispatch.ts
+  # (#4157 ToNumber fast paths, JS2WASM_FUSED_TONUMBER / JS2WASM_SMI_FASTPATH)
+  # +5 lines: one import plus a 4-line early-out at the ONE standalone
+  # externref->f64 coercion site. Both fast paths live in a new subsystem module
+  # (src/codegen/tonumber-fast-paths.ts); this is the whole of their footprint
+  # in the god-file, and there is no smaller way to route a coercion site to an
+  # alternative lowering than to test for it where the site is.
+  - src/codegen/type-coercion.ts
 func-budget-allow:
   # Same +8 lines, seen per-function: the two finalize sequences.
   - src/codegen/index.ts::generateModule
@@ -44,6 +51,11 @@ func-budget-allow:
   # the last 5 would mean inlining the options object back into a positional
   # argument list, which is worse code for a budget number.
   - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  # (#4157 ToNumber fast paths) +4 lines in `coerceType`'s externref->f64 arm.
+  # Splitting a 1,454-line function that is one long from/to type-pair ladder is
+  # a real refactor with its own byte-identity risk, and it would not shrink THIS
+  # change: the early-out has to sit in whichever function owns the pair.
+  - src/codegen/type-coercion.ts::coerceType
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -2555,3 +2567,76 @@ nulls and one was a regression. What is different is that the target is the
 rather than being relocated, and that the hit path is 6 instructions with no
 conversion. What is the same is that this box cannot resolve small effects, and
 that +1.53 % of binary is a real cost that has to be paid back.
+
+## 2026-08-13 (20) — ToNumber fast paths: fused coercion and an i31 operand guard
+
+Entry (15) counted **2,010 static sites where a helper boxes a value the call
+site immediately unwraps**, the largest single pattern being
+`__unbox_number(__to_primitive(x))` at 1,092. Both slices below are built,
+**default OFF**, byte-identical when off (sha256-verified, not just size).
+
+### Slice A — `JS2WASM_FUSED_TONUMBER`: 1,085 sites, **−6,314 B**
+
+One fused `__to_number` replaces the pair at the single standalone
+`externref → f64` coercion site. Three fast arms, each provably equal to the
+pair **because all three early-out before `__to_primitive`'s `$Object` test**,
+so no user code runs and nothing can throw or be reordered:
+
+| value | fused arm |
+| --- | --- |
+| null extern | `f64.const 0` |
+| `ref.i31` | `i31.get_s; f64.convert_i32_s` |
+| `$BoxedNumber` | `struct.get 0` |
+
+Excluded, falling through to the unchanged pair in unchanged order: `"string"`
+and `"default"` hints, every observable ToPrimitive shape (`valueOf`/`toString`,
+class instances, arrays, wrapper `[[PrimitiveValue]]`, the `$AnyValue`
+`undefined` singleton), and **native strings** — decidable, but excluded on
+purpose because composing it means a full `__str_to_number` scan and a second
+place for §7.1.4.1 to drift.
+
+**Size sign is site-count dependent**: −6,314 B on acorn's 1,085 sites but
+**+21 B** on a small fixture, since it trades ~11 B/site against one fixed helper
+— the same break-even shape as the const-box hoist.
+
+### Slice B — `JS2WASM_SMI_FASTPATH`: 1,075 sites, **+24,358 B**
+
+`ref.test i31` on the operand, then `i31.get_s; f64.convert_i32_s`, else the
+unchanged slow chain. The **non-nullable** `ref.test` form is deliberate: a null
+externref answers 0 and takes the slow arm, which returns 0 for null — the same
+answer — so no extra null test is needed and the `then`-arm's cast cannot see
+null.
+
+**+24 KB cuts directly against entry (15)'s finding that code size is itself an
+inlining barrier.** That is a real reason the A/B may come out negative, and it
+is stated here rather than discovered later.
+
+### The i32-arithmetic half is NOT built, and the proof that it needs no range guard
+
+It is a binary-op-site transform (`binary-ops-typed-dispatch.ts:626-638`,
+`:1560-1593`), which was off-limits to that workstream. The recommendation, with
+the part worth keeping:
+
+> When both `leftType` and `rightType` are `externref`, hoist both to locals and
+> guard `ref.test i31` on both. The fast arm needs **no range guard on the
+> result**: `a, b ∈ [-2^30, 2^30-1]` gives `a ± b ∈ [-2^31, 2^31-1]`, which fits
+> i32 exactly, and `f64.convert_i32_s` is exact — so
+> `f64.convert_i32_s(i32.add(a,b)) ≡ f64.add(f64(a), f64(b))`. `-0`, `NaN` and
+> non-integers are excluded by the guard itself.
+
+Order caution for whoever builds it: today the **right** operand is coerced
+before the left; the slow arm must preserve that.
+
+### Correctness
+
+Census checksum 422 in all four flag states with allocation counts (189,977) and
+struct bytes (5,759,436) identical — no allocation change, as expected. Acorn
+dogfood 7 equal / 0 divergent. A 24-file coercion batch 160/160 and a 12-file
+standalone numeric batch 91/91, in every state.
+
+Two failures attributed, **both pre-existing**: a QuickJS-provider environmental
+failure, and `var o: any = {valueOf: …}; var s: number = o - 1;` inside a
+function body failing to compile (`local.set[0] expected (ref null 76), found
+f64.const`) — **reproduced byte-for-byte on `origin/main` blobs at the same
+offset**. A module-level binding of the same object compiles fine. Unfiled; worth
+an issue.
