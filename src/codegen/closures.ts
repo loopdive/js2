@@ -65,6 +65,7 @@ import {
   compileExternrefArrayDestructuringDecl,
   compileExternrefObjectDestructuringDecl,
   compileStatement,
+  hoistFunctionDeclarations,
 } from "./statements.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import {
@@ -2520,7 +2521,9 @@ export function compileLiftedClosureBody(
 
   // Pre-hoist let/const with TDZ flags for the closure body so that
   // accesses before the declaration site throw ReferenceError (#790).
-  prepareLiftedFrameDeclarations(ctx, liftedFctx, body, true);
+  // Async/generator state machines own their frame initialization. Ordinary
+  // closure hoisting before that transform corrupts suspended-state layout.
+  prepareLiftedFrameDeclarations(ctx, liftedFctx, body, true, !asyncDecision && !isGenerator);
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no

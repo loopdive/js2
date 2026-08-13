@@ -13,9 +13,12 @@ export function prepareLiftedFrameDeclarations(
   fctx: FunctionContext,
   body: ts.ConciseBody,
   reifyDirectEval: boolean,
+  hoistFunctions = true,
 ): void {
   if (!ts.isBlock(body)) return;
   hoistLetConstWithTdz(ctx, fctx, body.statements);
   if (reifyDirectEval) reifyCurrentDirectEvalBindings(ctx, fctx);
-  hoistFunctionDeclarations(ctx, fctx, liftedFrameHoistableStatements(ctx, fctx, body.statements));
+  if (hoistFunctions) {
+    hoistFunctionDeclarations(ctx, fctx, liftedFrameHoistableStatements(ctx, fctx, body.statements));
+  }
 }

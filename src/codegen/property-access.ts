@@ -55,7 +55,11 @@ import {
 // (#4157) provably-dead null guards
 import { type ReceiverProofHint, emitReceiverNullGuard, receiverProofHolds } from "./nonnull-proof.js";
 import { ensureAnyFromExternHelper, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
-import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
+import {
+  emitUndefined,
+  ensureExternIsUndefinedImport,
+  patchStructNewForAddedField,
+} from "./expressions/late-imports.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
 import {
   addUnionImports,
@@ -2244,11 +2248,35 @@ export function compileOptionalPropertyAccess(
   }
 
   if (elseResultType === null) {
-    // Property could not be resolved to a concrete struct field/getter. The
-    // receiver ref is still on the stack from `local.get tmp`; coerce it to
-    // the block result type so the `if` typechecks rather than leaving a
-    // mismatched ref as the else-branch fallthrough (#1603).
-    elseResultType = objType;
+    // Property could not be resolved statically. The receiver is still on the
+    // stack from `local.get tmp`; perform the same runtime member lookup as an
+    // ordinary dynamic read. Returning the receiver itself here made
+    // `value?.length` compare the value object to the expected length (uuid's
+    // parsed Uint8Array namespace therefore never had length 16).
+    if (objType.kind !== "externref") {
+      coerceType(ctx, fctx, objType, { kind: "externref" });
+    }
+    const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+    if (getMemberIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+    } else {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      addStringConstantGlobal(ctx, propName);
+      flushLateImportShifts(ctx, fctx);
+      if (getIdx !== undefined) {
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+        fctx.body.push({ op: "call", funcIdx: getIdx });
+      } else {
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+    }
+    elseResultType = { kind: "externref" };
   }
   // Coerce else branch result to match the block result type
   if (!valTypesMatch(elseResultType, resultType)) {
@@ -3413,6 +3441,88 @@ export function compilePropertyAccess(
   }
 
   return finalizeStructAndDynamicMemberGet(ctx, fctx, expr, propName, objType);
+}
+
+/**
+ * Read a property as its boxed JavaScript value for a nullish comparison.
+ *
+ * Whole-program field inference may otherwise narrow a dynamic read to i32/f64.
+ * That is valid for a matching struct, but an unrelated receiver can miss and
+ * produce `undefined`; unboxing that miss to 0/false destroys the distinction
+ * observed by `value == null` / `value != null`.
+ */
+export function canCompilePropertyAccessForNullishObservation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): boolean {
+  if (expr.questionDotToken) return false;
+  const receiver = expr.expression;
+  const receiverIsLocalDynamicValue =
+    receiver.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isIdentifier(receiver) &&
+      (fctx.localMap.has(receiver.text) ||
+        (fctx.boxedCaptures?.has(receiver.text) ?? false) ||
+        ctx.moduleGlobals.has(receiver.text) ||
+        ctx.capturedGlobals.has(receiver.text)));
+  if (!receiverIsLocalDynamicValue) return false;
+  const receiverFact = ctx.oracle.typeFactOf(receiver).kind;
+  return receiverFact === "any" || receiverFact === "unknown";
+}
+
+export function compilePropertyAccessForNullishObservation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+): ValType | null {
+  if (!canCompilePropertyAccessForNullishObservation(ctx, fctx, expr)) {
+    return compilePropertyAccess(ctx, fctx, expr);
+  }
+  if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
+
+  const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+  const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+  const getIdx =
+    getMemberIdx === undefined
+      ? ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }])
+      : undefined;
+  const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
+  flushLateImportShifts(ctx, fctx);
+
+  const recvType = compileExpression(ctx, fctx, expr.expression);
+  if (!recvType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  const recvLocal = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: recvLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: typeErrorThrowInstrs(ctx, expr),
+    else: [],
+  });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  releaseTempLocal(fctx, recvLocal);
+  if (getMemberIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+    return { kind: "externref" };
+  }
+  if (getIdx !== undefined) {
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push({ op: "call", funcIdx: getIdx });
+    return { kind: "externref" };
+  }
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
 }
 
 export function compileExternPropertyGet(
