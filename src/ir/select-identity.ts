@@ -13,6 +13,7 @@ import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
 import {
+  boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
   isBoundedPreparedAccessorClass,
   isBoundedPreparedNestedOrdinaryClass,
@@ -419,8 +420,8 @@ function uniqueDeclarationsByName(
 }
 
 function uniqueClassDeclarationsByName(
-  classesByName: ReadonlyMap<string, readonly { classId: IrClassId; declaration: ts.ClassDeclaration }[]>,
-): Map<string, ts.ClassDeclaration> {
+  classesByName: ReadonlyMap<string, readonly IndexedClass[]>,
+): Map<string, ts.ClassDeclaration | ts.ClassExpression> {
   return new Map(
     [...classesByName]
       .filter(([, candidates]) => candidates.length === 1)
@@ -619,7 +620,7 @@ export function planIrCompilationByIdentity(
 
   const classes = collectClasses(sourceFile, sourceId, identityContext);
   populateClassMemberUnits(sourceId, classes, identityContext, units);
-  const classesByName = new Map<string, { classId: IrClassId; declaration: ts.ClassDeclaration }[]>();
+  const classesByName = new Map<string, IndexedClass[]>();
   for (const indexed of classes) {
     if (
       indexed.declaration.parent === sourceFile &&
@@ -633,11 +634,11 @@ export function planIrCompilationByIdentity(
   const uniqueFunctions = uniqueDeclarationsByName(functionsByName);
   const projectedClassCandidates = new Map(classesByName);
   for (const candidate of classes) {
-    if (!ts.isClassDeclaration(candidate.declaration) || !candidate.declaration.name) continue;
     if (candidate.declaration.parent === sourceFile) continue;
-    if (!isBoundedPreparedNestedOrdinaryClass(candidate.declaration)) continue;
+    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(candidate.declaration);
+    if (bindingName === undefined) continue;
     if (options.projectedClassShapesById?.has(candidate.classId) !== true) continue;
-    addNameIndex(projectedClassCandidates, candidate.declaration.name.text, candidate);
+    addNameIndex(projectedClassCandidates, bindingName, candidate);
   }
   const uniqueClasses = uniqueClassDeclarationsByName(projectedClassCandidates);
   const localClasses = new Set(uniqueClasses.keys());

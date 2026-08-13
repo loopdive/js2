@@ -121,6 +121,34 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
   return constructorCount === 1 && methodCount > 0;
 }
 
+/**
+ * Stable lexical name for the bounded ordinary-class transaction.
+ *
+ * Class declarations own their source name. Class expressions are admitted
+ * only in the exact `const C = class { ... }` / `const C = class C { ... }`
+ * form: the binding is immutable, ClassDefinitionEvaluation is inert under
+ * the ordinary-class gate above, and a differently named inner class cannot
+ * be confused with the outer constructor binding.
+ */
+export function boundedPreparedNestedOrdinaryClassBindingName(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): string | undefined {
+  if (!isBoundedPreparedNestedOrdinaryClass(declaration)) return undefined;
+  if (ts.isClassDeclaration(declaration)) return declaration.name?.text;
+  const variable = declaration.parent;
+  if (
+    !ts.isVariableDeclaration(variable) ||
+    variable.initializer !== declaration ||
+    !ts.isIdentifier(variable.name) ||
+    !ts.isVariableDeclarationList(variable.parent) ||
+    (variable.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return undefined;
+  }
+  const bindingName = variable.name.text;
+  return declaration.name === undefined || declaration.name.text === bindingName ? bindingName : undefined;
+}
+
 type LiteralComputedKeyValue = string | number;
 
 function literalOnlyComputedKeyValue(expression: ts.Expression): LiteralComputedKeyValue | undefined {

@@ -51,6 +51,7 @@ import {
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
+import { boundedPreparedNestedOrdinaryClassBindingName } from "./class-accessor-safety.js";
 import { remainderFastPathPlan } from "../codegen/analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
@@ -3024,6 +3025,17 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     }
     if (!d.initializer) {
       throw new Error(`ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`);
+    }
+    if (
+      ts.isClassExpression(d.initializer) &&
+      isConst &&
+      boundedPreparedNestedOrdinaryClassBindingName(d.initializer) === name &&
+      cx.classShapes?.has(name)
+    ) {
+      // Selection proved the class definition inert and the exact Program ABI
+      // component already installed every constructor/method body. The class
+      // binding is a compile-time constructor identity in this bounded family.
+      continue;
     }
     // (#3142 Slice 2) A module-scope binding initialized with a
     // function-like value: the legacy path stores its closure where other
