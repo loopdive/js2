@@ -92,7 +92,33 @@ func-budget-allow:
   # the AST-kind switch; a `this` operand is one of its cases and the CSE has to
   # bracket exactly that case's emission.
   - src/codegen/expressions.ts::compileExpressionInner
-
+oracle-ratchet-allow:
+  # (#4157 non-null guard elision, JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR) The
+  # +5 net counted sites all feed the PRE-EXISTING main helper
+  # `isProvablyNonNull(expr, checker?)` (property-access.ts:1074), whose
+  # signature takes the raw `ts.TypeChecker` — the new code adds CALLERS of
+  # that helper at the guard-elision sites, it does not introduce new raw type
+  # queries. Routing through ctx.oracle would mean migrating the helper itself,
+  # a separate refactor out of scope for a flags-off byte-identical PR.
+  - src/codegen/property-access.ts
+  - src/codegen/property-access-dispatch.ts
+  # nonnull-proof.ts's single counted hit is a DOC COMMENT ("`isProvablyNonNull
+  # (expr, ctx.checker)` — passed in to avoid an import cycle", line ~136) —
+  # the module deliberately takes the proof callback injected and holds no
+  # checker reference of its own.
+  - src/codegen/nonnull-proof.ts
+coercion-sites-allow:
+  # (#4157 inline truthy IC, JS2WASM_INLINE_TRUTHY_IC) The pass's whole job is
+  # to rewrite `call $__is_truthy` sites into a guarded speculation whose
+  # slow arm is copied verbatim OUT of the emitted `__is_truthy` helper body —
+  # it must name the helper to find its call sites and read its arms. It adds
+  # no new coercion MATRIX; it relocates the engine's own emission.
+  - src/codegen/is-truthy-inline-ic.ts
+  # (#4157 fused ToNumber, JS2WASM_FUSED_TONUMBER) Replaces the exact pair
+  # `__unbox_number(__to_primitive(x))` with one `__to_number` — it has to name
+  # the two helpers it fuses to match and replace them. The fused helper is
+  # emitted from the same engine vocabulary, not a fresh hand-rolled matrix.
+  - src/codegen/tonumber-fast-paths.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
