@@ -5305,6 +5305,15 @@ export function generateModule(
     unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
+    // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
+    // MUST run HERE: `unshiftExternGetProtoCacheArm` above is the last pass that
+    // prepends to `__extern_get`, and the extractor accepts the body only while
+    // that arm is still the PREFIX — which is also the property the arm's own
+    // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
+    // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
+    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    inlineExternGetCallSites(ctx);
+
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
     fillExternIsArray(ctx);
@@ -5529,13 +5538,6 @@ export function generateModule(
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);
-    // (#4157) Inline `__extern_get`'s per-key cache-hit arm at static-name call
-    // sites. Deliberately the LAST body-reading pass before branding: the arm it
-    // copies must be the first thing in `__extern_get`, and later fills
-    // (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) can unshift in
-    // front of it — the extractor's shape check is what detects that and
-    // declines. Default OFF ⇒ byte-identical.
-    inlineExternGetCallSites(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // ES5 Function `caller`: after dead-import elimination has finalized
     // function indices, thread each source caller's strictness into source
@@ -7670,6 +7672,15 @@ export function generateMultiModule(
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
+
+    // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
+    // MUST run HERE: `unshiftExternGetProtoCacheArm` above is the last pass that
+    // prepends to `__extern_get`, and the extractor accepts the body only while
+    // that arm is still the PREFIX — which is also the property the arm's own
+    // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
+    // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
+    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    inlineExternGetCallSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
@@ -7897,13 +7908,6 @@ export function generateMultiModule(
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);
-    // (#4157) Inline `__extern_get`'s per-key cache-hit arm at static-name call
-    // sites. Deliberately the LAST body-reading pass before branding: the arm it
-    // copies must be the first thing in `__extern_get`, and later fills
-    // (`fillDynamicForinVecArms`, `fillObjVecReflectionHelpers`) can unshift in
-    // front of it — the extractor's shape check is what detects that and
-    // declines. Default OFF ⇒ byte-identical.
-    inlineExternGetCallSites(ctx); // (#4157) no-op unless JS2WASM_EXEC_CENSUS is set
 
     // Mirror the single-source ES5 Function `caller` finalizer.
     finalizeFunctionPoisonPillCalls(ctx);
