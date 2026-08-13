@@ -1257,6 +1257,7 @@ function compileInlinedEvalStatements(
         annexBCancelled: fctx.annexBCancelled,
         annexBOuterBindings: fctx.annexBOuterBindings,
         annexBRepeatedOuterBindings: fctx.annexBRepeatedOuterBindings,
+        annexBExistingDirectFunctionBindings: fctx.annexBExistingDirectFunctionBindings,
       }
     : undefined;
 
@@ -1269,6 +1270,7 @@ function compileInlinedEvalStatements(
     fctx.annexBCancelled = undefined;
     fctx.annexBOuterBindings = undefined;
     fctx.annexBRepeatedOuterBindings = undefined;
+    fctx.annexBExistingDirectFunctionBindings = undefined;
   }
 
   try {
@@ -1320,6 +1322,7 @@ function compileInlinedEvalStatements(
       fctx.annexBCancelled = savedBindingState.annexBCancelled;
       fctx.annexBOuterBindings = savedBindingState.annexBOuterBindings;
       fctx.annexBRepeatedOuterBindings = savedBindingState.annexBRepeatedOuterBindings;
+      fctx.annexBExistingDirectFunctionBindings = savedBindingState.annexBExistingDirectFunctionBindings;
     }
   }
 }

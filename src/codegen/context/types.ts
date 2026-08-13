@@ -982,6 +982,14 @@ export interface FunctionContext {
    */
   annexBRepeatedOuterBindings?: Set<string>;
   /**
+   * Annex B declarations whose enclosing function already has a direct
+   * same-name FunctionDeclaration. Unlike `annexBOuterBindings`, these bindings
+   * are initialized at function entry with the direct declaration's closure and
+   * carry no TDZ flag; evaluating the nested declaration replaces that live
+   * value without changing the canonical name-keyed hoist owner.
+   */
+  annexBExistingDirectFunctionBindings?: Set<string>;
+  /**
    * For TDZ flag locals that have been boxed in an i32 ref cell so that
    * mutations propagate to closures that captured the flag (#1177).
    *
@@ -2451,6 +2459,14 @@ export interface CodegenContext {
    * compiling the same declaration node twice.
    */
   annexBModuleFnIdxByDecl?: WeakMap<ts.FunctionDeclaration, number>;
+  /**
+   * Per-declaration compiled function index for function-scope Annex B
+   * declarations that update an already-instantiated direct-function binding.
+   * The bare-name maps are restored to the direct declaration after compiling
+   * each inner body, so this node-keyed cache is the stable statement-time
+   * lookup for its closure value.
+   */
+  annexBDistinctFunctionIndices?: WeakMap<ts.FunctionDeclaration, number>;
   /** Deferred `export default <variable>` where variable is a module global (#1108).
    *  Resolved after all collectDeclarations calls when global indices are final. */
   deferredDefaultGlobalExport?: string;
