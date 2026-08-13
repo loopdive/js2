@@ -2636,6 +2636,35 @@ export function compileDeclarations(
       const isAmbient = hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile;
       if (ts.isClassDeclaration(stmt) && stmt.name && !isAmbient) {
         if (insideFunction) {
+          const preparedBodyUnits = stmt.members
+            .filter(
+              (
+                member,
+              ): member is
+                | ts.ConstructorDeclaration
+                | ts.MethodDeclaration
+                | ts.GetAccessorDeclaration
+                | ts.SetAccessorDeclaration =>
+                (ts.isConstructorDeclaration(member) ||
+                  ts.isMethodDeclaration(member) ||
+                  ts.isGetAccessorDeclaration(member) ||
+                  ts.isSetAccessorDeclaration(member)) &&
+                member.body !== undefined,
+            )
+            .map((member) => ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(member));
+          const fullyPrepared =
+            preparedBodyUnits.length > 0 &&
+            preparedBodyUnits.every(
+              (unitId) => unitId !== undefined && classBodyRouting?.skipBodyUnitIds?.has(unitId) === true,
+            );
+          if (fullyPrepared) {
+            // The enclosing IR body will not execute the direct nested-class
+            // statement. Visit the exact class here so the declaration pass
+            // correlates every skipped slot while preserving the bodies that
+            // the prepared transaction already installed.
+            compileClassBodies(ctx, stmt, funcByName, undefined, classBodyRouting);
+            continue;
+          }
           // Defer body compilation — will be compiled in compileNestedClassDeclaration
           // when the enclosing function is compiled (so captured locals are available)
           ctx.deferredClassBodies.add(stmt.name.text);
@@ -2663,6 +2692,38 @@ export function compileDeclarations(
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name) && decl.initializer && ts.isClassExpression(decl.initializer)) {
             if (insideFunction) {
+              const preparedBodyUnits = decl.initializer.members
+                .filter(
+                  (
+                    member,
+                  ): member is
+                    | ts.ConstructorDeclaration
+                    | ts.MethodDeclaration
+                    | ts.GetAccessorDeclaration
+                    | ts.SetAccessorDeclaration =>
+                    (ts.isConstructorDeclaration(member) ||
+                      ts.isMethodDeclaration(member) ||
+                      ts.isGetAccessorDeclaration(member) ||
+                      ts.isSetAccessorDeclaration(member)) &&
+                    member.body !== undefined,
+                )
+                .map((member) => ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(member));
+              const fullyPrepared =
+                preparedBodyUnits.length > 0 &&
+                preparedBodyUnits.every(
+                  (unitId) => unitId !== undefined && classBodyRouting?.skipBodyUnitIds?.has(unitId) === true,
+                );
+              if (fullyPrepared) {
+                const syntheticName = ctx.anonClassExprNames.get(decl.initializer);
+                compileClassBodies(
+                  ctx,
+                  decl.initializer,
+                  funcByName,
+                  syntheticName ?? decl.name.text,
+                  classBodyRouting,
+                );
+                continue;
+              }
               // (#3045 Bug 2) Defer the class-expression BODY compilation to the
               // in-scope variable path so its constructor/method bodies can
               // capture the enclosing function scope — call enclosing functions

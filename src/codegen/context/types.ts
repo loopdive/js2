@@ -691,13 +691,9 @@ export interface FunctionContext {
   /**
    * (#2976) Per-activation memo locals for capture-carrying nested function
    * declarations referenced as VALUES: funcName → local holding the
-   * `(ref null $__fn_cap_<name>_struct)` closure instance. Every reference
-   * site emits a `ref.is_null`-guarded lazy build into this local instead of
-   * constructing a fresh struct per reference, so `f === f` holds and
-   * sidecar/static writes land on the same instance every reference sees.
-   * The guard (rather than a prologue hoist) preserves the existing
-   * value-capture semantics: immutable captures are copied at the FIRST
-   * dynamic reference, exactly where the old per-site build copied them.
+   * closure instance. References lazily fill it once, preserving identity and
+   * making sidecar/static writes visible at every subsequent reference.
+   * Lazy initialization retains first-dynamic-reference capture semantics.
    */
   nestedFnClosureMemos?: Map<string, number>;
   /** Function-declaration bindings materialized once because their Function identity is observable. */

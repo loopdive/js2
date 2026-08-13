@@ -41,7 +41,6 @@ import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasm
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
-  buildArgcExtrasSetupFromLocals,
   emitFnctorSubclassDynamicMethodCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
@@ -50,9 +49,11 @@ import {
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
+import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
+import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
 import {
   captureObjectLiteralMethodReceiver,
   emitObjectLiteralMethodThisInstall,
@@ -61,96 +62,6 @@ import {
   planElementAccessMethodReceiverBind,
   planObjectLiteralMethodReceiverBind,
 } from "../object-literal-method-receiver.js";
-
-/**
- * (#3033) Per-source-file set of member names the USER's own code defines as
- * function-valued — prototype-method assignments (`P.prototype.check = fn`,
- * including the alias form `var pp = P.prototype; pp.check = fn`), plain
- * function-valued property assignments, function-valued object-literal
- * properties / method shorthands, and class method names.
- *
- * `tryExternClassMethodOnAny` consults this to REFUSE binding an `any`-typed
- * receiver's method call to an ambient extern class (lib.dom.d.ts et al.) by
- * first-name-match when the program itself defines a member of that name. The
- * concrete failure (#3033 acorn dogfood, minimal FF2 repro): `p.check()` on a
- * fnctor instance first-matched **FontFaceSet.check** — a DOM API — so the
- * user's `P.prototype.check` never ran and the call returned the import's
- * boxed default. Refusal is semantically safe: the call falls through to the
- * generic dynamic dispatch (`__extern_method_call` / fnctor-proto lookup),
- * which resolves by the receiver's REAL runtime identity — the same reasoning
- * as the existing hardcoded `slice`/`replace`/`forEach`/`some` refusals, made
- * general for names the user demonstrably owns.
- */
-const _userFunctionMemberNamesCache = new WeakMap<ts.SourceFile, Set<string>>();
-const _userAliasedFunctionMembersCache = new WeakMap<ts.SourceFile, Map<string, Set<string>>>();
-function getUserFunctionMemberNames(sf: ts.SourceFile): Set<string> {
-  const cached = _userFunctionMemberNamesCache.get(sf);
-  if (cached) return cached;
-  const names = new Set<string>();
-  const isFnValued = (e: ts.Expression): boolean =>
-    ts.isFunctionExpression(e) || ts.isArrowFunction(e) || ts.isIdentifier(e);
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) &&
-      isFnValued(node.right)
-    ) {
-      // Identifier RHS is included conservatively (`pp.parseIdent = parseIdent`
-      // aliasing); it can only widen the refusal set, never mis-bind.
-      names.add(node.left.name.text);
-    } else if (ts.isObjectLiteralExpression(node)) {
-      for (const prop of node.properties) {
-        if (ts.isMethodDeclaration(prop) && ts.isIdentifier(prop.name)) {
-          names.add(prop.name.text);
-        } else if (
-          ts.isPropertyAssignment(prop) &&
-          ts.isIdentifier(prop.name) &&
-          (ts.isFunctionExpression(prop.initializer) || ts.isArrowFunction(prop.initializer))
-        ) {
-          names.add(prop.name.text);
-        }
-      }
-    } else if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.members) {
-      for (const m of node.members) {
-        if (ts.isMethodDeclaration(m) && ts.isIdentifier(m.name)) names.add(m.name.text);
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  _userFunctionMemberNamesCache.set(sf, names);
-  return names;
-}
-
-function sourceAssignsAliasedFunctionMember(sf: ts.SourceFile, receiver: ts.Expression, name: string): boolean {
-  if (!ts.isIdentifier(receiver)) return false;
-  let members = _userAliasedFunctionMembersCache.get(sf);
-  if (!members) {
-    members = new Map<string, Set<string>>();
-    const visit = (node: ts.Node): void => {
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isPropertyAccessExpression(node.left) &&
-        ts.isIdentifier(node.left.expression) &&
-        ts.isIdentifier(node.right)
-      ) {
-        const receivers = members!.get(node.left.name.text) ?? new Set<string>();
-        receivers.add(node.left.expression.text);
-        members!.set(node.left.name.text, receivers);
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sf);
-    _userAliasedFunctionMembersCache.set(sf, members);
-  }
-  return members.get(name)?.has(receiver.text) === true;
-}
-
-export function sourceDefinesFunctionMember(sf: ts.SourceFile, name: string): boolean {
-  return getUserFunctionMemberNames(sf).has(name);
-}
 
 /**
  * (#3205) A single funcref-type dispatch candidate for a callable property /

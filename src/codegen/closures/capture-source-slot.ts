@@ -36,10 +36,23 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
   const capturedSlot = fctx.liftedCaptureSlots?.get(cap.name);
   if (capturedSlot !== undefined) return capturedSlot;
   const inFrameIdx = fctx.localMap.get(cap.name);
+  if (fctx.asyncDriveReturn && inFrameIdx !== undefined) return inFrameIdx;
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 
   const existsHere = cap.outerLocalIdx < fctx.params.length + fctx.locals.length;
   if (!existsHere && inFrameIdx !== undefined) return inFrameIdx;
 
   return cap.outerLocalIdx;
+}
+
+/** Freeze the leading capture-param slots before body locals can shadow their names. */
+export function recordLiftedCaptureSlots(fctx: FunctionContext, names: Iterable<string>): void {
+  const captureNames = [...names];
+  fctx.liftedCaptureNames = new Set(captureNames);
+  fctx.liftedCaptureSlots = new Map(
+    captureNames.flatMap((name) => {
+      const slot = fctx.localMap.get(name);
+      return slot === undefined ? [] : [[name, slot] as const];
+    }),
+  );
 }

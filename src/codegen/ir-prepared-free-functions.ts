@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
@@ -15,7 +16,6 @@ import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/s
 import { MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { ValType, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import { withSelectedTopLevelAccessorUnitIds } from "../ir/module-bindings.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -203,11 +203,17 @@ export function selectPreparedClassMemberUnitIds(
     const staticAccessorBody = terminal?.kind === "class-static-getter" || terminal?.kind === "class-static-setter";
     const nestedAccessorBody =
       (instanceAccessorBody || staticAccessorBody) && terminal?.containingTerminalOwnerId !== undefined;
+    const nestedOrdinaryBody =
+      terminal?.containingTerminalOwnerId !== undefined &&
+      owner !== undefined &&
+      (ts.isClassDeclaration(owner) || ts.isClassExpression(owner)) &&
+      isBoundedPreparedNestedOrdinaryClass(owner);
     const selectedTopLevelStaticAccessorBody = staticAccessorBody && terminal?.containingTerminalOwnerId === undefined;
     if (
       (selectedUnitIds ? selectedUnitIds.has(claim.unitId) : selectedNames.has(claim.legacyMatchName)) &&
       (terminal?.kind === "class-static-method" ||
         ((instanceBody || constructorBody) && instanceHierarchyIsPreparable) ||
+        ((instanceBody || constructorBody) && nestedOrdinaryBody && classOwnerIsPreparable) ||
         ((nestedAccessorBody || selectedTopLevelStaticAccessorBody) && classOwnerIsPreparable)) &&
       declaration !== undefined &&
       (ts.isMethodDeclaration(declaration) ||
@@ -1123,7 +1129,7 @@ function prepareIrClassMemberPopulation(input: {
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
     const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
-      owner !== undefined && ts.isClassDeclaration(owner)
+      owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
         : undefined;
     const shape = classId === undefined ? undefined : shapeByClassId.get(classId);

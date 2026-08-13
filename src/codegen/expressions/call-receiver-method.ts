@@ -115,12 +115,12 @@ import {
   compileCallablePropertyCall,
   compileGetterCallable,
   compileObjectPrototypeFallback,
-  sourceDefinesFunctionMember,
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
+import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall } from "./extern.js";
+import { tryEmitValueOfFallback } from "./valueof-fallback.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
-import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js"; // (#4201) dynamic-receiver valueOf
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -2958,29 +2958,11 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
-  // Fallback .valueOf(): the receiver itself, except on a DYNAMIC receiver
-  // (#4201). Standalone values cannot use the host fnctor dispatcher, so keep
-  // the direct primitive/Object fallback ahead of it in that lane.
-  if (ctx.standalone && propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
-  }
+  const valueOfFallback = tryEmitValueOfFallback(ctx, fctx, expr, propAccess);
+  if (valueOfFallback !== undefined) return valueOfFallback;
 
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
   if (lateFnctorCall !== undefined) return lateFnctorCall;
-
-  // In JS-host mode keep this after late fnctor dispatch: a compiled class can
-  // override Object.prototype.valueOf, and returning the receiver here would
-  // silently skip that user method (for example Moment's timestamp valueOf).
-  if (propAccess.name.text === "valueOf" && expr.arguments.length === 0) {
-    const receiverFact = ctx.oracle.typeFactOf(propAccess.expression).kind;
-    const dynamicReceiver = receiverFact === "any" || receiverFact === "unknown";
-    if (!dynamicReceiver) {
-      return tryEmitDynamicValueOfCall(ctx, fctx, propAccess) ?? compileExpression(ctx, fctx, propAccess.expression);
-    }
-    // In JS-host mode an any-typed receiver can be a compiled fnctor with a
-    // user-defined valueOf. Let the generic method dispatcher below perform
-    // the live prototype lookup rather than assuming Object.prototype.valueOf.
-  }
 
   // Generic dynamic fallback; the native tail reuses this receiver resolution.
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);

@@ -52,6 +52,7 @@ import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
+import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -78,9 +79,6 @@ import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import {
-  buildArgcExtrasReset,
-  buildArgcExtrasSetupFromLocals,
-  buildArgcResetNoLazyExtras,
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
   calleeMayBeHostCallable,
@@ -93,6 +91,13 @@ import {
   tryEmitArrayToStringNative,
   tryEmitInlineDynamicCall,
 } from "./calls.js";
+import {
+  appendArgcSetupFromExtras,
+  appendDynamicCandidateArgcSetup as setCandidateArgc,
+  buildArgcExtrasReset,
+  buildArgcResetNoLazyExtras,
+  saveArgumentLocalAsExtern,
+} from "./argc-extras.js";
 
 /**
  * (#3912) Report the representation of `String(<number>)`'s result truthfully.
@@ -116,27 +121,6 @@ function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContex
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
   }
   return { kind: "externref" };
-}
-
-function localBindingShadowsCapturingFunction(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  callee: ts.Identifier,
-): boolean {
-  const name = callee.text;
-  if (!fctx.localMap.has(name)) return false;
-  if (fctx.hoistedFunctionValueBindings?.has(name)) return false;
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  // A declaration-backed dynamic local can still shadow a same-named lifted
-  // function even when the checker gives it no call signature (Moment's
-  // `var format = ...`). A local whose value already has closure metadata must
-  // keep the closure route, however: treating a named function-expression self
-  // binding or `var af = (...x) => ...` as an arbitrary dynamic local bypasses
-  // the known wrapper and nulls recursive/rest calls.
-  if (declaration && ts.isVariableDeclaration(declaration) && !ctx.closureMap.has(name)) return true;
-  if (!ctx.nestedFuncCaptures.has(name)) return false;
-  const callSignatures = ctx.checker.getTypeAtLocation(callee).getCallSignatures?.();
-  return !!(callSignatures?.length || (declaration && ts.isParameter(declaration)));
 }
 
 function hasLiveFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
@@ -1431,11 +1415,7 @@ export function compileIdentifierCall(
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
-              fctx.body.push({ op: "local.get", index: argLocal });
-              coerceType(ctx, fctx, matchedClosureInfo.paramTypes[i]!, { kind: "externref" });
-              const externLocal = allocLocal(fctx, `__carg_extern_${fctx.locals.length}`, { kind: "externref" });
-              fctx.body.push({ op: "local.set", index: externLocal });
-              actualArgExternLocals.push(externLocal);
+              saveArgumentLocalAsExtern(ctx, fctx, argLocal, matchedClosureInfo.paramTypes[i]!, actualArgExternLocals);
             }
             for (let i = cpParamCnt; i < expr.arguments.length; i++) {
               const extraType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
@@ -1655,15 +1635,7 @@ export function compileIdentifierCall(
               fctx.body.push({ op: "local.get", index: al });
             }
             // (#1511) Set __extras_argv from saved overflow locals + __argc
-            for (const ins of buildArgcExtrasSetupFromLocals(
-              ctx,
-              fctx,
-              cpParamCnt,
-              cpExtrasLocals,
-              expr.arguments.length,
-            )) {
-              fctx.body.push(ins);
-            }
+            appendArgcSetupFromExtras(ctx, fctx, fctx.body, cpParamCnt, cpExtrasLocals, expr.arguments.length);
             // Push funcref back, guarded cast, call
             fctx.body.push({ op: "local.get", index: funcrefLocal });
             emitGuardedFuncRefCast(fctx, matchedClosureInfo.funcTypeIdx);
@@ -1788,19 +1760,13 @@ export function compileIdentifierCall(
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
               const fcCallBody: Instr[] = [];
-              // The runtime closure can declare fewer parameters than the
-              // imported/checker signature. Build `arguments` relative to the
-              // selected closure, not the declaration used to type the call.
-              // Otherwise the declaration's first formal is lost when a
-              // zero-formal implementation reads `arguments`.
-              fcCallBody.push(
-                ...buildArgcExtrasSetupFromLocals(
-                  ctx,
-                  fctx,
-                  fc.paramTypes.length,
-                  actualArgExternLocals.slice(fc.paramTypes.length),
-                  expr.arguments.length,
-                ),
+              setCandidateArgc(
+                ctx,
+                fctx,
+                fcCallBody,
+                fc.paramTypes.length,
+                actualArgExternLocals,
+                expr.arguments.length,
               );
               // Shared func types use canonical-root self. A private/named
               // closure func type still names its concrete self, so its arm
@@ -1888,13 +1854,7 @@ export function compileIdentifierCall(
               ];
             }
 
-            // (#2704) Each funcref-type arm sets __argc / __extras_argv for its
-            // own formal count so the callee's `arguments` object observes the
-            // TRUE call-site arguments. An aliased / indirect method call —
-            // `var ref = obj.m; ref(42)` — left __argc at its -1 sentinel and
-            // the callee fell back to its formal-param count: `arguments.length`
-            // came back 0 for a 0-formal method that reads `arguments` (the
-            // async-gen-meth / static-async-gen test262 forms in #2704). The
+            // Each arm derives `arguments` from its own formal count (#2704).
             fctx.body.push(...funcDispatch);
             // (#2704) Reset __argc to its sentinel after the dispatch so a stale
             // count can't leak into a subsequent callee that reads `arguments`

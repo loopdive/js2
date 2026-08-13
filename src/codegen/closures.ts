@@ -41,7 +41,6 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
-  hoistLetConstWithTdz,
   hoistVarDeclarations,
   isTupleType,
   nextModuleGlobalIdx,
@@ -123,6 +122,9 @@ import {
   getOrCreateFuncRefWrapperTypes,
   getFuncRefWrapperRootTypeIdx,
 } from "./closures/funcref-wrapper-types.js";
+import { recordLiftedCaptureSlots as recordCaptureSlots } from "./closures/capture-source-slot.js";
+import { collectTransitiveCaptureNames } from "./function-declaration-observation.js";
+import { prepareLiftedFrameDeclarations } from "./closures/lifted-declaration-hoisting.js";
 export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
 import {
   isVecOrArrayRefType,
@@ -168,7 +170,6 @@ import {
   emitEnsureDirectEvalActivationStatePoolInitialized,
   enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
-  reifyCurrentDirectEvalBindings,
   RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -2238,30 +2239,16 @@ export function compileLiftedClosureBody(
   }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
-  // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
-  // addUnionImports / shiftLateImportIndices can shift any `call funcIdx`
-  // instructions that get emitted during the captures-extraction prologue
-  // (lines 1589-1635) and the TDZ-flag-extraction prologue (lines 1648-1660),
-  // BOTH of which run BEFORE the savedFunc swap below that would otherwise
-  // expose liftedFctx.body via ctx.currentFunc / funcStack to the shifter.
+  // Track the body before capture/TDZ prologues so late imports can shift
+  // their call indices before the saved-function swap exposes it (#1384).
   ctx.liveBodies.add(liftedFctx.body);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
   }
-  // This body runs in a different Wasm frame from the source expression's
-  // declaring function. Calls to lifted sibling declarations must therefore
-  // source their synthetic capture prefix from the closure's extracted locals,
-  // never from the declaring frame's numeric slot indexes. FunctionDeclaration
-  // bodies already mark their leading captures this way; function expressions
-  // and arrows need the same cross-frame identity after their struct prologue
-  // installs the captures in localMap.
-  liftedFctx.liftedCaptureNames = new Set(captures.map((capture) => capture.name));
-  liftedFctx.liftedCaptureSlots = new Map(
-    captures.flatMap((capture) => {
-      const slot = liftedFctx.localMap.get(capture.name);
-      return slot === undefined ? [] : [[capture.name, slot] as const];
-    }),
+  recordCaptureSlots(
+    liftedFctx,
+    captures.map((capture) => capture.name),
   );
 
   // (#3683 S2/S3) Typed-`this` TWIN prologue. Runs FIRST so `typedThisLocalIdx`
@@ -2276,7 +2263,6 @@ export function compileLiftedClosureBody(
     );
   }
 
-  // Initialize locals for captured variables from struct fields.
   // When using wrapper func types, __self is typed as the wrapper base struct —
   // cast it to the specific subtype to access capture fields.
   let selfLocalForCaptures = 0; // default: param 0 (__self)
@@ -2535,27 +2521,9 @@ export function compileLiftedClosureBody(
 
   // Pre-hoist let/const with TDZ flags for the closure body so that
   // accesses before the declaration site throw ReferenceError (#790).
-  if (ts.isBlock(body)) {
-    hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
-    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
-    // FunctionDeclarationInstantiation makes every declaration in the body
-    // callable before its textual position. Function expressions and arrows
-    // use this lifted-closure compiler rather than function-body.ts; without
-    // the same function-declaration hoist, a forward sibling call was lowered
-    // as an unknown callable (ref.null.extern). Moment's createFromConfig ->
-    // prepareConfig edge is one real-world instance of the generic shape.
-    // The async/generator emitters own their body initialization and resume
-    // layout. Emitting declaration-hoist instructions into `liftedFctx.body`
-    // before those state machines are built changes observable scheduling
-    // (an async function must begin synchronously) and can drain a nested
-    // generator before its first resume. Keep the new forward-declaration
-    // support on ordinary lifted closures; async/generator declarations stay
-    // on their established state-machine path until that path can absorb the
-    // hoisted bindings explicitly.
-    if (!asyncDecision && !isGenerator) {
-      hoistFunctionDeclarations(ctx, liftedFctx, body.statements);
-    }
-  }
+  // Async/generator state machines own their frame initialization. Ordinary
+  // closure hoisting before that transform corrupts suspended-state layout.
+  prepareLiftedFrameDeclarations(ctx, liftedFctx, body, true, !asyncDecision && !isGenerator);
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no
@@ -3515,24 +3483,12 @@ export function compileArrowAsCallback(
   // frame must carry that declaration's environment just like a lifted Wasm
   // closure does; otherwise the direct call reads owner-frame local indices
   // from the callback frame.
-  const captureWorklist = [...referencedNames];
-  const visitedCaptureFunctions = new Set<string>();
-  const transitivelyRequiredNames = new Set<string>();
-  while (captureWorklist.length > 0) {
-    const referencedName = captureWorklist.pop()!;
-    if (visitedCaptureFunctions.has(referencedName)) continue;
-    visitedCaptureFunctions.add(referencedName);
-    const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
-    if (!transitiveCaptures) continue;
-    for (const capture of transitiveCaptures) {
-      if (ownLocals.has(capture.name)) continue;
-      transitivelyRequiredNames.add(capture.name);
-      if (!referencedNames.has(capture.name)) {
-        referencedNames.add(capture.name);
-        captureWorklist.push(capture.name);
-      }
-    }
-  }
+  const transitivelyRequiredNames = collectTransitiveCaptureNames(
+    ctx.nestedFuncCaptures,
+    referencedNames,
+    ownLocals,
+    () => false,
+  );
 
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
@@ -3554,9 +3510,7 @@ export function compileArrowAsCallback(
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       directReferencedNames.has(name) &&
-      bindingDeclaration !== undefined &&
       isCallbackFunctionDeclaration(bindingDeclaration) &&
-      !ts.isVariableDeclaration(bindingDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       !fctx.hoistedFunctionValueBindings?.has(name)
     ) {
@@ -3796,10 +3750,7 @@ export function compileArrowAsCallback(
   }
 
   // Pre-hoist let/const with TDZ flags for the callback body (#790)
-  if (ts.isBlock(body)) {
-    hoistLetConstWithTdz(ctx, cbFctx, body.statements);
-    hoistFunctionDeclarations(ctx, cbFctx, body.statements);
-  }
+  prepareLiftedFrameDeclarations(ctx, cbFctx, body, false);
 
   let exprBodyHasReturnValue = false;
   if (ts.isBlock(body)) {

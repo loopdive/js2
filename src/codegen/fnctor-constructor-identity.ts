@@ -2,7 +2,7 @@
 
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { ts } from "../ts-api.js";
-import { captureSourceSlot } from "./closures/capture-source-slot.js";
+import { captureSourceSlot, recordLiftedCaptureSlots } from "./closures/capture-source-slot.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
@@ -80,12 +80,9 @@ export function registerFnctorCaptureParams(
   layout: FnctorCaptureLayout,
 ): void {
   if (layout.captures.length === 0) return;
-  fctx.liftedCaptureNames = new Set(layout.captures.map((capture) => capture.name));
-  fctx.liftedCaptureSlots = new Map(
-    layout.captures.flatMap((capture) => {
-      const slot = fctx.localMap.get(capture.name);
-      return slot === undefined ? [] : [[capture.name, slot] as const];
-    }),
+  recordLiftedCaptureSlots(
+    fctx,
+    layout.captures.map((capture) => capture.name),
   );
   for (let i = 0; i < layout.captures.length; i++) {
     const capture = layout.captures[i]!;

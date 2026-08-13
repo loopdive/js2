@@ -1,1061 +1,686 @@
 ---
 id: 2668
-title: "ES5: Object.defineProperty/defineProperties descriptor fidelity residual (~788 fails — largest ES5 cluster)"
+title: "ES5: canonical vec-index Object/property MOP residual"
 status: ready
 created: 2026-06-25
-updated: 2026-08-04
+updated: 2026-08-13
 priority: high
 feasibility: hard
-reasoning_effort: high
+reasoning_effort: max
 task_type: bug
 area: codegen
 es_edition: 5
 language_feature: property-descriptors
 goal: es5
-related: [1460, 1462, 929, 3185, 4008, 4158]
+related: [1460, 1462, 929, 3185, 3663, 4008, 4158, 4197, 4222]
 sprint: current
 ---
-# #2668 — ES5 Object.defineProperty/defineProperties descriptor fidelity residual
 
-## Edition / impact
-
-- **Edition:** ES5.
-- **Fail count:** **~788** — the single largest ES5 cluster.
-  - `built-ins/Object/defineProperty`: **506**
-  - `built-ins/Object/defineProperties`: **282**
-  - (plus tails: `Object/create` 89, `getOwnPropertyDescriptor` 26 — track here too).
-- **Highest ES5 bang-for-buck.** Residual after #1460 / #1462 / #929 (all done) —
-  those landed core descriptor support; this is the long tail of full
-  [[DefineOwnProperty]] spec fidelity.
-
-## Problem
-
-`Object.defineProperty` / `defineProperties` do not fully implement the
-ES5/ES2015 9.1.6 `[[DefineOwnProperty]]` / `ValidateAndApplyPropertyDescriptor`
-algorithm. The failing tests exercise the validation matrix that the current
-implementation handles only partially:
-
-- **Attribute defaulting** when adding a new property (missing attributes
-  default to `false`/`undefined`).
-- **Reconfiguration rules** on existing properties: non-configurable properties
-  may not change configurable/enumerable, may not switch data<->accessor, may
-  not change a non-writable data value (with the `SameValue` exception), etc. —
-  each illegal change must throw `TypeError`.
-- **Array exotic [[DefineOwnProperty]]**: defining `"length"` (RangeError on
-  invalid length, deletion of out-of-range indices), defining an index ≥ length
-  updating `length`, non-writable `length` blocking index adds.
-- **Accessor descriptors**: get/set must be callable-or-undefined; redefinition
-  preserves unspecified attributes.
-- **Side-effect ordering**: descriptor field reads (`get`, `set`, `value`,
-  `writable`, `enumerable`, `configurable`, plus `ToPropertyKey` on the key) in
-  the spec-mandated order, each read once.
-
-Failure signatures are dominated by `assert.sameValue(obj.prop, ...)`,
-`verifyProperty(...)`, `assert.throws(TypeError/RangeError, ...)`.
-
-## Failing-test cluster (examples)
-
-```
-built-ins/Object/defineProperty/15.2.3.6-4-*           (the big 4-* descriptor-matrix family)
-built-ins/Object/defineProperty/name.js, length.js, descriptor-*-*.js
-built-ins/Object/defineProperties/15.2.3.7-*           (multi-descriptor application + ordering)
-built-ins/Object/create/15.2.3.5-*                     (create with property descriptors)
-```
-
-## Acceptance criteria
-
-- Target: pass **≥ 600 of the ~788** failing `defineProperty`/`defineProperties`
-  tests (full `ValidateAndApplyPropertyDescriptor` matrix).
-- All non-configurable-property illegal-change cases throw `TypeError`.
-- Array `length` define cases throw `RangeError` on invalid length and update
-  `length` correctly on index define.
-- Descriptor-field reads occur in spec order, once each.
-- No regression in currently-passing Object.* tests.
-
-## Notes — feasibility: hard
-
-This is core property-machinery work and touches the object model; route to the
-architect for an implementation spec before dispatch. Likely a focused rewrite
-of the shared `[[DefineOwnProperty]]` helper rather than per-method patches.
-Consider slicing: (a) data-descriptor matrix, (b) accessor + data<->accessor
-switch, (c) Array-exotic length/index. Each slice is independently shippable.
-
-## Slice A — landed (sd-2668a, host mode)
-
-**Status:** Slice A merged; the issue stays open for Slices B (accessors),
-C (array-`length` exotic) and D (cleanup). The full architect plan lives in
-PR #2068 (`arch-2668-spec`).
-
-### Verify-first finding — the real dominant bug differs from the spec framing
-
-The architect plan described a struct fast-path ↔ runtime-validator divergence
-for the *inline-literal* path. Verifying per-file on current main (isolated
-runs; the in-process batch driver is unreliable here — fork-state poisoning
-inflated the apparent `compile_error` bucket to ~1021/1131, but each flagged
-file PASSES in isolation) showed the inline-literal GOPD round-trip already
-works. The genuine bucket is the **`15.2.3.6-3-*` family where the descriptor
-is supplied as a non-literal expression** — most commonly a *local whose
-initializer is an object literal* (`var d = {value:1};
-Object.defineProperty(o, k, d)`).
-
-Two fixes (final scope after an auto-park merge_group diagnosis, below):
-
-1. **Host route for LITERAL-resolvable dynamic descriptors.** The inline fast
-   paths in `compileObjectDefineProperty` (`src/codegen/object-ops.ts`) only fire
-   for a *syntactic* object-literal descriptor at the call site. A descriptor
-   identifier whose declaration initializer is an object literal fell through to
-   `emitExternDefinePropertyNoValue`, which has no descriptor to read and
-   silently dropped the value + every attribute. **Fix:** in host mode, when
-   `descriptorInitializerForIdentifier(descArg)` resolves to a literal, route to
-   `emitDefinePropertyDescRuntime` → `__defineProperty_desc` (full
-   ToPropertyDescriptor + `_validatePropertyDescriptor`, §10.1.6.3), mirroring
-   the standalone `__obj_define_from_desc` route.
-
-2. **Typed-field value not synced.** A `const o: any = {}` whose property is
-   later defined gets a *typed* struct shape (e.g. `(struct (field $property …))`)
-   because the checker widens it; the member read `o.property` ref-tests as that
-   struct type and lowers to a static `struct.get`, which never consults the
-   sidecar. The runtime descriptor appliers wrote only the sidecar, so the
-   static read returned the field's stale initializer. **Fix:** new
-   `_structFieldWriteback` (`src/runtime.ts`) mirrors a defined data VALUE into
-   the real struct field via the compiled `__sset_<key>` export, called from
-   `__defineProperty_desc` and `__defineProperty_value` (value case). It does
-   NOT re-run `_safeSet`'s flag enforcement — the appliers already validated.
-
-### Auto-park merge_group diagnosis (#2547) — what got cut from Slice A
-
-PR #2074's first enqueue was auto-parked: the `merge_group` re-validation
-(merged state — catches what PR-level checks miss) reported **+41 improvements
-but 9 regressions** (net +32 pass), tripping the 10% regression-ratio gate
-(22%). All 9 regressions were in the same `15.2.3.6-3-23..45` for-in family.
-Localized locally (paired base-vs-fix isolated runs) to **two** over-reaching
-parts of the first cut, both removed:
-
-- A **for-in enumerability filter** (drop a typed field whose `_wasmPropDescs`
-  entry is `DEFINED && !ENUMERABLE`). It is correct for a *genuine*
-  `enumerable:false`, but these tests' descriptors carry `enumerable:true` on a
-  **prototype** that the runtime ToPropertyDescriptor reader can't see, so the
-  property was recorded non-enumerable and wrongly hidden. Reverted — the
-  for-in honoring needs the proto-read fix first (deferred).
-- The dynamic-descriptor route was **narrowed** from "any non-literal
-  descriptor" to "identifier resolving to an object **literal**". Arbitrary
-  host-object descriptors (`Math`, `Date` instance, `Object.create(proto)`) are
-  left on their prior path, because `__defineProperty_desc`'s reader resolves a
-  WasmGC-struct descriptor's attrs only on its OWN level and would drop a
-  prototype-inherited `enumerable`/`configurable`.
-
-### Out of scope / deferred
-
-- **For-in / Object.keys honoring `enumerable:false` on a typed field** — needs
-  the proto-inherited-attribute read fix first (the `Object.create(proto)` +
-  proto-sidecar gap below); deferred to a follow-up.
-- **Prototype-chain attribute reading for a WasmGC-struct descriptor** —
-  `Object.create(proto)` / `Array.prototype.<attr>` descriptors read attrs as
-  absent (own-level only). Pre-existing substrate gap.
-- Arbitrary host-object descriptors (`Math`/`Date` as descriptor;
-  `15.2.3.6-3-144/145-1`) — not routed (would need the proto fix).
-- `Object.defineProperty(arguments, …)` mapped-arguments rows
-  (`15.2.3.6-4-292`) — mapped-args territory (#1511/#2667).
-- The `#2130 delete-then-re-add → "in" true again` vitest fails on base main
-  too (confirmed by reverting this PR's src and re-running) — pre-existing.
-
-### Test results
-
-- New: `tests/issue-2668.test.ts` (8 cases, all green) — literal-resolvable
-  descriptor value application + GOPD round-trip + ToBoolean attr +
-  default-attrs + explicit w/e + 3 no-regression guards (inline define, plain
-  assign, and the proto-inherited for-in case Slice A must NOT regress).
-- Regression: all 52 existing `defineProperty` cases (`issue-1460/1629*`) green;
-  broad object suites (`issue-2017/2042/1364a/1364b/2580-m3-bacc/
-  delete-operator/...`) green; the 9 auto-parked regressions verified
-  recovered (isolated runs). `tsc --noEmit` clean.
-- Conformance: net-positive, **0 regressions** — re-validated via the
-  `merge_group` floor (core define/read path is broad-impact).
-
-## Slice B — landed (sd-2668b, host mode)
-
-**Status:** Slice B merged; issue stays open for Slice C (array-`length`
-exotic) and D (cleanup). Slice B targets **own-property accessor descriptor
-identity**: `Object.getOwnPropertyDescriptor(o, k).get/.set` returning the same
-function the user passed, and redefine-preserves-the-other-half.
-
-### Verify-first finding — the real bug is accessor re-synthesis, not read-back
-
-The box was quiet, so the per-file signal sd-2668a couldn't get earlier was
-reliable here (fresh single-process `runTest262File`, not the in-process batch).
-Repro (host/JS): `Object.defineProperty(o, "p", { get: getter, set: setter });
-Object.getOwnPropertyDescriptor(o, "p").get === getter` → **false** on main, even
-though `o.p` invokes the getter correctly.
-
-Root cause is in **codegen**, not the runtime read-back. For an
-*identifier-reference* accessor half (`{ get: fnRef }`), the
-`emitExternDefinePropertyNoValue` getExpr/setExpr branches
-(`src/codegen/object-ops.ts`) resolved `fnRef` back to its function
-*declaration* (`resolveExprToFuncNode`) and **re-synthesized a FRESH closure**
-via `emitAccessorFn`. That fresh closure is a different object than the value the
-user holds, so the descriptor's get/set never matched `=== fnRef`. (The runtime
-already memoizes the `_wrapWasmClosure` invocation bridge per source closure and
-`_hostEqComparableValue` unwraps it on `===`, so once the *stored* value derives
-from the user's actual closure, identity round-trips for free.)
-
-### The fix (one change, host mode)
-
-`emitAccessorRefValue` (`src/codegen/object-ops.ts`): in **host mode**, compile
-the `get`/`set` reference expression *directly* to push the user's actual
-function value (function-reference identity is stable in this compiler), instead
-of re-synthesizing from the declaration. Standalone keeps `emitAccessorFn`
-(host-free closure the native accessor arms dispatch through) — byte-identical
-standalone output. Invocation is unaffected (the runtime bridge dispatches via
-`__call_fn_method_0/1`, which also threads the receiver as `this` — a strict
-improvement over the captureless re-synthesized fn).
-
-### Discarded approach — runtime GOPD unwrap (documented to save the next dev)
-
-An earlier cut ALSO unwrapped the accessor bridge back to the raw closure at the
-`__getOwnPropertyDescriptor(s)` boundary. It produced the same +33 on the
-accessor batch but was **reverted** — it returns the raw WasmGC closure, which
-is `typeof "object"` (violates "accessor get is a function") and is **not
-dynamically invocable** (`desc.get()` → `NaN` in TS mode; broke the existing
-`issue-1629` "preserves referenced getter identity" vitest). The codegen-only
-fix avoids this entirely: the descriptor keeps the invocable JS-function bridge,
-and identity is recovered by the existing `__host_eq` unwrap.
-
-### Scope / two comparison regimes (why some shapes still differ)
-
-- **Regime 1 — `any === any` (the test262 regime).** test262's harness is
-  untyped JS, so `desc.get === origGetter` lowers to the JS-host `__host_eq`
-  path, which unwraps the bridge → identity matches. **This is what Slice B
-  fixes.**
-- **Regime 2 — statically function-typed `fnRef === any GOPD result`.** Lowers
-  to WasmGC `ref.eq` across two representations (a closure-ref vs the host bridge
-  externref) and does not match. This is a deeper representation-canonicalization
-  gap (out of Slice B scope) — the Slice B vitest cases use `any`-typed function
-  values to reflect the regime that is actually fixed.
-- Proto-inherited accessor attribute reads remain deferred to **#2680**.
-- Inline-method (`get(){}`) `this`-binding capture (`issue-929` "accessor
-  descriptor" case) fails on base too — pre-existing, untouched, separate.
-
-### Test results
-
-- New: 4 `#2668 Slice B` cases in `tests/issue-2668.test.ts` (get/set identity
-  round-trip + typeof, redefine-preserves-other-half, invocable-after-define,
-  data-value identity no-regression guard). Full file green (12 cases).
-- Per-file accessor batch (734 `defineProperty`/`defineProperties`/
-  `getOwnPropertyDescriptor` files touching get/set, fresh single-process):
-  **+33 pass (342→375), 0 regressions** (pass→fail).
-- Regression: `issue-1460/1629*/1364a/1364b/2017/2580-m3-bacc/2042-s3` +
-  `accessor-side-effects` green (119 passed; the lone fail is the pre-existing
-  `issue-929` inline-capture case, fails on base). `tsc --noEmit` clean.
-
-## Slice C — landed (sd-2668c, host/standalone mode-agnostic)
-
-**Status:** Slice C merged; issue stays open for Slice D (cleanup). Slice C
-targets **Array exotic `[[DefineOwnProperty]]` for the `length` property** —
-`Object.defineProperty(arr, "length", desc)`, ES §10.4.2.1 `ArraySetLength`.
-
-### Verify-first finding — every failing array-length test fails at the FIRST `assert.throws`
-
-Reproduced per-file on current main (fresh single-process `runTest262File`, NOT
-the in-process batch — fork-state poisoning). Every `15.2.3.6-4-*` array row and
-every `built-ins/Array/length/define-own-prop-*` row fails at the **first
-`assert.throws(RangeError|TypeError, …)`**: `Object.defineProperty(arr,
-"length", desc)` was a silent no-op — `parseCanonicalArrayIndex` explicitly
-rejects `"length"` so `maybeEmitVecLengthGrowth` skipped it, and the generic
-descriptor path has no array-length-exotic handling. So nothing threw, and a
-valid value never updated `vec.length` (struct field 0).
-
-### The fix (one new function, `src/codegen/object-ops.ts`)
-
-`maybeEmitVecLengthDefine(ctx, fctx, objArg, propArg, descArg)` — called from
-`compileObjectDefineProperty` just before `maybeEmitVecLengthGrowth`; returns a
-`ValType` (handled, caller returns immediately) or `false` (defer, unchanged).
-Fires only for a `"length"` string-literal key + object-literal descriptor +
-side-effect-free receiver that resolves to a WasmGC vec. Implements the
-spec-mandated **rejections** plus the simple length set:
-
-- get/set accessor descriptor on `length` → **TypeError** (length is a data prop).
-- `configurable:true` / `enumerable:true` (literal) → **TypeError** (illegal
-  change of a non-configurable, non-enumerable property's attributes).
-- `value` (number/boolean/null/undefined/**string**) whose ToUint32 ≠ ToNumber
-  (NaN / ±Infinity / fractional / negative / > 2³²−1 / non-numeric string) →
-  **RangeError** (computed inline: `nl≥0 && nl≤4294967295 && floor(nl)===nl`).
-  Spec order is preserved — the value RangeError is checked **before** the
-  illegal-attr TypeError when both are present.
-- a valid uint32 `value` → set `vec.length` (field 0), **growing the backing
-  `$data` array** when `newLen` exceeds capacity (mirrors
-  `maybeEmitVecLengthGrowth` — the vec invariant length ≤ array.len(data) must
-  hold; setting the length field alone caused an OOB read). Allocation guarded
-  at `nl ≤ 16M`. Shrinks keep the backing capacity (reads are length-bounded).
-
-Strings are admitted because `StringToNumber` (§7.1.4.1) has **no** observable
-side effects — same "no object ToPrimitive" guarantee as a number.
-
-### Out of scope / deferred
-
-- **Per-index configurability on shrink** (`15.2.3.6-4-116/117/168-177`):
-  shrinking length below a non-configurable index must throw TypeError and stop
-  at that index — needs per-index descriptor tracking (an array substrate gap),
-  not present. Those rows stay failing (no regression).
-- **Object/symbol-valued length descriptors** (`15.2.3.6-4-146-151`): need the
-  full host ToNumber/ToPrimitive engine + spec field read-order. Deferred.
-- **Frozen (`writable:false`) length blocking later index adds** (`-188/-189`):
-  needs a per-array frozen-length sidecar bit. Deferred.
-- **Sparse near-2³² lengths** (`-154/-155/-183-186`): a dense WasmGC vec cannot
-  represent a 4-billion-slot sparse array. Deferred.
-- **`getOwnPropertyDescriptor(arr, "length")` attribute fidelity** + the
-  `verifyProperty` tails (`-116/-222/…`): depend on the per-index work above.
-
-### Test results
-
-- New: 9 `#2668 Slice C` cases in `tests/issue-2668.test.ts` (RangeError on
-  fractional/negative/undefined value, TypeError on configurable/enumerable
-  true + accessor descriptor, valid value updates `length`, no-throw on valid
-  integer, index-define growth no-regression guard). Full file green (21 cases).
-- Per-file array-length batch (79 files: `15.2.3.6-4-*` array rows +
-  `Array/length/*`, fresh single-process): **+18 pass, 0 regressions**
-  (pass→fail). `tsc --noEmit` clean.
-- Conformance: net-positive, **0 regressions** — re-validated via the
-  `merge_group` floor (define/array path is broad-impact).
-
----
-
-## Implementation Plan
-
-> Author: architect (arch-es5), 2026-06-25. Grounded by reading the live
-> mechanism on current main (the defineProperty path is untouched on
-> `po-edition-gaps`, so the anchors hold for both). All file:line anchors below
-> are against that tree — re-`grep` the function name before editing, sibling
-> PRs shift line numbers (memory `feedback_reground_spec_against_current_main`).
-
-### Root cause — the dual-path divergence
-
-There are **two independent `[[DefineOwnProperty]]` implementations** in the
-tree, and they disagree:
-
-1. **Runtime path (high fidelity).** `_validatePropertyDescriptor`
-   (`src/runtime.ts:1556`) is a near-complete ES §10.1.6.3
-   `ValidateAndApplyPropertyDescriptor`: attribute defaulting on first define,
-   redefine-preserves-omitted, all non-configurable illegal-change throws,
-   `SameValue` value check, data↔accessor switch guard. It is reached by the
-   JS-host imports `__defineProperty_desc` (`runtime.ts:8312`),
-   `__defineProperty_value` (`runtime.ts:8418`), `__defineProperty_accessor`
-   (`runtime.ts:8457`) and `__obj_define_from_desc` — all call
-   `_validatePropertyDescriptor` (callers at `runtime.ts:8381, 8442, 8492, 8642,
-   8673`) and store flags into the canonical sidecar tables `_wasmStructProps`
-   (value, `runtime.ts:48`) + `_wasmPropDescs` (flags, `runtime.ts:583`) +
-   `_wasmStructAccessors` (`runtime.ts:590`). The read-back path
-   `_readOwnDescriptor` (`runtime.ts:4301`) reads those **same** tables, so the
-   host-runtime round-trip is largely correct.
-
-2. **Inline / struct fast-path (partial fidelity).** When the receiver resolves
-   to a static WasmGC struct *and* the descriptor is an object literal with a
-   `value`, `compileObjectDefineProperty` (`src/codegen/object-ops.ts:919`)
-   takes the `useStruct` branch (`object-ops.ts:1308`, body at
-   `object-ops.ts:1614`). This branch:
-   - emits a raw `struct.set` for the value,
-   - tracks attributes at **compile time** in `ctx.definedPropertyFlags`
-     (Map keyed `varName:propName`, `object-ops.ts:1660-1717`) and
-     `ctx.shapePropFlags` (`object-ops.ts:1726`),
-   - runs a **hand-rolled, partial** validation inline
-     (`object-ops.ts:1685-1714`) — and a second, separate runtime flag-check
-     helper `emitDefinePropertyFlagCheck` (`object-ops.ts:709`) that stores
-     flags into a **third, divergent** side-table keyed `__pf_<propName>`
-     (`object-ops.ts:717`) via `__extern_get/set` — a table **nothing in
-     `_readOwnDescriptor` consults**.
-
-The failures are the cartesian product of the two paths disagreeing:
-
-- **Attribute round-trip drops.** The struct fast-path's compile-time
-  `definedPropertyFlags` and `__pf_` table are not the `_wasmPropDescs` table
-  the read path reads — so `getOwnPropertyDescriptor` / `verifyProperty` see
-  default `{writable,enumerable,configurable}=true` regardless of what was
-  defined. This is the **single biggest** bucket (the `15.2.3.6-4-*`
-  `verifyProperty` family, 735 tests).
-- **Runtime behavior doesn't honor flags.** `writable:false` on a struct field
-  does not block a later `obj.x = v` (the struct.set assignment path has no
-  flag guard); `enumerable:false` is honored only when the read consults
-  `_wasmStructPropertyIsEnumerable` (`runtime.ts:4389`) — but struct-fast-path
-  fields never populate `_wasmPropDescs`, so for-in still lists them;
-  `configurable:false` does not block `delete`. `verifyProperty` mutates the
-  object to probe exactly these, so a dropped flag fails 2-3 assertions.
-- **Partial inline validation.** `object-ops.ts:1685-1714` omits the
-  `SameValue` value-equality exception, the accessor get/set-identity check, and
-  only fires when both receiver var-name and prop-name are static literals
-  (`varName`/`propName` both resolved). Any dynamic key or non-identifier
-  receiver silently skips validation.
-- **Array-exotic `length` unhandled.** `maybeEmitVecLengthGrowth`
-  (`object-ops.ts:463`) handles *only* index-define→length-growth. Defining
-  `"length"` itself (`RangeError` on a non-uint32 / fractional value; deleting
-  out-of-range indices when shrinking; `writable:false` length blocking
-  subsequent index adds) is **entirely missing** — `parseCanonicalArrayIndex`
-  (`object-ops.ts:433`) explicitly rejects `"length"`.
-
-### The fix strategy — converge on the runtime validator
-
-**Do NOT extend the inline `__pf_`/`definedPropertyFlags` machinery.** It is a
-parallel half-implementation. The strategy is to **route every define through
-the already-correct `_validatePropertyDescriptor` + `_wasmPropDescs` sidecar**
-and make the struct fast-path *also* publish to that sidecar, so reads,
-for-in, writes, and delete all consult one source of truth. Concretely:
-
-- Keep the `struct.set` value write (it is the zero-overhead storage for the
-  common `{value}` case — the no-regression fast path), **but** after it, always
-  emit a side-effecting call that records the *full descriptor flags* into
-  `_wasmPropDescs` via the runtime — i.e. fold the struct path's flag handling
-  into the **same** `__defineProperty_value(obj, key, val, flags)` sidecar write
-  the externref path already uses (`emitExternDefinePropertyValue`,
-  `object-ops.ts:2130`), rather than the divergent `__pf_` table. The struct
-  path already has a TODO-shaped comment acknowledging this
-  (`object-ops.ts:1305-1307`): *"emit an additional side-effect
-  `__defineProperty_value` call … so attribute flags are propagated to the
-  runtime sidecar (`_wasmPropDescs`) for later
-  `Object.getOwnPropertyDescriptor` reads."* Verify whether that call is
-  actually emitted today (read `object-ops.ts:1760-1960`) — if it is, the bug is
-  that the *flags integer* passed is incomplete; if it isn't, that's the drop.
-- Make **runtime behavior honor the sidecar flags**: the struct-field write
-  path (member assignment `obj.x = v` lowering in
-  `src/codegen/expressions/assignment.ts`) and `delete obj.x`
-  (`src/codegen/typeof-delete.ts`) must consult `_wasmPropDescs` for
-  writable/configurable when the field has a defineProperty'd descriptor. For
-  the **standalone** target (no JS host) this needs a Wasm-native flag check;
-  for **host** target the existing `__extern_set`/`__obj_delete` runtime entries
-  already gate on the sidecar — confirm and wire the struct path to them.
-- **Standalone parity (`ctx.standalone`)**: the `__defineProperty_*` and
-  `__extern_*` host imports are refused under `--target standalone` (#1472
-  Phase B — see the gate at `object-ops.ts:1224-1230`). The standalone path
-  currently relies on the struct fast-path + `shapePropFlags` for flags. Slices
-  must either (a) keep standalone on a Wasm-native flag-table struct field, or
-  (b) explicitly scope each slice to **host mode first** and file a standalone
-  follow-up. Recommend **(b)** per slice to keep slices small — the bulk of the
-  788 fails run in host mode (the default test262 runner target). Coordinate
-  the standalone value-rep with #2580 (the any-typed value-read substrate) and
-  `project_standalone_any_string_value_read_substrate` — do **not** invent a new
-  standalone descriptor representation here; defer standalone descriptor
-  fidelity to a #2580-dependent follow-up.
-
-### Representation — where per-property attributes live
-
-| Store | Location | Holds | Read by |
-|-------|----------|-------|---------|
-| `_wasmPropDescs` | `runtime.ts:583` | `Map<key, flags:int>` WEC+ACCESSOR+DEFINED bits | `_readOwnDescriptor`, `_wasmStructPropertyIsEnumerable`, delete/write gates — **canonical** |
-| `_wasmStructProps` | `runtime.ts:48` | dynamically-added / defineProperty'd **values** | read-back, has-check |
-| `_wasmStructAccessors` | `runtime.ts:590` | `{get,set}` fns (incl. symbol keys) | accessor read-back |
-| `ctx.definedPropertyFlags` | compile-time Map | `varName:propName → flags` | **inline path only — divergent, to be retired** |
-| `ctx.shapePropFlags` | compile-time, per-structTypeIdx | WEC bits per user field | standalone GOPD fallback |
-| `__pf_<prop>` extern table | `emitDefinePropertyFlagCheck` | boxed flags via `__extern_set` | **nothing canonical — to be retired** |
-
-The flag bit layout is **already unified** between codegen and runtime:
-`PROP_FLAG_*` (`object-ops.ts:646-650`: WRITABLE=1, ENUMERABLE=2,
-CONFIGURABLE=4, DEFINED=8, ACCESSOR=16) ≡ `_SC_*` in `runtime.ts`. Reuse them;
-do not introduce a new encoding.
-
-**Target end-state representation:** `_wasmPropDescs` (host) is the single
-source of truth for attributes; the struct field remains the value store for
-the data-`{value}` fast path; `definedPropertyFlags` / `__pf_` are deleted once
-their last reader is migrated. Standalone keeps `shapePropFlags` until #2580.
-
-### Slice breakdown (each independently shippable)
-
-Order matters: **Slice A first** — it is the largest bucket *and* establishes
-the "publish-to-`_wasmPropDescs`" convergence the later slices build on.
-
-#### Slice A — data-descriptor attribute round-trip + runtime honoring (host)
-**~480-520 fails** (the `15.2.3.6-4-*` `verifyProperty` data-property family +
-much of `defineProperties`). Highest ROI; do first.
-
-- **Scope:** data descriptors (`value`/`writable`/`enumerable`/`configurable`),
-  host mode. No accessors, no array-length.
-- **Changes:**
-  1. `src/codegen/object-ops.ts` — `compileObjectDefineProperty` `useStruct`
-     branch (`~1614`): after the `struct.set`, ALWAYS emit the
-     `__defineProperty_value(obj, key, val, flags)` sidecar call
-     (`emitExternDefinePropertyValue`, `~2130`) with the **complete**
-     `computeDescriptorFlags(...)`/`applyDescriptorFlags(...)` integer — so
-     `_wasmPropDescs` is populated identically to the externref path. Verify the
-     existing "additional side-effect" call at `~1760-1960` and fix the flags
-     integer it passes (or add the call if absent).
-  2. Retire the inline `emitDefinePropertyFlagCheck` (`~709`) / `__pf_` table
-     for this path — let `_validatePropertyDescriptor` (already called by
-     `__defineProperty_value`, `runtime.ts:8442`) be the sole validator. Remove
-     the partial inline validation at `object-ops.ts:1685-1714` for non-frozen
-     receivers (keep the `nonExtensibleVars` extensibility throw at `~1679`).
-  3. **Runtime honoring of `writable:false`**: the `obj.x = v` struct-field
-     assignment lowering (`src/codegen/expressions/assignment.ts` — grep
-     `struct.set` member-assign) must, when `obj` has a `_wasmPropDescs` entry
-     with `!WRITABLE`, route the write through the runtime
-     `__extern_set` (which silently no-ops a non-writable data prop and throws in
-     strict mode) instead of a bare `struct.set`. Simplest: when a field has
-     *ever* been `defineProperty`'d on this receiver (`definedPropertyFlags`
-     has the key, or unknown receiver), lower the assignment via the sidecar
-     write rather than `struct.set`.
-  4. `delete obj.x` honoring `configurable:false`: `src/codegen/typeof-delete.ts`
-     — gate the struct-field delete on the sidecar's CONFIGURABLE bit (host
-     `__obj_delete` already does — confirm the struct path reaches it).
-- **Verify:** `15.2.3.6-4-100..140` (value/attribute round-trip),
-  `15.2.3.6-4-292..360` (writable/enumerable/configurable behavior),
-  `15.2.3.6-4-1.js` (non-extensible throw).
-
-#### Slice B — accessor descriptors + data↔accessor switch (host)
-**~140-180 fails** (the `15.2.3.6-4-*` accessor sub-family +
-`defineProperties` accessor rows). Depends on Slice A's sidecar convergence.
-
-- **Scope:** `get`/`set` descriptors (inline fn, fn-ref, `undefined`),
-  redefinition preserving unspecified accessor halves, data↔accessor switch
-  validation, host mode.
-- **Changes:**
-  1. `compileObjectDefineProperty` accessor branch (`~1355-1612`): ensure the
-     accessor is mirrored into `_wasmStructAccessors` + `_wasmPropDescs` (the
-     `emitExternDefinePropertyNoValue` → `__defineProperty_accessor` path,
-     `runtime.ts:8457`, already does this — the bug is the static-struct branch
-     `~1355` captures the getter into the compiled `${structName}_get_<prop>`
-     fast path *instead of* the sidecar, so `getOwnPropertyDescriptor(o,k).get`
-     identity and `verifyProperty` fail). Make the static-struct accessor branch
-     **also** publish to the sidecar (one write reconciles every reader — the
-     comment at `object-ops.ts:1331-1335` describes exactly this for the
-     `any`-receiver case; extend it to the static-struct case for GOPD identity).
-  2. data↔accessor switch validation is already in `_validatePropertyDescriptor`
-     (`runtime.ts:1616-1632`) — once the accessor publishes through
-     `__defineProperty_accessor`, the switch guards fire for free. Remove the
-     partial inline data↔accessor throw (`object-ops.ts:1707-1712`).
-- **Verify:** `15.2.3.6-4-209.js` (accessor update-all), the
-  `get`/`set`-identity redefine rows, `defineProperty` accessor `verifyProperty`
-  rows.
-
-#### Slice C — Array-exotic `[[DefineOwnProperty]]` for `length` + index (host)
-**~60-90 fails** (`defineProperty` array rows + a slice of `Array` length
-tests). Independent of A/B (touches the vec path), can land in parallel.
-
-- **Scope:** `Object.defineProperty(arr, "length", desc)` and the non-writable
-  length / index-add interaction.
-- **Changes:**
-  1. `src/codegen/object-ops.ts` — add a `maybeEmitVecLengthDefine` sibling to
-     `maybeEmitVecLengthGrowth` (`~463`): when `propArg === "length"` on a vec
-     receiver, implement ES §10.4.2.1 `ArraySetLength`:
-     - `ToUint32(value) !== ToNumber(value)` → **RangeError** (throw via
-       `emitThrowRangeError` — add if missing, mirror `emitThrowTypeError`);
-     - new length < current → delete (zero/tombstone) indices in
-       `[newLen, oldLen)`; if any is non-configurable, throw TypeError and stop
-       at that index (set length to that index + 1);
-     - `writable:false` in the length descriptor → record a "frozen length" flag
-       in the sidecar so subsequent index-defines beyond length throw.
-  2. `maybeEmitVecLengthGrowth` (`~463`): before bumping, consult the
-     frozen-length flag and throw TypeError if the index ≥ frozen length.
-  3. `parseCanonicalArrayIndex` (`~433`) stays as-is (correctly rejects
-     `"length"`); the new `"length"` handler is a separate branch.
-- **Verify:** `defineProperty/redefine-length-with-various-values-and-configurable-true.js`,
-  array index-define rows in `15.2.3.6-4-*` (e.g. `15.2.3.6-4-209.js` array
-  receiver), `Array/length/*` define cases.
-
-#### Slice D (optional cleanup, post A/B) — retire divergent tables
-**0 direct fails** (regression-guard only). After A+B land and all readers
-consume `_wasmPropDescs`, delete `emitDefinePropertyFlagCheck`, the `__pf_`
-extern table, and `ctx.definedPropertyFlags` (keep `shapePropFlags` for
-standalone). Pure simplification — ship only once A+B are green to avoid
-churn during the migration.
-
-### Edge cases (apply across slices)
-
-- **First-define defaulting:** omitted attributes default to `false`/`undefined`
-  — already correct in `_validatePropertyDescriptor` (`runtime.ts:1581-1599`).
-  Ensure the struct fast-path computes the same via `computeDescriptorFlags`
-  (`object-ops.ts:657`), **not** `PROP_FLAGS_DEFAULT_DATA` (which defaults all
-  true — correct only for *plain assignment* `obj.x = 1`, **wrong** for
-  `defineProperty`).
-- **Redefine preserves omitted attributes** (`{value:5}` on an existing prop
-  keeps its w/e/c) — runtime `applyFlag` (`runtime.ts:1581`) handles it; the
-  struct path's `applyDescriptorFlags` (`object-ops.ts:671`) must pass the
-  *current* flags, not defaults — verify the `currentFlags` resolution at
-  `object-ops.ts:1662-1664`.
-- **Non-configurable illegal changes** all throw TypeError: configurable
-  false→true, enumerable flip, data↔accessor switch, writable false→true,
-  non-`SameValue` value on non-writable. All in `_validatePropertyDescriptor`
-  (`runtime.ts:1606-1646`). Slices A/B just need to *reach* it.
-- **`SameValue` exception** (`runtime.ts:1642`, `Object.is`): a non-writable
-  non-configurable data prop may be "redefined" with the *same* value (incl.
-  `+0`/`-0`, `NaN`). Do not regress — the inline path lacks this (a reason to
-  retire it).
-- **Non-extensible receiver** adding a *new* prop → TypeError; redefining an
-  *existing* field is allowed. Inline check at `object-ops.ts:1679` is
-  receiver-var-name-gated; the runtime `__defineProperty_value` extensibility
-  check (via `__ne`, `object-ops.ts:876-896` + runtime) is the general one.
-- **Descriptor-field read order / read-once** (§ToPropertyDescriptor): the
-  failing tests in this cluster are dominated by `verifyProperty` /
-  `assert.throws`, not side-effect-ordering probes — **defer** strict
-  read-order to a follow-up; it is a small sub-bucket. Note it in the slice-A
-  PR as a known gap.
-- **`defineProperties` batching:** `compileObjectDefineProperties`
-  (`object-ops.ts:2628`) iterates descriptor entries; once each entry routes
-  through the converged single-property path (A/B), batching is correct. The
-  spec requires **all** descriptors validated against the live object in order;
-  the dynamic fallback `__defineProperties` (`object-ops.ts:3260`,
-  `runtime.ts`) already does this — ensure the inline-literal batching loop
-  (`~2660-2703`) delegates per-entry to the same converged path rather than the
-  old inline flag handling.
-- **`ToPropertyKey` on the key**: numeric keys (`defineProperty(o, 0, …)`) box
-  as number-externref and must be ToString'd — handled by #2042 PR-A
-  (`object-ops.ts:2098`). No new work, just don't regress.
-
-### Risks / coordination
-
-- **File conflict surface:** `src/codegen/object-ops.ts` is the hot file; A, B,
-  C all touch it. Land **A first**, then B and C rebased on it. C is the most
-  isolated (vec path) and can go in parallel with B if devs coordinate the
-  `object-ops.ts` import block.
-- **`assignment.ts` / `typeof-delete.ts`** (Slice A steps 3-4) are shared with
-  many other features — scope the flag-gate narrowly (only when the receiver has
-  a defineProperty'd descriptor) to avoid regressing the plain-assignment fast
-  path.
-- **Standalone (`ctx.standalone`)**: every slice is **host-mode-first**.
-  Standalone descriptor fidelity is gated on #2580's value-rep substrate — file
-  a standalone follow-up per slice, do not block host-mode landing on it.
-- **#2580 (any-typed value-read substrate)** and #2585/#2040 (tag-5 classifier)
-  overlap the standalone struct-value read; keep this issue's standalone work
-  out of scope to avoid colliding with that in-flight substrate work.
-
-## Residual (as of #2199, PO reconcile 2026-06-28)
-
-NOT done — sliced. Slice A (host mode) landed (an auto-park merge_group diagnosis, #2547, trimmed its scope). Slices B (accessor descriptors) + C (Array-exotic length/index, ArraySetLength) remain; the ~788-fail ES5 cluster is not closed. Stays in-progress.
-
-## ⚠️ RE-SCOPE 2026-07-26 (opus-loop-e, task #24) — PART OF THE RATIONALE IS VOID
-
-**A different failure mode from the other false-label cases: the *status* here is
-fine, the *reason* is partly wrong.** This issue is not falsely `done` — it is
-live work justified in part by a defect that does not exist.
-
-This issue inherits the ES5 census #3626 §2.2 framing, including the
-**A2 "delete of non-configurable succeeds" (22 tests)** row. **That defect does
-not exist.** Re-measured on HEAD (see #3626 §2.2.1, landed via PR #3657):
-
-- `defineProperty(o,"x",{value:1,configurable:false}); try { delete o.x } catch(e){ e.name }`
-  → **"threw TypeError"**, matching a V8 control. Spec-correct today.
-- The census probe read `"x" in o` **after** a `delete` that throws, so that
-  expression never evaluated — the recorded `false` is a swallowed-exception
-  artifact. It measured the throw, not the value.
-- Corroboration: no 22-test cluster exists corpus-wide. `configurable`-mentioning
-  failure signatures total **~16, all singletons**.
-
-The **A1** row is also inverted: the dominant direction is properties being
-**over-restricted** (34 "expected to be writable, but was not") rather than
-under-enforced (~10, all `using`/`await-using`, not ES5). And the
-`defineProperty` bucket is **276 failures across 102 distinct signatures**
-(largest 17, 6 %) — not one mechanism, so the "ceiling 564" framing is withdrawn.
-
-**Remaining valid scope: the array/vec residual only.** Re-scope accordingly and
-do not carry the A2 delete-non-configurable justification forward.
-
-**Caveat on the A1 number, so it is not misused:** that ~10 was measured against
-the cached baseline jsonl, which **predates the #3603 de-inflation**. The
-post-de-inflation regression set contains a much larger `writable`/`configurable`
-wrongly-TRUE population (#3653, 202 + 134), which the pre-de-inflation baseline
-could not see. The two are measured on different trees and do **not** contradict —
-do not cite the ~10 against #3653.
-
-## Re-measure 2026-08-04 — standalone lane, ES5 + untagged scope
-
-Source: `plan/log/analysis-2026-08-04-es5-untagged-standalone-clusters.md`.
-Baselines fetched 2026-08-04, `oracle_version` 12, lane `honest`, baseline SHA
-`d3d7ec4c`. Scope is edition label `ES5` ∪ `Unclassified (untagged)` ∪
-`Unclassified (legacy)`, standalone lane, `scope_official` only.
-
-**762 files** — the largest cluster in that scope, ahead of Array traversal (738).
-605 `ES5`-tagged, 157 untagged. This is the descriptor family as a whole:
-attribute round-trip via `verifyProperty` (381) plus the
-`defineProperty`/`defineProperties`/`create`/`gOPD`/`seal`/`freeze` residual (381).
-
-Top failure shapes:
-
-```
-65  obj.property   Expected SameValue(«undefined», «…»)   built-ins/Object/defineProperty/15.2.3.6-3-228-1.js
-37  accessed !== true                                     built-ins/Object/defineProperty/15.2.3.6-3-40.js
-31  Expected obj[…] to be writable, but was not           built-ins/Object/defineProperty/15.2.3.6-4-302-1.js
-31  data           Expected SameValue(…)                  built-ins/Object/defineProperties/15.2.3.7-5-b-244.js
-27  desc.writable  Expected SameValue(«undefined», «true»)built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js
-24  Expected obj[…] to equal …, actually null             built-ins/Object/defineProperty/15.2.3.6-4-231.js
-22  newObj.prop    Expected SameValue(«undefined», «…»)   built-ins/Object/create/15.2.3.5-4-250.js
-21  afterWrite     Expected SameValue(«false», «true»)    built-ins/Object/defineProperty/15.2.3.6-3-159.js
-```
-
-**Sizing caveat — 422 of 762 (55 %) also fail on the JS-host lane.** Only 340 are
-standalone-only. This is not a standalone-substrate line item; most of the work
-pays into ES5 conformance on both lanes, and quoting 762 as standalone yield
-overstates it roughly 2×. (Same finding as the 2026-08-01 census, refutation #5.)
-
-**Framing:** this cluster and #3185's array-traversal cluster are two faces of one
-substrate gap — property access is shape-specialised rather than routed through
-the ordinary-object MOP (`[[Get]]` / `[[Set]]` / `[[HasProperty]]` /
-`[[DefineOwnProperty]]` over a descriptor table and the prototype chain).
-Together with #3185 they account for 1,500 of the 3,854 non-passes in scope.
-Sequencing note: a substrate fix that lands the MOP for ordinary objects should
-move both, so measure them together rather than claiming each in full.
-
-**Missing-throw sub-cluster:** 59 of these are `assert.throws` seeing no exception
-at all (illegal reconfiguration silently accepted). They belong here and to
-#4008, not to the new #4158, which covers the Reference-layer remainder.
-
-**Not verified by repro.** These counts derive from the published baselines; no
-compiler was built for this re-measure.
-
-## Current-main implementation plan (2026-08-13)
-
-This section supersedes the stale 2026-08-04 sizing above. It is grounded on
-exact upstream `main` compiler SHA
-`81125e5e248847a5df94c3e2a3a20016782e1df4`, baselines-repo SHA
-`356b7ffd2127fd58b1091852d4483a436c0bee32`, and test262 corpus SHA
-`b363f29d3c43c626dc852744ad64a0b48a003693`. The source inventory is
-`.tmp/es5-host-inventory/host-es5-nonpass.jsonl`; its checked summary is
-`.tmp/es5-host-inventory/summary.json`. The joined full-lane inputs are
-`.tmp/es5-host-inventory/test262-current-81125e5e.jsonl` and
-`.codex/worktrees/es5-complete-20260813/.test262-cache/test262-standalone-current-81125e5.jsonl`.
-These are measurement artifacts, not files to commit.
-
-### Current census and scope boundary
-
-The landing-ES5 manifest contains **9,029** files. Joining by exact test path,
-deduplicating each baseline first, gives:
-
-| Current result | Files |
+# #2668 — ES5 canonical vec-index Object/property MOP residual
+
+## Decision
+
+The next approved slice is **2668-M1: IR-first canonical vec own-index MOP**.
+It carries the direction landed in PR #4435 forward as an implementation-ready
+plan:
+
+1. make the exact ambient `Object.defineProperty(target, key, descriptor)` IR
+   operation lane-neutral without widening its carrier proof;
+2. give host and standalone vec providers the same four observable index
+   states: `ABSENT`, `DEFAULT_DATA`, `EXPLICIT_DATA`, and `ACCESSOR`;
+3. converge the readers and writers needed by the fresh 13-row canonical
+   vec-index slice on that state query; and
+4. prove the change with same-population base/head/kill-switch A/B in both
+   lanes, followed by the complete 9,029-file ES5 gate.
+
+This is not a claim that 13 tests will flip. The 13 files are the exact current
+at-risk denominator for M1. Report every row after implementation; if a row is
+blocked by a different measured mechanism, stop and obtain architecture
+approval before narrowing acceptance.
+
+Slices already landed under this issue and must not be reopened by M1:
+
+- Slice A: host routing for literal-resolvable dynamic descriptors and typed
+  struct-field value writeback.
+- Slice B: host accessor getter/setter identity preservation.
+- Slice C: host/standalone array-`length` define validation and simple
+  `ArraySetLength` support.
+
+## Current-main ground truth — 2026-08-13
+
+### Provenance
+
+- `git ls-remote origin refs/heads/main` resolved server `origin/main` to
+  `cb4d4d7ca2f151ba69f26cff517417e003428df7` before this audit.
+- The committed oracle artifacts name compiler baseline SHA
+  `1fcb363695415ff3a09e338feade66132c93dd50`, oracle v13, lane `honest`.
+  `cb4d4d7` is its direct child and changes only reports, manifests, README,
+  and the LOC budget; there is no intervening `src/` or `tests/` change.
+- The exact test262 gitlink is
+  `b363f29d3c43c626dc852744ad64a0b48a003693`.
+- Fresh forced inputs are `.test262-cache/test262-current.jsonl` and
+  `.test262-cache/test262-standalone-current.jsonl`, each with 48,735 unique
+  full-population rows. They exactly reproduce the committed host and
+  standalone aggregates. They are local measurement artifacts and must not be
+  committed.
+- The edition manifest classifies 9,174 ES5 paths. Removing its 145 Intl402
+  paths, which are outside the landing baseline, leaves the authoritative
+  **9,029** landing-ES5 paths. The join has no duplicate, missing-host, or
+  missing-standalone rows.
+
+The resource gate was satisfied before both forced fetches and the census:
+macOS page size 16,384 bytes; free + inactive + speculative memory was
+7,583,907,840 bytes (7.063 GiB); disk available was 2,943,584 KiB (2.807 GiB)
+before fetching and 2.621 GiB afterward. Disk later fell below 2 GiB, so no
+additional heavy run was attempted. Every developer census or full gate must
+recheck **free + inactive + speculative memory >= 2 GiB and disk available >=
+2 GiB immediately before starting**. A failed resource check invalidates the
+run; it is not permission to run a smaller or different population.
+
+### Exact 9,029-row lane census
+
+| Status | Host | Standalone |
+|---|---:|---:|
+| pass | 7,415 | 8,275 |
+| fail | 1,597 | 697 |
+| compile error | 14 | 53 |
+| compile timeout | 3 | 4 |
+| **total** | **9,029** | **9,029** |
+
+The exact joint partition is:
+
+| Joint status | Files |
 |---|---:|
-| pass in both lanes | 7,145 |
+| pass in both lanes | 7,160 |
 | host non-pass, standalone pass | 1,115 |
-| host pass, standalone non-pass | 263 |
-| non-pass in both lanes | 506 |
+| host pass, standalone non-pass | 255 |
+| non-pass in both lanes | 499 |
 | **total** | **9,029** |
 
-Host therefore has 7,408 pass and 1,621 non-pass (1,597 fail, 21
-`compile_error`, 3 `compile_timeout`); standalone has 8,260 pass and 769
-non-pass (705 fail, 60 `compile_error`, 4 `compile_timeout`). `compile_error`
-and `compile_timeout` are never counted as pass.
+`compile_error` and `compile_timeout` are non-pass results. The published
+baseline's full-population totals are not the ES5 denominator and must not be
+mixed into this table.
 
-The exact issue-family filter is:
+### Exact issue family
+
+The current issue-family selector is:
 
 ```text
 ^test/built-ins/Object/(defineProperty|defineProperties|create|getOwnPropertyDescriptor|freeze|seal|preventExtensions|isFrozen|isSealed|isExtensible|getOwnPropertyNames|keys)/
 ```
 
-It selects **567** files: `defineProperty` 299, `defineProperties` 175,
-`create` 44, `getOwnPropertyDescriptor` 27, `freeze` 8,
-`getOwnPropertyNames` 4, `keys` 5, `preventExtensions` 3, and `isSealed` 2.
-All 567 are host non-passes (563 fail, 4 compile errors); 492 pass standalone
-and 75 are non-passes in both lanes. Thus this family accounts for 492/1,115
-of the current host-only gap, but only the 75 shared non-passes are evidence
-for a cross-lane substrate defect.
+It selects exactly 567 host non-passes: 563 failures and four compile errors.
+Of those, 492 pass standalone and 75 are non-passes in both lanes.
 
-The ES5 filename stages are useful diagnostics, not root-cause labels:
-
-| Diagnostic filename group | Total | standalone pass | shared non-pass |
+| API | Host non-pass | Standalone pass | Both non-pass |
 |---|---:|---:|---:|
-| `Object.create/4-*` Properties application | 42 | 35 | 7 |
-| other `Object.create` | 2 | 1 | 1 |
-| `defineProperty/3-*` ToPropertyDescriptor | 70 | 68 | 2 |
-| `defineProperty/4-*` DefineOwnProperty | 227 | 191 | 36 |
-| other `defineProperty` | 2 | 1 | 1 |
-| `defineProperties/5-b-*` ToPropertyDescriptor | 30 | 30 | 0 |
-| `defineProperties/6-a-*` application | 125 | 112 | 13 |
-| other `defineProperties` | 20 | 17 | 3 |
-| the remaining APIs | 49 | 37 | 12 |
+| `defineProperty` | 299 | 260 | 39 |
+| `defineProperties` | 175 | 159 | 16 |
+| `create` | 44 | 36 | 8 |
+| `getOwnPropertyDescriptor` | 27 | 23 | 4 |
+| `getOwnPropertyNames` | 4 | 1 | 3 |
+| `preventExtensions` | 3 | 1 | 2 |
+| `freeze` | 8 | 7 | 1 |
+| `isSealed` | 2 | 2 | 0 |
+| `keys` | 5 | 3 | 2 |
+| `seal`, `isFrozen`, `isExtensible` | 0 | 0 | 0 |
 | **total** | **567** | **492** | **75** |
 
-Manual localization of those 75 shared rows, using the first failing
-assertion plus the current writer/reader path, gives the following exhaustive
-partition. These are **implementation boundaries, not independently proven
-causal counts**; every claimed flip still requires the A/B protocol below.
+The family total, its lane split, and the 13 M1 rows are unchanged from the
+PR #4435 direction, but the repository tip, oracle provenance, and global lane
+counts are refreshed here. Historical estimates are not acceptance inputs.
 
-| Localized boundary | Files |
-|---|---:|
-| exotic `Properties`/descriptor-carrier storage and enumeration | 8 |
-| `Object.create` prototype/method dispatch | 2 |
-| explicit-`undefined` descriptor presence/redefinition | 5 |
-| accessor return or missing-argument `undefined` ABI | 5 |
-| sparse uint32 array index/logical-length representation | 6 |
-| canonical vec own-index state/default descriptor/readers | **13** |
-| vec backing capacity after length-only growth | 2 |
-| vec accessor/heterogeneous-value routing | 4 |
-| closure callback illegal-cast before an array assertion | 2 |
-| unavailable QuickJS provider in the measurement environment | 1 |
-| mapped `Arguments` exotic object | 7 |
-| ordinary plural-transition validation | 2 |
-| named expando/prototype/global-object MOP | 9 |
-| intrinsic/global descriptor seeding | 5 |
-| empty-string own-key enumeration | 1 |
-| preventExtensions identity or boxed-String exotic behavior | 2 |
-| optional `Document` host facility/import leak | 1 |
-| **total** | **75** |
+## Fresh M1 candidate census
 
-This issue remains restricted by the 2026-07-26 re-scope to the array/vec
-residual. The first implementation slice below targets the coherent 13-file
-vec-index boundary. It does **not** absorb the sparse-uint32 rows, mapped
-Arguments, ordinary-object descriptor work (#4008), runtime-eval accessor
-carrier invocation (#4197), or the residual tombstone/sparse-array work in
-#4222. A slice may land after demonstrating a two-lane improvement, but this
-issue must not be called complete from a source-shape subset: the completion
-boundary is **9,029/9,029 landing-ES5 passes in each lane**, including tests
-whose harness uses `eval`, `Function`, or `with`.
+The exact current candidate is **0/13 pass in host and 0/13 pass in
+standalone**. Host reports 11 failures plus two compile errors; standalone
+reports 13 failures.
 
-### Root cause: vec length is not vec own-property presence
+| Test262 path | Host | Standalone | Contract exercised |
+|---|---|---|---|
+| `test/built-ins/Object/defineProperty/15.2.3.6-4-191.js` | fail | fail | defining a value-less own index over an inherited index creates present `undefined` and shadows the prototype |
+| `test/built-ins/Object/defineProperty/15.2.3.6-4-210.js` | compile error | fail | a dense default element begins W/E/C=true; an empty redefine preserves it |
+| `test/built-ins/Object/defineProperty/15.2.3.6-4-212.js` | compile error | fail | an explicit same-value/W/E/C redefine of a default element is legal |
+| `test/built-ins/Object/defineProperty/15.2.3.6-4-216.js` | fail | fail | a fresh explicit data index defaults omitted W/E/C to false |
+| `test/built-ins/Object/defineProperty/15.2.3.6-4-251.js` | fail | fail | a fresh object value defaults W/E/C false; illegal later value replacement throws and preserves identity |
+| `test/built-ins/Object/defineProperties/15.2.3.7-6-a-187.js` | fail | fail | plural define creates a present value-less index rather than exposing backing/prototype data |
+| `test/built-ins/Object/defineProperties/15.2.3.7-6-a-198.js` | fail | fail | plural redefine preserves effective enumerable state |
+| `test/built-ins/Object/defineProperties/15.2.3.7-6-a-211.js` | fail | fail | plural fresh data definition materializes present `undefined` with false defaults |
+| `test/built-ins/Object/defineProperties/15.2.3.7-6-a-231.js` | fail | fail | configurable default data may convert to an accessor while preserving omitted E/C |
+| `test/built-ins/Object/freeze/15.2.3.9-2-a-14.js` | fail | fail | freeze makes every present dense data index writable=false and configurable=false |
+| `test/built-ins/Object/keys/15.2.3.14-5-13.js` | fail | fail | sparse own-key enumeration omits holes/non-enumerable indices and retains a far present index |
+| `test/built-ins/Object/keys/15.2.3.14-5-a-4.js` | fail | fail | deleting index 0 from the returned key vec makes it absent, not present `undefined` |
+| `test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-6.js` | fail | fail | deleting index 0 from the returned names vec makes HasOwn report false |
 
-The compiler currently splits one array index's state across the backing vec,
-standalone `$Object`/`$PropEntry` overlay entries, host WeakMap sidecars,
-`FLAG_COMPANION_VALUE` (`src/codegen/vec-overlay.ts:106`),
-`FLAG_DELETED_INDEX` (`src/codegen/vec-overlay.ts:107`), and several
-compile-time `definedPropertyFlags` readers. No one query distinguishes:
+The two host compile errors are invalid Wasm `struct.get` type mismatches, not
+passes hidden by the harness. M1 must make them valid and semantically correct;
+disabling validation or reclassifying them is not an acceptable flip.
 
-1. an absent index (out of range, elision, length-grown hole, or tombstone),
-2. a live backing element with the implicit array-element descriptor
-   `{writable:true, enumerable:true, configurable:true}`,
-3. an explicit data descriptor, whose value authority is either the backing
-   vec or the companion entry, and
-4. an explicit accessor descriptor.
+## Root cause
 
-The host implementation exposes the ambiguity directly in
-`_vecDefineOwnProperty` (`src/runtime.ts:6041`): an in-bounds element without a
-sidecar cannot be distinguished from a compiler-created hole after pre-growth,
-so it is treated as a fresh all-false define. Standalone has more tombstone
-plumbing, but its definition, presence, reflection, enumeration, delete, and
-integrity paths still reconstruct different answers. Consequently an ordinary
-live element can lose its implicit attributes, a hole can appear own, and a
-metadata entry can disagree with the value read.
+Vec `length`, backing capacity, backing value, descriptor metadata, and
+own-property presence are different facts, but current code reconstructs them
+as if `0 <= index < length` always meant a live default element.
 
-### Semantic contract
+### Host provider
 
-Introduce one representation-neutral vec-index classification used by both
-lanes. The state names are normative even if the implementation encodes them
-as bits rather than an enum:
+- `src/codegen/object-ops.ts:1010-1021` pre-grows host vec length before the
+  runtime descriptor provider validates the define. By the time
+  `_vecDefineOwnProperty` runs, it cannot distinguish the new index from an
+  existing default element.
+- `_vecDefineOwnProperty` (`src/runtime.ts:6041`) therefore contains a deliberate
+  workaround: an in-bounds index with no sidecar can be treated as a first
+  definition. That fixes one fresh-index shape while corrupting the opposite
+  dense-default shape.
+- `_readOwnDescriptor` (`src/runtime.ts:5345`), `_safeGet`
+  (`src/runtime.ts:4506`), `_wasmStructHasOwn` (`src/runtime.ts:3625`),
+  `_ownStructKeys` (`src/runtime.ts:5573`), and `_wrapVecForHost`
+  (`src/runtime.ts:6237`) independently infer vec presence. Proxy traps in
+  `_wrapVecForHost` currently expose every index below length as own.
+- Host `__object_keys` (`src/runtime.ts:10668`) and
+  `__getOwnPropertyNames` (`src/runtime.ts:11542`) have further independent vec
+  enumeration loops. Freeze/seal via `_testIntegrityLevel`
+  (`src/runtime.ts:787`) cannot synthesize effective attributes for implicit
+  default indices from the same source of truth.
 
-| State | Own? | Descriptor/value rule |
+### Standalone provider
+
+- The overlay already owns descriptor entries and the flags
+  `FLAG_COMPANION_VALUE` and `FLAG_DELETED_INDEX`
+  (`src/codegen/vec-overlay.ts:106-107`), but it has no compact representation
+  for all absent ranges.
+- `buildRealElementSeed` (`src/codegen/vec-bag-seed.ts:109`) seeds every
+  in-bounds index as a real default element when no companion entry exists.
+  Elisions, length-grown holes, and never-written gaps therefore become
+  indistinguishable from dense values.
+- `buildVecHasIdxPresencePrologue`
+  (`src/codegen/vec-overlay-presence.ts:99`) can recognize an explicit deleted
+  entry, but absence is not consistently shared with reflection, reads, or
+  enumeration.
+- `fillDynamicForinVecArms` (`src/codegen/object-runtime.ts:8108`) gates indexed
+  enumeration through presence only when `overlayRouteActive`
+  (`src/codegen/typed-lane-overlay-route.ts:63`) is true. That gate omits
+  `usesArrayHoles`, and `Object.keys` additionally needs effective
+  enumerability, not presence alone.
+- `fillGopnVecArm` (`src/codegen/vec-overlay-keys.ts:453`) and integrity
+  mutation (`src/codegen/object-runtime-integrity.ts:100`) consume different
+  portions of the same state.
+
+### Values cannot encode absence
+
+`$Hole` in `src/codegen/array-holes.ts` works only for externref element
+carriers. Numeric array literals select f64 storage, and
+`compileArrayLiteral` (`src/codegen/literals.ts:3772`) uses the same sNaN
+storage sentinel for an elision and explicit `undefined` in f64 context. Null,
+`undefined`, every number, and every string are legal present data values.
+Presence therefore needs metadata independent of the backing value and element
+type.
+
+## Normative four-state contract
+
+Every canonical vec index is in exactly one state:
+
+| State | Own property? | Descriptor and value authority |
 |---|---|---|
-| `ABSENT` | no | prototype lookup may continue; omit from own-key readers |
-| `DEFAULT_DATA` | yes | backing vec value; W/E/C are all true |
-| `EXPLICIT_DATA` | yes | overlay attributes; backing value unless `FLAG_COMPANION_VALUE` |
-| `ACCESSOR` | yes | overlay getter/setter and attributes; no backing-value fallback |
+| `ABSENT` | no | no own descriptor; Get/HasProperty may continue on the prototype; omit from own keys |
+| `DEFAULT_DATA` | yes | backing vec value; effective writable/enumerable/configurable are all true |
+| `EXPLICIT_DATA` | yes | explicit descriptor flags; backing value unless `FLAG_COMPANION_VALUE` selects the companion value |
+| `ACCESSOR` | yes | explicit getter/setter and attributes; never fall through to backing data |
 
-The invariant is **absence-exception based**: `index < logical length` is live
-by default, except where a hole/tombstone marker says otherwise. Reuse the
-existing deleted-index marker as the canonical absent-index bit if possible;
-do not create another descriptor table. A length increase or array elision
-marks the newly exposed indices absent; assignment or successful data/accessor
-definition clears absence at that index; delete marks it absent; shrink makes
-all indices at or above the new length unobservable; later growth marks the
-newly exposed range absent again and must not resurrect stale values or
-descriptors.
+Use numeric constants `ABSENT=0`, `DEFAULT_DATA=1`, `EXPLICIT_DATA=2`, and
+`ACCESSOR=3` in the Wasm helper ABI. Do not expose those numbers outside the
+vec MOP modules.
 
-For dense numeric/f64/string vecs, do not materialize one `$PropEntry` per
-implicit element. Store hole exceptions in the existing overlay ownership
-layer (a side bitmap/range set is acceptable), keyed by vec identity. Host and
-standalone must implement the same four-state contract. In particular, do not
-encode holes by a JS `undefined`/Wasm null value: those are valid present data
-values, and f64/native-string vecs cannot carry a universal hole sentinel.
+Canonical index parsing retains the exact `_asArrayIndex`
+(`src/runtime.ts:5997`) contract: reject `"01"`, `"-0"`, `"1.0"`, symbols,
+named keys, and `2^32-1`. Parse once per operation. A rejected key follows the
+existing named-property MOP and never enters the vec-index classifier.
 
-### Changes
+### Absence representation
 
-**Files: `src/runtime.ts` (`_readOwnDescriptor` line 5345,
-`_ownStructKeys` line 5573, `_vecDefineOwnProperty` line 6041,
-`_wasmStructHasOwn` line 3625, `_safeGet` line 4506, `_safeSet` line 4785,
-`_testIntegrityLevel` line 787)**
+Presence is **default-with-absence-exceptions**: an index below logical length
+is `DEFAULT_DATA` unless an absence range or explicit descriptor says
+otherwise. Do not allocate a descriptor entry per dense element or per hole.
 
-- Add one host-side `_readVecIndexState(obj, key, exports)` helper returning the
-  canonical index plus `ABSENT | DEFAULT_DATA | EXPLICIT_DATA | ACCESSOR` and,
-  for explicit states, the one sidecar descriptor read during classification.
-- Canonicalize the key once with the existing array-index predicate. `"01"`,
-  `"-0"`, `"1.0"`, `2^32-1`, symbols, and non-index named keys remain on the
-  named-property path. Do not infer presence from backing capacity.
-- Make `_vecDefineOwnProperty` synthesize the current descriptor from that
-  state before ValidateAndApplyPropertyDescriptor. For `DEFAULT_DATA`, the
-  current W/E/C bits are all true. For `ABSENT`, apply new-property defaults.
-  Preserve descriptor-field presence bits; omitted fields are not explicit
-  false/undefined fields.
-- Route host `Get`, `Set`, HasOwn/HasProperty, gOPD, own-key enumeration,
-  deletion, and freeze/seal/preventExtensions checks through the same query.
-  Read the sidecar once per operation so a later branch cannot observe a
-  different descriptor.
-- Extend the existing host vec sidecar ownership with an absence bitmap/range
-  set. It must be weakly keyed by vec identity and must not retain compiled
-  instances after they become unreachable.
+Host ownership in `src/runtime.ts`:
 
-**Files: `src/codegen/vec-overlay.ts` (flags lines 106-107 and
-`fillVecOverlayHelpers` around line 637),
-`src/codegen/vec-overlay-presence.ts` (`buildVecHasIdxPresencePrologue` line
-99), `src/codegen/vec-bag-seed.ts` (`buildVecDeletePrologue` line 390)**
+- add `_wasmVecAbsentRanges: WeakMap<object, number[]>`;
+- store sorted, disjoint, half-open bounds as
+  `[start0,end0,start1,end1,...]`;
+- add `_vecAbsentHas`, `_vecAbsentMarkRange`, `_vecAbsentClearIndex`, and
+  `_vecAbsentTruncate`; and
+- weakly key all state by vec identity so dead instances remain collectable.
 
-- Add the standalone implementation of the same four-state query to the
-  existing vec-overlay subsystem. One acceptable ABI is a native multi-result
-  helper returning `(canonicalIndex:i32, kind:i32, entry:(ref null
-  $PropEntry))`; `canonicalIndex = -1` means the key is not an array index and
-  callers must use the named-property path.
-- Reuse `FLAG_DELETED_INDEX` for `ABSENT`. `FLAG_COMPANION_VALUE` only selects
-  the value authority for an `EXPLICIT_DATA` entry; it must not by itself imply
-  presence. Accessor entries never fall back to `array.get`.
-- Replace the separate deleted-index tests in the HasOwn/HasProperty and delete
-  builders with this query. Preserve the carrier-bag split for non-index keys.
-  Generate fresh `Instr[]` objects at every splice site; the finalize passes
-  must not receive shared instruction objects (#1302).
-- Every `ref.cast` introduced by classification must be dominated by the
-  appropriate `ref.test`; wrong-shape inputs take the ordinary/named fallback
-  or a catchable JS `TypeError`, never an `illegal_cast` trap.
+Standalone ownership in `src/codegen/vec-overlay.ts`:
 
-The standalone control flow should have this shape (indices and concrete helper
-names are allocator-owned):
+- extend `$__overlay_pair` created by `ensureOverlayCore` at line 269 with a
+  mutable nullable `$__overlay_absence` reference;
+- define `$__overlay_absence_bounds` as a mutable i32 array and
+  `$__overlay_absence` as `{count: mut i32, bounds: mut ref
+  $__overlay_absence_bounds}`;
+- keep the same sorted, disjoint, half-open representation; and
+- emit `__vec_absent_has`, `__vec_absent_mark_range`,
+  `__vec_absent_clear_index`, and `__vec_absent_truncate` as native symbolic
+  helpers. Growth is geometric; marking `[6,10000)` must not perform 9,994
+  descriptor writes.
+
+Construction and typed-write codegen cannot mutate the host WeakMap directly.
+Give `src/codegen/vec-index-state.ts` lane adapters for the same three writer
+operations:
+
+- host emits imports `__vec_absent_mark_range(externref,i32,i32)`,
+  `__vec_absent_clear_index(externref,i32)`, and
+  `__vec_absent_truncate(externref,i32)`, implemented by `buildImports`
+  (`src/runtime.ts:16239`) over the WeakMap helpers;
+- standalone emits direct calls to allocator-owned native helpers over the vec
+  `anyref`; and
+- the adapter owns any required `extern.convert_any`, late-import flush, and
+  symbolic helper lookup. Call sites do not branch on flag bits or know the
+  range layout.
+
+During migration, an existing companion entry carrying
+`FLAG_DELETED_INDEX` also classifies as `ABSENT`. New writer paths must update
+the range owner, and S4 removes duplicate deleted-bit tests only after every
+reader/writer has converged. `FLAG_COMPANION_VALUE` selects data value
+authority only; it never means present or absent by itself.
+
+## Implementation plan
+
+### 1. Make the exact IR operation lane-neutral
+
+**Files and anchors**
+
+- `src/ir/backend/legality.ts:18-59` — `IrBackendTargetCapability` and
+  `supportsIrBackendTargetCapability`.
+- `src/ir/select.ts:6841-6859` — exact call selection.
+- `src/ir/select.ts:7832-7842` — external-call exemption.
+- `src/ir/from-ast.ts:325-333` — `IrFromAstResolver` callback.
+- `src/ir/from-ast.ts:6125-6173` — exact ambient lowering.
+- `src/ir/integration.ts:4134-4137` — `objectDefinePropertyTarget`.
+- `src/codegen/object-runtime.ts:615` — `ensureObjectRuntime`.
+- `src/codegen/object-runtime-descriptors.ts:1910-2256` — native
+  `__obj_define_from_desc` registration.
+- `tests/issue-3663-object-define-property-ir.test.ts:25-94` — existing host
+  positive and standalone typed-carrier refusal.
+
+Rename `host-object-define-property` to
+`object-define-property-runtime`. The legality matrix is exact:
+
+| Backend profile | Capability |
+|---|---|
+| WasmGC, target `gc`, host imports allowed | yes |
+| WasmGC, target `standalone`, host imports forbidden | yes |
+| WasmGC strict/no-host `gc` | no |
+| `wasi` | no until a separately measured provider is approved |
+| linear, bytecode, Porffor | no |
+
+Factor one selector predicate used by both the selection arm and the
+external-call exemption. The existing exemption lacks the selector's lexical
+shadow and spread refusals. The shared predicate must require:
+
+- direct dot call on the exact ambient identifier `Object` and method
+  `defineProperty`;
+- neither direct module binding nor lexical/module shadowing;
+- exactly three arguments and no spread;
+- all three arguments Phase-1 eligible; and
+- `object-define-property-runtime` capability true.
+
+`from-ast.ts` remains the final no-loss carrier gate. Lower each argument once,
+left-to-right, with expected externref and admit only:
+
+- IR `extern`;
+- Wasm `externref`; or
+- argument 1 only, an IR string when `stringIsExternref()` is not false.
+
+Otherwise throw the existing `operand-coercion-unsupported` build refusal and
+fall back to legacy. In particular, a typed standalone target or descriptor
+that still needs `emitDefinePropertyDescRuntime` reification
+(`src/codegen/object-ops.ts:281-390`) must not be lossily cast into the IR call.
+Shadowed/aliased/computed/optional/spread/wrong-arity/providerless forms also
+remain legacy or unsupported exactly as they are today.
+
+Resolve the symbolic provider in `objectDefinePropertyTarget()`:
+
+- host: `irImportFuncRef("env", "__defineProperty_desc")`;
+- standalone: call `ensureObjectRuntime(ctx)`, require
+  `ctx.funcMap.has("__obj_define_from_desc")`, then return
+  `irRuntimeFuncRef("__obj_define_from_desc")`; and
+- strict, wasi, or unavailable helper: return `null`.
+
+Do not add a raw `funcIdx` to IR. `__obj_define_from_desc` is registered by
+`ensureObjectRuntime` but is intentionally absent from
+`OBJECT_RUNTIME_HELPER_NAMES`; the resolver must ensure then verify it through
+`funcMap`. The IR owns call identity, argument evaluation order, externref
+coercion, and the externref result. The provider owns ToPropertyDescriptor,
+validation, vec classification, attributes, holes, and storage.
+
+Direct IR tests must inspect the `IrInstr` call target binding:
+
+```ts
+// host
+{ kind: "import", module: "env", field: "__defineProperty_desc" }
+
+// standalone
+{ kind: "runtime", symbol: "__obj_define_from_desc" }
+```
+
+Retain the existing typed standalone negative test. Add negatives for a
+shadowed `Object`, spread, wrong arity, computed access, and a typed descriptor
+requiring legacy reification. IR-only convergence has a declared Test262 gain
+of zero unless same-population A/B measures a flip.
+
+### 2. Add the canonical provider query
+
+**Host: `src/runtime.ts`**
+
+Add `_readVecIndexState(obj, key, exports)`. It returns `undefined` for a
+non-vec or noncanonical key; otherwise it returns the canonical index, one of
+the four state constants, and the single sidecar descriptor read used to
+classify explicit states.
+
+Classification order is normative:
+
+1. read logical length, not backing capacity;
+2. if index is outside logical length, return `ABSENT`;
+3. if the absence range contains the index or a migration-era deleted entry is
+   present, return `ABSENT`;
+4. read the descriptor/companion entry once;
+5. no entry means `DEFAULT_DATA`;
+6. `ACCESSOR` flag means `ACCESSOR`; otherwise `EXPLICIT_DATA`.
+
+**Standalone: `src/codegen/vec-overlay.ts` and a focused new
+`src/codegen/vec-index-state.ts`**
+
+Let `vec-overlay.ts` retain storage ownership and expose only the handles the
+new classifier needs. Reserve and fill a symbolic native helper:
+
+```text
+__vec_index_state(vec:anyref, index:i32)
+  -> (kind:i32, entry:(ref null $PropEntry))
+```
+
+String-key callers first use their existing canonical index parser; indexed
+callers already have i32. Non-index keys never call this helper.
+
+The emitted Wasm shape is:
+
+```wasm
+local.get $vec
+ref.test $__vec_base
+i32.eqz
+if
+  ;; caller's ordinary/named fallback; never cast a wrong shape
+end
+
+local.get $vec
+ref.cast $__vec_base
+struct.get $__vec_base $length
+local.get $index
+i32.le_u
+if
+  i32.const 0                ;; ABSENT
+  ref.null $PropEntry
+  return
+end
+
+local.get $vec
+local.get $index
+call $__vec_absent_has
+if
+  i32.const 0                ;; ABSENT
+  ref.null $PropEntry
+  return
+end
+
+local.get $vec
+local.get $index
+call $__vec_overlay_lookup
+local.tee $entry
+ref.is_null
+if
+  i32.const 1                ;; DEFAULT_DATA
+  local.get $entry
+  return
+end
+
+;; FLAG_DELETED_INDEX -> ABSENT
+;; FLAG_ACCESSOR      -> ACCESSOR
+;; otherwise          -> EXPLICIT_DATA
+```
+
+Use `ref.test` before every `ref.cast`. Use fresh `Instr[]` objects at every
+finalize splice site; never reuse one mutable instruction graph across helper
+bodies. The classifier is semantic; pre-scan flags may prove it unnecessary
+for a module but must not alter its answer.
+
+### 3. Converge host readers and integrity
+
+Modify these exact functions in `src/runtime.ts`:
+
+- `_wasmStructHasOwn` at line 3625;
+- `_safeGet` at line 4506;
+- `_safeSet` at line 4785;
+- `_readOwnDescriptor` at line 5345;
+- `_ownStructKeys` at line 5573;
+- `_vecDefineOwnProperty` at line 6041;
+- `_wrapVecForHost` at line 6237;
+- `_testIntegrityLevel` at line 787; and
+- import handlers `__object_keys` at line 10668,
+  `__defineProperty_desc` at line 11044, and
+  `__getOwnPropertyNames` at line 11542.
+
+Required dispatch:
+
+- `ABSENT`: own/descriptor/enumeration miss; Get and `in` continue through the
+  recorded prototype path; Set may create an own element if allowed.
+- `DEFAULT_DATA`: read backing value and synthesize W/E/C=true.
+- `EXPLICIT_DATA`: use explicit attributes; read companion value only when
+  `FLAG_COMPANION_VALUE` is set, otherwise backing value.
+- `ACCESSOR`: invoke getter/setter with the original vec as `this`; absent
+  getter returns `undefined`; do not read backing data.
+
+`Object.keys` requires state not `ABSENT` **and effective enumerable=true**.
+`Object.getOwnPropertyNames` requires only state not `ABSENT`. Both emit each
+canonical index once in ascending numeric order, then existing named keys in
+their established order. Proxy `get`, `has`, `ownKeys`, and
+`getOwnPropertyDescriptor` traps in `_wrapVecForHost` must call the same query.
+
+Freeze/seal need not create one descriptor entry per default element. Effective
+descriptor synthesis clamps receiver-wide integrity state:
+
+- frozen present data: writable=false, configurable=false;
+- sealed present data/accessor: configurable=false;
+- holes remain `ABSENT`.
+
+The write, delete, and redefine validators consume that effective descriptor
+before mutating anything.
+
+### 4. Converge standalone readers and integrity
+
+Modify:
+
+- `src/codegen/vec-overlay.ts:637` — `fillVecOverlayHelpers` and the
+  `__vec_dp_value`, `__vec_dp_accessor`, gOPD, read, set, and delete arms;
+- `src/codegen/vec-overlay-presence.ts:99` — replace standalone deleted-only
+  presence logic with the classifier;
+- `src/codegen/vec-bag-seed.ts:109` — seed from `DEFAULT_DATA` only, never from
+  raw `index < length`;
+- `src/codegen/vec-overlay-keys.ts:155` and `:453` — companion-key and gOPN
+  enumeration;
+- `src/codegen/object-runtime.ts:8108` — vec arms for
+  `__object_keys_forin` and `__object_keys`;
+- `src/codegen/typed-lane-overlay-route.ts:63` — include every condition that
+  can make raw dense semantics wrong, including array holes; and
+- `src/codegen/object-runtime-integrity.ts:100` — effective freeze/seal state.
+
+Each reader calls `__vec_index_state` once and dispatches on its two results:
 
 ```wasm
 local.get $recv
-local.get $key
+local.get $index
 call $__vec_index_state
-local.set $entry       ;; third result
-local.set $kind        ;; second result
-local.set $index       ;; first result
+local.set $entry
+local.set $kind
 
 local.get $kind
-i32.const $ABSENT
+i32.const 0                  ;; ABSENT
 i32.eq
 if
-  ;; no own property; Get may continue at the prototype
+  ;; own miss; Get/HasProperty may continue to prototype
 else
   local.get $kind
-  i32.const $DEFAULT_DATA
+  i32.const 1                ;; DEFAULT_DATA
   i32.eq
   if
-    ;; descriptor W/E/C = 1/1/1; typed array.get owns the value
+    ;; typed array.get, effective W/E/C=1/1/1
   else
-    ;; one $PropEntry owns attributes/accessors;
-    ;; FLAG_COMPANION_VALUE selects companion vs backing data value
+    ;; one entry owns attrs/accessors;
+    ;; FLAG_COMPANION_VALUE selects explicit data value authority
   end
 end
 ```
 
-**Files: `src/codegen/array-length-define.ts`
-(`maybeEmitVecLengthDefine` line 111 and assignment validation line 496), plus
-the array construction/mutation emitters selected by code search**
+The typed fast lane and dynamic lane must agree for the same receiver. Do not
+fix only `__extern_get_idx`: propertyHelper functions can become typed after
+monomorphization, while Object reflection uses dynamic helpers.
 
-- On length growth, mark `[oldLength,newLength)` absent before publishing the
-  new logical length. Use word/range operations rather than an O(newLength)
-  `$PropEntry` allocation loop. On shrink, make entries at and above the new
-  length unobservable and discard explicit descriptors when safe.
-- Array literal elisions and `new Array(n)` create absent ranges. A direct
-  index assignment, `push`, or a successful index define clears absence for
-  exactly the written index. `delete`, `pop`, and length shrink mark/remove
-  state consistently. Audit `shift`, `unshift`, `splice`, and helper-returned
-  arrays before retiring the old reader paths because they renumber or create
-  indices.
-- Do not solve the six sparse-uint32 rows here by allocating a huge backing
-  vec. The current signed-i32/logical-length limitation is a separate sparse
-  array representation change (#4222).
+### 5. Make every relevant writer preserve the invariant
 
-**Files: `src/codegen/object-runtime-descriptors.ts`
-(`__obj_define_from_desc` lines 1910-2256),
-`src/codegen/object-runtime.ts` (`fillDynamicForinVecArms` line 8108), and all
-vec gOPD/own-key/integrity helper builders found from these entry points**
+The update must be atomic from the JavaScript observer's perspective: validate
+first; then update absence, explicit metadata/value, backing storage, and
+logical length in an order that cannot expose a half-transition. A throw leaves
+all state unchanged.
 
-- Keep ToPropertyDescriptor and ValidateAndApplyPropertyDescriptor in their
-  existing shared runtime-MOP entry points. Change only the vec receiver arm:
-  obtain the current descriptor through the canonical state query, apply the
-  transition once, then update value/metadata/absence atomically.
-- Route gOPD, `Object.keys`, `Object.getOwnPropertyNames`, for-in,
-  `hasOwnProperty`, `in`, delete, freeze and seal through that state. The
-  `overlayDirty` module pre-scan may remain an optimization, but it may only
-  prove that no overlay query is needed; it must not define semantics.
-- After `freeze`, every present data index reads writable=false and
-  configurable=false; holes remain absent. Enumeration emits each present
-  canonical index once, in numeric order, and filters only by the descriptor's
-  enumerable bit.
+| Operation | Required transition |
+|---|---|
+| dense literal element | clear absence at that index; no explicit entry, so state is `DEFAULT_DATA` |
+| literal elision | mark that index/range absent |
+| `new Array(n)` | mark `[0,n)` absent |
+| length growth | mark `[oldLength,newLength)` absent before publishing the new logical length |
+| length shrink | make `index >= newLength` unobservable, trim ranges, and discard/ignore explicit entries above the new length so later growth cannot resurrect them |
+| ordinary assignment / push | after rejection checks pass, clear absence for exactly the written index and keep/create default data semantics |
+| define at `index >= oldLength` | validate as `ABSENT`; mark `[oldLength,index)` absent, clear only `index`, store the new descriptor/value, then publish `index+1` length |
+| define on a hole | validate as `ABSENT`; a value-less data descriptor creates present `undefined` with W/E/C=false |
+| redefine default data | validate against W/E/C=true and preserve omitted fields |
+| data/accessor conversion | permit only when effective configurable=true; remove stale value/accessor authority after success |
+| delete | reject effective configurable=false; otherwise remove explicit metadata/value and mark the index absent |
+| freeze/seal | update receiver integrity and explicit entries; synthesize clamped attributes for default entries |
 
-**Files: `src/ir/from-ast.ts` (`IrFromAstResolver` lines 325-333 and exact
-ambient call lowering lines 6049-6097), `src/ir/select.ts` (lines 6787-6805 and
-7777-7785), `src/ir/backend/legality.ts` (capability table lines 18-59),
-`src/ir/integration.ts` (`objectDefinePropertyTarget` lines 4134-4137), and
-`src/codegen/object-ops.ts` (`emitDefinePropertyDescRuntime` line 281)**
+For a fresh value-less descriptor, use a companion value when the typed backing
+cannot store `undefined`; never substitute the backing's numeric/null default.
+For an OOB define, do not mark the defined index absent. Large gaps use one
+range insertion, not an element loop.
 
-- IR owns only the semantic call
-  `Object.defineProperty(target,key,rawDescriptor)`. It must not own vec flags,
-  hole state, descriptor defaults, or lane representations.
-- Rename/widen the current host-only capability to a WasmGC
-  `object-define-property-runtime` capability. For the already supported
-  three-argument, non-spread, exact ambient binding, integration resolves
-  `env::__defineProperty_desc` on host and the allocator-owned runtime function
-  `__obj_define_from_desc` on standalone after ensuring that helper exists.
-- Preserve the current no-loss gate in `from-ast.ts`: select the IR call only
-  when target, key, and descriptor already have an exact externref-backed
-  carrier. If a standalone typed descriptor struct still needs legacy
-  reification (`object-ops.ts:307-335`), selection must decline cleanly to
-  legacy; do not make it externref with a lossy coercion.
-- Both IR and legacy paths must converge below the call boundary on the same
-  lane runtime MOP. Add shape tests proving the host target remains a symbolic
-  import, the standalone target is a symbolic runtime function, and neither
-  route embeds a raw function index. This IR convergence is architectural
-  ownership work; claim **zero test262 gain** from it unless an A/B row flips.
+Specific codegen changes:
 
-`compileObjectDefineProperties` (`src/codegen/object-ops.ts:3071`) retains its
-static batching and dynamic fallback for this slice. Each applied descriptor
-must eventually delegate to the same single-property MOP, but widening the
-plural IR surface before the single-property invariant is green would combine
-two independent changes.
+- In `compileObjectDefineProperty` (`src/codegen/object-ops.ts:846`), stop the
+  host-only pre-growth at lines 1010-1021 from running before a vec define that
+  will use the runtime MOP. The host provider must own validated growth just as
+  standalone already does. Keep a legacy-only branch behind the temporary gate
+  for refusal shapes until S4.
+- Keep `emitDefinePropertyDescRuntime` (`src/codegen/object-ops.ts:281`) as the
+  carrier-reification boundary, not a second descriptor validator.
+- Update `maybeEmitVecLengthDefine`
+  (`src/codegen/array-length-define.ts:111`) and
+  `emitArraySetLengthValidation` at line 496 to call range mark/truncate helpers
+  around successful length changes.
+- In `compileArrayLiteral` (`src/codegen/literals.ts:3772`) record elision
+  ranges independently of `$Hole`/sNaN storage.
+- In `compileArrayConstructorCall` (`src/codegen/literals.ts:4872`) record the
+  `new Array(n)` absent range.
+- In `compileElementAssignment`
+  (`src/codegen/expressions/assignment.ts:4516`), update both the typed vec
+  branch at lines 4822-5145 and the overlay-routed Set path: preserve old
+  logical length, mark `[oldLength,index)` on an OOB write, clear exactly the
+  written index after the store succeeds, then publish the new length. The
+  existing externref gap fill at lines 5079-5121 is a value normalization, not
+  own-property presence, and remains independent.
+- In `compilePropertyAssignment`
+  (`src/codegen/expressions/assignment.ts:3488`), wrap the typed
+  `arr.length = N` branch at lines 3862-3893 with range mark/truncate after
+  validation and before the length field becomes observable.
+- Audit `compileArrayPush`, `compileArrayPop`, `compileArrayShift`,
+  `compileArrayUnshift`, and `compileArraySplice` at
+  `src/codegen/array-methods.ts:3189`, `:3322`, `:3428`, `:3524`, and `:4771`.
+  Any operation that renumbers or creates indices must transform ranges and
+  explicit entries consistently before the old reader paths can be retired.
 
-### Staging and removal gate
+`compileObjectDefineProperties` remains a legacy/static batching surface in
+M1. Each individual descriptor it applies must reach the same single-property
+provider, but adding a plural IR instruction is out of scope.
 
-1. **S0 — characterization, no semantics:** add the four-state contract tests
-   and IR shape tests. Record exact
-   `81125e5e248847a5df94c3e2a3a20016782e1df4` A arms in both lanes.
-2. **S1 — read-side query, gated:** implement host and standalone classifiers;
-   route gOPD, hasOwn/`in`, keys/gOPN, and Get through them behind one temporary
-   `vec-index-state-mop` development gate. Default remains old behavior.
-3. **S2 — writer convergence:** make array construction/length growth,
-   assignment, define, delete, and freeze maintain/query absence and metadata.
-   Flip the gate for the candidate branch and run the targeted A/B.
-4. **S3 — IR ownership:** widen exact externref-backed ambient
-   `Object.defineProperty` calls to the lane-neutral symbolic runtime target;
-   keep typed-descriptor reification on legacy until it has an exact carrier.
-5. **S4 — audit and retire:** audit every array mutator and every shared reader,
-   run the full two-lane ES5 matrix, then delete the duplicate readers and the
-   temporary gate. Do not delete `definedPropertyFlags` wholesale: retain any
-   compile-time facts still used outside vec-index semantics and remove only
-   facts whose consumers have converged.
+### 6. Temporary gate, staging, and removal
 
-Removal criterion: the new path is the default only after both targeted A/B
-arms and the full 9,029-file two-lane gate are green for regressions. Delete the
-old path and development gate in the same landing series; do not leave two
-long-term semantic implementations.
+Use one browser-safe temporary compiler kill switch,
+`JS2WASM_VEC_INDEX_MOP=0`, with default-on behavior at the candidate head.
+Read it through a guarded helper (`typeof process !== "undefined"` and optional
+`process.env`); do not add an unguarded browser-module `process.env` access.
+The switch chooses complete old versus new vec-index MOP ownership. It must not
+mix a new writer with an old reader.
 
-### RED tests and positive controls
+Land as one reviewed series, in this order:
 
-Add `tests/issue-2668-vec-index-state.test.ts`, running every behavioral case
-under host and `--target standalone`. The minimal mechanistic RED cases are:
+1. **S0 IR seam:** capability/provider/refusal convergence and direct IR shape
+   tests. Expected semantic Test262 claim: zero.
+2. **S1 state substrate:** host weak range state; standalone overlay-pair range
+   state; both canonical classifiers; temporary switch still off in focused
+   unit characterization.
+3. **S2 M1 readers/writers:** route the operations required by the 13 rows and
+   mechanistic tests; make the candidate head default-on.
+4. **S3 audit:** complete the named mutator and shared-reader audit, then run
+   targeted base/head/head-off A/B and the full two-lane gates.
+5. **S4 retire:** after acceptance, remove duplicate deleted/presence tests,
+   old host pre-growth for runtime-routed defines, and the temporary switch.
+   Re-run targeted tests plus full gates on the switch-free final SHA.
 
-1. `Object.getOwnPropertyDescriptor([7], "0")` reports value 7 and W/E/C all
-   true before any sidecar exists; redefining only `value` preserves those bits.
-2. After `a.length = 3`, index 1 is absent, an inherited prototype index is
-   visible to Get but `a.hasOwnProperty("1")` is false, and writing `a[1]`
-   clears the hole.
-3. Deleting index 1 from an array returned by `Object.keys` makes
-   `hasOwnProperty("1")`, `in`, gOPD, and own-key enumeration agree that it is
-   absent.
-4. `defineProperty(a,"0",{writable:true})` on a hole creates a present data
-   property with value `undefined` which shadows an inherited index.
+Do not leave both semantic implementations permanently. Do not delete
+`definedPropertyFlags` wholesale: remove only vec-index consumers proven to
+have converged; retain unrelated compile-time shape facts.
 
-Add `tests/issue-2668-object-defineproperty-ir.test.ts` with host and standalone
-IR-shape assertions for the exact ambient, three-argument externref-backed
-call, plus negative controls for a shadowed `Object`, spread arguments, and a
-standalone typed descriptor that must remain legacy.
+## Tests
 
-The exact current candidate census is **0/13 pass in host and 0/13 pass in
-standalone**:
+### IR shape and refusal tests
 
-```text
-test/built-ins/Object/defineProperty/15.2.3.6-4-191.js
-test/built-ins/Object/defineProperty/15.2.3.6-4-210.js
-test/built-ins/Object/defineProperty/15.2.3.6-4-212.js
-test/built-ins/Object/defineProperty/15.2.3.6-4-216.js
-test/built-ins/Object/defineProperty/15.2.3.6-4-251.js
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-187.js
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-198.js
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-211.js
-test/built-ins/Object/defineProperties/15.2.3.7-6-a-231.js
-test/built-ins/Object/freeze/15.2.3.9-2-a-14.js
-test/built-ins/Object/keys/15.2.3.14-5-13.js
-test/built-ins/Object/keys/15.2.3.14-5-a-4.js
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-b-6.js
-```
+Extend `tests/issue-3663-object-define-property-ir.test.ts` or add
+`tests/issue-2668-object-defineproperty-ir.test.ts`:
 
-This list is an at-risk denominator, not a promised +13. Report every remaining
-non-pass and demonstrate any blocker before narrowing it. Use these already
-passing files as positive semantic controls in both lanes:
+- host exact externref-backed ambient call selects IR and has the import
+  binding shown above;
+- standalone exact externref-backed ambient call selects IR and has the runtime
+  binding shown above;
+- both compile to valid Wasm and return the original target;
+- evaluation order is target, key, descriptor, each once;
+- shadowed `Object`, direct module binding, computed access, wrong arity, and
+  spread do not select this operation; and
+- the existing typed standalone target/descriptor remains legacy and succeeds.
+
+### Mechanistic cross-lane tests
+
+Add `tests/issue-2668-vec-index-state.test.ts`. Run every case in host and
+standalone:
+
+1. dense `[7]` gOPD reports value 7 and W/E/C=true before a sidecar exists;
+2. empty/same-value redefine of that element preserves default attributes;
+3. `[undefined]` is present while `[, ]` is absent, including f64-inferred
+   mixed arrays where a value sentinel cannot distinguish them;
+4. a hole with an inherited prototype index is visible to Get/`in` but absent
+   from HasOwn/gOPD/own keys;
+5. defining `{configurable:false}` on that hole creates a present own
+   `undefined` which shadows the prototype and has false omitted attributes;
+6. defining index 10000 on a short array leaves the intervening range absent
+   and enumerates only present indices;
+7. delete makes Get, `in`, HasOwn, gOPD, keys, and gOPN agree on absence;
+8. configurable default data converts to an accessor, then invokes it with the
+   original vec receiver as `this`;
+9. freeze clamps effective W/C on dense defaults without materializing an entry
+   per index; and
+10. `"01"`, `"-0"`, `"1.0"`, `"4294967295"`, symbols, and named expandos stay
+    on the named-property path.
+
+### Exact candidate and positive-control files
+
+Put the 13 paths from the fresh candidate table in the M1 list. Append these
+six currently passing controls in both lanes:
 
 ```text
 test/built-ins/Object/defineProperty/15.2.3.6-4-182.js
@@ -1066,53 +691,115 @@ test/built-ins/Object/keys/15.2.3.14-5-3.js
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-2.js
 ```
 
-### A/B measurement and CI acceptance
+## Same-population A/B protocol
 
-1. Put the 13 candidate paths and six positive controls in a temporary list.
-   Run `npx tsx scripts/harness-flip-probe.ts --self-test`, then record A at
-   exact SHA `81125e5e248847a5df94c3e2a3a20016782e1df4` separately for `--target host` and
-   `--target standalone`. Record B at the exact candidate SHA with the same
-   dependencies, corpus, timeout, and test list. Compare only local A to local B
-   with `--diff`; never diff a local sweep against the committed baseline.
-2. The driver must observe its mandatory must-pass and must-fail fixtures in
-   each arm. If any candidate reports `quickjs provider missing`, the arm is
-   invalid rather than a compiler result. The in-process probe is status-only;
-   `scripts/test262-worker.mjs` in authoritative CI owns runtime-eval provider
-   setup and final classification.
-3. Publish the complete partition for each lane: fail-like→pass,
-   pass→fail-like, other status changes, unchanged, entered, and left; assert
-   that the buckets sum to the union. Keep compile errors/timeouts distinct.
-4. Targeted acceptance requires all four mechanistic RED tests in both lanes,
-   no positive-control regression, and a reported 13-file denominator for each
-   lane. Do not infer success from emitted IR shape or a handwritten source
-   shape.
-5. Before landing, run authoritative CI over the exact **9,029 landing-ES5
-   files in both lanes**. Required regression gate: zero pass→non-pass and zero
-   new compile error/timeout in either lane. Tests using `eval`, `Function`, or
-   `with` remain in the denominator. The issue-level completion gate is stronger:
-   9,029/9,029 pass in host and 9,029/9,029 pass in standalone.
+Use separate clean worktrees and the same test262 gitlink, dependencies,
+harness, timeout, file list, and machine state for every arm. Base is exact
+server-main SHA `cb4d4d7ca2f151ba69f26cff517417e003428df7`; record the candidate and
+switch-removal SHAs in the issue or PR evidence.
 
-### Risks and coordination
+Before any heavy run, execute `sysctl -n hw.pagesize`, `vm_stat`, and `df -k .`.
+Proceed only when the resource gate stated above passes.
 
-- **Shared-reader regression:** changing only defineProperty can improve gOPD
-  while breaking Get, `in`, keys, delete, or freeze. Land the classifier and
-  its reader matrix before retiring any per-call-site logic.
-- **Presence-storage cost:** length growth must not allocate one descriptor per
-  hole, retain dead vecs, or scan to uint32 max. Benchmark dense arrays and a
-  large legal in-memory length; use compact weak side state/ranges.
-- **Value representation:** null and explicit `undefined` are present values;
-  neither may double as absence. Preserve f64/native-string fast storage and
-  use `FLAG_COMPANION_VALUE` only when the overlay truly owns the data value.
-- **Prototype semantics:** `ABSENT` permits inherited Get/HasProperty, whereas
-  HasOwn/gOPD/own keys stop. A present value-less own property shadows the
-  prototype. Test both directions.
-- **IR fallback correctness:** standalone typed descriptors still require the
-  legacy reification at `object-ops.ts:307-335`. An eager IR selection would
-  turn valid descriptor objects into wrong-shape traps.
-- **Hot files/conflicts:** `src/codegen/object-ops.ts`, `object-runtime.ts`,
-  `vec-overlay.ts`, and `runtime.ts` overlap #4008, #4197, and follow-ups to
-  #4222. Rebase after those changes and keep the canonical classifier in one
-  owned module rather than copying its bit tests.
-- **Measurement ceiling:** the 13 rows are only 13/506 current shared ES5
-  non-passes and 13/567 in this family. Do not restate the withdrawn ~788/762
-  headlines or credit unrelated host-only rows without measured flips.
+For the targeted 19-file list:
+
+```text
+npx tsx scripts/harness-flip-probe.ts --self-test
+
+npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-base-host.jsonl --target host
+npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-base-standalone.jsonl --target standalone
+
+JS2WASM_VEC_INDEX_MOP=0 npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-head-off-host.jsonl --target host
+JS2WASM_VEC_INDEX_MOP=0 npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-head-off-standalone.jsonl --target standalone
+
+JS2WASM_VEC_INDEX_MOP=1 npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-head-on-host.jsonl --target host
+JS2WASM_VEC_INDEX_MOP=1 npx tsx scripts/harness-flip-probe.ts --files .tmp/issue-2668-m1-files.txt --out .tmp/2668-head-on-standalone.jsonl --target standalone
+
+npx tsx scripts/harness-flip-probe.ts --diff .tmp/2668-base-host.jsonl .tmp/2668-head-on-host.jsonl
+npx tsx scripts/harness-flip-probe.ts --diff .tmp/2668-base-standalone.jsonl .tmp/2668-head-on-standalone.jsonl
+npx tsx scripts/harness-flip-probe.ts --diff .tmp/2668-base-host.jsonl .tmp/2668-head-off-host.jsonl
+npx tsx scripts/harness-flip-probe.ts --diff .tmp/2668-base-standalone.jsonl .tmp/2668-head-off-standalone.jsonl
+```
+
+Base versus head-off must have zero status changes. Head-off versus head-on
+isolates the switch on the same source SHA. Base versus head-on is the actual
+candidate comparison. Never compare a local arm with a committed baseline
+JSONL.
+
+The driver must observe its mandatory pass and fail controls. Publish the full
+partition in each lane: fail-like to pass, pass to fail-like, other changes,
+unchanged, entered, and left; assert the buckets sum to the union. Keep fail,
+compile error, compile timeout, skip, and harness error distinct. A missing
+QuickJS/eval provider invalidates the arm rather than producing a compiler
+result.
+
+After the targeted matrix, run the authoritative full **same 9,029-file ES5
+population** in host and standalone, including `eval`, `Function`, and `with`
+tests. Required landing gates in each lane:
+
+- zero pass to non-pass;
+- zero new compile errors;
+- zero new compile timeouts;
+- no loss among the six positive controls;
+- every one of the 13 candidate outcomes reported; and
+- all new focused and IR tests green.
+
+After removing the switch, rerun the targeted list and the full gates on the
+final SHA. Issue-level completion remains **9,029/9,029 pass in host and
+9,029/9,029 pass in standalone**; M1 landing does not close #2668 by itself.
+
+## Explicit exclusions and refusal boundary
+
+M1 does not absorb:
+
+- sparse uint32 indices that exceed the signed-i32/dense-backing model;
+- mapped `Arguments` exotic semantics;
+- ordinary object descriptor convergence tracked by #4008;
+- runtime `eval` accessor carrier invocation tracked by #4197;
+- named expando/prototype/global-object MOP gaps;
+- typed-array integer-indexed exotic semantics;
+- plural IR construction for `Object.defineProperties`; or
+- arbitrary typed descriptor reification in IR.
+
+These shapes retain their existing provider or decline to legacy. Do not make
+the M1 selector broader to capture them.
+
+## Risks and mitigations
+
+- **Partial convergence:** fixing define while leaving Get/Has/keys/delete or
+  freeze on raw length creates worse disagreement. The classifier plus reader
+  matrix lands before old tests are removed.
+- **Pre-growth mutation before validation:** a throwing define must not change
+  length, ranges, value, or metadata. Provider-owned validation precedes every
+  transition.
+- **Prototype distinction:** `ABSENT` continues prototype Get/HasProperty;
+  HasOwn/gOPD/own keys stop. A present value-less property shadows the
+  prototype.
+- **Representation traps:** every standalone cast is dominated by `ref.test`;
+  wrong carriers take a fallback or catchable JS `TypeError`, never
+  `illegal_cast`.
+- **Presence storage cost:** use weak host ownership and compact sorted ranges;
+  no O(length), O(gap), or uint32-max descriptor materialization.
+- **Stale resurrection:** shrink removes or hides explicit metadata above the
+  new length, and later growth marks the complete newly exposed range absent.
+- **Enumeration:** gOPN tests presence; keys/for-in test presence plus effective
+  enumerable. Deduplicate companion and backing indices and preserve numeric
+  order.
+- **IR overclaim:** standalone typed carriers remain legacy until reification
+  is exact. Selector and external-call exemption share one predicate.
+- **Browser compatibility:** the temporary environment switch must be guarded;
+  no unguarded `process.env` is added to browser-loaded compiler modules.
+- **Hot-file conflicts:** `src/runtime.ts`, `src/codegen/object-ops.ts`,
+  `object-runtime.ts`, and `vec-overlay.ts` overlap #4008, #4197, and #4222
+  follow-ups. Rebase before implementation and preserve one owner for each
+  state transition rather than copying bit tests.
+
+## Terra Max implementation handoff
+
+Implement **2668-M1** in the S0-S4 order above. First prove the symbolic host
+import and standalone runtime provider with unchanged typed-carrier refusals;
+then add compact absence ranges and one four-state classifier per provider;
+finally converge only the readers/writers required by the 13-row matrix before
+the mutator audit, same-population kill-switch A/B, both-lane zero-loss gate,
+and switch removal. Do not claim a Test262 gain until the measured partitions
+exist.

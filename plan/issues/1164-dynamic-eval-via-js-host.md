@@ -3,7 +3,7 @@ id: 1164
 title: "Dynamic eval via JS host import — compile eval string to ad-hoc Wasm module (~416 tests)"
 status: done
 created: 2026-04-22
-updated: 2026-04-25
+updated: 2026-08-13
 completed: 2026-04-25
 priority: medium
 feasibility: medium
@@ -151,11 +151,14 @@ Provide `evalMode: "worker"` as an opt-in for security-sensitive contexts that
 already have Cross-Origin-Isolation headers. Document both modes in
 `src/runtime-eval.ts`.
 
-## Out of scope
+## Out of scope for the original host increment
 
-- Standalone/WASI eval — see #1165
+- The original implementation did not provide Standalone/WASI eval; #1165
+  owns that provider. Standalone eval is nevertheless inside the current
+  `plan/goals/es5.md` completion boundary and must be counted by the full-lane
+  acceptance gate below.
 - Scope capture (caller variables visible inside eval string) — see #1073
-- `new Function(...)` — follow-up
+- `new Function(...)` — follow-up, also inside the current ES5 goal boundary
 
 ## Acceptance criteria
 
@@ -248,3 +251,197 @@ properly closed.
 - Equivalence suite: 1186 / 1291 pass, 105 fail (pre-existing baseline; the
   pre-#1163 baseline was 1185 / 1291 — so this branch is net +1 with no new
   regressions)
+
+## Implementation Plan — 2026-08-13 ES5 residual
+
+### Architecture verdict
+
+Candidate `64b8f831151efe4c11f241b2889cc7eedbebd7f7` is a useful reference,
+not a merge-ready patch. Its two changes solve different problems and must be
+measured separately:
+
+1. The Test262 gain comes from making the existing legacy host-eval fallback
+   install its already-defined raw `assert.*` object.
+2. The IR change gives one exact **indirect**, result-discarded host eval shape
+   explicit import ownership. It does not implement direct-eval lexical scope,
+   value-producing eval, or standalone eval.
+
+The candidate's 121-row result is head-only evidence against an older
+baseline. Re-run both arms from the same current-main population before
+crediting any flip. In particular, do not describe the 88 direct-eval rows as
+IR wins: they continue through the legacy/reified dynamic-code path.
+
+### Root causes
+
+`wrapTest` cannot rewrite identifiers embedded in source strings. When such a
+string reaches `src/runtime.ts::_legacyHostEval`, raw calls such as
+`assert.sameValue(...)` are invisible to the current `needsShim` detector,
+even though the generated shim already defines `assert`. The fallback then
+executes the source in the global realm and throws `ReferenceError`.
+
+Separately, an IR-emitted body skips the legacy body emitter that used to
+register `env.__extern_eval`. An exact `(0, eval)(source);` statement can only
+be owned by IR if selection, call-graph classification, early import
+collection, lowering, and provider resolution agree on one certified shape.
+The candidate selector accepts any Phase-1 argument while the lowerer later
+rejects non-strings; that is a post-claim demotion and must be removed.
+
+### Changes
+
+**File: `src/runtime-eval.ts` — beside `createEvalShim` (line ~133)**
+
+- Add a small exported classifier for Test262 raw-assert syntax. Parse the
+  eval source with the existing `ts` import and return true only for an active
+  unshadowed `assert(...)`, `assert.<method>(...)`, or
+  `assert["<known method>"](...)` reference.
+- Treat any binding declaration named `assert` as a conservative no-match.
+  Comments and string/template text containing `assert.` must not match.
+- Keep this classifier harness-only; it must not change ordinary
+  `PerformEval` semantics or select an execution engine.
+
+**File: `src/runtime.ts` — `resolveImport` / `_legacyHostEval` (lines
+~8431 / ~9505)**
+
+- In `resolveImport`, inside the `name === "__extern_eval"` branch and
+  `_legacyHostEval`, include the raw-assert classifier in `needsShim` beside
+  the existing rewritten harness identifiers.
+- Reuse the existing shim body. Do not add another `assert` implementation,
+  expose host globals, or change the `dynamicCode` policy.
+- Preserve ES5.1 §15.1.2.1: a non-string eval argument returns unchanged.
+  This follow-up's IR statement slice may reject that shape, but the runtime
+  import must retain the general rule.
+
+**File: `src/eval-call-shape.ts` — `exactIndirectEvalIdentifier` (candidate
+line ~10; new file)**
+
+- Keep `exactIndirectEvalIdentifier` as the syntax recognizer for only the
+  canonical comma form `(0, eval)(source)` after parentheses are stripped.
+  The left operand must be the numeric literal zero and the right operand the
+  identifier `eval`.
+- Add or expose one shared shape check for: expression-statement position,
+  exactly one non-spread argument, and the exact callee above. Semantic checks
+  (ambient binding, host capability, proven string carrier) remain at the
+  phases that own those facts.
+
+**File: `src/ir/select.ts` — `isPhase1Expr` / `buildLocalCallGraph`
+(candidate lines ~6351 / ~7669)**
+
+- In `isPhase1Expr`, claim the exact indirect-eval statement only when all of
+  these are true: JS-host externs are enabled; `eval` resolves to the ambient
+  intrinsic and is not in the current scope; there is one non-spread argument;
+  the call's value is discarded; `expressionIsProvenString(argument)` is true;
+  and the argument is otherwise Phase-1 lowerable.
+- In `buildLocalCallGraph`, exempt the call from `hasExternalCall` only under
+  that same certified predicate. A broader graph exemption can incorrectly
+  admit a body the lowerer cannot build.
+- Direct `eval(source)`, result-producing indirect eval, shadowed eval,
+  optional/spread calls, and non-proven-string arguments must demote before an
+  IR claim.
+
+**File: `src/codegen/declarations/import-collector.ts` —
+`UnifiedCollectorState`, `unifiedVisitNode`, `finalizeUnifiedCollector`
+(candidate lines ~87 / ~228 / ~1355)**
+
+- Extend `UnifiedCollectorState` with the exact host-indirect-eval need and set
+  it in `unifiedVisitNode` only for the same statement/arity/ambient/string
+  slice. Use checker-backed string classification; do not arm the import for
+  every syntactic comma-eval in the module.
+- In `finalizeUnifiedCollector`, reserve
+  `env.__extern_eval : (externref, i32) -> externref` before body planning.
+  Reuse an existing function-map entry if one was already registered.
+
+**File: `src/ir/from-ast.ts` — `lowerCall` (candidate line ~5266)**
+
+- In `lowerCall`, repeat the certified checks defensively and lower the source
+  as a host-backed string. A failed invariant is a selection bug, not an
+  expected post-claim fallback.
+- Emit the symbolic call below with `isDirect = 0`. The expression statement
+  discards the returned `externref`; do not invent a result coercion contract
+  in this slice.
+
+**File: `src/ir/integration.ts` — `makeFromAstResolver` /
+`resolveAndObserveCallableProvider` (candidate lines ~4055 / ~4486)**
+
+- In `makeFromAstResolver`, expose only the existing host-extern, ambient
+  binding, and host-string facts needed by selection/lowering. Resolve the
+  symbolic import through the finalized function map; do not mutate import
+  indices while materializing an IR body.
+
+### Wasm IR ownership
+
+```text
+%source = lower_string(source)
+%boxed  = coerce_to_externref(%source)
+%result = call @env.__extern_eval(%boxed, i32.const 0)
+drop %result
+```
+
+This is a host-only IR path because the import is the capability. Direct eval
+must use the reified-binding path from #2925/#1073: a plain host import cannot
+observe the caller's lexical and variable environments. Standalone still
+needs #1165's runtime/compiler provider. Neither lane is excluded from the
+ES5 goal or from the full 9,029-row gate.
+
+### Semantic boundaries and controls
+
+- Positive IR probe: ambient `(0, eval)(source);` with a proven host string;
+  require `irBodyEmitted: true`, `legacyBodyEmitted: false`, one symbolic
+  `env.__extern_eval` import, and successful `assert.sameValue` execution.
+- Demotion controls: direct eval; used return value; non-string/dynamic union;
+  zero/two/spread arguments; shadowed `eval`; nonzero comma lhs; optional call.
+- Runtime controls: raw `assert.sameValue`, `assert.throws`, and callable
+  `assert`; rewritten `assert_sameValue`; a local `let assert`; and inert
+  `"assert."`, template text, and comments. The last three must not activate
+  or collide with the shim.
+- Preserve indirect global-scope behavior and direct lexical-scope behavior.
+  A passing Test262 assertion-visibility row is not evidence for either scope
+  rule unless the test actually observes it.
+- Preserve non-string passthrough, syntax/runtime exception identity, strict
+  caller behavior, nested eval, and dynamic-code deny/native/evaluator modes.
+
+### Same-population A/B and zero-loss gates
+
+At implementation start, record the exact latest `origin/main` SHA and use it
+as the base arm. The comparison arm is the exact implementation SHA. Both
+arms must use Test262 corpus gitlink
+`b363f29d3c43c626dc852744ad64a0b48a003693`, the same oracle revision,
+harness, target flags, timeout, and maintained file list.
+
+Run four focused arms on the maintained 120-file `assert is not defined`
+population plus passing and negative controls:
+
+1. current-main base;
+2. runtime raw-assert classifier only;
+3. full implementation;
+4. full implementation with the raw-assert classifier disabled as an
+   attribution kill switch.
+
+Require exact row accounting. Expected attribution is that the runtime-only
+arm owns the Test262 flips; the IR arm owns the inventory probe and must add no
+unexplained row changes. Report pass/fail/compile-error/timeout/skip totals and
+every transition, including unchanged runner errors.
+
+Finally run all **9,029** `<= ES5` tests in each lane through the authoritative
+original harness:
+
+- host/gc: 9,029 pass, zero fail/compile error/timeout/skip for goal closure;
+- standalone: 9,029 pass, zero fail/compile error/timeout/skip for goal closure;
+- for an incremental PR, at minimum zero `pass -> non-pass` in either lane and
+  no newly unmeasured rows.
+
+Eval, `Function`, and `with` rows are included. For standalone dynamic-code
+measurement, rebuild the compiler/runtime bundle and the configured evaluator
+provider, clear any provider cache, and report the provider tier; a trap-only
+instrumentation stub is not a passing eval implementation.
+
+### Candidate disposition and implementation handoff
+
+- Rebase/rederive from current main; use candidate `64b8f831...` only as a
+  reference.
+- Retain the narrow import-first IR design after aligning every predicate and
+  adding negative controls.
+- Replace the raw `jsSrc.includes("assert.")` heuristic with the syntax-aware
+  classifier above.
+- Do not claim direct eval, value-producing eval, or standalone eval from this
+  increment. Record their remaining exact rows under #2925/#1165 and keep them
+  inside the ES5 completion denominator.

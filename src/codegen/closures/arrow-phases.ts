@@ -33,6 +33,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { allocLocal } from "../context/locals.js";
+import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
 import { emitBoundsCheckedArrayGet } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import {
@@ -476,26 +477,12 @@ export function planClosureCaptures(
   // Transitively add captures needed by called nested functions.
   // E.g. if this closure calls g() and g has nestedFuncCaptures {first, second},
   // this closure must also capture first and second so it can pass ref cells to g.
-  const transitivelyRequiredNames = new Set<string>();
-  const captureWorklist = [...referencedNames];
-  const visitedCaptureFunctions = new Set<string>();
-  while (captureWorklist.length > 0) {
-    const name = captureWorklist.pop()!;
-    if (visitedCaptureFunctions.has(name)) continue;
-    visitedCaptureFunctions.add(name);
-    if (ownLocals.has(name)) continue;
-    if (isEnclosingParameterBinding(fctx, name)) continue;
-    const transitiveCaptures = ctx.nestedFuncCaptures.get(name);
-    if (!transitiveCaptures) continue;
-    for (const cap of transitiveCaptures) {
-      if (ownLocals.has(cap.name)) continue;
-      transitivelyRequiredNames.add(cap.name);
-      if (!referencedNames.has(cap.name)) {
-        referencedNames.add(cap.name);
-        captureWorklist.push(cap.name);
-      }
-    }
-  }
+  const transitivelyRequiredNames = collectTransitiveCaptureNames(
+    ctx.nestedFuncCaptures,
+    referencedNames,
+    ownLocals,
+    (name) => isEnclosingParameterBinding(fctx, name),
+  );
 
   // Detect which captured variables are written inside the closure body
   const writtenInClosure = new Set<string>();
@@ -661,7 +648,7 @@ export function planClosureCaptures(
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
       (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) ||
-        (!transitivelyRequiredNames.has(name) && !observesHoistedFunctionValue(ctx, arrow, name)))
+        (!transitivelyRequiredNames.has(name) && !closureObservesBindingValue(arrow, name)))
     ) {
       continue;
     }

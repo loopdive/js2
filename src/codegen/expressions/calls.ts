@@ -84,6 +84,13 @@ import {
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4076)
+import {
+  appendDynamicCandidateArgcSetup,
+  appendExternResultArgcReset,
+  buildArgcExtrasSetupFromLocals,
+  buildArgcResetNoLazyExtras,
+} from "./argc-extras.js";
+import { emitMaterializedArgumentsVector, prepareCompiledApplyBridge } from "./apply-arguments-vector.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
@@ -197,7 +204,6 @@ import {
   emitDefaultParamInit,
   emitSetExtrasArgv,
   ensureArgcGlobal,
-  ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
 import {
@@ -2909,95 +2915,6 @@ export function emitClosureCallArgcExtras(
 }
 
 /**
- * Build the wasm instructions that set `__extras_argv` from a list of
- * pre-saved externref locals, and `__argc` to (paramCount + extrasLocals.length).
- *
- * Used by indirect-call paths that have already compiled overflow args
- * into externref locals (so we don't re-evaluate side effects). The
- * returned instruction list leaves the wasm value stack unchanged.
- * (#1511)
- */
-export function buildArgcExtrasSetupFromLocals(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  paramCount: number,
-  extrasLocals: number[],
-  actualArgCount = paramCount + extrasLocals.length,
-): Instr[] {
-  const out: Instr[] = [];
-  if (extrasLocals.length > 0) {
-    const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTi } = ensureExtrasArgvGlobal(ctx);
-    const extrasArrTi = getArrTypeIdxFromVec(ctx, extrasVecTi);
-    for (const el of extrasLocals) {
-      out.push({ op: "local.get", index: el });
-    }
-    out.push({ op: "array.new_fixed", typeIdx: extrasArrTi, length: extrasLocals.length });
-    const arrTmp = allocLocal(fctx, `__extras_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: extrasArrTi });
-    out.push({ op: "local.set", index: arrTmp });
-    out.push({ op: "i32.const", value: extrasLocals.length });
-    out.push({ op: "local.get", index: arrTmp });
-    out.push({ op: "struct.new", typeIdx: extrasVecTi });
-    out.push({ op: "global.set", index: extrasGlobalIdx });
-  }
-  const argcGlobalIdx = ensureArgcGlobal(ctx);
-  out.push({ op: "i32.const", value: Math.min(actualArgCount, paramCount) });
-  out.push({ op: "global.set", index: argcGlobalIdx });
-  return out;
-}
-
-/**
- * Build the wasm instructions that reset `__argc` and `__extras_argv` to
- * their sentinel values. Useful for inlining into dispatch arms / if
- * bodies. The returned list leaves the wasm value stack unchanged.
- * (#1511)
- */
-export function buildArgcExtrasReset(ctx: CodegenContext): Instr[] {
-  const { globalIdx: extrasGlobalIdx, vecTypeIdx: extrasVecTi } = ensureExtrasArgvGlobal(ctx);
-  const argcGlobalIdx = ensureArgcGlobal(ctx);
-  return [
-    { op: "ref.null", typeIdx: extrasVecTi },
-    { op: "global.set", index: extrasGlobalIdx },
-    { op: "i32.const", value: -1 },
-    { op: "global.set", index: argcGlobalIdx },
-  ];
-}
-
-/**
- * Reset `__argc` to its -1 sentinel and `__extras_argv` to null WITHOUT
- * lazily creating either global. Unlike {@link buildArgcExtrasReset}, this
- * never calls `ensureExtrasArgvGlobal` — so it cannot register the
- * `__extras_argv` vec heap type for the FIRST time mid-function-body.
- *
- * Why this matters (#2704 / PR #2149): the multi-funcref dispatch arm builds
- * its ref.test/ref.cast/call_ref chain (with type indices already resolved)
- * BEFORE emitting the post-dispatch reset. The preceding setup only registers
- * `__extras_argv` when the call actually has overflow args; a 0-extras callback
- * (e.g. the `() => void` thunk passed to `assert.throws`) leaves it
- * unregistered. Calling `ensureExtrasArgvGlobal` from the reset then becomes
- * the FIRST registration of that global/type at a point where the surrounding
- * function body has already been partially emitted — which desynced codegen
- * and silently miscompiled `new Map/WeakMap/WeakSet(iterable)` inside the
- * callback so it no longer threw (4-test merge_group regression).
- *
- * Resetting `__argc` is always safe (it is an i32 global with no heap type and
- * is already registered by the preceding setup). `__extras_argv` only needs a
- * reset when it was actually used / previously registered: if it was never
- * registered it still holds its null initializer, so there is nothing to leak
- * (#1511) and skipping the reset is correct.
- */
-export function buildArgcResetNoLazyExtras(ctx: CodegenContext): Instr[] {
-  const argcGlobalIdx = ensureArgcGlobal(ctx);
-  const out: Instr[] = [];
-  if (ctx.extrasArgvGlobalIdx >= 0) {
-    out.push({ op: "ref.null", typeIdx: ctx.extrasArgvVecTypeIdx });
-    out.push({ op: "global.set", index: ctx.extrasArgvGlobalIdx });
-  }
-  out.push({ op: "i32.const", value: -1 });
-  out.push({ op: "global.set", index: argcGlobalIdx });
-  return out;
-}
-
-/**
  * Flatten call-site arguments, expanding spread elements on array literals
  * into individual expressions. Returns the flat list of expressions.
  * For spread on non-literal arrays, returns null (cannot flatten at compile time).
@@ -3985,22 +3902,7 @@ export function tryEmitInlineDynamicCall(
 
     const callBody: Instr[] = [];
 
-    // A dynamic binding's checker-visible type need not describe the runtime
-    // closure body. In particular, CommonJS/default-export factories often
-    // expose a zero-formal function that consumes every supplied value through
-    // `arguments` (Moment's public `hooks` function). Seed the shared
-    // argc/extras protocol for the candidate that actually matched, preserving
-    // all call-site values beyond that candidate's formal prefix.
-    callBody.push(
-      ...buildArgcExtrasSetupFromLocals(
-        ctx,
-        fctx,
-        cand.info.paramTypes.length,
-        argLocals.slice(cand.info.paramTypes.length),
-        arity,
-      ),
-    );
-
+    appendDynamicCandidateArgcSetup(ctx, fctx, callBody, cand.info.paramTypes.length, argLocals, arity);
     // Self arg: anyref → the concrete struct type this funcref expects.
     callBody.push({ op: "local.get", index: anyLocal });
     callBody.push({ op: "ref.cast", typeIdx: selfTypeIdx });
@@ -4068,13 +3970,8 @@ export function tryEmitInlineDynamicCall(
     // slot backs `number`, `boolean` (1/0) and symbol handles alike (#2785),
     // so a boolean-returning closure reached through this inline ladder handed
     // back the NUMBER 0/1. That is what made test262's `isConfigurable()`
-    // answer `0` instead of `false` and `verifyProperty` report
-    // "<p> descriptor should (not) be configurable".
     callBody.push(...buildClosureResultBoxing(ctx, cand.info.returnType, boxNumberIdx));
-    const dynamicCallResultLocal = allocLocal(fctx, `__dyn_result_${fctx.locals.length}`, { kind: "externref" });
-    callBody.push({ op: "local.set", index: dynamicCallResultLocal });
-    callBody.push(...buildArgcResetNoLazyExtras(ctx));
-    callBody.push({ op: "local.get", index: dynamicCallResultLocal });
+    appendExternResultArgcReset(ctx, fctx, callBody);
 
     // (#820/#1543) Discriminate by the *funcref* signature, not the struct
     // type. Every `__fn_wrap_*` struct subtypes the single root wrapper, so
@@ -7030,17 +6927,7 @@ function compileCallExpression(
           ctx.closureMap.has(calleeName) ||
           ctx.funcMap.has(calleeName);
         if (argumentsVector !== undefined && knownCompiledCallee) {
-          // The arity bridge widens a short arguments vector to the target
-          // closure's formal count. In a JS host build those missing slots
-          // must carry the host's real `undefined`, not the standalone
-          // `$undefined` carrier: the callee may compare an `any` parameter
-          // with `undefined` through a host predicate. Register the import
-          // before reserving/filling the bridge so finalize only reads an
-          // already-stable function index.
-          if (!ctx.standalone && !ctx.wasi) {
-            ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-            flushLateImportShifts(ctx, fctx);
-          }
+          prepareCompiledApplyBridge(ctx, fctx);
           reserveApplyClosure(ctx);
 
           const calleeType = compileExpression(ctx, fctx, innerExpr, { kind: "externref" });
@@ -7057,21 +6944,7 @@ function compileCallExpression(
             coerceType(ctx, fctx, receiverType, { kind: "externref" });
           }
 
-          // Compile the native arguments vec in its own representation first.
-          // Supplying an externref expectation here routes array-like values
-          // through `__make_iterable`; that host wrapper hides the WasmGC vec
-          // from `__apply_closure`, so the bridge sees length 0 and pads every
-          // target formal with undefined. Convert the raw vec only after the
-          // identifier read, preserving its carrier for the bridge's direct
-          // length/index fast path.
-          const vectorLocalIdx = fctx.localMap.get(argumentsVector.text)!;
-          const vectorType = getLocalType(fctx, vectorLocalIdx)!;
-          fctx.body.push({ op: "local.get", index: vectorLocalIdx });
-          if (vectorType.kind === "ref" || vectorType.kind === "ref_null") {
-            fctx.body.push({ op: "extern.convert_any" });
-          } else if (vectorType.kind !== "externref") {
-            coerceType(ctx, fctx, vectorType, { kind: "externref" });
-          }
+          emitMaterializedArgumentsVector(ctx, fctx, argumentsVector);
 
           const applyIdx = ctx.funcMap.get("__apply_closure");
           if (applyIdx !== undefined) {

@@ -1,10 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-/**
- * Import/global registry ownership for the backend.
- *
- * This module owns low-level Wasm import registration plus the global-index
- * fixups required when late import globals are inserted during codegen.
- */
+/** Import/global registration and late index-space fixups. */
 import type { Import, Instr, TagDef, ValType } from "../../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
@@ -29,6 +24,7 @@ import { emitNativeParseNumber } from "../parse-number-native.js";
 import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
 import { isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
 import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
+import { shiftModuleGlobalExportIndices } from "../global-export-fixup.js";
 
 /**
  * Register an import (`module.name`) on the current module.
@@ -369,20 +365,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     if (g.init) shiftGlobalIndices(g.init);
   }
 
-  // Export descriptors use the same absolute global index space as
-  // global.get/global.set. A string constant imported after a module global
-  // has been exported shifts every defined global by one; leaving the export
-  // descriptor untouched exposes the preceding imported externref instead.
-  // This is especially damaging for the closure/data host-bridge manifests:
-  // their immutable i32 globals become null externref exports, authentication
-  // fails, and the runtime hides otherwise genuine closure dispatch helpers.
-  const shiftedGlobalExportDescs = new WeakSet<object>();
-  for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind === "global" && !shiftedGlobalExportDescs.has(entry.desc) && entry.desc.index >= threshold) {
-      shiftedGlobalExportDescs.add(entry.desc);
-      entry.desc.index += delta;
-    }
-  }
+  shiftModuleGlobalExportIndices(ctx, threshold, delta);
 
   function shiftMap(map: Map<string, number>): void {
     for (const [key, idx] of map) {

@@ -44,18 +44,10 @@ export function readField(
   receiver: unknown,
   hasBackingField: boolean | undefined,
 ): unknown | typeof NO_GENERATED_FIELD {
-  // Generated getters are shared by every WasmGC struct in the module and
-  // dispatch internally with `ref.test`. A getter can therefore return the
-  // zero/default slot of a structurally accepted but logically unrelated
-  // anonymous object. The field-name export is the authoritative shape proof;
-  // never probe the shared getter when that proof says the receiver does not
-  // own the field (#4383).
+  // A known field-name miss must not probe a getter shared by structurally
+  // compatible shapes. Unknown legacy/prepared shapes retain the old probe.
   if (hasBackingField === false || typeof getter !== "function") return NO_GENERATED_FIELD;
   const value = getter(receiver);
-  // When the field-name export cannot classify a late/opaque carrier, retain
-  // the legacy probe but accept only a non-null result. Generated ref getters
-  // use null for a shape miss; known-absent numeric fields never reach the
-  // getter because `hasBackingField === false` above.
   return value !== undefined && value !== null ? value : hasBackingField ? value : NO_GENERATED_FIELD;
 }
 

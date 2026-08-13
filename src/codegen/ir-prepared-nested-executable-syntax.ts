@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrHostVoidCallbackLoweringPlan } from "../ir/ast-lowering-plans.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import type { IrUnitId } from "../ir/identity.js";
 import { ts } from "../ts-api.js";
 
@@ -42,6 +43,9 @@ export function containsUnplannedNestedExecutableSyntax(
       seen.add(plan);
       ordinals.add(plan.liftedOrdinal);
       ts.forEachChild(node.body, visit);
+      return;
+    }
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && isBoundedPreparedNestedOrdinaryClass(node)) {
       return;
     }
     if (

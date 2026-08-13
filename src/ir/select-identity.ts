@@ -12,7 +12,12 @@ import {
 import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
-import { exactPreparedAccessorSyntaxKey, isBoundedPreparedAccessorClass } from "./class-accessor-safety.js";
+import {
+  boundedPreparedNestedOrdinaryClassBindingName,
+  exactPreparedAccessorSyntaxKey,
+  isBoundedPreparedAccessorClass,
+  isBoundedPreparedNestedOrdinaryClass,
+} from "./class-accessor-safety.js";
 import {
   assessIrImplicitConstructorSubject,
   assessIrStructuralSelectorSubject,
@@ -415,8 +420,8 @@ function uniqueDeclarationsByName(
 }
 
 function uniqueClassDeclarationsByName(
-  classesByName: ReadonlyMap<string, readonly { classId: IrClassId; declaration: ts.ClassDeclaration }[]>,
-): Map<string, ts.ClassDeclaration> {
+  classesByName: ReadonlyMap<string, readonly IndexedClass[]>,
+): Map<string, ts.ClassDeclaration | ts.ClassExpression> {
   return new Map(
     [...classesByName]
       .filter(([, candidates]) => candidates.length === 1)
@@ -615,7 +620,7 @@ export function planIrCompilationByIdentity(
 
   const classes = collectClasses(sourceFile, sourceId, identityContext);
   populateClassMemberUnits(sourceId, classes, identityContext, units);
-  const classesByName = new Map<string, { classId: IrClassId; declaration: ts.ClassDeclaration }[]>();
+  const classesByName = new Map<string, IndexedClass[]>();
   for (const indexed of classes) {
     if (
       indexed.declaration.parent === sourceFile &&
@@ -627,7 +632,15 @@ export function planIrCompilationByIdentity(
   }
 
   const uniqueFunctions = uniqueDeclarationsByName(functionsByName);
-  const uniqueClasses = uniqueClassDeclarationsByName(classesByName);
+  const projectedClassCandidates = new Map(classesByName);
+  for (const candidate of classes) {
+    if (candidate.declaration.parent === sourceFile) continue;
+    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(candidate.declaration);
+    if (bindingName === undefined) continue;
+    if (options.projectedClassShapesById?.has(candidate.classId) !== true) continue;
+    addNameIndex(projectedClassCandidates, bindingName, candidate);
+  }
+  const uniqueClasses = uniqueClassDeclarationsByName(projectedClassCandidates);
   const localClasses = new Set(uniqueClasses.keys());
   const asyncUnitIds = new Set(
     functions
@@ -692,22 +705,31 @@ export function planIrCompilationByIdentity(
       const parentName = extendsParentName(declaration);
       const parentIsLocal = parentName !== null && localClasses.has(parentName);
       const boundedAccessorClass = isBoundedPreparedAccessorClass(declaration);
+      const boundedNestedOrdinaryClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
       const exactAccessorClass = nestedClass || boundedTopLevelAccessorClass;
       selectImplicitConstructorClaim(implicitSelection, { classId, declaration }, nestedClass, candidates.length);
-      const markExactAccessorClassFallback = (): void => {
+      const markBoundedClassFallback = (): void => {
         if (!trackFallbacks) return;
         for (const member of declaration.members) {
-          if ((!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) || !member.body) continue;
+          if (
+            (!ts.isConstructorDeclaration(member) &&
+              !ts.isMethodDeclaration(member) &&
+              !ts.isGetAccessorDeclaration(member) &&
+              !ts.isSetAccessorDeclaration(member)) ||
+            !member.body
+          ) {
+            continue;
+          }
           const unitId = identityContext.unitIdByDeclaration.get(member);
           if (unitId !== undefined && identityContext.terminalByUnitId.has(unitId)) {
             reasons.set(unitId, "class-member-unsupported");
           }
         }
       };
-      if (nestedClass && !boundedAccessorClass) {
-        markExactAccessorClassFallback();
+      if (nestedClass && !boundedAccessorClass && !boundedNestedOrdinaryClass) {
+        markBoundedClassFallback();
         continue;
       }
       const exactAccessorDescriptors = new Map<
@@ -763,11 +785,11 @@ export function planIrCompilationByIdentity(
           accessorPlacementByKey.set(descriptor.name, staticPlacement);
         }
         if (hasAccessorSlotCollision || hasAccessorPlacementCollision || hasUnsafeComputedKey) {
-          markExactAccessorClassFallback();
+          markBoundedClassFallback();
           continue;
         }
       }
-      const pendingExactAccessorClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
+      const pendingBoundedClassClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
       for (const member of declaration.members) {
         if (
           (!ts.isConstructorDeclaration(member) &&
@@ -834,18 +856,20 @@ export function planIrCompilationByIdentity(
             : ts.isGetAccessorDeclaration(member)
               ? "getter"
               : "setter";
-          const descriptors = exactAccessorClass
+          const exactAccessorMember =
+            exactAccessorClass && (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member));
+          const descriptors = exactAccessorMember
             ? exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)
               ? [exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)!]
               : []
             : descriptorName === null
               ? []
-              : (options.projectedClassShapes
-                  ?.get(className)
-                  ?.methods.filter(
-                    (candidate) =>
-                      candidate.name === descriptorName && (candidate.memberKind ?? "method") === descriptorKind,
-                  ) ?? []);
+              : ((exactClassShape ?? options.projectedClassShapes?.get(className))?.methods.filter(
+                  (candidate) =>
+                    candidate.name === descriptorName &&
+                    (candidate.memberKind ?? "method") === descriptorKind &&
+                    (!nestedClass || candidate.placement?.classId === classId),
+                ) ?? []);
           exactMemberDescriptor = descriptors.length === 1 ? descriptors[0] : undefined;
           if (!exactMemberDescriptor) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-member-unsupported");
@@ -867,7 +891,7 @@ export function planIrCompilationByIdentity(
             : undefined;
         if (
           nestedClass &&
-          (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
+          (boundedNestedOrdinaryClass || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
           options.nestedClassMemberCallableAvailable?.(unit.unitId) !== true
         ) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-member-unsupported");
@@ -889,23 +913,57 @@ export function planIrCompilationByIdentity(
           exactAccessorEvidence,
         );
         if (assessment.reason === null) {
-          if (exactAccessorClass) pendingExactAccessorClaims.set(unit.unitId, unit);
+          if (boundedAccessorClass || boundedNestedOrdinaryClass) pendingBoundedClassClaims.set(unit.unitId, unit);
           else classClaims.set(unit.unitId, unit);
         } else if (trackFallbacks) {
           reasons.set(unit.unitId, assessment.reason);
           if (assessment.detail !== undefined) details.set(unit.unitId, assessment.detail);
         }
       }
-      if (exactAccessorClass) {
-        const accessorCount = declaration.members.filter(
-          (member) => (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && !!member.body,
-        ).length;
-        if (pendingExactAccessorClaims.size === accessorCount) {
-          for (const [unitId, claim] of pendingExactAccessorClaims) classClaims.set(unitId, claim);
+      if (boundedAccessorClass || boundedNestedOrdinaryClass) {
+        const expectedCount = declaration.members.filter((member) => {
+          if (boundedAccessorClass) {
+            return (
+              (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && member.body !== undefined
+            );
+          }
+          return (ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member)) && member.body !== undefined;
+        }).length;
+        if (pendingBoundedClassClaims.size === expectedCount) {
+          for (const [unitId, claim] of pendingBoundedClassClaims) classClaims.set(unitId, claim);
         } else {
-          markExactAccessorClassFallback();
+          markBoundedClassFallback();
         }
       }
+    }
+  }
+
+  // Ordinary nested classes are one ownership atom with their containing
+  // function. Unlike the accessor-only writeback family, their constructor,
+  // methods, and every call site share one exact class-layout/callable graph.
+  // If any body rejects—or the enclosing function itself rejects—withdraw the
+  // complete class plus owner before lowering can observe a mixed component.
+  for (const { classId, declaration } of classes) {
+    if (!isBoundedPreparedNestedOrdinaryClass(declaration)) continue;
+    const terminals = identityContext.inventory.terminalUnits.filter(
+      (terminal) =>
+        terminal.lexicalOwnerId === classId &&
+        terminal.observedKind === "class-member" &&
+        terminal.containingTerminalOwnerId !== undefined,
+    );
+    if (terminals.length === 0) continue;
+    const ownerUnitId = terminals[0]!.containingTerminalOwnerId!;
+    const exactOwner = terminals.every((terminal) => terminal.containingTerminalOwnerId === ownerUnitId);
+    const allMembersClaimed = exactOwner && terminals.every((terminal) => classClaims.has(terminal.id));
+    const ownerClaimed = individuallyClaimed.has(ownerUnitId);
+    if (allMembersClaimed && ownerClaimed) continue;
+    for (const terminal of terminals) {
+      classClaims.delete(terminal.id);
+      if (trackFallbacks) reasons.set(terminal.id, "class-member-unsupported");
+    }
+    if (!allMembersClaimed && ownerClaimed) {
+      individuallyClaimed.delete(ownerUnitId);
+      if (trackFallbacks) reasons.set(ownerUnitId, "class-member-unsupported");
     }
   }
 

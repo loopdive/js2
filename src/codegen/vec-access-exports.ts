@@ -22,6 +22,7 @@ import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./regis
 import { flushLateImportShifts } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
+import { guardVecElementRead } from "./vec-oob-read.js";
 
 export const VEC_HOST_BRIDGE_ROLE = "vec-host-bridge";
 
@@ -498,12 +499,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     })();
     const f64ScratchIdx = holeMapInVecGet ? 4 : 3;
     let usedF64Scratch = false;
-    const oobUndefinedInstrs: Instr[] = (() => {
-      const singleton = undefinedExternInstrs(ctx);
-      if (singleton !== undefined) return singleton.map((instr) => ({ ...instr }));
-      const getUndefinedIdx = ctx.funcMap.get("__get_undefined");
-      return getUndefinedIdx === undefined ? [{ op: "ref.null.extern" }] : [{ op: "call", funcIdx: getUndefinedIdx }];
-    })();
+    const oobUndefinedInstrs = f64SentinelUndefInstrs?.map((instr) => ({ ...instr })) ?? [
+      { op: "ref.null.extern" as const },
+    ];
     for (let i = vecEntries.length - 1; i >= 0; i--) {
       const [elemKey, vecTypeIdx] = vecEntries[i]!;
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
@@ -619,36 +617,14 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
         { op: "local.get", index: 1 }, // index
-        // (#2593) Packed i8/i16 elements REQUIRE array.get_u/_s (plain array.get
-        // is invalid Wasm on a packed array); read zero-extended in this generic
-        // path. (#2835) `i32_byte` (the ArrayBuffer/DataView byte buffer) is now
-        // ALSO packed i8 — it joins the `array.get_u` branch (its box arm already
-        // does the unsigned i32→f64 conversion). `i32_elem` (Int32/Uint32 element
-        // storage) and `f64` stay on plain `array.get`.
+        // Packed byte storage uses an unsigned read; ordinary elements use array.get.
         {
           op: elemKey === "i8_byte" || elemKey === "i16_byte" || elemKey === "i32_byte" ? "array.get_u" : "array.get",
           typeIdx: arrTypeIdx,
         },
         ...boxInstrs,
       ];
-      const thenBranch: Instr[] = [
-        // JavaScript array reads outside [0, length) produce undefined. This
-        // bridge is used by host and dynamic element access, so allowing the
-        // underlying Wasm `array.get` to see an OOB index turns an ordinary JS
-        // read into an uncatchable runtime trap.
-        { op: "local.get", index: 1 },
-        { op: "local.get", index: 2 },
-        { op: "ref.cast", typeIdx: vecTypeIdx },
-        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-        { op: "i32.lt_u" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
-          then: elementRead,
-          else: oobUndefinedInstrs.map((instr) => ({ ...instr })),
-        },
-        { op: "return" },
-      ];
+      const thenBranch = guardVecElementRead(vecTypeIdx, elementRead, oobUndefinedInstrs);
       current = [
         { op: "local.get", index: 2 },
         { op: "ref.test", typeIdx: vecTypeIdx },

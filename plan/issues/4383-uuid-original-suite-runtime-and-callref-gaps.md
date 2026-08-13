@@ -148,11 +148,12 @@ generic fixes for function-value observation, internal-call arguments,
 nullish property reads, symbol-key widening, optional `super` calls, async
 hoisting, and null-prototype native host objects.
 
-Standalone reruns recovered 82 of the 99 rows. Two additional generic routing
+Standalone reruns recovered 86 of the 99 rows after the current-main merge. Two additional generic routing
 fixes keep primitive `valueOf()` and constructor-assigned methods on the native
-standalone paths. The 17 locally unresolved rows are not changes introduced by
+standalone paths. The 13 locally unresolved rows are not changes introduced by
 this branch: the exact pre-PR source also fails them in the current checkout.
-They cover the unavailable local QuickJS artifact, one absent Test262 harness
-file, and pre-existing module-binding cases. Reconcile this branch with current
-`main` and rerun the authoritative merge-group baseline before removing the
-hold label.
+They cover three tests requiring the unavailable local QuickJS artifact, one
+absent Test262 harness file, and nine pre-existing module-binding cases. The
+exact 74 host regressions now pass 74/74, the 86 locally executable standalone
+rows pass, and the authoritative merge-group baseline remains the final oracle
+before removing the hold label.

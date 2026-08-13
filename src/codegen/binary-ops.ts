@@ -42,12 +42,8 @@ import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
-import {
-  canCompilePropertyAccessForNullishObservation,
-  compilePropertyAccessForNullishObservation,
-  isLogicalAssignNamedEvalNameRead,
-  resolveStructNameForExpr,
-} from "./property-access.js";
+import { isLogicalAssignNamedEvalNameRead, resolveStructNameForExpr } from "./property-access.js";
+import { compileNullishObservedExpression } from "./property-nullish-read.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import {
   emitAnyEqFromExternTemps,
@@ -670,30 +666,7 @@ export function compileBinaryExpression(
         (nonNullTsType.flags & ts.TypeFlags.Undefined) !== 0 || (nonNullTsType.flags & ts.TypeFlags.Void) !== 0;
       const nonNullIsNullType = (nonNullTsType.flags & ts.TypeFlags.Null) !== 0;
 
-      // Compile the non-null side
-      // A property read can miss at runtime even when whole-program field
-      // inference found only numeric/boolean writes for that property name.
-      // Keep the read boxed while observing it against null/undefined; lowering
-      // it to i32/f64 first turns a host `undefined` miss into 0/false and then
-      // incorrectly constant-folds `missing != null` to true. Closed struct
-      // reads remain semantically identical after boxing, while open/dynamic
-      // receivers retain the required nullish distinction.
-      // A delete-using module must retain the ordinary property route: it is
-      // the path that consults a receiver's tombstone before reading a static
-      // backing field. The boxed nullish-observation shortcut deliberately
-      // bypasses that route for collision-safe dynamic reads and would
-      // otherwise resurrect a deleted field.
-      const valType =
-        ts.isPropertyAccessExpression(nonNullExpr) &&
-        !ctx.moduleUsesDelete &&
-        canCompilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
-          ? compilePropertyAccessForNullishObservation(ctx, fctx, nonNullExpr)
-          : compileExpression(
-              ctx,
-              fctx,
-              nonNullExpr,
-              ts.isElementAccessExpression(nonNullExpr) ? ({ kind: "externref" } as const) : undefined,
-            );
+      const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
         // void returns undefined, so undefined == undefined/null is true (loose)
