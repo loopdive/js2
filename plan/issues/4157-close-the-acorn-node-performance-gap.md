@@ -1647,3 +1647,46 @@ existing helper populates for next time. Nothing about cache lifetime changes.
 Predicted movement: a **fall in `dynamic-lookup` as a whole**, since the hit path
 stops being a call. If `__extern_get` drops but the bucket does not, the work was
 relocated again, not removed.
+
+## 2026-08-12 (11) — the load-bearing number, verified rather than inherited
+
+Every "this cannot be closed by helper work" conclusion in entries (8)–(10)
+rests on ONE inherited number: the 2026-08-08 cross-runtime table's **≈3.0×
+floor**. That table's own text flags the weak spot — Node's measurement swung
+**14.1 / 18.8 / 21.9 ms** across three runs, and the floor was computed from the
+*fastest* of them. Twice this session a written claim turned out to be stale
+(the `typed-this.ts` ABI note; my own entry 5), so this one was re-derived from
+the raw samples of this session's own lane run rather than quoted.
+
+Nine measured rounds, `standalone-dynamic`, checksum 422:
+
+| | median | spread |
+| --- | ---: | --- |
+| wasm | **138.3 ms** | 115.7 – 145.8 ms |
+| node | **19.9 ms** | 17.7 – 23.4 ms (**28 % of median**) |
+| **ratio** | **6.96×** | |
+
+**Two things this settles.**
+
+1. **~7× is right.** 6.96× from this run's own medians, independent of the
+   profiler-window arithmetic every earlier entry used. The standing figure was
+   not an artifact.
+2. **The floor holds, and slightly tighter than claimed.** Today's profile puts
+   acorn's own compiled code (`compiled` 21.37 % + `scanner` 18.63 %) at
+   **40.0 %** of self time. Deleting every other millisecond — helpers, GC,
+   regexp, casts, string runtime, the lot — leaves 55.3 ms against Node's
+   19.9 ms: **2.78×**. The inherited 3.0× was honest; the correction is
+   downward and does not change the conclusion.
+
+**And it re-derives the measurement floor from first principles.** Node's own
+median varies by 28 % run to run and wasm's by 22 %. That is why §6 of #3927
+rules wall-clock A/Bs under ~10 % unresolvable on this box, and why every
+verdict in this file is bucket share with order-reversal controls rather than a
+stopwatch. An A/B claiming a 5 % wall-clock win here would be reading noise
+four times its own size.
+
+So the programme's conclusion stands on a number that has now been checked, not
+assumed: **parity with Node on acorn is unreachable by helper elision**, because
+2.78× of it is the quality of the code emitted for acorn's own scanner and
+parser — register allocation, inlining, inline caches — and nothing in this
+umbrella targets that.
