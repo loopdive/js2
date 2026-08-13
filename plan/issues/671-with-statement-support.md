@@ -52,11 +52,12 @@ writes, and callable-member calls on the selected target consume the raw
 open-object MOP value rather than the stale checker-derived field type. A
 same-named binding in another scope remains on its existing representation.
 
-The measured manifest was the exact 21-file slice below, comparing the local
-base artifact from
-`origin/main@cb4d4d7ca2f151ba69f26cff517417e003428df7` with the rebased implementation
-`491898a4dfa4129478c8a7cd2ddec00ba28574e7` on
-`origin/main@bd71baaf840f4b8e0a53e8f78d8b48c905d040ce`.
+The final measured manifest was the exact 21-file slice below, comparing a
+fresh detached base at
+`origin/main@17606867782907257c9fd26e4a4bc3e4e735a679` with implementation commit
+`83afdac8778499586928feebfc6767d9daf2ab45` on that base. The intervening
+main commit merged only the #2668 planning markdown; the compiler, runtime,
+harness, and fixture inputs remain byte-identical to the measured base.
 Both arms used `scripts/harness-flip-probe.ts` and demonstrated its mandatory
 must-pass and must-fail controls.
 
@@ -80,13 +81,15 @@ The 15 unchanged host rows are intentionally not folded into W1's claim:
   its `for-in` target consumer fails W1's pre-allocation safety proof. W1 does
   not widen that consumer without an explicit open-object iteration contract.
 
-The standalone pair has no transitions and remains 21/21 passing. The head arm
-used the canary-verified QuickJS artifact `b0662069c241…` and the compiler-keyed
-adapter `69f9752001f47bd7` for compiler bundle `66bbd7933576be22`; its runtime banner confirmed that provider before
-the population ran. An earlier candidate-only run that reported 21 failures
-was discarded because the worktree lacked that provider, while the baseline
-had it. Provider availability must match across both arms. W2/W4 retain the
-remaining environment and declaration work outside this exact W1 family.
+The standalone pair has no transitions and remains 21/21 passing. Both arms
+used the canary-verified QuickJS artifact `b0662069c241…`. The base used adapter
+`d7929c0b71a19b0c` for compiler bundle `106b0cabd7ae6de3`; the head used adapter
+`69f9752001f47bd7` for compiler bundle `66bbd7933576be22`. Each runtime banner
+confirmed its matching provider before the population ran. An earlier
+candidate-only run that reported 21 failures was discarded because its
+worktree lacked that provider. Provider availability must match across both
+arms. W2/W4 retain the remaining environment and declaration work outside this
+exact W1 family.
 
 Root review caught and fixed one pre-publication carrier leak: the first W1
 candidate also inserted the target's bare spelling into the legacy
