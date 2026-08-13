@@ -44,6 +44,20 @@ export function planHoleyArrayCarrier(ctx: CodegenContext, root: ts.Node): void 
     return;
   }
 
+  // (#3437) Cheap textual pre-gate, mirroring `source-scan-predicates.ts`.
+  // This pass is a SECOND full-tree traversal on top of `scanForArrayHoles`,
+  // and the `check:harness-compile-budget` meter counts shared-`forEachChild`
+  // invocations — so an unconditional walk here is a per-file scan the gate is
+  // specifically built to catch (measured +3919 units on a fixture that has no
+  // candidate at all, against a ceiling main had already consumed 96% of).
+  //
+  // Sound because a carrier requires BOTH halves textually: `carrierUses`
+  // returns undefined unless `filters.length > 0`, and `isEligibleArrayConstructor`
+  // demands a literal `new Array(<numeric literal>)`. Absence of either
+  // substring is proof no candidate exists, so skipping is not a heuristic.
+  const text = root.getSourceFile().text;
+  if (!text.includes("Array") || !text.includes("filter")) return;
+
   const { candidates, references } = collectCandidates(oracle, root);
   for (const { expr, declaration } of candidates) {
     const uses = carrierUses(references, declaration);
@@ -54,14 +68,43 @@ export function planHoleyArrayCarrier(ctx: CodegenContext, root: ts.Node): void 
   }
 }
 
+/**
+ * TWO PHASE, and the split is load-bearing for compile time (#3437).
+ *
+ * Phase 1 finds the `new Array(<literal>)` candidates. Phase 2 collects the
+ * identifier references, and runs ONLY if phase 1 found something — which for
+ * almost every real file means not at all.
+ *
+ * The single-pass version called `oracle.variableDeclarationOf` on EVERY
+ * identifier in the file before it knew whether any candidate existed. On
+ * harness-shaped input that is thousands of checker queries per file for a
+ * feature that applies to none of them: measured 111,568 → 131,151 units of
+ * `check:harness-compile-budget` work (+17.5%, over its +15% ceiling).
+ *
+ * Phase 2 also filters by NAME before querying. Only a candidate's own binding
+ * can matter, so an identifier whose text matches no candidate name is skipped
+ * without touching the checker at all.
+ */
 function collectCandidates(
   oracle: TypeOracle,
   root: ts.Node,
 ): { candidates: HoleyCandidate[]; references: Map<ts.VariableDeclaration, ts.Identifier[]> } {
   const candidates: HoleyCandidate[] = [];
   const references = new Map<ts.VariableDeclaration, ts.Identifier[]>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
+
+  const findCandidates = (node: ts.Node): void => {
+    if (isEligibleArrayConstructor(oracle, node)) {
+      const declaration = directVariableBinding(node);
+      if (declaration && declaration.type === undefined) candidates.push({ expr: node, declaration });
+    }
+    forEachChild(node, findCandidates);
+  };
+  findCandidates(root);
+  if (candidates.length === 0) return { candidates, references };
+
+  const candidateNames = new Set(candidates.map((c) => (c.declaration.name as ts.Identifier).text));
+  const collectReferences = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && candidateNames.has(node.text)) {
       const declaration = oracle.variableDeclarationOf(node);
       if (declaration) {
         const uses = references.get(declaration) ?? [];
@@ -69,13 +112,9 @@ function collectCandidates(
         references.set(declaration, uses);
       }
     }
-    if (isEligibleArrayConstructor(oracle, node)) {
-      const declaration = directVariableBinding(node);
-      if (declaration && declaration.type === undefined) candidates.push({ expr: node, declaration });
-    }
-    forEachChild(node, visit);
+    forEachChild(node, collectReferences);
   };
-  visit(root);
+  collectReferences(root);
   return { candidates, references };
 }
 
