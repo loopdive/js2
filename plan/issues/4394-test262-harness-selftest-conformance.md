@@ -371,6 +371,47 @@ legacy `wrapTest` lane and the shared `getTestSandbox()`.
 92 → **93** pass, 0 lost. A 400-file sample of `flags: [async]` tests across the
 suite: **0** status changes.
 
+## Diagnosed, not landed — `detachArrayBuffer` (2 tests)
+
+Both failures are understood; neither repair is justified on its own evidence
+yet, so both are recorded rather than shipped.
+
+**`detachArrayBuffer.js`** does NOT include the harness file, so `$DETACHBUFFER`
+is undeclared and calling it must throw a **ReferenceError** (§13.3.6 → GetValue
+on an unresolvable reference). Measured: calling ANY undeclared identifier is a
+silent no-op —
+
+```js
+try { someUndeclaredFn123(1); } catch (e) { /* never reached */ }
+```
+
+— so the test sees no throw. Making unresolvable CALLS throw is a
+whole-suite-scale semantic change (the bare-identifier read already consults the
+`globalSandbox` bridge, so the change has to distinguish "absent from the
+sandbox too"), and needs a full merge-group measurement rather than a sample.
+
+**`detachArrayBuffer-host-detachArrayBuffer.js`** declares its own
+`var $262 = { detachArrayBuffer() {…} }`, shadowing the runtime shim's
+`var $262 = {…}`. `registerModuleGlobal` is first-wins, so the global keeps the
+FIRST shape and the later store fails its guarded cast and lands as `null`:
+`typeof $262` still answers `"object"` while `!$262` is **true** — which is why
+the test reported "No method available to detach an ArrayBuffer" for a `$262`
+that plainly has the method.
+
+The shapes cannot be told apart from the checker (TypeScript MERGES duplicate
+`var` declarations into one symbol, so `getTypeAtLocation` answers the same type
+for both), so the trigger has to be syntactic: two or more initialized top-level
+`var`s of one name. That widening was implemented and measured — 0 status
+changes on a 250-file var-heavy sample, `!$262` and `$262.detachArrayBuffer`
+both correct — but it is **incomplete**: sibling reads (`dup.a`) still resolve
+against the merged static shape, and the realistic `$262` shape still traps. It
+gained 0 harness tests, so it was reverted rather than landed as a partial
+change to module-global typing.
+
+Behind it sits a THIRD defect this exposed: a `Test262Error` thrown from inside
+an OBJECT-LITERAL METHOD is caught with `err.constructor.name === "String"` —
+the error value degrades to a string across that boundary.
+
 ## Remaining buckets (GC lane, 23 fail)
 
 | bucket | n | signature |
