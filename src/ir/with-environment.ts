@@ -15,6 +15,87 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 
+/**
+ * Representation required by a `with` target before any object allocation.
+ *
+ * `closed-fields` is the existing static fast path. `open-object` means the
+ * body needs the ordinary Object Environment Record MOP: the target, the
+ * dynamic `with` operations, and later ordinary property reads must all share
+ * the same identity-bearing open object.
+ */
+export type IrWithTargetRepresentation = "closed-fields" | "open-object";
+
+export type IrWithTargetPlanReason = "runtime-has-binding" | "runtime-delete-binding";
+
+export interface IrWithTargetPlan {
+  readonly representation: IrWithTargetRepresentation;
+  readonly reasons: readonly IrWithTargetPlanReason[];
+}
+
+const CLOSED_WITH_TARGET_PLAN: IrWithTargetPlan = { representation: "closed-fields", reasons: [] };
+const DELETE_WITH_TARGET_PLAN: IrWithTargetPlan = {
+  representation: "open-object",
+  reasons: ["runtime-has-binding", "runtime-delete-binding"],
+};
+
+/** Unwrap the transparent parentheses allowed around a `with` target. */
+export function irWithTargetIdentifier(statement: ts.WithStatement): ts.Identifier | undefined {
+  let target: ts.Expression = statement.expression;
+  while (ts.isParenthesizedExpression(target)) target = target.expression;
+  return ts.isIdentifier(target) ? target : undefined;
+}
+
+/** Executable boundary: an inner callable/class owns its own `with` environment. */
+function isFunctionOrClassBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  );
+}
+
+/**
+ * The exact W1 trigger. A `delete <Identifier>` is a DeleteBinding operation,
+ * so the static field projection cannot model its HasBinding cascade or its
+ * post-delete readback. Parentheses do not alter that reference; member deletes
+ * do. Nested functions/classes execute in their own environment and are not
+ * attributed to this statement.
+ */
+function bodyContainsBareIdentifierDelete(body: ts.Statement): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== body && isFunctionOrClassBoundary(node)) return;
+    if (ts.isDeleteExpression(node)) {
+      let operand: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+      if (ts.isIdentifier(operand)) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
+
+/**
+ * Plan only the W1 slice: a single identifier target whose directly executing
+ * body uses bare-identifier DeleteBinding. This is intentionally independent
+ * of host/standalone representation details; allocation consumes the plan in
+ * the codegen pre-pass before it can create a closed struct.
+ */
+export function planIrWithTarget(statement: ts.WithStatement): IrWithTargetPlan {
+  if (!irWithTargetIdentifier(statement)) return CLOSED_WITH_TARGET_PLAN;
+  return bodyContainsBareIdentifierDelete(statement.statement) ? DELETE_WITH_TARGET_PLAN : CLOSED_WITH_TARGET_PLAN;
+}
+
 export type IrWithEnvironmentSelection =
   | { readonly ok: true; readonly closureCount: number }
   | { readonly ok: false; readonly reason: string };

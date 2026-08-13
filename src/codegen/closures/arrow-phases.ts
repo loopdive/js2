@@ -293,6 +293,31 @@ function hasReferenceOutsideClosure(ctx: CodegenContext, closure: ts.Node, name:
   return !sawReference || sawOuterReference;
 }
 
+/** Resolve a closure's free reference by declaration identity, not spelling. */
+function referencedBindingDeclaration(
+  ctx: CodegenContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): ts.Declaration | undefined {
+  let declaration: ts.Declaration | undefined;
+  let ambiguous = false;
+  const visit = (node: ts.Node): void => {
+    if (ambiguous) return;
+    if (node !== closure && ts.isFunctionLike(node)) return;
+    if (ts.isIdentifier(node) && node.text === name && isCaptureValueReference(node)) {
+      const resolved = ctx.oracle.valueDeclarationOf(node);
+      if (!resolved || (declaration !== undefined && declaration !== resolved)) {
+        ambiguous = true;
+        return;
+      }
+      declaration = resolved;
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return ambiguous ? undefined : declaration;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -575,6 +600,7 @@ export function planClosureCaptures(
       }
     }
     if (localIdx === undefined) continue;
+    const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -585,6 +611,7 @@ export function planClosureCaptures(
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
+      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) ||
         (!transitivelyRequiredNames.has(name) && !closureObservesBindingValue(arrow, name)))
     ) {

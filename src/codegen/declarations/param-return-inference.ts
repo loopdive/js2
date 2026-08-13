@@ -393,11 +393,70 @@ export function inferParamTypeFromBody(
   if (!decl.body) return null;
   const param = decl.parameters[paramIndex];
   if (!param || !ts.isIdentifier(param.name)) return null;
-  const paramName = param.name.text;
+
+  const isReferenceTo = (expression: ts.Expression, parameter: ts.ParameterDeclaration): boolean =>
+    ts.isIdentifier(expression) && ctx.oracle.valueDeclarationOf(expression) === parameter;
+
+  const hasDirectNumericUse = (owner: ts.FunctionLikeDeclaration, parameterIndex: number): boolean => {
+    const parameter = owner.parameters[parameterIndex];
+    if (!owner.body || !parameter || !ts.isIdentifier(parameter.name)) return false;
+    let numeric = false;
+    const visitDirect = (node: ts.Node): void => {
+      if (numeric) return;
+      if (
+        node !== owner &&
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) ||
+          ts.isMethodDeclaration(node) ||
+          ts.isAccessor(node) ||
+          ts.isConstructorDeclaration(node))
+      ) {
+        return;
+      }
+      if (ts.isBinaryExpression(node)) {
+        const op = node.operatorToken.kind;
+        const numericOps = new Set<ts.SyntaxKind>([
+          ts.SyntaxKind.PlusToken,
+          ts.SyntaxKind.MinusToken,
+          ts.SyntaxKind.AsteriskToken,
+          ts.SyntaxKind.AsteriskAsteriskToken,
+          ts.SyntaxKind.SlashToken,
+          ts.SyntaxKind.PercentToken,
+          ts.SyntaxKind.AmpersandToken,
+          ts.SyntaxKind.BarToken,
+          ts.SyntaxKind.CaretToken,
+          ts.SyntaxKind.LessThanLessThanToken,
+          ts.SyntaxKind.GreaterThanGreaterThanToken,
+          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+          ts.SyntaxKind.LessThanToken,
+          ts.SyntaxKind.LessThanEqualsToken,
+          ts.SyntaxKind.GreaterThanToken,
+          ts.SyntaxKind.GreaterThanEqualsToken,
+        ]);
+        if (numericOps.has(op)) {
+          const left = isReferenceTo(node.left, parameter);
+          const right = isReferenceTo(node.right, parameter);
+          if (
+            (op !== ts.SyntaxKind.PlusToken && (left || right)) ||
+            (op === ts.SyntaxKind.PlusToken &&
+              ((left && !ts.isStringLiteral(node.right)) || (right && !ts.isStringLiteral(node.left))))
+          ) {
+            numeric = true;
+            return;
+          }
+        }
+      }
+      forEachChild(node, visitDirect);
+    };
+    forEachChild(owner.body, visitDirect);
+    return numeric;
+  };
 
   let foundNumericUse = false;
+  let foundNullishSensitiveUse = false;
   function visit(node: ts.Node) {
-    if (foundNumericUse) return;
+    if (foundNumericUse && foundNullishSensitiveUse) return;
     // Don't descend into nested functions — the param doesn't propagate there
     // unless captured, and we don't track capture flow here.
     if (
@@ -412,12 +471,21 @@ export function inferParamTypeFromBody(
       return;
     }
 
-    // (1) param passed to a known numeric function
+    // (1) Param forwarded into a proven numeric FORMAL of a known numeric
+    // function. A numeric RETURN alone says nothing about its inputs: UUID's
+    // `v7()` forwarded its byte buffer to `v7Bytes()`, whose return happened to
+    // be misclassified numeric, and the old rule narrowed that buffer to f64.
+    // Require the corresponding callee parameter itself to have a direct
+    // numeric use. This retains the `run(n) { return fib(n) }` fast path while
+    // refusing unrelated object/vector parameters.
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const calleeName = node.expression.text;
       if (ctx.numericReturnTypes?.has(calleeName)) {
-        for (const arg of node.arguments) {
-          if (ts.isIdentifier(arg) && arg.text === paramName) {
+        const target = ctx.oracle.valueDeclarationOf(node.expression);
+        const callee = target && ts.isFunctionDeclaration(target) ? target : null;
+        for (let argumentIndex = 0; argumentIndex < node.arguments.length; argumentIndex++) {
+          const arg = node.arguments[argumentIndex]!;
+          if (isReferenceTo(arg, param) && callee && hasDirectNumericUse(callee, argumentIndex)) {
             foundNumericUse = true;
             return;
           }
@@ -428,6 +496,17 @@ export function inferParamTypeFromBody(
     // (2) param used in a numeric binary expression
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
+      if (
+        (op === ts.SyntaxKind.QuestionQuestionToken || op === ts.SyntaxKind.QuestionQuestionEqualsToken) &&
+        isReferenceTo(node.left, param)
+      ) {
+        // f64 cannot preserve the distinction this operation observes:
+        // unboxing `undefined` yields NaN, but `undefined ?? fallback` must
+        // select the fallback while `NaN ?? fallback` must not. Keep this
+        // parameter dynamic even when later arithmetic proves that every
+        // present value is numeric.
+        foundNullishSensitiveUse = true;
+      }
       const numericOps = new Set<ts.SyntaxKind>([
         ts.SyntaxKind.PlusToken,
         ts.SyntaxKind.MinusToken,
@@ -447,7 +526,7 @@ export function inferParamTypeFromBody(
         ts.SyntaxKind.GreaterThanEqualsToken,
       ]);
       if (numericOps.has(op)) {
-        const isParamId = (e: ts.Expression): boolean => ts.isIdentifier(e) && e.text === paramName;
+        const isParamId = (e: ts.Expression): boolean => isReferenceTo(e, param);
         // Skip when the OTHER operand is a string literal — `+` could mean
         // string concatenation. The TS checker will already have given us
         // a string-typed param in that case, so this guard is defensive.
@@ -471,7 +550,7 @@ export function inferParamTypeFromBody(
     forEachChild(node, visit);
   }
   forEachChild(decl.body, visit);
-  return foundNumericUse ? { kind: "f64" } : null;
+  return foundNumericUse && !foundNullishSensitiveUse ? { kind: "f64" } : null;
 }
 
 /**

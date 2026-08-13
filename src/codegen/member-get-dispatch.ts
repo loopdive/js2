@@ -417,7 +417,6 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // Complete candidate set (full type table). Unlike the WRITE side, a READ
     // does not need the mutable filter — reading an immutable field is fine.
     const candidates = findAlternateStructsForField(ctx, propName, -1);
-
     // (#2963) Class-method arms recorded at reserve time. Resolved BY NAME
     // here (funcMap / methodClosureGlobals are shift-maintained; the fill
     // must not mint anything). Each arm answers the canonical method-value
@@ -928,14 +927,31 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
               },
             ]
           : readValue;
+      const next = buildChain(idx + 1);
+      const shapeGuardedArmBody: Instr[] =
+        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
+              { op: "i32.const", value: cand.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } as ValType },
+                then: armBody,
+                else: next,
+              },
+            ]
+          : armBody;
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "f64" } as ValType },
-          then: armBody,
-          else: buildChain(idx + 1),
+          then: shapeGuardedArmBody,
+          else: next,
         },
       ];
     };
