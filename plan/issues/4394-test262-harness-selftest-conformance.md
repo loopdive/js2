@@ -17,6 +17,10 @@ loc-budget-allow:
   # here next to the #2671 / #3666 / #2660 arms it mirrors. Splitting a single
   # arm out would separate it from the ladder whose order is load-bearing.
   - src/codegen/declarations.ts
+  # +89 lines: the expected-struct diversion helper plus the arm that calls it.
+  # It belongs next to the #3536 arm it generalizes and to
+  # `compileObjectLiteralForStruct`, which it dispatches to; both live here.
+  - src/codegen/literals.ts
 func-budget-allow:
   # +23 lines: one more entry in the host import-resolution table. The table is
   # a flat dispatch over import names; there is no sub-unit to split it into
@@ -28,11 +32,23 @@ func-budget-allow:
   # +18 lines: one more arm in this function's top-level-statement keep ladder,
   # whose arm ORDER is load-bearing (each `continue`s past the later ones).
   - src/codegen/declarations.ts::collectDeclarations
+  # +29 lines: the new diversion is one guarded call plus the comment that
+  # records the failure mode; the body lives in its own helper alongside.
+  - src/codegen/literals.ts::compileObjectLiteral
+oracle-ratchet-allow:
+  # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
+  # structMap — a wasm-lowering ValType question the oracle does not express.
+  # Same grant, same reason, as the adjacent #3536 arm in this file.
+  - src/codegen/literals.ts
 files:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler/import-manifest.ts
   - src/runtime.ts
+  - src/codegen/declarations.ts
+  - src/codegen/literals.ts
   - tests/issue-4394-test262-error-ctor-identity.test.ts
+  - tests/issue-4394-nested-fn-static-write.test.ts
+  - tests/issue-4394-optional-field-literal-arg.test.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -148,13 +164,48 @@ excludes `F.prototype.m` and ordinary object-valued chains).
 80 → **84** pass. All 76 suite tests that include `deepEqual.js`: 4 fail → pass,
 0 regressions; `built-ins/Object/defineProperty` first 400: 0 diffs.
 
-## Remaining buckets (GC lane, 32 fail)
+## Root cause 3 (4 tests) — a partial object-literal argument arrives as `null`
+
+Under `allowJs` (which the original-harness lane uses) the checker honours
+JSDoc, so `propertyHelper.js`'s
+
+```js
+/** @param {object} [options]
+ *  @param {boolean} [options.label]
+ *  @param {boolean} [options.restore] */
+function verifyProperty(obj, name, desc, options) { … }
+verifyProperty(obj, prop, desc, { restore: true });
+```
+
+types the parameter as `{ label?: boolean; restore?: boolean }`. The argument
+lowered to `struct.new <{restore}>` followed by the call-boundary **guarded**
+downcast to `<{label,restore}>` — and a guarded cast that misses yields
+`ref.null`. So `options` arrived as **null**, `options && options.restore` was
+false, and `{ restore: true }` silently restored nothing.
+
+### Fix
+
+Build the literal directly as the EXPECTED struct, defaulting the fields it
+omits — what `compileObjectLiteralForStruct` already does for an unmentioned
+field. Scoped so it can only replace a cast that was going to fail: every
+literal property must be a field of the expected struct, the literal's own
+struct resolution must differ from the expected typeIdx, and spreads /
+accessors / methods / computed keys decline.
+
+### Measured
+
+84 → **88** pass (the four `verifyProperty-restore*` files).
+Regression samples: `built-ins/Object/defineProperty` first 400 → 325→**326**
+(+1, 0 lost); `built-ins/Reflect` (153) and `built-ins/JSON` (165) → **0** status
+changes; the object/property/descriptor slice of `tests/equivalence` (8 files,
+51 cases) passes.
+
+## Remaining buckets (GC lane, 28 fail)
 
 | bucket | n | signature |
 | --- | ---: | --- |
-| `deepEqual` | 7 | `TypeError: _compare is not a function` |
+| `deepEqual` (residual) | 3 | structural compare of primitives / deep objects |
 | asyncHelpers / `asyncTest` / `throwsAsync` | 8 | sync-vs-async throw ordering, `$DONE` flag plumbing, one null-deref trap |
-| `verifyProperty` restore | 5 | `Expected SameValue(«false», «true»)` after descriptor restore |
 | propertyHelper, symbol-keyed | 3 | symbol key reaches the integer-typed property path |
 | `compareArray` | 2 | `arguments` formatting, `assert.throws` inside the comparator |
 | `Object` method on null receiver | 2 | `TypeError: Object method called on null or undefined` |
