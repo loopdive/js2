@@ -3229,3 +3229,58 @@ those would mean inlining the *default*, i.e. speculating "any other non-null
 ref is truthy", which is a **negative** guard over the whole remaining type
 space and is exactly the shape that has measured null or worse in this file
 (entries 9, 13). Not attempted.
+
+## 2026-08-13 (24) — MEASURED END TO END: 5.83× → 5.58×, and the ceiling of this approach
+
+Same box, same workload, same session — a real ratio, not a cross-run inference.
+Box verifiably idle (load 0.27), 300 iterations, order-reversed ON/OFF/OFF/ON.
+
+| | ms / parse | vs Node |
+| --- | ---: | ---: |
+| Node (V8) | **17.59** | 1.00× |
+| wasm, all flags OFF | 102.55 | **5.83×** |
+| wasm, all 7 flags ON | **98.19** | **5.58×** |
+
+| bucket | ON | OFF | Δ |
+| --- | ---: | ---: | ---: |
+| cast-convert | 1.32 % | 6.03 % | −4.71 pp |
+| dynamic-eq | 3.19 % | 6.39 % | −3.20 pp |
+| dynamic-lookup | 17.55 % | 19.72 % | −2.17 pp |
+| string-runtime | 3.15 % | 4.11 % | −0.96 pp |
+| call-dispatch | 10.23 % | 11.04 % | −0.81 pp |
+| **wall** | **29,456 ms** | **30,765 ms** | **−4.3 %** |
+
+ON replicates to 0.5 %, OFF to 1.5 %. `__is_truthy` is the #2 frame in both OFF
+blocks (3.77 %, 3.62 %) and leaves the top frames entirely in both ON blocks.
+
+### The conversion rate, and why it is the important number
+
+**−59.1 % of executed helper calls bought −4.3 % of wall.** The buckets shed
+**11.85 pp** of share while wall moved a third of that. The mechanism:
+**inline caching RELOCATES work, it does not remove it.** A `ref.test` guard
+replacing a call still executes the test — it saves the call overhead and gets
+attributed to `compiled` rather than to a helper frame.
+
+This reframes the metric this issue adopted in entry (21). Counts remain the
+right *deterministic* instrument — they are exact and load-immune where wall
+clock on this box is neither — but they measure **calls avoided, not work
+avoided**, and here those differ by roughly 3×. Quote both, and never convert
+one into the other by assertion.
+
+### The ceiling of the helper-elimination program
+
+With everything on, helper buckets are ~35.4 % of 98.19 ms ≈ **34.8 ms**. Node
+spends ~93 % of its 17.59 ms inside acorn's own code. So **eliminating every
+remaining helper millisecond leaves ≈ 63 ms vs 17.6 ms — about 3.6×.**
+
+That independently reproduces the ~3× floor derived in the 2026-08-08
+cross-runtime entry, from the opposite direction: that one subtracted Node's
+buckets from ours, this one subtracts our own helper time from our total.
+
+**Parity is not reachable on this axis.** What remains here is worth perhaps
+another 1–2 %. The residual 3.6× is our compiled acorn code being that much
+slower than V8's JIT output for the same source: register allocation, inlining
+of acorn's *own* functions, and runtime type feedback an AOT compiler cannot
+obtain. That is a different program, and entry (18)/(19)'s decision — that the
+IR should own inlining, because `wasm-opt` will not inline anything containing a
+loop or a call, which is every function in acorn — is where it starts.
