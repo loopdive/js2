@@ -12,7 +12,7 @@
   "codegen/char-at-transfer.ts": 1,
   "codegen/class-to-primitive.ts": 1,
   "codegen/closed-method-dispatch.ts": 1,
-  "codegen/closure-exports.ts": 4,
+  "codegen/closure-exports.ts": 5,
   "codegen/collections-es2025.ts": 5,
   "codegen/dataview-native.ts": 5,
   "codegen/date-reflective-setters.ts": 3,
