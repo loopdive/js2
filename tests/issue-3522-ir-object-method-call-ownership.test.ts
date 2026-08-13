@@ -66,6 +66,40 @@ export function run(input: number): number {
 }
 `;
 
+const OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE = `
+export function run(input: number): number {
+  const offset: number = 2;
+  const operations = {
+    add(value: number): number { return value + offset; }
+  };
+  const copy = operations;
+  const { add } = copy;
+  return add(input);
+}
+`;
+
+const NO_OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE = `
+export function run(input: number): number {
+  const offset: number = 2;
+  const operations = {
+    add(value: number): number { return value + offset; }
+  };
+  const { add } = operations;
+  return add(input);
+}
+`;
+
+const COLLIDING_OBJECT_ALIAS_AND_METHOD_NAME_SOURCE = `
+export function run(input: number): number {
+  const operations = {
+    copy(value: number): number { return value + 2; }
+  };
+  const copy = operations;
+  const { copy: invoke } = copy;
+  return invoke(input);
+}
+`;
+
 function outcome(result: CompileResult): IrObservedOutcome {
   const observed = (result.irOutcomes ?? []).filter((candidate) => candidate.displayName === "run");
   expect(observed).toHaveLength(1);
@@ -371,33 +405,496 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps destructuring through an untracked object alias on the direct path", async () => {
+  it.each(TARGETS)(
+    "prepares a destructured method through one immutable object alias in the %s lane",
+    async (target) => {
+      const direct = await compile(OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE, {
+        fileName: `object-method-value-destructured-object-alias-direct-${target}.ts`,
+        emitWat: true,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      let noAliasControl: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
+        prepared = await compile(OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE, {
+          fileName: `object-method-value-destructured-object-alias-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+        noAliasControl = await compile(NO_OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE, {
+          fileName: `object-method-value-destructured-no-object-alias-control-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared, noAliasControl]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      for (const compiled of [prepared, noAliasControl]) {
+        expect(outcome(compiled)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+        expect(compiled.irPostClaimErrors ?? []).toEqual([]);
+        expect(compiled.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+      }
+      expect(prepared.wat).toContain("call_ref");
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      const exactPreparedImports = target === "gc" ? ["env::__box_number", "env::__unbox_number"] : [];
+      expect(importLabels(prepared)).toEqual(exactPreparedImports);
+      expect(importLabels(noAliasControl)).toEqual(exactPreparedImports);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+      expect(Buffer.from(prepared.binary)).toEqual(Buffer.from(noAliasControl.binary));
+    },
+  );
+
+  it.each(TARGETS)(
+    "distinguishes a method property name from its colliding object alias in the %s lane",
+    async (target) => {
+      const direct = await compile(COLLIDING_OBJECT_ALIAS_AND_METHOD_NAME_SOURCE, {
+        fileName: `object-method-value-destructured-object-alias-name-collision-direct-${target}.ts`,
+        emitWat: true,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = "run,run__closure_0";
+        prepared = await compile(COLLIDING_OBJECT_ALIAS_AND_METHOD_NAME_SOURCE, {
+          fileName: `object-method-value-destructured-object-alias-name-collision-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["run", "run__closure_0"]));
+      expect(prepared.wat).toContain("call_ref");
+      expect(prepared.wat).not.toContain("__call_m_");
+      expectNoImportRegression(direct, prepared, target);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it("keeps destructuring through a mutable object alias on the direct path", async () => {
     const result = await compile(
       `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
-        const copy = operations;
+        let copy = operations;
         const { add } = copy;
         return add(input);
       }`,
       {
-        fileName: "object-method-value-destructured-object-alias-direct.ts",
+        fileName: "object-method-value-destructured-let-object-alias-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
     expect((await instantiate(result)).run!(40)).toBe(42);
     expect(outcome(result)).toMatchObject({
       kind: "unsupported",
-      code: "call-resolution-unsupported",
       stage: "select",
       legacyBodyEmitted: true,
       irBodyEmitted: false,
     });
     expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("does not widen property-value projection through an object alias", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const add = copy.add;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-property-through-object-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps method writes through an object alias on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 1; }
+        };
+        const copy = operations;
+        copy.add = (value: number): number => value + 2;
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-written-object-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an object alias captured by a nested closure on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const invoke = (value: number): number => {
+          const { add } = copy;
+          return add(value);
+        };
+        return invoke(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-captured-object-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a second object alias before destructuring on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const second = copy;
+        const { add } = second;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-second-object-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps root method writes after aliasing on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 1; }
+        };
+        const copy = operations;
+        operations.add = (value: number): number => value + 2;
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-root-written-after-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a root captured after aliasing on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const observe = (): number => operations.add(input);
+        observe();
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-root-captured-after-alias-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an object alias escaped through shorthand on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const escaped = { copy };
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-object-alias-shorthand-escape-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an unsafe sibling destructure through the root on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { toString } = operations;
+        const copy = operations;
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-root-unsafe-sibling-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps an unsafe sibling destructure through the alias on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const copy = operations;
+        const { toString } = copy;
+        const { add } = copy;
+        return add(input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-alias-unsafe-sibling-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps two independent aliases of the same root on the direct path", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const first = operations;
+        const second = operations;
+        const { add } = first;
+        const { add: again } = second;
+        return add(input) + again(0) - 2;
+      }`,
+      {
+        fileName: "object-method-value-destructured-two-root-aliases-direct.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("does not reuse a certified alias for a mutable block-local shadow after a changed snapshot", async () => {
+    const source = `export function run(input: number): number {
+      {
+        const operations = {
+          add(value: number): number { return value + 1; }
+        };
+        let copy = operations;
+        const { add } = copy;
+        add(input);
+      }
+      const operations = {
+        add(value: number): number { return value + 2; }
+      };
+      const copy = operations;
+      const { add } = copy;
+      return add(input);
+    }`;
+    const options = {
+      fileName: "object-method-value-destructured-object-alias-shadow-reuse.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    } as const;
+
+    const fresh = await compile(source, options);
+    const compiler = createIncrementalCompiler(options);
+    try {
+      const warmup = await compiler.compile(OBJECT_ALIAS_DESTRUCTURED_METHOD_VALUE_SOURCE);
+      expect(warmup.success, warmup.errors.map((error) => error.message).join("\n")).toBe(true);
+      const warmed = await compiler.compile(source);
+      const reused = await compiler.compile(source);
+      for (const result of [fresh, warmed, reused]) {
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(result.binary)).toBe(true);
+        expect((await instantiate(result)).run!(40)).toBe(42);
+        expect(outcome(result)).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          legacyBodyEmitted: true,
+          irBodyEmitted: false,
+        });
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+      }
+      expect(Buffer.from(warmed.binary)).toEqual(Buffer.from(fresh.binary));
+      expect(Buffer.from(reused.binary)).toEqual(Buffer.from(fresh.binary));
+    } finally {
+      compiler.dispose();
+    }
   });
 
   it("keeps mixed exact and inherited destructuring atomic on the direct path", async () => {

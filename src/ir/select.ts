@@ -6613,6 +6613,11 @@ type DirectObjectMethodReceiver = {
   readonly object: ts.ObjectLiteralExpression;
 };
 
+type DirectDestructuredObjectMethodReceiver = {
+  readonly root: DirectObjectMethodReceiver;
+  readonly alias: ts.VariableDeclaration | null;
+};
+
 type DirectDestructuredObjectMethodProjection = {
   readonly element: ts.BindingElement & { readonly name: ts.Identifier };
   readonly method: ts.MethodDeclaration;
@@ -6669,6 +6674,50 @@ function directObjectMethodReceiver(
   const object = unwrapProjectionExpression(declaration.initializer);
   if (!ts.isObjectLiteralExpression(object) || !object.properties.every(ts.isMethodDeclaration)) return null;
   return { declaration, object };
+}
+
+/**
+ * Resolve the direct receiver used by destructuring, or one exact preceding
+ * `const alias = receiver` edge. Keep this separate from the general receiver
+ * resolver: property reads through object aliases are a wider callable-value
+ * surface and need their own ownership proof.
+ */
+function directDestructuredObjectMethodReceiver(
+  receiverExpression: ts.Expression,
+  scope: ReadonlySet<string>,
+): DirectDestructuredObjectMethodReceiver | null {
+  const direct = directObjectMethodReceiver(receiverExpression, scope);
+  if (direct) return { root: direct, alias: null };
+
+  const receiver = unwrapProjectionExpression(receiverExpression);
+  if (!ts.isIdentifier(receiver) || !scope.has(receiver.text) || !currentModuleBindingResolver) return null;
+  const alias = currentModuleBindingResolver.localVariableDeclaration(receiver);
+  if (!alias || !ts.isIdentifier(alias.name) || !alias.initializer || !ts.isIdentifier(alias.initializer)) return null;
+  const declarationList = alias.parent;
+  if (!ts.isVariableDeclarationList(declarationList) || !(declarationList.flags & ts.NodeFlags.Const)) return null;
+  const root = directObjectMethodReceiver(alias.initializer, scope);
+  if (!root) return null;
+  const resolvedRoot = currentModuleBindingResolver.localValueDeclaration(alias.initializer);
+  const resolvedAlias = currentModuleBindingResolver.localValueDeclaration(receiver);
+  if (
+    !resolvedRoot ||
+    !resolvedAlias ||
+    !localDeclarationsMatch(root.declaration, resolvedRoot) ||
+    !localDeclarationsMatch(alias, resolvedAlias)
+  ) {
+    return null;
+  }
+  const owner = enclosingProjectionOwner(root.declaration);
+  if (
+    !owner ||
+    enclosingProjectionOwner(alias) !== owner ||
+    enclosingProjectionOwner(receiver) !== owner ||
+    root.declaration.end > alias.pos ||
+    alias.end > receiver.pos
+  ) {
+    return null;
+  }
+  return { root, alias };
 }
 
 function localDeclarationsMatch(left: ts.Declaration, right: ts.Declaration): boolean {
@@ -6749,6 +6798,81 @@ function directObjectMethodReceiverUsesAreStable(receiver: DirectObjectMethodRec
       }
       const parent = node.parent;
       if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        ownMethodNames.has(parent.name.text) &&
+        !propertyAccessIsWriteTarget(parent)
+      ) {
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        ts.isObjectBindingPattern(parent.name) &&
+        objectBindingPatternReadsOnlyOwnMethods(parent.name, ownMethodNames)
+      ) {
+        return;
+      }
+      stable = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(owner, visit);
+  return stable;
+}
+
+/**
+ * Certify a destructuring-only object alias atomically with its root. The root
+ * may have its existing safe own-method reads/destructures plus this one alias
+ * edge; the alias itself may only feed safe own-method destructures. A second
+ * alias, escape, write, computed access, nested-owner capture, or unresolved
+ * checker reference rejects the complete projection family.
+ */
+function directDestructuredObjectMethodReceiverUsesAreStable(
+  receiver: DirectDestructuredObjectMethodReceiver,
+): boolean {
+  if (!receiver.alias) return directObjectMethodReceiverUsesAreStable(receiver.root);
+  const rootName = receiver.root.declaration.name;
+  const aliasName = receiver.alias.name;
+  if (!ts.isIdentifier(rootName) || !ts.isIdentifier(aliasName)) return false;
+  const owner = enclosingProjectionOwner(receiver.root.declaration);
+  if (!owner || enclosingProjectionOwner(receiver.alias) !== owner) return false;
+  const ownMethodNames = new Set(
+    receiver.root.object.properties
+      .filter(ts.isMethodDeclaration)
+      .map((method) => (method.name ? phase1PropertyName(method.name) : null))
+      .filter((name): name is string => name !== null),
+  );
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (
+      ts.isIdentifier(node) &&
+      node !== rootName &&
+      node !== aliasName &&
+      (node.text === rootName.text || node.text === aliasName.text) &&
+      identifierIsValueReference(node)
+    ) {
+      if (ts.isBindingElement(node.parent) && node.parent.propertyName === node) return;
+      const declaration = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!declaration) {
+        stable = false;
+        return;
+      }
+      const isRoot = localDeclarationsMatch(receiver.root.declaration, declaration);
+      const isAlias = localDeclarationsMatch(receiver.alias!, declaration);
+      if (!isRoot && !isAlias) return;
+      if (enclosingProjectionOwner(node) !== owner) {
+        stable = false;
+        return;
+      }
+      const parent = node.parent;
+      if (isRoot && ts.isVariableDeclaration(parent) && parent === receiver.alias && parent.initializer === node) {
+        return;
+      }
+      if (
+        isRoot &&
         ts.isPropertyAccessExpression(parent) &&
         parent.expression === node &&
         ownMethodNames.has(parent.name.text) &&
@@ -6860,8 +6984,8 @@ function directDestructuredObjectMethodProjections(
   initializer: ts.Expression,
   scope: ReadonlySet<string>,
 ): readonly DirectDestructuredObjectMethodProjection[] | null {
-  const receiver = directObjectMethodReceiver(initializer, scope);
-  if (!receiver || !directObjectMethodReceiverUsesAreStable(receiver)) return null;
+  const receiver = directDestructuredObjectMethodReceiver(initializer, scope);
+  if (!receiver || !directDestructuredObjectMethodReceiverUsesAreStable(receiver)) return null;
   const projections: DirectDestructuredObjectMethodProjection[] = [];
   for (const element of pattern.elements) {
     if (!ts.isIdentifier(element.name)) return null;
@@ -6871,7 +6995,12 @@ function directDestructuredObjectMethodProjections(
         : null
       : element.name.text;
     if (propertyName === null || !destructuredMethodAliasChainHasOnlyOwnerDirectCalls(element)) return null;
-    const method = directObjectMethodDeclaration(initializer, propertyName, scope);
+    const method = receiver.root.object.properties.find(
+      (property): property is ts.MethodDeclaration =>
+        ts.isMethodDeclaration(property) &&
+        property.name !== undefined &&
+        phase1PropertyName(property.name) === propertyName,
+    );
     if (!method) return null;
     projections.push({ element: element as ts.BindingElement & { readonly name: ts.Identifier }, method });
   }
