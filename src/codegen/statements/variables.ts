@@ -22,6 +22,7 @@ import { ensureObjectRuntime } from "../object-runtime.js"; // (#3037 CS1a) $Obj
 import { localGlobalIdx } from "../registry/imports.js";
 import {
   getOrRegisterArrayType,
+  getOrRegisterHoleyArrayType,
   getOrRegisterSubviewType,
   getOrRegisterTaViewType,
   getOrRegisterVecType,
@@ -525,6 +526,9 @@ function tryCompileUniformIndexPresenceBinding(
 
 export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
+  if (ctx.holeyArrayDeclarations.has(decl)) {
+    return { kind: "ref_null", typeIdx: getOrRegisterHoleyArrayType(ctx) };
+  }
   const varName = decl.name.text;
 
   // Walk up to the enclosing function body or source file

@@ -128,6 +128,9 @@ export function createCodegenContext(
     dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
     dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
+    holeyArrayDeclarations: new Set(), // (#4222) exact bounded sized-Array bindings
+    holeyArrayConstructorNodes: new Set(), // (#4222) exact sparse carrier constructors
+    holeyArrayFilterCallNodes: new Set(), // (#4222) exact direct filter consumers
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
@@ -257,6 +260,7 @@ export function createCodegenContext(
     shapeMap: new Map(),
     templateCacheCounter: 0,
     templateVecTypeIdx: -1,
+    holeyArrayTypeIdx: -1, // (#4222) dedicated sparse new Array(n) carrier, lazy
     vecBaseTypeIdx: -1, // (#2186) shared $__vec_base length supertype, lazy
     dvWindowTypeIdx: -1, // (#2159/#38) standalone DataView windowing wrapper, lazy
     subviewTypeIdx: -1, // (#2159/#2357/#47) standalone TypedArray subarray view, lazy

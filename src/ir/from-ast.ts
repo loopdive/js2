@@ -195,7 +195,12 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
-import { irVecElemSetSymbol, irVecNewSizedSymbol } from "./vector-runtime.js";
+import {
+  IR_HOLEY_ARRAY_ELEM_SET,
+  IR_HOLEY_ARRAY_NEW,
+  irVecElemSetSymbol,
+  irVecNewSizedSymbol,
+} from "./vector-runtime.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -316,6 +321,12 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Exact pre-scanned sparse constructor sites. */
+  isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
+  /** Exact direct filter consumers of those sparse constructors. */
+  isHoleyArrayFilterCall?(expr: ts.CallExpression): boolean;
+  /** Exact element writes whose receiver is the same sparse carrier binding. */
+  isHoleyArrayElementStore?(expr: ts.ElementAccessExpression): boolean;
   /** Resolve the host-free `%Function.prototype%.[[Call]]` entry point. */
   functionPrototypeCallTarget?(): IrFuncRef | null;
   /**
@@ -4927,7 +4938,11 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
     cx.builder.emitVecSet(recv, idxI32, val);
     return;
   }
-  cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, val], null);
+  const provider =
+    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
+      ? IR_HOLEY_ARRAY_ELEM_SET
+      : vecElemSetProviderSymbol(recvType, vec);
+  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, val], null);
 }
 
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
@@ -5680,6 +5695,45 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const className = expr.expression.text;
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     throw new Error(`ir/from-ast: module binding "${className}" is not a direct constructor (${cx.funcName})`);
+  }
+
+  if (className === "Array" && cx.resolver?.isHoleyArrayConstructor?.(expr) === true) {
+    if ((expr.typeArguments?.length ?? 0) !== 0 || expr.arguments?.length !== 1) {
+      throw new IrUnsupportedError(
+        "array-representation-unsupported",
+        "build",
+        `ir/from-ast: sparse Array constructor shape diverged after selection (${cx.funcName})`,
+      );
+    }
+    const lengthExpr = expr.arguments[0]!;
+    if (ts.isSpreadElement(lengthExpr) || !ts.isNumericLiteral(lengthExpr)) {
+      throw new IrUnsupportedError(
+        "array-representation-unsupported",
+        "build",
+        `ir/from-ast: sparse Array length is not the selected literal (${cx.funcName})`,
+      );
+    }
+    const length = Number(lengthExpr.text.replace(/_/g, ""));
+    if (!Number.isInteger(length) || length < 0 || length > 0x7fff_ffff) {
+      throw new IrUnsupportedError(
+        "array-representation-unsupported",
+        "build",
+        `ir/from-ast: sparse Array length escaped the bounded range (${cx.funcName})`,
+      );
+    }
+    const lengthRaw = lowerExpr(lengthExpr, cx, irVal({ kind: "f64" }));
+    const lengthType = asVal(cx.builder.typeOf(lengthRaw));
+    const lengthI32 =
+      lengthType?.kind === "i32"
+        ? lengthRaw
+        : cx.builder.emitUnary("i32.trunc_sat_f64_s", lengthRaw, irVal({ kind: "i32" }));
+    const result = cx.builder.emitCall(
+      irIntrinsicFuncRef(IR_HOLEY_ARRAY_NEW),
+      [lengthI32],
+      irVec(irVal({ kind: "externref" }), true),
+    );
+    if (result === null) throw new Error(`ir/from-ast: sparse Array allocator returned void (${cx.funcName})`);
+    return result;
   }
 
   // Slice 10 (#1169i): host extern class (RegExp, Uint8Array, …) normally
@@ -6450,6 +6504,46 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
 
   const recv = lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
+
+  if (methodName === "filter" && cx.resolver?.isHoleyArrayFilterCall?.(expr) === true) {
+    const resolvedVec = resolveIrVecType(recvType, cx);
+    if (!resolvedVec || resolvedVec.lowering.elementValType.kind !== "externref") {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: sparse filter receiver lost its externref carrier (${cx.funcName})`,
+      );
+    }
+    if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: sparse filter callback shape diverged after selection (${cx.funcName})`,
+      );
+    }
+    const callback = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+    const callbackType = cx.builder.typeOf(callback);
+    const callbackExtern =
+      callbackType.kind === "closure" || callbackType.kind === "callable"
+        ? cx.builder.emitCoerceToExternref(callback)
+        : asVal(callbackType)?.kind === "externref"
+          ? callback
+          : null;
+    if (callbackExtern === null) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: sparse filter callback is not a callable carrier (${cx.funcName})`,
+      );
+    }
+    const result = cx.builder.emitCall(
+      irRuntimeFuncRef("__hof_holey_array_filter"),
+      [cx.builder.emitCoerceToExternref(recv), callbackExtern, emitDefaultExternArg(cx, { kind: "externref" })],
+      irVal({ kind: "externref" }),
+    );
+    if (result === null) throw new Error(`ir/from-ast: sparse filter provider returned void (${cx.funcName})`);
+    return result;
+  }
 
   if (recvType.kind === "dynamic") {
     const firstArgumentText = expr.arguments[0]?.getText();

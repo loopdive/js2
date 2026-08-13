@@ -75,6 +75,7 @@ import {
 } from "../codegen/coercion-engine.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import {
+  ensureHoleyArrayNew,
   ensureVecElemSet,
   ensureVecElemSetForElement,
   ensureVecNewSized,
@@ -82,6 +83,8 @@ import {
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
+import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
+import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { ensureNativeStringHelpers } from "../codegen/native-strings.js";
 import {
@@ -311,7 +314,13 @@ import {
   IR_ASYNC_NUMBER_TO_STRING_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "./async-semantic-runtime.js";
-import { IR_VEC_ELEM_SET_PREFIX, IR_VEC_NEW_SIZED_PREFIX, parseIrVectorRuntimeElement } from "./vector-runtime.js";
+import {
+  IR_HOLEY_ARRAY_ELEM_SET,
+  IR_HOLEY_ARRAY_NEW,
+  IR_VEC_ELEM_SET_PREFIX,
+  IR_VEC_NEW_SIZED_PREFIX,
+  parseIrVectorRuntimeElement,
+} from "./vector-runtime.js";
 import {
   IR_STRING_CHAR_AT_FN,
   IR_STRING_CHAR_CODE_AT_FN,
@@ -1005,6 +1014,9 @@ export function compileIrPathFunctions(
       isArrayExpression,
       isRegExpExpression,
       isAmbientStringBinding,
+      isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
+      supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
@@ -4070,6 +4082,13 @@ function makeFromAstResolver(
     );
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
+    isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+    isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
+    isHoleyArrayElementStore: (expr) => {
+      if (!ts.isIdentifier(expr.expression)) return false;
+      const declaration = ctx.oracle.variableDeclarationOf(expr.expression);
+      return declaration !== undefined && ctx.holeyArrayDeclarations.has(declaration);
+    },
     standaloneWrapperInstanceOfPlan(ctorName: string) {
       if (
         !supportsBackendCapability("standalone-wrapper-instanceof") ||
@@ -4550,6 +4569,12 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_NEW_SIZED_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_NEW_SIZED_PREFIX);
     index = element ? ensureVecNewSizedForElement(ctx, element) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_HOLEY_ARRAY_NEW) {
+    index = ensureHoleyArrayNew(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_HOLEY_ARRAY_ELEM_SET) {
+    index = ensureVecElemSet(ctx, getOrRegisterHoleyArrayType(ctx));
+  } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
+    index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
     const vecTypeIdx = Number(symbol.slice(VEC_ELEM_SET_PREFIX.length));
     index = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;

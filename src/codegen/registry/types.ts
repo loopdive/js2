@@ -222,6 +222,48 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
 }
 
 /**
+ * (#4222 ES5 residual) Register the one sparse carrier used by the bounded
+ * `new Array(<literal>)` → direct `.filter(...)` slice.
+ *
+ * It is deliberately a subtype of the ordinary externref vec rather than a
+ * flag on that vec. The physical brand survives constructor, local binding,
+ * writes, and HOF dispatch, so no unrelated `any[]` can acquire `$Hole`
+ * semantics merely because the source module contains a sized constructor.
+ */
+export function getOrRegisterHoleyArrayType(ctx: CodegenContext): number {
+  if (ctx.holeyArrayTypeIdx >= 0) return ctx.holeyArrayTypeIdx;
+
+  const parentVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, parentVecTypeIdx);
+  if (arrTypeIdx < 0) throw new Error("holey array carrier requires the canonical externref vec layout");
+
+  const idx = ctx.mod.types.length;
+  const name = "__holey_array";
+  ctx.mod.types.push({
+    kind: "struct",
+    name,
+    superTypeIdx: parentVecTypeIdx,
+    fields: [
+      { name: "length", type: { kind: "i32" }, mutable: true },
+      { name: "data", type: { kind: "ref", typeIdx: arrTypeIdx }, mutable: true },
+    ],
+  });
+  ctx.holeyArrayTypeIdx = idx;
+  ctx.structMap.set(name, idx);
+  ctx.typeIdxToStructName.set(idx, name);
+  ctx.structFields.set(name, [
+    { name: "length", type: { kind: "i32" as const }, mutable: true },
+    { name: "data", type: { kind: "ref" as const, typeIdx: arrTypeIdx }, mutable: true },
+  ]);
+  return idx;
+}
+
+/** True exactly for the dedicated sparse `new Array(n)` carrier. */
+export function isHoleyArrayType(ctx: CodegenContext, typeIdx: number): boolean {
+  return ctx.holeyArrayTypeIdx >= 0 && typeIdx === ctx.holeyArrayTypeIdx;
+}
+
+/**
  * (#2159 / #2357 / #47) Get or register the `$__subview_<elemKind>` struct — a
  * TypedArray `subarray` view that SHARES the parent's backing array:
  *   `{length: i32, data: (ref null $__arr_<elemKind>), byteOffset: i32}`.

@@ -92,6 +92,7 @@ import { addImport, addStringConstantGlobal, localGlobalIdx } from "./registry/i
 import {
   addFuncType,
   getArrTypeIdxFromVec,
+  getOrRegisterHoleyArrayType,
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
@@ -1816,6 +1817,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    // (#4222 ES5 residual) The bounded sized-Array carrier is a nominal
+    // subtype of the ordinary externref vec.  Module globals need the same
+    // concrete slot as function-local bindings; otherwise the initializer can
+    // allocate `$__holey_array` but later `source.filter(...)` only sees the
+    // erased `$__vec_externref` supertype and loses the HasProperty route.
+    if (ctx.holeyArrayDeclarations.has(decl)) {
+      return { kind: "ref_null", typeIdx: getOrRegisterHoleyArrayType(ctx) };
+    }
     if (moduleInitForcesExternref(decl) && ts.isIdentifier(decl.name)) {
       ctx.externrefAccessorVars.add(decl.name.text);
       return { kind: "externref" };
