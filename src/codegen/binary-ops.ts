@@ -43,6 +43,7 @@ import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-an
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { isLogicalAssignNamedEvalNameRead, resolveStructNameForExpr } from "./property-access.js";
+import { compileNullishObservedExpression } from "./property-nullish-read.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import {
   emitAnyEqFromExternTemps,
@@ -665,8 +666,7 @@ export function compileBinaryExpression(
         (nonNullTsType.flags & ts.TypeFlags.Undefined) !== 0 || (nonNullTsType.flags & ts.TypeFlags.Void) !== 0;
       const nonNullIsNullType = (nonNullTsType.flags & ts.TypeFlags.Null) !== 0;
 
-      // Compile the non-null side
-      const valType = compileExpression(ctx, fctx, nonNullExpr);
+      const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
         // void returns undefined, so undefined == undefined/null is true (loose)
@@ -813,6 +813,14 @@ export function compileBinaryExpression(
   // Regular binary ops: evaluate both sides
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
   const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+  const isEqualityOp =
+    op === ts.SyntaxKind.EqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken ||
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const leftIsWrapperObj = isWrapperObjectType(leftTsType);
+  const rightIsWrapperObj = isWrapperObjectType(rightTsType);
+  const wrapperEquality = isEqualityOp && (leftIsWrapperObj || rightIsWrapperObj);
 
   // ── Loose equality (== / !=) with mixed types ──
   // JS loose equality coerces types before comparing. Handle common cases:
@@ -821,7 +829,7 @@ export function compileBinaryExpression(
   //   string == boolean / boolean == string → coerce both to number
   const isLooseEq = op === ts.SyntaxKind.EqualsEqualsToken;
   const isLooseNeq = op === ts.SyntaxKind.ExclamationEqualsToken;
-  if (isLooseEq || isLooseNeq) {
+  if ((isLooseEq || isLooseNeq) && !wrapperEquality) {
     const leftIsNum = isNumberType(leftTsType);
     const leftIsBool = isBooleanType(leftTsType);
     const leftIsStr = isStringType(leftTsType);
@@ -1060,15 +1068,6 @@ export function compileBinaryExpression(
   // Equality ops involving a wrapper object (Number/String/Boolean) are not
   // simple string/number ops — they have object-identity / ToPrimitive
   // semantics. Route them through the externref/wrapper path below (#1111).
-  const isEqualityOp =
-    op === ts.SyntaxKind.EqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  const leftIsWrapperObj = isWrapperObjectType(leftTsType);
-  const rightIsWrapperObj = isWrapperObjectType(rightTsType);
-  const wrapperEquality = isEqualityOp && (leftIsWrapperObj || rightIsWrapperObj);
-
   // (#3688) Statically-`number` equality gets the SAME numeric operand hint the
   // relational ops already get.
   //

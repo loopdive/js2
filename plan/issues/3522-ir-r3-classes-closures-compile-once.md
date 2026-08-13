@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-12
+updated: 2026-08-13
 priority: critical
 horizon: xl
 complexity: XL
@@ -42,6 +42,7 @@ files:
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
   - src/codegen/class-callable-abi.ts
+  - src/codegen/class-field-layout.ts
   - src/codegen/function-body.ts
   - src/codegen/class-constructor-wrapper.ts
   - src/codegen/closures.ts
@@ -51,6 +52,7 @@ files:
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/ir-class-shapes.ts
   - src/codegen/program-abi-class-callable-planning.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/program-abi-type-planning.ts
@@ -59,6 +61,7 @@ files:
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
@@ -69,16 +72,19 @@ files:
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
+  - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/program-abi-session.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/module-bindings.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
@@ -86,6 +92,8 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
+  - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/select.ts::whyNotIrClaimable
 ---
 
@@ -1046,6 +1054,266 @@ new regressions** (twelve stale baseline entries now pass but are deliberately
 not mixed into this PR). Cross-backend differential is **29/29**. Typecheck,
 lint, formatting, issue/optimization-retirement integrity, oracle separation,
 IR adoption, verdict-oracle, LOC, and function-budget gates also pass.
+
+### Forward class-field layout checkpoint (2026-08-13)
+
+Exact forward class references now cross the physical storage boundary before
+any source body emits. Class collection still reserves structs in source order,
+so `Holder.current: Value` is initially an `externref` slot when `Value` is
+declared later. The new post-collection `class-field-layout.ts` phase resolves
+the exact declaration through the Type Oracle and mutates that already-observed
+field in place to `(ref null $Value)` before callable finalization and class
+shape planning. It does not pre-reserve or reorder types, and it does not
+replace the `StructTypeDef` object held by the Program ABI type cell.
+
+This checkpoint is deliberately bounded to explicit identifier/private fields
+on unique, flat, top-level classes in one source. The reference must be a bare,
+non-generic `TypeReferenceNode` to a later unique local class, and the complete
+field dependency graph must be acyclic. Classes participating in inheritance,
+recursive/self layouts, nested/class-expression owners, optional/union/generic
+annotations, constructor-only inferred fields, and externref-backed targets
+remain on the typed direct route. Multi-source finalization remains R5 work.
+
+The primary `Holder -> Value` fixture now gives all four source bodies
+(`Holder_new`, `Holder_replace`, `Value_new`, and `run`) one prepared IR owner in
+WasmGC and standalone under both direct-class and direct-function poison. It
+validates and returns `25`, and the committed field plus constructor assignment,
+method read/write, and constructing caller contain no `externref` conversion,
+cast/test, or indirect-call traffic. Separate parity controls prove:
+
+- an initialized `current: Value = new Value(2)` retains the established typed
+  instance-field initialization optimization and per-instance behavior;
+- multiple public/private fields retain their exact shared target layout;
+- an adjacent default-parameter method can remain a typed direct fallback while
+  consuming the same finalized physical field ABI; and
+- mutual field recursion and any inheritance participant remain direct, with
+  the unresolved forward slot still physically `externref`.
+
+The exact A/B driver runs the same allocation, field replacement, and two field
+reads per iteration. Three repeated local measurements produced identical
+artifact sizes and correct checksums:
+
+| Target | Direct binary | Prepared IR binary | Delta | Direct median | Prepared median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| WasmGC | 2,836 bytes | 1,292 bytes | -1,544 bytes (-54.4%) | 3.318-3.684 us | 0.010-0.011 us |
+| standalone | 47,714 bytes | 21,531 bytes | -26,183 bytes (-54.9%) | 0.011-0.012 us | 0.010-0.011 us |
+
+The WasmGC direct lane's host-carrier path explains its much larger runtime
+gap; the relevant retirement requirement is satisfied in both targets: prepared
+IR is no larger and no slower than direct. A forward field forms a valid WasmGC
+recursive group spanning the owner-to-target type interval; binary validation,
+exact WAT assertions, and the artifact reduction guard that representation
+effect. The direct-only lane is unchanged and remains the A/B control.
+
+No shared legacy implementation is deleted here. The same direct layout/body
+code still has live consumers in every excluded family, and deleting it would
+violate the retirement rule. The next serial R3 transaction is immutable
+recursive class-layout cells for self and mutually recursive class fields;
+after that, extend the same proof to inheritance participants before nested and
+multi-source owners.
+
+### Recursive class-layout cell checkpoint (2026-08-13)
+
+Self and mutually recursive flat class graphs now cross the same prepare-before-
+emit boundary. `buildIrClassShapes` allocates compiler-branded, identity-stable
+descriptor cells for every eligible exact class before projecting constructor,
+field, and method positions. It fills those cells once, removes any incomplete
+cell plus every transitive consumer before publication, and preserves source
+order in the public sidecar. Selection can therefore resolve `Node.next: Node`
+and `Left.right: Right -> Right.left: Left` without a name fallback or a late
+body-time ABI repair.
+
+The physical layout finalizer now admits the same exact recursive field edges.
+It mutates only the pre-existing field object after every struct is registered,
+so WasmGC forms the required recursive type group without replacing a Program
+ABI type cell or changing type order. Inheritance participants, nested/class-
+expression owners, optional/union/generic annotations, inferred constructor
+fields, externref-backed targets, and multi-source graphs remain excluded.
+
+Prepared ownership remains fail-closed. Recursive shape cells carry a private
+compiler symbol; the immutable prepared-data copier may preserve a back-edge
+only through a structurally valid branded class shape. Arbitrary object, map,
+set, and class-lookalike cycles still raise `invalid-prepared-data`. Backend
+legality and linear-memory layout discovery now track visited exact shape
+objects, so a valid class cycle terminates while visiting every nominal class
+once. A unit test proves the linear planner interns two distinct layouts for a
+mutual cycle; linear legality continues to reject the unsupported `class` atom
+with finite, stable diagnostics rather than recursing.
+
+The executable GC/standalone matrix covers both a mutual cycle and a self
+cycle. The mutual fixture prepares **six** terminal source bodies (`Left_new`,
+`Left_attach`, `Left_value`, `Right_new`, `Right_attach`, and `run`) with
+`direct=0, IR=1`; the self fixture prepares **four** (`Node_new`, `Node_link`,
+`Node_sum`, and `run`) with the same counters. Direct class/function poison is
+active, both binaries validate, and runtime returns `14` and `7`. Exact WAT
+assertions require nullable nominal field refs plus typed `struct.get`/
+`struct.set` and direct calls; the migrated bodies reject extern conversions,
+casts/tests, and indirect calls. The mutual-cycle IR artifact is no larger than
+the same-source direct artifact in either target.
+
+The focused R2/R3 completion matrix is green at **126/126**. The complete class
+file is **42/42**, exact shape/program ownership suites are **29/29**, and the
+hybrid plus strict shadows remain **37/37 IR, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. Ordinary and shape-diagnostic fallback gates report zero
+unintended/post-claim/module-level increases and zero attributed body-shape
+rejections. Typecheck, changed-file lint, and formatting pass. Wider
+equivalence, cross-backend, optimization-retirement, integrity, adoption,
+oracle, and budget gates remain required before publication.
+
+No shared direct implementation is deleted in this checkpoint. Inheritance
+participants and the other excluded class families still consume it. The next
+serial R3 transaction extends exact field-layout finalization through local
+inheritance without allowing recursive heritage, then tackles nested/class-
+expression ownership. The obsolete direct implementation is removed in the
+same later transaction that proves its last consumer is gone.
+
+### Inherited class-layout checkpoint (2026-08-13)
+
+Exact forward class fields now remain typed through local user inheritance.
+The physical class collector deliberately shares each parent's `FieldDef`
+objects with its descendants, so the post-collection finalizer updates a
+parent-owned forward slot once and every already-collected subtype observes
+the same `(ref null $Target)` storage. A forward field declared by the child is
+finalized independently. No struct is replaced, no type is reordered, and
+externref-backed, nested, generic, optional, union, or inferred layouts remain
+outside this transaction.
+
+Derived classes now receive the same identity-stable provisional class-shape
+cells as flat classes. Projection adds the exact heritage parent as a
+dependency, guaranteeing that implicit constructor forwarding reads a fully
+populated parent ABI while recursive field edges still use stable cells. The
+existing earlier-parent rule rejects later, foreign, builtin, and unresolved
+heritage, so this does not admit recursive inheritance or widen the supported
+extends surface.
+
+The GC/standalone proof uses an exact three-level hierarchy. `Base.current`
+references later `Value`, `Child.other` references the same target, and
+`Value` itself extends an earlier `Amount`. All six class terminals plus the
+top-level caller record `legacyBodyEmitted:false, irBodyEmitted:true` while
+both direct-body poison seams are active. Direct and IR binaries validate and
+return `13`; the IR artifact is no larger than direct. WAT requires exact typed
+storage in both `Base` and the inherited prefix of `Child`, rejects externref
+and indirect dispatch in migrated bodies, and pins the derived initializer to
+one static parent narrowing plus one direct parent call before its typed
+`struct.set`.
+
+The complete class compile-once file passes **42/42** after the change. This
+checkpoint does not delete a shared direct implementation: nested/class-
+expression owners and the remaining typed fallback policies still consume the
+class collector/body machinery. After publication, the next serial R3 family
+is exact nested/class-expression ownership; shared code is removed only with
+the last proven consumer.
+
+### Bounded nested ordinary-class ownership checkpoint (2026-08-13)
+
+Named ordinary classes declared inside a function can now join the same
+prepare-before-emit transaction as their containing caller. The admitted
+family is deliberately effect-free at class-definition time: no heritage,
+decorators, static elements, computed keys, field initializers, async/generator
+methods, optional/rest/default parameters, or body captures. It has one fixed
+constructor and at least one fixed-name instance method. Those restrictions
+let the IR body treat the declaration as a lexical class binding while Program
+ABI owns every executable member before the containing body lowers.
+
+Identity inventory promotes the nested constructor and methods to exact
+terminal units with their containing function as owner. Selection is atomic:
+the caller, constructor, and every method must all claim with one projected
+class layout and exact callable graph, or the complete component stays direct.
+Prepared dependency sealing may borrow that nested layout only for exact
+members of the same containing owner. Declaration/body routing then visits the
+fully prepared class solely to correlate its skipped slots; neither the
+enclosing direct function compiler nor nested class-body compiler may emit the
+source bodies.
+
+The GC/standalone proof uses `run -> Calculator { constructor, add, scale }`.
+All four terminals share one prepared component and report
+`legacyBodyEmitted:false, irBodyEmitted:true` while both direct function and
+direct class-body poison seams are active. Both targets validate and return
+`715`; the prepared artifact is no larger than the same-source direct artifact.
+The constructor uses typed `struct.set`, both methods use typed `struct.get`,
+and migrated bodies reject extern conversions, casts/tests, `call_ref`, and
+`call_indirect`. A captured outer `offset` is the fail-closed control: the
+caller and every class member remain one Unsupported/direct component and
+return `42`, so a mixed caller/member policy cannot satisfy the test.
+
+The implementation preserves the separate nested-accessor policy. A focused
+audit initially exposed that projecting every nested class changed a TDZ/
+writeback accessor control from typed fallback into a late ABI failure. The
+candidate resolver and structural class-name set now widen only for this
+bounded ordinary family; all **21/21** accessor writeback tests pass, including
+the injected sibling-TDZ rejection, and the existing top-level default-
+parameter class retains its exact `class-projection-unsupported` outcome.
+
+Qualification after the inherited-layout checkpoint landed is green:
+
+- focused R2/R3 ownership matrix: **129/129**;
+- nested ordinary ownership plus accessor audit: **24/24**;
+- cross-backend differential: **29/29**;
+- equivalence: **1,645 passing, 24 known failures, zero new regressions**;
+- hybrid and strict shadows: **37/37 IR bodies, 0 legacy bodies, 0
+  Unsupported, 0 Invariants**;
+- ordinary fallback gate: zero unintended, post-claim, or module-level
+  increases; shape diagnostic: zero attributed body-shape rejections; and
+- typecheck, lint, and formatting pass.
+
+No shared direct implementation is deleted in this checkpoint. Class
+expressions and nested classes with inheritance, static/effectful elements,
+computed keys, initializers, flexible parameters, or captures still consume
+the nested class/body machinery. The remaining serial R3 checklist is:
+
+1. closures, object methods/accessors, and cross-owner callable support;
+2. module initialization under #3523;
+3. runtime and linear-memory helpers; and
+4. delete each direct implementation when its final typed consumer reaches
+   zero, then enable IR-only as the default.
+
+### Const-bound nested class-expression ownership checkpoint (2026-08-13)
+
+The next nested-class family is now a prepare-before-emit transaction for the
+exact effect-free `const C = class { ... }` and `const C = class C { ... }`
+forms. The class expression keeps its synthetic legacy callable/layout label,
+while the exact const binding is published as a selector/lowerer alias. The
+identity selector, checker-backed class resolver, Program ABI constructor
+support transaction, and declaration skip audit all correlate through the
+same `IrClassId`; the surrounding function, `_init`, AST-free `_new`, and every
+method either prepare as one component or remain direct together.
+
+The bounded family does not turn a class object into an IR runtime value.
+Selection proves every reference to the const binding is the callee of direct
+`new C(...)`. Passing, comparing, returning, or otherwise reading `C` keeps the
+whole component direct. Mutable bindings, differently named inner class
+expressions, captures, inheritance, decorators, static/effectful elements,
+computed keys, field initializers, flexible parameters, and unsupported member
+bodies also remain fail-closed.
+
+Explicit parity evidence covers both GC and standalone:
+
+- the enclosing `run`, constructor, `add`, and `scale` terminals share one
+  prepared component with `legacyBodyEmitted:false` and
+  `irBodyEmitted:true` while both direct-body poison seams are active;
+- both targets validate and return `715`, with typed `struct.set`/`struct.get`
+  bodies and no extern conversions, casts/tests, `call_ref`, or
+  `call_indirect` in migrated functions;
+- prepared binary size is **1,232 vs 1,557 bytes** direct on GC and **21,536
+  vs 47,058 bytes** direct on standalone; and
+- first-class-value, mutable-binding, and differently-named controls preserve
+  direct runtime semantics and record no post-claim failures.
+
+Focused class/expression/accessor qualification is **71/71**, including all
+42 class compile-once tests and all 21 nested-accessor writeback tests. The
+broader R2/R3 ownership matrix is **134/134**, cross-backend differential is
+**29/29**, and equivalence is **1,645 passing, 24 known failures, zero new
+regressions** (12 baseline failures now pass). Hybrid and strict shadows remain
+READY at **37/37 IR bodies, 0 legacy bodies, 0 Unsupported, 0 Invariants**.
+The fallback gate has zero unintended, post-claim, or module-level increases;
+typecheck, lint, formatting, optimization retirement, LOC, and function-budget
+gates pass.
+
+No shared direct class-expression implementation is deleted yet. First-class,
+module-level, inline, capturing, and effectful class-expression consumers still
+use it. The next serial R3 owner is closures/object methods/cross-owner callable
+support; after those consumers reach zero, the obsolete direct branches must be
+deleted in the same checkpoint that proves their last use is gone.
 
 ## Exhaustive source-unit census
 

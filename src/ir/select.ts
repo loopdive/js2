@@ -135,6 +135,7 @@ export type IrFallbackReason =
   | "primitive-method-unsupported"
   | "function-invocation-method-unsupported"
   | "logical-value-unsupported"
+  | "operand-coercion-unsupported"
   | "template-substitution-unsupported"
   | "error-constructor-unsupported"
   | "typed-array-constructor-unsupported"
@@ -516,6 +517,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
+      | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global",
   ) => boolean;
   /**
@@ -1248,7 +1250,7 @@ let currentIrSafeVarDeclarationLists: ReadonlySet<ts.VariableDeclarationList> = 
 // Current-run state shared by the deep isPhase1* recursion. The structural
 // selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
-let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration> = new Map();
+let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression> = new Map();
 let currentClaimClassName: string | null = null;
 // #2949 Acorn follow-up — the current top-level function's return expressions
 // may be provably boolean even while its unannotated JS callable ABI remains
@@ -1323,7 +1325,7 @@ let currentNumericParamNames = new Set<string>();
 export function configureIrStructuralSelectorPredicates(
   sourceFile: ts.SourceFile,
   options: IrSelectionOptions | undefined,
-  localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration>,
+  localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression>,
   functionDeclarations: ReadonlyMap<string, ts.FunctionDeclaration>,
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
@@ -1523,8 +1525,10 @@ function whyNotIrClaimable(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
   currentClaimClassName =
-    isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent)) && fn.parent.name
-      ? fn.parent.name.text
+    isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent))
+      ? ([...currentLocalClassDeclarations].find(([, declaration]) => declaration === fn.parent)?.[0] ??
+        fn.parent.name?.text ??
+        null)
       : null;
   currentClassBindings = new Map<string, string>();
   currentCallableArities = new Map<string, number>();
@@ -2986,6 +2990,16 @@ function isPhase1StatementListInScope(
       if (!isPhase1NestedFunc(s, scope, localClasses)) return false;
       continue;
     }
+    // #3522 — a strictly bounded nested class has no runtime definition
+    // effects. Exact Program ABI preparation owns its constructor/method
+    // bodies; this statement only introduces the class binding used by later
+    // `new` and method expressions in the enclosing IR body.
+    if (ts.isClassDeclaration(s) && s.name) {
+      const projected = currentLocalClassDeclarations.get(s.name.text);
+      if (projected !== s || !localClasses.has(s.name.text)) return shapeNo("nontail-class-unprepared", s);
+      scope.add(s.name.text);
+      continue;
+    }
     // Slice 3 (#1169c): bare call expression statement (drop the result).
     // Lets `inc(); inc(); inc();` patterns work for closures with side
     // effects through ref-cell captures.
@@ -3289,6 +3303,38 @@ function isPhase1StatementListInScope(
     return shapeNo("nontail-unhandled-stmt", s);
   }
   return isPhase1Tail(stmts[stmts.length - 1]!, scope, localClasses, isGenerator, isVoidReturn);
+}
+
+function boundedClassExpressionBindingHasOnlyStaticConstructionUses(
+  declaration: ts.VariableDeclaration,
+  classExpression: ts.ClassExpression,
+): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  let owner: ts.Node | undefined = declaration;
+  while (owner && !ts.isFunctionDeclaration(owner) && !ts.isFunctionExpression(owner) && !ts.isArrowFunction(owner)) {
+    owner = owner.parent;
+  }
+  if (
+    !owner ||
+    (!ts.isFunctionDeclaration(owner) && !ts.isFunctionExpression(owner) && !ts.isArrowFunction(owner)) ||
+    !owner.body
+  ) {
+    return false;
+  }
+  const bindingName = declaration.name.text;
+  let accepted = true;
+  const visit = (node: ts.Node): void => {
+    if (!accepted || node === classExpression) return;
+    if (ts.isIdentifier(node) && node.text === bindingName) {
+      if (node === declaration.name) return;
+      if (ts.isNewExpression(node.parent) && node.parent.expression === node) return;
+      accepted = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(owner.body);
+  return accepted;
 }
 
 /**
@@ -4435,6 +4481,21 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
     initializerScope.add(d.name.text);
+    if (ts.isClassExpression(d.initializer)) {
+      if (
+        !isConst ||
+        currentLocalClassDeclarations.get(d.name.text) !== d.initializer ||
+        !localClasses.has(d.name.text) ||
+        !boundedClassExpressionBindingHasOnlyStaticConstructionUses(d, d.initializer)
+      ) {
+        return shapeNo("vardecl-class-expression-unprepared", d.initializer);
+      }
+      // The exact prepared class has inert definition evaluation. Its
+      // constructor binding is consumed only by the dedicated `new C(...)`
+      // and static-member selector arms, never as a first-class IR value.
+      scope.add(d.name.text);
+      continue;
+    }
     const declarationList = d.parent;
     const declarationStatement = ts.isVariableDeclarationList(declarationList) ? declarationList.parent : undefined;
     const directModuleDeclaration =
@@ -5421,6 +5482,59 @@ function selectorSupportsStandaloneWrapperInstanceOf(node: ts.Identifier): boole
   );
 }
 
+/**
+ * #4208 S4 — recognize only the ambient primitive-wrapper constructions used
+ * by the residual ES5 abstract-equality family. The constructor argument must
+ * already have the exact primitive family consumed by the legacy wrapper ABI;
+ * general constructor coercion remains legacy-owned.
+ */
+function selectorPrimitiveWrapperConstruction(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): ts.NewExpression | null {
+  const candidate = unwrapPhase1Parens(expression);
+  if (
+    !ts.isNewExpression(candidate) ||
+    !ts.isIdentifier(candidate.expression) ||
+    !selectorSeesAmbientWrapperConstructor(candidate.expression) ||
+    candidate.arguments?.length !== 1 ||
+    ts.isSpreadElement(candidate.arguments[0]!)
+  ) {
+    return null;
+  }
+  const argument = candidate.arguments[0]!;
+  const expectedFamily =
+    candidate.expression.text === "Boolean" ? "boolean" : candidate.expression.text === "Number" ? "number" : "string";
+  if (obviousSelectorValueFamily(argument, scope) !== expectedFamily) return null;
+  return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
+}
+
+/** #4208 S4 — bounded wrapper coercion followed by the generic binary tail. */
+function selectorPrimitiveWrapperOrGenericBinary(
+  expr: ts.BinaryExpression,
+  binOp: ts.SyntaxKind,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (binOp === ts.SyntaxKind.EqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsToken) {
+    const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses);
+    const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses);
+    if ((leftWrapper === null) !== (rightWrapper === null)) {
+      const primitive = leftWrapper === null ? expr.left : expr.right;
+      const family = obviousSelectorValueFamily(primitive, scope);
+      if (family === "boolean" || family === "number") {
+        if (currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") !== true) {
+          return capabilityNo("operand-coercion-unsupported", "expr-wrapper-loose-equality-target", expr);
+        }
+        return isPhase1Expr(primitive, scope, localClasses);
+      }
+    }
+  }
+  if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+  return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+}
+
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
 }
@@ -5934,7 +6048,7 @@ function preflightClassPropertyWrite(expression: ts.PropertyAccessExpression, sc
 
 function classPositionTypeMayProject(
   type: ts.TypeNode | undefined,
-  owner: ts.ClassDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
   allowVoid: boolean = false,
 ): boolean {
   if (!type) return false;
@@ -5974,7 +6088,10 @@ function classPositionTypeMayProject(
   return false;
 }
 
-function classInitializerMayProject(initializer: ts.Expression | undefined, owner: ts.ClassDeclaration): boolean {
+function classInitializerMayProject(
+  initializer: ts.Expression | undefined,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
   if (!initializer) return false;
   const candidate = unwrapProjectionExpression(initializer);
   if (
@@ -5993,14 +6110,17 @@ function classInitializerMayProject(initializer: ts.Expression | undefined, owne
   return false;
 }
 
-function classFieldMayProject(field: ts.PropertyDeclaration, owner: ts.ClassDeclaration): boolean {
+function classFieldMayProject(field: ts.PropertyDeclaration, owner: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (!ts.isIdentifier(field.name) && !ts.isPrivateIdentifier(field.name)) return false;
   return field.type
     ? classPositionTypeMayProject(field.type, owner)
     : classInitializerMayProject(field.initializer, owner);
 }
 
-function classMethodSignatureMayProject(method: ts.MethodDeclaration, owner: ts.ClassDeclaration): boolean {
+function classMethodSignatureMayProject(
+  method: ts.MethodDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
   return (
     hasFixedIrParameters(method.parameters) &&
     method.parameters.every((parameter) => classPositionTypeMayProject(parameter.type, owner)) &&
@@ -6010,7 +6130,7 @@ function classMethodSignatureMayProject(method: ts.MethodDeclaration, owner: ts.
 
 function classAccessorMayProject(
   accessor: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-  owner: ts.ClassDeclaration,
+  owner: ts.ClassDeclaration | ts.ClassExpression,
 ): boolean {
   if (ts.isGetAccessorDeclaration(accessor)) {
     return accessor.parameters.length === 0 && classPositionTypeMayProject(accessor.type, owner);
@@ -6091,7 +6211,12 @@ function projectedConstructorArity(className: string): number | undefined {
 }
 
 function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): boolean {
-  return !scope.has(name) && !currentNestedFunctionNames.has(name) && !currentLexicalValueBindingNames.has(name);
+  const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.has(name);
+  return (
+    (!scope.has(name) || exactNestedClassBinding) &&
+    !currentNestedFunctionNames.has(name) &&
+    (!currentLexicalValueBindingNames.has(name) || exactNestedClassBinding)
+  );
 }
 
 function localClassNameForExpression(expression: ts.Expression, scope: ReadonlySet<string>): string | null {
@@ -6593,8 +6718,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return isPhase1Expr(expr.left, scope, localClasses);
     }
-    if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-    return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+    return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
   if (ts.isConditionalExpression(expr)) {
     if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
@@ -7688,7 +7812,9 @@ export function buildLocalCallGraph(
           (localClasses.has(node.expression.text) ||
             (isKnownExternClass(node.expression.text) &&
               (currentModuleBindingResolver === null ||
-                currentModuleBindingResolver.isAmbientBinding(node.expression))))
+                currentModuleBindingResolver.isAmbientBinding(node.expression))) ||
+            (selectorSeesAmbientWrapperConstructor(node.expression) &&
+              currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-loose-equality") === true))
         ) {
           // Slice 4: local class — `<Class>_new` has a stable signature.
           // Slice 10 (#1169i): known extern class — `<Class>_new` is
@@ -7886,8 +8012,10 @@ function implicitParameterHasOnlyStringCallArguments(
  * doesn't accept their use). Anonymous classes (no `name`) are skipped. The
  * declaration values preserve the identity needed by #3529 projection checks.
  */
-function collectLocalClassDeclarations(sourceFile: ts.SourceFile): Map<string, ts.ClassDeclaration> {
-  const declarations = new Map<string, ts.ClassDeclaration>();
+function collectLocalClassDeclarations(
+  sourceFile: ts.SourceFile,
+): Map<string, ts.ClassDeclaration | ts.ClassExpression> {
+  const declarations = new Map<string, ts.ClassDeclaration | ts.ClassExpression>();
   for (const stmt of sourceFile.statements) {
     if (ts.isClassDeclaration(stmt) && stmt.name) declarations.set(stmt.name.text, stmt);
   }

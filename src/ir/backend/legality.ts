@@ -8,7 +8,7 @@
 // surfaces a localized diagnostic instead of a late raw-emitter throw or
 // malformed Wasm/bytecode.
 
-import type { IrBinop, IrBlock, IrFunction, IrInstr, IrType } from "../nodes.js";
+import type { IrBinop, IrBlock, IrClassShape, IrFunction, IrInstr, IrType } from "../nodes.js";
 import { asVal } from "../nodes.js";
 import type { ValType } from "../types.js";
 
@@ -22,6 +22,7 @@ export type IrBackendTargetCapability =
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
+  | "primitive-wrapper-loose-equality"
   | "legacy-numeric-array-global";
 
 /**
@@ -70,6 +71,18 @@ export function supportsIrBackendTargetCapability(
         !profile.allowHostImports &&
         profile.fast === true
       );
+    case "primitive-wrapper-loose-equality":
+      // #4208 S4 — the focused producer crosses the wrapper object's
+      // externref through the canonical `__to_primitive` runtime boundary,
+      // then boxes that primitive into the dynamic carrier. That boundary is
+      // representation-exact only for the non-fast externref carrier today.
+      // Host gc and host-free standalone/WASI both provide the wrapper ctor +
+      // OrdinaryToPrimitive runtime family; strict-no-host gc does not.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.allowHostImports || profile.target === "standalone" || profile.target === "wasi")
+      );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
   }
@@ -84,10 +97,11 @@ export interface IrBackendLegalityError {
 
 export function verifyIrBackendLegality(func: IrFunction, backend: IrBackendKind): IrBackendLegalityError[] {
   const errors: IrBackendLegalityError[] = [];
+  const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string): void => {
     const msg = backendTypeError(backend, type);
     if (msg) errors.push({ message: `${where}: ${msg}`, func: func.name, block });
-    checkNestedTypeShapes(type, block, where, checkType);
+    checkNestedTypeShapes(type, block, where, checkType, checkedClassShapes);
   };
 
   for (const p of func.params) checkType(p.type, undefined, `param ${p.name}`);
@@ -512,6 +526,7 @@ function checkNestedTypeShapes(
   block: number | undefined,
   where: string,
   checkType: (type: IrType, block: number | undefined, where: string) => void,
+  checkedClassShapes: Set<IrClassShape>,
 ): void {
   switch (type.kind) {
     case "object":
@@ -524,6 +539,8 @@ function checkNestedTypeShapes(
       if (type.signature.returnType) checkType(type.signature.returnType, block, `${where}.return`);
       return;
     case "class":
+      if (checkedClassShapes.has(type.shape)) return;
+      checkedClassShapes.add(type.shape);
       for (const field of type.shape.fields) checkType(field.type, block, `${where}.${field.name}`);
       for (const method of type.shape.methods) {
         for (let i = 0; i < method.params.length; i++)

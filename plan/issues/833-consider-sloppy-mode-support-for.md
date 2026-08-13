@@ -3,7 +3,7 @@ id: 833
 title: "Consider sloppy mode support for legacy octal escapes and non-strict code"
 status: ready
 created: 2026-03-28
-updated: 2026-04-28
+updated: 2026-08-13
 priority: low
 feasibility: hard
 model: fable
@@ -11,6 +11,8 @@ reasoning_effort: max
 goal: contributor-readiness
 sprint: Backlog
 test262_skip: 16
+loc-budget-allow:
+  - src/compiler.ts
 ---
 # #833 -- Consider sloppy mode support for legacy code
 
@@ -57,6 +59,12 @@ Option 3 is most useful for test262 since it has explicit flags. For real-world 
 - If yes: 16 octal tests + potentially 550 `with` tests unskipped
 
 ## Implementation Plan
+
+> **2026-08-13 scope correction:** the plan below is retained as historical
+> context for legacy octal syntax, but its statement that `with` is outside the
+> ES5 target is superseded. The `es5` goal now includes every edition row in
+> both lanes, including `eval`, `Function`, and `with`. Dynamic `with` remains a
+> separate implementation stream (#671, #2663, #4179, #4206), not an exclusion.
 
 (Author: architect, 2026-05-21. Recommendation: **adopt Option 3
 (per-file detection from test262 metadata)** for octal escapes
@@ -133,5 +141,71 @@ CLAUDE.md.)
 
 ### Decision
 
-Recommend implementing. Cost is small (~200 LOC + tests); benefit
-is +16 test262 passes. `with` remains out of scope.
+The historical recommendation estimated ~200 LOC + tests for the octal slice.
+Its exclusion of `with` from the ES5 goal is superseded by the scope correction
+above.
+
+## Current-main implementation plan (2026-08-13)
+
+### Measured slice
+
+Exact source `81125e5e248847a5df94c3e2a3a20016782e1df4`, corpus
+`b363f29d3c43c626dc852744ad64a0b48a003693`, and oracle v13 report the same
+seven ES5 compile errors in host and standalone:
+
+- `annexB/language/comments/multi-line-html-close.js`
+- `annexB/language/comments/single-line-html-close.js`
+- `annexB/language/comments/single-line-html-open.js`
+- `annexB/language/comments/single-line-html-close-first-line-{1,2,3}.js`
+- `annexB/language/comments/single-line-html-close-unicode-separators.js`
+
+`single-line-html-close-asi.js` is already a pass and is a regression control;
+`language/comments/single-line-html-close-without-lt.js` must remain a parse
+negative.
+
+### Parser-to-IR design
+
+TypeScript cannot construct an AST for Annex B HTML-like comments, so this
+syntax requires one bounded pre-parse step. For an explicitly selected Script
+goal (`inferModuleStrictArguments === false`):
+
+1. Identify literal spans with the TypeScript frontend so marker text inside
+   strings, template raw segments, and regular expressions is protected.
+2. Scan ordinary comments and lexical line boundaries. Recognize `<!--` at an
+   input-element boundary and `-->` only at the start of a logical line after
+   optional whitespace/block comments, including the first line and U+2028/
+   U+2029 boundaries.
+3. Replace the recognized single-line comment text with the same number of
+   spaces while preserving every line terminator. The source-position map is
+   therefore identity.
+4. Send the resulting AST through the ordinary IR selector and emitter. Do not
+   add an AST-only codegen path or a legacy fallback for this syntax.
+5. Leave Module-goal source byte-for-byte untouched so HTML-like comments stay
+   syntax errors there.
+
+### Validation gates
+
+- Unit cases cover first-line, whitespace/comment prefixes, multiline-comment
+  prefixes, U+2028/U+2029, literals, regular expressions, templates, and
+  ordinary comments.
+- An IR inventory probe must report `kind: emitted`, `irBodyEmitted: true`, and
+  `legacyBodyEmitted: false` in host and standalone; standalone must have zero
+  Wasm imports.
+- All seven exact-current compile errors must pass through the authoritative
+  original-harness runner in both lanes.
+- The Module-goal and no-preceding-line-terminator negative controls must remain
+  failures.
+
+### Result (2026-08-13)
+
+Implemented in `src/compiler/html-like-comments.ts` and wired before other
+pre-parse rewrites in `compileSourceSync`. Focused validation is green:
+
+- 8/8 issue tests;
+- 7/7 exact-current Test262 cases in host;
+- 7/7 exact-current Test262 cases in standalone;
+- IR-only probe green in both lanes, with no standalone imports.
+
+This removes seven compile errors from each lane. It does not change the full
+9,029-test denominator and does not claim completion of legacy octal syntax or
+dynamic `with` semantics.

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { boundedPreparedNestedOrdinaryClassBindingName } from "../ir/class-accessor-safety.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrClassId, IrSourceId, IrUnitKind } from "../ir/identity.js";
@@ -301,8 +302,9 @@ function hasFixedClassShapeParameters(parameters: readonly ts.ParameterDeclarati
  * accidental restriction rather than an ABI constraint.
  *
  * Dependencies are identity-based and local to the candidate population.
- * Cycles deliberately retain their original order and therefore remain on the
- * typed direct path until recursive class-shape cells are planned explicitly.
+ * Cycles deliberately retain their original order. The descriptor builder
+ * resolves them through preallocated exact class-shape cells; stable residue
+ * order keeps planning deterministic without pretending a cycle is a DAG.
  */
 export function orderIrClassShapeDeclarationsForProjection(
   oracle: TypeOracle,
@@ -325,6 +327,29 @@ export function orderIrClassShapeDeclarationsForProjection(
         required.add(dependency);
       }
     };
+
+    // A derived descriptor consumes its exact parent shape in addition to its
+    // annotated member types. Keep the source-authoritative earlier-parent
+    // policy in buildIrClassShapes, but order an admitted parent before its
+    // child so implicit constructor forwarding never observes an unpopulated
+    // provisional cell.
+    const heritage = entry.declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+    const parentExpression = heritage?.types[0]?.expression;
+    if (parentExpression) {
+      const parentDeclarations = oracle.declarationsOf(parentExpression);
+      if (parentDeclarations.length === 1) {
+        const parentDeclaration = parentDeclarations[0];
+        if (
+          parentDeclaration &&
+          (ts.isClassDeclaration(parentDeclaration) || ts.isClassExpression(parentDeclaration))
+        ) {
+          const dependency = context.classIdByDeclaration.get(parentDeclaration);
+          if (dependency !== undefined && dependency !== entry.classId && byClassId.has(dependency)) {
+            required.add(dependency);
+          }
+        }
+      }
+    }
 
     for (const member of entry.declaration.members) {
       if (ts.isConstructorDeclaration(member)) {
@@ -427,6 +452,24 @@ export function createIrClassShapeSidecar(
   const legacyProjection = new Map<string, IrClassShape>();
   for (const entry of byClassId.values()) {
     if (occurrences.get(entry.legacyName) === 1) legacyProjection.set(entry.legacyName, entry.shape);
+  }
+  // A bounded nested class expression keeps its synthetic legacy callable and
+  // struct label, but source expressions address it through the exact const
+  // binding. Publish that binding as a selector/lowerer alias only when it is
+  // unique and cannot shadow an existing class label.
+  const boundedExpressionAliases = new Map<string, IrClassShapeEntry[]>();
+  for (const entry of byClassId.values()) {
+    if (!ts.isClassExpression(entry.declaration)) continue;
+    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(entry.declaration);
+    if (bindingName === undefined) continue;
+    const candidates = boundedExpressionAliases.get(bindingName) ?? [];
+    candidates.push(entry);
+    boundedExpressionAliases.set(bindingName, candidates);
+  }
+  for (const [bindingName, candidates] of boundedExpressionAliases) {
+    if (candidates.length === 1 && !legacyProjection.has(bindingName)) {
+      legacyProjection.set(bindingName, candidates[0]!.shape);
+    }
   }
   return { identityContext: context, byClassId, legacyProjection };
 }

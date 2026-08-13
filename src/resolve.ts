@@ -186,6 +186,27 @@ export class ModuleResolver {
       // Normalize the path
       resolved = this.host.realpath?.(path.resolve(resolved)) ?? path.resolve(resolved);
 
+      // An explicit relative JavaScript import names the runtime body, even when
+      // TypeScript redirects that specifier to a sibling declaration file for
+      // type checking.  Packages such as Moment ship `moment.js` beside
+      // `moment.d.ts`; following TS's declaration substitution here caused the
+      // graph walker to compile only the ambient signature and bind the import
+      // to null.  Keep TypeScript's normal extension substitution when the
+      // requested body does not exist (for the common `./source.js` ->
+      // `./source.ts` authoring pattern), but prefer the exact executable file
+      // whenever it is present on disk.
+      if (
+        !pkgName &&
+        (specifier.startsWith("./") || specifier.startsWith("../") || path.isAbsolute(specifier)) &&
+        /\.[cm]?js$/i.test(specifier) &&
+        /\.d\.[cm]?ts$/i.test(resolved)
+      ) {
+        const requestedBody = path.resolve(path.dirname(resolutionContainingFile), specifier);
+        if (this.tryStatFile(requestedBody)) {
+          resolved = this.host.realpath?.(requestedBody) ?? requestedBody;
+        }
+      }
+
       // TypeScript's standard resolver prefers `.d.ts` declarations over
       // implementation bodies in two cases relevant to js2wasm:
       //   1. `@types/<pkg>` declaration packages distinct from the impl

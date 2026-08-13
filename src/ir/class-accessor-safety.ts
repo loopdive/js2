@@ -57,6 +57,98 @@ export function isBoundedPreparedAccessorClass(declaration: ts.ClassDeclaration 
   });
 }
 
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
+  return ts.canHaveModifiers(node) && (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
+}
+
+function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.every(
+    (parameter) =>
+      ts.isIdentifier(parameter.name) &&
+      parameter.dotDotDotToken === undefined &&
+      parameter.questionToken === undefined &&
+      parameter.initializer === undefined &&
+      !hasDecorators(parameter),
+  );
+}
+
+/**
+ * Exact flat ordinary class family whose constructor and instance methods may
+ * be prepared independently of a still-direct containing executable.
+ *
+ * The restriction makes ClassDefinitionEvaluation inert: no heritage,
+ * decorators, computed keys, static work, or field initializers can execute in
+ * the containing frame. Body capture/type safety remains the structural
+ * selector's responsibility, and the identity selector admits the class only
+ * when every body-bearing member claims atomically.
+ */
+export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
+  if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
+    return false;
+  }
+  let constructorCount = 0;
+  let methodCount = 0;
+  for (const member of declaration.members) {
+    if (hasDecorators(member) || hasModifier(member, ts.SyntaxKind.StaticKeyword)) return false;
+    if (ts.isPropertyDeclaration(member)) {
+      if (member.initializer !== undefined || (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name))) {
+        return false;
+      }
+      continue;
+    }
+    if (ts.isConstructorDeclaration(member)) {
+      if (!member.body) continue; // Type-only overload signature.
+      constructorCount++;
+      if (constructorCount !== 1 || !hasFixedPreparedParameters(member.parameters)) return false;
+      continue;
+    }
+    if (ts.isMethodDeclaration(member)) {
+      if (
+        !member.body ||
+        !ts.isIdentifier(member.name) ||
+        member.asteriskToken !== undefined ||
+        hasModifier(member, ts.SyntaxKind.AsyncKeyword) ||
+        hasModifier(member, ts.SyntaxKind.AbstractKeyword) ||
+        !hasFixedPreparedParameters(member.parameters)
+      ) {
+        return false;
+      }
+      methodCount++;
+      continue;
+    }
+    return false;
+  }
+  return constructorCount === 1 && methodCount > 0;
+}
+
+/**
+ * Stable lexical name for the bounded ordinary-class transaction.
+ *
+ * Class declarations own their source name. Class expressions are admitted
+ * only in the exact `const C = class { ... }` / `const C = class C { ... }`
+ * form: the binding is immutable, ClassDefinitionEvaluation is inert under
+ * the ordinary-class gate above, and a differently named inner class cannot
+ * be confused with the outer constructor binding.
+ */
+export function boundedPreparedNestedOrdinaryClassBindingName(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): string | undefined {
+  if (!isBoundedPreparedNestedOrdinaryClass(declaration)) return undefined;
+  if (ts.isClassDeclaration(declaration)) return declaration.name?.text;
+  const variable = declaration.parent;
+  if (
+    !ts.isVariableDeclaration(variable) ||
+    variable.initializer !== declaration ||
+    !ts.isIdentifier(variable.name) ||
+    !ts.isVariableDeclarationList(variable.parent) ||
+    (variable.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return undefined;
+  }
+  const bindingName = variable.name.text;
+  return declaration.name === undefined || declaration.name.text === bindingName ? bindingName : undefined;
+}
+
 type LiteralComputedKeyValue = string | number;
 
 function literalOnlyComputedKeyValue(expression: ts.Expression): LiteralComputedKeyValue | undefined {

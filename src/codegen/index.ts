@@ -38,6 +38,7 @@ import { irSupportFuncRef } from "../ir/callable-bindings.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
+  IR_CLASS_SHAPE_CELL,
   irDynamic,
   isDynamic,
   irVal,
@@ -351,6 +352,7 @@ import {
   resolveClassMemberName,
 } from "./class-bodies.js";
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
+import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
@@ -427,6 +429,7 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import { emitDateHostBridge } from "./date-host-bridge.js";
 import {
   emitStructFieldGetters,
   emitStructFieldBooleanMarkers,
@@ -1300,6 +1303,37 @@ function buildIrClassShapes(
     declarationsInCollectionOrder,
     identityContext,
   );
+  // Local classes are allocated as identity-stable descriptor cells
+  // before any member type is projected. TypeScript permits self-recursive and
+  // mutually recursive annotations, so a later class must be resolvable while
+  // its descriptor is still being filled. The cells are planning-only: only
+  // completely populated dependency-closed shapes are published below.
+  const provisionalEntries = new Map<IrClassId, IrClassShapeEntry>();
+  const populatedProvisionalIds = new Set<IrClassId>();
+  for (const { classId, declaration } of declarationsInCollectionOrder) {
+    if (!ts.isClassDeclaration(declaration) || !declaration.name) {
+      continue;
+    }
+    const className = declaration.name.text;
+    if (
+      !ctx.classSet.has(className) ||
+      !ctx.structFields.has(className) ||
+      ctx.classExternrefBackedSet.has(className)
+    ) {
+      continue;
+    }
+    const shape: import("../ir/nodes.js").IrClassShape = {
+      [IR_CLASS_SHAPE_CELL]: true,
+      classId,
+      className,
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    };
+    const entry = { classId, legacyName: className, declaration, shape };
+    provisionalEntries.set(classId, entry);
+    out.set(classId, entry);
+  }
   for (const { classId, declaration: stmt } of declarations) {
     const className = ts.isClassExpression(stmt) ? ctx.anonClassExprNames.get(stmt) : stmt.name?.text;
     if (!className) continue;
@@ -1673,7 +1707,70 @@ function buildIrClassShapes(
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
     };
-    out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
+    const provisional = provisionalEntries.get(classId);
+    if (provisional) {
+      Object.assign(provisional.shape, shape);
+      populatedProvisionalIds.add(classId);
+    } else {
+      out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
+    }
+  }
+  for (const classId of provisionalEntries.keys()) {
+    if (!populatedProvisionalIds.has(classId)) out.delete(classId);
+  }
+
+  // A provisional target can fail after another descriptor already consumed
+  // its cell. Remove that owner as well; publishing a dangling class identity
+  // would turn an atomic typed fallback into a late lowering invariant.
+  const directShapeDependencies = (shape: import("../ir/nodes.js").IrClassShape): ReadonlySet<IrClassId> => {
+    const dependencies = new Set<IrClassId>();
+    const seen = new Set<IrType>();
+    const addType = (type: IrType): void => {
+      if (seen.has(type)) return;
+      seen.add(type);
+      switch (type.kind) {
+        case "class":
+          dependencies.add(type.shape.classId);
+          return;
+        case "object":
+          for (const field of type.shape.fields) addType(field.type);
+          return;
+        case "vec":
+          addType(type.elementType);
+          return;
+        case "closure":
+        case "callable":
+          for (const parameter of type.signature.params) addType(parameter);
+          if (type.signature.returnType) addType(type.signature.returnType);
+          return;
+        case "union":
+          for (const member of type.members) addType(member);
+          return;
+        case "boxed":
+          addType(type.inner);
+          return;
+        default:
+          return;
+      }
+    };
+    for (const field of shape.fields) addType(field.type);
+    for (const parameter of shape.constructorParams) addType(parameter);
+    for (const method of shape.methods) {
+      for (const parameter of method.params) addType(parameter);
+      if (method.returnType) addType(method.returnType);
+    }
+    if (shape.parent) dependencies.add(shape.parent.classId);
+    return dependencies;
+  };
+  let removedDanglingShape = true;
+  while (removedDanglingShape) {
+    removedDanglingShape = false;
+    for (const [classId, entry] of out) {
+      if ([...directShapeDependencies(entry.shape)].some((dependency) => !out.has(dependency))) {
+        out.delete(classId);
+        removedDanglingShape = true;
+      }
+    }
   }
   // Dependency construction order is an internal planning detail. Publish the
   // registry in the authoritative collection order so type/global planning and
@@ -4561,6 +4658,10 @@ export function generateModule(
     scanForArrayHoles(ctx, ast.sourceFile);
 
     collectDeclarations(ctx, ast.sourceFile);
+    // #3522 R3: exact fields that reference a later local class are collected
+    // provisionally as externref. Finalize their already-observed storage slot
+    // in place before class-shape planning snapshots the Program ABI layout.
+    finalizeForwardClassFieldLayouts(ctx, ast.sourceFile);
     // #3522 R3: callable slots with exact references to a later local class
     // must receive their final struct ABI before prepared IR planning decides
     // which direct bodies will never run. The direct body compiler retains its
@@ -4981,10 +5082,10 @@ export function generateModule(
     // `Array.prototype.{forEach,map,filter,every,some,find,...}.call(obj, cb)`
     // dispatched through the host `__proto_method_call` — the host invokes
     // the callback with `(value, index, array)` (arity 3) or, for reduce,
-    // `(acc, value, index, array)` (arity 4). The dispatchers iterate
-    // closures of arity ≤ N; lower-arity closures see extra args dropped.
+    // `(acc, value, index, array)` (arity 4).
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // #1636-S1 — emit __call_fn_method_N exports (N=0..2) for calling Wasm
     // closures from JS with a host-supplied `this`-value. Same dispatch
@@ -7489,13 +7590,6 @@ export function generateMultiModule(
     // (#3537) Same for the array-expando side table.
     fillVecPropHelpers(ctx);
 
-    // (#3371/#3496) Constructible function-expression wrappers are nominal
-    // subtypes of the ordinary closure wrapper. Multi-source harness methods
-    // route those values through `__apply_closure`, so rebuild that reserved
-    // bridge only after every source has registered its complete closure-type
-    // set. Leaving the placeholder untouched traps valid `assert.*` calls.
-    fillApplyClosure(ctx);
-
     // (#3496) A multi-source entry can reserve a closed method dispatcher just
     // like a single source can. The literal Test262 harness does so for
     // `assert.compareArray(...)`: the property assignment registers a closure
@@ -7611,12 +7705,11 @@ export function generateMultiModule(
 
     // Multi-source projects can pass entry-module closures into an imported
     // function whose dynamic call is compiled before that closure wrapper is
-    // known. The host fallback then needs the same 2..4 argument dispatchers
-    // as the single-source pipeline; otherwise it silently falls back to the
-    // highest available arity (formerly 1) and returns null for wider closures.
+    // known. The host fallback needs matching dispatchers or wider closures return null.
     emitClosureCallExport2(ctx);
     emitClosureCallExport3(ctx);
     emitClosureCallExport4(ctx);
+    emitDateHostBridge(ctx);
 
     // Mirror the single-source receiver bridge over the complete multi-source
     // closure registry. Include native-construction demand in the cap so its
@@ -7638,6 +7731,12 @@ export function generateMultiModule(
     // Unknown-arity host wrappers use this classifier to choose a dispatcher
     // wide enough for the closure's declared parameters.
     emitClosureArityExport(ctx);
+
+    // Fill multi-source constructor method drivers after all closure tables.
+    fillHostFnctorMethodDrivers(ctx);
+
+    // Fill apply only after every multi-source arity dispatcher exists.
+    fillApplyClosure(ctx);
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);

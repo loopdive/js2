@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import ts from "typescript";
 import { ModuleResolver, resolveAllImports, getBarePackageName, compileMulti } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import { treeshake, getEntryExportNames } from "../src/treeshake.js";
 
 const FIXTURES = path.resolve(__dirname, "fixtures/npm-resolve");
@@ -40,6 +41,14 @@ describe("ModuleResolver", () => {
 
     expect(resolved).toBeTruthy();
     expect(resolved).toContain("helper.ts");
+  });
+
+  it("keeps an explicitly requested .js body beside its .d.ts", () => {
+    const resolver = new ModuleResolver(FIXTURES, { allowJs: true });
+    const entryFile = path.join(FIXTURES, "entry.ts");
+    const resolved = resolver.resolve("./lib/explicit-js.js", entryFile);
+
+    expect(resolved).toBe(path.join(FIXTURES, "lib/explicit-js.js"));
   });
 
   it("resolves bare specifiers to node_modules", () => {
@@ -347,13 +356,7 @@ describe("multi-file compilation with resolution concepts", () => {
     const result = await compileMulti(files, "./main.ts");
     expect(result.success, `Compile failed: ${result.errors.map((e) => e.message).join(", ")}`).toBe(true);
 
-    const imports = {
-      env: {
-        console_log_number: () => {},
-        console_log_string: () => {},
-        console_log_bool: () => {},
-      },
-    };
+    const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     const exports = instance.exports as Record<string, Function>;
     expect(exports.run(2, 3)).toBe(5);

@@ -1761,13 +1761,14 @@ function skipPreparedClassConstructorBody(
       return true;
     }
   }
-  if (!routing?.skipBodies.has(ctorName)) return false;
+  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration ?? classDeclaration);
+  const exactSkip = unitId !== undefined && routing?.skipBodyUnitIds?.has(unitId) === true;
+  if (!routing?.skipBodies.has(ctorName) && !exactSkip) return false;
   const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
   const initKey = classMemberFuncKey(ctx, `${className}_init`);
   const initLocalIdx = funcByName.get(initKey);
   const initFuncIdx = ctx.funcMap.get(initKey);
   const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
-  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration ?? classDeclaration);
   const terminal = unitId ? ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId) : undefined;
   const allocated = unitId ? ctx.programAbiClassCallables?.functionForUnit(unitId) : undefined;
   if (
@@ -1781,7 +1782,10 @@ function skipPreparedClassConstructorBody(
     throw new Error(`prepared constructor ${ctorName} has no exact source init owner`);
   }
   const preserveExactBody = routing.preserveSkippedBodyUnitIds?.has(unitId) === true;
-  if (preserveExactBody !== (routing.preserveSkippedBodies?.has(ctorName) === true)) {
+  if (
+    routing.skipBodies.has(ctorName) &&
+    preserveExactBody !== (routing.preserveSkippedBodies?.has(ctorName) === true)
+  ) {
     throw new Error(`prepared constructor ${ctorName} has inconsistent exact and legacy preserve ownership`);
   }
   if (preserveExactBody) {
