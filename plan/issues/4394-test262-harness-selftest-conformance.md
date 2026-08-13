@@ -814,6 +814,53 @@ undefined elements back as `NaN` (`[0, NaN, NaN]` vs `[0, a, undefined]` — the
 standalone twin of root cause 4), and a Symbol element comparison (the #2610
 symbol-carrier bucket).
 
+## Diagnosed, not landed — a function-VALUED `toString` property is ignored (both lanes)
+
+Found while bisecting the six standalone `deepEqual-*` failures. It is not a
+harness-shaped bug at all: `o.toString()` silently returns `"[object Object]"`
+when the receiver's own `toString` is a **function-valued property** rather than
+method syntax. Measured on the GC lane (standalone matches):
+
+| receiver | `o.toString()` |
+| --- | --- |
+| `class P { toString() { … } }` | `"P!"` ✓ |
+| `{ toString() { … } }` (method shorthand) | `"OL"` ✓ |
+| `{ toString: function () { … } }` | **`"[object Object]"`** ✗ |
+| `{ toString }` (shorthand from a declaration) | **`"[object Object]"`** ✗ |
+| `P.prototype.toString = function () { … }` | **`"[object Object]"`** ✗ |
+
+So the dispatcher recognises a method DECLARATION but not a function-valued
+property or a prototype assignment. The last row is the classic ES5 idiom, and
+`sta.js` — in front of every single test262 file — uses exactly it:
+
+```js
+Test262Error.prototype.toString = function () {
+  return "Test262Error: " + this.message;
+};
+```
+
+Note the inversion that makes this easy to miss: `String(o)` and `"" + o` are
+**correct** for the same receivers (ToPrimitive does consult the property). Only
+the DIRECT `o.toString()` call is wrong, because the fallback arm in
+`call-receiver-method.ts` claims `.toString()` by name and emits the constant
+`"[object Object]"` for a struct-shaped receiver.
+
+### Shape of the fix
+
+The arm is a fallback `if (propAccess.name.text === "toString" && …)`, so a
+single added condition makes it DECLINE into the generic dynamic method
+dispatch, which resolves the real property. The predicate needed is "the
+receiver's type has an own `toString` declared in user source", and that is the
+part with a cost: `ctx.oracle.propertyFactOf(recv, "toString")` cannot tell a
+user-own `toString` apart from the inherited lib one (both answer "function"),
+so it needs either an oracle extension or an `oracle-ratchet-allow` grant for a
+raw symbol/declaration query.
+
+Not attempted here: it is a behaviour change to a shared dispatcher arm in a
+3,700-line function, it affects BOTH lanes and a very common idiom, and it
+deserves its own issue with its own merge-group measurement rather than a late
+edit inside this one.
+
 ## Diagnosed, not landed — a JSDoc-typed parameter makes `typeof` lie (1 test)
 
 `verifyProperty-desc-is-not-object.js` asserts that a primitive `desc` argument
