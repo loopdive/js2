@@ -495,6 +495,49 @@ function containsTopLevelFunctionValueReference(
   return found;
 }
 
+/**
+ * The direct backend currently owns ES5 Function `caller` / `arguments`
+ * activation semantics. In particular, a sloppy function that reads its own
+ * `caller` observes the direct-eval call boundary through the caller-strictness
+ * hand-off. Preparing that body without an equivalent IR activation contract
+ * turns the function-value support added below into a semantic regression.
+ *
+ * Keep only the exact current-function poison-pill shape direct. Unrelated
+ * property reads named `caller` / `arguments` and ordinary function-value
+ * targets remain eligible for Prepared IR.
+ */
+function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration: ts.FunctionLikeDeclaration): boolean {
+  if (!declaration.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    let receiver: ts.Expression | undefined;
+    let name: string | undefined;
+    if (ts.isPropertyAccessExpression(node) && !ts.isPrivateIdentifier(node.name)) {
+      receiver = node.expression;
+      name = node.name.text;
+    } else if (ts.isElementAccessExpression(node)) {
+      const key = node.argumentExpression;
+      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+        receiver = node.expression;
+        name = key.text;
+      }
+    }
+    if (
+      receiver !== undefined &&
+      (name === "caller" || name === "arguments") &&
+      ts.isIdentifier(receiver) &&
+      ctx.oracle.valueDeclarationOf(receiver) === declaration
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return found;
+}
+
 function sameValType(left: ValType, right: ValType): boolean {
   if (left.kind !== right.kind) return false;
   if ((left.kind === "ref" || left.kind === "ref_null") && (right.kind === "ref" || right.kind === "ref_null")) {
@@ -923,6 +966,7 @@ export function selectR2PreparedOwnerComponents(input: {
       isAsync ||
       claim.declaration.asteriskToken ||
       containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
+      containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
       containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
       !override.params.every(r2StableSignatureType) ||
       !r2StableSignatureType(override.returnType) ||

@@ -733,6 +733,40 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(entries.some((entry) => entry.id === cache.binding.bindingId)).toBe(false);
   });
 
+  it("keeps an exact current-function caller read on the direct activation path", async () => {
+    const source = `
+      eval("\\\"use strict\\\";\\ngNonStrict();");
+      function gNonStrict() {
+        return gNonStrict.caller;
+      }
+    `;
+    const direct = await compile(source, {
+      allowJs: true,
+      deferTopLevelInit: true,
+      fileName: "15.3.5.4_2-12gs-direct.js",
+      skipSemanticDiagnostics: true,
+    });
+    const result = await compile(source, {
+      allowJs: true,
+      deferTopLevelInit: true,
+      experimentalIR: true,
+      fileName: "15.3.5.4_2-12gs.js",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+    });
+
+    for (const compiled of [direct, result]) {
+      expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(compiled.binary)).toBe(true);
+      const exports = await instantiate(compiled);
+      expect(() => exports.__module_init!()).not.toThrow();
+    }
+    expect(outcome(result, "gNonStrict")).toMatchObject({
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+  });
+
   it("prepares a closed free-function component beside direct class and module owners", async () => {
     const result = await compile(
       `

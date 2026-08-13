@@ -1437,6 +1437,14 @@ methods/accessors, and callable values that require dynamic dispatch remain on
 the typed direct route. No shared direct closure implementation is deleted in
 this checkpoint because those consumers still reach it.
 
+The exact current-function `caller` / `arguments` poison-pill read also remains
+direct until IR owns the equivalent activation/caller hand-off. The merge-queue
+Test262 probe `built-ins/Function/15.3.5.4_2-12gs.js` caught this boundary: an
+otherwise safe sloppy function is materialized as a value by strict `eval`, but
+its legacy `caller` observation still depends on direct activation state. The
+checkpoint carries a focused runtime parity test for that source shape; all
+ordinary function-value targets continue to prepare.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
