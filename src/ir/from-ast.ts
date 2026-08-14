@@ -163,7 +163,12 @@ import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts }
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
-import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
+import {
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
+  irClosureSignatureFromFunctionTypeNode,
+  IR_MATH_METHOD_TABLE,
+} from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
 import {
   exactClosureLiftedName,
@@ -11361,6 +11366,11 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
  */
 function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string): IrType {
   if (isPrimitiveTypeNode(node)) return typeNodeToIr(node, where);
+  if (ts.isFunctionTypeNode(node)) {
+    const signature = irClosureSignatureFromFunctionTypeNode(node);
+    if (!signature) throw new Error(`ir/from-ast: unsupported closure-valued parameter signature (${where})`);
+    return { kind: "closure", signature };
+  }
   if (ts.isArrayTypeNode(node) && node.elementType.kind === ts.SyntaxKind.NumberKeyword) {
     const elementValType: ValType = { kind: "f64" };
     const elementType = irVal(elementValType);
