@@ -486,6 +486,7 @@ import {
   rejectTimersUnderWasi,
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
+import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -4440,12 +4441,18 @@ export function generateModule(
       // pre-#2520 behaviour while preserving the wasi/standalone flood fix.
       const libRefs =
         ctx.wasi || ctx.standalone ? collectReferencedGlobalNames([ast.sourceFile], ctx.checker) : undefined;
-      for (const sf of ast.program.getSourceFiles()) {
+      // (#4218) The lib-file walk resolves every declared type SYNTACTICALLY
+      // through a one-shot declaration index — lib files are fully annotated,
+      // so the ~254k per-compile checker queries this loop used to issue are
+      // unnecessary. Same traversal order ⇒ identical import/type tables.
+      const libSfs = ast.program.getSourceFiles().filter((sf) => {
         const baseName = sf.fileName.split("/").pop() ?? sf.fileName;
-        if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-          collectExternDeclarations(ctx, sf, libRefs);
-          collectDeclaredGlobals(ctx, sf, ast.sourceFile);
-        }
+        return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
+      });
+      const libIndex = buildLibDeclIndex(libSfs);
+      for (const sf of libSfs) {
+        collectExternDeclarations(ctx, sf, libRefs, libIndex);
+        collectDeclaredGlobals(ctx, sf, ast.sourceFile, libIndex);
       }
     }
 
@@ -7154,14 +7161,17 @@ export function generateMultiModule(
         // comment in generateModule above.
         const libRefs =
           ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
-        for (const libSf of multiAst.program.getSourceFiles()) {
+        // (#4218) Same syntactic lib-walk as generateModule above.
+        const libSfs = multiAst.program.getSourceFiles().filter((libSf) => {
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
-          if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-            collectExternDeclarations(ctx, libSf, libRefs);
-            for (const sf of multiAst.sourceFiles) {
-              if (sourceUsesLibGlobals(sf)) {
-                collectDeclaredGlobals(ctx, libSf, sf);
-              }
+          return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
+        });
+        const libIndex = buildLibDeclIndex(libSfs);
+        for (const libSf of libSfs) {
+          collectExternDeclarations(ctx, libSf, libRefs, libIndex);
+          for (const sf of multiAst.sourceFiles) {
+            if (sourceUsesLibGlobals(sf)) {
+              collectDeclaredGlobals(ctx, libSf, sf, libIndex);
             }
           }
         }

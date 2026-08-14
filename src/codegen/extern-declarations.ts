@@ -19,6 +19,16 @@ import { brandExternMethodResult } from "./shared.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
+import {
+  heritageBaseName,
+  isExternDeclaredLibName,
+  isVoidTypeNode,
+  libConstructSignatures,
+  mapLibTypeNodeToWasm,
+  typeParamScopeOf,
+  typeRefName,
+  type LibDeclIndex,
+} from "./lib-decl-index.js";
 
 // ── Built-in extern class registration ───────────────────────────────
 
@@ -628,18 +638,25 @@ const WASI_STDIN_REACTOR_INTRINSICS = new Set([
 // `declare function` host-import registration to names the user references
 // (#2520). User-file call sites omit it so preprocessImports stubs always
 // register.
+//
+// `libIndex`, when provided (lib-file scan only, #4218), switches ALL type
+// resolution in this pre-pass to the syntactic lib-decl index — zero
+// `ctx.checker` queries. User-file call sites omit it and keep the checker
+// (user `declare`s are input-driven and cheap; lib files were 96 % of the
+// compiler's checker traffic).
 export function collectExternDeclarations(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   libReferencedNames?: Set<string>,
+  libIndex?: LibDeclIndex,
 ): void {
   for (const stmt of sourceFile.statements) {
     if (ts.isModuleDeclaration(stmt) && hasDeclareModifier(stmt)) {
-      collectDeclareNamespace(ctx, stmt, []);
+      collectDeclareNamespace(ctx, stmt, [], libIndex);
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
     if (ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
-      collectExternClass(ctx, stmt, []);
+      collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
     // can pass arguments correctly (missing args get padded with default values).
@@ -730,28 +747,41 @@ export function collectExternDeclarations(
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
       if (!ctx.funcMap.has(name)) {
-        const sig = ctx.checker.getSignatureFromDeclaration(stmt);
-        if (sig) {
-          // (#4238) Under `externNativeTypes` an explicit native annotation
-          // (`type i32 = number` & friends) wins over the default mapping, so
-          // a peer-wasm binding can declare its REAL `(i32,i32,i32) -> i32`
-          // signature and bind with no JS wrapper closure. Without the option
-          // — every user compile — `nativeTypeFromTypeNode` is never consulted
-          // and `number` keeps mapping to f64, byte-identical.
-          const nativeOf = (node: ts.TypeNode | undefined): ValType | null =>
-            ctx.externNativeTypes ? nativeTypeFromTypeNode(ctx.checker, node) : null;
+        // (#4238) Under `externNativeTypes` an explicit native annotation
+        // (`type i32 = number` & friends) wins over the default mapping, so
+        // a peer-wasm binding can declare its REAL `(i32,i32,i32) -> i32`
+        // signature and bind with no JS wrapper closure. Without the option
+        // — every user compile — `nativeTypeFromTypeNode` is never consulted
+        // and `number` keeps mapping to f64, byte-identical.
+        const nativeOf = (node: ts.TypeNode | undefined): ValType | null =>
+          ctx.externNativeTypes ? nativeTypeFromTypeNode(ctx.checker, node) : null;
+        if (libIndex) {
+          // (#4218) Syntactic path — lib declaration files are fully annotated.
+          const scope = typeParamScopeOf(stmt);
           const params: ValType[] = stmt.parameters.map(
-            (p) => nativeOf(p.type) ?? mapTsTypeToWasm(ctx.checker.getTypeAtLocation(p), ctx.checker),
+            (p) => nativeOf(p.type) ?? mapLibTypeNodeToWasm(p.type, libIndex, scope),
           );
-          const retType = ctx.checker.getReturnTypeOfSignature(sig);
-          const results: ValType[] = isVoidType(retType)
+          const results: ValType[] = isVoidTypeNode(stmt.type)
             ? []
-            : [nativeOf(stmt.type) ?? mapTsTypeToWasm(retType, ctx.checker)];
+            : [nativeOf(stmt.type) ?? mapLibTypeNodeToWasm(stmt.type, libIndex, scope)];
           const typeIdx = addFuncType(ctx, params, results);
-          // (#4238) `externImportModule` retargets extern declarations at a
-          // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
-          // `env` JS-host module. Unset for every user compile.
           addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+        } else {
+          const sig = ctx.checker.getSignatureFromDeclaration(stmt);
+          if (sig) {
+            const params: ValType[] = stmt.parameters.map(
+              (p) => nativeOf(p.type) ?? mapTsTypeToWasm(ctx.checker.getTypeAtLocation(p), ctx.checker),
+            );
+            const retType = ctx.checker.getReturnTypeOfSignature(sig);
+            const results: ValType[] = isVoidType(retType)
+              ? []
+              : [nativeOf(stmt.type) ?? mapTsTypeToWasm(retType, ctx.checker)];
+            const typeIdx = addFuncType(ctx, params, results);
+            // (#4238) `externImportModule` retargets extern declarations at a
+            // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
+            // `env` JS-host module. Unset for every user compile.
+            addImport(ctx, ctx.externImportModule ?? "env", name, { kind: "func", typeIdx });
+          }
         }
       }
     }
@@ -762,7 +792,7 @@ export function collectExternDeclarations(
         if (!decl.name || !ts.isIdentifier(decl.name) || !decl.type) continue;
         // Inline type literal with construct signature
         if (ts.isTypeLiteralNode(decl.type) && decl.type.members.some((m) => ts.isConstructSignatureDeclaration(m))) {
-          collectExternFromDeclareVar(ctx, decl);
+          collectExternFromDeclareVar(ctx, decl, libIndex);
         }
         // Type reference to interface with construct signature (e.g. declare var Date: DateConstructor)
         // Skip types with built-in wasm handling (Array, primitives, etc.)
@@ -805,10 +835,11 @@ export function collectExternDeclarations(
             "Promise",
           ]);
           if (!BUILTIN_SKIP.has(varName)) {
-            const refType = ctx.checker.getTypeAtLocation(decl.type);
-            const constructSigs = refType.getConstructSignatures();
-            if (constructSigs.length > 0) {
-              collectExternFromDeclareVar(ctx, decl);
+            const hasCtor = libIndex
+              ? libConstructSignatures(typeRefName(decl.type.typeName), libIndex).length > 0
+              : ctx.checker.getTypeAtLocation(decl.type).getConstructSignatures().length > 0;
+            if (hasCtor) {
+              collectExternFromDeclareVar(ctx, decl, libIndex);
             }
           }
         }
@@ -817,23 +848,33 @@ export function collectExternDeclarations(
   }
 }
 
-function collectDeclareNamespace(ctx: CodegenContext, decl: ts.ModuleDeclaration, parentPath: string[]): void {
+function collectDeclareNamespace(
+  ctx: CodegenContext,
+  decl: ts.ModuleDeclaration,
+  parentPath: string[],
+  libIndex?: LibDeclIndex,
+): void {
   const nsName = decl.name.text;
   const path = [...parentPath, nsName];
 
   if (decl.body && ts.isModuleBlock(decl.body)) {
     for (const stmt of decl.body.statements) {
       if (ts.isClassDeclaration(stmt) && stmt.name) {
-        collectExternClass(ctx, stmt, path);
+        collectExternClass(ctx, stmt, path, libIndex);
       }
       if (ts.isModuleDeclaration(stmt)) {
-        collectDeclareNamespace(ctx, stmt, path);
+        collectDeclareNamespace(ctx, stmt, path, libIndex);
       }
     }
   }
 }
 
-function collectExternClass(ctx: CodegenContext, decl: ts.ClassDeclaration, namespacePath: string[]): void {
+function collectExternClass(
+  ctx: CodegenContext,
+  decl: ts.ClassDeclaration,
+  namespacePath: string[],
+  libIndex?: LibDeclIndex,
+): void {
   const className = decl.name!.text;
   if (ERROR_TYPES_SKIP.has(className)) return;
   const prefix = [...namespacePath, className].join("_");
@@ -847,37 +888,59 @@ function collectExternClass(ctx: CodegenContext, decl: ts.ClassDeclaration, name
     properties: new Map(),
   };
 
+  // (#4218) Type resolution: syntactic through the lib index on the lib-file
+  // scan, checker-based on the user path. Both produce identical ValTypes for
+  // annotated declarations (see lib-decl-index.ts).
+  const mapNode = (node: ts.TypeNode | undefined, scope: ReturnType<typeof typeParamScopeOf>): ValType =>
+    libIndex ? mapLibTypeNodeToWasm(node, libIndex, scope) : { kind: "externref" };
+
   for (const member of decl.members) {
     if (ts.isConstructorDeclaration(member)) {
       for (const param of member.parameters) {
-        const paramType = ctx.checker.getTypeAtLocation(param);
-        info.constructorParams.push(mapTsTypeToWasm(paramType, ctx.checker));
+        info.constructorParams.push(
+          libIndex
+            ? mapNode(param.type, typeParamScopeOf(decl, member))
+            : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(param), ctx.checker),
+        );
       }
     }
     if (ts.isMethodDeclaration(member) && member.name) {
       const methodName = (member.name as ts.Identifier).text;
-      const sig = ctx.checker.getSignatureFromDeclaration(member);
-      if (sig) {
+      if (libIndex) {
+        const scope = typeParamScopeOf(decl, member);
         const params: ValType[] = [{ kind: "externref" }]; // 'this'
         let requiredParams = 1;
         for (const p of member.parameters) {
-          const pt = ctx.checker.getTypeAtLocation(p);
-          params.push(mapTsTypeToWasm(pt, ctx.checker));
+          params.push(mapNode(p.type, scope));
           if (!p.questionToken && !p.initializer) requiredParams++;
         }
-        const retType = ctx.checker.getReturnTypeOfSignature(sig);
-        // (#2770, S5b) Brand a boolean extern-method result at registration so the
-        // direct `methodInfo.results[0]` consumption path (extern.ts) is honest.
-        const results: ValType[] = isVoidType(retType)
-          ? []
-          : [brandExternMethodResult(ctx, retType, mapTsTypeToWasm(retType, ctx.checker))];
+        const results: ValType[] = isVoidTypeNode(member.type) ? [] : [mapNode(member.type, scope)];
         info.methods.set(methodName, { params, results, requiredParams });
+      } else {
+        const sig = ctx.checker.getSignatureFromDeclaration(member);
+        if (sig) {
+          const params: ValType[] = [{ kind: "externref" }]; // 'this'
+          let requiredParams = 1;
+          for (const p of member.parameters) {
+            const pt = ctx.checker.getTypeAtLocation(p);
+            params.push(mapTsTypeToWasm(pt, ctx.checker));
+            if (!p.questionToken && !p.initializer) requiredParams++;
+          }
+          const retType = ctx.checker.getReturnTypeOfSignature(sig);
+          // (#2770, S5b) Brand a boolean extern-method result at registration so the
+          // direct `methodInfo.results[0]` consumption path (extern.ts) is honest.
+          const results: ValType[] = isVoidType(retType)
+            ? []
+            : [brandExternMethodResult(ctx, retType, mapTsTypeToWasm(retType, ctx.checker))];
+          info.methods.set(methodName, { params, results, requiredParams });
+        }
       }
     }
     if (ts.isPropertyDeclaration(member) && member.name) {
       const propName = (member.name as ts.Identifier).text;
-      const propType = ctx.checker.getTypeAtLocation(member);
-      const wasmType = mapTsTypeToWasm(propType, ctx.checker);
+      const wasmType = libIndex
+        ? mapNode(member.type, typeParamScopeOf(decl))
+        : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(member), ctx.checker);
       const isReadonly = member.modifiers?.some((m) => m.kind === ts.SyntaxKind.ReadonlyKeyword) ?? false;
       info.properties.set(propName, { type: wasmType, readonly: isReadonly });
     }
@@ -887,8 +950,9 @@ function collectExternClass(ctx: CodegenContext, decl: ts.ClassDeclaration, name
   if (decl.heritageClauses) {
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types[0]) {
-        const baseType = ctx.checker.getTypeAtLocation(clause.types[0]);
-        const baseName = baseType.getSymbol()?.name;
+        const baseName = libIndex
+          ? heritageBaseName(clause.types[0])
+          : ctx.checker.getTypeAtLocation(clause.types[0]).getSymbol()?.name;
         if (baseName) ctx.externClassParent.set(className, baseName);
       }
     }
@@ -913,7 +977,7 @@ const ERROR_TYPES_SKIP = new Set([
 ]);
 
 /** Collect extern class info from a `declare var X: { prototype: X; new(): X }` (lib.dom.d.ts pattern) */
-function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDeclaration): void {
+function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDeclaration, libIndex?: LibDeclIndex): void {
   const className = (decl.name as ts.Identifier).text;
   if (ERROR_TYPES_SKIP.has(className)) return;
   // (#1103a) In standalone / nativeStrings mode, `Map` is served by the
@@ -924,8 +988,17 @@ function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDecla
   if (className === "Map" && ctx.nativeStrings) return;
   if (ctx.externClasses.has(className)) return;
 
-  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
-  if (!symbol) return;
+  // (#4218) Lib path: the merged `interface <className>` declarations come
+  // from the name-keyed index (same program order the checker's merged
+  // symbol reports). User path: resolve the symbol via the checker.
+  let ifaceDecls: readonly ts.Declaration[];
+  if (libIndex) {
+    ifaceDecls = libIndex.interfaces.get(className) ?? [];
+  } else {
+    const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+    if (!symbol) return;
+    ifaceDecls = symbol.getDeclarations() ?? [];
+  }
 
   const info: ExternClassInfo = {
     importPrefix: className,
@@ -942,55 +1015,82 @@ function collectExternFromDeclareVar(ctx: CodegenContext, decl: ts.VariableDecla
       for (const member of decl.type.members) {
         if (ts.isConstructSignatureDeclaration(member)) {
           for (const param of member.parameters) {
-            const paramType = ctx.checker.getTypeAtLocation(param);
-            info.constructorParams.push(mapTsTypeToWasm(paramType, ctx.checker));
+            info.constructorParams.push(
+              libIndex
+                ? mapLibTypeNodeToWasm(param.type, libIndex, typeParamScopeOf(member))
+                : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(param), ctx.checker),
+            );
           }
           break;
         }
       }
     } else if (ts.isTypeReferenceNode(decl.type)) {
-      // Resolve interface reference (e.g. DateConstructor, RegExpConstructor)
-      const refType = ctx.checker.getTypeAtLocation(decl.type);
-      const constructSigs = refType.getConstructSignatures();
+      // Resolve interface reference (e.g. DateConstructor, RegExpConstructor).
       // Use the constructor with the most parameters so all overloads can be
       // served.  Missing args at call sites are padded with defaults.
-      const sig =
-        constructSigs.length > 0
-          ? constructSigs.reduce((a, b) => (b.parameters.length > a.parameters.length ? b : a))
-          : undefined;
-      if (sig) {
-        for (const param of sig.parameters) {
-          const paramType = ctx.checker.getTypeOfSymbol(param);
-          info.constructorParams.push(mapTsTypeToWasm(paramType, ctx.checker));
+      if (libIndex) {
+        const constructSigs = libConstructSignatures(typeRefName(decl.type.typeName), libIndex);
+        const sig =
+          constructSigs.length > 0
+            ? constructSigs.reduce((a, b) => (b.parameters.length > a.parameters.length ? b : a))
+            : undefined;
+        if (sig) {
+          for (const param of sig.parameters) {
+            info.constructorParams.push(mapLibTypeNodeToWasm(param.type, libIndex, typeParamScopeOf(sig)));
+          }
+        }
+      } else {
+        const refType = ctx.checker.getTypeAtLocation(decl.type);
+        const constructSigs = refType.getConstructSignatures();
+        const sig =
+          constructSigs.length > 0
+            ? constructSigs.reduce((a, b) => (b.parameters.length > a.parameters.length ? b : a))
+            : undefined;
+        if (sig) {
+          for (const param of sig.parameters) {
+            const paramType = ctx.checker.getTypeOfSymbol(param);
+            info.constructorParams.push(mapTsTypeToWasm(paramType, ctx.checker));
+          }
         }
       }
     }
   }
 
   // Collect members from own interface declarations + non-extern mixin interfaces
-  const allDecls = symbol.getDeclarations() ?? [];
   const visited = new Set<string>();
-  for (const d of allDecls) {
+  for (const d of ifaceDecls) {
     if (!ts.isInterfaceDeclaration(d)) continue;
     // Collect own members
-    collectInterfaceMembers(ctx, d, info, decl);
+    collectInterfaceMembers(ctx, d, info, decl, libIndex);
     // Walk extends: first extern parent → inheritance chain, non-extern → collect their members
     if (d.heritageClauses) {
       let parentSet = false;
       for (const clause of d.heritageClauses) {
         if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
         for (const typeRef of clause.types) {
-          const baseType = ctx.checker.getTypeAtLocation(typeRef);
-          const baseName = baseType.getSymbol()?.name;
-          if (!baseName) continue;
-          if (!parentSet && !ctx.externClassParent.has(className)) {
-            // First extends type → record as parent for inheritance chain
-            ctx.externClassParent.set(className, baseName);
-            parentSet = true;
-          }
-          // If this base is NOT an extern class, it's a mixin — collect its members
-          if (!isExternalDeclaredClass(baseType, ctx.checker)) {
-            collectMixinMembers(ctx, baseType, info, decl, visited);
+          if (libIndex) {
+            const baseName = heritageBaseName(typeRef);
+            if (!baseName) continue;
+            if (!parentSet && !ctx.externClassParent.has(className)) {
+              ctx.externClassParent.set(className, baseName);
+              parentSet = true;
+            }
+            if (!isExternDeclaredLibName(baseName, libIndex)) {
+              collectMixinMembersLib(ctx, baseName, info, decl, visited, libIndex);
+            }
+          } else {
+            const baseType = ctx.checker.getTypeAtLocation(typeRef);
+            const baseName = baseType.getSymbol()?.name;
+            if (!baseName) continue;
+            if (!parentSet && !ctx.externClassParent.has(className)) {
+              // First extends type → record as parent for inheritance chain
+              ctx.externClassParent.set(className, baseName);
+              parentSet = true;
+            }
+            // If this base is NOT an extern class, it's a mixin — collect its members
+            if (!isExternalDeclaredClass(baseType, ctx.checker)) {
+              collectMixinMembers(ctx, baseType, info, decl, visited);
+            }
           }
         }
       }
@@ -1006,36 +1106,55 @@ function collectInterfaceMembers(
   iface: ts.InterfaceDeclaration,
   info: ExternClassInfo,
   locationNode: ts.Node,
+  libIndex?: LibDeclIndex,
 ): void {
   for (const member of iface.members) {
     // Method signatures
     if (ts.isMethodSignature(member) && member.name && ts.isIdentifier(member.name)) {
       const methodName = member.name.text;
       if (info.methods.has(methodName)) continue;
-      const sig = ctx.checker.getSignatureFromDeclaration(member);
-      if (sig) {
+      if (libIndex) {
+        // (#4218) Syntactic path — declared annotations only, no checker.
+        // Boolean results are already branded by mapLibTypeNodeToWasm
+        // (mirroring mapTsTypeToWasm), so no separate branding step is needed.
+        const scope = typeParamScopeOf(iface, member);
         const params: ValType[] = [{ kind: "externref" }];
         let requiredParams = 1;
         for (const p of member.parameters) {
-          const pt = ctx.checker.getTypeAtLocation(p);
-          params.push(mapTsTypeToWasm(pt, ctx.checker));
+          params.push(mapLibTypeNodeToWasm(p.type, libIndex, scope));
           if (!p.questionToken && !p.initializer) requiredParams++;
         }
-        const retType = ctx.checker.getReturnTypeOfSignature(sig);
-        // (#2770, S5b) Brand a boolean extern-method result at registration so the
-        // direct `methodInfo.results[0]` consumption path (extern.ts) is honest.
-        const results: ValType[] = isVoidType(retType)
+        const results: ValType[] = isVoidTypeNode(member.type)
           ? []
-          : [brandExternMethodResult(ctx, retType, mapTsTypeToWasm(retType, ctx.checker))];
+          : [mapLibTypeNodeToWasm(member.type, libIndex, scope)];
         info.methods.set(methodName, { params, results, requiredParams });
+      } else {
+        const sig = ctx.checker.getSignatureFromDeclaration(member);
+        if (sig) {
+          const params: ValType[] = [{ kind: "externref" }];
+          let requiredParams = 1;
+          for (const p of member.parameters) {
+            const pt = ctx.checker.getTypeAtLocation(p);
+            params.push(mapTsTypeToWasm(pt, ctx.checker));
+            if (!p.questionToken && !p.initializer) requiredParams++;
+          }
+          const retType = ctx.checker.getReturnTypeOfSignature(sig);
+          // (#2770, S5b) Brand a boolean extern-method result at registration so the
+          // direct `methodInfo.results[0]` consumption path (extern.ts) is honest.
+          const results: ValType[] = isVoidType(retType)
+            ? []
+            : [brandExternMethodResult(ctx, retType, mapTsTypeToWasm(retType, ctx.checker))];
+          info.methods.set(methodName, { params, results, requiredParams });
+        }
       }
     }
     // Property signatures
     if (ts.isPropertySignature(member) && member.name && ts.isIdentifier(member.name)) {
       const propName = member.name.text;
       if (info.properties.has(propName)) continue;
-      const propType = ctx.checker.getTypeAtLocation(member);
-      let wasmType = mapTsTypeToWasm(propType, ctx.checker);
+      let wasmType = libIndex
+        ? mapLibTypeNodeToWasm(member.type, libIndex, typeParamScopeOf(iface))
+        : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(member), ctx.checker);
       // (#2671) `RegExp.lastIndex` is a value-preserving data slot: §22.2.7.2
       // RegExpBuiltinExec reads it via `ToLength(? Get(R, "lastIndex"))` at exec
       // time — the spec stores whatever was assigned verbatim and coerces only
@@ -1086,8 +1205,9 @@ function collectInterfaceMembers(
     if (ts.isGetAccessorDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
       const propName = member.name.text;
       if (info.properties.has(propName)) continue;
-      const propType = ctx.checker.getTypeAtLocation(member);
-      const wasmType = mapTsTypeToWasm(propType, ctx.checker);
+      const wasmType = libIndex
+        ? mapLibTypeNodeToWasm(member.type, libIndex, typeParamScopeOf(iface, member))
+        : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(member), ctx.checker);
       // Check if there's a matching setter
       const hasSetter = iface.members.some(
         (m) => ts.isSetAccessorDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === propName,
@@ -1129,9 +1249,45 @@ function collectMixinMembers(
   }
 }
 
+/** (#4218) Syntactic twin of {@link collectMixinMembers}: recurse through the
+ * merged interface declarations of a non-extern mixin by NAME via the lib
+ * index — no checker. Same visited-set and traversal order. */
+function collectMixinMembersLib(
+  ctx: CodegenContext,
+  mixinName: string,
+  info: ExternClassInfo,
+  locationNode: ts.Node,
+  visited: Set<string>,
+  libIndex: LibDeclIndex,
+): void {
+  if (visited.has(mixinName)) return;
+  visited.add(mixinName);
+
+  for (const d of libIndex.interfaces.get(mixinName) ?? []) {
+    collectInterfaceMembers(ctx, d, info, locationNode, libIndex);
+    // Also walk this mixin's extends (for deeply nested mixins)
+    if (d.heritageClauses) {
+      for (const clause of d.heritageClauses) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const typeRef of clause.types) {
+          const baseName = heritageBaseName(typeRef);
+          if (baseName && !isExternDeclaredLibName(baseName, libIndex)) {
+            collectMixinMembersLib(ctx, baseName, info, locationNode, visited, libIndex);
+          }
+        }
+      }
+    }
+  }
+}
+
 // ── Declared globals (e.g. declare const document: Document) ────────
 
-export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFile, userFile: ts.SourceFile): void {
+export function collectDeclaredGlobals(
+  ctx: CodegenContext,
+  libFile: ts.SourceFile,
+  userFile: ts.SourceFile,
+  libIndex?: LibDeclIndex,
+): void {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
   // #2520 — also track names used as a VALUE (vs. a pure call/new callee or a
@@ -1182,14 +1338,27 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
       const name = decl.name.text;
       if (!referencedNames.has(name)) continue; // only register used globals
       if (ctx.declaredGlobals.has(name)) continue;
-      const type = ctx.checker.getTypeAtLocation(decl);
+      // (#4218) Extern-class classification + declared-type class name:
+      // syntactic on the lib path (`declare var document: Document` → the
+      // TypeReference target's lib declarations), checker-based otherwise.
+      let isExternClassGlobal: boolean;
+      let declaredClassName: string | undefined;
+      if (libIndex) {
+        declaredClassName =
+          decl.type && ts.isTypeReferenceNode(decl.type) ? typeRefName(decl.type.typeName) : undefined;
+        isExternClassGlobal = declaredClassName !== undefined && isExternDeclaredLibName(declaredClassName, libIndex);
+      } else {
+        const type = ctx.checker.getTypeAtLocation(decl);
+        isExternClassGlobal = isExternalDeclaredClass(type, ctx.checker);
+        declaredClassName = type.getSymbol()?.name;
+      }
       // `window` is declared by lib.dom as `Window & typeof globalThis`, so
       // its intersection type has no single external-class symbol even though
       // it is a real ambient host value. The same rule applies to the other
       // browser-only ambient variables below. Register those by their proven
       // lib declaration/name; otherwise a bare `window.event` read silently
       // lowers to `ref.null` (ReactDOM's update-priority path).
-      if (!isExternalDeclaredClass(type, ctx.checker) && !DOM_ONLY_GLOBALS.has(name)) continue;
+      if (!isExternClassGlobal && !DOM_ONLY_GLOBALS.has(name)) continue;
       // #2907 — under no-JS-host mode (standalone as well as
       // strictNoHostImports/wasi) there is no host to satisfy
       // `env.global_<Name>`. `TypeError`, `Error`, `RegExp`, `Reflect`, the
@@ -1214,8 +1383,7 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
         // (#2856) Record the extern class of the global's declared type so
         // the IR host-extern path can type the `call global_<name>` handle
         // as `IrType.extern { className }` and dispatch member access on it.
-        const className = type.getSymbol()?.name;
-        ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className });
+        ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className: declaredClassName });
       }
     }
   }

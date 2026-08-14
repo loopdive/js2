@@ -13,6 +13,28 @@ updated: 2026-08-13
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/compiler.ts
+  # Kill-order item 1/4 dual-path slice (2026-08-14): the lib walk gains a
+  # syntactic branch NEXT TO the checker branch (extern-declarations), and
+  # from-ast/integration/index thread the oracle option. The checker branches
+  # are deleted in Phase 3, returning the LOC.
+  - src/codegen/extern-declarations.ts
+  - src/ir/from-ast.ts
+  - src/codegen/index.ts
+  - src/ir/integration.ts
+# Same slice: a few lines of index construction / option threading inside the
+# existing drivers (no new logic in the god-functions themselves).
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/ir/from-ast.ts::lowerBinary
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
+# Kill-order item 1 (syntactic lib walk) REMOVES ~254k runtime checker calls;
+# the +1 static ctxChecker count in extern-declarations.ts is an inlining
+# artifact of restructuring the user-path else-branches (net behavior change
+# is a large DECREASE in checker usage — see the 2026-08-14 audit section).
+oracle-ratchet-allow:
+  - src/codegen/extern-declarations.ts
 priority: medium
 horizon: xl
 feasibility: hard
@@ -190,6 +212,37 @@ Findings:
   backend option**: `ir/from-ast.ts` (×4), `ir/fmod-selection.ts:36`,
   `ir/update-retyped-bindings.ts:24` — they hit TS5 even under
   `oracleBackend: "inhouse"`.
+
+### Kill order items 1 + 4 — LANDED (2026-08-14)
+
+- **Item 1 (lib walk → syntactic)**: `src/codegen/lib-decl-index.ts` — a
+  one-shot name-keyed index over the program's `lib.*.d.ts` files plus a
+  TypeNode→ValType mapper mirroring `mapTsTypeToWasm` decision-for-decision
+  (lib files are fully annotated, so every checker query in the walk was
+  answerable from syntax). The lib-file scan in `extern-declarations.ts`
+  now passes a `libIndex` and issues ZERO checker calls; the user-file
+  `declare` path keeps the checker (input-driven, cheap). Same traversal
+  order ⇒ identical import/type tables.
+- **Item 4 (constructor bypasses)**: `oracle?: TypeOracle` threaded through
+  `AstToIrOptions`/`LowerCtx` (from-ast) and `fmodRefFor`; integration
+  passes `ctx.oracle`, so the former ad-hoc `new TsCheckerOracle(checker)`
+  sites now honor `oracleBackend`. Ad-hoc wrap remains only as no-oracle
+  fallback. (`update-retyped-bindings.ts` already accepted an oracle; its
+  module-bindings caller still passes a checker — part of the tail.)
+
+Measured (same corpus/audit as above):
+
+| backend | before | after | Δ |
+| --- | --- | --- | --- |
+| `checker` | 271,405 | 35,403 | **−87 %** |
+| `inhouse` | 263,748 | 27,658 | **−89.5 %** |
+
+Wasm output byte-identical to the pre-change baseline on all 21 corpus
+inputs, BOTH backends. `type-mapper.ts getBaseConstraintOfType` (item 2)
+disappeared with the lib walk — it was only ever called from it. The
+remaining traffic is now dominated by `ir/module-bindings.ts`
+`getSymbolAtLocation`/`getResolvedSignature` (binder-shaped work → Phase 1
+`valueDeclarationOf` territory) plus the ~25-site tail.
 
 ### Measured kill order (refines the Plan phases above)
 

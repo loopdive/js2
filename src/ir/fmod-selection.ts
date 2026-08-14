@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { TsCheckerOracle } from "../checker/oracle.js";
+import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { staticIntegerRange } from "../codegen/analysis/static-numeric-range.js";
 import { FMOD_EARLY_MAGNITUDE_FN, FMOD_FN } from "../codegen/fmod.js";
 import { ts } from "../ts-api.js";
@@ -27,13 +27,16 @@ function numericLiteralValue(expression: ts.Expression): number | undefined {
 }
 
 /** Select the exact remainder helper without matching source or benchmark identities. */
-export function fmodRefFor(rhs: ts.Expression, checker?: ts.TypeChecker) {
+export function fmodRefFor(rhs: ts.Expression, checker?: ts.TypeChecker, oracle?: TypeOracle) {
   if (process.env.JS2WASM_FMOD_EARLY_MAGNITUDE === "0") return irIntrinsicFuncRef(FMOD_FN);
 
   const literal = numericLiteralValue(rhs);
   let divisor = literal !== undefined && Number.isSafeInteger(literal) ? literal : undefined;
-  if (divisor === undefined && checker) {
-    const range = staticIntegerRange({ oracle: new TsCheckerOracle(checker) }, rhs);
+  // (#4218) Prefer the compile's backend-selected oracle; the ad-hoc
+  // TsCheckerOracle wrap remains only as the no-oracle fallback.
+  const rangeOracle = oracle ?? (checker ? new TsCheckerOracle(checker) : undefined);
+  if (divisor === undefined && rangeOracle) {
+    const range = staticIntegerRange({ oracle: rangeOracle }, rhs);
     if (range && range.min === range.max) divisor = range.min;
   }
   const symbol =
