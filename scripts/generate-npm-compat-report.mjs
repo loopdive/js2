@@ -44,6 +44,7 @@ import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
 import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
 import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
+import { runHarness as runReduxUpstreamSuite } from "../tests/dogfood/redux-upstream-suite.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
@@ -1858,9 +1859,11 @@ for (const entry of NPM_COMPAT_CATALOG) {
           ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })
           : entry.name === "uuid"
             ? runUuidUpstreamSuite
-            : entry.name === "moment"
-              ? runMomentUpstreamSuite
-              : null;
+            : entry.name === "redux"
+              ? runReduxUpstreamSuite
+              : entry.name === "moment"
+                ? runMomentUpstreamSuite
+                : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
@@ -1888,7 +1891,6 @@ for (const entry of NPM_COMPAT_CATALOG) {
       }
     : null;
   const tests =
-    workload?.tests ??
     (catalogUpstreamReport
       ? {
           kind: "upstream-suite",
@@ -1905,7 +1907,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             catalogUpstreamReport.extraction?.upstreamTestsSeen ??
             catalogUpstreamReport.results?.scored ??
             null,
-          harnessIncompatible: 0,
+          harnessIncompatible: catalogUpstreamReport.extraction?.nativeFailed ?? 0,
           quarantined: 0,
           sourceIssue: 3995,
           upstreamPin: {
@@ -1913,8 +1915,10 @@ for (const entry of NPM_COMPAT_CATALOG) {
             tag: catalogUpstreamReport.upstreamSuite?.tag ?? null,
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
+          packageApiWorkload: workload?.tests ?? undefined,
         }
       : null) ??
+    workload?.tests ??
     upstreamTests ??
     (hasApiWorkload
       ? {

@@ -221,3 +221,20 @@ scores and pins directly. Remaining packages with no runtime adapter stay
 explicitly `adapter-pending`; the next slices should expand the unified runner
 in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
 large compiler/tooling suites).
+
+## 2026-08-14 Redux complete runtime suite
+
+Redux 5.0.1 now uses all nine original `*.spec.ts` runtime files from
+`reduxjs/redux@v5.0.1` (commit
+`50b010210df25c470386f7e39a9389a4a77b3842`). All 82 callbacks register and
+all nine generated test modules compile to valid Wasm. The synchronous Node
+oracle reproduces 78 callbacks; the four promise-returning callbacks are
+explicitly harness-incompatible until the shared runner supports async Wasm
+tests. The measured Wasm baseline is **5/78**: ten callbacks reach an assertion
+and diverge, while 63 encounter a module-level runtime trap in the larger
+`bindActionCreators`, `combineReducers`, and `createStore` files. The existing
+1/1 package API workload remains visible as a separate secondary result.
+
+Vitest's spy/assertion surface and the one RxJS protocol test use narrow test
+infrastructure shims; the original callback bodies and inputs are unchanged.
+The next unadapted package remains Axios.

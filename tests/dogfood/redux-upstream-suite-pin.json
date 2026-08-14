@@ -1,0 +1,21 @@
+{
+  "name": "redux",
+  "version": "5.0.1",
+  "repo": "https://github.com/reduxjs/redux.git",
+  "tag": "v5.0.1",
+  "commit": "50b010210df25c470386f7e39a9389a4a77b3842",
+  "testFileCount": 9,
+  "testFilePathSha256": "48798789f3f825fd0d4fd18dd1a7017c642de12e5e1587fff76db217dd3d5245",
+  "registrationSites": 82,
+  "selectedFiles": [
+    "test/applyMiddleware.spec.ts",
+    "test/bindActionCreators.spec.ts",
+    "test/combineReducers.spec.ts",
+    "test/compose.spec.ts",
+    "test/createStore.spec.ts",
+    "test/utils/formatProdErrorMessage.spec.ts",
+    "test/utils/isAction.spec.ts",
+    "test/utils/isPlainObject.spec.ts",
+    "test/utils/warning.spec.ts"
+  ]
+}

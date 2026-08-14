@@ -20,7 +20,7 @@ function run(name: string) {
 }
 
 describe("small npm package upstream suites", () => {
-  it("pins complete clsx and cookie unit-file inventories", () => {
+  it("pins complete clsx, cookie, and Redux unit-file inventories", () => {
     expect(pin("clsx")).toMatchObject({
       tag: "v2.1.1",
       commit: "925494cf31bcd97d3337aacd34e659e80cae7fe2",
@@ -31,6 +31,12 @@ describe("small npm package upstream suites", () => {
       tag: "v2.0.1",
       commit: "51c485421a95ee796de6d8dab53a5ade0a20db8a",
       testFileCount: 4,
+    });
+    expect(pin("redux")).toMatchObject({
+      tag: "v5.0.1",
+      commit: "50b010210df25c470386f7e39a9389a4a77b3842",
+      testFileCount: 9,
+      registrationSites: 82,
     });
   });
 
@@ -54,5 +60,20 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.results.scored).toBe(63_672);
     expect(report.results.passed).toBeGreaterThanOrEqual(63_625);
+  });
+
+  const reduxHeavy = process.env.DOGFOOD_REDUX_UPSTREAM_SUITE === "1" ? it : it.skip;
+  reduxHeavy("runs Redux's complete original runtime callback inventory", { timeout: 600_000 }, () => {
+    const report = run("redux");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 9,
+      filesSelected: 9,
+      testsRegistered: 82,
+      nativePassed: 78,
+      nativeFailed: 4,
+    });
+    expect(report.compile).toMatchObject({ modules: 9, succeeded: 9, validated: 9 });
+    expect(report.results).toMatchObject({ scored: 78 });
+    expect(report.results.passed).toBeGreaterThanOrEqual(5);
   });
 });
