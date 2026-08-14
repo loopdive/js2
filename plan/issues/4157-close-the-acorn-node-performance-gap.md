@@ -4838,3 +4838,40 @@ newly-direct calls under `JS2WASM_CALL_DISPATCH_IC=1`; (2) the
 `effectiveSize` of `__closure_685__typed_this` after cold-subtraction, which
 decides whether a multi-caller/non-leaf rule could actually admit it; (3) any
 wall A/B.
+
+## 2026-08-15 (48) — the `hot` rule: closing the no-rule hole (entry 47's lever), flag-gated
+
+Implemented the rule entry 47 identified. `JS2WASM_IR_INLINE=...,hot` (token
+`hot`, ceiling `hotmax=N`, default 60) admits a callee when
+`weight >= LOOP_WEIGHT && effSize <= hotMax * max(1, log10(weight))` — the
+same hotness bar and weight-scaled budget as `loop-leaf`, with the two gates
+that created the hole removed:
+
+- **caller count does not gate** (`single` needs `callerCount == 1`; the top
+  candidates have hundreds to thousands of callers),
+- **leaf-ness does not gate** (`loop` needs a call-free body; nested calls in
+  the copied body stay calls — ONE pass never chains — so non-leaf admission
+  adds no new hazard class, only size, which `hotMax` × the shared growth cap
+  bound).
+
+Deliberately NOT in the `on` preset — measure first (the #4455 pattern:
+flag-gated in, numbers to the lead, separate flip PR).
+
+Verbose no-rule declines now carry per-callee facts in the aggregation key
+(`<name> no-rule eff=<n> leaf=<0|1> callers=<n>`), so a single
+`report,verbose` compile answers entry 47's open measurement (2) for every
+candidate at once — including `__closure_685__typed_this`'s post-subtraction
+effectiveSize.
+
+Fresh baseline reproduction on current main (`1185f7af2`-era, opt=3):
+`sites=47411 inlined=8270` · `no-rule=33984` (helper 32976, user 817) · top
+candidates by site count: `__str_equals` 2672 · `__unbox_number` 1795 ·
+`__is_truthy` 1652 · `__objvec_push` 1601 · `__box_number` 1553 ·
+`__extern_get` 1435 (4.0 % of runtime per entry 46's profile) ·
+`__box_boolean` 1424 · `__to_number` 1063.
+
+Measurement protocol (next): (a) positive control — `JS2WASM_IR_INLINE=hot,poison`
+must move the acorn checksum off 422 (proves hot-inlined bodies execute);
+(b) correctness — `on,hot` checksum stays 422; (c) 4-leg order-reversed wall
+A/B on standalone-dynamic, `wasmOptimized: true` verified per leg; (d) binary
+size delta. Then a `hotmax` sweep if (c) is a win.
