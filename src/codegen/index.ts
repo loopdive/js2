@@ -300,6 +300,7 @@ import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allo
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
 import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
+import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5311,6 +5312,13 @@ export function generateModule(
     // extraction fail and the pass decline wholesale. DEFAULT OFF.
     inlineExternGetCallSites(ctx);
 
+    // (#4157) Devirtualize the filled `__call_m_<name>_<arity>` dispatchers:
+    // copy each one's outermost guard + hit arm to its plain `call` sites,
+    // with the unmodified dispatcher call as the miss arm. MUST run after
+    // every `__call_m_*` body fill (the pass reads the final fill shape) and
+    // BEFORE dead elimination / the census installs. DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
+
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
     fillExternIsArray(ctx);
@@ -7669,6 +7677,11 @@ export function generateMultiModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT OFF.
     inlineExternGetCallSites(ctx);
+
+    // (#4157) `__call_m_*` devirtualization — same finalize point as the
+    // single-source pipeline above (after all dispatcher fills, before
+    // dead-elim / census). DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone

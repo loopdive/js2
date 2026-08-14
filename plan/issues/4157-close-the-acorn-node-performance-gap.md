@@ -20,6 +20,10 @@ loc-budget-allow:
   # one-line pass invocations, one per compile pipeline. The pass itself is a
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
+  # (#4157 call-dispatch devirtualization, JS2WASM_CALL_DISPATCH_IC) +13 lines
+  # of WIRING: one import plus one guarded pass invocation per compile
+  # pipeline, immediately after inlineExternGetCallSites. The pass itself is a
+  # new subsystem module (src/codegen/call-dispatch-ic.ts).
   - src/codegen/index.ts
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
