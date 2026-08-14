@@ -193,6 +193,7 @@
     "commit": "6a24bd65b72c43207c36ce61b54e1f5833486906",
     "cacheKey": "webpack",
     "compileScript": "dogfood:webpack",
+    "suiteScript": "dogfood:webpack-upstream-suite",
     "inventory": {
       "directory": "test",
       "include": "^test/[^/]+\\.unittest\\.js$",

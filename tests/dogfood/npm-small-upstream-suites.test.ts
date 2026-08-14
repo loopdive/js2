@@ -80,6 +80,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 41,
       registrationSites: 668,
     });
+    expect(pin("webpack")).toMatchObject({
+      tag: "v5.109.2",
+      commit: "6a24bd65b72c43207c36ce61b54e1f5833486906",
+      testFileCount: 98,
+      registrationSites: 1357,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -224,5 +230,20 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile.modules).toBe(3);
     expect(report.results.scored).toBe(6);
+  });
+
+  const webpackHeavy = process.env.DOGFOOD_WEBPACK_UPSTREAM_SUITE === "1" ? it : it.skip;
+  webpackHeavy("runs webpack's selected original utility units", { timeout: 600_000 }, () => {
+    const report = run("webpack");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 98,
+      filesSelected: 3,
+      filesDeferred: 95,
+      testsRegistered: 16,
+      nativePassed: 16,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(3);
+    expect(report.results.scored).toBe(16);
   });
 });

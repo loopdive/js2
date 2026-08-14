@@ -372,3 +372,23 @@ React, DOM, snapshot, SSR, Stylis, and larger object-graph files remain
 explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
+
+## 2026-08-14 webpack synchronous utility slice
+
+webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and
+1,357 static registrations from `webpack/webpack@v5.109.2` (commit
+`6a24bd65b72c43207c36ce61b54e1f5833486906`). The first runtime adapter runs
+the original `ArrayHelpers`, `formatSize`, and `objectToMap` unit files against
+their matching published CommonJS implementations without changing callbacks
+or inputs.
+
+All three generated modules compile and validate. Native Node passes **16/16**
+callbacks and Wasm passes **13/16**. Both `ArrayHelpers.groupBy` callbacks trap
+with `illegal cast` on their nested array results. The remaining failure is
+`formatSize(undefined)`, where Wasm produces `0 bytes` instead of Node's
+`unknown size`; the `objectToMap` callback passes.
+
+Compiler, filesystem, loader, snapshot, async, and larger graph files remain
+explicit deferred inventory. The npm-compat generator invokes the adapter
+directly so the merge-only refresh publishes numeric results and cannot fall
+back to `adapter pending`.
