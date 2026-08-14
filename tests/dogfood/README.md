@@ -129,6 +129,7 @@ then compares its result with the same operation in native Node.
 | **moment upstream suite**               | #3995 | `moment.js`               | pinned original QUnit callbacks; complete core/locale inventory tracked       |
 | **stylelint upstream suite**            | #3995 | `lib/utils/*.mjs`         | pinned original utility-unit callbacks; complete `lib/**/__tests__` inventory tracked |
 | **three upstream suite**                | #3995 | `src/math/MathUtils.js`   | pinned original QUnit module; complete `test/unit/src` inventory tracked      |
+| **jsdom upstream suite**                | #3995 | `lib/jsdom/virtual-console.js` | pinned original VirtualConsole callbacks; complete `test/api` inventory tracked |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)

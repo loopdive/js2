@@ -169,6 +169,7 @@
     "dogfood:react-dom": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package react-dom",
     "dogfood:jsdom": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package jsdom",
     "dogfood:jsdom-workload": "npx tsx tests/dogfood/jsdom-harness.mjs",
+    "dogfood:jsdom-upstream-suite": "node --import tsx tests/dogfood/jsdom-upstream-suite.mjs",
     "dogfood:webpack": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package webpack",
     "dogfood:uuid": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package uuid",
     "dogfood:uuid-upstream-suite": "node --import tsx tests/dogfood/uuid-upstream-suite.mjs",

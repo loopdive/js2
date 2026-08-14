@@ -161,6 +161,7 @@
     "commit": "6584485f094d5b271553005b68804c93a455c002",
     "cacheKey": "jsdom",
     "compileScript": "dogfood:jsdom",
+    "suiteScript": "dogfood:jsdom-upstream-suite",
     "inventory": {
       "directory": "test/api",
       "include": "^test/api/[^/]+\\.js$",

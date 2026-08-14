@@ -47,6 +47,7 @@ import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-up
 import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
 import { runHarness as runReduxUpstreamSuite } from "../tests/dogfood/redux-upstream-suite.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
+import { runHarness as runJsdomUpstreamSuite } from "../tests/dogfood/jsdom-upstream-suite.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runPrettierUpstreamSuite } from "../tests/dogfood/prettier-upstream-suite.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
@@ -1912,15 +1913,17 @@ for (const entry of NPM_COMPAT_CATALOG) {
             ? runUuidUpstreamSuite
             : entry.name === "redux"
               ? runReduxUpstreamSuite
-              : entry.name === "axios"
-                ? runAxiosUpstreamSuite
-                : entry.name === "moment"
-                  ? runMomentUpstreamSuite
-                  : entry.name === "stylelint"
-                    ? runStylelintUpstreamSuite
-                    : entry.name === "three"
-                      ? runThreeUpstreamSuite
-                      : null;
+              : entry.name === "jsdom"
+                ? runJsdomUpstreamSuite
+                : entry.name === "axios"
+                  ? runAxiosUpstreamSuite
+                  : entry.name === "moment"
+                    ? runMomentUpstreamSuite
+                    : entry.name === "stylelint"
+                      ? runStylelintUpstreamSuite
+                      : entry.name === "three"
+                        ? runThreeUpstreamSuite
+                        : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite

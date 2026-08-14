@@ -330,3 +330,25 @@ those measured zeroes and all 231 deferred browser, WebGL, DOM, loader, and
 larger object-graph files. The npm-compat generator invokes the suite directly,
 so the merge-only refresh publishes the numeric result and upstream pin rather
 than leaving Three.js at `adapter pending`.
+
+## 2026-08-14 jsdom VirtualConsole slice
+
+jsdom 30.0.1 now verifies the complete 17-file `test/api/*.js` inventory and
+all 318 static registration sites from `jsdom/jsdom@v30.0.1` (commit
+`6584485f094d5b271553005b68804c93a455c002`). The first runtime adapter selects
+six unchanged synchronous callbacks from `virtual-console.js` which exercise
+`VirtualConsole.forwardTo()` without constructing a DOM. They run against the
+matching published `lib/jsdom/virtual-console.js`; its Node `events` dependency
+is left at the platform boundary rather than replaced with a harness fake.
+
+The selected module compiles and validates in about half a second. Native Node
+passes **6/6** callbacks and Wasm passes **1/6**. Each of the five failures
+reports `on is not a function`, isolating the remaining gap to callable method
+projection on the host-provided `EventEmitter`; the invalid-option callback
+passes because it does not need to register a listener.
+
+The remaining 312 registrations, including full DOM construction, resource
+loading, and asynchronous cases, remain explicit deferred coverage. The
+npm-compat generator invokes this adapter directly and publishes its numeric
+pass/total result on merge; the workflow guard rejects a missing or pending
+jsdom suite row.

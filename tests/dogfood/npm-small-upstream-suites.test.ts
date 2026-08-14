@@ -68,6 +68,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 232,
       registrationSites: 1313,
     });
+    expect(pin("jsdom")).toMatchObject({
+      tag: "v30.0.1",
+      commit: "6584485f094d5b271553005b68804c93a455c002",
+      testFileCount: 17,
+      registrationSites: 318,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -180,5 +186,22 @@ describe("small npm package upstream suites", () => {
     expect(report.compile.modules).toBe(1);
     expect(report.results.scored).toBe(18);
     expect(report.results.passed).toBe(0);
+  });
+
+  const jsdomHeavy = process.env.DOGFOOD_JSDOM_UPSTREAM_SUITE === "1" ? it : it.skip;
+  jsdomHeavy("runs jsdom's selected original VirtualConsole callbacks", { timeout: 600_000 }, () => {
+    const report = run("jsdom");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 17,
+      filesSelected: 1,
+      filesDeferred: 16,
+      testsRegistered: 6,
+      nativePassed: 6,
+      nativeFailed: 0,
+      callbacksSelected: 6,
+      callbacksDeferred: 312,
+    });
+    expect(report.compile.modules).toBe(1);
+    expect(report.results.scored).toBe(6);
   });
 });
