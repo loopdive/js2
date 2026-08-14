@@ -1,13 +1,53 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+/**
+ * (#4415) One shared encoder for names. `new TextEncoder()` per `name()` call
+ * allocated one object per import, export, function name and custom-section
+ * key in the module.
+ */
+const NAME_ENCODER = new TextEncoder();
+
 export class WasmEncoder {
-  private buf: number[] = [];
+  /**
+   * (#4415) A growable `Uint8Array`, not `number[]`.
+   *
+   * This was a boxed JS array pushed one byte at a time, with `finish()`
+   * copying the whole thing into a `Uint8Array`. A CPU profile of 40
+   * steady-state test262 compiles put `byte()` at **5.1% of total compile
+   * time** — the largest non-GC entry — with the garbage collector at 10.2%,
+   * fed largely by this array's repeated growth and the boxed elements.
+   *
+   * `section()` makes it worse than linear: it encodes into a sub-encoder,
+   * finishes it, then copied the result back one byte at a time, so nested
+   * sections re-copied their payload per level. `bytes()` is now a bulk
+   * `set()`.
+   */
+  private buf = new Uint8Array(1024);
+  private len = 0;
+
+  private ensure(extra: number): void {
+    const need = this.len + extra;
+    if (need <= this.buf.length) return;
+    let cap = this.buf.length * 2;
+    while (cap < need) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.buf.subarray(0, this.len));
+    this.buf = next;
+  }
 
   byte(b: number): void {
-    this.buf.push(b & 0xff);
+    if (this.len === this.buf.length) this.ensure(1);
+    this.buf[this.len++] = b & 0xff;
   }
 
   bytes(bs: number[] | Uint8Array): void {
-    for (const b of bs) this.byte(b);
+    this.ensure(bs.length);
+    if (bs instanceof Uint8Array) {
+      this.buf.set(bs, this.len);
+      this.len += bs.length;
+      return;
+    }
+    for (const b of bs) this.buf[this.len++] = b & 0xff;
   }
 
   /** Unsigned LEB128 */
@@ -81,7 +121,7 @@ export class WasmEncoder {
 
   /** UTF-8 string with length prefix */
   name(s: string): void {
-    const encoded = new TextEncoder().encode(s);
+    const encoded = NAME_ENCODER.encode(s);
     this.u32(encoded.length);
     this.bytes(encoded);
   }
@@ -104,15 +144,20 @@ export class WasmEncoder {
 
   /** Get current buffer length */
   get length(): number {
-    return this.buf.length;
+    return this.len;
   }
 
   /** Get current write position (alias for length, used by relocation tracking) */
   get position(): number {
-    return this.buf.length;
+    return this.len;
   }
 
+  /**
+   * A COPY of the bytes written so far. Deliberately `slice`, not `subarray`:
+   * the previous implementation returned a fresh array, and callers (notably
+   * `section()`) keep using the encoder afterwards, so a view would alias.
+   */
   finish(): Uint8Array {
-    return new Uint8Array(this.buf);
+    return this.buf.slice(0, this.len);
   }
 }

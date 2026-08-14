@@ -18,6 +18,7 @@ import {
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
+import { resetDerivationFlagCache } from "./derivation-flags.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
 import type { CodegenOptions } from "./codegen/context/types.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
@@ -1322,6 +1323,14 @@ export function compileSourceSync(
   // Without this, the depth accumulates across compilations in the same process
   // (e.g., test262 worker pool), causing false "depth exceeded" errors.
   resetCompileDepth();
+
+  // (#4415) Re-read the derivation flags once for this compile instead of on
+  // every predicate call. `process.env` is ~85x slower than a cached boolean
+  // and these predicates run in the hot lowering path. Resetting HERE — the one
+  // choke point every compile passes through, including the re-entrant
+  // runtime-eval path — is what keeps the ~244 test sites that set and delete
+  // these variables between compiles working.
+  resetDerivationFlagCache();
 
   // #2146 — fail fast if any codegen delegate was never wired, instead of
   // throwing an obscure error only when the relevant feature is exercised. This entry pulls
