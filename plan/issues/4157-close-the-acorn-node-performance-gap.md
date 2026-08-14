@@ -4753,14 +4753,39 @@ Exactly one line, and it is an ACCEPT. `__closure_355` ← `pp.fullCharCodeAt`
 generic wrapper — and its effective size was **within** the 400-instruction
 budget. There is no size-budget decline to report.
 
-That is in direct tension with the profile's "called 100% DIRECTLY from
-`__closure_686__typed_this`", and the tension is the actual finding: whatever
-`__closure_355__typed_this` costs in the profile, it is reached by a path
-`ir-inline`'s pre-pass call-graph did not count as a direct `call`. Resolving
-that — element-segment/`ref.func` reachability, the second lifted copy
-(`__closure_685`/`__closure_686` are a second `fullCharCodeAt` /
-`fullCharCodeAtPos` pair lifted from the same source lines 5479/5486), or a
-`wasm-opt` rename — is the next step and is NOT yet done.
+That looked like a contradiction with the profile's "called 100 % DIRECTLY
+from `__closure_686__typed_this`". **It is not — the profile is pointing at
+the WRONG TWIN.** Disassembling a name-preserving `optimize:0` build
+(`wasm-dis --all-features`) resolves it exactly:
+
+```
+$ grep -c '(call $__closure_355__typed_this' o0.wat   →  0
+$ grep -c '(call $__closure_685__typed_this' o0.wat   →  31
+```
+
+`pp.fullCharCodeAt` @5479 is lifted TWICE — `__closure_355` and
+`__closure_685` — as is `pp.fullCharCodeAtPos` @5486 (`__closure_356` /
+`__closure_686`). `__closure_355__typed_this` has **zero** call sites: its one
+caller was its own generic wrapper, `ir-inline` inlined it there, and the body
+survives to emission only because **`ir-inline` runs AFTER dead-elim (step 9
+vs step 6), so a function it strands is never reclaimed** — a small standing
+size cost worth its own look. The LIVE function is
+`__closure_685__typed_this`, and `__closure_686__typed_this` calls it, exactly
+as the profile says.
+
+**And the live twin lands squarely in the `no-rule` bucket.** It has 31 direct
+call sites (`single-caller` needs 1) and it is NOT a leaf — its body calls
+`__to_number` ×2, `__str_flatten` ×2, `__box_number` ×2, `__unbox_number`,
+`__get_member_pos__f64` and `__call_m_fullCharCodeAt_1` (`loop-leaf` needs a
+call-free body). Its folded-WAT body is ~721 lines, so a budget question is
+live too, but the rules never get that far: **multi-caller AND non-leaf is
+declined before any budget is consulted.**
+
+So the task's instinct was right and its stated reason was wrong. The lever is
+a rule admitting small hot multi-caller non-leaf callees — not a new pass, and
+not a size budget on `charCodeAt` lowering. The ~721-line body does mean such
+a rule needs the `effectiveSize` cold-subtraction to do real work on this
+callee; that is unmeasured.
 
 Baseline `ir-inline` apply stats, for reference:
 
@@ -4787,7 +4812,29 @@ read the absence as a null.
 ### Handoff state
 
 Branch `impl-post-devirt-inline`. No compiler source changed — this entry is
-the whole deliverable so far. Scratch driver (gitignored) at
-`.tmp/compile-acorn.mjs`: compiles standalone acorn with
-`preserveDebugNames`, honours `ACORN_OPT`, prints bytes + sha256. One compile
-is ~110 s.
+the whole deliverable. Scratch driver (gitignored) at `.tmp/compile-acorn.mjs`:
+compiles standalone acorn with `preserveDebugNames`, honours `ACORN_OPT`,
+prints bytes + sha256.
+
+**Nothing under `.tmp/` survives a container restart** — the `optimize:0`
+name-preserving binary and its `.wat` are gone with the box. To rebuild the
+evidence above from scratch (~110 s compile, ~60 s disassembly, ~28 MB of
+WAT):
+
+```bash
+ACORN_OPT=0 JS2WASM_CLOSURE_NAME_MAP=1 NODE_OPTIONS=--max-old-space-size=6144 \
+  node --import tsx .tmp/compile-acorn.mjs .tmp/o0.wasm 2> .tmp/o0.err
+node_modules/.bin/wasm-dis --all-features .tmp/o0.wasm -o .tmp/o0.wat
+grep -c '(call $__closure_685__typed_this' .tmp/o0.wat   # 31
+grep -c '(call $__closure_355__typed_this' .tmp/o0.wat   # 0
+```
+
+Note `__closure_*` numbering is not stable across compiler revisions — read
+the live pair off `[js2:closure-map]` in `.tmp/o0.err` rather than assuming
+355/685.
+
+Still NOT measured, in priority order: (1) whether `-O4` inlines the
+newly-direct calls under `JS2WASM_CALL_DISPATCH_IC=1`; (2) the
+`effectiveSize` of `__closure_685__typed_this` after cold-subtraction, which
+decides whether a multi-caller/non-leaf rule could actually admit it; (3) any
+wall A/B.
