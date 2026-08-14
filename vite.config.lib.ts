@@ -45,9 +45,14 @@ export default defineConfig({
       external: [
         "typescript",
         "binaryen",
-        // #1288: TS7 native-preview is opt-in via JS2WASM_TS7=1; mark all its
-        // subpaths as external so the lib build doesn't try to bundle them
-        // when ts-api.ts conditionally requires them.
+        // #1288: TS7 is opt-in via JS2WASM_TS7=1; mark all its subpaths as
+        // external so the lib build doesn't try to bundle them when
+        // ts-api.ts conditionally requires them. The package is installed
+        // under the `typescript7` alias (`typescript7@npm:typescript@^7`) so
+        // it can coexist with the typescript@5 runtime dependency; the old
+        // `@typescript/native-preview` pattern is kept so a consumer pinning
+        // the frozen preview package still resolves it as external.
+        /^typescript7(\/.*)?$/,
         /^@typescript\/native-preview(\/.*)?$/,
         ...nodeBuiltins,
       ],
