@@ -4875,3 +4875,41 @@ must move the acorn checksum off 422 (proves hot-inlined bodies execute);
 (b) correctness — `on,hot` checksum stays 422; (c) 4-leg order-reversed wall
 A/B on standalone-dynamic, `wasmOptimized: true` verified per leg; (d) binary
 size delta. Then a `hotmax` sweep if (c) is a win.
+
+### Gates run (same day)
+
+- **(a) PASSED**: `hot,poison` → `RuntimeError: unreachable` in the self-parse
+  — hot-inlined bodies are on the executed path; the mechanism is live.
+- **(b) PASSED**: `on,hot` → checksum **422**, suite **3,490 passed / 99.2 %**
+  — identical to baseline.
+- **Admissions** (`report,hot,verbose`): `hot=3577` (3,479 helper / 89 user /
+  9 other); inlined 8,272 → 11,849; addedInstrs 141,961 → 322,022 (cap 400k).
+  Per-callee: `__str_equals` 908 · `__unbox_number` 617 · `__str_flatten` 253
+  · `__to_number` 209 · `__nullish_to_null` 171 · `__extern_toString` 165 ·
+  `__to_bigint` 148 · `__extern_set_strict` 46. The leaf candidates
+  (`__is_truthy`/`__objvec_push`/`__box_number`) get 0 — their hot sites were
+  already loop-leaf-inlined; their remaining declines are cold sites, which is
+  correct. `__closure_685__typed_this` (entry 47's live twin) gets 0 as a
+  CALLEE (budget) but RECEIVES hot inlines (`__str_flatten`, `__to_number`).
+- **(c) IN FLIGHT**, after two instrument traps burned the first attempts:
+  1. **`JS2WASM_IR_INLINE=""` is an OFF-token** (`OFF_TOKENS` in
+     perf-flags.ts includes `""`). A base leg env-set to the empty string
+     measures the inliner fully OFF and credits the whole pass to the rule
+     under test. Base legs must pass explicit `on`.
+  2. **Self-contaminated box**: launching the A/B right after three stacked
+     compile jobs left load at 3.4 — the two BASE legs disagreed by 20 %
+     (48.3k vs 57.9k µs; the handoff's quality bar is ~6 % within-group), and
+     one leg's harness died silently after compile (banner-only stdout, clean
+     stderr, no JSON). Re-run is load-gated (< 1.5) with 6 alternating legs
+     and per-leg exit/size checks + empty-output retry.
+- **Not measured yet**: (d) size delta at -O4, the `hotmax` sweep, and entry
+  47's open (1) — Binaryen × `JS2WASM_CALL_DISPATCH_IC=1`.
+
+### Follow-ups noted while here
+
+- `__extern_get` effSize **16,553** at 1,435 declined sites (4.0 % of runtime
+  per entry 46) — no inline budget can ever admit it; the dynamic-lookup
+  bucket needs lookup devirtualization/specialisation (#4405 lane), not the
+  inliner. The two levers are cleanly complementary.
+- Entry 47's stranded-body observation stands: ir-inline runs after dead-elim,
+  so a twin it fully inlines away survives to emission as dead mass.
