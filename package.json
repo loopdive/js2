@@ -154,6 +154,7 @@
     "dogfood:eslint-workload": "npx tsx tests/dogfood/eslint-workload-harness.mjs",
     "dogfood:eslint-upstream-suite": "npx tsx tests/dogfood/eslint-upstream-suite.mjs",
     "dogfood:prettier": "npx tsx tests/dogfood/prettier-harness.mjs",
+    "dogfood:prettier-upstream-suite": "node --import tsx tests/dogfood/prettier-upstream-suite.mjs",
     "dogfood:react": "npx tsx tests/dogfood/react-harness.mjs",
     "dogfood:react-upstream-suite": "npx tsx tests/dogfood/react-upstream-suite.mjs",
     "dogfood:hono": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package hono",

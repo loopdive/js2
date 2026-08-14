@@ -1,0 +1,12 @@
+{
+  "name": "prettier",
+  "version": "3.8.1",
+  "repo": "https://github.com/prettier/prettier.git",
+  "tag": "3.8.1",
+  "commit": "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
+  "testFileCount": 20,
+  "testFilePathSha256": "79e27ef592b9fafc4369a6971417326b66b9d484d906d03087c2f849c6363f6b",
+  "registrationSites": 48,
+  "selectedFiles": ["tests/unit/ast-path.js", "tests/unit/errors.js", "tests/unit/make-string.js"],
+  "_note": "The complete tests/unit/*.js inventory is verified. This first adapter selects the three synchronous, self-contained files whose imports stay within Prettier's implementation. Async plugin loading, snapshots, node:path/url, external development dependencies, and larger document/parser graphs remain explicitly deferred. Test callback bodies and inputs are unchanged."
+}

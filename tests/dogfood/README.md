@@ -404,16 +404,20 @@ differential test exists.
 
 ```bash
 pnpm run dogfood:prettier
+pnpm run dogfood:prettier-upstream-suite
 pnpm run dogfood:react
 pnpm run dogfood:react-upstream-suite
 DOGFOOD_PRETTIER=1 pnpm test -- tests/dogfood/prettier.test.ts
 DOGFOOD_REACT_UPSTREAM=1 pnpm exec vitest run tests/dogfood/react-upstream-suite.test.ts
 ```
 
-The current Prettier entry exposes a compile blocker. React's package entry
-compiles to valid Wasm, but that alone is not reported as runtime correctness —
-`react-upstream-suite.mjs` is what actually tests it, by running **React's own
-unit tests**.
+The current Prettier package entry emits an invalid binary, while its separate
+upstream-suite lane compiles three self-contained original unit modules from the
+pinned GitHub release. All 8 selected callbacks pass in Node; 1/8 currently
+passes in Wasm. The full 20-file inventory and 17 deferred files remain visible
+in the report. React's package entry compiles to valid Wasm, but that alone is
+not reported as runtime correctness — `react-upstream-suite.mjs` is what actually
+tests it, by running **React's own unit tests**.
 
 ### How React's suite is reached
 
