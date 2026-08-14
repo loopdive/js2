@@ -4694,3 +4694,100 @@ Not accounted for: 1 `wasm_compile` + the 3 `assertion_fail` rows. The sweep
 compiles only the PRIMARY harness variant and never executes, so it cannot see a
 strict-rerun-only failure or a wrong-answer one; the merge-group re-run is the
 authoritative check on those.
+
+## 2026-08-14 (47) — WIP HANDOFF: the real phase order, and the premise that `ir-inline` runs BEFORE devirtualization is FALSE
+
+Task was "build a SECOND inlining pass that runs AFTER devirtualization".
+Establishing the phase order first — as the task asked — invalidated the
+premise it was built on. Recording that before anything is built, because it
+redirects the work.
+
+### (a) The REAL phase order (`src/codegen/index.ts`, the finalize block)
+
+Read off the source, not inferred. All line numbers at `d98ea58a8`:
+
+| # | line | pass | default |
+| --- | --- | --- | --- |
+| 1 | 5230-5279 | every `__call_m_*` / `__get_member_*` / `__set_member_*` body **fill** | — |
+| 2 | 5281-5283 | `inlineMemberGetCallSites` · `inlineIsTruthyCallSites` · `fuseBoxBooleanSinks` | ON · ON · OFF |
+| 3 | 5328-5329 | `inlineExternGetCallSites` · `inlineFlatStrCallSites` | ON |
+| 4 | 5336 | `inlineMemberSetCallSites` | OFF |
+| 5 | **5342** | **`inlineCallDispatchSites`** — the `__call_m_*` **devirtualization** | **OFF** |
+| 6 | 5575 | `eliminateDeadLayoutAndPlanProgramAbi` — authoritative funcIdx remap | — |
+| 7 | 5578/5581 | `repairStructTypeMismatches` · `peepholeOptimize` | — |
+| 8 | 5586-5587 | `installAllocCensus` · `installExecCensus` | OFF |
+| 9 | **5588** | **`inlineUserFunctions` (`ir-inline.ts`)** | **ON** |
+| 10 | 5596 | `finalizeFunctionPoisonPillCalls` | — |
+| 11 | 5601 | `ctx.indexSpaceFrozen = true` | — |
+| 12 | 5610-5611 | `repairCrossHierarchyOperands` · `stackBalance` | — |
+| 13 | 5619 | `fixupExternConvertAny` → **then** emit → **then** `src/optimize.ts` (`wasm-opt`) | — |
+
+**`ir-inline` is step 9. The devirtualization IC is step 5. `ir-inline`
+already runs AFTER devirtualization** — by 246 lines and, more importantly,
+across the dead-elim boundary, so every `call` it sees carries a final
+funcIdx. It is also not an "IR pass" in the `src/ir/` front-end sense: it is a
+wasm-level pass over `mod.functions`, four passes before `stackBalance`.
+
+So a "second inlining pass that runs after devirtualization" would occupy
+**the slot `ir-inline` already occupies**. The gap, if there is one, is in
+`ir-inline`'s ADMISSION RULES, not in the phase order. That is a different
+change with a different risk profile, and it should not be built as a second
+pass on the strength of an ordering claim that does not hold.
+
+### (c) `pp.fullCharCodeAt` is NOT declined on budget — it is ALREADY INLINED
+
+The stated hypothesis was that `this.input.charCodeAt(...)` lowers to
+string-runtime helper calls that inflate the body past the inliner's size
+budget. Measured on a baseline compile (`JS2WASM_IR_INLINE=on,verbose`,
+`JS2WASM_CLOSURE_NAME_MAP=1`, standalone, `optimize:3`, acorn 8.16.0,
+1,398,937 B):
+
+```
+[ir-inline]   single-caller: __closure_355__typed_this -> __closure_355
+```
+
+Exactly one line, and it is an ACCEPT. `__closure_355` ← `pp.fullCharCodeAt`
+(closure-name map). The `single-caller` rule requires `callerCount == 1 &&
+!addressTaken && effSize <= 400`, so at ir-inline time the typed twin had
+**exactly one direct caller in the whole module** — `__closure_355`, its own
+generic wrapper — and its effective size was **within** the 400-instruction
+budget. There is no size-budget decline to report.
+
+That is in direct tension with the profile's "called 100% DIRECTLY from
+`__closure_686__typed_this`", and the tension is the actual finding: whatever
+`__closure_355__typed_this` costs in the profile, it is reached by a path
+`ir-inline`'s pre-pass call-graph did not count as a direct `call`. Resolving
+that — element-segment/`ref.func` reachability, the second lifted copy
+(`__closure_685`/`__closure_686` are a second `fullCharCodeAt` /
+`fullCharCodeAtPos` pair lifted from the same source lines 5479/5486), or a
+`wasm-opt` rename — is the next step and is NOT yet done.
+
+Baseline `ir-inline` apply stats, for reference:
+
+```
+mode=apply funcs=3549 sites=47540 inlined=8289 addedInstrs=141844
+by-rule  adapter=3820 loop-leaf=2643 specialised=1174 single-caller=652
+declines no-rule=34079 (helper 33071, user 817) cold-callee=4628
+         self-recursive=334 unsafe:return-call=203 unsafe:try=6
+```
+
+`no-rule` is 72 % of declines and is dominated by small hot HELPERS
+(`__str_equals` 2,679 sites, `__unbox_number` 1,807, `__is_truthy` 1,652,
+`__box_number` 1,556) that are **multi-caller and non-leaf** — the one shape
+no existing rule admits: `adapters` is name-gated, `single-caller` needs
+`callerCount == 1`, `loop-leaf` needs a call-free body, `specialise` needs
+constant args. That, not the phase order, is the real hole.
+
+### (b) Binaryen vs newly-direct calls — NOT YET MEASURED
+
+Deliberately unanswered. The `JS2WASM_CALL_DISPATCH_IC=1` × `-O4` A/B
+disassembly comparison had not run when this session was handed off. Do not
+read the absence as a null.
+
+### Handoff state
+
+Branch `impl-post-devirt-inline`. No compiler source changed — this entry is
+the whole deliverable so far. Scratch driver (gitignored) at
+`.tmp/compile-acorn.mjs`: compiles standalone acorn with
+`preserveDebugNames`, honours `ACORN_OPT`, prints bytes + sha256. One compile
+is ~110 s.
