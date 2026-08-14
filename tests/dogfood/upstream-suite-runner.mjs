@@ -146,7 +146,7 @@ const __qunitAssert = {
   deepEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (!__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + ": " + (message || "deepEqual mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
   throws(fn, expected, message) { if (!__upstreamThrownMatches(__upstreamThrown(fn), expected)) __upstreamFail(message || "expected matching throw"); },
 };
-function suiteModule(_name) {}
+function suiteModule(_name, body) { if (typeof body === "function") body(); }
 const QUnit = {
   module: suiteModule,
   test(name, body) { __upstreamTests.push({ name: String(name), body }); },

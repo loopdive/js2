@@ -1,0 +1,12 @@
+{
+  "name": "three",
+  "version": "0.185.1",
+  "repo": "https://github.com/mrdoob/three.js.git",
+  "tag": "r185",
+  "commit": "2431a09f46f34c560bc8e44b33be0e567723d5b9",
+  "testFileCount": 232,
+  "testFilePathSha256": "0126bb4d658f1861dc4a058a26ee7c0fe7346e27745fff780c068a9004f27581",
+  "registrationSites": 1313,
+  "selectedFiles": ["test/unit/src/math/MathUtils.tests.js"],
+  "_note": "The complete test/unit/src/**/*.tests.js inventory is verified. This first adapter runs the original dependency-light MathUtils QUnit module directly against the matching GitHub source implementation. Browser, WebGL, DOM, loader, and larger object-graph modules remain explicit deferred inventory."
+}

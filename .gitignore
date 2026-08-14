@@ -101,6 +101,7 @@ tests/dogfood/report/
 /.lodash-es-upstream-suite-generated/
 /.moment-upstream-suite-generated/
 /.stylelint-upstream-suite-generated/
+/.three-upstream-suite-generated/
 /check-*.ts
 /check-*.mts
 /debug-*.ts

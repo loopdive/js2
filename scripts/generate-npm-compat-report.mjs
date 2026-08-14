@@ -60,6 +60,7 @@ import { runHarness as runUuidUpstreamSuite } from "../tests/dogfood/uuid-upstre
 import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-upstream-suite.mjs";
 import { runHarness as runAxiosUpstreamSuite } from "../tests/dogfood/axios-upstream-suite.mjs";
 import { runHarness as runStylelintUpstreamSuite } from "../tests/dogfood/stylelint-upstream-suite.mjs";
+import { runHarness as runThreeUpstreamSuite } from "../tests/dogfood/three-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1917,7 +1918,9 @@ for (const entry of NPM_COMPAT_CATALOG) {
                   ? runMomentUpstreamSuite
                   : entry.name === "stylelint"
                     ? runStylelintUpstreamSuite
-                    : null;
+                    : entry.name === "three"
+                      ? runThreeUpstreamSuite
+                      : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite

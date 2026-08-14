@@ -183,6 +183,7 @@
     "dogfood:stylelint": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package stylelint",
     "dogfood:stylelint-upstream-suite": "node --import tsx tests/dogfood/stylelint-upstream-suite.mjs",
     "dogfood:three": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package three",
+    "dogfood:three-upstream-suite": "node --import tsx tests/dogfood/three-upstream-suite.mjs",
     "dogfood:lit": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package lit",
     "dogfood:lit-upstream-suite": "npx tsx tests/dogfood/lit-upstream-suite.mjs",
     "dogfood:react-dom-upstream-suite": "npx tsx tests/dogfood/react-dom-upstream-suite.mjs",

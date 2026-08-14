@@ -62,6 +62,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 281,
       registrationSites: 1574,
     });
+    expect(pin("three")).toMatchObject({
+      tag: "r185",
+      commit: "2431a09f46f34c560bc8e44b33be0e567723d5b9",
+      testFileCount: 232,
+      registrationSites: 1313,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -158,5 +164,21 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile).toMatchObject({ modules: 5, succeeded: 5, validated: 5 });
     expect(report.results.scored).toBe(9);
+  });
+
+  const threeHeavy = process.env.DOGFOOD_THREE_UPSTREAM_SUITE === "1" ? it : it.skip;
+  threeHeavy("runs Three.js's original MathUtils QUnit module", { timeout: 600_000 }, () => {
+    const report = run("three");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 232,
+      filesSelected: 1,
+      filesDeferred: 231,
+      testsRegistered: 18,
+      nativePassed: 18,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(1);
+    expect(report.results.scored).toBe(18);
+    expect(report.results.passed).toBe(0);
   });
 });

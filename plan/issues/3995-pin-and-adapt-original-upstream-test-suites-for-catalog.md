@@ -314,3 +314,19 @@ infrastructure. The other 276 inventory files remain explicitly deferred. The
 npm-compat generator invokes the runner directly, so the merge-only refresh
 publishes the 7/9 result and the configured-suite guard rejects a missing or
 `adapter pending` Stylelint row.
+
+## 2026-08-14 Three.js MathUtils QUnit slice
+
+Three.js r185 now verifies all 232 `test/unit/src/**/*.tests.js` files and 1,313
+QUnit registration sites from `mrdoob/three.js@r185` (commit
+`2431a09f46f34c560bc8e44b33be0e567723d5b9`). The first runtime adapter runs
+the original dependency-light `MathUtils.tests.js` module directly against the
+matching GitHub source. Its generated module compiles and validates, native
+Node passes **18/18**, and Wasm currently reports **0/18**.
+
+The module reaches the shared QUnit callback runner but currently returns false
+for every callback without a surfaced assertion message. The report preserves
+those measured zeroes and all 231 deferred browser, WebGL, DOM, loader, and
+larger object-graph files. The npm-compat generator invokes the suite directly,
+so the merge-only refresh publishes the numeric result and upstream pin rather
+than leaving Three.js at `adapter pending`.
