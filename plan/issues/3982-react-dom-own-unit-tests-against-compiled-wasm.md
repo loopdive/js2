@@ -249,6 +249,25 @@ dynamic-to-typed nullable narrowing at the producer/call boundary. Keep Wasm
 validation authoritative; coercing the signature or suppressing the error
 would only hide an invalid module.
 
+## Current checkpoint (2026-08-14)
+
+The client-only published implementation (React plus the shared and client
+react-dom CJS modules) now compiles and validates as Wasm. The bounded run used
+the unchanged upstream extractor and admitted 1,261 of 2,003 tests; 681 tests
+that reference `ReactDOMServer` are retained in the report with the explicit
+`needs-react-dom-server` reason. The server renderer is a separate CJS graph and
+still produces an invalid WasmGC type graph when concatenated into this lane,
+so those tests are deferred rather than counted as client implementation
+failures. The harness also now preserves upstream `const` bindings and reports
+the two-module client result without a false setup error.
+
+The bounded client probe now instantiates and executes one original test. It
+reaches ReactDOM's client renderer but fails in the constructor bridge with
+`[object Object] is not a constructor`; this is a runtime/compiler boundary
+finding, not a Wasm validation failure. A full pass-rate claim is not made
+until that constructor value is preserved and the server-renderer slice has its
+own valid module path.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
