@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 920,
+      "passCount": 917,
       "totalCount": 1177
     },
     {
@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3932,
+      "passCount": 3939,
       "totalCount": 4581
     },
     {
@@ -173,19 +173,19 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 85,
+      "passCount": 86,
       "totalCount": 234
     },
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1773,
+      "passCount": 1776,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1588,
+      "passCount": 1593,
       "totalCount": 1896
     },
     {
@@ -197,7 +197,7 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1069,
+      "passCount": 1068,
       "totalCount": 1131
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1751,
+      "passCount": 1749,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 705,
+      "passCount": 742,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 327,
+      "passCount": 386,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 514,
+      "passCount": 513,
       "totalCount": 1072
     },
     {
@@ -323,7 +323,7 @@
         "language/expressions/async-function",
         "language/statements/async-function"
       ],
-      "passCount": 303,
+      "passCount": 301,
       "totalCount": 348
     },
     {
@@ -341,7 +341,7 @@
     {
       "name": "Object spread / rest",
       "testCategories": ["language/expressions/object/spread"],
-      "passCount": 175,
+      "passCount": 248,
       "totalCount": 401
     },
     {
@@ -354,13 +354,13 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2528,
+      "passCount": 2593,
       "totalCount": 3812
     },
     {
       "name": "Optional chaining (?.)",
       "testCategories": ["language/expressions/optional-chaining"],
-      "passCount": 40,
+      "passCount": 36,
       "totalCount": 52
     },
     {
@@ -378,7 +378,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 280,
+      "passCount": 286,
       "totalCount": 1048
     },
     {
@@ -396,7 +396,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3453,
+      "passCount": 3573,
       "totalCount": 4979
     },
     {
@@ -438,7 +438,7 @@
     {
       "name": "Array.prototype.flat / flatMap",
       "testCategories": ["built-ins/Array/prototype/flat", "built-ins/Array/prototype/flatMap"],
-      "passCount": 9,
+      "passCount": 10,
       "totalCount": 35
     },
     {
@@ -450,7 +450,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 40,
+      "passCount": 44,
       "totalCount": 109
     },
     {
@@ -504,7 +504,7 @@
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 109,
+      "passCount": 113,
       "totalCount": 393
     },
     {
@@ -528,7 +528,7 @@
     {
       "name": "Array.fromAsync",
       "testCategories": [],
-      "passCount": 13,
+      "passCount": 11,
       "totalCount": 95
     },
     {
