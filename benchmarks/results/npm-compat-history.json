@@ -5697,6 +5697,45 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-14T18:05:38.177Z",
+      "sourceRevision": "c462d1fd64141f77d28b03b6517cda28127c391e",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.00286611820578788
+          },
+          "standalone": {
+            "static": 75002.94704982168,
+            "dynamic": 0.12276561631670568
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0020001276015008808
+          },
+          "standalone": {
+            "static": 703.5017993874535,
+            "dynamic": 0.2630364702320994
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.08942499080179557
+          },
+          "standalone": {
+            "static": 17.99348126542248,
+            "dynamic": 0.17319593970109015
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009562108283502293
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
