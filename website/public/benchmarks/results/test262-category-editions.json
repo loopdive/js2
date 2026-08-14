@@ -1045,20 +1045,6 @@
       "skip": 0
     }
   },
-  "built-ins/WeakMap": {
-    "ES2015": {
-      "pass": 85,
-      "fail": 17,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2026": {
-      "pass": 30,
-      "fail": 9,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/JSON": {
     "ES5": {
       "pass": 47,
@@ -1091,10 +1077,16 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURIComponent": {
+  "built-ins/WeakMap": {
     "ES2015": {
-      "pass": 0,
-      "fail": 1,
+      "pass": 85,
+      "fail": 17,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2026": {
+      "pass": 30,
+      "fail": 9,
       "ce": 0,
       "skip": 0
     }
@@ -1109,6 +1101,14 @@
     "ES2016": {
       "pass": 2,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/decodeURIComponent": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1151,18 +1151,18 @@
       "skip": 0
     }
   },
-  "built-ins/DisposableStack": {
-    "ES2027": {
-      "pass": 73,
-      "fail": 20,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Infinity": {
     "ES5": {
       "pass": 5,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/DisposableStack": {
+    "ES2027": {
+      "pass": 73,
+      "fail": 20,
       "ce": 0,
       "skip": 0
     }
@@ -1247,14 +1247,6 @@
       "skip": 0
     }
   },
-  "built-ins/ShadowRealm": {
-    "ES2023": {
-      "pass": 0,
-      "fail": 64,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/parseFloat": {
     "ES2015": {
       "pass": 0,
@@ -1271,6 +1263,14 @@
     "ES2021": {
       "pass": 15,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/ShadowRealm": {
+    "ES2023": {
+      "pass": 0,
+      "fail": 64,
       "ce": 0,
       "skip": 0
     }
@@ -1479,14 +1479,6 @@
       "skip": 0
     }
   },
-  "built-ins/encodeURI": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Symbol": {
     "ES2015": {
       "pass": 52,
@@ -1515,6 +1507,14 @@
     "ES2027": {
       "pass": 4,
       "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/encodeURI": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1657,20 +1657,6 @@
       "skip": 0
     }
   },
-  "language/reserved-words": {
-    "ES5": {
-      "pass": 13,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 2,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/import": {
     "ES2015": {
       "pass": 1,
@@ -1687,6 +1673,20 @@
     "ES2027": {
       "pass": 0,
       "fail": 5,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/reserved-words": {
+    "ES5": {
+      "pass": 13,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 2,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }

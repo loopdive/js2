@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-12",
+  "generated": "2026-08-14",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -132,7 +132,6 @@
     "src/codegen/property-access.ts::compileElementAccess": 317,
     "src/codegen/property-access.ts::compileElementAccessBody": 965,
     "src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs": 937,
-    "src/codegen/stack-balance.ts::fixCallArgTypesInBody": 392,
     "src/codegen/stack-balance.ts::instrDelta": 318,
     "src/codegen/stack-balance.ts::updateTypeStack": 434,
     "src/codegen/statements/exceptions.ts::compileTryStatement": 378,
