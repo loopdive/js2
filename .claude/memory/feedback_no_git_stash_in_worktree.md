@@ -19,6 +19,19 @@ If you ever DO find a stash collision, never `git stash drop` — use `git stash
 
 **Recurred 2026-05-27 on issue-1332** despite this rule: stashed a 1-line runtime.ts fix to measure a baseline; a concurrent agent (issue-1682) pushed its own stash and my entry vanished from the stack entirely (working tree came back clean, fix lost). Recovery was trivial only because the change was tiny and I had the verbatim diff in context — re-applied via Edit. Lesson reinforced: for a SMALL change, never stash at all; if you must measure a baseline, `git commit` the WIP first (per-branch, never shared) or use a throwaway `git worktree add origin/main`.
 
+## Project-lead refinement (2026-08-13): the rule is about CONTENTION, not the command
+
+`git stash` is permitted when the stash stack cannot be contended: **in an
+isolated worktree/clone no other agent touches** (e.g. a harness-managed
+per-agent worktree of a repo whose other worktrees have no active agents), or
+**when you are provably the only agent working on that copy**. The hazard was
+never the command — it is two writers interleaving on one shared stack. When
+ANY concurrent agent shares the same `.git` (the normal state in this repo's
+multi-agent worktree setup), the full prohibition stands, and commits / file
+copies / throwaway worktrees remain the default tools. When in doubt about
+whether another agent is active on the same repo, assume contention and do not
+stash.
+
 ## ⚠ The `cp` workaround has its OWN hazard: never restore ACROSS a moved base
 
 Measured 2026-08-02, a near-miss caught only by a diffstat.

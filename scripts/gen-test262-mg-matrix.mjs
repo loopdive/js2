@@ -75,8 +75,19 @@
 
 export const MERGE_GROUP_RUNNER_CAPACITY = 120;
 export const MERGE_GROUP_RESERVED_RUNNERS = 18;
-export const JS_HOST_CHUNKS = 66;
-export const STANDALONE_CHUNKS = 36;
+// THIRD ratio drift (2026-08-14, the #4157 tuned-defaults flip): standalone
+// `Run shard` work grew ~40 % under tuned emission (#4157 entry 43) while
+// js-host medians stayed flat (8.1 -> 8.2 min measured across the flip in
+// merge_group runs 31741566801 vs 31743784768). Re-derived split: host
+// 29,353 rs vs standalone 16,000 x 1.4 = 22,400 rs -> ratio 1.31 -> 58/44 of
+// the same 102-shard budget (means ~506 s vs ~509 s, balanced). The practical
+// stake is wave survival, not just throughput: GitHub-hosted runner shutdown
+// waves (five windows on 2026-08-13) kill long jobs preferentially, and
+// post-flip 36-way standalone shards ran 20-36+ min — 2-4x the exposure of
+// every PR that merged through the same windows. 44-way puts standalone jobs
+// back at the ~15-min profile that demonstrably survives.
+export const JS_HOST_CHUNKS = 58;
+export const STANDALONE_CHUNKS = 44;
 
 /**
  * @param {string} targetName matrix job-name suffix, e.g. "js-host"

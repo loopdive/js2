@@ -79,7 +79,11 @@ describe("#3431 gen-test262-mg-matrix", () => {
     // It has already drifted once (2.13 at run 29807524490), so this asserts
     // the constants stay mutually consistent rather than pinning a number
     // forever: whoever re-derives the ratio updates both sides together.
-    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(1.835, 2);
+    // Drift history: 2.13 (run 29807524490) -> 1.835 (run 30631849709,
+    // 2026-07-31) -> 1.318 (2026-08-14, the #4157 tuned-defaults flip grew
+    // standalone work ~40 % while js-host stayed flat — see the derivation in
+    // scripts/gen-test262-mg-matrix.mjs).
+    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(58 / 44, 2);
   });
 });
 
