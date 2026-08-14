@@ -98,6 +98,7 @@
     "commit": "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
     "cacheKey": "prettier",
     "compileScript": "dogfood:prettier",
+    "suiteScript": "dogfood:prettier-upstream-suite",
     "inventory": {
       "directory": "tests/unit",
       "include": "^tests/unit/[^/]+\\.js$",

@@ -258,3 +258,24 @@ suite adapters from `npm-compat-upstream-sources.json` and refuses to publish
 if any adapter lacks numeric pass/total results. This also protects the Redux,
 clsx, cookie, and pre-existing upstream lanes from silently reverting to
 `adapter pending` on `npm-compat.html`.
+
+## 2026-08-14 Prettier synchronous source-unit slice
+
+Prettier 3.8.1 now verifies all 20 top-level `tests/unit/*.js` files and 48
+static registration sites from `prettier/prettier@3.8.1` (commit
+`90983f40dce5e20beea4e5618b5e0426a6a7f4f0`). The first runtime adapter runs
+the three self-contained synchronous files `ast-path.js`, `errors.js`, and
+`make-string.js` without rewriting their callback bodies or inputs. All three
+generated modules compile and validate, all **8/8** callbacks pass in native
+Node, and **1/8** passes in Wasm.
+
+The seven measured failures are useful compatibility evidence rather than a
+gate: the four `AstPath` callbacks trap with `illegal cast`, while the three
+custom `Error` subclasses expose the existing builtin-subclass/name gap
+([#1366a](https://github.com/loopdive/js2wasm/blob/main/plan/issues/1366a-class-extends-error-builtin-subclassing.md),
+[#2962](https://github.com/loopdive/js2wasm/blob/main/plan/issues/2962-native-error-identity-stringification.md)).
+The remaining 17 source files are explicitly deferred for async plugin loading,
+snapshots, Node-only helpers, external development dependencies, or larger
+document/parser graphs. The npm-compat generator now publishes this score, and
+the merge-only workflow's configured-suite guard requires the numeric Prettier
+result before it can update `npm-compat.html`.

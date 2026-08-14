@@ -20,7 +20,7 @@ function run(name: string) {
 }
 
 describe("small npm package upstream suites", () => {
-  it("pins complete clsx, cookie, Redux, and Axios unit-file inventories", () => {
+  it("pins complete clsx, cookie, Redux, Axios, and Prettier unit-file inventories", () => {
     expect(pin("clsx")).toMatchObject({
       tag: "v2.1.1",
       commit: "925494cf31bcd97d3337aacd34e659e80cae7fe2",
@@ -43,6 +43,12 @@ describe("small npm package upstream suites", () => {
       commit: "1337d6b537afb2d3f501074c8ac4ef4308221197",
       testFileCount: 49,
       registrationSites: 645,
+    });
+    expect(pin("prettier")).toMatchObject({
+      tag: "3.8.1",
+      commit: "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
+      testFileCount: 20,
+      registrationSites: 48,
     });
   });
 
@@ -97,5 +103,16 @@ describe("small npm package upstream suites", () => {
     expect(report.compile).toMatchObject({ modules: 25, succeeded: 25, validated: 25 });
     expect(report.results).toMatchObject({ scored: 170 });
     expect(report.results.passed).toBeGreaterThanOrEqual(16);
+  });
+
+  const prettierHeavy = process.env.DOGFOOD_PRETTIER_UPSTREAM_SUITE === "1" ? it : it.skip;
+  prettierHeavy("runs Prettier's selected original synchronous unit files", { timeout: 600_000 }, () => {
+    const report = run("prettier");
+    expect(report.extraction.filesSeen).toBe(20);
+    expect(report.extraction.filesSelected).toBe(3);
+    expect(report.extraction.filesDeferred).toBe(17);
+    expect(report.extraction.nativeFailed).toBe(0);
+    expect(report.compile.modules).toBe(3);
+    expect(report.results.scored).toBeGreaterThan(0);
   });
 });

@@ -47,6 +47,7 @@ import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-
 import { runHarness as runReduxUpstreamSuite } from "../tests/dogfood/redux-upstream-suite.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
+import { runHarness as runPrettierUpstreamSuite } from "../tests/dogfood/prettier-upstream-suite.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
@@ -1669,8 +1670,9 @@ if (selectedPackages.has("eslint")) {
 }
 
 if (selectedPackages.has("prettier")) {
-  console.log("[npm-compat] prettier — bounded package-entry compile/validate...");
+  console.log("[npm-compat] prettier — package entry + selected original upstream unit tests...");
   const prettierReport = await runPrettier({ quiet: true });
+  const prettierSuite = await runPrettierUpstreamSuite({ quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "prettier",
@@ -1679,7 +1681,25 @@ if (selectedPackages.has("prettier")) {
       entryFile: prettierReport.prettier.entryModule.replace(/^package\//, ""),
       shape: "esm-project",
       report: prettierReport,
-      tests: null,
+      tests: {
+        kind: "upstream-suite",
+        passed: prettierSuite.results?.passed ?? null,
+        total: prettierSuite.results?.scored ?? null,
+        passRatePct:
+          prettierSuite.results?.scored > 0
+            ? Number(((prettierSuite.results.passed / prettierSuite.results.scored) * 100).toFixed(1))
+            : null,
+        admitted: prettierSuite.extraction?.testsRegistered ?? null,
+        executed: prettierSuite.results?.scored ?? null,
+        upstreamTestsSeen: prettierSuite.upstreamSuite?.registrationSites ?? null,
+        harnessIncompatible: prettierSuite.extraction?.nativeFailed ?? null,
+        sourceIssue: 3995,
+        upstreamPin: {
+          repo: prettierSuite.upstreamSuite?.repo ?? null,
+          tag: prettierSuite.upstreamSuite?.tag ?? null,
+          commit: prettierSuite.upstreamSuite?.commit ?? null,
+        },
+      },
       perf: null,
     }),
   );
