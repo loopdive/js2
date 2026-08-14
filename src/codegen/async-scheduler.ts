@@ -40,6 +40,11 @@ import {
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+// (#4394) Dynamic `.then` handler wrappers invoke a runtime-held callback via
+// the `__apply_closure` arity bridge; the args carrier is the runtime's own
+// $ObjVec. Cycle-safe: object-runtime.ts does not import this module.
+import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
+import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 // (#2958, extracted for #3102) The unhandled-rejection substrate lives in its own
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
@@ -1823,6 +1828,164 @@ function emitThenWrapperFunction(
   // Wrapper result (externref) — dropped by the drain; always null now.
   body.push({ op: "ref.null.extern" });
 
+  pushDefinedFunc(ctx, funcIdx, {
+    name: wrapperName,
+    typeIdx: state.microtaskFuncTypeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set(wrapperName, funcIdx);
+  return funcIdx;
+}
+
+/**
+ * (#4394) Shared per-module DYNAMIC `.then`/`.catch` reaction wrapper —
+ * `__then_dyn_fulfill` / `__then_dyn_reject`, uniform microtask signature
+ * `(caps externref, value externref) -> externref`.
+ *
+ * The static wrapper (`emitThenWrapperFunction`) bakes one function per call
+ * site from the handler's ClosureInfo and `call_ref`s it directly — which only
+ * works when the handler expression resolves to a compile-time closure. The
+ * harness `assert.throwsAsync` attaches its captured promise-resolve functions
+ * (`res.then(onResFulfilled, onResRejected)`), and tests reassign `$DONE` and
+ * pass it by value — pure runtime function values. This wrapper covers them:
+ *
+ *   - `caps.callback` null (absent/undefined handler) or not a closure-wrapper
+ *     struct (non-callable, §27.2.5.4 step 3/4 "empty" reaction): identity —
+ *     fulfill resolves the chained promise with the value (resolve-value, so a
+ *     promise passthrough still assimilates), reject passes the reason through
+ *     to `__promise_reject`.
+ *   - callable: `__apply_closure(cb, undefined, [value])`, result settles the
+ *     chained promise via resolve-value; a throw REJECTS the chained promise
+ *     (same try/catch contract as the static wrapper, #2867 Gap 2).
+ *
+ * Registered at most once per module per kind; returns undefined (caller falls
+ * back to the identity wrappers — the pre-#4394 behaviour) when the object
+ * runtime is unavailable.
+ */
+function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject"): number | undefined {
+  ensurePromiseSettleFunctions(ctx);
+  const state = getOrInitState(ctx as CodegenContextWithScheduler);
+  const wrapperName = kind === "fulfill" ? "__then_dyn_fulfill" : "__then_dyn_reject";
+  const existing = ctx.funcMap.get(wrapperName);
+  if (existing !== undefined) return existing;
+  if (state.microtaskFuncTypeIdx === -1 || state.promiseResolveValueFuncIdx === -1) return undefined;
+
+  // Deps are append-only mints (defined funcs, no imports) — safe mid-body.
+  ensureObjVecBuilders(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (applyIdx === undefined || objVecNewIdx === undefined || objVecPushIdx === undefined) return undefined;
+
+  const capsTypeIdx = getOrRegisterThenCapsType(ctx);
+  const exnTag = ensureExnTag(ctx);
+  // Non-callable arm: fulfill = identity resolve-value; reject = pass-through reject.
+  const missSettleIdx = kind === "fulfill" ? state.promiseResolveValueFuncIdx : state.promiseRejectFuncIdx;
+
+  const capLocal = 2;
+  const cbLocal = 3;
+  const resultLocal = 4;
+  const reasonLocal = 5;
+  const vecLocal = 6;
+  const locals: LocalDef[] = [
+    { name: "$caps", type: { kind: "ref_null", typeIdx: capsTypeIdx } },
+    { name: "$cb", type: { kind: "externref" } },
+    { name: "$result", type: { kind: "externref" } },
+    { name: "$reason", type: { kind: "externref" } },
+    { name: "$argvec", type: { kind: "externref" } },
+  ];
+
+  const identityArm: Instr[] = [
+    { op: "local.get", index: capLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: missSettleIdx },
+    { op: "drop" },
+  ];
+
+  const applyArm: Instr[] = [
+    {
+      op: "try",
+      blockType: { kind: "empty" },
+      body: [
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "local.set", index: vecLocal },
+        { op: "local.get", index: vecLocal },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: objVecPushIdx },
+        { op: "local.get", index: cbLocal },
+        { op: "ref.null.extern" }, // this = undefined (§27.2.5.4 handler call)
+        { op: "local.get", index: vecLocal },
+        { op: "call", funcIdx: applyIdx },
+        { op: "local.set", index: resultLocal },
+        { op: "local.get", index: capLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: resultLocal },
+        { op: "call", funcIdx: state.promiseResolveValueFuncIdx },
+        { op: "drop" },
+      ],
+      catches: [
+        {
+          tagIdx: exnTag,
+          body: [
+            { op: "local.set", index: reasonLocal },
+            { op: "local.get", index: capLocal },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+            { op: "local.get", index: reasonLocal },
+            { op: "call", funcIdx: state.promiseRejectFuncIdx },
+            { op: "drop" },
+          ],
+        },
+      ],
+    },
+  ];
+
+  // IsCallable ≈ "is a closure-wrapper struct" — every compiled function value
+  // (user closures, builtin-fn metas, bound functions) subtypes the wrapper
+  // root. When no wrapper root exists yet, a non-null callback is applied
+  // optimistically (`__apply_closure`'s miss arm answers undefined, no trap).
+  const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const callableArm: Instr[] =
+    rootTypeIdx === undefined
+      ? applyArm
+      : [
+          { op: "local.get", index: cbLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: rootTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: applyArm,
+            else: identityArm.map((i) => ({ ...i })),
+          },
+        ];
+
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: capsTypeIdx },
+    { op: "local.set", index: capLocal },
+    { op: "local.get", index: capLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: cbLocal },
+    { op: "local.get", index: cbLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: identityArm,
+      else: callableArm,
+    },
+    { op: "ref.null.extern" },
+  ];
+
+  const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
     name: wrapperName,
     typeIdx: state.microtaskFuncTypeIdx,
@@ -3931,7 +4094,19 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
 
 export interface StandalonePromiseThenCallback {
   instrs: Instr[];
-  closureInfo: ClosureInfo;
+  /**
+   * Statically-resolved handler closure. Absent for a DYNAMIC handler (#4394):
+   * a runtime-held function value (`p.then(onResFulfilled, onResRejected)` on
+   * captured resolvers, `p.then($DONE)` on a reassigned global) whose shape the
+   * compiler cannot see. Dynamic handlers ride `instrs` as a plain externref
+   * and are invoked at settle time by the shared `__then_dyn_*` wrapper via
+   * `__apply_closure`. Before #4394 these were silently treated as ABSENT
+   * (identity/pass-through), which left every promise chained through such a
+   * handler pending forever — the asyncHelpers `resSettlementP` stall.
+   */
+  closureInfo?: ClosureInfo;
+  /** Marks the dynamic-handler case above. */
+  dynamic?: boolean;
 }
 
 /**
@@ -3966,11 +4141,19 @@ export function emitStandalonePromiseThen(
   // (not fulfill) so a handler that RETURNS a promise/thenable causes the chain
   // to adopt that inner promise's eventual state. A reject handler that returns
   // normally also fulfils the chain (catch-recovery), so it routes the same way.
+  // (#4394) A DYNAMIC handler (no ClosureInfo — a runtime-held function value)
+  // takes the shared `__then_dyn_*` wrapper, which invokes it at settle time via
+  // `__apply_closure`. Falls back to the identity wrapper (the pre-#4394
+  // treated-as-absent behaviour) only if the dynamic machinery is unavailable.
   const fulfillWrapperFuncIdx = onFulfilled
-    ? emitThenWrapperFunction(ctx, onFulfilled.closureInfo, state.promiseResolveValueFuncIdx, "__then_fulfill")
+    ? onFulfilled.closureInfo
+      ? emitThenWrapperFunction(ctx, onFulfilled.closureInfo, state.promiseResolveValueFuncIdx, "__then_fulfill")
+      : (ensureDynamicThenWrapper(ctx, "fulfill") ?? state.identityFulfillWrapperFuncIdx)
     : state.identityFulfillWrapperFuncIdx;
   const rejectWrapperFuncIdx = onRejected
-    ? emitThenWrapperFunction(ctx, onRejected.closureInfo, state.promiseResolveValueFuncIdx, "__then_reject")
+    ? onRejected.closureInfo
+      ? emitThenWrapperFunction(ctx, onRejected.closureInfo, state.promiseResolveValueFuncIdx, "__then_reject")
+      : (ensureDynamicThenWrapper(ctx, "reject") ?? state.identityRejectWrapperFuncIdx)
     : state.identityRejectWrapperFuncIdx;
 
   const promiseLocal = allocLocal(fctx, `__then_promise_${fctx.locals.length}`, {
@@ -4363,7 +4546,10 @@ export function emitStandalonePromiseFinally(
   promiseInstrs: Instr[],
   onFinally: StandalonePromiseThenCallback | null,
 ): void {
-  if (onFinally === null) {
+  // (#4394) `.finally` has no dynamic-handler wrapper yet — a dynamic marker
+  // (no ClosureInfo) degrades to the absent-handler identity chain, exactly the
+  // pre-#4394 behaviour for a handler the compiler could not resolve.
+  if (onFinally === null || onFinally.closureInfo === undefined) {
     emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);
     return;
   }

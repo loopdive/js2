@@ -1475,6 +1475,39 @@ function runtimeEvalMayRebindIdentifier(
   );
 }
 
+/**
+ * (#4394) Unsound-fold guard: a PARAMETER in a JavaScript source file whose
+ * type comes only from JSDoc (`@param {Function} testFunc`) has no runtime
+ * enforcement whatsoever — `asyncTest(null)` flows null straight into a
+ * `{Function}` param, and the harness's `typeof testFunc !== "function"` guard
+ * exists precisely to catch that. Folding typeof from the JSDoc type turns the
+ * guard into a compile-time constant and silently takes the wrong branch
+ * (every asyncHelpers `asyncTest`/`throwsAsync` non-callable rejection path).
+ * Kill the fold for annotation-free parameters in JS files; the runtime
+ * `__typeof_*` predicates / `$AnyValue` tag path answer correctly standalone.
+ * TypeScript parameters keep the #1304 fold (an explicit annotation is a
+ * compiler-enforced contract there), and the standalone/wasi gate keeps the
+ * host/gc lanes byte-identical.
+ */
+function typeofFoldUnsoundForJsParam(ctx: CodegenContext, operand: ts.Expression): boolean {
+  if (ctx.standalone !== true && ctx.wasi !== true) return false;
+  let bare: ts.Expression = operand;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = (bare as ts.ParenthesizedExpression | ts.AsExpression).expression;
+  }
+  if (!ts.isIdentifier(bare)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(bare);
+  if (decl === undefined || !ts.isParameter(decl)) return false;
+  if (decl.type !== undefined) return false; // explicit TS annotation → trusted
+  const fileName = decl.getSourceFile().fileName;
+  return /\.(js|mjs|cjs|jsx)$/.test(fileName);
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1657,6 +1690,11 @@ export function compileTypeofExpression(
     // (#4204) Slot is externref, checker still says primitive — folding
     // `typeof x` would report the initializer's type forever.
     if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
+    // (#4394) JSDoc-typed JS parameter — the declared type is not enforced at
+    // runtime, so the fold is unsound (see typeofFoldUnsoundForJsParam).
+    if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
@@ -1921,6 +1959,11 @@ export function compileTypeofComparison(
   // read whose write-kind verdict PROVES a write of a different kind reaches
   // the field must not const-fold the comparison.
   if (staticTypeof !== null && typeofFoldContradictedByFieldVerdict(ctx, operand, staticTypeof)) {
+    staticTypeof = null;
+  }
+  // (#4394) JSDoc-typed JS parameter — no runtime enforcement, fold unsound
+  // (`typeof testFunc !== "function"` in asyncHelpers must observe the value).
+  if (staticTypeof !== null && typeofFoldUnsoundForJsParam(ctx, operand)) {
     staticTypeof = null;
   }
   if (staticTypeof !== null) {

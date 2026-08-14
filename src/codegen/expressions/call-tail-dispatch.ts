@@ -48,7 +48,12 @@ import {
   pushDefaultValue,
   pushParamSentinel,
 } from "../type-coercion.js";
-import { compileCallableElementAccessCall, compileClosureCall } from "./calls-closures.js";
+import {
+  compileCallableElementAccessCall,
+  compileClosureCall,
+  emitMatchedClosureCallArguments, // (#4394) rest-aware matched-closure args
+} from "./calls-closures.js";
+import { tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394)
 import {
   buildThrowJsErrorInstrs,
   getFuncParamTypes,
@@ -62,6 +67,7 @@ import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import {
@@ -1748,10 +1754,10 @@ export function compileTailDispatch(
       const sig = callSigs[0]!;
 
       // Find matching closure info by comparing param types and return type
-      // against all registered closure types
-      let matchedClosureInfo: ClosureInfo | undefined;
-      let matchedStructTypeIdx: number | undefined;
-
+      // against all registered closure types. (#4394) Exact-first (typeIdx-
+      // aware) — the old kind-only scan picked whichever same-arity closure
+      // registered first; a wrong ref-result typeIdx makes the guarded funcref
+      // cast below null → call_ref trap (standalone deepEqual-* family).
       const sigParamCount = sig.parameters.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
@@ -1761,26 +1767,11 @@ export function compileTailDispatch(
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 
-      for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-        if (info.paramTypes.length !== sigParamCount) continue;
-        // Check return type match
-        if (sigRetWasm === null && info.returnType !== null) continue;
-        if (sigRetWasm !== null && info.returnType === null) continue;
-        if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
-        // Check param types match
-        let paramsMatch = true;
-        for (let i = 0; i < sigParamCount; i++) {
-          if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
-            paramsMatch = false;
-            break;
-          }
-        }
-        if (paramsMatch) {
-          matchedClosureInfo = info;
-          matchedStructTypeIdx = typeIdx;
-          break;
-        }
-      }
+      const sigMatched = matchClosureInfoBySignature(ctx, sigParamWasmTypes, sigRetWasm, {
+        sigHasRest: tsSignatureHasRest(sig),
+      });
+      const matchedClosureInfo: ClosureInfo | undefined = sigMatched?.info;
+      const matchedStructTypeIdx: number | undefined = sigMatched?.structTypeIdx;
 
       if (matchedClosureInfo && matchedStructTypeIdx !== undefined) {
         // Compile the inner call expression to get the closure on the stack
@@ -1808,26 +1799,11 @@ export function compileTailDispatch(
         fctx.body.push({ op: "local.get", index: closureLocal });
         emitNullCheckThrow(ctx, fctx, closureRefType);
 
-        // Push call arguments (only up to declared param count)
-        const crParamCnt = matchedClosureInfo.paramTypes.length;
-        // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
-        {
-          for (let i = 0; i < Math.min(expr.arguments.length, crParamCnt); i++) {
-            compileExpression(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
-          }
-        }
-
-        // Pad missing arguments with defaults
-        for (let i = expr.arguments.length; i < crParamCnt; i++) {
-          pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
-        }
-
-        // (#1511) For indirect calls we cannot know whether the lifted target
-        // reads `arguments`; pack any overflow args into `__extras_argv` and
-        // set `__argc` so a callee that DOES read `arguments` sees the full
-        // call-site length. Overflow args are NOT pushed to the wasm stack —
-        // they live in the global. Cleanup happens after call_ref.
-        emitClosureCallArgcExtras(ctx, fctx, expr.arguments, crParamCnt);
+        // Push call arguments (only up to declared param count). (#4394)
+        // Rest-aware: a matched rest-param closure gets its trailing args
+        // packed into the rest vec instead of arg0 being coerced (→ nulled)
+        // straight to the vec param. Includes the #1511 argc/extras protocol.
+        emitMatchedClosureCallArguments(ctx, fctx, expr, matchedClosureInfo);
 
         // Push the funcref from the closure struct (field 0) — null-check → TypeError (#728)
         fctx.body.push({ op: "local.get", index: closureLocal });
@@ -1931,26 +1907,12 @@ export function compileTailDispatch(
       // already been registered (the original scan-only behavior), and
       // gate THAT dispatch with ref.test. If no match, fall through to the
       // graceful tail at the end of compileCallExpression.
-      let matchedClosureInfo: ClosureInfo | undefined;
-      let matchedStructTypeIdx: number | undefined;
-      for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-        if (info.paramTypes.length !== sigParamCount) continue;
-        if (sigRetWasm === null && info.returnType !== null) continue;
-        if (sigRetWasm !== null && info.returnType === null) continue;
-        if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
-        let paramsMatch = true;
-        for (let i = 0; i < sigParamCount; i++) {
-          if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
-            paramsMatch = false;
-            break;
-          }
-        }
-        if (paramsMatch) {
-          matchedClosureInfo = info;
-          matchedStructTypeIdx = typeIdx;
-          break;
-        }
-      }
+      // (#4394) Exact-first (typeIdx-aware) pick — see closure-sig-match.ts.
+      const sigMatched = matchClosureInfoBySignature(ctx, sigParamWasmTypes, sigRetWasm, {
+        sigHasRest: tsSignatureHasRest(sig),
+      });
+      const matchedClosureInfo: ClosureInfo | undefined = sigMatched?.info;
+      const matchedStructTypeIdx: number | undefined = sigMatched?.structTypeIdx;
       const wrapperTypes =
         matchedClosureInfo && matchedStructTypeIdx !== undefined
           ? {
@@ -2124,35 +2086,51 @@ export function compileTailDispatch(
         emitNullCheckThrow(ctx, fctx, { kind: "ref_null", typeIdx: funcTypeIdx });
         fctx.body.push({ op: "call_ref", typeIdx: funcTypeIdx });
 
-        // Coerce return value to externref so the if-block has a single
-        // result type. For void closures, push ref.null.extern.
+        // (#4394) A concrete GC-ref closure result keeps its OWN type across
+        // the if-join instead of detouring through externref. The externref
+        // detour ran the #2358 struct→`$Object` materialization on a
+        // user-`toString` struct, and the CALLER's guarded externref→struct
+        // cast then nulled the materialized `$Object` — deepEqual.js's
+        // `return lazyResult`…`()` came back null. Wasm typing guarantees the
+        // call_ref result is `funcTypeIdx`'s declared result, so the typed
+        // join is always valid; the graceful else arm stays a null of the
+        // same type. Void and numeric results keep the externref join.
+        const refResultType: ValType | null =
+          closureInfo.returnType !== null &&
+          (closureInfo.returnType.kind === "ref" || closureInfo.returnType.kind === "ref_null")
+            ? { kind: "ref_null", typeIdx: closureInfo.returnType.typeIdx }
+            : null;
+        const joinType: ValType = refResultType ?? { kind: "externref" };
         if (closureInfo.returnType === null) {
           fctx.body.push({ op: "ref.null.extern" });
-        } else if (closureInfo.returnType.kind !== "externref") {
+        } else if (refResultType === null && closureInfo.returnType.kind !== "externref") {
           coerceType(ctx, fctx, closureInfo.returnType, { kind: "externref" });
         }
-        // (#1511) Reset argc/extras after the call. Return value (externref) is
-        // on the stack at this point — save, reset, restore.
+        // (#1511) Reset argc/extras after the call. Return value is on the
+        // stack at this point — save, reset, restore.
         {
-          const _retL = allocLocal(fctx, `__cb_ret_${fctx.locals.length}`, { kind: "externref" });
+          const _retL = allocLocal(fctx, `__cb_ret_${fctx.locals.length}`, joinType);
           fctx.body.push({ op: "local.set", index: _retL });
           emitResetArgcExtras(ctx, fctx);
           fctx.body.push({ op: "local.get", index: _retL });
         }
 
-        // 6. else branch — graceful null.
-        const elseInstrs: Instr[] = [{ op: "ref.null.extern" }];
+        // 6. else branch — graceful null (typed to match the join).
+        const elseInstrs: Instr[] =
+          refResultType !== null
+            ? [{ op: "ref.null", typeIdx: (refResultType as { typeIdx: number }).typeIdx }]
+            : [{ op: "ref.null.extern" }];
 
         // 7. Restore body, emit the if/else.
         popBody(fctx, savedBody);
         fctx.body.push({
           op: "if",
-          blockType: { kind: "val", type: { kind: "externref" } },
+          blockType: { kind: "val", type: joinType },
           then: thenInstrs,
           else: elseInstrs,
         });
 
-        return { kind: "externref" };
+        return joinType;
       }
     }
   }

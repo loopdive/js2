@@ -534,14 +534,23 @@
         height: 0;
         border-top: 2px solid rgba(255, 255, 255, 0.9);
       }
-      .diagram-legend-line.total {
+      /* The conformance trend plots both lanes at once: the selected one (the
+         "JS host" toggle) is the thick white line, the other a thinner solid
+         line. The legend mirrors that weighting so the two are told apart
+         without a colour key. */
+      .diagram-legend-item[data-selected="false"] .diagram-legend-line {
         border-top-width: 1px;
-        border-top-color: rgba(141, 154, 184, 1);
-        border-top-style: dotted;
+        border-top-color: rgba(255, 255, 255, 0.62);
       }
-      .diagram-legend-line.passed {
-        border-top-width: 1px;
-        border-top-color: rgba(255, 255, 255, 0.82);
+      .diagram-legend-item[data-selected="true"] {
+        color: var(--fg);
+      }
+      .diagram-legend-item[data-available="false"] {
+        opacity: 0.4;
+      }
+      .diagram-legend-note {
+        font-size: 9px;
+        letter-spacing: 0.02em;
       }
 
       .host-bench-copy {
@@ -1792,18 +1801,16 @@
           <div class="diagram-panel">
             <h3 class="diagram-title">ECMAScript Conformance Pass Rate Over Time</h3>
             <trend-chart id="conformance-history-chart" mode="step" height="260" x-key="time"></trend-chart>
-            <div class="diagram-legend">
-              <span class="diagram-legend-item">
+            <div class="diagram-legend" id="conformance-history-legend">
+              <span class="diagram-legend-item" data-lane="host" data-selected="true" data-available="true">
                 <span class="diagram-legend-line"></span>
-                <span>Pass rate</span>
+                <span>JS host pass rate</span>
+                <span class="diagram-legend-note"></span>
               </span>
-              <span class="diagram-legend-item">
-                <span class="diagram-legend-line passed"></span>
-                <span>Tests passed</span>
-              </span>
-              <span class="diagram-legend-item">
-                <span class="diagram-legend-line total"></span>
-                <span>Total tests run</span>
+              <span class="diagram-legend-item" data-lane="standalone" data-selected="false" data-available="true">
+                <span class="diagram-legend-line"></span>
+                <span>Standalone pass rate</span>
+                <span class="diagram-legend-note"></span>
               </span>
             </div>
           </div>
@@ -5287,59 +5294,115 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         return points;
       };
 
-      const CONFORMANCE_HISTORY_SERIES = JSON.stringify([
-        { key: "rate", color: "#ffffff", fill: true },
-        { key: "pass", color: "rgba(255,255,255,0.82)", axis: "right", lineWidth: 1, lineOpacity: 0.5 },
-        {
-          key: "total",
-          color: "rgba(141, 154, 184, 1)",
-          axis: "right",
-          lineWidth: 1,
-          lineOpacity: 1,
-          dasharray: "1 3",
-        },
-      ]);
+      // Both lanes on one axis: the SELECTED lane (the "JS host" toggle) is the
+      // thick white line with the gradient fill, the other lane the thinner
+      // solid line. The selected lane is listed FIRST because <trend-chart>
+      // attaches its point dots and peak label to seriesDef[0].
+      //
+      // The old third/fourth series ("Tests passed" and a dashed "Total tests
+      // run", both on a right-hand count axis) are gone: the chart now answers
+      // one question — how the two lanes' pass RATES compare over time — and
+      // the count axis only made the two rate lines harder to read. Absolute
+      // counts are still on the donut and the per-edition bars.
+      const conformanceHistorySeries = (hostEnabled) => {
+        const selected = { key: hostEnabled ? "hostRate" : "standaloneRate", color: "#ffffff", fill: true };
+        const other = {
+          key: hostEnabled ? "standaloneRate" : "hostRate",
+          color: "rgba(255,255,255,0.62)",
+          lineWidth: 1.25,
+        };
+        return JSON.stringify([selected, other]);
+      };
+
+      // Interleave the two lanes onto one x axis. The lanes are measured by
+      // different CI jobs at different times, so a given timestamp usually has
+      // a value for only one of them: carry each lane's last known value
+      // forward across the other's points (a step chart of a cumulative
+      // measure — the rate holds until the next run says otherwise), but leave
+      // a lane null BEFORE its first run so <trend-chart> breaks the line
+      // instead of drawing a fabricated leading segment.
+      const mergeConformanceLanes = (hostPoints, standalonePoints) => {
+        const byTime = new Map();
+        const collect = (points, key) => {
+          for (const point of points ?? []) {
+            const existing = byTime.get(point.time) ?? {
+              label: point.label,
+              timestamp: point.timestamp,
+              time: point.time,
+            };
+            existing[key] = point.rate;
+            byTime.set(point.time, existing);
+          }
+        };
+        collect(hostPoints, "hostRate");
+        collect(standalonePoints, "standaloneRate");
+
+        const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
+        for (const key of ["hostRate", "standaloneRate"]) {
+          let last = null;
+          for (const point of merged) {
+            if (typeof point[key] === "number") last = point[key];
+            else point[key] = last;
+          }
+        }
+        return merged.length >= 2 ? merged : null;
+      };
+
+      const updateConformanceHistoryLegend = (hostEnabled, availability) => {
+        const legend = document.getElementById("conformance-history-legend");
+        if (!legend) return;
+        for (const item of legend.querySelectorAll(".diagram-legend-item")) {
+          const lane = item.dataset.lane;
+          const available = lane === "host" ? availability.host : availability.standalone;
+          item.dataset.selected = String(lane === (hostEnabled ? "host" : "standalone"));
+          item.dataset.available = String(!!available);
+          const note = item.querySelector(".diagram-legend-note");
+          if (note) note.textContent = available ? "" : "(no history yet)";
+        }
+      };
 
       async function updateConformanceHistoryChart(scope, hostEnabled) {
         const chart = document.getElementById("conformance-history-chart");
         if (!chart) return;
         try {
           const isOverallScope = !scope || scope === "overall" || scope === "overall+proposal";
-          let points = null;
 
-          if (isOverallScope) {
-            const runs = await fetchJsonSafe(
-              hostEnabled ? "./benchmarks/results/runs/index.json" : "./benchmarks/results/runs/standalone-index.json",
-            );
-            points = buildHistoryPoints(runs, (run) => ({
-              pass: run?.pass,
-              total: run?.total,
-              timestampRaw: run?.timestamp,
-            }));
-          } else {
-            // (#4362) Specific ES edition. The standalone lane now has its own
-            // per-edition trend series (`standalone-editions-index.json`,
-            // appended by scripts/append-run-history.mjs from the host-free
-            // edition buckets), so the chart tracks the toggle instead of
-            // hiding itself. It is deliberately NOT backfilled — no historical
-            // standalone edition snapshots exist — so the series starts short
-            // and `buildHistoryPoints`'s own `< 2 points` guard keeps the chart
-            // hidden until it has something real to plot. Never fall back to
-            // the host series here: a host curve under a "standalone" label is
-            // exactly the kind of quietly-wrong number this issue is fixing.
-            const runs = await fetchJsonSafe(
-              hostEnabled
-                ? "./benchmarks/results/runs/editions-index.json"
+          // BOTH lanes are always fetched for the current scope — the toggle
+          // now picks which curve is emphasised, not which one exists. Each
+          // lane keeps its OWN history file; a lane is never substituted for
+          // the other (a host curve under a "standalone" label is exactly the
+          // quietly-wrong number #4362 set out to kill), it just goes missing
+          // from the chart and is marked "(no history yet)" in the legend.
+          //
+          // (#4362) Per-edition standalone history lives in
+          // `standalone-editions-index.json`, appended by
+          // scripts/append-run-history.mjs from the host-free edition buckets.
+          // It is deliberately not backfilled, so that lane starts short.
+          const [hostRuns, standaloneRuns] = await Promise.all([
+            fetchJsonSafe(
+              isOverallScope ? "./benchmarks/results/runs/index.json" : "./benchmarks/results/runs/editions-index.json",
+            ),
+            fetchJsonSafe(
+              isOverallScope
+                ? "./benchmarks/results/runs/standalone-index.json"
                 : "./benchmarks/results/runs/standalone-editions-index.json",
-            );
-            const label = normalizeEditionLabel(scope);
-            points = buildHistoryPoints(runs, (run) => {
-              if (!Array.isArray(run?.editions)) return null;
-              const entry = run.editions.find((e) => normalizeEditionLabel(String(e?.edition || "")) === label);
-              if (!entry) return null;
-              return { pass: entry.pass, total: entry.total, timestampRaw: run.timestamp };
-            });
-          }
+            ),
+          ]);
+
+          const extract = isOverallScope
+            ? (run) => ({ pass: run?.pass, total: run?.total, timestampRaw: run?.timestamp })
+            : (run) => {
+                const label = normalizeEditionLabel(scope);
+                if (!Array.isArray(run?.editions)) return null;
+                const entry = run.editions.find((e) => normalizeEditionLabel(String(e?.edition || "")) === label);
+                if (!entry) return null;
+                return { pass: entry.pass, total: entry.total, timestampRaw: run.timestamp };
+              };
+
+          const hostPoints = buildHistoryPoints(hostRuns, extract);
+          const standalonePoints = buildHistoryPoints(standaloneRuns, extract);
+          const points = mergeConformanceLanes(hostPoints, standalonePoints);
+          updateConformanceHistoryLegend(hostEnabled, { host: !!hostPoints, standalone: !!standalonePoints });
 
           if (!points) {
             chart.hidden = true;
@@ -5347,7 +5410,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           }
 
           chart.setAttribute("labels-key", "label");
-          chart.setAttribute("series", CONFORMANCE_HISTORY_SERIES);
+          chart.setAttribute("series", conformanceHistorySeries(hostEnabled));
           chart.data = points;
           chart.hidden = false;
         } catch {
