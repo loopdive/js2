@@ -30,7 +30,7 @@ own and `auto-enqueue` took it to queue position 1.
 **Check before acting:**
 
 ```bash
-gh pr view <N> -R loopdive/js2 --json statusCheckRollup \
+gh pr view <N> -R loopdive/js2wasm --json statusCheckRollup \
   -q '.statusCheckRollup[] | select((.conclusion // .state) as $c |
       $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL")
       | "\(.name // .context) -> \(.conclusion // .state)"'

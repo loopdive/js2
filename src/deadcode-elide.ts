@@ -67,6 +67,35 @@ interface Candidate {
   dropped: boolean;
 }
 
+/**
+ * `Function.prototype.<name>` where `<name>` is a statically-known key other
+ * than `constructor` — the receiver-uncurry idiom test262's propertyHelper.js
+ * opens with (`Function.prototype.call.bind(...)`). The value escaping such a
+ * chain is an ordinary prototype method, never the `Function` constructor, so
+ * it cannot later receive computed source. Counting it as an unknown dynamic
+ * identifier revived EVERY dropped harness binding — including the
+ * `$262.evalScript` shim, whose own computed `eval` then poisoned the whole
+ * module into runtime-eval carrier mode (and linked the interpreter provider)
+ * for every propertyHelper-including test. Mirrors
+ * `isFunctionPrototypeMethodChain` in `src/ir/runtime-eval-boundary-plan.ts` —
+ * keep the two in sync.
+ */
+function isFunctionPrototypeMethodReceiver(identifier: ts.Identifier): boolean {
+  if (identifier.text !== "Function") return false;
+  const proto = identifier.parent;
+  if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
+  if (proto.name.text !== "prototype") return false;
+  const member = proto.parent;
+  if (ts.isPropertyAccessExpression(member) && member.expression === proto) {
+    return member.name.text !== "constructor";
+  }
+  if (ts.isElementAccessExpression(member) && member.expression === proto) {
+    const key = member.argumentExpression;
+    return ts.isStringLiteralLike(key) && key.text !== "constructor";
+  }
+  return false;
+}
+
 const identityResult = (source: string): DeadBindingElisionResult => ({
   source,
   positionMap: PositionMap.identity(),
@@ -232,7 +261,11 @@ export function elideDeadTopLevelBindings(
     }
     if (ts.isIdentifier(node)) {
       const pos = node.getStart(sf);
-      if ((node.text === "eval" || node.text === "Function") && !handledDynamicIdentifiers.has(pos)) {
+      if (
+        (node.text === "eval" || node.text === "Function") &&
+        !handledDynamicIdentifiers.has(pos) &&
+        !isFunctionPrototypeMethodReceiver(node)
+      ) {
         // An escaped/aliased evaluator may later receive computed source. This
         // also covers `var Ctor = Function; new Ctor(dynamicBody)` once the
         // alias candidate is revived by its use.

@@ -16,9 +16,10 @@
 #                                     labs-remote  the allowlisted private repo
 #                                                  (loopdive/js2wasm-labs)
 #                                     public       a known public destination
-#                                                  (canonical loopdive/js2,
-#                                                  legacy loopdive/js2wasm, or a
-#                                                  public fork <owner>/js2)
+#                                                  (canonical loopdive/js2wasm,
+#                                                  pre-rename legacy loopdive/js2,
+#                                                  or a public fork <owner>/js2wasm
+#                                                  or <owner>/js2)
 #                                     unknown      cannot be confirmed private
 #   run_labs_guard <remote> <url> reads pre-push ref lines on stdin; returns 0
 #                                 (allow) or 1 (block) and prints a diagnostic
@@ -33,18 +34,18 @@ LABS_PRIVATE_REPO="js2wasm-labs"
 # The canonical public repo name, and its pre-rename legacy alias. A remote
 # whose repo segment normalizes to the canonical name is public regardless of
 # owner, so upstream and public forks are both covered.
-PUBLIC_REPO_CANONICAL="js2"
-PUBLIC_REPO_LEGACY="js2wasm"
+PUBLIC_REPO_CANONICAL="js2wasm"
+PUBLIC_REPO_LEGACY="js2"
 NULL_OID="0000000000000000000000000000000000000000"
 
 # normalize_owner_repo <url> -> "owner/repo" | ""
 #
 # Recovers the trailing owner/repo from every remote-URL syntax we care about:
-#   https://github.com/loopdive/js2.git
-#   https://x-access-token:TOKEN@github.com/loopdive/js2
-#   ssh://git@github.com/loopdive/js2.git
-#   git@github.com:loopdive/js2.git          (SCP short syntax)
-#   http://local_proxy@127.0.0.1:41729/git/loopdive/js2   (proxied)
+#   https://github.com/loopdive/js2wasm.git
+#   https://x-access-token:TOKEN@github.com/loopdive/js2wasm
+#   ssh://git@github.com/loopdive/js2wasm.git
+#   git@github.com:loopdive/js2wasm.git          (SCP short syntax)
+#   http://local_proxy@127.0.0.1:41729/git/loopdive/js2wasm   (proxied)
 # by stripping the scheme, turning ':' into '/' (SCP colon and any host:port
 # become path separators — harmless because only the last two segments are
 # kept), dropping a trailing '.git', and taking the final two '/'-segments.

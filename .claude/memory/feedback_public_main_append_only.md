@@ -7,7 +7,7 @@ metadata:
   originSessionId: 0ffbd21c-b73d-429a-a76d-4fb742ea9794
 ---
 
-Public `main` (the open-source repo, loopdive/js2, formerly js2wasm) is **append-only**. Never force-push it, never rewrite its history (no `git push --force`/`--force-with-lease` to main, no rebasing published commits, no history-rewriting subtree/filter operations that change SHAs on the public branch).
+Public `main` (the open-source repo, loopdive/js2wasm, formerly js2wasm) is **append-only**. Never force-push it, never rewrite its history (no `git push --force`/`--force-with-lease` to main, no rebasing published commits, no history-rewriting subtree/filter operations that change SHAs on the public branch).
 
 **Why:** During the public/private restructure, `origin/main` was force-pushed / rewritten (rollback + subtree splits) and the repo was renamed (js2wasm → js2). That broke external contributor guest271314's clone — on `git pull` they hit "divergent branches" through no fault of their own (their clone kept the old lineage; the remote's was rewritten). For a project courting external contributors, breaking their first `git pull` is a serious own-goal.
 

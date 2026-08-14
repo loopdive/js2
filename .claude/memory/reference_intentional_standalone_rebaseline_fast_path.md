@@ -18,7 +18,7 @@ Do NOT bump oracle_version for this — a de-vacuification is CODEGEN, not verdi
 2. Set N from the SCOPED estimate immediately (opus-3055 measured −25 on a 5-suite sample → extrapolated ~1,978 corpus-wide in minutes) + margin — don't block on a full ~68-min sharded run.
 
 **RECOVERY LEVER (if it was already admin-bypassed and the queue is wedged on #1897):**
-- The external baseline re-seed is `refresh-baseline.yml` → **"Baseline Refresh (scheduled + emergency)"**, EMERGENCY mode: `gh workflow run "Baseline Refresh (scheduled + emergency)" -R loopdive/js2 --ref main -f force_baseline_refresh=true -f confirm_force=YES`. This does an UNCONDITIONAL promote (ignores regressions) → re-seeds committed baseline + the js2wasm-baselines repo → clears #1897.
+- The external baseline re-seed is `refresh-baseline.yml` → **"Baseline Refresh (scheduled + emergency)"**, EMERGENCY mode: `gh workflow run "Baseline Refresh (scheduled + emergency)" -R loopdive/js2wasm --ref main -f force_baseline_refresh=true -f confirm_force=YES`. This does an UNCONDITIONAL promote (ignores regressions) → re-seeds committed baseline + the js2wasm-baselines repo → clears #1897.
 - Do NOT use `test262-sharded.yml`'s `force_baseline_refresh` for this — its promote is `needs: merge-report`, which fails on #1897 first, so the promote SKIPS (wasted a ~68-min run 2026-07-06).
 - Also lower the committed #2097 highwater (data-only PR) — that gate is separate and not fixed by the emergency refresh's promote until it completes.
 - Landing page (js2.loopdive.com) needs a deploy-pages run AFTER the baseline refresh to serve the new number (see [[feedback_trigger_deploy_pages]]).

@@ -1,7 +1,7 @@
 // #2815 — suppress the spurious TS2304 "Cannot find name 'Deno'" diagnostic on
 // the natively-lowered `Deno.{stdin,stdout,stderr}` synchronous-stdio surface.
 //
-// loopdive/js2#389: js2wasm recognizes `Deno.stdin/stdout.{readSync,writeSync}`
+// loopdive/js2wasm#389: js2wasm recognizes `Deno.stdin/stdout.{readSync,writeSync}`
 // and lowers it to WASI fd IO (src/codegen/deno-api.ts), and the single-source
 // checker path injects an ambient `Deno` d.ts (#2684) so it never warns. But the
 // MULTI-FILE paths (analyzeMultiSource / analyzeFiles — used the moment the entry

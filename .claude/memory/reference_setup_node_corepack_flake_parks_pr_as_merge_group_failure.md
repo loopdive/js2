@@ -22,10 +22,10 @@ Both were front-end/byte-inert-off-path changes; both re-admitted once and merge
 
 **How to diagnose (do this BEFORE removing a bot-park hold):**
 ```
-RUN=$(gh run list -R loopdive/js2 --workflow test262-sharded.yml --limit 25 \
+RUN=$(gh run list -R loopdive/js2wasm --workflow test262-sharded.yml --limit 25 \
   --json databaseId,event,conclusion \
   --jq '[.[]|select(.event=="merge_group" and .conclusion=="failure")][0].databaseId')
-gh run view $RUN -R loopdive/js2 --json jobs \
+gh run view $RUN -R loopdive/js2wasm --json jobs \
   --jq '.jobs[]|select(.name|test("js-host shard N"))|{conclusion,steps:[.steps[]|select(.conclusion=="failure")|.name]}'
 ```
 If the failed step is `Setup Node` / `Setup pnpm via Corepack` / any setup step

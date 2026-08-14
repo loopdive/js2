@@ -84,6 +84,36 @@ function stringArguments(args: readonly ts.Expression[] | undefined): { literalS
   return { literalSource: args.map((arg) => arg.text).join("\n"), unknown: false };
 }
 
+/**
+ * `Function.prototype.<name>` where `<name>` is a statically-known key other
+ * than `constructor` — e.g. the receiver-uncurry idiom the test262
+ * propertyHelper harness opens with (`Function.prototype.call.bind(...)`).
+ * The value that escapes such a chain is an ordinary prototype METHOD
+ * (`call`, `bind`, `toString`, …), never the `Function` constructor itself,
+ * so no dynamic-code capability crosses the runtime-eval boundary. Counting
+ * it as an `intrinsic-value` site linked the full interpreter provider (a
+ * ~24 MB binary delta) into every propertyHelper-including test262 module
+ * AND flipped those modules into the shared-realm carrier representation,
+ * where the dynamic-descriptor round-trip loses descriptor fields
+ * (harness/verifyProperty-restore-accessor.js and friends). A bare
+ * `Function.prototype` value use, a computed member, or `.constructor` all
+ * still count as escapes.
+ */
+function isFunctionPrototypeMethodChain(identifier: ts.Identifier): boolean {
+  const proto = identifier.parent;
+  if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
+  if (proto.name.text !== "prototype") return false;
+  const member = proto.parent;
+  if (ts.isPropertyAccessExpression(member) && member.expression === proto) {
+    return member.name.text !== "constructor";
+  }
+  if (ts.isElementAccessExpression(member) && member.expression === proto) {
+    const key = unwrapExpression(member.argumentExpression);
+    return ts.isStringLiteralLike(key) && key.text !== "constructor";
+  }
+  return false;
+}
+
 function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (
@@ -179,7 +209,14 @@ export function buildIrRuntimeEvalBoundaryPlan(
         const isMemberName =
           (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
           (ts.isElementAccessExpression(parent) && parent.argumentExpression === node);
-        if (!isMemberName) {
+        // (#2960/#4394) The predicate deliberately fires only for `Function` —
+        // `eval` stays a site in receiver position (`eval.call(null, src)` is a
+        // real indirect eval), and `.constructor` chains stay escapes because
+        // `Function.prototype.constructor` IS the eval-capable constructor.
+        // This supersedes the broader any-receiver-read carve-out that briefly
+        // held this arm: that version also excused the `.constructor` chain.
+        const isSafePrototypeMethodReceiver = node.text === "Function" && isFunctionPrototypeMethodChain(node);
+        if (!isMemberName && !isSafePrototypeMethodReceiver) {
           addSite(sourceFile, id, node, "intrinsic-value", "required");
           unknownDynamicSource = true;
         }

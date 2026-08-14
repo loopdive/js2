@@ -157,7 +157,7 @@ describe("#3915 queue-length reading", () => {
     const exec = () => {
       throw new Error("gh: API rate limit exceeded");
     };
-    expect(readQueueLength({ repo: "loopdive/js2", exec })).toBe(UNKNOWN);
+    expect(readQueueLength({ repo: "loopdive/js2wasm", exec })).toBe(UNKNOWN);
   });
 
   /**
@@ -166,12 +166,12 @@ describe("#3915 queue-length reading", () => {
    * "queue empty" would make a broken query look like a clear runway.
    */
   it.each(["", "\n", "null"])("reports UNKNOWN for a blank body %o", (out) => {
-    expect(readQueueLength({ repo: "loopdive/js2", exec: () => out })).toBe(UNKNOWN);
+    expect(readQueueLength({ repo: "loopdive/js2wasm", exec: () => out })).toBe(UNKNOWN);
   });
 
   it("reads a real count", () => {
-    expect(readQueueLength({ repo: "loopdive/js2", exec: () => "0\n" })).toBe(0);
-    expect(readQueueLength({ repo: "loopdive/js2", exec: () => "7\n" })).toBe(7);
+    expect(readQueueLength({ repo: "loopdive/js2wasm", exec: () => "0\n" })).toBe(0);
+    expect(readQueueLength({ repo: "loopdive/js2wasm", exec: () => "7\n" })).toBe(7);
   });
 
   it("reports UNKNOWN for a malformed repo slug instead of guessing", () => {
@@ -270,7 +270,7 @@ describe("#3915 wiring: refresh-baseline.yml", () => {
         ...process.env,
         PATH: `${dir}:${process.env.PATH ?? ""}`,
         GITHUB_OUTPUT: out,
-        GITHUB_REPOSITORY: "loopdive/js2",
+        GITHUB_REPOSITORY: "loopdive/js2wasm",
         IS_FORCED: "false",
       },
       encoding: "utf8",
@@ -284,7 +284,7 @@ describe("#3915 wiring: refresh-baseline.yml", () => {
 describe("#3915 class coverage: no un-gated pusher is left behind", () => {
   /**
    * The reported instance was `benchmark-refresh`. The class is "a workflow
-   * that pushes to `loopdive/js2:main`". These four are the whole class as of
+   * that pushes to `loopdive/js2wasm:main`". These four are the whole class as of
    * 2026-08-01: two were already gated inline by #1951, and this change gates
    * the two that were not. Every other `git push` in `.github/workflows/`
    * targets the baselines repo or a non-main branch.

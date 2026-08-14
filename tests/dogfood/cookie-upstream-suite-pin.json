@@ -1,0 +1,16 @@
+{
+  "name": "cookie",
+  "repo": "https://github.com/jshttp/cookie.git",
+  "tag": "v2.0.1",
+  "commit": "51c485421a95ee796de6d8dab53a5ade0a20db8a",
+  "inventoryDirectory": "src",
+  "testFileCount": 4,
+  "testFilePathSha256": "580633177e65fd6ec43cc0177db24e1a3fb2fac9fdc3f3780004d35cf36a7c8e",
+  "selectedFiles": [
+    "src/parse-cookie.spec.ts",
+    "src/parse-set-cookie.spec.ts",
+    "src/stringify-cookie.spec.ts",
+    "src/stringify-set-cookie.spec.ts"
+  ],
+  "_note": "The published cookie tarball omits its Vitest sources. This pin verifies the complete src/*.spec.ts inventory at the immutable v2.0.1 commit and executes all four files against the matching published ESM implementation. Snapshot assertions that cannot yet be reproduced are reported as harness-incompatible, never silently treated as passes."
+}

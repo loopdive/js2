@@ -145,7 +145,7 @@ export function test(): number { return takesComplex((xs: number[]): number => x
     expect(reasons.get("takesComplex")).toBe("param-type-not-resolvable");
   });
 
-  it("void-returning callbacks stay rejected (emitClosureCall is value-producing)", () => {
+  it("keeps a void-returning callback call rejected after its signature becomes expressible", () => {
     const reasons = selectorReasons(`
 function each(fn: (a: number) => void): number {
   fn(1);
@@ -153,7 +153,7 @@ function each(fn: (a: number) => void): number {
 }
 export function test(): number { return each((a: number): void => {}); }
 `);
-    expect(reasons.get("each")).toBe("param-type-not-resolvable");
+    expect(reasons.get("each")).toBe("call-graph-closure");
   });
 
   it("signature helper: expressible and inexpressible shapes", () => {
@@ -170,11 +170,14 @@ export function test(): number { return each((a: number): void => {}); }
       params: [{ kind: "val", val: { kind: "f64" } }, { kind: "string" }],
       returnType: { kind: "val", val: { kind: "i32" } },
     });
-    // rest / optional / default / non-primitive / void / generics → null
+    expect(irClosureSignatureFromFunctionTypeNode(parse("() => void"))).toEqual({
+      params: [],
+      returnType: null,
+    });
+    // rest / optional / default / non-primitive / generics → null
     expect(irClosureSignatureFromFunctionTypeNode(parse("(...a: number[]) => number"))).toBeNull();
     expect(irClosureSignatureFromFunctionTypeNode(parse("(a?: number) => number"))).toBeNull();
     expect(irClosureSignatureFromFunctionTypeNode(parse("(a: number[]) => number"))).toBeNull();
-    expect(irClosureSignatureFromFunctionTypeNode(parse("() => void"))).toBeNull();
     expect(irClosureSignatureFromFunctionTypeNode(parse("<T>(a: T) => number"))).toBeNull();
   });
 });

@@ -23,7 +23,7 @@ On 2026-07-24/25 FOUR PRs parked, with only two distinct comment texts between t
 ## Triage procedure
 
 1. **Find the run** — `gh run list` on gh 2.23 has **no `--event` flag**. Use REST:
-   `gh api "repos/loopdive/js2/actions/runs?event=merge_group&per_page=40"` and filter
+   `gh api "repos/loopdive/js2wasm/actions/runs?event=merge_group&per_page=40"` and filter
    `.head_branch` on `pr-<N>`.
 2. **THE PAGINATION TRAP — this will fool you.** The jobs API caps at `per_page=100`, and a
    test262-sharded run has **114 jobs** (72 host + 34 standalone shards + others). Querying

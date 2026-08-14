@@ -583,7 +583,7 @@ jobs:
           # fix in test262-sharded.yml promote-baseline). New runs/<sha> files
           # are staged via `git add -A --sparse`.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json' '/runs/standalone-editions-index.json'
           git -C /tmp/js2wasm-baselines checkout main
 
           # (#3335) Trap-growth gate: refuse to bake a main-side increase of any
@@ -787,7 +787,7 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
-            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo baseline push needs the private half of the loopdive/js2wasm 'MAIN_DEPLOY_KEY' deploy key — GITHUB_TOKEN is blocked by ruleset GH013."
             exit 1
           fi
           # #2562 — NORMAL (scheduled / non-forced) vs FORCED (emergency) label

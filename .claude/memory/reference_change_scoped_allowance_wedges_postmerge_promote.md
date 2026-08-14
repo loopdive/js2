@@ -10,7 +10,7 @@ metadata:
 
 **A change-scoped allowance that one enforcement point cannot read turns a
 correct PR into a permanent pipeline wedge.** Observed live 2026-07-25 on
-`loopdive/js2`.
+`loopdive/js2wasm`.
 
 PR #3629 carried a correct `trap-growth-allow: count 1` (in
 `plan/issues/2900-es3-module-indirect-default-binding-update.md`) for

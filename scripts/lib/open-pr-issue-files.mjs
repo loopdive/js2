@@ -73,7 +73,7 @@ export function liveIssuePaths(fileNodes) {
  *   `complete: false` means the scan failed/timed out and the result is a
  *   FLOOR, not the truth — callers must degrade loudly, never silently.
  */
-export function openPrIssueFiles({ repo = process.env.CLAIM_PR_REPO || "loopdive/js2" } = {}) {
+export function openPrIssueFiles({ repo = process.env.CLAIM_PR_REPO || "loopdive/js2wasm" } = {}) {
   const [owner, name] = repo.split("/");
   const deadline = Date.now() + PR_SCAN_TOTAL_TIMEOUT_MS;
   const ghBounded = (args) => {

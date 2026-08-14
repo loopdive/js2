@@ -11,6 +11,7 @@ import {
 import { getDefaultEnvironment } from "../env.js";
 import { DTS_ENTRY_DECLS_NAME } from "./dts-entrypoint-seeds.js";
 import { buildModuleDecls } from "./node-capability-map.js";
+import { traceTs5Checker } from "./ts5-trace.js";
 
 // All Node builtin access goes through the environment adapter (#1096).
 // This module no longer probes `typeof window` / `typeof process` directly
@@ -808,7 +809,7 @@ function findNodeAtPosition(sf: ts.SourceFile, pos: number): ts.Node | undefined
  * #2815 — js2wasm natively recognizes the ambient `Deno.{stdin,stdout,stderr}`
  * synchronous-stdio surface and lowers it to WASI fd IO (src/codegen/deno-api.ts),
  * so the checker's TS2304 "Cannot find name 'Deno'" on that recognized shape is
- * pure noise — the same class as the `process` TS2580 that loopdive/js2#389 asked
+ * pure noise — the same class as the `process` TS2580 that loopdive/js2wasm#389 asked
  * about (downgraded in #1951/#2603) and the ambient `Deno` d.ts the single-source
  * path injects (#2684). The multi-file paths (analyzeMultiSource / analyzeFiles)
  * don't inject that d.ts, so the warning still leaks for a real Deno program that
@@ -996,7 +997,7 @@ export function analyzeSource(source: string, fileName = "input.ts", analyzeOpti
 
   return {
     sourceFile: program.getSourceFile(fileName)!,
-    checker: program.getTypeChecker(),
+    checker: traceTs5Checker(program.getTypeChecker()),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1169,7 +1170,7 @@ export function analyzeMultiSource(
   return {
     sourceFiles: userSourceFiles,
     entryFile: entrySourceFile,
-    checker: program.getTypeChecker(),
+    checker: traceTs5Checker(program.getTypeChecker()),
     program,
     diagnostics,
     syntacticDiagnostics: syntacticDiagnostics as readonly ts.Diagnostic[],
@@ -1206,7 +1207,7 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
   }
 
   const program = ts.createProgram([resolvedEntry], compilerOptions);
-  const checker = program.getTypeChecker();
+  const checker = traceTs5Checker(program.getTypeChecker());
 
   const syntacticDiagnostics = program.getSyntacticDiagnostics();
   const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics

@@ -28,7 +28,7 @@ gh api repos/<owner>/<repo>/issues/<N>/labels -f "labels[]=<label>"
 The DELETE returns the remaining labels array, so you can confirm in one call.
 Works for both PRs and issues (PRs are issues for the labels endpoint).
 
-Verified 2026-06-20 removing `hold` from `loopdive/js2` PR #1787 — `gh pr edit`
+Verified 2026-06-20 removing `hold` from `loopdive/js2wasm` PR #1787 — `gh pr edit`
 reported success but left `["hold"]`; the REST DELETE removed it and it stayed
 removed (no automation was re-adding it; the gh bug was the whole story). Relevant
 when un-parking a held PR before enqueue.

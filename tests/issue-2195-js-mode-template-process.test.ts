@@ -1,4 +1,4 @@
-// #2195 — external bug report loopdive/js2#389 (native-messaging host,
+// #2195 — external bug report loopdive/js2wasm#389 (native-messaging host,
 // 2026-06-18). Compiling a *.js* file (untyped params → checker sees `any`)
 // under --target wasi hit two problems:
 //   1. A numeric template-literal substitution on an `any`-typed value aborted

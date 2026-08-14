@@ -364,7 +364,7 @@ describe("#2683 Native Messaging comparison harness — byte-identical framed ec
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// #2696 — loopdive/js2#389 reporter payload regression suite.
+// #2696 — loopdive/js2wasm#389 reporter payload regression suite.
 //
 // guest271314 ran these hosts (npm `@loopdive/js2` + `bun build`) and hit three
 // compile bugs: (1) `wasm:memory` store32/load32/store8/load8 leaked as dropped

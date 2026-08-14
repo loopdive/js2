@@ -7,7 +7,7 @@ metadata:
 ---
 
 #2203 (standalone closure-capturing native generator emits invalid funcidx) was
-**already fixed and merged on `loopdive/js2:main`** by another agent before my
+**already fixed and merged on `loopdive/js2wasm:main`** by another agent before my
 PR could land. Their fix: `generatorCapturesOuterScope` wired into
 `sourceNeedsGeneratorHostImports` (`src/codegen/generators-native.ts`) — the
 exact same root cause and mechanism I independently implemented as

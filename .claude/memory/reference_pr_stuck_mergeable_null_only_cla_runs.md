@@ -10,7 +10,7 @@ metadata:
 
 **A PR can wedge at `mergeable: null` / `mergeable_state: "unknown"` and stay
 there indefinitely.** It hit **two independent PRs within one hour** on
-`loopdive/js2` (2026-07-25, #3639 and #3641), so it is not a one-off.
+`loopdive/js2wasm` (2026-07-25, #3639 and #3641), so it is not a one-off.
 
 ## ⚠ RULE OUT `MERGED`/`CLOSED` FIRST — added 2026-08-02 after a false positive
 

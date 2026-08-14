@@ -8,7 +8,7 @@ metadata:
 ---
 
 Never dispatch or implement a sprint issue/slice without first confirming
-it is NOT already (a) fixed on **upstream/main** (loopdive/js2), or (b)
+it is NOT already (a) fixed on **upstream/main** (loopdive/js2wasm), or (b)
 covered by an **open PR in review**. The stakeholder called this out
 explicitly during sprint 63.
 
@@ -25,7 +25,7 @@ also lags reality.
    the fork-vs-upstream topology.
 2. Re-run the issue's repro on upstream/main — if it no longer fails, the
    issue is already fixed; mark it done, don't code.
-3. `gh pr list -R loopdive/js2 --state open --search "#<id> in:title"` (and
+3. `gh pr list -R loopdive/js2wasm --state open --search "#<id> in:title"` (and
    grep titles) — if a PR already implements the slice, do NOT open a
    duplicate; coordinate or pick a different residual slice.
 4. Bake "RE-VALIDATE vs upstream + check open PRs first" into every

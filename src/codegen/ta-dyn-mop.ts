@@ -617,6 +617,53 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       out.push({ op: "return" });
       return out;
     };
+    // (§23.2.3.34) `view[Symbol.toStringTag]` — the %TypedArray%.prototype
+    // @@toStringTag getter reads [[TypedArrayName]] (the per-kind ctor name)
+    // and is UNAFFECTED by detach (it never consults the buffer/length), so
+    // this arm sits before the string/expando ladder and switches on `kind`
+    // alone. Without it a Symbol key fell to the expando miss → undefined,
+    // which held the toStringTag family of tests in a false pass (both sides
+    // undefined) until the `$__ta_ctor` name arm made `TA.name` real. Other
+    // Symbol keys still fall through to the expando delegate below.
+    if ((mode === "get" || mode === "has") && ctx.symbolTypeIdx >= 0) {
+      const symTypeIdx = ctx.symbolTypeIdx;
+      const tagHit: Instr[] = [];
+      if (mode === "has") {
+        tagHit.push({ op: "i32.const", value: 1 }, { op: "return" });
+      } else {
+        for (let k = 0; k < TA_CTOR_KINDS.length; k++) {
+          tagHit.push({ op: "local.get", index: aKind });
+          tagHit.push({ op: "i32.const", value: k });
+          tagHit.push({ op: "i32.eq" });
+          tagHit.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...nativeStringLiteralInstrs(ctx, TA_CTOR_KINDS[k]!),
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+          });
+        }
+        tagHit.push(...undef(), { op: "return" });
+      }
+      inner.push({ op: "local.get", index: aKey });
+      inner.push({ op: "any.convert_extern" });
+      inner.push({ op: "ref.test", typeIdx: symTypeIdx });
+      inner.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: aKey },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symTypeIdx },
+          { op: "struct.get", typeIdx: symTypeIdx, fieldIdx: 0 },
+          { op: "i32.const", value: 4 }, // @@toStringTag well-known id
+          { op: "i32.eq" },
+          { op: "if", blockType: { kind: "empty" }, then: tagHit },
+        ],
+      });
+    }
     inner.push({ op: "local.get", index: aKey });
     inner.push({ op: "any.convert_extern" });
     inner.push({ op: "ref.test", typeIdx: anyStrTypeIdx });

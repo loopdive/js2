@@ -33,7 +33,7 @@ tech lead to standardize this; until then, treat claim-first as advisory and
 always `gh pr list` + probe before opening.
 
 **How to apply:** before committing/​pushing a slice, run
-`gh pr list -R loopdive/js2 --state open --search "<feature> standalone"` AND
+`gh pr list -R loopdive/js2wasm --state open --search "<feature> standalone"` AND
 `git log --oneline origin/<branch>` to check the branch isn't already committed/
 PR'd by another session. Mirrors the [[project_2203_already_landed_duplicate]]
 lesson. CI not triggering on fork PRs (only cla-check ran, required

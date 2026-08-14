@@ -8,7 +8,7 @@ metadata:
 ---
 
 In the js2 (ttraenkler/js2) dev setup, the **fork's `origin/main` is ~1000–1165
-commits BEHIND `upstream/main` (loopdive/js2)**, the real PR base. Merged PRs land
+commits BEHIND `upstream/main` (loopdive/js2wasm)**, the real PR base. Merged PRs land
 on upstream; the fork mirror lags badly. Consequences:
 
 - Issue **frontmatter `status`/`assignee` lags merged code** — an issue can read

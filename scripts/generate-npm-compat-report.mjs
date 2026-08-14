@@ -36,14 +36,18 @@ import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
 import { runHarness as runMarked } from "../tests/dogfood/marked-harness.mjs";
 import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
+import { runHarness as runClsxUpstreamSuite } from "../tests/dogfood/clsx-upstream-suite.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
+import { runHarness as runCookieUpstreamSuite } from "../tests/dogfood/cookie-upstream-suite.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
 import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
 import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
+import { runHarness as runReduxUpstreamSuite } from "../tests/dogfood/redux-upstream-suite.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
+import { runHarness as runPrettierUpstreamSuite } from "../tests/dogfood/prettier-upstream-suite.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
@@ -53,6 +57,7 @@ import { runHarness as runHonoUpstreamSuite } from "../tests/dogfood/hono-upstre
 import { runHarness as runLodashUpstreamSuite } from "../tests/dogfood/lodash-upstream-suite.mjs";
 import { runHarness as runUuidUpstreamSuite } from "../tests/dogfood/uuid-upstream-suite.mjs";
 import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-upstream-suite.mjs";
+import { runHarness as runAxiosUpstreamSuite } from "../tests/dogfood/axios-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1520,8 +1525,9 @@ if (selectedPackages.has("clsx")) {
       knownBugs: knownBugsFor("clsx"),
     });
   } else {
-    console.log("[npm-compat] clsx — compile/validate/diff + perf...");
+    console.log("[npm-compat] clsx — compile/validate/diff + complete original upstream unit suite + perf...");
     const clsxReport = await runClsx({ quiet: true });
+    const clsxSuite = await runClsxUpstreamSuite({ quiet: true });
     const clsxPerf = await perfClsx();
     packages.push(
       await buildPackageEntry({
@@ -1532,10 +1538,28 @@ if (selectedPackages.has("clsx")) {
         shape: "esm-driver-epilogue",
         report: clsxReport,
         tests: {
-          kind: "differential-ops",
-          passed: clsxReport.summary.opDiff?.equal ?? null,
-          total: clsxReport.summary.opDiff?.total ?? null,
-          sourceIssue: 3748,
+          kind: "upstream-suite",
+          passed: clsxSuite.results?.passed ?? null,
+          total: clsxSuite.results?.scored ?? null,
+          passRatePct:
+            clsxSuite.results?.scored > 0
+              ? Number(((clsxSuite.results.passed / clsxSuite.results.scored) * 100).toFixed(1))
+              : null,
+          admitted: clsxSuite.extraction?.testsRegistered ?? null,
+          executed: clsxSuite.results?.scored ?? null,
+          upstreamTestsSeen: clsxSuite.upstreamSuite?.registrationSites ?? null,
+          harnessIncompatible: clsxSuite.extraction?.nativeFailed ?? null,
+          sourceIssue: 3995,
+          upstreamPin: {
+            repo: clsxSuite.upstreamSuite?.repo ?? null,
+            tag: clsxSuite.upstreamSuite?.tag ?? null,
+            commit: clsxSuite.upstreamSuite?.commit ?? null,
+          },
+          packageApiWorkload: {
+            kind: "differential-ops",
+            passed: clsxReport.summary.opDiff?.equal ?? null,
+            total: clsxReport.summary.opDiff?.total ?? null,
+          },
         },
         perf: clsxPerf,
       }),
@@ -1557,8 +1581,9 @@ if (selectedPackages.has("cookie")) {
       knownBugs: knownBugsFor("cookie"),
     });
   } else {
-    console.log("[npm-compat] cookie — compile/validate/diff + perf...");
+    console.log("[npm-compat] cookie — compile/validate/diff + complete original upstream unit suite + perf...");
     const cookieReport = await runCookie({ quiet: true });
+    const cookieSuite = await runCookieUpstreamSuite({ quiet: true });
     const cookiePerf = await perfCookie();
     packages.push(
       await buildPackageEntry({
@@ -1569,10 +1594,28 @@ if (selectedPackages.has("cookie")) {
         shape: "esm-direct",
         report: cookieReport,
         tests: {
-          kind: "differential-ops",
-          passed: cookieReport.summary.opDiff?.equal ?? null,
-          total: cookieReport.summary.opDiff?.total ?? null,
-          sourceIssue: 3751,
+          kind: "upstream-suite",
+          passed: cookieSuite.results?.passed ?? null,
+          total: cookieSuite.results?.scored ?? null,
+          passRatePct:
+            cookieSuite.results?.scored > 0
+              ? Number(((cookieSuite.results.passed / cookieSuite.results.scored) * 100).toFixed(1))
+              : null,
+          admitted: cookieSuite.extraction?.testsRegistered ?? null,
+          executed: cookieSuite.results?.scored ?? null,
+          upstreamTestsSeen: cookieSuite.extraction?.testsRegistered ?? null,
+          harnessIncompatible: cookieSuite.extraction?.nativeFailed ?? null,
+          sourceIssue: 3995,
+          upstreamPin: {
+            repo: cookieSuite.upstreamSuite?.repo ?? null,
+            tag: cookieSuite.upstreamSuite?.tag ?? null,
+            commit: cookieSuite.upstreamSuite?.commit ?? null,
+          },
+          packageApiWorkload: {
+            kind: "differential-ops",
+            passed: cookieReport.summary.opDiff?.equal ?? null,
+            total: cookieReport.summary.opDiff?.total ?? null,
+          },
         },
         perf: cookiePerf,
       }),
@@ -1627,8 +1670,9 @@ if (selectedPackages.has("eslint")) {
 }
 
 if (selectedPackages.has("prettier")) {
-  console.log("[npm-compat] prettier — bounded package-entry compile/validate...");
+  console.log("[npm-compat] prettier — package entry + selected original upstream unit tests...");
   const prettierReport = await runPrettier({ quiet: true });
+  const prettierSuite = await runPrettierUpstreamSuite({ quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "prettier",
@@ -1637,7 +1681,25 @@ if (selectedPackages.has("prettier")) {
       entryFile: prettierReport.prettier.entryModule.replace(/^package\//, ""),
       shape: "esm-project",
       report: prettierReport,
-      tests: null,
+      tests: {
+        kind: "upstream-suite",
+        passed: prettierSuite.results?.passed ?? null,
+        total: prettierSuite.results?.scored ?? null,
+        passRatePct:
+          prettierSuite.results?.scored > 0
+            ? Number(((prettierSuite.results.passed / prettierSuite.results.scored) * 100).toFixed(1))
+            : null,
+        admitted: prettierSuite.extraction?.testsRegistered ?? null,
+        executed: prettierSuite.results?.scored ?? null,
+        upstreamTestsSeen: prettierSuite.upstreamSuite?.registrationSites ?? null,
+        harnessIncompatible: prettierSuite.extraction?.nativeFailed ?? null,
+        sourceIssue: 3995,
+        upstreamPin: {
+          repo: prettierSuite.upstreamSuite?.repo ?? null,
+          tag: prettierSuite.upstreamSuite?.tag ?? null,
+          commit: prettierSuite.upstreamSuite?.commit ?? null,
+        },
+      },
       perf: null,
     }),
   );
@@ -1738,14 +1800,30 @@ if (selectedPackages.has("react-dom")) {
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
   const reactDomSuite = await runReactDomUpstreamSuite({ quiet: true });
+  const reactDomImplementationReport = {
+    ...reactDomReport,
+    // The package-entry probe only compiles the small environment selector.
+    // The compatibility verdict must come from the real shared + client
+    // production renderer that the upstream tests execute.
+    compile: {
+      ...reactDomReport.compile,
+      success: reactDomSuite.compile?.success ?? false,
+      durationMs: reactDomSuite.compile?.durationMs ?? reactDomReport.compile?.durationMs,
+      binaryBytes: reactDomSuite.compile?.binaryBytes ?? 0,
+      error: reactDomSuite.summary?.implementationError ?? null,
+    },
+    validation: reactDomSuite.validation,
+  };
   packages.push(
     await buildPackageEntry({
       name: "react-dom",
       version: reactDomEntry.version,
       issue: 3982,
-      entryFile: reactDomEntry.entryModule.replace(/^package\//, ""),
+      // The card reports the real renderer result, so link the renderer rather
+      // than the tiny environment-selecting package entry.
+      entryFile: reactDomSuite.reactDom.modules[1].replace(/^package\//, ""),
       shape: reactDomEntry.shape,
-      report: reactDomReport,
+      report: reactDomImplementationReport,
       // (#3982) The suite landed in PR #4079 but this card kept saying
       // "not-integrated" — the same failure mode as lit/#3977: a suite that
       // exists in tests/dogfood/ is invisible to the dashboard until THIS
@@ -1755,6 +1833,10 @@ if (selectedPackages.has("react-dom")) {
       // nothing about the compiler.
       tests: {
         kind: "upstream-suite",
+        status: reactDomSuite.summary?.implementationInvalid ? "blocked" : "measured",
+        reason: reactDomSuite.summary?.implementationInvalid
+          ? "react-dom implementation did not produce a valid Wasm module; no upstream test executed in Wasm"
+          : null,
         passed: reactDomSuite.results?.passed ?? null,
         total: reactDomSuite.results?.scored ?? null,
         passRatePct: reactDomSuite.summary?.passRatePct ?? null,
@@ -1798,9 +1880,13 @@ for (const entry of NPM_COMPAT_CATALOG) {
           ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })
           : entry.name === "uuid"
             ? runUuidUpstreamSuite
-            : entry.name === "moment"
-              ? runMomentUpstreamSuite
-              : null;
+            : entry.name === "redux"
+              ? runReduxUpstreamSuite
+              : entry.name === "axios"
+                ? runAxiosUpstreamSuite
+                : entry.name === "moment"
+                  ? runMomentUpstreamSuite
+                  : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
@@ -1828,7 +1914,6 @@ for (const entry of NPM_COMPAT_CATALOG) {
       }
     : null;
   const tests =
-    workload?.tests ??
     (catalogUpstreamReport
       ? {
           kind: "upstream-suite",
@@ -1845,7 +1930,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             catalogUpstreamReport.extraction?.upstreamTestsSeen ??
             catalogUpstreamReport.results?.scored ??
             null,
-          harnessIncompatible: 0,
+          harnessIncompatible: catalogUpstreamReport.extraction?.nativeFailed ?? 0,
           quarantined: 0,
           sourceIssue: 3995,
           upstreamPin: {
@@ -1853,8 +1938,10 @@ for (const entry of NPM_COMPAT_CATALOG) {
             tag: catalogUpstreamReport.upstreamSuite?.tag ?? null,
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
+          packageApiWorkload: workload?.tests ?? undefined,
         }
       : null) ??
+    workload?.tests ??
     upstreamTests ??
     (hasApiWorkload
       ? {

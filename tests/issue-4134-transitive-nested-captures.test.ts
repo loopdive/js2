@@ -48,12 +48,54 @@ async function run(source: string): Promise<Record<string, unknown>> {
   return instance.exports as Record<string, unknown>;
 }
 
+async function compileOnly(source: string): Promise<void> {
+  const result = await compileMulti({ "./main.ts": source }, "./main.ts", { target: "gc" });
+  expect(result.success, result.errors.map((error) => error.message).join(" | ")).toBe(true);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+}
+
 /** Twenty locals ahead of the captured pair, so their slots land past any
  *  sibling's own frame. Fewer locals does NOT reproduce. */
 const WIDE_HOST_PRELUDE = Array.from({ length: 20 }, (_, i) => `  const p${i} = ${i};`).join("\n");
 const WIDE_HOST_SINK = Array.from({ length: 20 }, (_, i) => `p${i}`).join(" + ");
 
 describe("#4134 — transitive captures through a nested sibling call", () => {
+  it("materializes a transitive function-value cycle without recursive compiler construction", async () => {
+    const exports = await run(`
+function makeCycle(seed: number) {
+  function dispatch(): number { return process(); }
+  function process(): number { return resolve(); }
+  function resolve(): number {
+    const next = process;
+    return next === process ? seed : 0;
+  }
+  const start = dispatch;
+  return start;
+}
+
+const probeCycle = makeCycle(42);
+export function main(): number { return probeCycle(); }
+`);
+    expect((exports.main as () => number)()).toBe(42);
+  });
+
+  it("materializes a cyclic function-value capture before a direct sibling call", async () => {
+    const exports = await run(`
+function recurse(count: number): number {
+  function getF() { return f; }
+  function f(_template: unknown, remaining: number): number {
+    if (remaining === 0) return 42;
+    const next = getF();
+    return next(null, remaining - 1);
+  }
+  return f(null, count);
+}
+
+export function main(): number { return recurse(3); }
+`);
+    expect((exports.main as () => number)()).toBe(42);
+  });
+
   it("a sibling that only CALLS the capturing function still gets the captures", async () => {
     const exports = await run(`
 function factory(): number {
@@ -144,5 +186,47 @@ ${WIDE_HOST_PRELUDE}
 export function main(): number { return factory(); }
 `);
     expect((exports.main as () => number)()).toBe(42);
+  });
+
+  it("threads a sibling's capture through a returned function expression", async () => {
+    const exports = await run(`
+function factory(): number {
+${WIDE_HOST_PRELUDE}
+  const STATE = 41;
+
+  function readState(): number { return STATE; }
+  function makeReader() {
+    return function (): number { return readState() + 1; };
+  }
+
+  const sink = ${WIDE_HOST_SINK};
+  const callback = makeReader();
+  return callback() + sink * 0;
+}
+
+export function main(): number { return factory(); }
+`);
+    expect((exports.main as () => number)()).toBe(42);
+  });
+
+  it("keeps a transitive sibling function value inside a returned closure frame", async () => {
+    await compileOnly(`
+function factory(): number {
+${WIDE_HOST_PRELUDE}
+  const STATE = 40;
+
+  function finish(): number { return STATE + 2; }
+  function dispatch(): number { return finish.call(null); }
+  function makeReader() {
+    return function (): number { return dispatch(); };
+  }
+
+  const sink = ${WIDE_HOST_SINK};
+  const callback = makeReader();
+  return callback() + sink * 0;
+}
+
+export function main(): number { return factory(); }
+`);
   });
 });

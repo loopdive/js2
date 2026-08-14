@@ -9,88 +9,131 @@ goal: test-infrastructure
 created: 2026-08-13
 related: [4251, 4304, 4262]
 loc-budget-allow:
-  # The host-side `Test262Error` class and the `__new_Test262Error_ctor` builtin
-  # belong to the runtime's import-resolution table, which lives here; there is
-  # no separate host-error subsystem module to add them to.
-  - src/runtime.ts
-  # +18 lines: one more arm in the top-level-statement keep ladder, which lives
-  # here next to the #2671 / #3666 / #2660 arms it mirrors. Splitting a single
-  # arm out would separate it from the ladder whose order is load-bearing.
-  - src/codegen/declarations.ts
-  # +89 lines: the expected-struct diversion helper plus the arm that calls it.
-  # It belongs next to the #3536 arm it generalizes and to
-  # `compileObjectLiteralForStruct`, which it dispatches to; both live here.
-  - src/codegen/literals.ts
-  # +27 lines: entries in the two ambient-global registries (`LIB_GLOBALS` and
-  # `AMBIENT_BUILTIN_CTORS`) plus the comments recording why they must stay in
-  # step. Both registries live in this file and are read only from it; moving
-  # seven names to a leaf module would split one gate from the loop it gates.
-  - src/codegen/extern-declarations.ts
-  # +3 lines: an import line and a two-line pointer. The decision itself lives
-  # in the new leaf module codegen/callback-ctor-bridge.ts; what remains here is
-  # the call that replaced the inline ternary.
-  - src/codegen/closures.ts
-  # +4 lines: an import line and a two-line comment on the struct-name
-  # resolution that now excludes the global object. The predicate itself lives
-  # in global-environment.ts, beside the other global-object receiver gate.
+  # ALL grants below are for the parallel-bucket integration change-set
+  # (async / tostring-dispatch / string-callable / verifyproperty), each
+  # measured by its bucket agent with a targeted standalone A/B (0 flips) and
+  # an unchanged GC lane.
+  # +10 lines: the global-object-receiver gate for the standalone
+  # defineProperty arm lives beside the host-lane #4394 gate it mirrors; the
+  # barrel carries only the wiring to the new vec-length-set leaf module.
+  - src/codegen/index.ts
+  # +6 lines: the standalone global-object receiver exclusion, next to the
+  # identical host-lane exclusion (#4432 root cause 9) it extends.
   - src/codegen/object-ops.ts
-  # +9 lines: the import-name selection that encodes newTarget PRESENCE, plus
-  # the comment recording why the fixed-arity wasm boundary cannot carry it as
-  # a value. It belongs beside the Reflect.apply / Reflect.construct arms it
-  # sits among, which are all in this file.
-  - src/codegen/expressions/call-namespace-static.ts
-  # +48 lines: the HOF routing arm in `emitArrayProtoMemberBody` plus its
-  # receiver guard and the comments recording why each half is load-bearing.
-  # It belongs beside the `slice` arm it sits in and beside the identical
-  # String.prototype receiver guard it mirrors, both in this file.
-  - src/codegen/array-object-proto.ts
-func-budget-allow:
-  # +23 lines: one more entry in the host import-resolution table. The table is
-  # a flat dispatch over import names; there is no sub-unit to split it into
-  # that would not just move the same switch arm behind an indirection.
-  - src/runtime.ts::resolveImport
-  # +5 lines: the new arm's body lives in its own module
-  # (expressions/test262-error-ctor.ts); what remains here is the guarded call.
-  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
-  # +18 lines: one more arm in this function's top-level-statement keep ladder,
-  # whose arm ORDER is load-bearing (each `continue`s past the later ones).
-  - src/codegen/declarations.ts::collectDeclarations
-  # +5 lines: a three-line comment plus the guarded call that seeds script
-  # function bindings at the top of __module_init. The seeder itself lives in
-  # the new leaf module codegen/global-function-bindings.ts.
-  - src/codegen/declarations.ts::compileDeclarations
-  # +29 lines: the new diversion is one guarded call plus the comment that
-  # records the failure mode; the body lives in its own helper alongside.
-  - src/codegen/literals.ts::compileObjectLiteral
-  # +13 lines: a one-condition change to the existing widening scan plus the
-  # comment recording the literal-vs-non-literal divergence it closes.
-  - src/codegen/literals.ts::compileArrayLiteral
-  # +2 lines: a two-line pointer above the call that replaced the inline
-  # maker-name ternary. The decision lives in codegen/callback-ctor-bridge.ts.
-  - src/codegen/closures.ts::compileArrowAsCallback
-  # +3 lines: a two-line comment plus the ternary that excludes the global
-  # object from struct-name resolution; the predicate is in global-environment.ts.
-  - src/codegen/object-ops.ts::compileObjectDefineProperty
-  # +10 lines: two more arms in this flat name→intent dispatch — the
-  # constructible callback maker and the `__new_Test262Error_ctor` builtin,
-  # which must precede the generic `__new_` extern_class arm to avoid being
-  # resolved as a class named `Test262Error_ctor`. Arm ORDER is load-bearing,
-  # so the arms cannot move out of the ladder.
-  - src/compiler/import-manifest.ts::classifyImport
-  # +9 lines: the Reflect.construct arm now selects its import NAME from the
-  # call's arity, because the fixed-arity boundary cannot carry newTarget
-  # PRESENCE as a value. Comment plus one ternary, inside the arm it belongs to.
-  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
-trap-growth-allow:
-  count: 1
-  reason: "#4394 gives the host callback bridge the source callable's own [[Construct]] (S15.2.4), so an ordinary compiled function is no longer rejected by Reflect.construct. test/built-ins/Proxy/construct/call-result.js was ALREADY failing on the merge-base and still fails — only the MECHANISM moved. Before: the arrow bridge refused construction outright with a catchable 'function () { [native code] } is not a constructor'. After: construction proceeds correctly, reaches the proxy construct trap, and hits a pre-existing illegal cast in the method-dispatch trampoline (__call_fn_method_3). A bounded fail-to-trap reclassification that is a direct consequence of the construct fix, not a pass regression; the same fix is +29 pass on a 400-file isConstructor.js sample and +2 on built-ins/{Proxy,Reflect}."
-  tests:
-    - test/built-ins/Proxy/construct/call-result.js
-oracle-ratchet-allow:
-  # `resolveStructName` keys off raw `ts.Type` IDENTITY to reach anonTypeMap /
-  # structMap — a wasm-lowering ValType question the oracle does not express.
-  # Same grant, same reason, as the adjacent #3536 arm in this file.
+  # +10 lines: the standalone bound-function arm's #3571-uncurried-dispatch
+  # ordering guard — the #4395 provider widening must not run ahead of it
+  # (test262error-identity bucket; regression attributed to dbccc693).
+  - src/codegen/fnctor-escape-gate.ts
+  # +2 lines: routing the caught-error property fallback through its new leaf
+  # module; the dispatch ladder carries only the call.
+  - src/codegen/property-access-dispatch.ts
+  # +186 lines: the two silent-drop repairs behind every "async completion
+  # marker not observed" stall — a .then handler without compile-time
+  # ClosureInfo was treated as ABSENT, and the standalone .then rejection path
+  # never resumed the driver. Both live in the scheduler's handler-registration
+  # ladder, whose arm order is load-bearing; the new dynamic-handler arm and its
+  # rejection-resumption twin sit beside the arms they extend.
+  - src/codegen/async-scheduler.ts
+  # +54 net: the numeric-first array-literal widening now also fires for
+  # UNANNOTATED literals (the standalone twin of the merged host-lane fix that
+  # sits beside it), plus the literal-side closure-shape registration the exact
+  # call_ref signature match consumes.
   - src/codegen/literals.ts
+  # +43 lines: `typeof` on an identifier whose standalone binding is a null
+  # carrier must answer from the binding's declared kind, not deref — one arm
+  # in the existing typeof ladder plus its comment.
+  - src/codegen/typeof-delete.ts
+  # +37 net across two buckets: async's thenable-miss routing arm, minus the
+  # closure-pick simplification the exact-signature match made possible (the
+  # tostring bucket SHRANK this file by 11).
+  - src/codegen/expressions/calls.ts
+  # +32 lines: closure-shape registration at closure-creation sites so the
+  # dynamic dispatch can pick the exact call_ref type instead of kind-only.
+  - src/codegen/expressions/calls-closures.ts
+  # +14 lines: the ClosureInfo signature-registry fields on the codegen
+  # context, beside the closure maps they index.
+  - src/codegen/context/types.ts
+  # +10 net: the [[Call]] front-guard arm in __apply_closure that makes a
+  # builtin-ctor carrier callable everywhere at once (identity-compared by
+  # ref.eq, dead unless the carrier global exists).
+  - src/codegen/object-runtime.ts
+  # +9 lines: route a .then on a receiver with no ClosureInfo through the
+  # thenable-miss helper instead of silently dropping the handler.
+  - src/codegen/expressions/call-receiver-method.ts
+  # +4 lines: the identifier-call arm consults the exact-signature match
+  # before the kind-only fallback.
+  - src/codegen/expressions/call-identifier.ts
+  # ALL typedarray-intrinsics bucket grants below: agent-measured, 200-file
+  # TypedArray A/B zero pass->fail, GC lane byte-identical.
+  # +44 net: the funcIdx stale-capture fix lives inside tryEmitInlineDynamicCall
+  # in this frozen file — re-flush + re-capture after callee/arg compiles; the
+  # #329/#1677/#1839/#1886/#2043 index-desync family.
+  - src/codegen/expressions/calls.ts
+  # +56: nullish-receiver TypeError guards in the closed-method dispatchers.
+  - src/codegen/closed-method-dispatch.ts
+  # +17: undeclared-callee ReferenceError arm (S13.3.6.1 ordering).
+  - src/codegen/expressions/call-identifier.ts
+  # +9: union-receiver skip of the covered-form NamedEvaluation .name fold.
+  - src/codegen/array-object-proto.ts
+  # +13 (net +6): Symbol.toStringTag routing to the $__ta_dyn_view MOP arm.
+  - src/codegen/property-access-dispatch.ts
+  # +47: the Symbol-key arm answering [[TypedArrayName]] (S23.2.3.34) — this
+  # module is the designated owner of $__ta_dyn_view MOP arms.
+  - src/codegen/ta-dyn-mop.ts
+  # +71 lines: the #4394 renderer arms for declined harness error fnctors —
+  # they live in emitExceptionRenderExports beside the index-shift-safety
+  # contract they must obey, and mirror the __error_to_string concat idiom
+  # defined in this same file.
+  - src/codegen/native-strings.ts
+coercion-sites-allow:
+  # +3 sites (__extern_toString, __unbox_number, __is_truthy), all inside the
+  # new [[Call]] arm for the builtin `String` carrier. Calling `String(x)` IS
+  # ToString (§22.1.1.1), so the coercion vocabulary is the arm's substance,
+  # not a fresh hand-rolled matrix beside the engine. Routing this arm through
+  # the #1917/#2108 coercion engine is the recorded follow-up for when the
+  # Number/Boolean carriers join the same mechanism.
+  - src/codegen/builtin-ctor-callable.ts
+  # +1 site (__unbox_number) in the array-length WRITE arm: setting `.length`
+  # performs ToNumber/ToUint32 on the incoming value (§10.4.2.4 ArraySetLength)
+  # — the coercion is the arm's substance (verifyproperty bucket). Same
+  # follow-up as above: route through the #1917/#2108 engine.
+  - src/codegen/vec-length-set.ts
+func-budget-allow:
+  # +9 lines: the wiring that registers the vec-length-set leaf module and the
+  # standalone global-object defineProperty gate — both single guarded calls
+  # whose bodies live in their own modules (verifyproperty bucket).
+  - src/codegen/index.ts::generateModule
+  # +6 lines: the standalone global-object receiver exclusion beside the
+  # host-lane #4432 root-cause-9 exclusion it extends (verifyproperty bucket).
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # +3 lines: the symbol-keyed entry skip in the for-in vec arm — enumeration
+  # must not surface a Symbol key as its numeric slot index (verifyproperty).
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  # ALL typedarray-intrinsics bucket function grants: agent-measured A/B clean.
+  # +47: the Symbol-key [[TypedArrayName]] arm in the designated $__ta_dyn_view
+  # MOP owner; the arm switches on the view's kind field, inherently inline.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  # +43: the stale-capture fix — re-flush + re-capture of every baked funcIdx
+  # after callee/arg compilation, inside the function that owns the bake sites.
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  # +9: union-receiver dynamic .name read beside the static fold it bypasses.
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  # +2: the nullish-receiver guard splice points; guard bodies live in helpers.
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  # +16 lines: the standalone Test262Error prototype-method binding arm beside
+  # the host-lane #4394 arm it mirrors (test262error-identity bucket); the
+  # bodies live in shadowed-error-ctor.ts / caught-error-prop-fallback.ts.
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  # +10 lines: one more condition in the widening scan (unannotated
+  # numeric-first literals), inside the scan whose order is load-bearing.
+  - src/codegen/literals.ts::compileArrayLiteral
+  # +9 lines: the thenable-miss routing arm, beside the .then arms it guards.
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  # +9 lines: the builtin-ctor [[Call]] front-guard arm in the closure
+  # application driver — the single funnel every dynamic invocation lane uses.
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  # +4 lines: consult the exact closure-signature match before kind-only pick.
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 files:
   - src/codegen/expressions/new-builtin-globals.ts
   - src/compiler/import-manifest.ts
@@ -120,6 +163,19 @@ files:
   - tests/issue-4394-array-proto-hof-as-value.test.ts
   - src/codegen/expressions/call-namespace-static.ts
   - tests/issue-4394-reflect-construct-newtarget.test.ts
+  - src/codegen/async-scheduler.ts
+  - src/codegen/then-thenable-miss.ts
+  - src/codegen/native-batched-concat.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/expressions/closure-sig-match.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/builtin-ctor-callable.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/closures/capture-source-slot.ts
+  - src/codegen/closures/funcref-as-closure.ts
+  - src/codegen/context/types.ts
 ---
 
 # #4394 — make the Test262 harness self-tests pass (GC lane)
@@ -867,21 +923,83 @@ the DIRECT `o.toString()` call is wrong, because the fallback arm in
 `call-receiver-method.ts` claims `.toString()` by name and emits the constant
 `"[object Object]"` for a struct-shaped receiver.
 
-### Shape of the fix
+### Shape of the fix — the obvious one was ATTEMPTED and does NOT work
 
-The arm is a fallback `if (propAccess.name.text === "toString" && …)`, so a
-single added condition makes it DECLINE into the generic dynamic method
-dispatch, which resolves the real property. The predicate needed is "the
-receiver's type has an own `toString` declared in user source", and that is the
-part with a cost: `ctx.oracle.propertyFactOf(recv, "toString")` cannot tell a
-user-own `toString` apart from the inherited lib one (both answer "function"),
-so it needs either an oracle extension or an `oracle-ratchet-allow` grant for a
-raw symbol/declaration query.
+This section previously claimed that "a single added condition makes it DECLINE
+into the generic dynamic method dispatch, **which resolves the real property**."
+That premise is **wrong**, and it was measured wrong the way premises usually
+are — by never running it. Implemented (`expressions/user-declared-tostring.ts`,
+a declaration-provenance predicate: does the receiver's type carry a `toString`
+whose declaration is in user source rather than an ambient `lib.*.d.ts`?), wired
+as the extra condition on the arm, and measured:
 
-Not attempted here: it is a behaviour change to a shared dispatcher arm in a
-3,700-line function, it affects BOTH lanes and a very common idiom, and it
-deserves its own issue with its own merge-group measurement rather than a late
-edit inside this one.
+| receiver | before | after declining |
+| --- | --- | --- |
+| `P.prototype.toString = function () { … }` | `[object Object]` | **`null`** |
+| `{ toString: function () { … } }` | `[object Object]` | **`null`** |
+| `{ toString: fn }` | `[object Object]` | **`null`** |
+| `{ toString() { … } }` | `"MS"` ✓ | `"MS"` ✓ |
+
+The generic dispatch does not resolve it either — it produces a null string ref,
+which is strictly worse than a wrong constant because it can null-deref
+downstream. **Reverted.** The predicate module is not on the branch; rebuild it
+from this description if the next attempt wants it.
+
+### What the probes actually established
+
+Each case compiled as its own module (see below for why that matters):
+
+| probe | result | |
+| --- | --- | --- |
+| `{ foo: function () { … } }` → `o.foo()` | `"F"` | ✓ a function-valued property call works in general |
+| `{ valueOf: function () { … } }` → `o.valueOf()` | `7` | ✓ (#4201) |
+| `{ toString: fn }` → `var f = o.toString; f()` | `"OL"` | ✓ **the struct holds the right function value** |
+| `{ hasOwnProperty: fn }` → `o.hasOwnProperty()` | `false` | ✗ the builtin answers; the own property is ignored |
+| `{ toString: fn }` → `o["toString"]()` | — | ✗ **invalid Wasm**: `call[0] expected …` |
+| `P.prototype.greet = function () { … }` → `p.greet()` | `null` | ✗ |
+
+Two conclusions the old write-up missed:
+
+1. **The prototype-assignment idiom is broken for ANY method name, not just
+   `toString`.** `P.prototype.greet = function () {}` then `p.greet()` is
+   `null`. So this is not a `toString` bug with a prototype-assignment corner —
+   it is a prototype-assignment bug that `toString` happens to expose. That is a
+   much larger blast radius than "the harness's `deepEqual` family", and it
+   wants its own issue.
+2. **The property is stored correctly; only the direct-CALL dispatch misses it.**
+   Reading `o.toString` and calling the result gives the right answer. So the
+   defect is entirely in method-call lowering, not in object layout — which
+   means the fix is in the dispatcher, but it cannot simply be "decline", since
+   the path being declined INTO is itself the broken one.
+
+The name matters, too: `foo` works, `valueOf` works, `toString` and
+`hasOwnProperty` do not. So the failing set is lib-inherited names that some
+earlier arm claims by name — `valueOf` being the one that has already been
+fixed (#4201) and is therefore the template to follow.
+
+### A separate defect found in passing — structurally identical literals collide
+
+The first probe put several cases in ONE module and produced a result that no
+single-case probe reproduces:
+
+```js
+var o = { toString: function () { return "OL"; } };
+var m = { toString() { return "MS"; } };
+o.toString();   // → "MS"   ← m's method body
+```
+
+Two object literals with the same structural type appear to share one struct and
+one method body, so the wrong one is called. This is not a `toString` issue and
+is not covered anywhere in this file; it needs its own issue and its own probe.
+It also means **any multi-case probe in this area is untrustworthy** — measure
+one shape per compiled module.
+
+### Still not attempted
+
+For the same reasons as before, now better evidenced: it is a behaviour change
+to a shared dispatcher arm in a 3,700-line function, it affects BOTH lanes and a
+very common idiom, the decline target needs fixing first, and it deserves its
+own issue with its own merge-group measurement.
 
 ## Root cause 15 (merge_group regression) — `Reflect.construct` collapsed a PRESENT `null` newTarget
 
@@ -1160,3 +1278,29 @@ what now gates the `throwsAsync` tests.
 - [ ] Every change is measured both ways; a previously-"passing" test that flips
       to failing because a helper stopped lying is a **correct** outcome and is
       reported, not suppressed.
+
+## Parallel-bucket integration (2026-08-14) — async, tostring-dispatch, string-callable
+
+Three of six parallel bucket agents delivered; their patches are integrated on
+this branch. Each was measured by its agent with a targeted standalone A/B
+(0 flips) and an unchanged GC lane, full evidence in the per-bucket reports.
+
+| bucket | fixed (standalone) | key finding |
+| --- | --- | --- |
+| async | 13 of 18 asyncHelpers-* | The "completion marker not observed" stalls were two silent-drop policies composing: a `.then` handler without compile-time ClosureInfo was treated as ABSENT, and the standalone `.then` rejection path never resumed the driver. The `__str_concat_3` derefs were a null string carrier reaching a statically-string-typed concat. |
+| tostring-dispatch | deepEqual-array/deep/object | Not one bug — a pipeline of silent guarded-cast nulls: closure pick by KIND (not exact signature), rest-vec arg coercion, externref if-joins and TDZ-box reuse each degrade a type mismatch to ref.null, so the first wrong pick surfaces as a null deref somewhere else. The exact call_ref signature registry (closure-sig-match.ts) fixes the pick; calls.ts SHRANK. |
+| string-callable | compare-array-arguments/arraylike | Every standalone dynamic invocation lane funnels through `__apply_closure`, so ONE ref.eq identity front-guard arm there (builtin-ctor-callable.ts) makes the `String` carrier callable everywhere at once without touching its object identity — the exact fix shape the reverted registry attempt pointed at. |
+
+Still failing out of these buckets, with owners:
+
+- `asyncHelpers-throwsAsync-same-realm` — needs `$262.createRealm()`; realms do
+  not exist standalone. Candidate for a permanent exclusion note.
+- `asyncHelpers-asyncTest-return-not-thenable` — the bucket agent isolated a
+  distinct defect and WITHDREW its fix after measurement (see async.report.md).
+- `compare-array-symbol` — #2610 symbol carrier, confirmed blocked.
+- `deepEqual-mapset` — past the toString trap now; distinct remaining cause.
+- `deepEqual-primitives-bigint` — `deepEqual(1n, 1n)` itself now passes; the
+  test fails on a later line.
+- Everything identity-shaped (`sta.js`, `deepEqual-primitives`,
+  `verifyProperty-same-value`/`value-error`, `asyncTest-*` overlaps) — owned by
+  the test262error-identity bucket, still in flight.

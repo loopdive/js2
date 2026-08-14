@@ -1990,6 +1990,38 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
   const dataTypeIdx = ctx.nativeStrDataTypeIdx;
   if (anyToStrIdx === undefined || flattenIdx === undefined || flatTypeIdx < 0 || dataTypeIdx < 0) return;
 
+  // (#4394) Arms for DECLINED harness error fnctors (new-builtin-globals.ts):
+  // `new Test262Error(msg)` in a module that DECLARES `function Test262Error`
+  // now constructs an ordinary user-fnctor instance for correct identity, so a
+  // thrown one matches no `$Error_struct` arm in `__any_to_string` and rendered
+  // "[object Object]" — the merged standalone report lost every
+  // "Test262Error: …" signature (213 unclassified rows, the #4484 park). Each
+  // arm mirrors the harness's own prototype toString: `"Name: " + message`,
+  // with the message field rendered through the same `__any_to_string` chain
+  // the in-module `String(x)` coercion uses (an undefined message renders
+  // "Name: undefined", exactly what the harness's `+` produces). Every helper
+  // index and literal global is resolved HERE, before either body is built —
+  // the index-shift-safety contract of this emitter (see doc above); literal
+  // instrs are interned global reads, so building them early adds no funcs and
+  // no imports.
+  const fnctorArms: { typeIdx: number; fieldIdx: number; fieldIsExtern: boolean; prefixInstrs: Instr[] }[] = [];
+  for (const name of ctx.exnRenderFnctorErrorNames ?? []) {
+    const structTypeIdx = ctx.fnctorReservedTypeIdx.get(name);
+    const fields = ctx.structFields.get(`__fnctor_${name}`);
+    const fieldIdx = fields === undefined ? -1 : fields.findIndex((f) => f.name === "message");
+    if (structTypeIdx === undefined || fields === undefined || fieldIdx < 0) continue;
+    const ft = fields[fieldIdx].type;
+    if (ft.kind !== "externref" && ft.kind !== "anyref" && ft.kind !== "ref" && ft.kind !== "ref_null") continue;
+    fnctorArms.push({
+      typeIdx: structTypeIdx,
+      fieldIdx,
+      fieldIsExtern: ft.kind === "externref",
+      prefixInstrs: nativeStringLiteralInstrs(ctx, `${name}: `),
+    });
+  }
+  const fnctorConcatIdx = fnctorArms.length === 0 ? undefined : ctx.nativeStrHelpers.get("__str_concat");
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+
   const mod = ctx.mod;
 
   // (mut ref null $NativeString) — the prepared render buffer.
@@ -2005,6 +2037,41 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
   {
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$exn_render_prepare_type");
     const funcIdx = mintDefinedFunc(ctx);
+    // (#4394) The declined-fnctor arms run ahead of the generic chain; each is
+    // self-contained and RETURNS, so a non-matching payload falls through to
+    // the original tail unchanged. Local 1 holds the rendered message string.
+    const fnctorArmInstrs: Instr[] = [];
+    if (fnctorConcatIdx !== undefined && anyStrTypeIdx >= 0) {
+      for (const arm of fnctorArms) {
+        fnctorArmInstrs.push(
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: arm.typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: arm.typeIdx },
+              { op: "struct.get", typeIdx: arm.typeIdx, fieldIdx: arm.fieldIdx },
+              ...(arm.fieldIsExtern ? ([{ op: "any.convert_extern" }] satisfies Instr[]) : []),
+              { op: "call", funcIdx: anyToStrIdx },
+              { op: "local.set", index: 1 },
+              ...arm.prefixInstrs,
+              { op: "local.get", index: 1 },
+              { op: "ref.as_non_null" },
+              { op: "call", funcIdx: fnctorConcatIdx },
+              { op: "call", funcIdx: flattenIdx },
+              { op: "global.set", index: bufGlobalIdx },
+              { op: "global.get", index: bufGlobalIdx },
+              { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 0 }, // len
+              { op: "return" },
+            ],
+          },
+        );
+      }
+    }
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
@@ -2013,6 +2080,7 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: -1 }, { op: "return" }],
       },
+      ...fnctorArmInstrs,
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "call", funcIdx: anyToStrIdx },
@@ -2025,7 +2093,10 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
     pushDefinedFunc(ctx, funcIdx, {
       name: "__exn_render_prepare",
       typeIdx,
-      locals: [],
+      locals:
+        fnctorArmInstrs.length > 0 && anyStrTypeIdx >= 0
+          ? [{ name: "msg", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } }]
+          : [],
       body,
       exported: true,
     } as WasmFunction);

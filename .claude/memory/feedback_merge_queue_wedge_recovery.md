@@ -7,7 +7,7 @@ metadata:
   originSessionId: 9b7877fc-6699-40e1-b5cf-8f2f65bfd493
 ---
 
-The loopdive/js2 GitHub merge queue periodically **wedges**: entries sit
+The loopdive/js2wasm GitHub merge queue periodically **wedges**: entries sit
 `AWAITING_CHECKS` indefinitely, **zero `merge_group` CI runs fire**
 (`gh run list` filtered to `gh-readonly-queue` branches is empty), and
 GitHub Actions is **idle** (not congested) — so it is NOT an Actions
@@ -17,7 +17,7 @@ fully green at the PR level (all required checks pass) yet never merge.
 **Recovery (no main-write, no admin needed):** dequeue then re-enqueue each
 stuck PR to force a fresh merge group, which triggers `merge_group` CI:
 ```
-ID=$(gh pr view <N> -R loopdive/js2 --json id -q .id)
+ID=$(gh pr view <N> -R loopdive/js2wasm --json id -q .id)
 gh api graphql -f query='mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}' -f id="$ID"
 gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$ID"
 ```

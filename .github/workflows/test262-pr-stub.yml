@@ -341,7 +341,7 @@ jobs:
     # them without the expression ever being evaluated. The outcome is identical
     # whether or not the run was cancelling, so it cannot discriminate.
     # Worse, that run's own RUN-level conclusion is `cancelled`
-    # (`gh api repos/loopdive/js2/actions/runs/30645425429 --jq .conclusion`),
+    # (`gh api repos/loopdive/js2wasm/actions/runs/30645425429 --jq .conclusion`),
     # which is at least consistent with `cancelled()` being TRUE on a job
     # timeout — in which case `!cancelled()` would SKIP this guard in exactly
     # the case it exists for, and the whole non-silence guarantee would be

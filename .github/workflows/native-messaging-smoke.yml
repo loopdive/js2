@@ -57,7 +57,7 @@ jobs:
       - name: Verify wasmtime is on PATH
         run: wasmtime --version
 
-      - name: Install bun (the reporter's bundler — loopdive/js2#389)
+      - name: Install bun (the reporter's bundler — loopdive/js2wasm#389)
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest

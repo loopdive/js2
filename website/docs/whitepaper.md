@@ -404,5 +404,5 @@ The current public milestone is enough to make the direction concrete. The next 
 
 - Project page: [js2wasm.loopdive.com](https://js2wasm.loopdive.com)
 - Playground: [js2wasm.loopdive.com/playground](https://js2wasm.loopdive.com/playground)
-- Repository: [github.com/loopdive/js2](https://github.com/loopdive/js2)
+- Repository: [github.com/loopdive/js2wasm](https://github.com/loopdive/js2wasm)
 - Contact: `js2@loopdive.com`

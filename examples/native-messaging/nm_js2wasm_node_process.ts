@@ -29,7 +29,7 @@
 // growing `Uint8Array` and only echoed a frame once the entire body had arrived
 // (`drain` required `tail - head >= 4 + len`). That made the read side's peak RSS
 // scale ~8x the frame size (≈530 MB at 64 MiB, ≈2 GB at 256 MiB) — exactly the
-// loopdive/js2#389 reporter's "node_process climbed to ~98% memory on a 64 MiB
+// loopdive/js2wasm#389 reporter's "node_process climbed to ~98% memory on a 64 MiB
 // frame". #2814 re-chunked only the WRITE side; the read side still held the full
 // frame. The sibling SYNCHRONOUS hosts (`nm_js2wasm_node_fs`, `nm_js2wasm_deno` via
 // the shared `nm_js2wasm_sync_framing` core, and `nm_js2wasm_wasi_p1`) stay flat
@@ -405,7 +405,7 @@ function main(): void {
   // NO explicit encoding delivers each `'data'` chunk as a `Buffer`, which has no
   // `.charCodeAt` — so the state machine's `chunk.charCodeAt(...)` byte reads threw
   // `TypeError: chunk.charCodeAt is not a function` when this source was run as
-  // plain JS under node (loopdive/js2#389). Declaring the "latin1" encoding makes
+  // plain JS under node (loopdive/js2wasm#389). Declaring the "latin1" encoding makes
   // node deliver one-char-per-byte STRING chunks instead, so `charCodeAt` recovers
   // the raw byte exactly as it does for the js2wasm prelude's string chunks. Under
   // `--target wasi` the injected `process.stdin` prelude already materialises every

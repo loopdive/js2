@@ -82,6 +82,7 @@ import {
   getOrRegisterVecType,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
+import { builtinCtorCallableArmInstrs } from "./builtin-ctor-callable.js"; // (#4394) wrapper-ctor [[Call]] arm
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
@@ -4015,17 +4016,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // ToString = "null" (§7.1.17). Legacy keeps the null pass-through
         // (downstream __any_to_string renders its residual arm).
         then: undefinedSingletonActive(ctx) ? [...stringExtern("null")] : [{ op: "ref.null.extern" }],
-        else: [
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: objectTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [{ op: "local.get", index: 0 }, ...stringExtern("string"), { op: "call", funcIdx: toPrimitiveIdx }],
-            else: [{ op: "local.get", index: 0 }],
-          },
-        ],
+        // (#4394) Route EVERY non-null receiver through `__to_primitive`, not
+        // only `$Object`s. `__to_primitive` already handles the non-`$Object`
+        // shapes correctly — primitives/strings early-return unchanged, vecs
+        // reduce via Array.prototype.toString, and a closed STRUCT carrying a
+        // user `toString` reduces via the `__class_to_primitive` →
+        // `__call_toString` dispatchers; a struct with no user ToPrimitive
+        // returns unchanged and falls to `__any_to_string`'s generic
+        // "[object Object]" exactly as before. The old raw-passthrough arm made
+        // `"" + o` ignore a function-valued `toString` on a struct receiver
+        // (the deepEqual.js lazy-toString family).
+        else: [{ op: "local.get", index: 0 }, ...stringExtern("string"), { op: "call", funcIdx: toPrimitiveIdx }],
       },
       { op: "any.convert_extern" },
       { op: "call", funcIdx: anyToStringIdx },
@@ -6402,6 +6403,15 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       },
     );
   }
+
+  // (#4394) Wrapper-constructor carrier [[Call]] arm — `String`/`Number`/
+  // `Boolean` used as a first-class callable (a HOF callback, `fn.call(...)`).
+  // The carrier is a `$Object` singleton (identity is load-bearing — see the
+  // reverted conversion-closure attempt in #4394), so the closure-cast ladder
+  // below can never dispatch it; this identity-compare guard performs the
+  // spec's no-`new` conversion instead. Empty for modules that never demanded
+  // a wrapper carrier.
+  body.unshift(...builtinCtorCallableArmInstrs(ctx, ARG_OF));
 
   bridgeFn.body = [...buildTransferredCharAtApplyArm(ctx, ARG_OF), ...body];
   bridgeFn.locals = locals;
@@ -8847,7 +8857,10 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
-                { op: "f64.convert_i32_s" },
+                // UNSIGNED: a `length` of 2**32-1 (stored as 0xFFFFFFFF by the
+                // vec-length-set.ts ArraySetLength arm) must read back as
+                // 4294967295, not -1. Ordinary lengths (< 2**31) are unchanged.
+                { op: "f64.convert_i32_u" },
                 { op: "call", funcIdx: boxNumberIdx },
                 { op: "return" },
               ],

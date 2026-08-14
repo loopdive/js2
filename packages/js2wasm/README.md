@@ -40,8 +40,8 @@ npx js2wasm input.ts --optimize -o output.wasm
 
 - Canonical package: [`@loopdive/js2`](https://www.npmjs.com/package/@loopdive/js2)
 - Homepage: https://js2wasm.loopdive.com
-- Source: https://github.com/loopdive/js2
-- Issues: https://github.com/loopdive/js2/issues
+- Source: https://github.com/loopdive/js2wasm
+- Issues: https://github.com/loopdive/js2wasm/issues
 
 ## License
 

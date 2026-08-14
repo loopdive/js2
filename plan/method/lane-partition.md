@@ -13,7 +13,7 @@ re-implemented by both lanes — the opus PRs closed as redundant), the
   `claim-issue.mjs` returned exit 0 to both — the lock is **advisory**, not
   exclusive.
 - Both pushed same-named branches to **different head repos** (one lane to
-  upstream `loopdive/js2`, one to the `ttraenkler` fork), so GitHub could not
+  upstream `loopdive/js2wasm`, one to the `ttraenkler` fork), so GitHub could not
   apply its normal same-head+base duplicate-PR rejection.
 
 ## The partition (by goal)
@@ -45,7 +45,7 @@ lane — never start a parallel implementation.
 ## Branch / PR hygiene (kills the surviving dup mechanism)
 
 - Push every branch to the **`fork`** remote: `git push fork <branch>`, then
-  `gh pr create -R loopdive/js2 --head ttraenkler:<branch>`. With both lanes on
+  `gh pr create -R loopdive/js2wasm --head ttraenkler:<branch>`. With both lanes on
   the same head repo, GitHub rejects a duplicate same-head+base PR for free.
 - A PR that goes **DIRTY on files it itself touched** is a duplicate-merge
   smell — check `origin/main` before "resolving" it.

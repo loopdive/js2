@@ -69,7 +69,7 @@ class NpmCompatChart extends HTMLElement {
   // An issue reference here is THIS project's markdown issue
   // (plan/issues/<id>-<slug>.md), not a GitHub issue. The repo has no GitHub
   // issues, and issue ids share one number sequence with PRs, so
-  // github.com/loopdive/js2/issues/<id> did not 404 — it silently redirected to
+  // github.com/loopdive/js2wasm/issues/<id> did not 404 — it silently redirected to
   // an unrelated PULL REQUEST (lodash's #1031 opened "feat(number): add
   // standalone integer radix toString"). Link the dashboard's markdown viewer,
   // which resolves a bare id via plan/issues/index.json.

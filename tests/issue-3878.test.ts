@@ -16,7 +16,7 @@ import { PENDING_LABEL, releasePendingAfterSynchronize } from "../scripts/retarg
 // These tests fail against the pre-fix condition with the exact production
 // error, `synchronized pull request head changed`.
 
-const BASE_REPO = "loopdive/js2";
+const BASE_REPO = "loopdive/js2wasm";
 const FORK_REPO = "ttraenkler/js2";
 const BASE_SHA = "0".repeat(40);
 

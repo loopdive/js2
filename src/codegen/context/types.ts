@@ -240,7 +240,7 @@ export interface CodegenOptions {
   /** (#2657) Set of LOCAL names imported from `"wasi_snapshot_preview1"`
    *  (detected pre-preprocessing). The raw-WASI fd_read/fd_write passthrough
    *  binds these identifiers directly to the WASI import funcs — the most honest
-   *  pure-WASI-P1 expression, no `node:fs` surface (loopdive/js2#389). */
+   *  pure-WASI-P1 expression, no `node:fs` surface (loopdive/js2wasm#389). */
   wasiRawImports?: Set<string>;
   /** (#2657) Set of LOCAL names imported from `"wasm:memory"` — js2wasm's inline
    *  linear-memory access intrinsics (`store32`/`load32`/`store8`/`load8`). These
@@ -704,6 +704,8 @@ export interface FunctionContext {
   hoistedFunctionValueBindings?: Set<string>;
   /** Hoisted Function bindings whose singleton closure has been emitted in this frame. */
   materializedHoistedFunctionValueBindings?: Set<string>;
+  /** Hoisted Function bindings currently constructing a mutually recursive closure value. */
+  materializingHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
   /** Whether this constructor belongs to a class declared with `extends`. Spec §10.2.1.3
@@ -1009,7 +1011,21 @@ export interface FunctionContext {
    * point at the SAME local index (the boxed ref-cell ref local).  We
    * preserve the old map so call-site checks (calls.ts) keep firing.
    */
-  boxedTdzFlags?: Map<string, { refCellTypeIdx: number; localIdx: number }>;
+  boxedTdzFlags?: Map<
+    string,
+    {
+      refCellTypeIdx: number;
+      localIdx: number;
+      /**
+       * (#4394) The RAW i32 flag local the box was built from, when it was
+       * built from a verified live flag. Reuse sites are not dominated by the
+       * site that teed `localIdx` (deepEqual.js `format` builds the box in its
+       * first `return lazyResult…` branch; sibling branches read it null), so
+       * they re-init the box lazily from this source when `localIdx` is null.
+       */
+      srcFlagIdx?: number;
+    }
+  >;
   /**
    * (#3546) Locals in `__module_init` that SHADOW a module-global binding for a
    * top-level closure declaration (`const/let/var f = () => …` at module
@@ -3485,7 +3501,7 @@ export interface CodegenContext {
   /** (#743) Shared `.d.ts` entrypoint seed map — see the CodegenOptions field. */
   dtsEntrypointSeeds?: import("../../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds;
   /** (#2657) Local names imported from `"wasi_snapshot_preview1"` — the raw-WASI
-   *  fd_read/fd_write passthrough bindings (loopdive/js2#389). Empty for any
+   *  fd_read/fd_write passthrough bindings (loopdive/js2wasm#389). Empty for any
    *  program that does not import the raw WASI module. */
   wasiRawImports: Set<string>;
   /** (#2657) Local names imported from `"wasm:memory"` — js2wasm's inline
@@ -3586,6 +3602,15 @@ export interface CodegenContext {
    * Empty for fnctor-free modules ⇒ byte-identical no-op.
    */
   fnctorReservedTypeIdx: Map<string, number>;
+  /**
+   * (#4394) Harness error fnctors whose `new <Name>` interception was DECLINED
+   * because the module DECLARES `function <Name>` (sta.js's `Test262Error`) —
+   * their thrown instances are ordinary user structs, so the #2962 exception
+   * renderer bakes a per-fnctor "Name: message" arm for them (see
+   * `emitExceptionRenderExports`); without it every such throw rendered
+   * "[object Object]" and the merged standalone report lost the signature.
+   */
+  exnRenderFnctorErrorNames?: Set<string>;
   /**
    * (#3927) fnctor name → reserved `$__fnctor_<Name>__cold` tail-struct type
    * index, reserved alongside the main struct in `reserveFnctorStructTypes` so

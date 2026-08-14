@@ -26,7 +26,7 @@ drifts independently of `status:` (checked `[x]` while still `ready`).
 **How to apply:**
 - **Before dispatching on a reopened/resumed sprint, run a reconcile-against-git
   pass first** (a product-owner agent is the right tool): for every carried
-  `ready`/`in-progress` issue, PROBE against `upstream/main` (loopdive/js2 — the
+  `ready`/`in-progress` issue, PROBE against `upstream/main` (loopdive/js2wasm — the
   fork lags) — `git log --grep`, open-PR scan, run the acceptance tests — and
   flip the already-done ones to `done` (with a Resolution note citing the merge),
   folded→done, deferred→backlog, gated→blocked. Open ONE docs-only

@@ -1,6 +1,6 @@
 // #2684 — Deno synchronous stdio surface → DIRECT WASI Preview-1 fd_read/fd_write.
 //
-// loopdive/js2#389: the Native Messaging host reporter runs directly under a WASI
+// loopdive/js2wasm#389: the Native Messaging host reporter runs directly under a WASI
 // host (wasmtime) and is explicitly "not chasing Node.js". #2655 gave the Node
 // (`node:fs` readSync/writeSync) variant of the dual-mode "runs under the runtime
 // + compiles to wasi" story. This adds the DENO variant: the ambient

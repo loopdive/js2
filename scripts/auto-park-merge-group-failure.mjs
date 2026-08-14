@@ -39,7 +39,7 @@
 
 import { execFileSync } from "node:child_process";
 
-const REPO = process.env.GH_REPO || "loopdive/js2";
+const REPO = process.env.GH_REPO || "loopdive/js2wasm";
 const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 const HOLD_LABEL = "hold"; // matches enqueue-green-prs.mjs HOLD_LABELS
 const MARKER = "<!-- auto-park-bot:merge-group-failure -->";
@@ -178,26 +178,74 @@ export function isInfraStep(name) {
 //     recognised setup/infra step, the verdict never ran and parking would be
 //     bogus (the #3566 shape).
 //
+// (3) RUNNER KILL (#4157 parks 2-4, 2026-08-13) — a GitHub-hosted runner that
+//     receives a shutdown signal mid-job ("The runner has received a shutdown
+//     signal", exit 143) produces a job with conclusion === "failure" whose
+//     steps contain NO failed step: the step it died in reads `cancelled`.
+//     No verdict ran, so this is the same class as (2) — parking is bogus, and
+//     the correct response is the eject→auto-enqueue retry loop already
+//     documented at the infra-only exit below. Five kill waves on 2026-08-13
+//     parked the same PR four times on exactly this shape before the
+//     classifier was taught it.
+//
 // CONSERVATIVE BY CONSTRUCTION: we skip parking only on POSITIVE evidence that
 // every failure was infra. A failed job whose failing step we cannot identify
 // (`steps` absent/empty — e.g. the API response was trimmed) is
-// `unclassifiable` and forces a park. Being wrong in the permissive direction
-// lets a real regression into main; being wrong in the strict direction costs
-// one label removal.
+// `unclassifiable` and forces a park; the runner-kill shape is NOT that case —
+// it carries positive evidence (>= 1 cancelled step, zero failed steps).
+// Being wrong in the permissive direction lets a real regression into main;
+// being wrong in the strict direction costs one label removal.
+// A cancelled-step death at/above this duration is suspected to be the JOB
+// TIMEOUT (timeout-minutes: 40 on the shard jobs), i.e. a genuinely-too-slow
+// merged state — that PARKS, because auto-retrying a too-slow PR is the exact
+// #2547 infinite-lap cycle this bot exists to break. Below it, the death is a
+// mid-flight runner kill. If the shard timeout is ever raised, a wave kill in
+// the [35 min, timeout) band wrongly parks — the cheap direction (one label
+// removal) by this script's own doctrine.
+export const RUNNER_KILL_MAX_MS = 35 * 60 * 1000;
+
+// Steps whose failure is DERIVATIVE of shard-job deaths — the aggregate that
+// fails *because* required shards did not succeed. When >= 1 runner-killed
+// shard exists in the run, this step's failure carries no independent verdict
+// and must not veto the infra classification. When NO runner kill exists, it
+// is judged like any other step (i.e. non-infra -> park).
+const DERIVATIVE_AGGREGATE_STEPS = [/^Fail if required test262 shards did not succeed$/];
+function isDerivativeAggregateStep(name) {
+  return typeof name === "string" && DERIVATIVE_AGGREGATE_STEPS.some((re) => re.test(name.trim()));
+}
+
 export function classifyRun(jobs) {
   const failed = (jobs || []).filter((j) => j && j.conclusion === "failure");
   const failedJobs = failed.map((j) => j.name);
-  const failedDetails = failed.map((j) => ({
-    job: j.name,
-    url: j.html_url || null,
-    failedSteps: (Array.isArray(j.steps) ? j.steps : [])
-      .filter((s) => s && s.conclusion === "failure")
-      .map((s) => s.name),
-  }));
+  const failedDetails = failed.map((j) => {
+    const steps = Array.isArray(j.steps) ? j.steps : [];
+    const failedSteps = steps.filter((s) => s && s.conclusion === "failure").map((s) => s.name);
+    const durationMs = j.started_at && j.completed_at ? Date.parse(j.completed_at) - Date.parse(j.started_at) : null;
+    return {
+      job: j.name,
+      url: j.html_url || null,
+      failedSteps,
+      // The runner-kill signature: job failed, no step FAILED, >= 1 step
+      // CANCELLED mid-flight (the one the runner died in), and the job died
+      // well before the job timeout would have fired. Missing timestamps mean
+      // no positive duration evidence -> NOT a runner kill (conservative).
+      runnerKilled:
+        failedSteps.length === 0 &&
+        steps.some((s) => s && s.conclusion === "cancelled") &&
+        durationMs !== null &&
+        durationMs < RUNNER_KILL_MAX_MS,
+    };
+  });
   const realFailure = failed.length > 0;
-  const unclassifiable = failedDetails.some((d) => d.failedSteps.length === 0);
+  const anyRunnerKilled = failedDetails.some((d) => d.runnerKilled);
+  // Steps that carry an independent verdict for the infra/real judgment.
+  const judgedSteps = (d) =>
+    anyRunnerKilled ? d.failedSteps.filter((s) => !isDerivativeAggregateStep(s)) : d.failedSteps;
+  const unclassifiable = failedDetails.some((d) => d.failedSteps.length === 0 && !d.runnerKilled);
   const infraOnly =
-    realFailure && !unclassifiable && failedDetails.every((d) => d.failedSteps.every((s) => isInfraStep(s)));
+    realFailure &&
+    !unclassifiable &&
+    failedDetails.every((d) => d.runnerKilled || judgedSteps(d).every((s) => isInfraStep(s)));
   return {
     realFailure,
     failedJobs,
@@ -233,7 +281,7 @@ function fetchJobs(runId) {
     "--paginate",
     `repos/${REPO}/actions/runs/${runId}/jobs?per_page=100`,
     "--jq",
-    ".jobs[] | {name, conclusion, html_url, steps: [(.steps // [])[] | {name, conclusion}]}",
+    ".jobs[] | {name, conclusion, html_url, started_at, completed_at, steps: [(.steps // [])[] | {name, conclusion}]}",
   ]);
   // --jq with --paginate streams one JSON object per line.
   return out
@@ -428,6 +476,113 @@ function selfCheck() {
     pick(classifyRun([])),
     { realFailure: false, failedJobs: [], infraOnly: false, unclassifiable: false, shouldPark: false },
     "empty jobs -> do not park",
+  );
+
+  // (#4157 parks 2-4) Runner-kill shape: failed job, zero failed steps, >= 1
+  // cancelled step, died well under the job timeout — positive evidence the
+  // runner was shut down mid-step. Infra; the derivative aggregate failure
+  // does not veto. Do not park (eject + auto-enqueue is the retry).
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 4/36",
+          conclusion: "failure",
+          started_at: "2026-08-13T23:42:00Z",
+          completed_at: "2026-08-13T23:51:00Z",
+          steps: [
+            { name: "Checkout", conclusion: "success" },
+            { name: "Run shard", conclusion: "cancelled" },
+          ],
+        },
+        {
+          name: "merge shard reports",
+          conclusion: "failure",
+          started_at: "2026-08-14T00:26:00Z",
+          completed_at: "2026-08-14T00:27:00Z",
+          steps: [{ name: "Fail if required test262 shards did not succeed", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 4/36", "merge shard reports"],
+      infraOnly: true,
+      unclassifiable: false,
+      shouldPark: false,
+    },
+    "runner-kill: cancelled step under timeout + derivative aggregate -> infra, do not park",
+  );
+  // Same cancelled-step shape but the job ran to ~its timeout: that is the
+  // job-timeout kill of a genuinely-too-slow merged state — PARK (auto-retry
+  // of a too-slow PR is the #2547 infinite lap).
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 9/36",
+          conclusion: "failure",
+          started_at: "2026-08-13T23:00:00Z",
+          completed_at: "2026-08-13T23:40:05Z",
+          steps: [
+            { name: "Checkout", conclusion: "success" },
+            { name: "Run shard", conclusion: "cancelled" },
+          ],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 9/36"],
+      infraOnly: false,
+      unclassifiable: true,
+      shouldPark: true,
+    },
+    "timeout-kill: cancelled step at ~job timeout -> park (too-slow merged state)",
+  );
+  // Missing timestamps: no positive duration evidence -> not a runner kill ->
+  // unclassifiable -> park (conservative).
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 2/36",
+          conclusion: "failure",
+          steps: [{ name: "Run shard", conclusion: "cancelled" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 2/36"],
+      infraOnly: false,
+      unclassifiable: true,
+      shouldPark: true,
+    },
+    "cancelled step without timestamps -> no duration evidence -> park",
+  );
+  // The derivative aggregate step does NOT get a pass when no runner kill
+  // exists in the run — judged like any step, non-infra -> park.
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "merge shard reports",
+          conclusion: "failure",
+          started_at: "2026-08-14T00:26:00Z",
+          completed_at: "2026-08-14T00:27:00Z",
+          steps: [{ name: "Fail if required test262 shards did not succeed", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["merge shard reports"],
+      infraOnly: false,
+      unclassifiable: false,
+      shouldPark: true,
+    },
+    "derivative aggregate alone (no runner kill) -> park",
   );
 
   // (#3597) Step awareness — the two shapes that were indistinguishable on

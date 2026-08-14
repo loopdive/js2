@@ -893,8 +893,14 @@ export function compileReceiverMethodCall(
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
-              const onFulfilled = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
-              const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[1], liveBuffers);
+              // (#4394) allowDynamic: runtime-held handlers ride the caps and the
+              // shared `__then_dyn_*` wrapper applies them at settle time.
+              const onFulfilled = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers, {
+                allowDynamic: true,
+              });
+              const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[1], liveBuffers, {
+                allowDynamic: true,
+              });
               emitStandalonePromiseThen(ctx, fctx, promiseInstrs, onFulfilled, onRejected);
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);
@@ -924,7 +930,10 @@ export function compileReceiverMethodCall(
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
-              const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers);
+              // (#4394) allowDynamic — see the `.then` twin above.
+              const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, expr.arguments[0], liveBuffers, {
+                allowDynamic: true,
+              });
               emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, onRejected);
             } finally {
               for (const b of liveBuffers) ctx.liveBodies.delete(b);

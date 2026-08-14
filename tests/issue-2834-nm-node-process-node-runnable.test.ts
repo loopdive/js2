@@ -4,7 +4,7 @@
  * compiled to WASI.
  *
  * Run as plain JS under real `node` (the reporter's `bun build`/transpile → `.js`
- * pipeline, loopdive/js2#389), the host threw:
+ * pipeline, loopdive/js2wasm#389), the host threw:
  *
  *   TypeError: chunk.charCodeAt is not a function
  *
