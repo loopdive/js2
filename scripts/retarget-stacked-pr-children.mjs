@@ -665,7 +665,7 @@ async function selfCheck() {
     baseSha: "9".repeat(40),
   });
 
-  assert.deepEqual(parseRepository(repo), { owner: "loopdive", name: "js2", fullName: repo });
+  assert.deepEqual(parseRepository(repo), { owner: "loopdive", name: "js2wasm", fullName: repo });
   assert.equal(parseParentNumber("10"), 10);
   assert.throws(() => parseRepository("loopdive/js2wasm/extra"), /owner\/name/);
   assert.throws(() => parseParentNumber("0"), /positive integer/);
