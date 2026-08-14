@@ -1352,6 +1352,96 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     },
   );
 
+  it("distinguishes an explicit empty callable-carrier proof from absent preparation", () => {
+    const f = fixture();
+    const signature: IrClosureSignature = { params: [], returnType: null };
+    const callableType: IrType = { kind: "callable", signature };
+    const fn: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "callback", type: callableType }],
+      valueCount: 1,
+    };
+    const dependencies = (typeRefs: ReadonlyMap<IrType, readonly IrTypeRef[]>) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [fn] },
+        terminalUnitIds: new Set([f.first.id]),
+        inventory: f.inventory,
+        closureSupport: {
+          typeRefs,
+          instructionRefs: new Map(),
+          functionRefs: new Map(),
+        },
+        abi: abiLookup([sourceCallableEntry(f.first.id)]),
+      }).components[0]!;
+
+    const absent = dependencies(new Map());
+    expect(absent.status).toBe("blocked");
+    expect(absent.failures).toContainEqual(
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("IR callable signature resolves backend callable/type support"),
+      }),
+    );
+
+    const prepared = dependencies(new Map([[callableType, Object.freeze([])]]));
+    expect(prepared.status).toBe("complete");
+    expect(prepared.failures).toEqual([]);
+    expect(prepared.abiDependencies).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: "closure",
+      type: {
+        kind: "closure",
+        signature: { params: [], returnType: null },
+      } satisfies IrType,
+      detail: "IR closure signature resolves backend callable/type support",
+    },
+    {
+      label: "boxed",
+      type: {
+        kind: "boxed",
+        inner: irVal({ kind: "f64" }),
+      } satisfies IrType,
+      detail: "IR boxed/ref-cell type resolves a backend type",
+    },
+    {
+      label: "object",
+      type: {
+        kind: "object",
+        shape: { fields: [{ name: "value", type: irVal({ kind: "f64" }) }] },
+      } satisfies IrType,
+      detail: "IR object shape resolves a backend type",
+    },
+  ])("does not accept explicit empty support evidence for a bare $label type", ({ type, detail }) => {
+    const f = fixture();
+    const fn: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "value", type }],
+      valueCount: 1,
+    };
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [fn] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      closureSupport: {
+        typeRefs: new Map([[type, Object.freeze([])]]),
+        instructionRefs: new Map(),
+        functionRefs: new Map(),
+      },
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toContainEqual(
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining(detail),
+      }),
+    );
+  });
+
   it("keeps nested closure-signature support dependencies fail-closed", () => {
     const f = fixture();
     const signature: IrClosureSignature = { params: [{ kind: "string" }], returnType: null };
