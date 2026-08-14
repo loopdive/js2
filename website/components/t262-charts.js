@@ -1795,5 +1795,6 @@ export {
   T262_EDITION_SCOPE_RANK,
   t262IsEditionScope,
   t262LatestPublishedEditionYear,
+  t262NormalizeEditionLabel,
   t262ResolveLatestPublishedEdition,
 };

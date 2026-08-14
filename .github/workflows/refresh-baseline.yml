@@ -546,7 +546,29 @@ jobs:
             --update --sha "${{ github.sha }}" || true
 
       - name: Regenerate edition buckets
-        run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
+        run: |
+          node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
+          # (#4362) The STANDALONE twin. This job — not promote-baseline — is
+          # what actually lands runs/editions-index.json in the baselines repo
+          # (measured 2026-08-14: every commit touching that file is a
+          # "scheduled baseline refresh", ~3/day, while promote-baseline's
+          # baselines push is superseded by the per-SHA promote job and drops).
+          # So the standalone per-edition history can only accrue if it is
+          # generated and appended HERE too; without it the landing page and
+          # report page have no standalone curve to draw at any ES edition, and
+          # the sparse-checkout fix alone never gets a file to preserve.
+          # Best-effort, mirroring promote-baseline: a missing/corrupt
+          # standalone JSONL must skip, never fail the refresh.
+          if [ -f benchmarks/results/test262-standalone-current.jsonl ]; then
+            node --experimental-strip-types scripts/generate-editions.ts \
+              --results benchmarks/results/test262-standalone-current.jsonl \
+              --output website/public/benchmarks/results/test262-standalone-editions.json \
+              --host-free \
+              --feature-examples-out website/public/feature-examples-standalone.json \
+              || echo "::warning::standalone edition buckets failed (non-fatal)"
+          else
+            echo "no standalone baseline JSONL on disk — skipping standalone edition buckets"
+          fi
 
       - name: Deploy to baselines repo
         env:
@@ -647,6 +669,7 @@ jobs:
           node scripts/append-run-history.mjs \
             --runs-dir /tmp/js2wasm-baselines/runs \
             --editions website/public/benchmarks/results/test262-editions.json \
+            --standalone-editions website/public/benchmarks/results/test262-standalone-editions.json \
             --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
             --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
 
@@ -805,6 +828,12 @@ jobs:
             website/public/benchmarks/results/test262-category-editions.json
           # #2871 follow-up — per-file edition index (Error Patterns / Skipped Tests filter).
           git add -f website/public/benchmarks/results/test262-file-editions.json 2>/dev/null || true
+          # (#4362) Standalone twins of the edition buckets + feature-row counts,
+          # regenerated above. They back the per-edition pass bars and feature
+          # rows whenever the "JS host" toggle is off, so they must refresh with
+          # their host counterparts instead of freezing at whatever last landed.
+          git add -f website/public/benchmarks/results/test262-standalone-editions.json 2>/dev/null || true
+          git add -f website/public/feature-examples-standalone.json 2>/dev/null || true
           # #3381 — the #2097 standalone high-water mark (raised earlier). Tolerant
           # add: present on main, but never let a missing file abort the stage.
           git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
