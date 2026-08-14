@@ -300,6 +300,7 @@ import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allo
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
 import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
+import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5311,6 +5312,12 @@ export function generateModule(
     // extraction fail and the pass decline wholesale. DEFAULT OFF.
     inlineExternGetCallSites(ctx);
 
+    // (#4157) Inline the member-WRITE dispatchers' first arm at the call
+    // sites. Runs while the arm it copies and the copy share one type/funcIdx
+    // regime — after every `__set_member_*` body fill, before any index
+    // remap. DEFAULT OFF.
+    inlineMemberSetCallSites(ctx);
+
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
     fillExternIsArray(ctx);
@@ -7669,6 +7676,11 @@ export function generateMultiModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT OFF.
     inlineExternGetCallSites(ctx);
+
+    // (#4157) Inline the member-WRITE dispatchers' first arm at the call
+    // sites — multi-source parity with the generateModule call above (same
+    // after-the-set-fills, before-any-index-remap ordering). DEFAULT OFF.
+    inlineMemberSetCallSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone

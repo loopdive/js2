@@ -21,6 +21,12 @@ loc-budget-allow:
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
   - src/codegen/index.ts
+  # (#4157 write-side member IC, JS2WASM_SET_MEMBER_IC) +12 lines in the
+  # driver: one import plus one pass invocation per compile pipeline
+  # (generateModule + generateMultiModule), immediately after
+  # inlineExternGetCallSites. The pass itself is a new subsystem module
+  # (src/codegen/member-set-inline-ic.ts); there is no smaller way to WIRE a
+  # finalize pass than to call it from the finalize sequence.
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
   # (src/codegen/nonnull-proof.ts); what remains in these two files is
