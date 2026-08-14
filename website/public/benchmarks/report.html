@@ -1443,7 +1443,20 @@
           donutEl.setAttribute("skip", String(summary?.skip || 0));
           donutEl.setAttribute("total", String(summary?.total || 0));
           donutEl.setAttribute("caption-main", captionMain);
-          donutEl.setAttribute("caption-sub", "conformance");
+          // Same caption wording as the landing page: the sub-line names the
+          // lane and the strict filter, so a standalone or strict number is
+          // never presented as if it were the plain host one. This matters
+          // more now that standalone is the default view.
+          donutEl.setAttribute("caption-sub", conformanceCaptionSub());
+        }
+
+        // Mirrors the landing page's `conformanceOptions().captionSub`.
+        function conformanceCaptionSub() {
+          const strictOnly = strictCheckbox.checked;
+          const standalone = view.mode === "standalone";
+          if (strictOnly && standalone) return "strict standalone conformance";
+          if (strictOnly) return "strict conformance";
+          return standalone ? "standalone conformance" : "conformance";
         }
 
         function renderEditionSection() {
@@ -1492,7 +1505,11 @@
 
         function renderSummaryCard() {
           if (scoreState.editionScope === "overall") {
-            const overallCaption = editionDetail?.captionMain || "ECMAScript";
+            // Plain "ECMAScript" at overall scope, matching the landing page.
+            // The slider's own caption for this stop names the latest published
+            // edition ("ECMAScript 2026"), which reads as an edition FILTER
+            // rather than the unfiltered headline this scope actually is.
+            const overallCaption = "ECMAScript";
             if (strictCheckbox.checked && data.strict_summary) {
               setDonutSummary(data.strict_summary, overallCaption);
             } else {
@@ -1504,7 +1521,10 @@
             return;
           }
           if (scoreState.editionScope === "overall+proposal") {
-            setDonutSummary(fullSummary, PROPOSAL_LABEL);
+            // "ECMAScript + proposals", matching the landing page — the scope is
+            // the standard PLUS proposals, not proposals alone (which is what
+            // the bare slider label PROPOSAL_LABEL suggests).
+            setDonutSummary(fullSummary, "ECMAScript + proposals");
             return;
           }
           const scope =
@@ -2454,9 +2474,14 @@
           // Mode switch (only shown when standalone data is available).
           // ?mode= wins over the remembered choice: an explicit link should
           // show what it says regardless of what this browser last looked at.
+          // Standalone (pure Wasm, no JS host imports) is the DEFAULT lane on
+          // both surfaces — the honest floor of what the compiler produces on
+          // its own. Host mode is the opt-in, via the switch, `?mode=host`, or
+          // a remembered choice. It still falls back to host when no standalone
+          // report was published.
           const conformanceHost = el("div");
-          const preferredMode = initialViewState.mode || localStorage.getItem("t262-mode");
-          let activeMode = standaloneView && preferredMode === "standalone" ? "standalone" : "host";
+          const preferredMode = initialViewState.mode || localStorage.getItem("t262-mode") || "standalone";
+          let activeMode = standaloneView && preferredMode !== "host" ? "standalone" : "host";
           const renderActive = () => {
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
