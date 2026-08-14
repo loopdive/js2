@@ -1,14 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #1288 — TypeScript 7 (`@typescript/native-preview`) feature-flag smoke tests.
+// #1288 — TypeScript 7 (GA `typescript@7`, installed under the `typescript7`
+// npm alias) feature-flag smoke tests.
 //
 // These tests verify the shim infrastructure is correctly wired:
 // 1. Default mode (typescript@5): basic compile works, no warnings.
 // 2. Import attributes (`with { type: "json" }`) parse without error and emit
 //    a single one-line warning, NOT a throw.
 // 3. The `tsRuntime` named export reflects the JS2WASM_TS7 env var: under TS7
-//    it loads a synthesized native-preview namespace that throws on the
-//    entry-points still tracked in #1029.
+//    it loads a synthesized TS7 namespace (from `typescript7/unstable/*`)
+//    that throws on the entry-points still tracked in #1029.
 //
 // Note: these tests intentionally do NOT enable JS2WASM_TS7 globally — the
 // decision is made at module-load time and would affect other parallel
@@ -52,7 +53,7 @@ export function answer(): number { return 42; }`;
 });
 
 describe("#1288 ts-api shim (TS7 runtime probe)", () => {
-  it("under JS2WASM_TS7=1 the runtime backend is the native-preview synth", () => {
+  it("under JS2WASM_TS7=1 the runtime backend is the TS7 synth", () => {
     // Spawn a child process so the env var only affects the child's module
     // load and doesn't leak into other vitest workers.
     const probe = `

@@ -45,10 +45,13 @@ js2wasm depends on the `typescript` npm package for two separable things:
    ~445 legacy raw `checker.`/`ctxChecker` references still in codegen
    under the oracle-ratchet (#1930/#3273) baseline.
 
-The checker is the reason we cannot move the compile pipeline to tsgo:
-TS 7.0 went GA (2026-07-08) **without a programmatic compiler API** — the
-Strada JS API is not carried forward; a new (subprocess/IPC, async-flavored)
-API is expected around 7.1. #1029 is therefore blocked on upstream.
+The checker is the reason we cannot move the compile pipeline to tsgo.
+**Update 2026-08-13**: TS7 GA (`typescript@7.0.2`, npm `latest`) ships a
+synchronous subprocess Checker API after all (`typescript/unstable/sync`, see
+the #1029 GA re-audit) — but at ~0.12ms/IPC-query it only becomes viable
+once this issue's kill order shrinks query volume from ~264k to the ~1.6k
+residual. The in-house backend remains the plan of record for the hot path;
+the TS7 checker is a candidate for TS-mode differential validation.
 
 This issue removes that blockage from our side: back `ctx.oracle` with an
 **in-house binder + annotation-propagation engine** so the TS5 checker
@@ -217,7 +220,10 @@ measured, bounded fix.
   ~424k-LOC front end for no user-visible gain. Ruled out.
 - Reimplementing full TypeScript inference (generics, conditional types,
   flow narrowing). The oracle vocabulary defines the ceiling.
-- Waiting on the TS 7.1 API: even when it ships it will be
-  subprocess/IPC-based, so synchronous per-node oracle queries would each
-  cost a round-trip — an in-house backend avoids that architecture problem
-  entirely.
+- Waiting on the TS7 API was the plan's original non-goal; GA has now shipped
+  it (`typescript/unstable/sync`) and the audit's measurement confirms the
+  reasoning: per-node IPC queries cost ~0.12ms each, so at today's ~264k
+  calls/compile the TS7 checker cannot back the hot path — an in-house
+  backend avoids that architecture problem entirely. The TS7 checker becomes
+  useful only after the kill order lands (residual ~1.6k queries ≈ 0.2s),
+  and then only as a TS-mode validation/differential backend.
