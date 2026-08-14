@@ -192,6 +192,51 @@ export interface CallSiteParamInference {
  * whether the function is called internally at all (see #3471 and
  * {@link inferParamTypeFromBody}).
  */
+/**
+ * (#4416) Call sites bucketed by callee name, built ONCE per source file.
+ *
+ * `inferParamTypeFromCallSites` used to walk the entire source file looking for
+ * calls to one function, and it is invoked once per (function, parameter). That
+ * is O(functions x params x programSize) — measured quadratic:
+ *
+ *     units   calls   AST nodes visited
+ *        32     128             184,448
+ *       128     512           2,949,632
+ *       512    2048          47,187,968     <- 4x input, 16x work
+ *
+ * 47 million node visits for a 61 KB input, and a CPU profile put this one
+ * `visit` at **25.2% of a large compile** (with TypeScript's `forEachChild`
+ * underneath it accounting for most of the rest). One walk per source file
+ * turns it into O(programSize + functions x params).
+ *
+ * Keyed on the `SourceFile` object, so a new program (or a rewritten file, e.g.
+ * cjs-rewrite) gets a fresh index automatically and nothing needs invalidating.
+ * The index holds only nodes reachable from `forEachChild(sourceFile, ...)` —
+ * exactly what the old walk saw — so coverage is unchanged, and buckets keep
+ * document order so an order-dependent `agreed`/`conflict` accumulation
+ * resolves identically.
+ */
+type CalleeSite = ts.CallExpression | ts.NewExpression;
+const callSiteIndexBySourceFile = new WeakMap<ts.SourceFile, Map<string, CalleeSite[]>>();
+
+function calleeNameIndex(sourceFile: ts.SourceFile): Map<string, CalleeSite[]> {
+  const cached = callSiteIndexBySourceFile.get(sourceFile);
+  if (cached) return cached;
+  const index = new Map<string, CalleeSite[]>();
+  const visit = (node: ts.Node): void => {
+    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      const bucket = index.get(name);
+      if (bucket) bucket.push(node as CalleeSite);
+      else index.set(name, [node as CalleeSite]);
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  callSiteIndexBySourceFile.set(sourceFile, index);
+  return index;
+}
+
 export function inferParamTypeFromCallSites(
   ctx: CodegenContext,
   funcName: string,
@@ -214,7 +259,7 @@ export function inferParamTypeFromCallSites(
     return false;
   };
 
-  function visit(node: ts.Node) {
+  function visit(node: CalleeSite) {
     // (#743) `new F(…)` is a call site for F's PARAMETERS exactly as `F(…)` is —
     // same arity rules, same argument-to-parameter mapping, same under-application
     // semantics. Until now only `isCallExpression` matched, so every
@@ -233,12 +278,11 @@ export function inferParamTypeFromCallSites(
     // slot stays `externref` re-boxes on every store and measured strictly
     // WORSE than doing nothing (+27 bytes on a one-field fixture).
     // **ON by default since 2026-08-08** — see that module for the acorn numbers.
+    // The name and node-kind halves of this test are now the index's job; only
+    // the ctor gate is left, because it is a runtime flag rather than a
+    // property of the node.
     const ctorSitesEnabled = fnctorCtorParamTypesFlagEnabled();
-    if (
-      (ts.isCallExpression(node) || (ctorSitesEnabled && ts.isNewExpression(node))) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === funcName
-    ) {
+    if (ts.isCallExpression(node) || (ctorSitesEnabled && ts.isNewExpression(node))) {
       // A matching call exists regardless of arg types — the function IS invoked
       // internally, so its params are determined by runtime call args, not the
       // body-usage fallback. Record this before any conflict short-circuit.
@@ -339,10 +383,10 @@ export function inferParamTypeFromCallSites(
         }
       }
     }
-    forEachChild(node, visit);
   }
 
-  forEachChild(sourceFile, visit);
+  // Was `forEachChild(sourceFile, visit)` — a whole-program walk per call.
+  for (const site of calleeNameIndex(sourceFile).get(funcName) ?? []) visit(site);
   // (TS control-flow can't see the closure mutation of `agreed` — assert its
   // declared type so the property narrowing below typechecks.)
   let type: ValType | null = conflict ? null : (agreed as ValType | null);
