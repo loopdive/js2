@@ -56,6 +56,40 @@ export function derivationFlagEnabled(raw: string | undefined): boolean {
 }
 
 /**
+ * (#4415) Per-compile memo for the seven predicates below.
+ *
+ * `process.env.X` is not a property read — V8 goes to the real environ block
+ * every time, measured **85x slower** than a cached boolean (2M reads: 507 ms
+ * vs 6 ms). These predicates are called from the hot lowering path, and a CPU
+ * profile of 40 steady-state test262 compiles put
+ * `fnctorCtorParamTypesFlagEnabled` at **2.3% of total compile time** — ~12 ms
+ * per compile, i.e. tens of thousands of env reads, to answer a question whose
+ * answer cannot change while a compile is running.
+ *
+ * Memoised per compile rather than per process because ~244 sites under
+ * `tests/` set and delete these variables between compiles; a module constant
+ * would silently freeze the first value and break them. {@link
+ * resetDerivationFlagCache} is called once at the start of each compile, so a
+ * test's `process.env.X = "0"` is picked up by the next compile — the only
+ * point at which it could ever have taken effect anyway.
+ */
+const flagCache = new Map<string, boolean>();
+
+/** Drop the memo. Called once per compile; safe to call at any time. */
+export function resetDerivationFlagCache(): void {
+  flagCache.clear();
+}
+
+/** `derivationFlagEnabled(process.env[name])`, read at most once per compile. */
+function cachedFlag(name: string): boolean {
+  const hit = flagCache.get(name);
+  if (hit !== undefined) return hit;
+  const value = derivationFlagEnabled(process.env[name]);
+  flagCache.set(name, value);
+  return value;
+}
+
+/**
  * `JS2WASM_FNCTOR_CTOR_PARAM_TYPES` — the #743 satellite: constructor-parameter
  * and `this`-field-read facts from the whole-module call graph, consumed f64-only
  * by `codegen/fnctor-ctor-param-types.ts`.
@@ -69,7 +103,7 @@ export function derivationFlagEnabled(raw: string | undefined): boolean {
  * had to price: the satellite fixpoint now runs on every standalone compile.
  */
 export function fnctorCtorParamTypesFlagEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_FNCTOR_CTOR_PARAM_TYPES);
+  return cachedFlag("JS2WASM_FNCTOR_CTOR_PARAM_TYPES");
 }
 
 /**
@@ -139,7 +173,7 @@ export function fnctorCtorParamTypesFlagEnabled(): boolean {
  * ships ON.
  */
 export function fnctorCtorParamSlotsEnabled(): boolean {
-  return fieldWriteVerdictEnabled() && derivationFlagEnabled(process.env.JS2WASM_FNCTOR_CTOR_PARAM_SLOTS);
+  return fieldWriteVerdictEnabled() && cachedFlag("JS2WASM_FNCTOR_CTOR_PARAM_SLOTS");
 }
 
 /**
@@ -158,7 +192,7 @@ export function fnctorCtorParamSlotsEnabled(): boolean {
  * of the family.
  */
 export function fieldWriteVerdictEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_FIELD_WRITE_VERDICT);
+  return cachedFlag("JS2WASM_FIELD_WRITE_VERDICT");
 }
 
 /**
@@ -174,7 +208,7 @@ export function fieldWriteVerdictEnabled(): boolean {
  * than blind trust in a declaration file.
  */
 export function dtsEntrypointSeedsFlagEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_DTS_ENTRYPOINT_SEEDS);
+  return cachedFlag("JS2WASM_DTS_ENTRYPOINT_SEEDS");
 }
 
 /**
@@ -183,7 +217,7 @@ export function dtsEntrypointSeedsFlagEnabled(): boolean {
  * A direct CONSUMER of the derived slot types, not a derivation itself.
  */
 export function fnctorTypedReadsFlagEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_FNCTOR_TYPED_READS);
+  return cachedFlag("JS2WASM_FNCTOR_TYPED_READS");
 }
 
 /**
@@ -193,7 +227,7 @@ export function fnctorTypedReadsFlagEnabled(): boolean {
  * that takes typed reads from 78 to 424 candidate sites on acorn.
  */
 export function fnctorTypedBindingsFlagEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_FNCTOR_TYPED_BINDINGS);
+  return cachedFlag("JS2WASM_FNCTOR_TYPED_BINDINGS");
 }
 
 /**
@@ -207,5 +241,5 @@ export function fnctorTypedBindingsFlagEnabled(): boolean {
  * exactly.
  */
 export function numericReturnsFlagEnabled(): boolean {
-  return derivationFlagEnabled(process.env.JS2WASM_NUMERIC_RETURNS);
+  return cachedFlag("JS2WASM_NUMERIC_RETURNS");
 }
