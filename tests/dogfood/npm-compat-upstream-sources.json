@@ -1,0 +1,314 @@
+[
+  {
+    "name": "uuid",
+    "version": "14.0.1",
+    "repo": "https://github.com/uuidjs/uuid.git",
+    "tag": "v14.0.1",
+    "commit": "70177807e9229dfacde2038dc1e722f1828f358a",
+    "cacheKey": "uuid",
+    "compileScript": "dogfood:uuid",
+    "suiteScript": "dogfood:uuid-upstream-suite"
+  },
+  {
+    "name": "typescript",
+    "version": "5.9.3",
+    "repo": "https://github.com/microsoft/TypeScript.git",
+    "tag": "v5.9.3",
+    "commit": "c63de15a992d37f0d6cec03ac7631872838602cb",
+    "cacheKey": "typescript",
+    "compileScript": "dogfood:typescript",
+    "inventory": {
+      "directory": "src/testRunner/unittests",
+      "include": "^src/testRunner/unittests/.*\\.ts$",
+      "fileCount": 256,
+      "pathSha256": "5f735da50b2a27e0e9274a21d759cedf845e7b91c1896bc817aaa5f940e97743"
+    }
+  },
+  {
+    "name": "acorn",
+    "version": "8.16.0",
+    "repo": "https://github.com/acornjs/acorn.git",
+    "tag": "8.16.0",
+    "commit": "610d62d8f9cf44ca0e70c516b40c92452235c81b",
+    "cacheKey": "acorn",
+    "compileScript": "dogfood:acorn",
+    "suiteScript": "dogfood:acorn-official-suite"
+  },
+  {
+    "name": "cookie",
+    "version": "2.0.1",
+    "repo": "https://github.com/jshttp/cookie.git",
+    "tag": "v2.0.1",
+    "commit": "51c485421a95ee796de6d8dab53a5ade0a20db8a",
+    "cacheKey": "cookie",
+    "compileScript": "dogfood:cookie",
+    "suiteScript": "dogfood:cookie-upstream-suite",
+    "inventory": {
+      "directory": "src",
+      "include": "^src/[^/]+\\.spec\\.ts$",
+      "fileCount": 4,
+      "pathSha256": "580633177e65fd6ec43cc0177db24e1a3fb2fac9fdc3f3780004d35cf36a7c8e"
+    }
+  },
+  {
+    "name": "lodash",
+    "version": "4.18.1",
+    "repo": "https://github.com/lodash/lodash.git",
+    "tag": "4.18.1",
+    "commit": "cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e",
+    "cacheKey": "lodash",
+    "compileScript": "dogfood:lodash",
+    "suiteScript": "dogfood:lodash-upstream-suite"
+  },
+  {
+    "name": "react",
+    "version": "19.2.6",
+    "repo": "https://github.com/facebook/react.git",
+    "tag": "v19.2.6",
+    "commit": "eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401",
+    "cacheKey": "react",
+    "compileScript": "dogfood:react",
+    "suiteScript": "dogfood:react-upstream-suite"
+  },
+  {
+    "name": "eslint",
+    "version": "10.0.3",
+    "repo": "https://github.com/eslint/eslint.git",
+    "tag": "v10.0.3",
+    "commit": "bfce7eaa0ec5d6591fd247b7ff57b51e45fb88a1",
+    "cacheKey": "eslint",
+    "compileScript": "dogfood:eslint",
+    "suiteScript": "dogfood:eslint-upstream-suite"
+  },
+  {
+    "name": "react-dom",
+    "version": "19.2.6",
+    "repo": "https://github.com/facebook/react.git",
+    "tag": "v19.2.6",
+    "commit": "eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401",
+    "cacheKey": "react",
+    "compileScript": "dogfood:react-dom",
+    "suiteScript": "dogfood:react-dom-upstream-suite"
+  },
+  {
+    "name": "prettier",
+    "version": "3.8.1",
+    "repo": "https://github.com/prettier/prettier.git",
+    "tag": "3.8.1",
+    "commit": "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
+    "cacheKey": "prettier",
+    "compileScript": "dogfood:prettier",
+    "inventory": {
+      "directory": "tests/unit",
+      "include": "^tests/unit/[^/]+\\.js$",
+      "fileCount": 20,
+      "pathSha256": "79e27ef592b9fafc4369a6971417326b66b9d484d906d03087c2f849c6363f6b"
+    }
+  },
+  {
+    "name": "tailwindcss",
+    "version": "4.3.3",
+    "repo": "https://github.com/tailwindlabs/tailwindcss.git",
+    "tag": "v4.3.3",
+    "commit": "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
+    "cacheKey": "tailwindcss",
+    "compileScript": "dogfood:tailwindcss",
+    "inventory": {
+      "directory": "packages/tailwindcss",
+      "include": "^packages/tailwindcss/(?:src|tests)/.*\\.(?:test|spec)\\.(?:js|ts|tsx)$",
+      "fileCount": 42,
+      "pathSha256": "99c9e7c4483c38fb1ec9f25ff6c9d05e4bdaac65f8991138cb494812c7b98cf1"
+    }
+  },
+  {
+    "name": "axios",
+    "version": "1.16.1",
+    "repo": "https://github.com/axios/axios.git",
+    "tag": "v1.16.1",
+    "commit": "1337d6b537afb2d3f501074c8ac4ef4308221197",
+    "cacheKey": "axios",
+    "compileScript": "dogfood:axios",
+    "inventory": {
+      "directory": "tests/unit",
+      "include": "^tests/unit/.*\\.test\\.js$",
+      "fileCount": 49,
+      "pathSha256": "4007c33faf45e631aab4e31dc4576a44928933e8635d18ae82f43db766015381"
+    }
+  },
+  {
+    "name": "clsx",
+    "version": "2.1.1",
+    "repo": "https://github.com/lukeed/clsx.git",
+    "tag": "v2.1.1",
+    "commit": "925494cf31bcd97d3337aacd34e659e80cae7fe2",
+    "cacheKey": "clsx",
+    "compileScript": "dogfood:clsx",
+    "suiteScript": "dogfood:clsx-upstream-suite",
+    "inventory": {
+      "directory": "test",
+      "include": "^test/[^/]+\\.js$",
+      "fileCount": 3,
+      "pathSha256": "8746cc44a9e6bf780cff17e92f32ad57ae25f08bc13e791777a46ea0fd4fc966"
+    }
+  },
+  {
+    "name": "jsdom",
+    "version": "30.0.1",
+    "repo": "https://github.com/jsdom/jsdom.git",
+    "tag": "v30.0.1",
+    "commit": "6584485f094d5b271553005b68804c93a455c002",
+    "cacheKey": "jsdom",
+    "compileScript": "dogfood:jsdom",
+    "inventory": {
+      "directory": "test/api",
+      "include": "^test/api/[^/]+\\.js$",
+      "fileCount": 17,
+      "pathSha256": "c23d751621c9fc6e1d98c571d2c234dca4a543ebeec67c723ff42866f793e4bb"
+    }
+  },
+  {
+    "name": "marked",
+    "version": "18.0.2",
+    "repo": "https://github.com/markedjs/marked.git",
+    "tag": "v18.0.2",
+    "commit": "c4f4529d69d254458831f3c22187d080db2f3c83",
+    "cacheKey": "marked",
+    "compileScript": "dogfood:marked",
+    "inventory": {
+      "directory": "test/unit",
+      "include": "^test/unit/[^/]+\\.test\\.js$",
+      "fileCount": 6,
+      "pathSha256": "3e6097a2d40c3a2481c9110218b0fb66bd3a868e5d6537673e6cc27809b38d3a"
+    }
+  },
+  {
+    "name": "webpack",
+    "version": "5.109.2",
+    "repo": "https://github.com/webpack/webpack.git",
+    "tag": "v5.109.2",
+    "commit": "6a24bd65b72c43207c36ce61b54e1f5833486906",
+    "cacheKey": "webpack",
+    "compileScript": "dogfood:webpack",
+    "inventory": {
+      "directory": "test",
+      "include": "^test/[^/]+\\.unittest\\.js$",
+      "fileCount": 98,
+      "pathSha256": "78dbd5743a1a3ad12574f4c0e0a8c05a39e4dda24a1e1c41d29fbb7034f80feb"
+    }
+  },
+  {
+    "name": "hono",
+    "version": "4.12.16",
+    "repo": "https://github.com/honojs/hono.git",
+    "tag": "v4.12.16",
+    "commit": "90d4182aabd328e2ec6af3f25ec62ddc574ad8cb",
+    "cacheKey": "hono",
+    "compileScript": "dogfood:hono",
+    "suiteScript": "dogfood:hono-upstream-suite"
+  },
+  {
+    "name": "jest",
+    "version": "30.4.2",
+    "repo": "https://github.com/jestjs/jest.git",
+    "tag": "v30.4.2",
+    "commit": "746f2a0f57c56e3bba555280f0587d40f3db95c0",
+    "cacheKey": "jest",
+    "compileScript": "dogfood:jest",
+    "inventory": {
+      "directory": "packages",
+      "include": "^packages/.*/__tests__/.*\\.(?:test|spec)\\.(?:js|jsx|ts|tsx)$",
+      "fileCount": 241,
+      "pathSha256": "28c5ee1496f45562053a8dbcb6ea14a922180b55a3f1eeb5dcb42928528ed7e7"
+    }
+  },
+  {
+    "name": "lodash-es",
+    "version": "4.18.1",
+    "repo": "https://github.com/lodash/lodash.git",
+    "tag": "4.18.1",
+    "commit": "cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e",
+    "cacheKey": "lodash",
+    "compileScript": "dogfood:lodash-es",
+    "suiteScript": "dogfood:lodash-es-upstream-suite"
+  },
+  {
+    "name": "redux",
+    "version": "5.0.1",
+    "repo": "https://github.com/reduxjs/redux.git",
+    "tag": "v5.0.1",
+    "commit": "50b010210df25c470386f7e39a9389a4a77b3842",
+    "cacheKey": "redux",
+    "compileScript": "dogfood:redux",
+    "inventory": {
+      "directory": "test",
+      "include": "^test/.*\\.spec\\.ts$",
+      "fileCount": 9,
+      "pathSha256": "48798789f3f825fd0d4fd18dd1a7017c642de12e5e1587fff76db217dd3d5245"
+    }
+  },
+  {
+    "name": "moment",
+    "version": "2.30.1",
+    "repo": "https://github.com/moment/moment.git",
+    "tag": "2.30.1",
+    "commit": "485d9a7d709bd5f3869a7ad24630cf0746d072dc",
+    "cacheKey": "moment",
+    "compileScript": "dogfood:moment",
+    "suiteScript": "dogfood:moment-upstream-suite"
+  },
+  {
+    "name": "three",
+    "version": "0.185.1",
+    "repo": "https://github.com/mrdoob/three.js.git",
+    "tag": "r185",
+    "commit": "2431a09f46f34c560bc8e44b33be0e567723d5b9",
+    "cacheKey": "three",
+    "compileScript": "dogfood:three",
+    "inventory": {
+      "directory": "test/unit/src",
+      "include": "^test/unit/src/.*\\.tests\\.js$",
+      "fileCount": 232,
+      "pathSha256": "0126bb4d658f1861dc4a058a26ee7c0fe7346e27745fff780c068a9004f27581"
+    }
+  },
+  {
+    "name": "styled-components",
+    "version": "6.4.4",
+    "repo": "https://github.com/styled-components/styled-components.git",
+    "tag": "styled-components@6.4.4",
+    "commit": "5f69a304df5de81aae114928dcd98896c627c94a",
+    "cacheKey": "styled-components",
+    "compileScript": "dogfood:styled-components",
+    "inventory": {
+      "directory": "packages/styled-components/src",
+      "include": "^packages/styled-components/src/.*/test/.*\\.test\\.(?:js|jsx|ts|tsx)$",
+      "fileCount": 41,
+      "pathSha256": "df2509ffafb8041e04371f3f34ff5237a9fd756344e3f6f7713af23890ba1724"
+    }
+  },
+  {
+    "name": "stylelint",
+    "version": "17.14.1",
+    "repo": "https://github.com/stylelint/stylelint.git",
+    "tag": "17.14.1",
+    "commit": "cd66b035087270dd62d33542154463266cc5e81a",
+    "cacheKey": "stylelint",
+    "compileScript": "dogfood:stylelint",
+    "inventory": {
+      "directory": "lib",
+      "include": "^lib/.*/__tests__/.*\\.(?:js|mjs|cjs)$",
+      "fileCount": 281,
+      "pathSha256": "b70f2378fe3ed0fcc06082e14aadf174a4cba166943b81c4cf88c48ebd008ea3"
+    }
+  },
+  {
+    "name": "lit",
+    "version": "3.3.3",
+    "repo": "https://github.com/lit/lit.git",
+    "tag": "lit@3.3.3",
+    "commit": "20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6",
+    "cacheKey": "lit",
+    "compileScript": "dogfood:lit",
+    "suiteScript": "dogfood:lit-upstream-suite"
+  }
+]

@@ -11,7 +11,7 @@
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot } from "./capture-source-slot.js";
+import { captureSourceSlot, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -225,7 +225,8 @@ function emitMemoizedNestedFnClosure(
       }
       const existingBox = fctx.boxedTdzFlags?.get(cap.name);
       if (existingBox) {
-        fctx.body.push({ op: "local.get", index: existingBox.localIdx });
+        // (#4394) Null-guarded reuse — the teeing site may not dominate this one.
+        pushBoxedTdzFlagRef(fctx, existingBox);
       } else {
         const liveFlagIdx = fctx.tdzFlagLocals?.get(cap.name);
         const liveType = liveFlagIdx !== undefined ? getLocalType(fctx, liveFlagIdx) : undefined;
@@ -247,6 +248,8 @@ function emitMemoizedNestedFnClosure(
           fctx.boxedTdzFlags.set(cap.name, {
             refCellTypeIdx: i32RefCellTypeIdxForFlags,
             localIdx: flagBoxLocal,
+            // (#4394) Raw i32 source for non-dominated reuse re-init.
+            srcFlagIdx: liveFlagIdx,
           });
           if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
           fctx.tdzFlagLocals.set(cap.name, flagBoxLocal);
@@ -415,12 +418,23 @@ export function emitFuncRefAsClosure(
     observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx);
     ctx.funcMap.set(trampolineName, trampolineFuncIdx);
 
-    // Register closureInfo so array method callbacks can use call_ref
+    // Register closureInfo so array method callbacks can use call_ref.
+    // (#4394) Carry `hasRestParam` from the source declaration: the generic
+    // call-of-expression paths (call-tail-dispatch.ts) consult it to pack
+    // trailing args into the rest vec — without it a dynamic call of a
+    // rest-param nested fn coerced arg0 straight to the vec param (guarded
+    // cast → null) and the callee trapped reading `rest.length`.
+    const ownerDecl = ctx.funcMapOwnerDecl.get(funcName);
+    const ownerHasRest =
+      ownerDecl !== undefined &&
+      ts.isFunctionLike(ownerDecl) &&
+      ownerDecl.parameters.some((p) => p.dotDotDotToken !== undefined);
     const closureInfo: ClosureInfo = {
       structTypeIdx,
       funcTypeIdx: wrapperTypes.closureInfo.funcTypeIdx,
       returnType: results.length > 0 ? results[0]! : null,
       paramTypes: userParams,
+      ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
 
