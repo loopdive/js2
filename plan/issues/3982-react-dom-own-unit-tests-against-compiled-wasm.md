@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-13
+updated: 2026-08-15
 priority: high
 horizon: m
 feasibility: medium
@@ -267,6 +267,17 @@ reaches ReactDOM's client renderer but fails in the constructor bridge with
 finding, not a Wasm validation failure. A full pass-rate claim is not made
 until that constructor value is preserved and the server-renderer slice has its
 own valid module path.
+
+## Capture-continuation checkpoint (2026-08-15)
+
+The constructor-capture fix is now on the draft follow-up. It preserves
+immutable boxed captures across lifted closure frames and lazily materializes
+nullable cells from their raw binding before a conditional closure is called.
+The client module remains valid Wasm, but the first admitted upstream probe now
+reaches a separate null-cell dereference in the generated constructor closure.
+The follow-up therefore stays draft until that runtime path is fixed; this
+checkpoint intentionally records the remaining failure instead of claiming a
+pass-rate improvement.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
