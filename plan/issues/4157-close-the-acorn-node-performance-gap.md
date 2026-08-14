@@ -144,6 +144,14 @@ coercion-sites-allow:
   # lookup to find the sites, one skip guard so the helper bodies themselves are
   # never rewritten. It removes coercion calls; it adds no coercion matrix.
   - src/codegen/box-boolean-fuse.ts
+  # (#4157 park-6 fix) The cross-hierarchy operand repair does NOT author any
+  # coercion: it calls `callArgCoercionInstrs` — the SHARED engine helper in
+  # stack-balance.ts — and the two `findFunc` lookups exist only to hand that
+  # helper the `__box_number` / `__unbox_number` indices it takes as
+  # parameters. The gate counts the literal helper names; here they are an
+  # index lookup, not a hand-rolled ToNumber matrix. The pass repairs only
+  # externref ⇄ concrete-GC-ref operands, whose hierarchies are disjoint.
+  - src/codegen/cross-hierarchy-operands.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
