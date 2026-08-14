@@ -36,6 +36,9 @@ loc-budget-allow:
   # rewrites and every correctness argument live in the new subsystem module
   # src/codegen/flat-str-ic.ts; there is no smaller way to wire a finalize
   # pass than to call it from the finalize sequence.
+  # (#4157 unboxed boolean fusion) +3 lines of WIRING in the driver: one
+  # import and two one-line finalize invocations of fuseBoxBooleanSinks.
+  # The pass itself is a new subsystem module (src/codegen/box-boolean-fuse.ts).
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
   # (src/codegen/nonnull-proof.ts); what remains in these two files is
