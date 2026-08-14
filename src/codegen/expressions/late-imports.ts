@@ -14,7 +14,7 @@ import { addFuncType } from "../registry/types.js";
 import { addUnionImportsViaRegistry } from "../shared.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
-import { ensureSymbolCarrier } from "../symbol-native.js";
+import { ensureSymbolCarrier, usesNativeSymbolProvider } from "../symbol-native.js";
 // (#3100 S4) Native standalone iteration substrate: the four `__iterator*`
 // protocol ops, the bounded materializer `__array_from_iter_n`, and the
 // rest-slice `__extern_slice` all have Wasm-native DEFINED implementations.
@@ -25,6 +25,7 @@ import {
 } from "../iterator-native.js";
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
+import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 
 /**
  * #1471: helper names that `addUnionImports` provides Wasm-native
@@ -405,21 +406,28 @@ export function ensureLateImport(
         `this producer must register its import before the freeze point or refuse loudly`,
     );
   }
-  // #1471: under no-JS-host mode, the box/unbox/typeof/is_truthy helpers have
-  // Wasm-native implementations emitted by addUnionImports. Route there so the
-  // module needs no unsatisfiable `env::*` host import. addUnionImports is
+  // #1471/#4397: native semantic providers implement the
+  // box/unbox/typeof/is_truthy helpers in Wasm via addUnionImports. Route there
+  // so the module needs no semantic `env::*` import. addUnionImports is
   // idempotent and registers every name in UNION_NATIVE_HELPER_NAMES, so a
   // single call resolves this lookup. These names are disjoint from the
   // #1472 object/property refusal family below.
-  if ((ctx.wasi || ctx.standalone) && UNION_NATIVE_HELPER_NAMES.has(name)) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && UNION_NATIVE_HELPER_NAMES.has(name)) {
     addUnionImportsViaRegistry(ctx);
     return ctx.funcMap.get(name);
   }
-  // #1472 Phase B — under --target standalone, the open-object property ops
+  if (ctx.targetProfile.semanticProviders === "native-first" && name.startsWith("__new_")) {
+    const errorName = name.slice("__new_".length);
+    if (isWasiErrorName(errorName)) {
+      emitWasiErrorConstructor(ctx, errorName, paramTypes.length);
+      return ctx.funcMap.get(name);
+    }
+  }
+  // #1472 Phase B / #4397 — with native semantic providers, open-object ops
   // (__new_plain_object / __extern_get / __extern_set) have Wasm-native
   // implementations emitted by ensureObjectRuntime (object-runtime.ts), backed
   // by a $Object/$PropMap/$PropEntry open-hash-map instead of the JS-host
-  // WeakMap sidecars. Route here so the module needs no unsatisfiable env::*
+  // WeakMap sidecars. Route here so the module needs no semantic `env::*`
   // host import. ensureObjectRuntime is idempotent and registers every name in
   // OBJECT_RUNTIME_HELPER_NAMES in funcMap as a DEFINED function (no import is
   // added, so no index shift is required — same invariant as the #1471 boxing
@@ -441,7 +449,7 @@ export function ensureLateImport(
   // ctx.standalone` routing of UNION_NATIVE_HELPER_NAMES above and the #2609
   // `__object_is` host-free (`ctx.standalone || ctx.wasi`) registration inside
   // ensureObjectRuntime.
-  if ((ctx.standalone || ctx.wasi) && OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
     ensureObjectRuntime(ctx);
     return ctx.funcMap.get(name);
   }
@@ -453,7 +461,7 @@ export function ensureLateImport(
   // the leak fix: before #2866, a standalone `o[sym] = v` / `symbol[]` read
   // reached the `addImport("env","__box_symbol")` fallthrough below and emitted
   // an `env::__box_symbol` import that failed at instantiation.
-  if ((ctx.standalone || ctx.wasi) && name === "__box_symbol") {
+  if (usesNativeSymbolProvider(ctx) && name === "__box_symbol") {
     ensureSymbolCarrier(ctx);
     return ctx.funcMap.get(name);
   }

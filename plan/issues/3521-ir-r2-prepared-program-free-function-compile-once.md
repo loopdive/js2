@@ -2,25 +2,25 @@
 id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
-sprint: current
 created: 2026-07-21
-updated: 2026-08-09
+updated: 2026-08-12
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, compiler
 language_feature: compiler-internals
-es_edition: n/a
 goal: ir-full-coverage
-lane: ir-retirement-r2
-model: gpt-5.6-sol
+sprint: current
 parent: 3518
 depends_on: [3520]
-required_by: [3522, 3523, 3525, 3526]
-related: [2138, 2855, 3143, 3203, 3518, 3519, 4260]
+required_by: [3522, 3523, 3525, 3526, 3792]
+horizon: xl
+complexity: XL
+es_edition: n/a
+lane: ir-retirement-r2
+model: gpt-5.6-sol
+related: [2138, 2855, 3143, 3203, 3518, 3519, 3678, 4260, 4382]
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
@@ -82,7 +82,6 @@ func-budget-allow:
   - src/ir/integration.ts::makeResolver
   - src/ir/lower.ts::lowerIrFunctionBody
 ---
-
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
 ## Objective
@@ -157,11 +156,39 @@ but the contract is fixed:
   cross-unit ABI/call edge cannot be proven safe, the entire component becomes
   typed `Unsupported` before emission rather than partially emitting and
   discovering the mismatch later.
+- `formatVersion` and `decisionSchemaVersion` — explicit compatibility keys for
+  a deterministic serialized handoff. No AST node, compiler callback, live
+  registry, concrete Wasm index, or backend-owned mutable object may cross this
+  boundary.
 
 `Prepared` means AST→IR build, verification, hygiene, inline/mono transforms,
 symbolic resolution validation, support-intent collection, target legality,
 and final ABI/signature checks succeeded. Backend body emission is a consumer,
 not another capability probe.
+
+## Versioned serialized handoff
+
+Define a canonical encoder/decoder for the frozen `PreparedIrProgram`. This is
+an architectural boundary and cache/tooling primitive, not permission to make
+serialized IR a stable public language before its compatibility policy is
+documented.
+
+- Canonical ordering makes equivalent programs byte-identical regardless of
+  source/map traversal order.
+- Tagged scalar encoding preserves `NaN`, infinities, negative zero, bigint,
+  nullish values, strings, and stable symbol/type/unit identities without JSON
+  coercion loss.
+- Source identity includes normalized paths/IDs, content hashes, and exact
+  locations needed by #3678 diagnostics without embedding mutable TypeScript
+  nodes.
+- Decode reconstructs immutable data and re-runs structural, type, ABI, effect,
+  component, support-intent, runtime-manifest, and target-legality verification
+  before returning `Prepared`.
+- Unknown versions, malformed fields, missing provider/capability decisions,
+  and target/backend mismatches fail with typed diagnostics before any module,
+  slot, import, cache entry, or output file is published.
+- Backend-specific lowering state is excluded. R8 must prove WasmGC and linear
+  consume the exact same decoded snapshot rather than reparsing or reselecting.
 
 ## Prepare/emit split
 
@@ -919,6 +946,12 @@ R3–R8 issue instead of absorbing it.
    the temporary direct policy but never cause `direct=1, IR=1`.
 7. Inventory, outcome, and emission denominators reconcile; duplicate/missing
    counters and a shipping placeholder fail the test.
+8. Encode/decode round-trips a fixture containing all supported scalar and ID
+   forms, including `NaN`, infinities, negative zero, bigint, source spans,
+   support intents, and component ownership, with semantic deep equality.
+9. Reordered construction produces byte-identical serialization. Corruption,
+   unknown versions, forged outcome/provider data, and backend mismatch fail
+   before an emitter or publication hook can run.
 
 Run these with `tests/issue-3143.test.ts`, `tests/issue-3203.test.ts`,
 `tests/issue-3214-imported-hof.test.ts`, the inline/mono pass suites, and the
@@ -928,6 +961,12 @@ full equivalence/cross-backend gates.
 
 - [ ] `PreparedIrProgram` is complete and immutable before any R2
       free-function body emission starts.
+- [ ] Its canonical, versioned serialization round-trips without scalar,
+      source-identity, ABI, effect, support-intent, component, or decision loss;
+      equivalent input orderings produce byte-identical output.
+- [ ] Decoding is fail-closed and re-verifies the complete prepared contract.
+      Invalid/incompatible snapshots emit typed #3678 diagnostics before any
+      artifact, cache entry, registry state, or output file is published.
 - [ ] Preparation includes final typed IR, verification/passes, target legality,
       ABI validation, and every support intent; emission performs no new
       capability decision.

@@ -320,6 +320,8 @@ export function fillInstanceProps(ctx: CodegenContext): void {
   const ensureIdx = ctx.funcMap.get(CLOSURE_BAG_ENSURE);
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const deletePropIdx = ctx.funcMap.get("__delete_property");
   if (
@@ -355,6 +357,51 @@ export function fillInstanceProps(ctx: CodegenContext): void {
     }
     body.push({ op: "i32.const", value: 0 });
     setFn(IS_INSTANCE_EXPANDO_CARRIER, [{ name: "__any", type: ANY }], body);
+  }
+
+  // A Proxy trap receives its target through the dynamic externref ABI. When
+  // that target is a compiler-owned closed struct, the ordinary call-site
+  // fast path for Object.getOwnPropertyDescriptor no longer knows its nominal
+  // shape; the generic descriptor helper used to treat it like a primitive and
+  // return undefined. Reuse the completed closed-struct hasOwn/get ladders to
+  // synthesize the ordinary default data descriptor without copying or opening
+  // the target. The functions are filled later in finalization, but their
+  // reserved indices are already stable here.
+  //
+  // Closed physical fields on this substrate are ordinary W/E/C data
+  // properties. Reflagged descriptors are widened to the open-object runtime,
+  // so they do not reach this arm. The hasOwn predicate also screens presence
+  // bits and deletion tombstones before the value read.
+  if (hasOwnIdx !== undefined && createDescriptorIdx !== undefined && externGetIdx !== undefined) {
+    const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
+    const gopdFn = gopdIdx === undefined ? undefined : definedFuncAt(ctx, gopdIdx);
+    if (gopdFn) {
+      gopdFn.body.unshift(
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: carrierIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: hasOwnIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: externGetIdx },
+                { op: "i32.const", value: 0x07 },
+                { op: "call", funcIdx: createDescriptorIdx },
+                { op: "return" },
+              ],
+            },
+          ],
+        },
+      );
+    }
   }
 
   /** `if (!__is_instance_expando_carrier(obj)) <bail>;` */

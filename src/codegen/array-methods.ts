@@ -1408,6 +1408,18 @@ export function compileArrayMethodCall(
     resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
   if (!arrInfo) return undefined;
 
+  // A native-string join over a closure-producing array expression must
+  // compile that receiver exactly once. The ordinary actual-type probe below
+  // recompiles `map`/`filter`/… and closure registration is not transactional;
+  // probing and then emitting the receiver can therefore leave the committed
+  // call wired to a stale/null closure. The resolved TS result type already
+  // describes the array produced by these methods, including `map`'s result
+  // element type, so use it directly for this narrow nested-call shape.
+  const skipReceiverProbeForNativeJoin =
+    ctx.nativeStrings &&
+    (methodName === "join" || methodName === "toString" || methodName === "toLocaleString") &&
+    receiverIsClosureProducingArrayCall(receiverExpr);
+
   let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
   // #1286: tracks whether the probe found the receiver to be externref at
   // runtime (e.g., the result of `Object.keys(any)`, which goes through the
@@ -1434,7 +1446,7 @@ export function compileArrayMethodCall(
   // `[0, true].lastIndexOf(...)` infers i32 elements during construction,
   // but resolveArrayInfo resolves (number|boolean)[] → __vec_externref.
   // Probe-compile the receiver to determine the actual Wasm type (#826).
-  if (receiverExpr) {
+  if (receiverExpr && !skipReceiverProbeForNativeJoin) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
     if (ts.isIdentifier(receiverExpr)) {
@@ -1652,7 +1664,12 @@ export function compileArrayMethodCall(
       // by the native concat lowering, so preserve their Array.prototype.concat
       // semantics through the existing host fallback.
       result = receiverIsExternref
-        ? compileArrayConcatExtern(ctx, fctx, methodAccess, callExpr)
+        ? ctx.targetProfile.semanticProviders === "native-first" &&
+          callExpr.arguments.every(
+            (argument) => resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(argument)) !== null,
+          )
+          ? compileArrayConcatNativeDynamic(ctx, fctx, methodAccess, callExpr)
+          : compileArrayConcatExtern(ctx, fctx, methodAccess, callExpr)
         : compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "join":
@@ -3879,6 +3896,74 @@ function emitBackingClampedArrayCopy(
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: copyInstrs });
 }
 
+/** Native-first concat for array operands whose physical vec kinds differ. */
+function compileArrayConcatNativeDynamic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  const builders = ensureObjVecBuilders(ctx);
+  const externLenIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdx = ctx.funcMap.get("__extern_get_idx");
+  flushLateImportShifts(ctx, fctx);
+  if (externLenIdx === undefined || externGetIdx === undefined) return null;
+
+  const out = allocLocal(fctx, `__cat_native_out_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: builders.newIdx });
+  fctx.body.push({ op: "local.set", index: out });
+
+  // The caller admits only statically array-shaped operands. Walk each through
+  // the native dynamic readers so differently specialized vecs, `$ObjVec`, and
+  // an explicitly admitted caller-owned JS Array share one path. The result is
+  // a fresh Wasm-owned `$ObjVec`; no JS shadow array is introduced.
+  for (const sourceExpr of [propAccess.expression, ...callExpr.arguments]) {
+    const source = allocLocal(fctx, `__cat_native_src_${fctx.locals.length}`, { kind: "externref" });
+    const len = allocLocal(fctx, `__cat_native_len_${fctx.locals.length}`, { kind: "i32" });
+    const index = allocLocal(fctx, `__cat_native_i_${fctx.locals.length}`, { kind: "i32" });
+
+    const sourceType = compileExpression(ctx, fctx, sourceExpr, { kind: "externref" });
+    if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: source });
+    fctx.body.push({ op: "call", funcIdx: externLenIdx });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: len });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index });
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index },
+            { op: "local.get", index: len },
+            { op: "i32.ge_u" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: out },
+            { op: "local.get", index: source },
+            { op: "local.get", index },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: externGetIdx },
+            { op: "call", funcIdx: builders.pushIdx },
+            { op: "local.get", index },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    });
+  }
+
+  fctx.body.push({ op: "local.get", index: out });
+  return { kind: "externref" };
+}
+
 /**
  * arr.concat(other) -> create new vec struct with combined data.
  */
@@ -3940,14 +4025,26 @@ function compileArrayConcat(
   const argNode = callExpr.arguments[0]!;
   const argTsType = ctx.checker.getTypeAtLocation(argNode);
   const argArrayInfo = resolveArrayInfo(ctx, argTsType);
+  const allArgumentsAreArrays = callExpr.arguments.every(
+    (argument) => resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(argument)) !== null,
+  );
 
   if (!argArrayInfo) {
+    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+      return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
+    }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
   if (argArrayInfo.vecTypeIdx !== vecTypeIdx) {
+    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+      return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
+    }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
   if (callExpr.arguments.length > 1) {
+    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+      return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
+    }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
 
@@ -4227,10 +4324,11 @@ export function compileArrayJoinExtern(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
-  // #3155 — standalone/WASI has no JS host, so the `__array_join_any` delegation
-  // below leaks an unsatisfiable `env::__array_join_any` import (the module
-  // fails to instantiate). Walk the externref array natively instead.
-  if (noJsHost(ctx)) {
+  // #3155/#4397 — standalone/WASI cannot satisfy the `__array_join_any`
+  // delegation, and native-first must not select a JS semantic provider merely
+  // because a JS host happens to instantiate the module. Both profiles walk
+  // the externref array with the in-module provider instead.
+  if (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") {
     const native = compileArrayJoinExternNative(ctx, fctx, propAccess, callExpr);
     if (native !== null) return native;
     // else fall through — native string helpers unavailable, best-effort host.
@@ -4510,14 +4608,10 @@ function compileArrayJoin(
   // illegal-casts on native-string element arrays and emits imports the
   // standalone target cannot satisfy. Route through the native vec join.
   //
-  // #2075 follow-up — a receiver that is itself a *closure-producing* array
-  // method call (`.map(fn).join(...)`, `.filter(fn).join(...)`) is excluded:
-  // the receiver probe in compileArrayMethodCall re-compiles such receivers and
-  // the closure registration is not idempotent, so routing them here produces
-  // an invalid module. Those keep their prior behavior until the probe is made
-  // closure-safe; the non-closure collateral shapes (slice/spread/concat/
-  // push-pop/sort/shift/reverse/length-trunc) all go native correctly.
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && !receiverIsClosureProducingArrayCall(propAccess.expression)) {
+  // Closure-producing receiver calls are admitted here too. Their dispatcher
+  // skips the non-transactional receiver probe above, so the closure and its
+  // native result vec are emitted exactly once.
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
     return compileArrayJoinNative(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
   }
 

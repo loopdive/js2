@@ -11,6 +11,7 @@
 import type { IrBinop, IrBlock, IrFunction, IrInstr, IrType } from "../nodes.js";
 import { asVal } from "../nodes.js";
 import type { ValType } from "../types.js";
+import type { CompileTargetProfile } from "../../target-profile.js";
 
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
@@ -33,6 +34,24 @@ export interface IrBackendTargetProfile {
   readonly allowHostImports: boolean;
   /** Legacy fast-array storage has a distinct ABI not yet represented in IR. */
   readonly fast?: boolean;
+}
+
+/**
+ * Exact IR projection of the compiler's normalized target policy (#4396).
+ *
+ * `allowHostImports` means ambient JavaScript capability imports, not JS value
+ * interop. A JS value bridge may remain enabled when this is false.
+ */
+export function projectIrBackendTargetProfile(
+  profile: CompileTargetProfile,
+  options: { readonly fast?: boolean } = {},
+): IrBackendTargetProfile {
+  return Object.freeze({
+    backend: profile.backend,
+    target: profile.target,
+    allowHostImports: profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js",
+    fast: options.fast,
+  });
 }
 
 /**

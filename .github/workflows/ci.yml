@@ -127,6 +127,9 @@ jobs:
       - name: IR fallback gate (#1376)
         run: pnpm run check:ir-fallbacks
 
+      - name: Native-first host semantic debt gate (#4401)
+        run: pnpm run check:host-import-policy
+
       - name: IR-only readiness instrumentation (#3519)
         # Hybrid policy is the bounded migration ratchet: Unsupported rows are
         # measured, while any invariant, missing unit, or compile failure is

@@ -314,10 +314,12 @@ export function emitDefinePropertyDescRuntime(
   // struct field via `struct.get`, box to externref, `__extern_set` onto a new
   // open-hash object) so the applier can read it. A descriptor that is already
   // a `$Object` (externref — e.g. `as any`, or a `$Object`-built literal) is
-  // passed through unchanged: no double-wrap. Gated `ctx.standalone`; host/gc/
-  // wasi keep their existing `__defineProperty_desc` host-import path.
+  // passed through unchanged: no double-wrap. The native semantic-provider
+  // policy uses this same path in JavaScript and host-free environments.
   const descStructTypeIdx =
-    ctx.standalone && descType && (descType.kind === "ref" || descType.kind === "ref_null")
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    descType &&
+    (descType.kind === "ref" || descType.kind === "ref_null")
       ? descType.typeIdx
       : undefined;
   const reifyStructName = descStructTypeIdx !== undefined ? ctx.typeIdxToStructName.get(descStructTypeIdx) : undefined;
@@ -361,15 +363,15 @@ export function emitDefinePropertyDescRuntime(
   const descLocal = allocLocal(fctx, `__defprop_desc_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: descLocal });
 
-  // (#1629b) Standalone: there is no JS host, so the `__defineProperty_desc`
-  // import is refused (#1472 Phase B). Route to the Wasm-native
+  // (#1629b/#4397) Native semantics never use the `__defineProperty_desc`
+  // host fallback. Route to the Wasm-native
   // `__obj_define_from_desc(obj, key, desc)` helper, which performs
   // ToPropertyDescriptor over the descriptor `$Object` and dispatches to the
   // native `__defineProperty_value` / `__defineProperty_accessor` store. The
   // host-side `__descriptor_undefined` presence sidecar is not used standalone
   // (the native helper reads presence directly via `__hasOwnProperty`), so the
   // undefined-fields sidecar emission is host-only.
-  if (ctx.standalone) {
+  if (ctx.targetProfile.semanticProviders === "native-first") {
     ensureObjectRuntime(ctx);
     fctx.body.push({ op: "local.get", index: descLocal });
     const nativeIdx = ctx.funcMap.get("__obj_define_from_desc");
@@ -3971,7 +3973,36 @@ export function compileObjectKeysOrValues(
     return { kind: "externref" };
   }
 
+  // Native-first object literals can deliberately lower to the open `$Object`
+  // carrier. Its struct fields are runtime storage (`props`, `count`, flags,
+  // …), not the object's JavaScript own properties, so the closed-struct field
+  // expansion below would filter them all and constant-fold Object.keys to
+  // `[]`. Enumerate `$Object`/`$Proxy` through the native object MOP instead;
+  // its `$ObjVec` result stays Wasm-owned and is converted to the caller's
+  // declared array carrier by the normal native coercion path.
   const structTypeIdx = ctx.structMap.get(structName);
+  const objectRuntimeTypes = ctx.objectRuntimeTypes;
+  if (
+    structName === "$Object" ||
+    structName === "$Proxy" ||
+    (objectRuntimeTypes !== undefined &&
+      (structTypeIdx === objectRuntimeTypes.objectTypeIdx || structTypeIdx === objectRuntimeTypes.proxyTypeIdx))
+  ) {
+    ensureObjectRuntime(ctx);
+    const argResult = compileExpression(ctx, fctx, arg);
+    if (!argResult) return null;
+    if (argResult.kind !== "externref") {
+      coerceType(ctx, fctx, argResult, { kind: "externref" });
+    }
+    const funcIdx = ctx.funcMap.get(`__object_${method}`);
+    if (funcIdx === undefined) {
+      reportError(ctx, expr, `Object.${method}(): native object enumerator is unavailable`);
+      return null;
+    }
+    fctx.body.push({ op: "call", funcIdx });
+    return { kind: "externref" };
+  }
+
   const fields = ctx.structFields.get(structName);
   if (structTypeIdx === undefined || !fields) {
     reportError(ctx, expr, `Object.${method}(): unknown struct "${structName}"`);

@@ -377,7 +377,7 @@ export function isAnyValue(type: ValType, ctx: CodegenContext): boolean {
 }
 
 export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHonest?: boolean }): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (ctx.nativeBoxNumberTypeIdx < 0 || ctx.nativeBoxBooleanTypeIdx < 0) return undefined;
 
   // (#3037 CS1b) The reader-carrier consumers need an ALWAYS-honest classifier
@@ -589,7 +589,7 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
  * otherwise (caller keeps the host import).
  */
 export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_strict_eq");
   if (existing !== undefined) return existing;
   const fromExternIdx = ensureAnyFromExternHelper(ctx);
@@ -739,7 +739,7 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
  * existing `__any_eq` body owns the complete IsLooselyEqual dispatch.
  */
 export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_loose_eq");
   if (existing !== undefined) return existing;
   const fromExternIdx = ensureAnyFromExternHelper(ctx);
@@ -783,7 +783,7 @@ export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefin
  * f64 self-inequality (`x !== x`).
  */
 export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_same_value_zero");
   if (existing !== undefined) return existing;
   const strictEqExternIdx = ensureExternStrictEqHelper(ctx);
@@ -852,7 +852,7 @@ export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | u
 }
 
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (ctx.anyValueTypeIdx < 0) return undefined;
 
   const existing = ctx.funcMap.get("__any_to_extern");
@@ -1032,7 +1032,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // Mirrors the static-type lowering at binary-ops.ts:881-889; deliberately NOT
   // `parseFloat` (Number("0xff")=255 but parseFloat("0xff")=NaN — §7.1.4.1).
   let strToNumIdx = -1;
-  if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     if (!ctx.funcMap.has("__str_to_number")) {
       emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
     }
@@ -1053,7 +1053,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   let externToStringIdx = -1;
   let anyToStringIdx = -1;
   let strConcatIdx = -1;
-  if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     ensureObjectRuntime(ctx); // registers native __extern_toString + __to_primitive
     anyToStringIdx = ensureAnyToStringHelper(ctx); // (anyref AnyValue) → ref $AnyString, tag-dispatched
@@ -1076,7 +1076,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // gate as the concat arm (helpers idempotent).
   let nativeStrFlattenIdx = -1;
   let nativeStrEqualsIdx = -1;
-  if ((ctx.standalone === true || ctx.wasi === true) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     nativeStrFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten") ?? -1;
     nativeStrEqualsIdx = ctx.nativeStrHelpers.get("__str_equals") ?? -1;
@@ -1169,7 +1169,9 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // classifying without a string arm would send equal-content distinct
   // strings into the object `ref.eq` arm (wrong false).
   const tag5ValueEqThen = (): Instr[] => {
-    if (!ctx.tag5ValueEqClassifier || !(ctx.standalone === true || ctx.wasi === true)) return tag5StringEqThen();
+    if (!ctx.tag5ValueEqClassifier || ctx.targetProfile.semanticProviders !== "native-first") {
+      return tag5StringEqThen();
+    }
     if (!canNativeStrEq && ctx.anyStrTypeIdx >= 0) return tag5StringEqThen();
     const recoverAny = (operandIdx: number, scratchIdx: number): Instr[] => [
       { op: "local.get", index: operandIdx },

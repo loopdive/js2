@@ -1317,6 +1317,16 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
   const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
+  const missingDependencies = [
+    ["__str_flatten", flattenIdx],
+    ["__new_plain_object", newObjIdx],
+    ["__extern_set", externSetIdx],
+    ["__objvec_new", objVecNewIdx],
+    ["__objvec_push", objVecPushIdx],
+  ].flatMap(([name, idx]) => (idx === undefined ? [name] : []));
+  if (missingDependencies.length > 0) {
+    throw new Error(`native JSON.parse provider is missing dependencies: ${missingDependencies.join(", ")}`);
+  }
 
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
@@ -1365,6 +1375,9 @@ export function emitJsonParseText(ctx: CodegenContext): number {
   // polymorphic so the enclosing block's declared result type still validates.
   const tagIdx = ensureExnTag(ctx);
   const ctorIdx = ctx.funcMap.get("__new_SyntaxError")!;
+  if (ctorIdx === undefined) {
+    throw new Error("native JSON.parse provider is missing dependency: __new_SyntaxError");
+  }
   const throwSyntaxError = (msg: string): Instr[] => {
     addStringConstantGlobal(ctx, msg);
     return [

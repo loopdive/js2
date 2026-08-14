@@ -631,6 +631,33 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
 const HOST_ARRAY_STRING_METHODS = new Set(["split"]);
 
 /**
+ * A property-descriptor query returns an object-or-undefined carrier even when
+ * the binding is explicitly `any`. Usage inference must not narrow that
+ * binding to f64 merely because the eventual descriptor field is numeric: the
+ * descriptor object itself has to survive the local slot first.
+ */
+function isPropertyDescriptorResultExpression(expr: ts.Expression | undefined): boolean {
+  if (!expr) return false;
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (!ts.isCallExpression(current) || !ts.isPropertyAccessExpression(current.expression)) return false;
+  const callee = current.expression;
+  return (
+    ts.isIdentifier(callee.expression) &&
+    (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+    callee.name.text === "getOwnPropertyDescriptor"
+  );
+}
+
+/**
  * (#684) Usage-based `any`-local override. Returns an unboxed `f64` ValType when
  * the (checker-layer) usage-inference pass proved every use of this
  * `any`/`unknown`-typed local binding is ToNumber-invariant — otherwise `null`,
@@ -730,7 +757,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     ) {
       return null;
     }
-    if (isPromiseHostCall(ctx, init) || isBindHostCall(init) || isStringMethodReturningHostArray(ctx, init)) {
+    if (isPromiseHostCall(ctx, init) || isBindCarrierCall(init) || isStringMethodReturningHostArray(ctx, init)) {
       return null;
     }
   }
@@ -1059,7 +1086,9 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
 }
 
 /**
- * (#2615) Check if an initializer is a `new Proxy(target, handler)` construction.
+ * (#2615/#4397) Check if an initializer produces a Proxy carrier or the
+ * ordinary `{ proxy, revoke }` revocable handle. Both are represented as
+ * externrefs even though TypeScript gives them more specific structural types.
  *
  * A Proxy carries NO TypeScript-type brand — `ProxyConstructor` is typed to
  * return its TARGET type `T`, so the checker types `const p = new Proxy(t, h)`
@@ -1077,11 +1106,75 @@ function isPromiseHostCall(_ctx: CodegenContext, expr: ts.Expression): boolean {
  * initializer, so member reads/writes/has/delete lower through the dynamic
  * boundary helpers (`__extern_get` / `__extern_set` / `__extern_has`), which
  * are the only paths that run the Proxy MOP (the trap). Mirrors the
- * `isBindHostCall` / `isPromiseHostCall` slot-type overrides. Mode-agnostic:
+ * `isBindCarrierCall` / `isPromiseHostCall` slot-type overrides. Mode-agnostic:
  * both host and standalone emit a Proxy externref, so both need the override.
  */
 function isProxyConstruction(expr: ts.Expression): boolean {
-  return ts.isNewExpression(expr) && ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy";
+  if (ts.isNewExpression(expr)) {
+    return ts.isIdentifier(expr.expression) && expr.expression.text === "Proxy";
+  }
+  return (
+    ts.isCallExpression(expr) &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "revocable" &&
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "Proxy"
+  );
+}
+
+/**
+ * Does this binding become the target of a native Proxy in its lexical scope?
+ * A Proxy can mutate that target through a trap or an absent-trap forward, so
+ * later reads through any source alias must not be frozen into a direct
+ * closed-struct field load. Keep the binding on the dynamic object carrier
+ * from construction time; the Proxy and the alias then share one object rather
+ * than copying into a shadow representation.
+ */
+function bindingIsProxyTarget(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(decl.name)) return false;
+  const scope = findEnclosingFunctionOrSource(decl);
+  if (!scope) return false;
+
+  const unwrap = (expr: ts.Expression): ts.Expression => {
+    let current = expr;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    let target: ts.Expression | undefined;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
+      target = node.arguments?.[0];
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Proxy" &&
+      node.expression.name.text === "revocable"
+    ) {
+      target = node.arguments[0];
+    }
+    if (target) {
+      const candidate = unwrap(target);
+      if (ts.isIdentifier(candidate) && ctx.oracle.valueDeclarationOf(candidate) === decl) {
+        found = true;
+        return;
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(scope);
+  return found;
 }
 
 /**
@@ -1159,23 +1252,20 @@ function findEnclosingFunctionOrSource(node: ts.Node): ts.Node | undefined {
 }
 
 /**
- * (#1337) Check if an initializer is a `Function.prototype.bind` call whose
- * result is a real JS bound-function exotic (externref), NOT a wasm closure
- * struct. In JS-host mode `fn.bind(...)` / `Function.prototype.bind.call(fn, ...)`
- * lower to `__bind_function` which returns a host bound function as externref.
+ * (#1337/#4397) Check if an initializer is a `Function.prototype.bind` call.
+ * Its result is an externref carrier rather than the target's closure struct:
+ * a real JS bound-function exotic under the compatibility provider, or the
+ * Wasm-owned `$__bound_fn` carrier under the native provider.
  *
  * Such a variable MUST get an `externref` local — `resolveWasmType` would
  * otherwise type it as the target function's closure-struct ref (TS infers the
  * bound result's type from the target's call signature), and the subsequent
  * `coerceType(externref → struct ref)` emits a `ref.cast` that traps on the JS
  * function, nulling the binding (the LHS-coerce blocker documented in #1337).
- * With an externref local the value round-trips intact and calling it routes
- * through the host externref-callee dispatch.
- *
- * Standalone mode degrades bind to identity (returns the receiver unchanged),
- * so this override is intentionally scoped to JS-host mode by the caller.
+ * With an externref local the provider-specific call dispatcher can inspect
+ * the value without an invalid target-closure cast.
  */
-function isBindHostCall(expr: ts.Expression): boolean {
+function isBindCarrierCall(expr: ts.Expression): boolean {
   if (!ts.isCallExpression(expr)) return false;
   const callee = expr.expression;
   if (!ts.isPropertyAccessExpression(callee)) return false;
@@ -1719,8 +1809,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const subarraySubviewType = inferSubarraySubviewType(ctx, fctx, decl.initializer);
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
-    // (#2615) `new Proxy(...)` initializer — the slot must be externref so reads
-    // route through `__extern_get` (the Proxy MOP), not a static `struct.get`.
+    // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
+    // slots so dynamic MOP/result-object reads do not become struct.get on the
+    // checker-inferred target/revocable shapes.
     // NARROWED (#2615 regression fix): only when the Proxy variable stays local
     // and is member-accessed; if it escapes into a call/new argument or a
     // generic-method `.call`/`.apply` receiver, keep the struct typing so the
@@ -1731,6 +1822,9 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       isProxyConstruction(decl.initializer) &&
       ts.isIdentifier(decl.name) &&
       !proxyResultEscapesToCall(decl, decl.name.text);
+    const isProxyTargetBinding = bindingIsProxyTarget(ctx, decl);
+    if (isProxyTargetBinding) ctx.externrefAccessorVars.add(name);
+    const initIsPropertyDescriptorResult = isPropertyDescriptorResultExpression(decl.initializer);
     // (#3037 CS1a) A spread-free, data-only object literal produced into an
     // `any`/`unknown`/`object` context (standalone) is built as an open `$Object`
     // and normally lands in an externref local — where at `===` it boxes tag-5
@@ -1776,51 +1870,50 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // plain-fn capture and does not fire for uncaptured bindings).
       mixedAssignmentCarrier
         ? { kind: "externref" as const }
-        : fctx.forInIdentifierVars?.has(name)
+        : isProxyTargetBinding
           ? { kind: "externref" as const }
-          : fctx.fnctorWidenedLocals?.has(name)
+          : fctx.forInIdentifierVars?.has(name)
             ? { kind: "externref" as const }
-            : initIsAccessorLiteral ||
-                initIsHostSpreadLiteral ||
-                initIsGrowableObjectLiteral ||
-                initIsProtoReceiverLiteral
+            : fctx.fnctorWidenedLocals?.has(name)
               ? { kind: "externref" as const }
-              : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-                ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-                : isI32CoercedLocal
-                  ? { kind: "i32" }
-                  : isI32SpecializedArray
-                    ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-                    : widenedTypeIdx !== undefined
-                      ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                      : (taViewType ??
-                        subarraySubviewType ??
-                        inferredVecType ??
-                        standaloneRegExpMatchArrayType ??
-                        (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                          ? { kind: "externref" as const }
-                          : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
-                            ? { kind: "externref" as const }
-                            : // (#2615) `new Proxy(target, handler)` returns a host/native
-                              // Proxy externref. The checker types it as the TARGET's
-                              // struct (ProxyConstructor returns T), so the default slot
-                              // would `ref.test` the Proxy against that struct, fail, null
-                              // it, and trap every read via a direct `struct.get`. Force an
-                              // externref local so reads route through `__extern_get` (the
-                              // only path that runs the Proxy MOP / trap). Both modes emit
-                              // a Proxy externref, so this is mode-agnostic.
-                              initIsProxy
+              : initIsAccessorLiteral ||
+                  initIsHostSpreadLiteral ||
+                  initIsGrowableObjectLiteral ||
+                  initIsProtoReceiverLiteral
+                ? { kind: "externref" as const }
+                : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+                  ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+                  : initIsPropertyDescriptorResult
+                    ? { kind: "externref" as const }
+                    : isI32CoercedLocal
+                      ? { kind: "i32" }
+                      : isI32SpecializedArray
+                        ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                        : widenedTypeIdx !== undefined
+                          ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                          : (taViewType ??
+                            subarraySubviewType ??
+                            inferredVecType ??
+                            standaloneRegExpMatchArrayType ??
+                            (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                               ? { kind: "externref" as const }
-                              : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
-                                // returns a host bound-function externref in JS-host mode;
-                                // force an externref local so the value isn't ref.cast to
-                                // the target's closure struct (which traps → null binding).
-                                decl.initializer &&
-                                  !ctx.standalone &&
-                                  !noJsHost(ctx) &&
-                                  isBindHostCall(decl.initializer)
+                              : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                                 ? { kind: "externref" as const }
-                                : localTypeForDeclaration(ctx, varType, decl)));
+                                : // (#2615/#4397) Proxy and revocable-handle results are
+                                  // externref carriers in both provider profiles. A
+                                  // checker-derived struct slot would cast them to null
+                                  // before their MOP/result fields can be observed.
+                                  initIsProxy
+                                  ? { kind: "externref" as const }
+                                  : // (#1337/#4397) In a JS environment, both the
+                                    // compatibility exotic and native `$__bound_fn`
+                                    // are externref carriers, never the target struct.
+                                    decl.initializer &&
+                                      !ctx.standalone &&
+                                      !noJsHost(ctx) &&
+                                      isBindCarrierCall(decl.initializer)
+                                    ? { kind: "externref" as const }
+                                    : localTypeForDeclaration(ctx, varType, decl)));
     // (#2660 S3b) A provably-monomorphic `new F(...)` binding of an approved
     // fnctor gets the reserved struct slot instead of externref. Same (cached)
     // verdict as the var hoister / let-const pre-hoister, so a reused
@@ -2073,13 +2166,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           closureType.kind === "externref" &&
           !ctx.standalone &&
           !noJsHost(ctx) &&
-          isBindHostCall(decl.initializer)
+          isBindCarrierCall(decl.initializer)
         ) {
-          // (#1337) A `.bind(...)` result is a host bound-function exotic.
-          // Keep it as externref — do NOT match-and-recast it to a wasm
-          // closure struct (the JS function isn't a struct; the cast would
-          // trap and null the binding). Calling it dispatches through the
-          // host externref-callee path.
+          // (#1337/#4397) A `.bind(...)` result is a provider-owned externref
+          // carrier. Keep it as externref so neither the native `$__bound_fn`
+          // nor the compatibility JS exotic is cast to the target's wrapper.
           if (localIdx >= fctx.params.length) {
             const localSlot = fctx.locals[localIdx - fctx.params.length];
             if (localSlot) localSlot.type = { kind: "externref" };

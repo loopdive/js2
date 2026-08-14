@@ -2,25 +2,25 @@
 id: 3526
 title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
-sprint: Backlog
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-12
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, runtime, compiler
 language_feature: compiler-internals
-es_edition: multi
 goal: ir-full-coverage
-lane: ir-retirement-r6
-model: gpt-5.6-sol
+sprint: Backlog
 parent: 3518
 depends_on: [3521]
-required_by: [3527, 3528]
-related: [1713, 2094, 2520, 2855, 2954, 2956, 3090, 3143, 3226, 3233, 3518]
+required_by: [3527, 3528, 4382]
+horizon: xl
+complexity: XL
+es_edition: multi
+lane: ir-retirement-r6
+model: gpt-5.6-sol
+related: [1713, 2094, 2514, 2520, 2855, 2954, 2956, 3090, 3143, 3226, 3233, 3518, 3678, 4382]
 origin: "#3518 R6 — replace AST-driven lazy runtime registration with typed semantic intents"
 files:
   - src/ir/intrinsics.ts
@@ -70,7 +70,6 @@ func-budget-allow:
   - src/ir/integration.ts::makeResolver
   - src/ir/passes/inline-small.ts::renameInstrOperands
 ---
-
 # #3526 — IR-only R6: typed semantic runtime contract and frozen feature manifest
 
 ## Objective
@@ -190,6 +189,12 @@ from `HostCapability` for the public compile result; non-`env` semantic imports
 such as string builtins/constants receive an explicit typed projection rather
 than disappearing. `classifyImport` may remain temporarily as a debug parity
 oracle, but it is never production authority.
+
+The same immutable contract exposes a stable read-only decision projection for
+#4382. That public report may add source-facing explanations and #3678
+diagnostics, but it cannot maintain a second support table or infer capability
+from emitted helper/import names. `unknown` is the required public result when
+an internal decision has not yet received a schema projection.
 
 After freeze, resolver/import/type/global/helper registration is lookup-only.
 Any lazy mutation, undeclared intrinsic, transitive feature, host import, type,
@@ -392,6 +397,9 @@ Run M1 with `tests/math-inline.test.ts`, `tests/math-minmax.test.ts`,
       backend/body lowering.
 - [ ] `ImportIntent` is solely a projection of the frozen capability manifest;
       emitted-import string classification is not production authority.
+- [ ] The manifest exposes deterministic decision IDs and source/provenance data
+      sufficient for #4382 to generate its capability report without a parallel
+      feature table or post-emission inference.
 - [ ] Resolver/import/type/global/literal/helper state is lookup-only after
       freeze. Every undeclared or late request is a fatal typed Invariant.
 - [ ] The exact twelve-method pure-Math M1 uses typed intents, has no legacy

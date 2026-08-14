@@ -42,7 +42,7 @@ import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
-import { isLogicalAssignNamedEvalNameRead, resolveStructNameForExpr } from "./property-access.js";
+import { isLogicalAssignNamedEvalNameRead, resolveStructName, resolveStructNameForExpr } from "./property-access.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import {
   emitAnyEqFromExternTemps,
@@ -872,8 +872,8 @@ export function compileBinaryExpression(
       // native `__str_to_number` scanner is §7.1.4.1 StringToNumber (NaN for a
       // non-numeric string, 0 for empty), and `f64.eq` reproduces +0===-0 and
       // NaN≠NaN — so `"1"==1`, `0==""`, `false==""`, `"x"==1` all match Node.
-      const noJsHost = ctx.standalone === true || ctx.wasi === true;
-      if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+      const nativeSemantics = ctx.targetProfile.semanticProviders === "native-first";
+      if (nativeSemantics && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         // Ensure the native StringToNumber scanner exists. Its signature is
         // `(externref) -> f64`; it converts the externref back to ref $AnyString
         // internally (any.convert_extern + ref.cast).
@@ -2252,7 +2252,7 @@ function structHasStaticNumericToPrimitive(ctx: CodegenContext, name: string | u
  * on the existing boxed-externref path (string concat unaffected).
  */
 function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): number | null {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
   // Unwrap `as`/parenthesized/non-null/satisfies wrappers (e.g. `(o as any)`):
   // the wrappers are type-only / identity, but they make TS report the operand
   // type as `any` (so the struct name can't be resolved) and make
@@ -2268,7 +2268,54 @@ function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Exp
   ) {
     inner = (inner as ts.ParenthesizedExpression | ts.AsExpression | ts.NonNullExpression).expression;
   }
-  const structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
+  let structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
+  if (noJsHost && structName === undefined && ts.isIdentifier(inner)) {
+    const localIdx = fctx.localMap.get(inner.text);
+    const localType =
+      localIdx === undefined
+        ? undefined
+        : localIdx < fctx.params.length
+          ? fctx.params[localIdx]?.type
+          : fctx.locals[localIdx - fctx.params.length]?.type;
+    if (localType?.kind === "ref" || localType?.kind === "ref_null") {
+      structName = ctx.typeIdxToStructName.get(localType.typeIdx);
+    }
+    if (structName === undefined) {
+      const declaration = ctx.checker.getSymbolAtLocation(inner)?.valueDeclaration;
+      const initializer = declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+      if (initializer) {
+        structName = resolveStructName(ctx, ctx.checker.getTypeAtLocation(initializer));
+        if (structName === undefined && ts.isObjectLiteralExpression(initializer)) {
+          const memberNames = initializer.properties
+            .map((member) => {
+              if (ts.isShorthandPropertyAssignment(member)) return member.name.text;
+              if (
+                (ts.isPropertyAssignment(member) ||
+                  ts.isMethodDeclaration(member) ||
+                  ts.isGetAccessorDeclaration(member) ||
+                  ts.isSetAccessorDeclaration(member)) &&
+                (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name))
+              ) {
+                return member.name.text;
+              }
+              return undefined;
+            })
+            .filter((name): name is string => name !== undefined)
+            .sort();
+          for (const [candidate, fields] of ctx.structFields) {
+            const fieldNames = fields.map((field) => field.name).sort();
+            if (
+              fieldNames.length === memberNames.length &&
+              fieldNames.every((name, index) => name === memberNames[index])
+            ) {
+              structName = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
   if (noJsHost && structHasStaticNumericToPrimitive(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
@@ -2320,7 +2367,7 @@ function emitAddOperand(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Exp
  * `f64` for the legacy numeric fallback).
  */
 export function emitAnyAdd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
 
   // #1988: in standalone/WASI the §13.15.3 string-vs-numeric decision must be
   // made on the ToPrimitive(default) results, not the raw operands — an object
@@ -2377,7 +2424,7 @@ export function emitAnyAddFromExternTemps(
   lTmp: number,
   rTmp: number,
 ): ValType {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
 
   // ── JS-host: JS `+` via __host_add ──
   if (!noJsHost) {
@@ -2523,7 +2570,7 @@ export function emitAnyRelational(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): ValType {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });

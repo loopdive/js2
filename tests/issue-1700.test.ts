@@ -92,12 +92,17 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
   });
 
   it("regression guard: externref/any param keeps the externref pass-through path", async () => {
-    // No Uint8Array in the signature → no exportSignatures entry, wrapper
-    // is the legacy pass-through (this is the path that already worked).
+    // `any` is now explicitly classified as a dynamic boundary value. It must
+    // still avoid the TypedArray copied-value ABI and preserve the original
+    // externref identity.
     const r = await compile(`
       export function echoAny(input: any): any { return input; }
     `);
-    expect(r.exportSignatures?.echoAny).toBeUndefined();
+    expect(r.exportSignatures?.echoAny).toEqual({ params: ["dynamic"], result: "dynamic" });
+    expect(r.exportBoundaryPolicies?.echoAny).toEqual({
+      params: [{ kind: "dynamic", policy: "copied-value" }],
+      result: { kind: "dynamic", policy: "copied-value" },
+    });
     const instance = await instantiate(r);
     const exports = wrapExports(instance.exports, { signatures: r.exportSignatures });
     const input = new Uint8Array([1, 2, 3]);

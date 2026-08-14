@@ -51,7 +51,12 @@ import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object
 import { COLLECTION_KIND, ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
-import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
+import {
+  ensureNativeProxyRuntime,
+  ensureObjectRuntime,
+  ensureObjVecBuilders,
+  reserveApplyClosure,
+} from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
 import { ensureSetHelpers } from "../set-runtime.js";
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
@@ -217,6 +222,51 @@ function isNewOnNonConstructablePrototype(ctx: CodegenContext, callee: ts.Expres
   const obj = callee.expression;
   if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") return true;
   return callee.name.text === "prototype" && ts.isIdentifier(obj) && resolvesToAmbientGlobal(ctx, obj);
+}
+
+/**
+ * A Date prototype method reached through an instance is the same builtin
+ * function object as `Date.prototype.<name>` and therefore has no
+ * `[[Construct]]`. The direct-prototype guard above misses the natural
+ * `new date.getYear()` spelling used by Test262. Keep this proof narrow and
+ * decline it if the source writes that member anywhere; an overwritten method
+ * may be an ordinary constructible function.
+ */
+function isNewOnUnmodifiedDateInstanceMethod(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const receiverType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(callee.expression));
+  if (receiverType.getSymbol()?.name !== "Date") return false;
+
+  const memberName = callee.name.text;
+  let reassigned = false;
+  const source = callee.getSourceFile();
+  const visit = (node: ts.Node): void => {
+    if (reassigned) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      node.left.name.text === memberName
+    ) {
+      reassigned = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(source);
+  return !reassigned;
+}
+
+/** Evaluate a proven non-constructor member value and arguments, then throw. */
+function emitStaticMemberNotAConstructorThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callee: ts.Expression,
+  args: readonly ts.Expression[],
+): ValType {
+  const calleeType = compileExpression(ctx, fctx, callee);
+  if (calleeType) fctx.body.push({ op: "drop" });
+  return emitStaticNotAConstructorThrow(ctx, fctx, args);
 }
 
 /**
@@ -2211,25 +2261,71 @@ function getFuncResultType(ctx: CodegenContext, funcIdx: number): ValType | unde
  *
  * Returns `undefined` to decline (caller continues its normal dispatch).
  */
+function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expression): boolean {
+  const seen = new Set<ts.Symbol>();
+  const unwrap = (value: ts.Expression): ts.Expression => {
+    let current = value;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const isProxyFactory = (value: ts.Expression): boolean => {
+    const current = unwrap(value);
+    if (ts.isNewExpression(current) && ts.isIdentifier(current.expression) && current.expression.text === "Proxy") {
+      return true;
+    }
+    if (
+      ts.isPropertyAccessExpression(current) &&
+      current.name.text === "proxy" &&
+      ts.isCallExpression(unwrap(current.expression))
+    ) {
+      const call = unwrap(current.expression) as ts.CallExpression;
+      return (
+        ts.isPropertyAccessExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        call.expression.expression.text === "Proxy" &&
+        call.expression.name.text === "revocable"
+      );
+    }
+    if (!ts.isIdentifier(current)) return false;
+    const symbol = ctx.checker.getSymbolAtLocation(current);
+    if (!symbol || seen.has(symbol)) return false;
+    seen.add(symbol);
+    const declaration = symbol.valueDeclaration;
+    return declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined
+      ? isProxyFactory(declaration.initializer)
+      : false;
+  };
+  return isProxyFactory(expression);
+}
+
 function tryCompileNativeConstructFromValue(
   ctx: CodegenContext,
   fctx: FunctionContext,
   calleeExpr: ts.Expression,
   rawArgs: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!noJsHost(ctx)) return undefined;
+  if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (!ts.isIdentifier(calleeExpr)) return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
     ctx.runtimeEvalCallableBoundaryEnabled === true && resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
-  if (!runtimeFunctionAlias && !resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+  const proxyValue = resolvesToNativeProxyValue(ctx, calleeExpr);
+  if (!runtimeFunctionAlias && !proxyValue && !resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
 
   // A linked `%Function%` alias is a provider marker rather than a local
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias) {
+  if (runtimeFunctionAlias || proxyValue) {
+    if (proxyValue) ensureNativeProxyRuntime(ctx);
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
   }
@@ -3424,6 +3520,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (isNewOnNonConstructablePrototype(ctx, unwrappedNonId)) {
         return emitStaticNotAConstructorThrow(ctx, fctx, []);
       }
+      if (isNewOnUnmodifiedDateInstanceMethod(ctx, unwrappedNonId)) {
+        return emitStaticMemberNotAConstructorThrow(ctx, fctx, unwrappedNonId, expr.arguments ?? []);
+      }
       // (#1732 S2) `new <NonCtorNamespace>.<method>()` — a method pulled off a
       // non-constructor namespace object (Math/JSON/Reflect/Atomics). Every such
       // method is an ordinary function with no [[Construct]] (§21.3/§25.5/§28.1/
@@ -3666,7 +3765,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // literal patterns. Unsupported constructor forms still produce explicit
   // #1474-compatible compile errors instead of JS-host imports.
   if (
-    ctx.standalone &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
     (isGlobalRegExpType(type) || (ts.isIdentifier(expr.expression) && isGlobalRegExpIdentifier(ctx, expr.expression)))
   ) {
     return compileStandaloneRegExpConstructor(ctx, fctx, expr.arguments ?? [], expr);

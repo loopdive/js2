@@ -15,6 +15,8 @@ import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
+import type { CompileTargetProfile } from "../../target-profile.js";
+import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 
 export interface CodegenError {
   message: string;
@@ -123,6 +125,8 @@ export interface CodegenOptions {
    * standalone/WASI; the resolved boolean lands on `ctx.emitHostBridge`.
    */
   hostBridge?: "auto" | "always" | "off";
+  /** Select migrated Wasm-native semantic providers independently of JS interop. */
+  semanticProviders?: import("../../target-profile.js").SemanticProviderSelection;
   /**
    * (#2141 S1) Honest generic `any` boxing — the Stage-B regime flag. When ON,
    * `boxToAny`'s externref arm routes through `__any_box_extern` (runtime
@@ -1204,6 +1208,12 @@ export interface FunctionContext {
 
 export interface CodegenContext {
   mod: WasmModule;
+  /**
+   * Immutable target/provider/interop policy resolved once at context creation.
+   * New policy decisions read this profile instead of reconstructing a target
+   * lane from the compatibility booleans below (#4396).
+   */
+  targetProfile: CompileTargetProfile;
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
   programAbiModuleInitCallables?: import("../program-abi-module-init-planning.js").ProgramAbiModuleInitCallableRegistry;
   programAbiSourceCallables?: import("../program-abi-source-callable-planning.js").ProgramAbiSourceCallableRegistry;
@@ -2054,6 +2064,8 @@ export interface CodegenContext {
    * Callable writes to its native global object use the cross-module carrier.
    */
   runtimeEvalCallableBoundaryEnabled?: boolean;
+  /** Compile-once inventory of runtime-eval provider and callback demand. */
+  runtimeEvalBoundaryPlan?: IrRuntimeEvalBoundaryPlan;
   /**
    * #2928 — structurally canonical `(call,get,target,brandA,brandB)` carrier
    * shared by caller and provider without changing the ordinary closure
@@ -3344,19 +3356,18 @@ export interface CodegenContext {
    * #2783 — an INTERNAL convenience boolean, **derived** from
    * `linkedNamespaces.has("node:fs")` (there is no user-facing `linkNodeShims`
    * option anymore — `link: string[]` is the only input). The two
-   * are computed together in `create-context.ts` from the same (WASI-gated)
-   * `link` set so they can never drift. Keeping this boolean lets the ~30
+   * are computed together in `create-context.ts`; this boolean additionally
+   * requires a WASI target. Keeping it lets the ~30
    * existing `ctx.linkNodeShims` read sites stay zero-churn while the underlying
    * state generalizes to an arbitrary set of linked namespaces.
    */
   linkNodeShims: boolean;
   /**
    * #2783 — the set of external namespaces left as **link-time imports** for
-   * this compile (WASI-gated; empty for non-WASI targets). `node:fs` membership
-   * additionally drives the import-and-link std-IO codegen path (see
-   * `linkNodeShims`, derived from this set). For an arbitrary namespace,
-   * membership only permits its imports past the strict `--no-host-imports` /
-   * WASI leaked-host-import gate (`assertNoLeakedHostImports`).
+   * this compile on any target. `node:fs` membership additionally drives the
+   * import-and-link std-IO codegen path only on WASI (see `linkNodeShims`). For
+   * an arbitrary namespace, membership declares that its imports are expected
+   * provider edges rather than implicit host leaks.
    */
   linkedNamespaces: ReadonlySet<string>;
   /**

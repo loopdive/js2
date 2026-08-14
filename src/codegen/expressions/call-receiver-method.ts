@@ -57,6 +57,7 @@ import {
   ensureTaDynReverseHelper,
   ensureTaFromArrayLikeHelper,
   isDataViewAccessor,
+  usesNativeDataViewProvider,
 } from "../dataview-native.js";
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
@@ -130,6 +131,7 @@ import {
   maybeStampCompiledFunctionArgName,
   noJsHost,
   resolveReceiverMethodClassName,
+  usesNativeJsErrors,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -141,6 +143,7 @@ import {
   STANDALONE_TA_MAPFILTER_PACKED_VIEWS,
   STANDALONE_TA_SCALAR_HOFS,
   compileFunctionBind,
+  usesNativeFunctionBindProvider,
   compilePromiseThenReceiverBuffer,
   compileStandalonePromiseThenCallback,
   emitFnctorSubclassDynamicMethodCall,
@@ -619,13 +622,10 @@ export function compileReceiverMethodCall(
     return compilePropertyIntrospection(ctx, fctx, propAccess, expr);
   }
 
-  // #1654 — native DataView accessors in no-JS-host mode. In JS-host mode the
-  // runtime materializes a real DataView over the byte array; standalone/WASI
-  // has no JS runtime, so emit Wasm-native byte read/write into the i32_byte
-  // backing array directly. Must run BEFORE the extern-class dispatch, which
-  // would otherwise route DataView_setUint32 to an unsatisfiable host import
-  // (or silently drop the call).
-  if (noJsHost(ctx) && isDataViewAccessor(propAccess.name.text)) {
+  // #1654/#4397 — the native DataView provider is independent of the embedder.
+  // It must run before extern-class dispatch so native-first JS builds do not
+  // move DataView state or byte access into the host runtime.
+  if (usesNativeDataViewProvider(ctx) && isDataViewAccessor(propAccess.name.text)) {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "DataView") {
       const dvResult = emitDataViewAccessor(
@@ -802,6 +802,7 @@ export function compileReceiverMethodCall(
   // compiled async function returns through host Promise path — v1 regression)
   {
     const method = propAccess.name.text;
+    const nativeFirstPromise = ctx.targetProfile.semanticProviders === "native-first";
     // (#2903) `.finally` takes the NATIVE §27.2.5.3 lowering only when the
     // module provably cannot mint a HOST promise (or under wasi, whose
     // zero-import contract has no host route at all). Producer modules keep
@@ -815,7 +816,7 @@ export function compileReceiverMethodCall(
     const nativeFinallyActive =
       method === "finally" &&
       isStandaloneThenChainNativeActive(ctx) &&
-      (ctx.wasi === true || standaloneThenMissArmCanBeNative(ctx));
+      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
     if (
       (method === "then" || method === "catch" || method === "finally") &&
       (expr.arguments.length >= 1 || nativeFinallyActive)
@@ -852,7 +853,7 @@ export function compileReceiverMethodCall(
         if (method === "finally") {
           (ctx.standaloneNativeFinallyNodes ??= new Set()).add(expr);
           emitStandaloneFinallyWithNativeFallback(ctx, fctx, propAccess.expression, expr.arguments[0], {
-            nullMiss: ctx.wasi === true,
+            nullMiss: ctx.wasi === true || nativeFirstPromise,
           });
           return { kind: "externref" };
         }
@@ -863,7 +864,7 @@ export function compileReceiverMethodCall(
           method,
           method === "then" ? expr.arguments[0] : undefined,
           method === "then" ? expr.arguments[1] : expr.arguments[0],
-          { nullMiss: ctx.wasi === true },
+          { nullMiss: ctx.wasi === true || nativeFirstPromise },
         );
         return { kind: "externref" };
       }
@@ -887,7 +888,7 @@ export function compileReceiverMethodCall(
         // fail to instantiate for their own unrelated missing import), so
         // this preserves WASI's behaviour byte-for-byte.
         if (isStandaloneThenChainNativeActive(ctx) && method === "then") {
-          if (ctx.wasi === true) {
+          if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -911,14 +912,14 @@ export function compileReceiverMethodCall(
         }
 
         // (#2165) Standalone `.catch(onRejected)` ≡ `.then(undefined, onRejected)`
-        // per §27.2.5.1. Reuse the native `$Promise` then-machinery so WASI
-        // mode doesn't leak the `Promise_catch` / `__make_callback` host
-        // imports. The chained promise still propagates a fulfilled receiver
+        // per §27.2.5.1. Reuse the native `$Promise` then-machinery so native
+        // provider lanes don't leak the `Promise_catch` / `__make_callback`
+        // host imports. The chained promise still propagates a fulfilled receiver
         // unchanged (onFulfilled = null) and routes a rejection through the
         // user's onRejected continuation. (#2980 class 1: same wasi/standalone
         // split as `.then` above.)
         if (isStandaloneThenChainNativeActive(ctx) && method === "catch") {
-          if (ctx.wasi === true) {
+          if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -951,7 +952,7 @@ export function compileReceiverMethodCall(
         // exact legacy host route below.
         if (nativeFinallyActive) {
           (ctx.standaloneNativeFinallyNodes ??= new Set()).add(expr);
-          if (ctx.wasi === true) {
+          if (ctx.wasi === true || nativeFirstPromise) {
             const liveBuffers: Instr[][] = [];
             try {
               const promiseInstrs = compilePromiseThenReceiverBuffer(ctx, fctx, propAccess.expression, liveBuffers);
@@ -1932,7 +1933,16 @@ export function compileReceiverMethodCall(
   }
 
   // Array method calls
-  {
+  // A native-first `any`/`unknown` receiver can be a caller-owned JS array.
+  // Do not specialize it as a Wasm vec from the method spelling alone: the
+  // generic object-runtime call preserves the admitted raw JS receiver and
+  // reaches the boundary-object adapter only on its non-native fallback.
+  if (
+    !(
+      ctx.targetProfile.semanticProviders === "native-first" &&
+      (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+    )
+  ) {
     const arrMethodResult = compileArrayMethodCall(ctx, fctx, propAccess, expr, receiverType, undefined, expectedType);
     if (arrMethodResult !== undefined) return arrMethodResult;
   }
@@ -2626,7 +2636,7 @@ export function compileReceiverMethodCall(
           const strIdx = ctx.stringGlobalMap.get(msg)!;
           // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
           // constructor (no `__throw_type_error` host import).
-          if (noJsHost(ctx)) {
+          if (usesNativeJsErrors(ctx)) {
             emitThrowTypeError(ctx, fctx, msg);
             fctx.body.push({ op: "unreachable" });
           } else {
@@ -3160,7 +3170,7 @@ export function compileReceiverMethodCall(
         // this module (which already imports dataview-native) to avoid the
         // eval-time import cycle a closed-method-dispatch.ts import would form
         // (same reasoning as the #2927 reserveVecMethodHelper placement above).
-        if (noJsHost(ctx) && isDataViewAccessor(methodName)) {
+        if (usesNativeDataViewProvider(ctx) && isDataViewAccessor(methodName)) {
           ensureDvAccessorHelper(ctx, methodName);
         }
         flushLateImportShifts(ctx, fctx);
@@ -3238,7 +3248,7 @@ export function compileReceiverMethodCall(
         // closure-classifier runtime arms: a callable receiver mints the
         // native `$__bound_fn` carrier; anything else keeps the EXACT
         // dispatcher path (closed-struct `bind` methods, open objects).
-        if (methodName === "bind" && (ctx.standalone || ctx.wasi)) {
+        if (methodName === "bind" && usesNativeFunctionBindProvider(ctx)) {
           // Reserve-then-fill (#1719 discipline): the callable test needs the
           // COMPLETE closure-classifier root list, which is only settled at
           // finalize — baking `buildClosureRefTestArms` here would miss every
@@ -3489,7 +3499,12 @@ export function compileReceiverMethodCall(
       // `ref.test` the registered vec carriers; on hit call the native op, else
       // fall through to the host bridge in the `else` arm. Host/gc mode only (acorn
       // dogfoods there); standalone keeps the existing path (a noted follow-up).
-      if (!ctx.standalone && (methodName === "push" || methodName === "pop") && ctx.vecTypeMap.size > 0) {
+      if (
+        ctx.targetProfile.semanticProviders !== "native-first" &&
+        !ctx.standalone &&
+        (methodName === "push" || methodName === "pop") &&
+        ctx.vecTypeMap.size > 0
+      ) {
         // (#2784 S3) Add ALL late imports FIRST and flush, so the index space is
         // settled BEFORE reserving the native-vec helper funcIdx (a function push,
         // which does not itself shift). Reserving the helper before these imports
@@ -3598,7 +3613,7 @@ export function compileReceiverMethodCall(
         // #1472: the JS-array builders are not globally safe to alias.
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.standalone) {
+        if (ctx.targetProfile.semanticProviders === "native-first") {
           const b = ensureObjVecBuilders(ctx);
           arrNewIdx = b.newIdx;
           arrPushIdx = b.pushIdx;

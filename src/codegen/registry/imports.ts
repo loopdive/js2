@@ -483,7 +483,7 @@ export function addStringImports(ctx: CodegenContext): void {
   // path under standalone (e.g. via a missed gate), no-op so the resulting
   // module remains JS-host-free. WASI mode keeps the historical no-op
   // behavior via the same nativeStrings forcing.
-  if (ctx.standalone || ctx.wasi) {
+  if (ctx.targetProfile.semanticProviders === "native-first") {
     ctx.hasStringImports = true;
     return;
   }
@@ -684,22 +684,21 @@ export function addUnionImports(ctx: CodegenContext): void {
   ctx.hasUnionImports = true;
 
   // #2039: settle any deferred ensureLateImport batch before this pass bakes
-  // or shifts funcIdx values. Under wasi/standalone the native-helper
+  // or shifts funcIdx values. With native semantic providers the helper
   // registration below computes indices from the post-batch `numImportFuncs`;
-  // in host mode the internal shift below uses its own `importsBefore`. Either
+  // the compatibility provider's internal shift uses `importsBefore`. Either
   // way, a still-pending batch flush would later re-apply its delta on top —
   // an over-shift that desyncs funcMap/bodies from actual function positions
   // (same mechanism as the ensureObjectRuntime guard; see object-runtime.ts).
   flushLateImportShifts(ctx, null);
 
-  // Under `--target wasi` (#1180) and `--standalone` (#1471): emit Wasm-native
+  // With native semantic providers (#1180/#1471/#4397), emit Wasm-native
   // implementations of the box / unbox / typeof / is_truthy helpers instead of
-  // `env::*` host imports, since a pure-Wasm engine (wasmtime, wasmer) cannot
-  // satisfy the env::* imports without a JS host. The native impls preserve the
+  // `env::*` host imports. The native implementations preserve the
   // same name + signature so existing call sites
   // (`ctx.funcMap.get("__unbox_number")` etc.) work unchanged.
   // Same dual-mode pattern as #679 (strings) and #682 (RegExp).
-  if (ctx.wasi || ctx.standalone) {
+  if (ctx.targetProfile.semanticProviders === "native-first") {
     addUnionImportsAsNativeFuncs(ctx);
     return;
   }
@@ -770,8 +769,8 @@ export function addUnionImports(ctx: CodegenContext): void {
   // Symbol via the identity-stable host symbol cache. The F1 `symbol[]` OOB read
   // routes here (HOST mode only — standalone defers `symbol[]`; see
   // `f1ElementBoxType`). Same (i32)→externref signature as __box_boolean. Only
-  // reached on the host path; in standalone `addUnionImports` returns before this
-  // block, so no symbol host import ever leaks into a standalone module.)
+  // reached on the compatibility-provider path; with native providers
+  // `addUnionImports` returns before this block.)
   addImport(ctx, "env", "__box_symbol", {
     kind: "func",
     typeIdx: boxBoolType,
@@ -2270,6 +2269,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     forEachChild(node, collectUserClassNames);
   }
   collectUserClassNames(sourceFile);
+  const nativeRegExpProvider = ctx.targetProfile.semanticProviders === "native-first";
 
   function resolveExtern(className: string, memberName: string, kind: "method" | "property"): ExternClassInfo | null {
     // User-defined classes shadow extern classes — never resolve to extern (#1284).
@@ -2304,14 +2304,19 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         (bareClassName && !userValueNames.has(bareClassName) && ctx.externClasses.has(bareClassName)
           ? bareClassName
           : undefined);
-      if (className && !userClassNames.has(className) && !isNativeEncodingClass(className)) {
+      if (
+        className &&
+        !(nativeRegExpProvider && className === "RegExp") &&
+        !userClassNames.has(className) &&
+        !isNativeEncodingClass(className)
+      ) {
         const info = ctx.externClasses.get(className);
         if (info) register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
       }
     }
 
     // RegExp literal (/pattern/flags) → needs RegExp_new import
-    if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    if (!nativeRegExpProvider && node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
       const info = ctx.externClasses.get("RegExp");
       if (info) {
         register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
@@ -2321,7 +2326,12 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     // RegExp(pattern, flags) call without `new` — compileCallExpression
     // emits the RegExp_new host call directly. Register it here so the
     // import exists by the time codegen runs. (#1055)
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "RegExp") {
+    if (
+      !nativeRegExpProvider &&
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "RegExp"
+    ) {
       const info = ctx.externClasses.get("RegExp");
       if (info) {
         register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);
@@ -2344,7 +2354,8 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
         if (className && !isNativeEncodingClass(className)) {
           const isCall = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
           if (isCall) {
-            const info = resolveExtern(className, memberName, "method");
+            const info =
+              nativeRegExpProvider && className === "RegExp" ? null : resolveExtern(className, memberName, "method");
             if (info) {
               const sig = info.methods.get(memberName)!;
               register(`${info.importPrefix}_${memberName}`, sig.params, sig.results);
@@ -2357,7 +2368,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
             // prop on the (refusing) extern path instead of silently losing
             // its import.
             const isStandaloneNativeRegExpProp =
-              ctx.standalone && className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
+              nativeRegExpProvider && className === "RegExp" && STANDALONE_REGEXP_REFLECTION_PROPS.has(memberName);
             const info = isStandaloneNativeRegExpProp ? null : resolveExtern(className, memberName, "property");
             if (info) {
               const propInfo = info.properties.get(memberName)!;
@@ -2379,7 +2390,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       const propName = node.left.name.text;
       // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
       // not pre-register env.RegExp_set_lastIndex.
-      const isStandaloneNativeRegExpWrite = ctx.standalone && className === "RegExp" && propName === "lastIndex";
+      const isStandaloneNativeRegExpWrite = nativeRegExpProvider && className === "RegExp" && propName === "lastIndex";
       if (className && !isNativeEncodingClass(className) && !isStandaloneNativeRegExpWrite) {
         const info = resolveExtern(className, propName, "property");
         if (info) {
@@ -2395,7 +2406,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       // — the call handler compiles this as a direct method call, not a property read
       const isCallCallee = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
       const isNativeStandaloneRegExpMatchArray =
-        ctx.standalone && isStandaloneRegExpMatchArrayValue(ctx, node.expression);
+        nativeRegExpProvider && isStandaloneRegExpMatchArrayValue(ctx, node.expression);
       const objType = ctx.checker.getTypeAtLocation(node.expression);
       const sym = objType.getSymbol();
       // Skip Array and tuple types — those use Wasm GC struct/array ops, not host import

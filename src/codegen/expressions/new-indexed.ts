@@ -14,10 +14,10 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
-import { getOrRegisterDvWindowType } from "../dataview-native.js";
+import { getOrRegisterDvWindowType, usesNativeDataViewProvider } from "../dataview-native.js";
 import { getArrTypeIdxFromVec, getOrRegisterResizableAbType, getOrRegisterVecType, resolveWasmType } from "../index.js";
 import { compileExpression } from "../shared.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./helpers.js";
+import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { inferArrayElementType } from "./new-super.js";
 
@@ -209,6 +209,7 @@ export function tryCompileIndexedBuiltinNew(
 
   // new DataView(buffer) / new DataView(buffer, byteOffset) / new DataView(buffer, byteOffset, byteLength)
   if (className === "DataView") {
+    const nativeDataView = usesNativeDataViewProvider(ctx);
     const elemType: ValType = { kind: "i8" }; // (#2835) packed byte buffer
     const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", elemType);
     const args = expr.arguments ?? [];
@@ -361,7 +362,7 @@ export function tryCompileIndexedBuiltinNew(
         fctx.body.push({ op: "local.get", index: offsetF64 });
         fctx.body.push({ op: "f64.sub" });
         fctx.body.push({ op: "local.set", index: lenF64 });
-      } else if (noJsHost(ctx)) {
+      } else if (nativeDataView) {
         // (#2159/#38) Standalone externref buffer (the common case — ArrayBuffer
         // locals are typed externref): recover the i32_byte vec struct at runtime
         // (any.convert_extern + ref.cast) and read its byte length, so the default
@@ -401,7 +402,7 @@ export function tryCompileIndexedBuiltinNew(
       // for `new DataView(buf, n>0)` is a separate representation slice, shared
       // with TypedArray-on-buffer windowing; offset-0 views — the dominant
       // case — are fully native here.)
-      if (!noJsHost(ctx)) {
+      if (!nativeDataView) {
         const regIdx = ensureLateImport(
           ctx,
           "__dv_register_view",
@@ -432,7 +433,7 @@ export function tryCompileIndexedBuiltinNew(
       // `$__resizable_ab` passes too — it subtypes the vec): a non-vec buffer
       // (host object, exotic value) passes through unwrapped, exactly the
       // pre-#3173 behaviour, so no new trap is introduced.
-      const windowed = noJsHost(ctx);
+      const windowed = nativeDataView;
       if (windowed) {
         const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
         const wrapWindow: Instr[] = [

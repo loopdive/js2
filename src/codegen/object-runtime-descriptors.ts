@@ -85,6 +85,11 @@ export interface ObjectDescriptorHelperState {
   objOrderedIdx: number;
   objOrderedAllIdx: number;
   externSetIdx: number;
+  boundaryObjectGetOwnPropertyDescriptorIdx?: number;
+  boundaryObjectDefinePropertyValueIdx?: number;
+  boundaryObjectDefinePropertyAccessorIdx?: number;
+  boundaryObjectGetOwnPropertyNamesIdx?: number;
+  boundaryObjectGetOwnPropertySymbolsIdx?: number;
   // Reserved builtin-fn metadata natives (standalone only → may be undefined).
   bfnGopdIdx: number | undefined;
   bfnPushOwnNamesIdx: number | undefined;
@@ -128,6 +133,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     objOrderedIdx,
     objOrderedAllIdx,
     externSetIdx,
+    boundaryObjectGetOwnPropertyDescriptorIdx,
+    boundaryObjectDefinePropertyValueIdx,
+    boundaryObjectDefinePropertyAccessorIdx,
+    boundaryObjectGetOwnPropertyNamesIdx,
+    boundaryObjectGetOwnPropertySymbolsIdx,
     bfnGopdIdx,
     bfnPushOwnNamesIdx,
     NONE_HEAP,
@@ -383,6 +393,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       bagLocalIdx: 13,
       fallback: [{ op: "local.get", index: 0 }, { op: "return" }],
     });
+    const dpValueBoundaryLocal = 13 + (dpValueClosureArm ? 1 : 0);
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay (per-index/expando descriptor storage on a
@@ -402,6 +413,23 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          ...(boundaryObjectDefinePropertyValueIdx !== undefined
+            ? [
+                { op: "local.get", index: 0 } as Instr,
+                { op: "local.get", index: 1 } as Instr,
+                { op: "local.get", index: 2 } as Instr,
+                { op: "local.get", index: 3 } as Instr,
+                { op: "call", funcIdx: boundaryObjectDefinePropertyValueIdx } as Instr,
+                { op: "local.tee", index: dpValueBoundaryLocal } as Instr,
+                { op: "ref.is_null" } as Instr,
+                { op: "i32.eqz" } as Instr,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: dpValueBoundaryLocal }, { op: "return" }],
+                } as Instr,
+              ]
+            : []),
           ...vecOverlayArm(5, vecOverlay?.dpValueIdx ?? -1, 4),
           ...(dpValueClosureArm ?? [{ op: "local.get", index: 0 }, { op: "return" }]),
         ],
@@ -616,6 +644,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ...(dpValueClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
+        ...(boundaryObjectDefinePropertyValueIdx !== undefined
+          ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );
@@ -710,6 +741,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       bagLocalIdx: 16,
       fallback: [{ op: "local.get", index: 0 }, { op: "return" }],
     });
+    const dpAccessorBoundaryLocal = 16 + (dpAccessorClosureArm ? 1 : 0);
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay; a CLOSURE receiver defines into its #3468
@@ -723,6 +755,24 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          ...(boundaryObjectDefinePropertyAccessorIdx !== undefined
+            ? [
+                { op: "local.get", index: 0 } as Instr,
+                { op: "local.get", index: 1 } as Instr,
+                { op: "local.get", index: 2 } as Instr,
+                { op: "local.get", index: 3 } as Instr,
+                { op: "local.get", index: 4 } as Instr,
+                { op: "call", funcIdx: boundaryObjectDefinePropertyAccessorIdx } as Instr,
+                { op: "local.tee", index: dpAccessorBoundaryLocal } as Instr,
+                { op: "ref.is_null" } as Instr,
+                { op: "i32.eqz" } as Instr,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "local.get", index: dpAccessorBoundaryLocal }, { op: "return" }],
+                } as Instr,
+              ]
+            : []),
           ...vecOverlayArm(6, vecOverlay?.dpAccessorIdx ?? -1, 5),
           // The closure arm carries the lenient-no-op return as its own
           // bag-absent fallback and otherwise FALLS THROUGH to the `$Object`
@@ -1065,6 +1115,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         // (#4161) closure own-property bag (local 16) — standalone/wasi only.
         ...(dpAccessorClosureArm
           ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
+        ...(boundaryObjectDefinePropertyAccessorIdx !== undefined
+          ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
       body,
@@ -2627,6 +2680,21 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             },
           ] satisfies Instr[])
         : []),
+      ...(boundaryObjectGetOwnPropertyDescriptorIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: boundaryObjectGetOwnPropertyDescriptorIdx },
+            { op: "local.tee", index: 6 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 6 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       // any = any.convert_extern(obj) ; if !$Object → vec receivers consult
       // the #3251 overlay (companion entry / implicit element descriptor),
       // then the primitive-receiver arm (#2984: nullish → TypeError, string →
@@ -2905,6 +2973,20 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const body: Instr[] = [
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
+      ...(boundaryObjectGetOwnPropertyNamesIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryObjectGetOwnPropertyNamesIdx },
+            { op: "local.tee", index: 8 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 8 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       // (#2896) Builtin-fn metadata arm: a builtin function value's own string
       // keys are ["length", "name"] in spec order (minus deleted ones). The
       // filled helper pushes them into the vec and returns 1 on a hit.
@@ -2984,6 +3066,9 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        ...(boundaryObjectGetOwnPropertyNamesIdx !== undefined
+          ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );
@@ -3016,6 +3101,20 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
+      ...(boundaryObjectGetOwnPropertySymbolsIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryObjectGetOwnPropertySymbolsIdx },
+            { op: "local.tee", index: 8 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 8 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       // any = any.convert_extern(obj); if !$Object → return empty vec
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -3089,13 +3188,40 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        ...(boundaryObjectGetOwnPropertySymbolsIdx !== undefined
+          ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );
   } else {
     // String-keyed runtime (host/gc, or no symbol keys): always [].
-    const body: Instr[] = [{ op: "call", funcIdx: objVecNewIdx }];
-    registerNative("__getOwnPropertySymbols", [{ kind: "externref" }], [{ kind: "externref" }], [], body);
+    const body: Instr[] = [
+      ...(boundaryObjectGetOwnPropertySymbolsIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryObjectGetOwnPropertySymbolsIdx },
+            { op: "local.tee", index: 1 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 1 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
+      { op: "call", funcIdx: objVecNewIdx },
+    ];
+    registerNative(
+      "__getOwnPropertySymbols",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+      boundaryObjectGetOwnPropertySymbolsIdx !== undefined
+        ? [{ name: "boundaryResult", type: { kind: "externref" } }]
+        : [],
+      body,
+    );
   }
 
   // ── __object_getOwnPropertyDescriptors / __object_fromEntries ─────────────

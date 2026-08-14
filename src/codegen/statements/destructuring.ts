@@ -31,6 +31,7 @@ import {
 } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
+import { usesNativeJsErrors } from "../js-errors.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
 import {
@@ -825,17 +826,16 @@ export function compileObjectDestructuring(
   const hasRestElement = pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken);
   if (hasRestElement) {
     if (resultType.kind === "ref" || resultType.kind === "ref_null") {
-      // (#3222 C1) In standalone/WASI, the externref rest path collects the rest
+      // (#3222 C1/#4397) With native semantic providers, the externref rest path collects the rest
       // binding via `__extern_rest_object` → `__object_keys`, which walks only
       // the open-`$Object` hash. A CLOSED-shape struct source (`{a,...rest} =
       // {a:1,b:2,c:3}`) reinterpreted as externref via `extern.convert_any` is
       // invisible to that enumeration, so `rest` came out EMPTY. Instead
       // materialize the struct into a real open `$Object` first (own-enumerable
       // fields only) so both the named-binding `__extern_get`s and the
-      // `__extern_rest_object` collection see every property. Host/gc lanes keep
-      // the byte-identical `extern.convert_any` (the host `__extern_rest_object`
-      // enumerates closed structs via `__sget_*` reflection already).
-      if ((ctx.standalone || ctx.wasi) && structTypeIdx !== undefined) {
+      // `__extern_rest_object` collection see every property. Host-assisted
+      // compatibility mode keeps its existing host reflection path.
+      if (ctx.targetProfile.semanticProviders === "native-first" && structTypeIdx !== undefined) {
         // Match the materialize helper's local type (ref_null <structTypeIdx>);
         // an anonymous-literal source may have a different resultType.typeIdx.
         if ((resultType as { typeIdx?: number }).typeIdx !== structTypeIdx) {
@@ -869,7 +869,7 @@ export function compileObjectDestructuring(
   // constructor instead of the `__throw_type_error` host import. Register that
   // constructor now (it lands in funcMap as an internal function, after all
   // current imports, so it introduces no late-import index shift).
-  if (ctx.wasi || ctx.standalone) {
+  if (usesNativeJsErrors(ctx)) {
     emitWasiErrorConstructor(ctx, "TypeError", 1);
   } else {
     ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);

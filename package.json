@@ -111,6 +111,7 @@
     "detect:vacuity": "npx tsx scripts/detect-vacuity.ts",
     "check:test-vacuity-shapes": "npx tsx scripts/check-test-vacuity-shapes.ts",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
+    "check:host-import-policy": "node --import tsx scripts/check-host-import-policy.ts",
     "check:ir-only": "npx tsx scripts/check-ir-only.ts",
     "check:ir-optimization-retirement": "node scripts/check-ir-optimization-retirement.mjs",
     "check:linear-ir": "npx tsx scripts/check-linear-ir.ts",

@@ -2876,7 +2876,7 @@ export function compileArrowAsClosure(
     closureName,
     isNamedFuncExpr: !!isNamedFuncExpr,
     constructible:
-      noJsHost(ctx) &&
+      (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       ts.isFunctionExpression(arrow) &&
       arrow.asteriskToken === undefined &&
       !(arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false),

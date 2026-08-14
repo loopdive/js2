@@ -1,97 +1,143 @@
 ---
 id: 3681
-title: "Differential whole-program corpus testing — diff stdout/stderr/exit-code against Node (scriptc-inspired)"
+title: "Differential whole-program target matrix — Node oracle vs JS-host, standalone, WASI, and linear"
 status: backlog
-sprint: Backlog
-updated: 2026-07-27
 created: 2026-07-26
-priority: medium
-horizon: m
-feasibility: easy
+updated: 2026-08-12
+priority: high
+feasibility: medium
 reasoning_effort: medium
 task_type: test
-area: testing
-language_feature: n/a
+area: testing, compiler, codegen-linear
+language_feature: whole-program-semantics
 goal: test-infrastructure
+sprint: Backlog
+horizon: m
+es_edition: multi
+related: [1203, 1854, 1941, 2711, 3518, 3781]
 ---
+# #3681 — Differential whole-program target matrix
 
-# #3681 — Differential whole-program corpus testing
+## Objective
 
-## Context / provenance
+Extend the existing differential corpus into one explicit target matrix that
+compares observable whole-program behavior against Node while keeping Test262
+as the standards oracle. Every applicable compiler lane must either run the
+program or report a typed, visible reason that the lane is inapplicable.
 
-From the 2026-07-26 [vercel-labs/scriptc](https://github.com/vercel-labs/scriptc)
-comparison. scriptc's primary correctness harness is **differential testing**:
-800+ corpus programs run under both Node and the compiled binary, and
-**stdout, stderr, and exit codes must match byte-for-byte**. They make no
-test262 claims at all — the corpus diff *is* their conformance story.
+## Existing foundation
 
-## Why we want it too (not instead of test262)
+The repository already has the harness proposed by this issue's first draft:
+`tests/differential/corpus/`, `scripts/diff-test.ts`, and the #1203 delta gate.
+The JS-host lane compares Node and compiled-Wasm stdout and writes
+`benchmarks/results/diff-test.json`; CI blocks regressions while allowing known
+failures to remain visible. The corpus currently contains roughly 120 source
+programs.
 
-test262 measures spec conformance one assertion at a time; it is our roadmap
-metric (29,568/43,097). But its shape has blind spots a whole-program diff
-catches:
+The open work is therefore an extension, not a second harness:
 
-- **Miscompilations that don't trip an assertion** — wrong-but-plausible
-  output, ordering bugs, output interleaving, exit-code paths.
-- **Feature *interaction* bugs** — test262 files are deliberately minimal;
-  real programs compose closures + classes + async + string ops in one flow.
-  Our sprint history is full of bugs that only manifested in composition.
-- **stderr/exit-code semantics** — essentially untested today; matters for the
-  WASI/CLI target (`fd_write`, `proc_exit`).
+- stderr and exit status are not compared;
+- standalone/WASI and linear applicability are not a first-class matrix;
+- observable thrown-error class and exported results are not captured where a
+  lane exposes them;
+- deliberate normalizations and target-specific divergences need a maintained
+  ledger with owners and evidence.
 
-We already have the seed: `tests/equivalence.test.ts` compares compiled
-results against host evaluation, and `playground/examples/` is a ready-made
-corpus (already walked by `check:ir-fallbacks`). This issue scales the idea
-from expression-level equivalence to **process-level** equivalence.
+## Target matrix
 
-## Proposal
+For each corpus program, record an explicit row for:
 
-1. **Harness** (`tests/differential.test.ts` or standalone runner): for each
-   corpus program, run (a) under Node (tsx/ts-node), (b) compiled to wasm and
-   executed in both JS-host and standalone/WASI modes. Diff stdout, stderr,
-   exit code. Byte-for-byte, with a small documented normalization list
-   (e.g. stack-trace frames) — every normalization is a numbered, deliberate
-   divergence, scriptc-style: "nothing diverges silently."
-2. **Corpus**: start with `playground/examples/` (zero new content), then grow
-   with programs written to *compose* features. Target ~100 programs first,
-   scaling toward scriptc's 800+.
-3. **CI**: run in `quality` or as its own cheap job — this is minutes, not the
-   test262 shard matrix. Failures block like equivalence failures.
-4. **Divergence ledger**: `docs/divergences.md` — numbered list of deliberate
-   Node/js2wasm output differences with rationale (mirrors scriptc's "a few
-   dozen documented divergences" practice).
+| Lane | Oracle / comparison | Minimum observables |
+| --- | --- | --- |
+| Node | reference execution | stdout, stderr, exit status, thrown error |
+| JS-host WasmGC | Node | byte output, exit/error class, exposed exports |
+| standalone/WASI WasmGC | Node where portable | byte output, exit/error class |
+| JS-host linear | Node and WasmGC | byte output, exit/error class, exports |
+| standalone/WASI linear | Node and WasmGC where portable | byte output, exit/error class |
 
-## Non-goals
+Target-inapplicable source is a measured result with a stable diagnostic code,
+not a missing row. The artifact reports per-lane denominators and counts for
+pass, known divergence, unsupported, compile failure, runtime failure, and
+harness failure. A zero-sized or silently skipped lane fails anti-vacuity
+checks.
 
-- Not a replacement for test262 or the equivalence suite
-- No fuzzing in v1 (a fuzzer feeding this differential oracle is the natural
-  follow-up — file separately when the harness exists)
+## Observable contract
+
+- Compare stdout and stderr as bytes, preserving ordering when the runner can
+  observe it, plus exact exit status.
+- Capture thrown error name/class and stable message portions without treating
+  engine-specific stack paths as semantics.
+- Compare exported primitive/structured results when both runners expose them;
+  use the repository's established canonicalization rather than ad hoc string
+  conversion.
+- Keep every normalization narrow, numbered, documented, and tested with a
+  positive control proving the unnormalized difference would be detected.
+- Separate compiler semantic divergences from host API/WASI environment
+  differences. A capability absent from a target is not normalized into a pass.
+
+## Corpus growth and safety
+
+Grow the corpus with real multi-feature programs and minimized regressions from
+Test262/npm work. Give priority to feature interactions, initialization order,
+exceptions, async scheduling, closures/classes, dynamic values, host adapters,
+and lifetime/rooting stress. Where native sanitizer tooling is not applicable
+to WasmGC, add equivalent allocation/collection/rooting stress and engine
+validation; do not claim sanitizer coverage that the lane did not execute.
+
+Generated cases record seed and generator version. Handwritten cases state the
+behavioral interaction they protect. Test262 remains authoritative for
+language conformance, and its license/metadata rules are preserved when a
+minimized case is derived from it.
+
+## Reusable corpus interchange
+
+Define a small, documented fixture manifest for source files, arguments,
+environment, expected observables, target applicability, normalization IDs,
+seed/generator data, license, and provenance. Keep the runner repository-native,
+but make individual fixtures portable enough for compiler/runtime/tooling
+projects to exchange minimized failures and feature-interaction cases without
+adopting one another's architecture or support policy.
+
+Imported fixtures retain attribution and are reviewed against this project's
+language contract. Exported fixtures contain no repository-only absolute paths,
+secrets, or implicit host setup. Shared cases improve the oracle; another
+implementation's pass/fail classification never becomes authoritative here.
+
+## Divergence ledger
+
+Maintain a machine-readable ledger and a rendered documentation view. Each
+entry includes a stable ID, affected lanes, exact normalization or intentional
+difference, motivation, owner/follow-up issue, first and last verified commit,
+and a focused regression fixture. Expired or unmatched entries fail CI; broad
+wildcards and output deletion are forbidden.
 
 ## Acceptance criteria
 
-- [ ] Runner executes a corpus program under Node and under compiled wasm
-      (JS-host mode) and reports a unified diff of stdout/stderr/exit-code
-- [ ] Standalone/WASI lane included or explicitly deferred with a follow-up id
-- [ ] `playground/examples/` corpus onboarded; count reported per run
-- [ ] Wired into CI as a blocking check on a lane that runs per-PR
-- [ ] `docs/divergences.md` exists; every normalization in the harness cites a
-      numbered entry
+- [ ] The existing runner captures stdout, stderr, exit status, and thrown
+      error class for Node and JS-host WasmGC without weakening the #1203 gate.
+- [ ] Standalone/WASI, JS-host linear, and standalone/WASI linear are explicit
+      lanes with per-program applicability and typed reasons for unsupported
+      rows.
+- [ ] Result artifacts report the corpus revision plus per-lane denominators
+      and pass/divergence/unsupported/compile/runtime/harness failure counts.
+- [ ] Applicable target lanes compare exports where observable and distinguish
+      compile failure, trap, exception, nonzero exit, and harness failure.
+- [ ] Every normalization/divergence has a stable ledger entry, owner, focused
+      test, and positive control; stale or unused entries fail the gate.
+- [ ] CI blocks new regressions in every established lane. A new lane may begin
+      advisory only with a committed baseline and a named promotion issue/date.
+- [ ] Corpus growth includes feature-composition and lifetime/rooting cases;
+      generated cases record reproducible seeds and versions.
+- [ ] A versioned fixture manifest can import/export a focused case without
+      losing arguments, observables, applicability, seed, license, or
+      provenance; at least one round-trip fixture proves the interchange.
+- [ ] Test262 remains a separate, authoritative standards signal; differential
+      pass counts are not labeled conformance.
 
-## 2026-07-27 update — the proposed harness already exists
+## Out of scope
 
-Filed independently the same day: **the runner this issue proposes already
-exists** — `tests/differential/corpus/` + `scripts/diff-test.ts` (#1203),
-predating this issue. It already does exactly item 1 (Node vs compiled-wasm
-stdout diff, JS-host mode, `benchmarks/results/diff-test.json`) and item 3
-(`scripts/diff-test-gate.ts` delta gate, wired in `.github/workflows/diff-test.yml`).
-#3690 grew its corpus (generators/, private-fields/, deeper regex/symbol —
-also scriptc-inspired) and found the existing gate design already matches
-this issue's "failures block like equivalence failures" goal, scoped to
-regressions only (new/still-failing corpus entries are informational, not
-blocking, so the corpus can grow ahead of the compiler).
-
-**Still genuinely open from this proposal**: no `stderr`/exit-code diffing
-(stdout only today), no standalone/WASI lane, no `docs/divergences.md`
-ledger, and the corpus is ~120 programs vs the ~100+ target. Worth
-re-scoping this issue as "extend the existing harness" rather than "build
-a harness" to avoid a future duplicate build.
+- Replacing Test262, equivalence, import-leak, or artifact-validity gates.
+- Treating target-inapplicable programs as passes or omitting them from the
+  denominator.
+- Normalizing away host capability gaps, error classes, or substantive output.
+- Adding another backend solely to increase the number of matrix columns.

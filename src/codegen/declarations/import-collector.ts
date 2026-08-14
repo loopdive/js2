@@ -46,6 +46,7 @@ import {
 } from "../index.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
+import { emitNativeBigIntFormat } from "../bigint-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addImport, addStringConstantGlobal } from "../registry/imports.js";
@@ -650,7 +651,10 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       //   numeric arg  → `number_toString`
       //   boolean arg  → "true"/"false" string literals (emitBoolToString)
       //   void arg     → "undefined" literal
-      if ((ctx.standalone || ctx.wasi) && node.arguments.length >= 1) {
+      if (
+        (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) &&
+        node.arguments.length >= 1
+      ) {
         const arg0 = node.arguments[0]!;
         const arg0Type = ctx.checker.getTypeAtLocation(arg0);
         const isStr = isStringType(arg0Type);
@@ -846,8 +850,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   if (
     ASYNC_CPS_ENABLED &&
     (!state.asyncCpsFound || !state.asyncHostDriveFound) &&
-    !ctx.wasi &&
-    !ctx.standalone &&
+    !isStandalonePromiseActive(ctx) &&
     (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
     node.body !== undefined &&
     hasAsyncModifier(node)
@@ -1410,11 +1413,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     addImport(ctx, "env", "number_toString_radix", { kind: "func", typeIdx: t });
   }
   // (#1644 Slice D) BigInt#toString — i64 receiver, optional i32 radix.
-  if (state.primitiveNeeded.has("bigint_toString")) {
+  if (state.primitiveNeeded.has("bigint_toString") && !nativeNumberFormat) {
     const t = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "bigint_toString", { kind: "func", typeIdx: t });
   }
-  if (state.primitiveNeeded.has("bigint_toString_radix")) {
+  if (state.primitiveNeeded.has("bigint_toString_radix") && !nativeNumberFormat) {
     const t = addFuncType(ctx, [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "bigint_toString_radix", { kind: "func", typeIdx: t });
   }
@@ -1439,6 +1442,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     if (fmtNative.size > 0) {
       emitNativeNumberFormat(ctx, fmtNative);
     }
+    const bigintNative = new Set<string>();
+    for (const name of ["bigint_toString", "bigint_toString_radix"]) {
+      if (state.primitiveNeeded.has(name)) bigintNative.add(name);
+    }
+    if (bigintNative.size > 0) emitNativeBigIntFormat(ctx, bigintNative);
   } else {
     if (state.primitiveNeeded.has("number_toFixed")) {
       const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
@@ -1524,10 +1532,13 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       }
       // #682/#1474: standalone refuses RegExp-consuming string methods during
       // lowering, so do not pre-register JS-host string_* imports for them.
-      if (ctx.standalone && (method === "match" || method === "matchAll" || method === "search")) {
+      if (
+        ctx.targetProfile.semanticProviders === "native-first" &&
+        (method === "match" || method === "matchAll" || method === "search")
+      ) {
         continue;
       }
-      if (ctx.standalone && state.stringRegexpMethodNeeded.has(method)) {
+      if (ctx.targetProfile.semanticProviders === "native-first" && state.stringRegexpMethodNeeded.has(method)) {
         continue;
       }
       if (nativeStringMethod && !state.stringRegexpMethodNeeded.has(method)) continue;
@@ -1595,7 +1606,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // and `Number("42")` returned NaN across the whole gc-native lane. Always
       // emit it natively; `parseInt` / `parseFloat` keep their host imports
       // off-target, and those are real JS globals the host DOES provide.
-      if (ctx.wasi || ctx.standalone || name === STR_TO_NUMBER_HELPER) {
+      if (
+        ctx.targetProfile.semanticProviders === "native-first" ||
+        ctx.wasi ||
+        ctx.standalone ||
+        name === STR_TO_NUMBER_HELPER
+      ) {
         parseNative.add(name);
         continue;
       }
@@ -1637,7 +1653,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     let needsNativeDecode = false;
     for (const name of state.uriNeeded) {
       if (ctx.funcMap.has(name)) continue;
-      if (ctx.wasi || ctx.standalone) {
+      if (ctx.targetProfile.semanticProviders === "native-first" || ctx.wasi || ctx.standalone) {
         if (name === "encodeURI" || name === "encodeURIComponent") {
           needsNativeEncode = true;
           continue;
@@ -1672,7 +1688,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // guard skips it in both lanes.
   for (const name of state.escapeNeeded) {
     if (ctx.funcMap.has(name)) continue;
-    if (ctx.standalone || ctx.wasi) {
+    if (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) {
       if (name === "escape") emitNativeEscape(ctx);
       else emitNativeUnescape(ctx);
       continue;
@@ -1722,7 +1738,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // Resolve/reject keep their original 1-arg signature.
   for (const method of state.promiseNeeded) {
     if (method === "then" || method === "catch" || method === "finally") continue;
-    if (ctx.wasi && (method === "resolve" || method === "reject")) continue;
+    if (isStandalonePromiseActive(ctx) && (method === "resolve" || method === "reject")) continue;
     // (#2867 Gap 4) Under the native-`$Promise` carrier, `Promise.all`/`Promise.race`
     // over an array literal lower to the host-free native combinator (no host
     // import). Skip the unsatisfiable `Promise_all`/`Promise_race` pre-registration
@@ -1747,7 +1763,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
     }
   }
-  if (state.promiseNeedConstructor && !ctx.funcMap.has("Promise_new")) {
+  if (state.promiseNeedConstructor && !isStandalonePromiseActive(ctx) && !ctx.funcMap.has("Promise_new")) {
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "Promise_new", { kind: "func", typeIdx });
   }
@@ -1760,11 +1776,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // call site in expressions/calls.ts emits a clear compile error for the
   // unsupported (non-primitive) shapes. The primitive `JSON.stringify`
   // slice (#1324) is still lowered to pure Wasm and needs no host import.
-  const jsonHostUnavailable = ctx.wasi || ctx.standalone;
-  if (!jsonHostUnavailable && (state.jsonNeedStringify || state.jsonNeedParse)) {
+  const jsonUsesNativeProvider = ctx.targetProfile.semanticProviders === "native-first";
+  if (!jsonUsesNativeProvider && (state.jsonNeedStringify || state.jsonNeedParse)) {
     addUnionImports(ctx);
   }
-  if (!jsonHostUnavailable && state.jsonNeedStringify) {
+  if (!jsonUsesNativeProvider && state.jsonNeedStringify) {
     // (value: externref, replacer: externref, space: externref) -> externref
     const typeIdx = addFuncType(
       ctx,
@@ -1773,7 +1789,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     );
     addImport(ctx, "env", "JSON_stringify", { kind: "func", typeIdx });
   }
-  if (!jsonHostUnavailable && state.jsonNeedParse) {
+  if (!jsonUsesNativeProvider && state.jsonNeedParse) {
     // #2013 — (text, reviver) so JSON.parse can apply §25.5.1
     // InternalizeJSONProperty. The reviver is `ref.null.extern` when absent.
     const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
@@ -1794,7 +1810,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // degrades to the native closure struct (see compileArrowAsCallback). JS-host
     // lane byte-identical.
     if (
-      !(ctx.standalone || ctx.wasi) &&
+      !isStandalonePromiseActive(ctx) &&
       (state.callbackFound || state.asyncCpsFound) &&
       !ctx.funcMap.has("__make_callback")
     ) {
@@ -1814,7 +1830,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // the late-import path (its `call` opcodes would not be shifted — #1384).
   // `__make_callback` is registered above. Idempotent via funcMap guard so a
   // module that also uses `.then(cb1,cb2)` / `Promise.resolve` is unaffected.
-  if (state.asyncCpsFound || state.asyncHostDriveFound) {
+  if (!isStandalonePromiseActive(ctx) && (state.asyncCpsFound || state.asyncHostDriveFound)) {
     if (!ctx.funcMap.has("Promise_resolve")) {
       const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
       addImport(ctx, "env", "Promise_resolve", { kind: "func", typeIdx });
@@ -1838,7 +1854,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // the resolve/reject capabilities on the promise as `__r`/`__j`). The settle
   // imports declare an externref result (the JS fns return undefined) so the
   // shared `call <fulfill>; drop` settle shape stays uniform across backends.
-  if (state.asyncHostDriveFound) {
+  if (!isStandalonePromiseActive(ctx) && state.asyncHostDriveFound) {
     if (!ctx.funcMap.has("__make_callback")) {
       const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
       addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
@@ -1915,7 +1931,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // mode `compileForInStatement` routes through the native object runtime
   // (`__object_keys` + `__extern_length/_get_idx/_has`) instead, so leaving the
   // host imports unregistered is exactly what selects the native path there.
-  if (state.forInFound && !ctx.standalone && !ctx.wasi) {
+  if (state.forInFound && ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone && !ctx.wasi) {
     addForInImports(ctx);
   }
   if (state.forInLiterals.size > 0) {
@@ -1981,7 +1997,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // unchanged.
     // #1473 — standalone mode has no JS host either, so it needs the same
     // in-module Error constructors as WASI mode.
-    if ((ctx.wasi || ctx.standalone) && isWasiErrorName(name)) {
+    if (ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(name)) {
       emitWasiErrorConstructor(ctx, name, argCount);
       continue;
     }

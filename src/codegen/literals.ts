@@ -70,7 +70,7 @@ import {
   registerNativeGenerator,
 } from "./generators-native.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
-import { emitSymbolDescStore } from "./symbol-native.js";
+import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -397,11 +397,11 @@ export function compileObjectLiteralAsExternref(
           coerceType(ctx, fctx, srcType, { kind: "externref" });
         }
         // Wrap source in a single-element sources list for __object_assign(target,
-        // sources). Host mode → JS array; standalone → native $ObjVec (#1472
+        // sources). Compatibility mode → JS array; native semantics → native $ObjVec (#1472
         // Phase B Slice 3 — native __object_assign iterates a $ObjVec).
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.standalone) {
+        if (ctx.targetProfile.semanticProviders === "native-first") {
           const b = ensureObjVecBuilders(ctx);
           arrNewIdx = b.newIdx;
           arrPushIdx = b.pushIdx;
@@ -815,17 +815,14 @@ function compileObjectLiteralWithAccessors(
         // Host/gc lanes keep the byte-identical `extern.convert_any` + host
         // `__object_assign` (host reflection reads closed structs already).
         //
-        // Gated on `ctx.standalone` ONLY (not wasi): this handler's array-builder
-        // + `__object_assign` merge below is itself host-free only under
-        // `ctx.standalone` (the `else` branch takes the `__js_array_new` host
-        // import), so `--target wasi` object-spread has a SEPARATE pre-existing
-        // gap (even open-`$Object` spread is empty under wasi). Materializing here
-        // would produce a correct `$Object` the wasi downstream still can't merge,
-        // so we scope this to the mode where the whole path is native. (The
+        // Gated on the native provider: this handler's array-builder and
+        // `__object_assign` merge below use `$ObjVec`, while compatibility mode
+        // retains the `__js_array_new` host import. Materialize the closed struct
+        // only where the whole downstream path remains native. (The
         // object-REST fix IS `standalone || wasi` — its `__extern_rest_object`
         // downstream is native in both.)
         const spreadStructIdx =
-          ctx.standalone &&
+          ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&
           typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
           ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
@@ -842,7 +839,7 @@ function compileObjectLiteralWithAccessors(
         }
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.standalone) {
+        if (ctx.targetProfile.semanticProviders === "native-first") {
           const b = ensureObjVecBuilders(ctx);
           arrNewIdx = b.newIdx;
           arrPushIdx = b.pushIdx;
@@ -1133,7 +1130,7 @@ function emitObjectLiteralAccessorFn(
   // (#2128) per-literal shared-cell capture options — see compileArrowAsCallback
   captureOptions?: { forceMutableCaptures?: Set<string>; sharedRefCells?: SharedRefCellMap },
 ): boolean {
-  if (ctx.standalone) {
+  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
     const closureType = compileArrowAsClosure(ctx, fctx, fn);
     if (!closureType) return false;
     if (closureType.kind !== "externref") {
@@ -1163,7 +1160,7 @@ function emitObjectLiteralAccessorFn(
  * getter closures use, so `this` is bound correctly.
  */
 function emitObjectLiteralMethodFn(ctx: CodegenContext, fctx: FunctionContext, fn: ts.FunctionExpression): boolean {
-  if (ctx.standalone) {
+  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
     const closureType = compileArrowAsClosure(ctx, fctx, fn);
     if (!closureType) return false;
     if (closureType.kind !== "externref") {
@@ -2001,6 +1998,7 @@ export function ensureSymbolCounter(ctx: CodegenContext): number {
  * The description argument (if any) is evaluated for side effects but discarded.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  if (usesNativeSymbolProvider(ctx)) ensureNativeSymbolBoundaryBridge(ctx);
   const counterIdx = ensureSymbolCounter(ctx);
   // Increment counter first so the new id is reserved before we register a
   // description for it: `++counter; register_desc(counter, desc); return counter`.
@@ -2023,8 +2021,8 @@ export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, ar
   // all `typeof s === "symbol"` and symbol identity/distinctness need), so the
   // host registration is a pure JS-host fast path. Skip it standalone and only
   // evaluate the description argument for side effects.
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
-  const regIdx = noJsHost
+  const nativeSymbolProvider = usesNativeSymbolProvider(ctx);
+  const regIdx = nativeSymbolProvider
     ? undefined
     : ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
   if (regIdx !== undefined) {

@@ -1,73 +1,106 @@
 ---
 id: 3678
-title: "Actionable rejection diagnostics for the IR path — error code + code frame + rewrite hint (scriptc-inspired)"
+title: "Stable, actionable compiler diagnostics — code, source frame, and remediation"
 status: backlog
-sprint: Backlog
 created: 2026-07-26
-priority: medium
-horizon: m
+updated: 2026-08-12
+priority: high
 feasibility: medium
 reasoning_effort: medium
 task_type: feature
-area: compiler
+area: compiler, cli
 language_feature: compiler-internals
 goal: developer-experience
-related: [2855, 1376]
+sprint: Backlog
+required_by: [4382]
+horizon: m
+es_edition: n/a
+related: [1376, 1590, 1928, 1929, 2135, 2855, 3518, 3519, 3526, 4382]
 ---
+# #3678 — Stable, actionable compiler diagnostics
 
-# #3678 — Actionable rejection diagnostics for the IR path
+## Objective
 
-## Context / provenance
-
-From a 2026-07-26 comparison with [vercel-labs/scriptc](https://github.com/vercel-labs/scriptc)
-(Vercel's TypeScript→native compiler). scriptc's headline DX property: when a
-construct can't compile, the user gets **"a specific error code, a code frame,
-and usually a rewrite hint. Nothing is ever silently miscompiled."**
-
-We are on the opposite end today: when the IR path rejects a node kind, the
-failure **silently demotes to the legacy AST→Wasm path** via a warning channel
-(#1376 fallback budget), and the only visibility is the aggregate bucket counts
-in `scripts/ir-fallback-baseline.json`. A user (or dev agent) compiling a file
-has no per-site signal of *what* was rejected, *where*, or *what to change*.
+Give every compiler capability failure a stable, source-located, structured
+diagnostic that tells a user what happened and what they can do next. Expected
+unsupported source, compiler invariants, target-policy failures, runtime-
+provider gaps, and backend-legality failures must remain distinguishable from
+TypeScript's own numeric diagnostics.
 
 ## Problem
 
-As #2855 ratchets unintended fallback buckets to zero and promotes reasons into
-`STRICT_IR_REASONS`, rejections stop being silent demotions and become **hard
-compile errors**. The current error surface for that promotion is a bare reason
-string (e.g. `body-shape-rejected`) — accurate for CI gating, useless for a
-human deciding how to fix their source.
+Today, several internal systems expose reason strings or aggregate buckets,
+while `CompileError.code` primarily reflects optional TypeScript numeric codes.
+Fallback telemetry is useful for CI budgets, but a developer compiling one file
+still may not learn which source site failed, whether the failure is an
+intentional target limitation or compiler defect, or which rewrite or target
+would make progress.
 
-## Proposal
+This becomes a release blocker for the IR-only transition: once temporary
+hybrid demotion is removed, every expected capability gap becomes a hard error.
+A bare internal reason such as `body-shape-rejected` is accurate enough for a
+counter but not an acceptable public diagnostic.
 
-Give every IR rejection (and every `STRICT_IR_REASONS` hard error) a structured
-diagnostic:
+## Diagnostic contract
 
-1. **Stable error code** per rejection reason — e.g. `JS2W-IR-001
-   body-shape-rejected`, `JS2W-IR-004 param-shape-rejected` — so codes are
-   greppable, documentable, and stable across refactors of the reason strings.
-2. **Code frame** — file, line/col span of the offending node, with a 2–3 line
-   source excerpt. The IR builder already has the `ts.Node`; thread its
-   position through the rejection instead of dropping it at
-   `trackFallbacks` aggregation time.
-3. **Rewrite hint** where one exists — e.g. `param-shape-rejected` →
-   "destructure inside the body instead of the parameter list (until #1372)";
-   `external-call` → "only whitelisted builtins (Math.*, parseInt) are
-   IR-compilable (#1371)".
-4. A `--explain JS2W-IR-XXX` CLI mode (or a docs table) mapping each code to
-   its meaning, tracking issue, and workaround.
+Define a typed diagnostic registry with stable project codes such as
+`JS2W-IR-001`. The mnemonic/internal reason may evolve independently; the code
+and documented meaning follow compatibility rules.
 
-Keep the fallback-budget machinery unchanged — this is a presentation layer on
-data the rejection path already produces; it must not alter which nodes fall
-back.
+Each diagnostic carries:
+
+- `code`, `category`, and `severity`;
+- a primary file/line/column span plus related spans where needed;
+- a concise message that states the failed capability or invariant;
+- the selected target/backend and typed outcome (`Unsupported` or `Invariant`);
+- an optional actionable hint, alternative target/provider, and tracking issue;
+- structured details safe for JSON output without parsing human prose.
+
+The initial registry covers every reason in the #1376 fallback census and the
+typed preparation/legality outcomes introduced by #3519/#3518. Hints are
+specific and conditional: for example, a parameter-shape rejection can suggest
+moving destructuring into the function body, while a missing host capability
+can name targets that intentionally provide it. A compiler invariant never
+pretends a source rewrite is the remedy.
+
+Human-readable output includes a compact source frame. JSON output uses the
+same typed object and stable codes. `check:ir-fallbacks --verbose`, compile
+results, CLI errors, and #4382's `explain` workflow all consume the registry;
+none maintains its own code/message table.
+
+## Compatibility and completeness
+
+- Codes are never reassigned. Retired codes remain documented as retired.
+- Unknown internal reasons map to a dedicated invariant diagnostic and fail the
+  registry-completeness test; they are not printed as unstructured strings.
+- TypeScript numeric codes remain available in a separate field rather than
+  sharing the project-code namespace.
+- Adding a fallback, typed outcome, host-capability rule, or backend-legality
+  rejection requires a diagnostic registry entry in the same change.
+- Presentation must not change fallback or target-selection behavior. Behavior
+  changes belong to their semantic owner and are validated independently.
 
 ## Acceptance criteria
 
-- [ ] Every rejection reason in the #1376 table has a stable `JS2W-IR-NNN` code
-- [ ] `trackFallbacks: true` (and strict-reason hard errors) emit file:line:col
-      plus a source excerpt for each rejection site
-- [ ] At least the four unintended buckets with tracking issues
-      (`body-shape-rejected`, `external-call`, `param-shape-rejected`,
-      `call-graph-closure`) carry rewrite hints citing the tracking issue
-- [ ] `check:ir-fallbacks --verbose` output includes the codes
-- [ ] No change to fallback *behavior* — baseline counts identical before/after
+- [ ] Every #1376 rejection reason and every production typed compiler outcome
+      has a stable project diagnostic code and category.
+- [ ] Every source-caused `Unsupported` includes file/line/column and a compact
+      source frame; multi-site errors include deterministic related locations.
+- [ ] All known actionable gaps have a tested hint or alternative target;
+      invariants clearly identify compiler defects without blaming source.
+- [ ] Compile results expose project codes separately from TypeScript numeric
+      codes, with one documented JSON schema used by CLI and tooling.
+- [ ] `check:ir-fallbacks --verbose` includes the stable codes and locations.
+- [ ] Registry completeness fails on an unregistered reason/outcome, duplicate
+      code, reassigned code, or message-table drift.
+- [ ] Human and JSON snapshots cover Unsupported, Invariant, host-policy,
+      runtime-provider, and backend-legality examples.
+- [ ] Baseline selection, fallback counts, emitted artifacts, and Test262
+      results are unchanged by the presentation-layer landing.
+
+## Out of scope
+
+- Claiming that a diagnostic category is a conformance result.
+- Hiding unsupported source by silently changing the requested target.
+- Preserving legacy fallback after the IR-only retirement boundary solely to
+  avoid emitting a diagnostic.

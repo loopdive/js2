@@ -12,6 +12,7 @@ import {
   isHeterogeneousUnion,
   isNumberType,
   isNumberWrapperType,
+  isPromiseType,
   isStringType,
   isVoidType,
   mapTsTypeToWasm,
@@ -33,7 +34,7 @@ import {
   createsGlobalObjectBinding,
   isAssignmentOperator,
 } from "./module-init-collection.js";
-import { emitUndefinedExtern, ensureWrapperTypes } from "./any-helpers.js";
+import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
@@ -75,9 +76,14 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
-import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
+import {
+  ensureNativeStringBoundaryBridge,
+  ensureNativeStringExternBridge,
+  ensureNativeStringHelpers,
+} from "./native-strings.js";
+import { ensureNativeSymbolBoundaryBridge } from "./symbol-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
@@ -100,7 +106,7 @@ import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
-import { definedFuncAt, mintDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { pushProgramAbiModuleInitCallable } from "./program-abi-module-init-planning.js";
 import {
   pushProgramAbiNestedFunctionDeclaration,
@@ -141,13 +147,13 @@ import {
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
 /**
- * (#1700) Record TypedArray classifications for a user-exported function so
- * the JS-host `wrapExports` can marshal `Uint8Array` params/returns across
- * the JS↔Wasm boundary. The Wasm signature alone is ambiguous —
+ * Record source-level boundary classifications for a user-exported function
+ * so the JS-host `wrapExports` can marshal native strings and TypedArray
+ * params/returns across the JS↔Wasm boundary. The Wasm signature alone is ambiguous —
  * `(input: Uint8Array)` and `(input: number[])` lower to the same
  * `(ref null $Vec[f64])` — so we surface the TS-level distinction here.
  *
- * No-op when every slot classifies as `"other"` so non-TypedArray modules
+ * No-op when every slot classifies as `"other"` so scalar-only modules
  * accumulate no metadata.
  */
 /**
@@ -175,6 +181,98 @@ const STANDALONE_FN_STATIC_KEEP_EXCLUDED = new Set([
   "arguments",
 ]);
 
+/**
+ * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
+ *
+ * JS primitives are converted to existing native carriers before invoking a
+ * user export. Null and undefined need distinct `$AnyValue` carriers because a
+ * bare JS externref cannot be classified as undefined by Wasm alone. The tag
+ * classifier maps only those two boundary carriers back; all other values stay
+ * under their ordinary string/number/boolean/bigint/object adapters.
+ */
+function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
+  ensureNativeStringBoundaryBridge(ctx);
+  addUnionImports(ctx);
+  ensureAnyHelpers(ctx);
+
+  for (const name of [
+    "__box_number",
+    "__box_boolean",
+    "__box_bigint",
+    "__typeof_number",
+    "__unbox_number",
+    "__typeof_boolean",
+    "__unbox_boolean",
+    "__typeof_bigint",
+    "__to_bigint",
+    "__any_box_null",
+    "__any_box_undefined",
+  ]) {
+    const funcIdx = ctx.funcMap.get(name);
+    if (funcIdx === undefined) continue;
+    const func = definedFuncAt(ctx, funcIdx);
+    if (func) func.exported = true;
+    if (!ctx.mod.exports.some((entry) => entry.name === name)) {
+      ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+    }
+  }
+
+  const name = "__dynamic_boundary_tag";
+  let funcIdx = ctx.funcMap.get(name);
+  if (funcIdx === undefined && ctx.anyValueTypeIdx >= 0) {
+    const anyTypeIdx = ctx.anyValueTypeIdx;
+    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], name);
+    funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx,
+      locals: [
+        { name: "any", type: { kind: "anyref" } },
+        { name: "tag", type: { kind: "i32" } },
+      ],
+      body: [
+        { op: "local.get", index: 0 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "i32.const", value: 1 }],
+          else: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: 1 },
+            { op: "ref.test", typeIdx: anyTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "ref.cast", typeIdx: anyTypeIdx },
+                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+                { op: "local.tee", index: 2 },
+                { op: "i32.const", value: 2 },
+                { op: "i32.lt_u" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [{ op: "local.get", index: 2 }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ],
+              else: [{ op: "i32.const", value: 0 }],
+            },
+          ],
+        },
+      ],
+      exported: true,
+    });
+    ctx.funcMap.set(name, funcIdx);
+  }
+  if (funcIdx !== undefined && !ctx.mod.exports.some((entry) => entry.name === name)) {
+    ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  }
+}
+
 function recordExportSignature(
   ctx: CodegenContext,
   exportName: string,
@@ -183,20 +281,66 @@ function recordExportSignature(
 ): void {
   const sig = ctx.checker.getSignatureFromDeclaration(stmt);
   if (!sig) return;
-  const params: import("../ir/types.js").TypedArrayKind[] = [];
+  const params: import("../ir/types.js").ExportBoundaryKind[] = [];
   let anyHit = false;
+  let stringHit = false;
+  let symbolHit = false;
+  let promiseHit = false;
+  let dynamicHit = false;
   for (const p of stmt.parameters) {
     const pt = ctx.checker.getTypeAtLocation(p);
-    const kind = classifyTypedArrayType(pt, ctx.checker);
+    const kind =
+      (pt.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+        ? "dynamic"
+        : isStringType(pt)
+          ? "string"
+          : isPromiseType(pt)
+            ? "promise"
+            : (pt.flags & ts.TypeFlags.ESSymbolLike) !== 0
+              ? "symbol"
+              : classifyTypedArrayType(pt, ctx.checker) !== "other"
+                ? classifyTypedArrayType(pt, ctx.checker)
+                : (pt.flags & ts.TypeFlags.Object) !== 0
+                  ? "aggregate"
+                  : "other";
     if (kind !== "other") anyHit = true;
+    if (kind === "string") stringHit = true;
+    if (kind === "symbol") symbolHit = true;
+    if (kind === "promise") promiseHit = true;
+    if (kind === "dynamic") dynamicHit = true;
     params.push(kind);
   }
   const retType = ctx.checker.getReturnTypeOfSignature(sig);
   const unwrappedRet = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
-  const result = classifyTypedArrayType(unwrappedRet, ctx.checker);
+  const result =
+    isAsync || isPromiseType(retType)
+      ? "promise"
+      : (unwrappedRet.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
+        ? "dynamic"
+        : isStringType(unwrappedRet)
+          ? "string"
+          : (unwrappedRet.flags & ts.TypeFlags.ESSymbolLike) !== 0
+            ? "symbol"
+            : classifyTypedArrayType(unwrappedRet, ctx.checker) !== "other"
+              ? classifyTypedArrayType(unwrappedRet, ctx.checker)
+              : (unwrappedRet.flags & ts.TypeFlags.Object) !== 0
+                ? "aggregate"
+                : "other";
   if (result !== "other") anyHit = true;
+  if (result === "string") stringHit = true;
+  if (result === "symbol") symbolHit = true;
+  if (result === "promise") promiseHit = true;
+  if (result === "dynamic") dynamicHit = true;
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
+  if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
+  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+    ensureNativeSymbolBoundaryBridge(ctx);
+  }
+  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+    ensureNativeDynamicBoundaryBridge(ctx);
+  }
+  if (promiseHit) ensureNativePromiseBoundaryBridge(ctx);
 }
 
 // An unannotated binding-pattern parameter — `function f([x, y])` or

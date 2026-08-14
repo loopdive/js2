@@ -3,10 +3,9 @@
 // #2046 — Standalone Reflect spec gaps (#1905 follow-up).
 //
 // PR-A (restore fail-loud):
-//   - Reflect.get/set with an explicit receiver were evaluated then SILENTLY
-//     DROPPED (no receiver slot in __extern_get/__reflect_set), so accessor
-//     get/set ran with `this = target` instead of `receiver`. Until real
-//     receiver plumbing (PR-C, deferred), refuse loudly at compile time.
+//   - Reflect.get with an explicit receiver now threads that receiver through
+//     the native accessor path. Reflect.set remains fail-loud until its
+//     separate receiver/write semantics are implemented.
 //   - Reflect.deleteProperty(primitive, k) returned true; §28.1.4 requires a
 //     TypeError. Guarded at the call site (ref.test $Object) so the SHARED
 //     __delete_property (also backing sloppy `delete`, a no-op success on
@@ -47,15 +46,17 @@ async function expectThrows(source: string): Promise<void> {
 
 describe("#2046 standalone Reflect spec gaps", () => {
   // ── PR-A defect 1: explicit-receiver refusal ──────────────────────────────
-  it("Reflect.get with an explicit receiver is refused at compile time", async () => {
-    await expectCompileRefusal(
-      `export function test(): number {
-        const o: any = { x: 1 };
-        const recv: any = {};
-        return Reflect.get(o, "x", recv) as number;
-      }`,
-      "Reflect.get with an explicit receiver",
-    );
+  it("Reflect.get binds an accessor to its explicit receiver", async () => {
+    expect(
+      await runStandalone(`export function test(): number {
+        const target: any = {};
+        Object.defineProperty(target, "x", {
+          get: function (): number { return (this as any).value; },
+        });
+        const receiver: any = { value: 42 };
+        return Reflect.get(target, "x", receiver) as number;
+      }`),
+    ).toBe(42);
   });
 
   it("Reflect.set with an explicit receiver is refused at compile time", async () => {
@@ -133,19 +134,15 @@ describe("#2046 standalone Reflect spec gaps", () => {
     ).toBe(1);
   });
 
-  it("sloppy delete also honors freeze (shared __delete_property)", async () => {
-    expect(
-      await runStandalone(`export function test(): number {
-        const o: any = { x: 1 };
-        Object.freeze(o);
-        const refused = (delete o.x) ? 0 : 1;
-        const kept = o.x === 1 ? 2 : 0;
-        return refused + kept; // expect 3
-      }`),
-    ).toBe(3);
+  it("strict module delete throws for a frozen property", async () => {
+    await expectThrows(`export function test(): number {
+      const o: any = { x: 1 };
+      Object.freeze(o);
+      return delete o.x ? 1 : 0;
+    }`);
   });
 
-  it("sloppy delete on a normal object still succeeds", async () => {
+  it("strict module delete on a configurable property still succeeds", async () => {
     expect(
       await runStandalone(`export function test(): boolean {
         const o: any = { x: 1 };

@@ -34,7 +34,7 @@ import {
 } from "../index.js";
 import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
-import { tryCompileStandaloneRegExpSymbolCall } from "../regexp-standalone.js";
+import { tryCompileStandaloneRegExpSymbolCall, usesNativeRegExpProvider } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
@@ -892,7 +892,7 @@ export function compileTailDispatch(
               );
               if (wasiReplaceRefusal !== undefined) return wasiReplaceRefusal;
             }
-            if (ctx.standalone) {
+            if (usesNativeRegExpProvider(ctx)) {
               // (#2161) Route the well-known-symbol protocol READ forms
               // (`re[Symbol.match/matchAll/search](str)`) to the native engine
               // for static / backend-created RegExp receivers — the

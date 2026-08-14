@@ -1218,7 +1218,7 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   ) {
     const valueDecl = ctx.checker.getSymbolAtLocation(id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
-      noJsHost(ctx) &&
+      (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       valueDecl !== undefined &&
       ts.isFunctionDeclaration(valueDecl) &&
       valueDecl.asteriskToken === undefined &&
@@ -1930,7 +1930,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // single subclass; distinguishing sibling subclasses needs a per-user-class
   // brand (broader $ClassMeta work, #2101). Captured in #1536c's resolution.
   let userErrorParent: string | undefined;
-  if (noJsHost(ctx) && !isBuiltinTypeName(ctorName)) {
+  if (ctx.targetProfile.semanticProviders === "native-first" && !isBuiltinTypeName(ctorName)) {
     const bp = ctx.classBuiltinParentMap.get(ctorName);
     if (bp && (bp === "Error" || isWasiErrorName(bp))) userErrorParent = bp;
   }
@@ -1957,7 +1957,7 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // (#1536c) `userErrorParent` extends this to externref-backed user Error
   // subclasses.
   if (
-    noJsHost(ctx) &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
     (ctorName === "Error" ||
       isWasiErrorName(ctorName) ||
       // (#3234) SuppressedError is not in WASI_ERROR_NAMES (its ctor arity/args

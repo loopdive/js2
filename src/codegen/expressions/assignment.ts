@@ -33,7 +33,7 @@ import {
 } from "../index.js";
 import { getSubviewArrTypeIdx, isSubviewTypeIdx, isTaViewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
-import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
+import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -54,7 +54,14 @@ import {
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { coerceType, compileExpression, skipTransparentExpressions, valTypesMatch, VOID_RESULT } from "../shared.js";
+import {
+  coerceType,
+  compileExpression,
+  materializeStructAsObject,
+  skipTransparentExpressions,
+  valTypesMatch,
+  VOID_RESULT,
+} from "../shared.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { compileProtoArg } from "./calls.js";
 import { findExternInfoForMember, patchStructNewForDynamicField } from "./extern.js";
@@ -1516,7 +1523,23 @@ function compileDestructuringAssignment(
             else if (ts.isNumericLiteral(pn)) excludedKeys.push(pn.text);
           }
         }
-        // Use __extern_rest_object(externObj, excludedKeysStr)
+        if (ctx.targetProfile.semanticProviders === "native-first") {
+          const emitted = emitNativeObjectRest(
+            ctx,
+            fctx,
+            () => {
+              fctx.body.push({ op: "local.get", index: tmpLocal });
+              if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+                fctx.body.push({ op: "extern.convert_any" });
+              }
+            },
+            excludedKeys,
+            restIdx,
+          );
+          if (emitted) continue;
+        }
+
+        // Host-assisted compatibility ABI: comma-joined exclusion keys.
         let restObjIdx = ctx.funcMap.get("__extern_rest_object");
         if (restObjIdx === undefined) {
           const importsBefore = ctx.numImportFuncs;

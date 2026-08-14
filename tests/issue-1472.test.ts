@@ -706,26 +706,37 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
     expect((instance.exports as Record<string, () => number>).run()).toBe(42);
   });
 
-  it("Proxy.revocable fails explicitly in standalone mode without leaking proxy host imports", async () => {
-    for (const source of [
+  it("Proxy.revocable uses the standalone native proxy runtime without host imports", async () => {
+    const r = await compile(
       `
-        export function revokeLater(target: any): any {
-          return Proxy.revocable(target, {});
+        export function run(): number {
+          const target: any = { value: 1 };
+          const pair = Proxy.revocable(target, {
+            get: function (inner: any, key: string): any { return inner[key]; },
+          });
+          const before = pair.proxy.value;
+          pair.revoke();
+          let revoked = false;
+          try { pair.proxy.value; } catch (error) { revoked = error instanceof TypeError; }
+          pair.revoke();
+          return before === 1 && revoked ? 42 : 0;
         }
       `,
-      `
-        export function revokeLater(target: any): any {
-          return Proxy.revocable(target);
-        }
-      `,
-    ]) {
-      const r = await compile(source, { target: "standalone" });
-      expect(r.success).toBe(false);
-      const joined = r.errors.map((e) => e.message).join("\n");
-      expect(joined).toMatch(/Proxy not supported in standalone mode/);
-      expect(joined).toMatch(/#1472 Phase C/);
-      assertNoHostObjectImports(r.imports);
-    }
+      { target: "standalone" },
+    );
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    assertNoHostObjectImports(r.imports);
+    expect(WebAssembly.validate(r.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    expect((instance.exports as Record<string, () => number>).run()).toBe(42);
+
+    const missingHandler = await compile(`export function run(): any { return Proxy.revocable({ value: 1 }); }`, {
+      target: "standalone",
+    });
+    expect(missingHandler.success, missingHandler.errors.map((e) => e.message).join("\n")).toBe(true);
+    assertNoHostObjectImports(missingHandler.imports);
+    const missingInstance = await WebAssembly.instantiate(missingHandler.binary, {});
+    expect(() => (missingInstance.instance.exports as Record<string, () => unknown>).run()).toThrow();
   });
 
   it("Phase C: Reflect.ownKeys routes to native __object_keys in standalone (no host import)", async () => {

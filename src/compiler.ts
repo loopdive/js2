@@ -23,6 +23,11 @@ import type { CodegenOptions } from "./codegen/context/types.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
+import { buildPlatformCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
+import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
+import { buildExportBoundaryPolicies } from "./boundary-policy.js";
+import { buildCompileExplanation } from "./compile-explain.js";
 import {
   findSmallestNodeAtPosition,
   isBindingPatternFalsePositive,
@@ -52,6 +57,7 @@ import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
+import { resolveCompileTargetProfile } from "./target-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
@@ -724,19 +730,21 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  const targetProfile = resolveCompileTargetProfile(options);
   return {
     sourceMap: emitSourceMap,
     fast: options.fast,
     nativeStrings: options.nativeStrings,
     hostBridge: options.hostBridge,
+    semanticProviders: options.semanticProviders,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
-    wasi: options.target === "wasi",
+    wasi: targetProfile.target === "wasi",
     // #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
     // (deduped). `link: ["node:fs"]` is the only spelling; the old `linkNodeShims`
     // boolean was removed.
     link: [...new Set(options.link ?? [])],
-    standalone: options.target === "standalone",
+    standalone: targetProfile.target === "standalone",
     directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
@@ -754,7 +762,7 @@ function buildCodegenOptions(
     // (#2796) Diff-test-harness fidelity — defer top-level init to an export so
     // the host runs it after setExports (symmetric with standalone `_start`).
     deferTopLevelInit: options.deferTopLevelInit,
-    strictNoHostImports: options.strictNoHostImports,
+    strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,
     // Phase 2 (#1131): default experimentalIR to on so recursive numeric
@@ -886,6 +894,7 @@ function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError
  */
 function runPipeline(input: PipelineInput): CompileResult {
   const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  const targetProfile = resolveCompileTargetProfile(options);
   const emitWatOutput = options.emitWat !== false;
   const userSourceFiles = input.userSourceFiles;
 
@@ -929,7 +938,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   // of allowJs: Test262 module fixtures use JavaScript source, and silently
   // skipping this gate there produced a success result with no runnable import
   // semantics for top-level `await import(...)`.
-  if (options.target === "standalone") {
+  if (targetProfile.target === "standalone") {
     const dynamicImportErrors = userSourceFiles.flatMap(detectStandaloneDynamicImports);
     errors.push(...dynamicImportErrors);
     if (dynamicImportErrors.length > 0) return failResult(errors);
@@ -962,7 +971,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   }
 
   const emitSourceMap = options.sourceMap === true;
-  const useLinear = options.target === "linear";
+  const useLinear = targetProfile.backend === "linear";
 
   // Step 2: Generate the module (IR/codegen).
   let mod;
@@ -1079,6 +1088,44 @@ function runPipeline(input: PipelineInput): CompileResult {
   // type errors.
   widenNonDefaultableTypes(mod);
 
+  // #4401 — Native-first is a semantic-provider contract, not a best-effort
+  // hint. Never publish a module that silently recovered an implicit JS
+  // semantic fallback (or an unclassified import) after a native lowering
+  // declined. Value adapters, lifecycle hooks, explicit platform capabilities,
+  // and named accelerators remain valid imports; only the two policy classes
+  // that cannot justify publication are rejected here.
+  //
+  // Run this before binary/WAT/helper emission so an unsupported construct
+  // fails as a compile diagnostic rather than becoming a valid-looking module
+  // that depends on the compatibility runtime. The host-assisted profile is
+  // unchanged and remains the explicit migration/rollback path.
+  const imports = buildImportManifest(mod);
+  const hostImportInventory = buildHostImportInventory(mod, imports);
+  if (targetProfile.semanticProviders === "native-first") {
+    const forbidden = hostImportInventory.filter(
+      (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
+    );
+    if (forbidden.length > 0) {
+      const details = forbidden
+        .map((entry) => `${entry.module}::${entry.name} (${entry.classification}, owner #${entry.ownerIssue})`)
+        .join(", ");
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `Native-first semantic-provider policy rejected implicit or unclassified host imports: ${details}. ` +
+          `Use the host-assisted compatibility profile for this source until its native provider is implemented.`,
+        "error",
+      );
+      return failResult(errors, {
+        fallbackCounts: capturedFallbackCounts,
+        irPostClaimErrors: capturedIrPostClaimErrors,
+        irCompiledFuncs: capturedIrCompiledFuncs,
+        irFirstSkipped: capturedIrFirstSkipped,
+        irOutcomes: capturedIrOutcomes,
+      });
+    }
+  }
+
   // Step 3: Emit binary (with source map collection if enabled).
   let binary: Uint8Array;
   let sourceMapJson: string | undefined;
@@ -1140,16 +1187,37 @@ function runPipeline(input: PipelineInput): CompileResult {
   // Step 5: Generate .d.ts.
   const dts = generateDts(entryAst, mod);
 
-  // Step 6: Generate imports helper.
-  const importsHelper = generateImportsHelper(mod);
-
-  // Step 7: Generate WIT interface (optional).
+  const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
+  const capabilityRequirements = buildPlatformCapabilityRequirements(mod, hostImportInventory);
+  const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
+    capabilityRequirements,
+    targetProfile.environment,
+  );
+  const exportBoundaryPolicies = buildExportBoundaryPolicies(mod.exportSignatures, targetProfile);
+  // Step 6: Generate WIT from the same frozen capability requirements used by
+  // explain output and adapter validation, never from a parallel authority map.
   let witOutput: string | undefined;
   if (options.wit) {
     const witOpts = typeof options.wit === "object" ? options.wit : undefined;
-    witOutput = generateWit(entryAst, { ...witOpts, imports: mod.imports, types: mod.types });
+    witOutput = generateWit(entryAst, {
+      ...witOpts,
+      imports: mod.imports,
+      types: mod.types,
+      capabilities: capabilityRequirements,
+    });
   }
-
+  const adapterManifest = createJavaScriptAdapterManifest({
+    targetProfile,
+    imports,
+    stringPool: mod.stringPool,
+    capabilities: capabilityRequirements,
+    exportSignatures: mod.exportSignatures,
+    exportBoundaries: exportBoundaryPolicies,
+  });
+  // Step 7: Generate the helper from the same frozen adapter plan returned to
+  // API callers. The serialized helper therefore cannot silently recover the
+  // low-level buildImports compatibility defaults.
+  const importsHelper = generateImportsHelper(adapterManifest);
   return {
     binary,
     wat,
@@ -1159,12 +1227,26 @@ function runPipeline(input: PipelineInput): CompileResult {
     errors,
     stringPool: mod.stringPool,
     sourceMap: sourceMapJson,
-    imports: buildImportManifest(mod),
+    imports,
+    targetProfile,
+    hostImportInventory,
+    hostImportSummary,
+    capabilityRequirements,
+    capabilityProviderDiagnostics,
     cHeader,
     wit: witOutput,
     hasMain: mod.exports.some((e) => e.name === "main" && e.desc.kind === "func"),
     hasTopLevelStatements: mod.hasTopLevelStatements === true,
     exportSignatures: mod.exportSignatures,
+    exportBoundaryPolicies,
+    adapterManifest,
+    explanation: buildCompileExplanation({
+      target: targetProfile,
+      hostImports: hostImportSummary,
+      capabilities: capabilityRequirements,
+      capabilityDiagnostics: capabilityProviderDiagnostics,
+      exportBoundaries: exportBoundaryPolicies,
+    }),
     fallbackCounts: capturedFallbackCounts,
     irPostClaimErrors: capturedIrPostClaimErrors,
     irCompiledFuncs: capturedIrCompiledFuncs,
@@ -1239,6 +1321,7 @@ export function compileSourceSync(
   assertCodegenRegistrationsComplete();
 
   const errors: CompileError[] = [];
+  const targetProfile = resolveCompileTargetProfile(options);
 
   // Step 0a: Apply compile-time define substitutions (#1043)
   // #1928 — each pre-parse rewrite returns a PositionMap (output → its input);
@@ -1258,7 +1341,7 @@ export function compileSourceSync(
   // intrinsics, so it flows through CJS-rewrite / preprocessImports / codegen with
   // no special-casing (mirrors the #1501 timer-shim prepend).
   const stdinResult =
-    options.target === "wasi"
+    targetProfile.target === "wasi"
       ? injectProcessStdinPrelude(definedSource)
       : { source: definedSource, positionMap: PositionMap.identity(), injected: false };
   const stdinInjectedSource = stdinResult.source;
@@ -1271,7 +1354,7 @@ export function compileSourceSync(
   // (#1464). Byte-identical (identity map, unchanged source) when the program
   // never references an Iterator static helper.
   const iterStaticsResult =
-    options.target === "standalone" || options.target === "wasi"
+    targetProfile.environment === "none" || targetProfile.environment === "wasi"
       ? injectIteratorStaticsPrelude(stdinInjectedSource)
       : { source: stdinInjectedSource, positionMap: PositionMap.identity(), injected: false };
   const iterStaticsSource = iterStaticsResult.source;
@@ -1302,7 +1385,7 @@ export function compileSourceSync(
   // like node:fs above). Both empty for every program that doesn't import the
   // respective module, so it's byte-neutral elsewhere.
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
-  const preprocessed = preprocessImports(cjsRewritten2, { wasi: options.target === "wasi" });
+  const preprocessed = preprocessImports(cjsRewritten2, { wasi: targetProfile.target === "wasi" });
   let processedSource = preprocessed.source;
   // Compose imports → eval/super → CJS → Iterator → stdin → define back to the original source.
   const positionMap = preprocessed.positionMap
@@ -1316,7 +1399,7 @@ export function compileSourceSync(
   let isJsMode = options.allowJs === true || (options.fileName?.endsWith(".js") ?? false);
   const defaultFileName = options.fileName ?? (isJsMode ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
-  let irInventory = irIds.maybe(positionMap, options.trackIrOutcomes || options.target === "linear");
+  let irInventory = irIds.maybe(positionMap, options.trackIrOutcomes || targetProfile.backend === "linear");
   // #2645/#2736 — `--target node`/`deno` (formerly `--platform node`) implies
   // node-style emulation so the ambient surface and the importable `node:<mod>`
   // capability gate share one target model. This EFFECTIVE flag drives the
@@ -1335,7 +1418,7 @@ export function compileSourceSync(
 
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
   // parsing so unreachable bodies do not register host imports.
-  if (options.target === "standalone" || options.target === "wasi") {
+  if (targetProfile.environment === "none" || targetProfile.environment === "wasi") {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;
