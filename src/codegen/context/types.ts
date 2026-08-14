@@ -1009,7 +1009,21 @@ export interface FunctionContext {
    * point at the SAME local index (the boxed ref-cell ref local).  We
    * preserve the old map so call-site checks (calls.ts) keep firing.
    */
-  boxedTdzFlags?: Map<string, { refCellTypeIdx: number; localIdx: number }>;
+  boxedTdzFlags?: Map<
+    string,
+    {
+      refCellTypeIdx: number;
+      localIdx: number;
+      /**
+       * (#4394) The RAW i32 flag local the box was built from, when it was
+       * built from a verified live flag. Reuse sites are not dominated by the
+       * site that teed `localIdx` (deepEqual.js `format` builds the box in its
+       * first `return lazyResult…` branch; sibling branches read it null), so
+       * they re-init the box lazily from this source when `localIdx` is null.
+       */
+      srcFlagIdx?: number;
+    }
+  >;
   /**
    * (#3546) Locals in `__module_init` that SHADOW a module-global binding for a
    * top-level closure declaration (`const/let/var f = () => …` at module

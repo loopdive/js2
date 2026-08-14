@@ -46,6 +46,7 @@ import {
   reserveBindDynHelper,
 } from "../object-runtime.js";
 import { ensureStringRawHelper } from "../string-raw.js"; // (#3147)
+import { tryEmitStandaloneThenThenableMissArm } from "../then-thenable-miss.js"; // (#4394)
 import {
   emitMicrotaskEnqueue,
   emitStandalonePromiseFinally,
@@ -374,6 +375,7 @@ import { directEvalRunsAtScriptGlobal } from "../direct-eval-environment.js";
 // re-exported here so existing importers keep resolving via calls.js.
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { matchClosureInfoBySignature, tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 export { BUILTIN_CLASS_NAMES };
 
 /**
@@ -4370,6 +4372,13 @@ export function compileStandalonePromiseThenCallback(
   fctx: FunctionContext,
   arg: ts.Expression | undefined,
   liveBuffers: Instr[][],
+  // (#4394) `.then`/`.catch` sites opt in to DYNAMIC handlers (a runtime-held
+  // function value with no compile-time ClosureInfo — captured promise
+  // resolvers, reassigned `$DONE`): the compiled externref rides the caps and
+  // the shared `__then_dyn_*` wrapper applies it at settle time. Left off for
+  // `.finally` (no dynamic wrapper there yet), which keeps its old
+  // treated-as-absent behaviour.
+  opts?: { allowDynamic?: boolean },
 ): StandalonePromiseThenCallback | null {
   if (arg === undefined || isNullishPromiseThenCallbackArg(arg)) return null;
 
@@ -4402,6 +4411,16 @@ export function compileStandalonePromiseThenCallback(
       closureInfo = ctx.closureMap.get(arg.text);
     }
     if (!closureInfo) {
+      // (#4394) Dynamic handler: keep the compiled externref value — the shared
+      // `__then_dyn_*` settle-time wrapper invokes it via `__apply_closure`.
+      // Dropping it here (the pre-#4394 behaviour) silently treated the handler
+      // as absent, leaving e.g. asyncHelpers' `resSettlementP` pending forever.
+      if (opts?.allowDynamic === true && (ctx.standalone === true || ctx.wasi === true) && type !== null) {
+        if (type.kind !== "externref") {
+          coerceType(ctx, fctx, type, { kind: "externref" });
+        }
+        return { instrs, dynamic: true };
+      }
       instrs.length = 0;
       return null;
     }
@@ -4763,8 +4782,12 @@ export function emitStandaloneThenWithNativeFallback(
     fctx.body.push({ op: "local.set", index: recvLocal });
 
     const onFulfilled =
-      method === "then" ? compileStandalonePromiseThenCallback(ctx, fctx, onFulfilledArg, liveBuffers) : null;
-    const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, onRejectedArg, liveBuffers);
+      method === "then"
+        ? compileStandalonePromiseThenCallback(ctx, fctx, onFulfilledArg, liveBuffers, { allowDynamic: true })
+        : null;
+    const onRejected = compileStandalonePromiseThenCallback(ctx, fctx, onRejectedArg, liveBuffers, {
+      allowDynamic: true,
+    });
     const promiseInstrs: Instr[] = [{ op: "local.get", index: recvLocal }];
 
     const outerBody = fctx.body;
@@ -4782,8 +4805,34 @@ export function emitStandaloneThenWithNativeFallback(
     }
 
     const hostArm: Instr[] = [];
+    let missArmEmitted = false;
     if (opts?.nullMiss === true) {
-      hostArm.push({ op: "ref.null.extern" });
+      // (#4394) Standalone (non-wasi) `.then` miss arm: a user thenable's own
+      // `then` must be invoked and a genuine non-thenable must throw the
+      // catchable §27.2.5.4 TypeError — the bare null result swallowed both
+      // (asyncHelpers `asyncTest`/`throwsAsync` stalls). All-native pieces, no
+      // host import; wasi keeps its zero-import null contract.
+      if (ctx.standalone === true && ctx.wasi !== true && method === "then") {
+        const missArgs: (ts.Expression | undefined)[] = [onFulfilledArg, onRejectedArg];
+        while (missArgs.length > 0 && missArgs[missArgs.length - 1] === undefined) missArgs.pop();
+        ctx.liveBodies.add(hostArm);
+        liveBuffers.push(hostArm);
+        fctx.savedBodies.push(outerBody);
+        fctx.body = hostArm;
+        try {
+          missArmEmitted = tryEmitStandaloneThenThenableMissArm(
+            ctx,
+            fctx,
+            recvLocal,
+            missArgs,
+            standaloneThenMissArmCanBeNative(ctx),
+          );
+        } finally {
+          fctx.savedBodies.pop();
+          fctx.body = outerBody;
+        }
+      }
+      if (!missArmEmitted) hostArm.push({ op: "ref.null.extern" });
     } else {
       ctx.liveBodies.add(hostArm);
       liveBuffers.push(hostArm);
@@ -8369,27 +8418,15 @@ function compileExpressionCallee(
       sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
     }
 
-    let matchedClosureInfo: ClosureInfo | undefined;
-    let matchedStructTypeIdx: number | undefined;
-
-    for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-      if (info.paramTypes.length !== sigParamCount) continue;
-      if (sigRetWasm === null && info.returnType !== null) continue;
-      if (sigRetWasm !== null && info.returnType === null) continue;
-      if (sigRetWasm !== null && info.returnType !== null && sigRetWasm.kind !== info.returnType.kind) continue;
-      let paramsMatch = true;
-      for (let i = 0; i < sigParamCount; i++) {
-        if (sigParamWasmTypes[i]!.kind !== info.paramTypes[i]!.kind) {
-          paramsMatch = false;
-          break;
-        }
-      }
-      if (paramsMatch) {
-        matchedClosureInfo = info;
-        matchedStructTypeIdx = typeIdx;
-        break;
-      }
-    }
+    // (#4394) Exact-first (typeIdx-aware) matching — the old kind-only linear
+    // scan picked whichever same-arity closure registered first, and a wrong
+    // ref-result typeIdx makes the guarded funcref cast below null → call_ref
+    // trap (standalone deepEqual-* family). Mechanism in closure-sig-match.ts.
+    const sigMatched = matchClosureInfoBySignature(ctx, sigParamWasmTypes, sigRetWasm, {
+      sigHasRest: tsSignatureHasRest(sig),
+    });
+    const matchedClosureInfo: ClosureInfo | undefined = sigMatched?.info;
+    const matchedStructTypeIdx: number | undefined = sigMatched?.structTypeIdx;
 
     if (matchedClosureInfo && matchedStructTypeIdx !== undefined) {
       // Compile the callee expression to get the closure on the stack

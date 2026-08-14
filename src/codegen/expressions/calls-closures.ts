@@ -462,6 +462,38 @@ function compileRestClosureArguments(
   return { fixedParamCount, restExternLocals };
 }
 
+/**
+ * (#4394) Emit the argument sequence for a call through a MATCHED ClosureInfo
+ * (the generic call-of-expression tails in call-tail-dispatch.ts, e.g.
+ * `lazyResult(...)(...)`). Rest-aware: when the matched closure's lifted
+ * signature ends in a rest VEC param, positional trailing args are packed into
+ * that vec via `compileRestClosureArguments` — the old positional emit coerced
+ * arg0 straight to the vec param (guarded cast → null) and the callee trapped
+ * reading `rest.length` (deepEqual.js `acceptMappers(join)`). The non-rest
+ * path is byte-identical to what those call sites emitted inline.
+ */
+export function emitMatchedClosureCallArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  info: ClosureInfo,
+): void {
+  const paramCount = info.paramTypes.length;
+  const restArgs = info.hasRestParam === true ? compileRestClosureArguments(ctx, fctx, expr, info) : null;
+  if (restArgs !== null) {
+    fctx.body.push(...buildArgcExtrasSetupFromLocals(ctx, fctx, restArgs.fixedParamCount, restArgs.restExternLocals));
+    emitSetArgc(ctx, fctx, expr.arguments.length, restArgs.fixedParamCount);
+    return;
+  }
+  for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
+    compileExpression(ctx, fctx, expr.arguments[i]!, info.paramTypes[i]);
+  }
+  for (let i = expr.arguments.length; i < paramCount; i++) {
+    pushDefaultValue(fctx, info.paramTypes[i]!, ctx);
+  }
+  emitClosureCallArgcExtras(ctx, fctx, expr.arguments, paramCount);
+}
+
 /** Compile a call to a closure variable: closureVar(args...) */
 export function compileClosureCall(
   ctx: CodegenContext,

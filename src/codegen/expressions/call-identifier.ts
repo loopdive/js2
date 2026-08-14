@@ -9,7 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot } from "../closures/capture-source-slot.js";
+import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -2188,8 +2188,9 @@ export function compileIdentifierCall(
           const existing = fctx.boxedTdzFlags?.get(cap.name);
           if (existing) {
             // Already boxed by an enclosing closure construction or a prior
-            // call-site cap-prepend — share the box reference.
-            fctx.body.push({ op: "local.get", index: existing.localIdx });
+            // call-site cap-prepend — share the box reference. (#4394)
+            // Null-guarded: the teeing site may not dominate this one.
+            pushBoxedTdzFlagRef(fctx, existing);
           } else {
             // Fresh box: read the current i32 flag, struct.new an i32 ref cell,
             // tee into a new outer-fctx local, and re-aim
@@ -2253,6 +2254,9 @@ export function compileIdentifierCall(
               fctx.boxedTdzFlags.set(cap.name, {
                 refCellTypeIdx: i32RefCellTypeIdx,
                 localIdx: flagBoxLocal,
+                // (#4394) Record the raw i32 source so non-dominated reuse
+                // sites can lazily re-init the box from the true flag.
+                srcFlagIdx: liveFlagIdx,
               });
               if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
               fctx.tdzFlagLocals.set(cap.name, flagBoxLocal);
