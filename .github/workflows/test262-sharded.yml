@@ -3001,8 +3001,27 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           # Add a dedicated SSH remote for the deploy-key push + its rebase fetch.
           # The checkout's origin is HTTPS; we don't rewrite it (other steps may
-          # rely on it). github.repository is owner/name (e.g. loopdive/js2wasm).
-          MAIN_SSH_REMOTE="git@github.com:${{ github.repository }}.git"
+          # rely on it). $GITHUB_REPOSITORY is owner/name (e.g. loopdive/js2wasm).
+          #
+          # It is the RUNNER ENV VAR, deliberately not an Actions expression
+          # interpolation, and that is LOAD-BEARING. A `run:` script containing
+          # even one interpolation is compiled into a single format expression
+          # capped at 21,000 characters. This script is ~25 kB, so the lone
+          # interpolation that used to sit here put the step over the cap and
+          # GitHub rejected the whole file:
+          #   Invalid workflow file … Exceeded max expression length 21000
+          # That is not a normal test failure — the run fails instantly with
+          # ZERO jobs, so the required `merge shard reports` and `check for
+          # test262 regressions` contexts are never published for the merged
+          # state, the merge-queue entry can never satisfy them, and it sits at
+          # the queue head forever blocking every PR behind it. PR #4498 stalled
+          # ~2h this way, tipped over the cap by a two-line addition elsewhere
+          # in this same script. With no interpolation left the script is a
+          # plain string and the limit does not apply. Keep it that way: read
+          # workflow context here through env vars only — and note the ban
+          # covers COMMENTS too, since the expression compiler scans the whole
+          # script (spelling the token out in this comment re-broke the file).
+          MAIN_SSH_REMOTE="git@github.com:${GITHUB_REPOSITORY}.git"
           git remote remove deploykey 2>/dev/null || true
           git remote add deploykey "$MAIN_SSH_REMOTE"
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('benchmarks/results/test262-current.json','utf8')).summary.pass)")
