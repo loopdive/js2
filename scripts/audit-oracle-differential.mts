@@ -15,9 +15,11 @@
  *
  *  1. **Fact divergence** — runs the corpus under `oracleBackend:
  *     "differential"` (answers from the checker, records where the in-house
- *     backend disagrees) and reports `conflicting` (in-house claims a
- *     DIFFERENT fact — a bug) vs `weakened` (in-house declines to answer —
- *     safe but lossy), broken down per query so the output is a worklist.
+ *     backend disagrees) and reports the four-way structural verdict of
+ *     #4408 — `weakened` (in-house declined: safe, lossy), `checkerWeaker`
+ *     (in-house claims a fact TypeScript will not give: adjudicate, it is
+ *     often correct — #4410) and `conflicting` (both claim a fact and the
+ *     facts differ) — broken down per query so the output is a worklist.
  *
  *  2. **Emitted-code quality** — compiles each input under `checker` and
  *     `inhouse` and diffs the generated WAT for the signatures of lost
@@ -258,10 +260,14 @@ interface PerFile {
   annotated: boolean;
   agreements: number;
   weakened: number;
+  checkerWeaker: number;
   conflicting: number;
 }
 const perFile: PerFile[] = [];
-const totalsByQuery = new Map<string, { agreements: number; weakened: number; conflicting: number }>();
+const totalsByQuery = new Map<
+  string,
+  { agreements: number; weakened: number; checkerWeaker: number; conflicting: number }
+>();
 const conflictSamples: { file: string; query: string; checker: string; inhouse: string; node: string }[] = [];
 
 let phase1Done = 0;
@@ -276,9 +282,10 @@ for (const input of corpus) {
   const s = globalDivergenceLedger.summary();
   perFile.push({ file: input.name, annotated: input.annotated, ...s });
   for (const [q, v] of globalDivergenceLedger.byQuery) {
-    const t = totalsByQuery.get(q) ?? { agreements: 0, weakened: 0, conflicting: 0 };
+    const t = totalsByQuery.get(q) ?? { agreements: 0, weakened: 0, checkerWeaker: 0, conflicting: 0 };
     t.agreements += v.agreements;
     t.weakened += v.weakened;
+    t.checkerWeaker += v.checkerWeaker;
     t.conflicting += v.conflicting;
     totalsByQuery.set(q, t);
   }
@@ -296,47 +303,46 @@ const grand = perFile.reduce(
   (a, f) => ({
     agreements: a.agreements + f.agreements,
     weakened: a.weakened + f.weakened,
+    checkerWeaker: a.checkerWeaker + f.checkerWeaker,
     conflicting: a.conflicting + f.conflicting,
   }),
-  { agreements: 0, weakened: 0, conflicting: 0 },
+  { agreements: 0, weakened: 0, checkerWeaker: 0, conflicting: 0 },
 );
-const grandTotal = grand.agreements + grand.weakened + grand.conflicting;
+const grandTotal = grand.agreements + grand.weakened + grand.checkerWeaker + grand.conflicting;
 const pct = (n: number) => (grandTotal === 0 ? "0.0" : ((n / grandTotal) * 100).toFixed(1));
 console.log(`\nqueries compared: ${grandTotal}`);
-console.log(`  agree       ${String(grand.agreements).padStart(7)}  (${pct(grand.agreements)}%)`);
+console.log(`  agree        ${String(grand.agreements).padStart(7)}  (${pct(grand.agreements)}%)`);
 console.log(
-  `  weakened    ${String(grand.weakened).padStart(7)}  (${pct(grand.weakened)}%)   inhouse declined — safe, lossy`,
+  `  weakened     ${String(grand.weakened).padStart(7)}  (${pct(grand.weakened)}%)   inhouse declined — safe, lossy`,
 );
 console.log(
-  `  CONFLICTING ${String(grand.conflicting).padStart(7)}  (${pct(grand.conflicting)}%)   both answered and the answers differ`,
+  `  ckr-weaker   ${String(grand.checkerWeaker).padStart(7)}  (${pct(grand.checkerWeaker)}%)   inhouse claims MORE than TS — adjudicate (#4410)`,
 );
-// (#4408) This bucket is NOT a bug count. `isWeaker` only recognises an
-// abstention when the WHOLE answer string is one of four literals, so it
-// mislabels weakening nested in a composite (`(unresolvable)->unresolvable#1`),
-// weakening carried by a boolean polarity (`isBooleanProducing: false`), and
-// weakening on the CHECKER side (`declarationsOf: []`). Re-classifying the
-// 2,137-input run structurally turned 908 "conflicts" into 136 same-meaning,
-// 306 inhouse-weaker, 366 checker-weaker and 100 genuine. And a genuine
-// conflict still is not automatically an in-house bug — TypeScript is unsound
-// for `with`, direct `eval` and annexB hoisting, and is bound to a program
-// that excludes re-entrant eval'd sources (#4410).
-console.log("  (see #4408 — this classifier over-reports ~9x; #4410 — the checker is not ground truth)");
+console.log(
+  `  CONFLICTING  ${String(grand.conflicting).padStart(7)}  (${pct(grand.conflicting)}%)   both claim a fact and the facts differ`,
+);
+// A conflict is still not automatically an in-house bug. TypeScript is unsound
+// for `with`, direct `eval` and annexB hoisting, and its `ts.Program` does not
+// contain re-entrant eval'd sources — so the checker is evidence, not ground
+// truth (#4410). Adjudicate each row against ECMAScript.
 
 console.log("\n--- by query (the worklist) ---");
 const qw = Math.max(...[...totalsByQuery.keys()].map((k) => k.length), 12);
-console.log(`${"query".padEnd(qw)}  ${"agree".padStart(8)}  ${"weakened".padStart(8)}  ${"conflict".padStart(8)}`);
+console.log(
+  `${"query".padEnd(qw)}  ${"agree".padStart(8)}  ${"weakened".padStart(8)}  ${"ckr-weak".padStart(8)}  ${"conflict".padStart(8)}`,
+);
 for (const [q, v] of [...totalsByQuery].sort(
-  (a, b) => b[1].conflicting - a[1].conflicting || b[1].weakened - a[1].weakened,
+  (a, b) => b[1].conflicting - a[1].conflicting || b[1].checkerWeaker - a[1].checkerWeaker,
 )) {
   console.log(
-    `${q.padEnd(qw)}  ${String(v.agreements).padStart(8)}  ${String(v.weakened).padStart(8)}  ${String(v.conflicting).padStart(8)}`,
+    `${q.padEnd(qw)}  ${String(v.agreements).padStart(8)}  ${String(v.weakened).padStart(8)}  ${String(v.checkerWeaker).padStart(8)}  ${String(v.conflicting).padStart(8)}`,
   );
 }
 
 if (conflictSamples.length > 0) {
-  console.log("\n--- conflicting samples (adjudicate each; see #4408 / #4410) ---");
+  console.log("\n--- samples needing a verdict (see #4408 / #4410) ---");
   for (const c of conflictSamples) {
-    console.log(`  ${c.file}  ${c.query}`);
+    console.log(`  ${c.file}  ${c.query}  [${c.verdict}]`);
     console.log(`      checker=${c.checker}  inhouse=${c.inhouse}  node=${c.node}`);
   }
 }

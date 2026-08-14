@@ -29,6 +29,10 @@ land in a bucket the ledger had no name for: the **in-house backend claims a
 fact the checker declines to give**. Adjudicated against ECMAScript, that
 bucket splits three ways.
 
+Reproduce the adjudication probes with
+`npx tsx scripts/audit-oracle-adjudication.mts` — each prints what ECMAScript
+requires next to both backends' answers.
+
 ## A. The checker is WRONG; the in-house backend is right
 
 ### A1 — a local binding resolved to a lib.d.ts global
@@ -127,7 +131,7 @@ That is the wrong goal in two directions:
 
 Restated gate for #4218:
 
-- genuine both-claim-different-facts == 0 (currently **100**, #4408), **and**
+- genuine both-claim-different-facts == 0 (currently **88**, #4408), **and**
 - every `checker-weaker` row adjudicated into A (in-house right — keep), B
   (contract gap — specify the query), or C (in-house wrong — fix), **and**
 - zero standalone-mode test262 regressions under `JS2WASM_ORACLE_BACKEND=inhouse`.
@@ -149,4 +153,7 @@ Restated gate for #4218:
 
 Re-classification of the 908 rows, harvested from the 237 conflicting files of
 the 2,137-input corpus (playground + stratified test262 + npm packages):
-136 same-meaning, 306 in-house-weaker, 366 checker-weaker, 100 genuine.
+136 same-meaning, 318 in-house-weaker, 366 checker-weaker, 88 genuine. The
+88 sit entirely in four binding-resolution queries — `declarationsOf` (44),
+`valueDeclarationOf` (24), `typeFactOf` (14), `variableDeclarationOf` (6);
+`signatureOf`, which produced 374 of the original 908, has none.
