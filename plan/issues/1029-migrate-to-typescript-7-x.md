@@ -68,6 +68,66 @@ today), so bare `tsc` in any script is a silent-engine-swap hazard.
 Flipping the CI gate to `typecheck:ts7` is a deliberate lead decision once
 it has soaked.
 
+## Scope decision (2026-08-14): TS7 in the Node lane ONLY
+
+**TypeScript 7 replaces typescript@5 outside the browser and never for
+runtime eval.** Two lanes stay pinned to TS5 *permanently* — this is a
+settled boundary, not pending work:
+
+| lane | backend | why |
+| --- | --- | --- |
+| Node (CLI, CI, `compileFiles`/`compileProject`, test262) | TS7 (target) | can spawn the tsgo subprocess |
+| browser (playground) | **TS5, pinned** | no process model; see the Wasm evaluation below |
+| runtime-eval (`src/runtime-eval.ts`) | **TS5, pinned** | `__extern_eval` re-enters the pipeline **synchronously** (`compileSourceSync`) and must work in the browser — a subprocess round-trip cannot serve a sync in-process re-entry |
+
+Enforced in code, not by convention: `src/ts-api.ts` exports
+`ts7EligibleForLane()` (the pure policy), `currentTsFrontendLane()`, and
+`runWithTs5Pinned()` — a *dynamic* scope, because the process can be
+mid-eval while the outer compile legitimately used TS7. `runtime-eval.ts`
+wraps all three of its `compileSourceSync` re-entries in it. Consumers must
+gate on **`isTs7Active()`**, never on the raw `isTs7` flag. Pinned by
+`tests/issue-1029-ts7-lane-policy.test.ts`.
+
+### Why not compile tsgo to Wasm (evaluated and rejected, 2026-08-14)
+
+The obvious escape from the subprocess constraint — and the repo already has
+the build pattern (`scripts/quickjs-artifact/build.sh` compiles QuickJS to
+Wasm with clang-18 + wasi-libc, keyed/verified/cached). Rejected on three
+measured grounds:
+
+- **It loses the speed it exists for.** tsgo's advantage is Go goroutine
+  parallelism across files; both Go Wasm targets (`GOOS=js`, `wasip1`) are
+  single-threaded.
+- **Size goes the wrong way.** The tsgo native binary is **24 MB** vs
+  typescript@5's **8.7 MB** of JS; Go→Wasm output runs comparable-to-larger
+  than native. The browser would ship *more* bytes for a single-threaded
+  frontend.
+- **It wouldn't remove TypeScript from the playground anyway.** Monaco
+  bundles its own TS language service (`ts.worker`, `typescriptDefaults`) for
+  editor IntelliSense, and `website/playground/lib-loader.ts` globs
+  `lib.*.d.ts` out of the typescript package (TS7 embeds lib texts in the Go
+  binary rather than shipping files).
+
+The deeper point: the blocker is the **API shape** (proto/LSP over IPC), not
+the engine's compilation target. A Wasm build hands you the engine without
+the binding — you would reimplement the transport in-memory against an
+`unstable/*` protocol and track its churn, which is the same cost either way.
+
+**Watch item that would flip this:** upstream shipping an official tsgo Wasm
+build with a documented in-process API. Then it is a dependency swap, not a
+project, and the quickjs-artifact script is the template.
+
+### What still gates the Node-lane swap
+
+Per the #4218 audit, a TS7 frontend is all-or-nothing per compile (a TS5
+checker cannot answer queries about tsgo AST nodes), and the TS7 checker
+costs ~0.12 ms/IPC query — ~1.8 s per compile at the current 15,121-query
+residual. So the Node-lane swap runs *through* #4218's remaining sweep:
+finish the in-house oracle, then TS7 parses with no checker in the loop.
+Ordered blockers: oracle residual (15k calls, flat tail) → syntactic helpers
+(~170 sites) → diagnostics (3 files) → `lib.*.d.ts` text (TS7 ships none) →
+`createProgram` + module resolution (riskiest, keep last).
+
 Migration order stays as #4218 concludes: make the checker droppable first
 (inhouse oracle), then swap the parser to tsgo batch parse; the TS7 sync
 Checker is a candidate for TS-mode differential validation, not for per-node
