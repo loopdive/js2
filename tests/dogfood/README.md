@@ -75,6 +75,29 @@ satisfy that check.
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
 
+## Unified npm-compat upstream sources
+
+Every package rendered on `npm-compat.html` has one GitHub repository, release
+tag, and immutable commit in `npm-compat-upstream-sources.json`. Acquire and
+verify one package without touching any other lane:
+
+```bash
+pnpm run dogfood:npm-compat-upstream-sources -- --package clsx
+pnpm run dogfood:npm-compat-upstream -- --package clsx
+```
+
+Use `--all` instead of `--package` for the complete catalog. `--source-only`
+stops after the GitHub checkout and unit-file inventory check;
+`--skip-compile` reuses the already-verified published package compile and runs
+only its upstream adapter. Packages whose adapters are still being built fail
+loudly by default; `--allow-pending` records them as `adapter-pending` while an
+all-package source/compile census continues.
+
+The clsx and cookie adapters cover their complete upstream unit-file
+inventories. Their reports separate native-incompatible assertions, Wasm
+compile/validation failures, runtime failures, and actual assertion
+divergences; none of those categories is converted into a pass.
+
 The focused lodash callback-capture regression can be run without extracting
 the full package:
 
