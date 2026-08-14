@@ -114,6 +114,7 @@
     "commit": "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
     "cacheKey": "tailwindcss",
     "compileScript": "dogfood:tailwindcss",
+    "suiteScript": "dogfood:tailwindcss-upstream-suite",
     "inventory": {
       "directory": "packages/tailwindcss",
       "include": "^packages/tailwindcss/(?:src|tests)/.*\\.(?:test|spec)\\.(?:js|ts|tsx)$",

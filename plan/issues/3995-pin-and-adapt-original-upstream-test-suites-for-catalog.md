@@ -395,6 +395,24 @@ remain explicit deferred inventory. The npm-compat generator invokes the
 adapter directly so the merge-only refresh publishes numeric results and
 cannot fall back to `adapter pending`.
 
+## 2026-08-14 Tailwind CSS segment utility slice
+
+Tailwind CSS 4.3.3 now verifies all 42 matching tests under
+`packages/tailwindcss` and 1,376 static registrations from
+`tailwindlabs/tailwindcss@v4.3.3` (commit
+`c2b24dd15fed1c59dd521bd86082f520c9f5ad0d`). The first runtime adapter runs
+the original `segment.test.ts` and `to-key-path.test.ts` callbacks directly
+against their matching release-tag TypeScript implementations without changing
+callback bodies or inputs.
+
+The adapter registers 13 callbacks. All 13 pass in native Node and all 13 pass
+after compiling the release-tag sources and original callbacks to Wasm.
+
+Scanner, Rust/native, CSS pipeline, snapshot, async, UI, and larger graph files
+remain explicit deferred inventory. The npm-compat generator invokes the
+adapter directly so the merge-only refresh publishes numeric results and
+cannot fall back to `adapter pending`.
+
 ## 2026-08-14 webpack synchronous utility slice
 
 webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and

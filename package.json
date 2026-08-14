@@ -192,6 +192,7 @@
     "dogfood:lit-upstream-suite": "npx tsx tests/dogfood/lit-upstream-suite.mjs",
     "dogfood:react-dom-upstream-suite": "npx tsx tests/dogfood/react-dom-upstream-suite.mjs",
     "dogfood:tailwindcss": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package tailwindcss",
+    "dogfood:tailwindcss-upstream-suite": "node --import tsx tests/dogfood/tailwindcss-upstream-suite.mjs",
     "dogfood:npm-compat-upstream-sources": "node tests/dogfood/npm-compat-upstream-sources.mjs",
     "dogfood:npm-compat-upstream": "node tests/dogfood/npm-compat-upstream.mjs",
     "generate:npm-compat": "node --import tsx scripts/generate-npm-compat-report.mjs",
