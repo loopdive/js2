@@ -302,6 +302,7 @@ import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inline
 import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
 import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
+import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5312,6 +5313,7 @@ export function generateModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT OFF.
     inlineExternGetCallSites(ctx);
+    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
     // sites. Runs while the arm it copies and the copy share one type/funcIdx
@@ -7692,6 +7694,7 @@ export function generateMultiModule(
     // single-source pipeline above (after all dispatcher fills, before
     // dead-elim / census). DEFAULT OFF.
     inlineCallDispatchSites(ctx);
+    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone

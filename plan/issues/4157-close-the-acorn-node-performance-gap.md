@@ -31,6 +31,11 @@ loc-budget-allow:
   # inlineExternGetCallSites. The pass itself is a new subsystem module
   # (src/codegen/member-set-inline-ic.ts); there is no smaller way to WIRE a
   # finalize pass than to call it from the finalize sequence.
+  # (#4157 flat-str IC, JS2WASM_FLAT_STR_IC) +3 lines: one import plus a
+  # one-line pass invocation per compile pipeline. Extraction, both site
+  # rewrites and every correctness argument live in the new subsystem module
+  # src/codegen/flat-str-ic.ts; there is no smaller way to wire a finalize
+  # pass than to call it from the finalize sequence.
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
   # (src/codegen/nonnull-proof.ts); what remains in these two files is
