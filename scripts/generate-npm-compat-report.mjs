@@ -36,7 +36,9 @@ import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
 import { runHarness as runMarked } from "../tests/dogfood/marked-harness.mjs";
 import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
+import { runHarness as runClsxUpstreamSuite } from "../tests/dogfood/clsx-upstream-suite.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
+import { runHarness as runCookieUpstreamSuite } from "../tests/dogfood/cookie-upstream-suite.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
@@ -1520,8 +1522,9 @@ if (selectedPackages.has("clsx")) {
       knownBugs: knownBugsFor("clsx"),
     });
   } else {
-    console.log("[npm-compat] clsx — compile/validate/diff + perf...");
+    console.log("[npm-compat] clsx — compile/validate/diff + complete original upstream unit suite + perf...");
     const clsxReport = await runClsx({ quiet: true });
+    const clsxSuite = await runClsxUpstreamSuite({ quiet: true });
     const clsxPerf = await perfClsx();
     packages.push(
       await buildPackageEntry({
@@ -1532,10 +1535,28 @@ if (selectedPackages.has("clsx")) {
         shape: "esm-driver-epilogue",
         report: clsxReport,
         tests: {
-          kind: "differential-ops",
-          passed: clsxReport.summary.opDiff?.equal ?? null,
-          total: clsxReport.summary.opDiff?.total ?? null,
-          sourceIssue: 3748,
+          kind: "upstream-suite",
+          passed: clsxSuite.results?.passed ?? null,
+          total: clsxSuite.results?.scored ?? null,
+          passRatePct:
+            clsxSuite.results?.scored > 0
+              ? Number(((clsxSuite.results.passed / clsxSuite.results.scored) * 100).toFixed(1))
+              : null,
+          admitted: clsxSuite.extraction?.testsRegistered ?? null,
+          executed: clsxSuite.results?.scored ?? null,
+          upstreamTestsSeen: clsxSuite.upstreamSuite?.registrationSites ?? null,
+          harnessIncompatible: clsxSuite.extraction?.nativeFailed ?? null,
+          sourceIssue: 3995,
+          upstreamPin: {
+            repo: clsxSuite.upstreamSuite?.repo ?? null,
+            tag: clsxSuite.upstreamSuite?.tag ?? null,
+            commit: clsxSuite.upstreamSuite?.commit ?? null,
+          },
+          packageApiWorkload: {
+            kind: "differential-ops",
+            passed: clsxReport.summary.opDiff?.equal ?? null,
+            total: clsxReport.summary.opDiff?.total ?? null,
+          },
         },
         perf: clsxPerf,
       }),
@@ -1557,8 +1578,9 @@ if (selectedPackages.has("cookie")) {
       knownBugs: knownBugsFor("cookie"),
     });
   } else {
-    console.log("[npm-compat] cookie — compile/validate/diff + perf...");
+    console.log("[npm-compat] cookie — compile/validate/diff + complete original upstream unit suite + perf...");
     const cookieReport = await runCookie({ quiet: true });
+    const cookieSuite = await runCookieUpstreamSuite({ quiet: true });
     const cookiePerf = await perfCookie();
     packages.push(
       await buildPackageEntry({
@@ -1569,10 +1591,28 @@ if (selectedPackages.has("cookie")) {
         shape: "esm-direct",
         report: cookieReport,
         tests: {
-          kind: "differential-ops",
-          passed: cookieReport.summary.opDiff?.equal ?? null,
-          total: cookieReport.summary.opDiff?.total ?? null,
-          sourceIssue: 3751,
+          kind: "upstream-suite",
+          passed: cookieSuite.results?.passed ?? null,
+          total: cookieSuite.results?.scored ?? null,
+          passRatePct:
+            cookieSuite.results?.scored > 0
+              ? Number(((cookieSuite.results.passed / cookieSuite.results.scored) * 100).toFixed(1))
+              : null,
+          admitted: cookieSuite.extraction?.testsRegistered ?? null,
+          executed: cookieSuite.results?.scored ?? null,
+          upstreamTestsSeen: cookieSuite.extraction?.testsRegistered ?? null,
+          harnessIncompatible: cookieSuite.extraction?.nativeFailed ?? null,
+          sourceIssue: 3995,
+          upstreamPin: {
+            repo: cookieSuite.upstreamSuite?.repo ?? null,
+            tag: cookieSuite.upstreamSuite?.tag ?? null,
+            commit: cookieSuite.upstreamSuite?.commit ?? null,
+          },
+          packageApiWorkload: {
+            kind: "differential-ops",
+            passed: cookieReport.summary.opDiff?.equal ?? null,
+            total: cookieReport.summary.opDiff?.total ?? null,
+          },
         },
         perf: cookiePerf,
       }),
