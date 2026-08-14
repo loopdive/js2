@@ -176,6 +176,7 @@
     "commit": "c4f4529d69d254458831f3c22187d080db2f3c83",
     "cacheKey": "marked",
     "compileScript": "dogfood:marked",
+    "suiteScript": "dogfood:marked-upstream-suite",
     "inventory": {
       "directory": "test/unit",
       "include": "^test/unit/[^/]+\\.test\\.js$",

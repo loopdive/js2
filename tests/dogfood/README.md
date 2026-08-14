@@ -292,6 +292,7 @@ layer needed to compare results.
 
 ```bash
 pnpm run dogfood:marked          # run the loop, print a human summary, write the JSON report
+pnpm run dogfood:marked-upstream-suite  # run the selected original Hooks callbacks
 npx tsx tests/dogfood/marked-harness.mjs --json   # machine output to stdout
 DOGFOOD_MARKED=1 pnpm test -- tests/dogfood/marked.test.ts   # vitest contract wrapper
 ```

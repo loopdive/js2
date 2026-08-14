@@ -146,6 +146,7 @@
     "dogfood:acorn-test262": "node --max-old-space-size=4096 --import tsx tests/dogfood/acorn-test262.mjs",
     "dogfood:acorn-official-suite": "npx tsx tests/dogfood/acorn-official-suite.mjs",
     "dogfood:marked": "npx tsx tests/dogfood/marked-harness.mjs",
+    "dogfood:marked-upstream-suite": "node --import tsx tests/dogfood/marked-upstream-suite.mjs",
     "dogfood:clsx": "npx tsx tests/dogfood/clsx-harness.mjs",
     "dogfood:clsx-upstream-suite": "node --import tsx tests/dogfood/clsx-upstream-suite.mjs",
     "dogfood:cookie": "npx tsx tests/dogfood/cookie-harness.mjs",

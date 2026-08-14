@@ -35,6 +35,7 @@ import { buildStringConstants, buildStringConstants16, jsString, wrapExports } f
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
 import { runHarness as runMarked } from "../tests/dogfood/marked-harness.mjs";
+import { runHarness as runMarkedUpstreamSuite } from "../tests/dogfood/marked-upstream-suite.mjs";
 import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
 import { runHarness as runClsxUpstreamSuite } from "../tests/dogfood/clsx-upstream-suite.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
@@ -1495,8 +1496,9 @@ if (selectedPackages.has("acorn")) {
 }
 
 if (selectedPackages.has("marked")) {
-  console.log("[npm-compat] marked — compile/validate/diff...");
+  console.log("[npm-compat] marked — package entry + selected original upstream unit tests...");
   const markedReport = await runMarked({ quiet: true });
+  const markedSuite = await runMarkedUpstreamSuite({ quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "marked",
@@ -1505,7 +1507,33 @@ if (selectedPackages.has("marked")) {
       entryFile: markedReport.marked.entryModule.replace(/^package\//, ""),
       shape: "esm-direct",
       report: markedReport,
-      tests: null,
+      tests: {
+        kind: "upstream-suite",
+        status: markedSuite.compile?.validated === markedSuite.compile?.modules ? "measured" : "blocked",
+        reason:
+          markedSuite.compile?.validated === markedSuite.compile?.modules
+            ? null
+            : "Marked's implementation emitted invalid Wasm; no admitted upstream callback executed in Wasm",
+        passed: markedSuite.results?.passed ?? null,
+        total: markedSuite.results?.scored ?? null,
+        passRatePct:
+          markedSuite.results?.scored > 0
+            ? Number(((markedSuite.results.passed / markedSuite.results.scored) * 100).toFixed(1))
+            : null,
+        admitted: markedSuite.extraction?.testsRegistered ?? null,
+        executed: markedSuite.results?.scored ?? null,
+        upstreamTestsSeen: markedSuite.upstreamSuite?.registrationSites ?? null,
+        harnessIncompatible: markedSuite.extraction?.nativeFailed ?? null,
+        implementationInvalidTests:
+          markedSuite.compile?.validated === markedSuite.compile?.modules ? 0 : (markedSuite.results?.scored ?? null),
+        implementationError: markedSuite.compile?.details?.find((detail) => !detail.validates)?.validationError ?? null,
+        sourceIssue: 3995,
+        upstreamPin: {
+          repo: markedSuite.upstreamSuite?.repo ?? null,
+          tag: markedSuite.upstreamSuite?.tag ?? null,
+          commit: markedSuite.upstreamSuite?.commit ?? null,
+        },
+      },
       perf: null,
     }),
   );

@@ -20,7 +20,7 @@ function run(name: string) {
 }
 
 describe("small npm package upstream suites", () => {
-  it("pins complete clsx, cookie, Redux, Axios, and Prettier unit-file inventories", () => {
+  it("pins complete small-package unit-file inventories", () => {
     expect(pin("clsx")).toMatchObject({
       tag: "v2.1.1",
       commit: "925494cf31bcd97d3337aacd34e659e80cae7fe2",
@@ -49,6 +49,12 @@ describe("small npm package upstream suites", () => {
       commit: "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
       testFileCount: 20,
       registrationSites: 48,
+    });
+    expect(pin("marked")).toMatchObject({
+      tag: "v18.0.2",
+      commit: "c4f4529d69d254458831f3c22187d080db2f3c83",
+      testFileCount: 6,
+      registrationSites: 181,
     });
   });
 
@@ -114,5 +120,22 @@ describe("small npm package upstream suites", () => {
     expect(report.extraction.nativeFailed).toBe(0);
     expect(report.compile.modules).toBe(3);
     expect(report.results.scored).toBeGreaterThan(0);
+  });
+
+  const markedHeavy = process.env.DOGFOOD_MARKED_UPSTREAM_SUITE === "1" ? it : it.skip;
+  markedHeavy("runs Marked's original Hooks unit file", { timeout: 600_000 }, () => {
+    const report = run("marked");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 6,
+      filesSelected: 1,
+      filesDeferred: 5,
+      testsRegistered: 30,
+      nativePassed: 15,
+      nativeFailed: 15,
+    });
+    expect(report.compile.modules).toBe(1);
+    expect(report.compile).toMatchObject({ succeeded: 1, validated: 0 });
+    expect(report.results.scored).toBe(15);
+    expect(report.results.passed).toBe(0);
   });
 });

@@ -279,3 +279,21 @@ snapshots, Node-only helpers, external development dependencies, or larger
 document/parser graphs. The npm-compat generator now publishes this score, and
 the merge-only workflow's configured-suite guard requires the numeric Prettier
 result before it can update `npm-compat.html`.
+
+## 2026-08-14 Marked Hooks source-unit slice
+
+Marked 18.0.2 now verifies the complete six-file `test/unit/*.test.js`
+inventory and 181 static registration sites from `markedjs/marked@v18.0.2`
+(commit `c4f4529d69d254458831f3c22187d080db2f3c83`). The first runtime adapter
+runs the original 30-callback `Hooks.test.js` file against the matching
+published `marked.esm.js` build. Native Node reproduces **15/30** callbacks;
+the 15 promise-returning callbacks are explicitly harness-incompatible until
+the shared Wasm runner supports async tests.
+
+The generated implementation module compiles in about eight seconds but fails
+Wasm validation in an object-method trampoline, so **0/15** synchronously
+reproducible callbacks execute successfully. The npm-compat card records this
+as blocked, carries all 15 implementation-invalid tests and the exact validator
+message, and still publishes numeric pass/total fields for the workflow
+contract. The five heavier Lexer, Parser, CLI, instance, and full marked files
+remain explicit deferred inventory rather than disappearing from the report.
