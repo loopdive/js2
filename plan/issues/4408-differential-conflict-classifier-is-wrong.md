@@ -1,10 +1,11 @@
 ---
 id: 4408
-title: "Differential oracle: the conflict classifier is wrong — 908 reported conflicts are 100"
-status: ready
+title: "Differential oracle: the conflict classifier is wrong — 908 reported conflicts are 88"
+status: done
 sprint: current
 created: 2026-08-14
 updated: 2026-08-14
+completed: 2026-08-14
 priority: high
 horizon: s
 feasibility: easy
@@ -56,9 +57,9 @@ Re-classifying the same 908 rows structurally:
 | bucket                                            | count   |
 | ------------------------------------------------- | ------- |
 | same meaning (`any` ≡ `unresolvable`, etc.)       | **136** |
-| in-house weaker (safe abstention, mislabelled)    | **306** |
+| in-house weaker (safe abstention, mislabelled)    | **318** |
 | checker weaker (in-house claims MORE — see #4410) | **366** |
-| genuine both-claim-different-facts                | **100** |
+| genuine both-claim-different-facts                | **88**  |
 
 Per query:
 
@@ -67,16 +68,20 @@ Per query:
 | `declarationsOf`           | 0    | 0              | 34             | 44      |
 | `valueDeclarationOf`       | 0    | 0              | 196            | 24      |
 | `typeFactOf`               | 46   | 10             | 42             | 14      |
-| `signatureOf`              | 90   | 272            | 0              | 12      |
 | `variableDeclarationOf`    | 0    | 0              | 36             | 6       |
+| `signatureOf`              | 90   | 284            | 0              | **0**   |
 | `isUnresolvableIdentifier` | 0    | 12             | 4              | 0       |
 | `staticJsTypeOf`           | 0    | 0              | 36             | 0       |
 | `isBooleanProducing`       | 0    | 12             | 0              | 0       |
 | `declaredNameOf`           | 0    | 0              | 18             | 0       |
 
-`signatureOf` — the query that dominated the original number, 374 of 908 —
-has **12** genuine conflicts. Its 95.9 % "conflict rate" was a ~100 %
-_abstention_ rate rendered through a broken predicate.
+`signatureOf` — the query that dominated the original number, 374 of 908, at a
+reported 95.9 % "conflict rate" — has **zero** genuine conflicts. Every one of
+those rows is either a total in-house abstention or the same answer spelled
+differently (`any` vs `unresolvable`). The 95.9 % was an abstention rate
+rendered through a broken predicate.
+
+Reproduce: `npx tsx scripts/audit-oracle-differential.mts --corpus all`.
 
 ## Second defect: conflicts were unsampleable
 
@@ -93,24 +98,31 @@ recoverable from 237 files.
 
 ## Acceptance criteria
 
-- [ ] `isWeaker` is replaced by a structural classifier producing a four-way
+- [x] `isWeaker` is replaced by a structural classifier producing a four-way
       verdict: `same-meaning` | `inhouse-weaker` | `checker-weaker` |
-      `genuine-conflict`.
-- [ ] The classifier understands composite answers (signature strings, nested
+      `genuine-conflict` (`src/checker/divergence-classifier.ts`).
+- [x] The classifier understands composite answers (signature strings, nested
       generic fact strings), per-query polarity, list emptiness on either side,
-      and `any` ≡ `unresolvable`.
-- [ ] `checker-weaker` is a first-class bucket, not folded into conflicts —
+      `any` ≡ `unresolvable`, and total abstention across differing shapes
+      (with declared arity compared exactly, so an arity mismatch stays a
+      conflict however blank the rest is).
+- [x] `checker-weaker` is a first-class bucket, not folded into conflicts —
       "the in-house backend knows more than TypeScript" is a real and frequent
       outcome (#4410), not a bug signal.
-- [ ] `DivergenceLedger` keeps per-query-quota'd conflict samples
-      (already implemented on `claude/ts7-differential-spike`).
-- [ ] `scripts/audit-oracle-differential.mts` reports the four-way split.
-- [ ] A unit test pins each mis-classification above with a literal answer
-      pair, so the predicate cannot silently regress to string equality.
+- [x] `DivergenceLedger` keeps per-query-quota'd conflict samples, and each
+      sample carries its verdict.
+- [x] `scripts/audit-oracle-differential.mts` reports the four-way split.
+- [x] A unit test pins each mis-classification above with a literal answer
+      pair, so the predicate cannot silently regress to string equality
+      (`tests/issue-4408-divergence-classifier.test.ts`).
 
 ## Notes
 
-Everything published from the old classifier is wrong by roughly 9× and should
-be restated: the corrected genuine-conflict count is **100**, and the correct
-retirement gate is "genuine-conflict == 0 **and** every `checker-weaker` row
-adjudicated", not "conflicting == 0".
+Everything published from the old classifier is wrong by roughly 10× and
+should be restated: the corrected genuine-conflict count is **88**, and the
+correct retirement gate is "genuine-conflict == 0 **and** every
+`checker-weaker` row adjudicated", not "conflicting == 0".
+
+The remaining 88 are concentrated in four binding-resolution queries and are
+adjudicated in #4410 — a share of them are cases where TypeScript is the
+wrong one.
