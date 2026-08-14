@@ -63,6 +63,23 @@ loc-budget-allow:
   # +4 lines: the identifier-call arm consults the exact-signature match
   # before the kind-only fallback.
   - src/codegen/expressions/call-identifier.ts
+  # ALL typedarray-intrinsics bucket grants below: agent-measured, 200-file
+  # TypedArray A/B zero pass->fail, GC lane byte-identical.
+  # +44 net: the funcIdx stale-capture fix lives inside tryEmitInlineDynamicCall
+  # in this frozen file — re-flush + re-capture after callee/arg compiles; the
+  # #329/#1677/#1839/#1886/#2043 index-desync family.
+  - src/codegen/expressions/calls.ts
+  # +56: nullish-receiver TypeError guards in the closed-method dispatchers.
+  - src/codegen/closed-method-dispatch.ts
+  # +17: undeclared-callee ReferenceError arm (S13.3.6.1 ordering).
+  - src/codegen/expressions/call-identifier.ts
+  # +9: union-receiver skip of the covered-form NamedEvaluation .name fold.
+  - src/codegen/array-object-proto.ts
+  # +13 (net +6): Symbol.toStringTag routing to the $__ta_dyn_view MOP arm.
+  - src/codegen/property-access-dispatch.ts
+  # +47: the Symbol-key arm answering [[TypedArrayName]] (S23.2.3.34) — this
+  # module is the designated owner of $__ta_dyn_view MOP arms.
+  - src/codegen/ta-dyn-mop.ts
 coercion-sites-allow:
   # +3 sites (__extern_toString, __unbox_number, __is_truthy), all inside the
   # new [[Call]] arm for the builtin `String` carrier. Calling `String(x)` IS
@@ -82,6 +99,17 @@ func-budget-allow:
   # +3 lines: the symbol-keyed entry skip in the for-in vec arm — enumeration
   # must not surface a Symbol key as its numeric slot index (verifyproperty).
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  # ALL typedarray-intrinsics bucket function grants: agent-measured A/B clean.
+  # +47: the Symbol-key [[TypedArrayName]] arm in the designated $__ta_dyn_view
+  # MOP owner; the arm switches on the view's kind field, inherently inline.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  # +43: the stale-capture fix — re-flush + re-capture of every baked funcIdx
+  # after callee/arg compilation, inside the function that owns the bake sites.
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  # +9: union-receiver dynamic .name read beside the static fold it bypasses.
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  # +2: the nullish-receiver guard splice points; guard bodies live in helpers.
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   # +16 lines: the standalone Test262Error prototype-method binding arm beside
   # the host-lane #4394 arm it mirrors (test262error-identity bucket); the
   # bodies live in shadowed-error-ctor.ts / caught-error-prop-fallback.ts.

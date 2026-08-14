@@ -75,6 +75,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { emitThrowReferenceError } from "../js-errors.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
@@ -1935,6 +1936,22 @@ export function compileIdentifierCall(
         (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal);
       if (dyn !== null) return dyn;
+
+      // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
+      // undeclared identifier (`$DETACHBUFFER(ab)` with no `includes:` that
+      // would define it — test262 harness/detachArrayBuffer.js) must throw
+      // ReferenceError, and the arguments must NOT be evaluated (the callee
+      // reference is resolved first, §13.3.6.1 step 1). The identifier READ
+      // path already throws for symbol-less names (#1380); this is the same
+      // rule at the call site, where the graceful undefined fallback below
+      // used to swallow it. Standalone/wasi only, and NOT under
+      // runtime-eval global bindings (an eval-defined global function has no
+      // static symbol yet is legitimately callable there).
+      if ((ctx.standalone || ctx.wasi) && !isRuntimeEvalGlobal && declaration === undefined && noJsHost(ctx)) {
+        emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
 
       // Graceful fallback for unknown functions — compile arguments (for side effects)
       // then emit ref.null extern (undefined) as the return value.

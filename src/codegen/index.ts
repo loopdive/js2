@@ -270,6 +270,7 @@ import {
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
+import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
@@ -5380,6 +5381,13 @@ export function generateModule(
     // value resolve its spec `name`/`length` at runtime, host-free. No-op when
     // no builtin closure was materialized (standalone only).
     fillBuiltinFnMeta(ctx);
+
+    // `$__ta_ctor` name/length arm for the same meta consult — a TypedArray
+    // constructor VALUE's `TA.name` / `TA.length` resolves host-free (the
+    // test262 TypedArray harness's `TA.name.slice(0, -5)` trapped on the null
+    // miss). Disjoint receiver guard, so order relative to fillBuiltinFnMeta
+    // is immaterial; no-op unless a `$__ta_ctor` type is registered.
+    fillTaCtorGetMetaArm(ctx);
 
     // (#3130) Splice the `$Error_struct` arm into `__extern_get` so dynamic
     // reads of `err.message`/`err.name`/`err.stack`/`err.constructor` resolve

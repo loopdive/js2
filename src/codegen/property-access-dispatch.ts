@@ -2503,8 +2503,17 @@ export function tryLengthAndNameReads(
           }
         }
       }
-      if (hasFuncSig) {
-        // Resolve the function name from the type symbol or the expression
+      if (hasFuncSig && (noJsHost(ctx) ? !objType.isUnion() : true)) {
+        // Resolve the function name from the type symbol or the expression.
+        //
+        // UNION-typed receivers are excluded on the host-free lanes: a union
+        // (e.g. `typedArrayConstructors[i]` — element type is the union of the
+        // TA ctor interfaces) has no single static name, and the old fold
+        // answered the covered-form `""` for every element — the literal
+        // testTypedArray.js harness then keyed `callCounts[""]` and its
+        // per-ctor call-count self-check failed. Falling through lets the
+        // dynamic read (now backed by the `$__ta_ctor` meta arm) answer the
+        // real per-value name. Host lane keeps the fold (byte-identical).
         let funcName = objType.getSymbol()?.name ?? "";
         // __type, __function, __class, __object are anonymous type names from TS checker
         if (funcName === "__type" || funcName === "__function" || funcName === "__class" || funcName === "__object")
