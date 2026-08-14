@@ -298,6 +298,7 @@ import {
 import { emitInlineMathFunctions } from "./math-helpers.js";
 import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
+import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
@@ -5585,6 +5586,9 @@ export function generateModule(
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
+    // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
+    // position-guessing repairs inside stackBalance. See its own header.
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
@@ -7942,6 +7946,9 @@ export function generateMultiModule(
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
+    // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
+    // position-guessing repairs inside stackBalance. See its own header.
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.

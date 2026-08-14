@@ -4498,3 +4498,99 @@ hotness 3.8 + rewrite 14 ms post-fix). Runner note: a fresh worktree needs
 BOTH gitignored bundles (`pnpm run build:compiler-bundle` AND the
 `src/runtime.ts` esbuild) or every pool worker dies at startup and all tests
 "fail" as worker-less timeouts.
+
+## 2026-08-14 (44) — park 6 ROOT-CAUSED and FIXED: the receiver coercion two late repairs both mis-attribute, and the tuned set is what widened the window
+
+PR #4455's merge-group run 31790623974 completed all 102 shards and the
+standalone guard failed for real: **net −30 pass** (30,703 → 30,673, tolerance
+−15), 36 regressions vs 6 improvements, **wasm_compile 33** + assertion_fail 3,
+compile_error bucket 5,792 → 5,830. All 36 wasm-hash-changed (flip-attributable,
+zero compile_timeout involvement) and all shared one bucket signature. js-host
+passed its guards — standalone-only.
+
+### Recovering the file list without the CI artifact
+
+The per-file list lives only in an Azure-blob artifact this container's proxy
+blocks, and the GitHub API is unreachable from here too. Recovered locally
+instead: clone `loopdive/js2wasm-baselines`, take the 30,703 `pass` rows of
+`test262-standalone-current.jsonl`, and for each re-assemble the ORIGINAL
+harness exactly as the sharded runner does (`assembleOriginalHarness`), compile
+with `{target:"standalone", allowJs, skipSemanticDiagnostics, deferTopLevelInit}`
+and check `WebAssembly.validate`. A `wasm_compile` regression is a COMPILE-time
+property — no eval engine, no instantiation, no quickjs provider needed, ~0.6 s
+per test. Two random draws (4,641 tests) surfaced two hits; both were
+`cpn-class-*`, and sweeping that family directly gave **32 of the 36**:
+`language/{statements,expressions}/class/cpn-class-{decl,expr}-computed-property-name-from-*`
+(additive-add/subtract, multiplicative-mult/div, exponetiation, condition-true/false,
+null, identifier, math, string-literal, numeric/decimal/decimal-e/integer-e-notational,
+integer-separators).
+
+### Root cause — NOT a single culprit flag
+
+Single-flag bisection was misleading in both directions: with all eleven ON,
+turning any ONE off still failed; with all eleven OFF, turning `JS2WASM_IR_INLINE`
+**or** `JS2WASM_SMI_FASTPATH` on *independently* reproduced it. That is because
+neither is the defect. The defect is older and the two flags merely widen the
+window it needs.
+
+Standalone codegen emits a devirtualized method call as
+
+    global.get $__mod_c   ;; the receiver `c`, a (ref null $C) GC struct
+    call $C_2             ;; the devirtualized method — takes ZERO parameters
+    …                     ;; whatever consumes $C_2's f64 result
+    call $__call_m_sameValue_2 / local.set $x    ;; the operand's REAL consumer
+
+so the receiver's consumer is several instructions away, and nothing emits its
+`extern.convert_any`. Two late repairs are supposed to supply it, and both
+attribute the value by position rather than by stack model:
+
+- `fixCallArgTypesInBody` (stack-balance.ts) walks BACKWARD from the call and
+  **stops at the first `if`/`block`/`loop`** ("Stop at control flow boundaries");
+- `fixLocalSetCoercion` only ever inspects `body[i - 1]`.
+
+`smi-box-fast-path.ts` replaces `call $__box_number` with a guard ending in
+`if (result externref)`; `ir-inline.ts` replaces a call with `block (result …)`.
+Either lands inside that window, the coercion is silently never inserted, and
+V8 rejects the module with `call[0] expected type externref, found global.get of
+type (ref null 74)` — or, one shape over, the `local.set[0]` twin. Verified by
+instrumenting the pass chain: the `extern.convert_any` is absent BEFORE
+`finalizeModuleValueCaches` in every build and appears only `after-stack-balance`
+in the legacy one. It is standalone-only for the obvious reason: under a JS host
+a class instance already IS an `externref`, so no coercion is ever due.
+
+### Fix — model the stack instead of guessing the position
+
+`src/codegen/call-arg-producers.ts` (new): the #4077 exact forward model moved
+verbatim out of `fixups.ts` and generalised from `locateCallArgProducers` to
+`locateOperandProducers` — the producer index of every value each instruction
+POPS. It already models `if`/`block`/`loop` exactly, which is the whole point.
+`stack-balance.ts` gains `repairCrossHierarchyOperands`, running BEFORE the
+backward walk (which then sees the coercion in place and queues nothing).
+
+It repairs **only** `externref` ⇄ concrete-GC-ref, in either direction. Those
+hierarchies are disjoint in Wasm, so such a pair can never validate under any
+subtyping rule — the pass can only turn an invalid module valid, never perturb
+a valid one. Everything else (numerics, struct-to-struct `ref.cast_null`,
+`anyref` widening, which IS legal) is left to the two legacy repairs untouched.
+Real fix, not a target gate: the −12 % standalone acorn win is kept whole.
+
+### Verification
+
+- 32/32 recovered `cpn-class-*` tests: INVALID_WASM → valid. Re-run twice.
+- 4,000-test random A/B (same list, pre vs post): **zero new failures**, one
+  fixed; 560 → 559 non-ok rows (the rest are negative tests, identical in both).
+- Byte identity on the `=0`-everything path: standalone acorn 1,157,936 B
+  unchanged with all four canaries (2/3/4/5); the 172,617-byte test262 harness
+  module sha256 `e30ad07f…` unchanged. Both measured base-vs-new by file copy.
+- Tuned-default acorn: success, canaries 2/3/4/5, no host imports.
+- Equivalence gate shards 1–8: no new regressions, and shard 2 reports **4
+  FIXED** — `coercion/arithmetic-add` standalone / standalone-O string
+  concatenation, i.e. the same defect was already costing us tests before the
+  flip.
+- New regression test `tests/issue-4157-park6-cross-hierarchy-operand.test.ts`
+  pins both consumer shapes (call operand, `local.set` operand).
+
+Not accounted for: 1 `wasm_compile` + the 3 `assertion_fail` rows. The sweep
+compiles only the PRIMARY harness variant and never executes, so it cannot see a
+strict-rerun-only failure or a wrong-answer one; the merge-group re-run is the
+authoritative check on those.
