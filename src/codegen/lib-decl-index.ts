@@ -169,17 +169,6 @@ export function isVoidTypeNode(node: ts.TypeNode | undefined): boolean {
   return false;
 }
 
-/** Mirror of shared.ts `isStrictBooleanReturnType` on the declared node: exactly
- * `boolean` (or a true/false literal type) — unions/aliases do NOT brand. */
-export function isStrictBooleanTypeNode(node: ts.TypeNode | undefined): boolean {
-  if (!node) return false;
-  if (node.kind === ts.SyntaxKind.BooleanKeyword) return true;
-  return (
-    ts.isLiteralTypeNode(node) &&
-    (node.literal.kind === ts.SyntaxKind.TrueKeyword || node.literal.kind === ts.SyntaxKind.FalseKeyword)
-  );
-}
-
 /**
  * Construct signatures declared on the merged `interface <name>` declarations
  * (e.g. `DateConstructor`), in merge order. Mirrors
