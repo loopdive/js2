@@ -371,6 +371,10 @@ export function tryCompileBuiltinGlobalNew(
       ctorName === "Test262Error" &&
       (ctx.wasi || ctx.standalone) &&
       errorCtorNameIsUserFunctionShadowed(expr, ctorName);
+    // (#4394) A declined instance is an ordinary user struct — tell the #2962
+    // exception renderer, or a thrown one renders "[object Object]" and the
+    // merged report loses the "Test262Error: …" signature (the #4484 park).
+    if (test262StandaloneUserFn) (ctx.exnRenderFnctorErrorNames ??= new Set()).add(ctorName);
     if (
       (isIntrinsicErrorName && !errorCtorNameIsUserShadowed(expr, ctorName)) ||
       (ctorName === "Test262Error" && !test262StandaloneUserFn)

@@ -80,6 +80,11 @@ loc-budget-allow:
   # +47: the Symbol-key arm answering [[TypedArrayName]] (S23.2.3.34) — this
   # module is the designated owner of $__ta_dyn_view MOP arms.
   - src/codegen/ta-dyn-mop.ts
+  # +71 lines: the #4394 renderer arms for declined harness error fnctors —
+  # they live in emitExceptionRenderExports beside the index-shift-safety
+  # contract they must obey, and mirror the __error_to_string concat idiom
+  # defined in this same file.
+  - src/codegen/native-strings.ts
 coercion-sites-allow:
   # +3 sites (__extern_toString, __unbox_number, __is_truthy), all inside the
   # new [[Call]] arm for the builtin `String` carrier. Calling `String(x)` IS
