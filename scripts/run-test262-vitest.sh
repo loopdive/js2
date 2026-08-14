@@ -386,8 +386,35 @@ if [ "$COMPLETED" = true ]; then
   echo "Results: $RUN_JSONL"
   echo "Symlinks updated."
 
-  # Append to historical index
-  if [ -f "$RUN_REPORT" ]; then
+  # Append to historical index.
+  #
+  # (#4412) ONLY for a full-corpus run. `runs/index.json` is COMMITTED and
+  # feeds the report page's conformance trend graph, but this append had no
+  # notion of a scoped run: with `TEST262_PATH_FILTER` or a narrowed
+  # `TEST262_LOCAL_SHARD_GLOB`, a partial run posted a partial total as if it
+  # were a full pass. Measured 2026-08-14: a single-shard local run wrote
+  # `pass: 1902 / total: 2713` beside real ~30,000-test entries, and a
+  # 32-invocation sharded experiment would have written 32 such rows. Nothing
+  # in CI would have caught it — it surfaced only because a local stop hook
+  # noticed the dirty file.
+  #
+  # Default is to REFUSE when the run is scoped. `TEST262_PUBLISH_HISTORY=1`
+  # forces the append for the rare case where a deliberately scoped run should
+  # still be recorded; `TEST262_PUBLISH_HISTORY=0` suppresses it outright.
+  # The decision lives in scripts/should-publish-run-history.mjs so it can be
+  # unit-tested; exit 0 = publish, 1 = skip, reason on stdout.
+  if PUBLISH_REASON=$(TEST262_LOCAL_SHARD_GLOB="$LOCAL_SHARD_GLOB" \
+      node "$MAIN_DIR/scripts/should-publish-run-history.mjs"); then
+    PUBLISH_HISTORY=1
+  else
+    PUBLISH_HISTORY=0
+  fi
+
+  if [ "$PUBLISH_HISTORY" != "1" ]; then
+    echo "Historical index: SKIPPED — $PUBLISH_REASON."
+    echo "  runs/index.json is committed and drives the trend graph; a partial"
+    echo "  run must not post a partial total. Override with TEST262_PUBLISH_HISTORY=1."
+  elif [ -f "$RUN_REPORT" ]; then
     RUNS_DIR="$RESULTS_DIR/runs"
     mkdir -p "$RUNS_DIR"
     INDEX_FILE="$RUNS_DIR/index.json"
