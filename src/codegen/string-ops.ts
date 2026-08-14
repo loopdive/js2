@@ -315,7 +315,14 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
 
   const toStrIdx = ctx.funcMap.get("number_toString");
 
-  if (opType.kind === "i32" && isBooleanType(tsType)) {
+  // (#4414) `|| opType.boolean` — the static type alone misses a devirtualized
+  // prototype-method call: `p.eat(5)` on an untyped constructor is `any` to the
+  // checker, but the direct-call trampoline returns the callee's BRANDED i32
+  // (`{kind:"i32", boolean:true}`). Without the brand check the value fell into
+  // the numeric arm below and `("" + p.eat(5))` printed "1", not "true". The
+  // binary-op concat path already checks the brand; this cascade and the
+  // template-span path did not.
+  if (opType.kind === "i32" && (isBooleanType(tsType) || opType.boolean === true)) {
     // Boolean → "true"/"false" native literal selected at runtime.
     const trueInstrs = nativeStringLiteralInstrs(ctx, "true");
     const falseInstrs = nativeStringLiteralInstrs(ctx, "false");
@@ -816,7 +823,10 @@ export function compileNativeTemplateExpression(
 
     const spanType = compileExpression(ctx, fctx, span.expression);
     const spanIsScalarNullish = (spanNativeIsUndef || spanNativeIsNull) && spanType && spanType.kind !== "externref";
-    const spanIsBool = spanType && spanType.kind === "i32" && isBooleanType(spanNativeTsType);
+    // (#4414) brand check mirrors the binary-op concat path — see
+    // compileNativeConcatOperand.
+    const spanIsBool =
+      spanType && spanType.kind === "i32" && (isBooleanType(spanNativeTsType) || spanType.boolean === true);
     if (spanIsScalarNullish) {
       // Scalar-lowered null/undefined → drop the placeholder, build the native
       // string constant inline (#2005/#2006). Leaves the native string ref on

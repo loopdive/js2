@@ -1,15 +1,19 @@
 ---
 id: 4414
 title: "devirtualized prototype-method call returns a boolean as a number — live standalone miscompile"
-status: ready
+status: done
 sprint: current
 created: 2026-08-14
+completed: 2026-08-14
 priority: high
 horizon: s
 feasibility: medium
 task_type: bug
 area: codegen
 related: [4406, 4405, 3754, 4157]
+loc-budget-allow:
+  - src/codegen/string-ops.ts
+  - src/codegen/expressions/call-identifier.ts
 ---
 
 # #4414 — devirtualized boolean return typed as a number: `("" + p.eat(5)).length` → 1, not 4
@@ -131,3 +135,42 @@ prototype-method call in the direct-call fill path (`recordDirectCallTwin` /
 the standalone lane, with typed-this twins OFF. Find who decides the callee's
 result is numeric there. Repro test (currently failing, do not add to CI until
 it passes): `.tmp/issue-4407-repro-test.ts`.
+
+## Root cause + fix (2026-08-14, impl PR)
+
+The direct-call machinery was **innocent** — its result type was correct all
+along. Instrumented at the trampoline reservation
+(`tryEmitDirectTwinCall`, typed-this.ts): `sig.returnType` for `P.eat` arrives
+as `{"kind":"i32","boolean":true}` — the #1788 **boolean brand on the i32
+carrier**, exactly right — and `tryEmitDirectTwinCall` reports it faithfully
+to the caller.
+
+The defect was three **stringification consumers deciding boolean-ness from
+the static TS type alone**, ignoring the runtime brand:
+
+1. `compileNativeConcatOperand` (string-ops.ts) — the standalone `+`-concat
+   cascade, deliberately not migrated to the coercion engine (its #1917 note).
+2. The template-literal span path (string-ops.ts, `spanIsBool`).
+3. The `String(x)` builtin lowering's i32 arm (call-identifier.ts).
+
+`p.eat(5)` on an untyped constructor instance is `any` to the checker, so
+`isBooleanType(tsType)` is false and the branded i32 fell into each site's
+numeric arm → `number_toString` → `"1"`. This explains the whole shape table
+above: every passing shape has a *statically known* boolean type; only
+devirtualization surfaces a branded i32 under static `any`. And
+`JS2WASM_DIRECT_CALLS=0` "fixes" it only because the dynamic dispatcher
+returns a boxed externref that stringifies at runtime — the numeric fixpoint
+(`refinedTwinReturnType`) never fired at all in the repro (`refined=undefined`,
+measured).
+
+Fix: all three sites now check `isBooleanType(tsType) || valType.boolean`,
+matching what the binary-op concat path (string-ops.ts ~2047/2122) and the
+migrated coercion engine (`emitToString`, coercion-engine.ts:236) already did.
+
+Verified: repro 4 ✓; siblings `String()` 4 ✓, template 10 ✓, `=== true` ✓,
+`typeof` ✓ (the last two passed before the fix — strict-eq/typeof compare the
+i32 numerically, which is correct for booleans). The js-host lane cannot run
+the repro shape at all (`value is not callable`, byte-identical on unmodified
+HEAD — #4227 family), so the new equivalence test
+(`tests/issue-4414-boolean-direct-call-stringify.test.ts`) oracles standalone
+against plain JS.
