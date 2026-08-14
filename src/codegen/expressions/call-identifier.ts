@@ -787,9 +787,9 @@ export function compileIdentifierCall(
       }
 
       if (argType?.kind === "i32") {
-        // Check if it's a boolean type → "true"/"false"
+        // (#4414) `|| .boolean` — a devirtualized call is `any` statically but returns a BRANDED boolean i32
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
-        if (isBooleanType(argTsType)) {
+        if (isBooleanType(argTsType) || argType.boolean === true) {
           return emitBoolToString(ctx, fctx);
         }
         // number (i32) → string via f64 conversion
