@@ -43,6 +43,114 @@ interface Input {
   annotated: boolean;
 }
 
+/**
+ * (#4218) Corpus selection. The first spike ran on 21 inputs, which cannot
+ * support a claim about type loss; `--corpus` widens it to the real code the
+ * compiler is measured on elsewhere:
+ *
+ *   playground  13 annotated TS examples + 8 hand-written snippets
+ *   test262     stratified sample of the 53k-file conformance corpus. Raw
+ *               files, no harness: we are comparing COMPILE OUTPUT between
+ *               backends, so a test that cannot run (or cannot compile) is
+ *               still a valid datapoint as long as both backends agree.
+ *   npm         real-world package sources on disk (marked, lodash, react,
+ *               prettier, eslint, hono) — the large, messy, unannotated end.
+ *
+ * Behavioral corpora (equivalence, unit tests, test262 conformance) are NOT
+ * run here: those are answered by running their own suites under
+ * `JS2WASM_ORACLE_BACKEND=inhouse`, which checks semantics rather than
+ * emitted-code shape.
+ */
+function stratifiedTest262(limit: number): Input[] {
+  const root = join(REPO_ROOT, "test262", "test");
+  const out: Input[] = [];
+  const areas = ["language", "built-ins", "annexB", "intl402"];
+  const perArea = Math.max(1, Math.floor(limit / areas.length));
+  for (const area of areas) {
+    const areaRoot = join(root, area);
+    let found: string[] = [];
+    const walk = (dir: string) => {
+      if (found.length >= perArea * 6) return; // gather a pool, then stride
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const p2 = join(dir, e);
+        let st: ReturnType<typeof statSync>;
+        try {
+          st = statSync(p2);
+        } catch {
+          continue;
+        }
+        if (st.isDirectory()) walk(p2);
+        else if (e.endsWith(".js") && !e.endsWith("_FIXTURE.js")) found.push(p2);
+        if (found.length >= perArea * 6) return;
+      }
+    };
+    walk(areaRoot);
+    // Stride the pool so the sample spans the area instead of its first dir.
+    const stride = Math.max(1, Math.floor(found.length / perArea));
+    for (let i = 0; i < found.length && out.length < limit; i += stride) {
+      const f = found[i];
+      let src = "";
+      try {
+        src = readFileSync(f, "utf8");
+      } catch {
+        continue;
+      }
+      // Skip the enormous outliers; they dominate wall-clock without adding signal.
+      if (src.length > 40_000) continue;
+      out.push({ name: relative(REPO_ROOT, f), source: src, annotated: false });
+    }
+  }
+  return out;
+}
+
+function npmCorpus(limit: number): Input[] {
+  const out: Input[] = [];
+  const pkgs = ["marked", "lodash", "react", "prettier", "eslint", "hono"];
+  for (const pkg of pkgs) {
+    const base = join(REPO_ROOT, "node_modules", pkg);
+    const files: string[] = [];
+    const walk = (dir: string, depth: number) => {
+      if (depth > 3 || files.length >= 40) return;
+      let entries: string[] = [];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (files.length >= 40) return;
+        if (e === "node_modules" || e.startsWith(".")) continue;
+        const p2 = join(dir, e);
+        let st: ReturnType<typeof statSync>;
+        try {
+          st = statSync(p2);
+        } catch {
+          continue;
+        }
+        if (st.isDirectory()) walk(p2, depth + 1);
+        else if ((e.endsWith(".js") || e.endsWith(".mjs") || e.endsWith(".cjs")) && st.size < 250_000) files.push(p2);
+      }
+    };
+    walk(base, 0);
+    const perPkg = Math.max(1, Math.floor(limit / pkgs.length));
+    const stride = Math.max(1, Math.floor(files.length / perPkg));
+    for (let i = 0; i < files.length && out.length < limit; i += stride) {
+      try {
+        out.push({ name: relative(REPO_ROOT, files[i]), source: readFileSync(files[i], "utf8"), annotated: false });
+      } catch {
+        /* unreadable */
+      }
+    }
+  }
+  return out;
+}
+
 /** Corpus: annotated TS (where the checker actually knows things — the only
  * place a weakened in-house answer can cost anything) plus plain JS. */
 function collectCorpus(): Input[] {
@@ -132,8 +240,13 @@ async function compileShape(source: string, backend: "checker" | "inhouse"): Pro
 
 const args = process.argv.slice(2);
 const sampleLimit = args.includes("--samples") ? Number(args[args.indexOf("--samples") + 1]) : 12;
-const corpus = collectCorpus();
-console.log(`corpus: ${corpus.length} inputs (${corpus.filter((c) => c.annotated).length} annotated)\n`);
+const which = args.includes("--corpus") ? args[args.indexOf("--corpus") + 1] : "playground";
+const limit = args.includes("--limit") ? Number(args[args.indexOf("--limit") + 1]) : 400;
+const corpus: Input[] = [];
+if (which === "playground" || which === "all") corpus.push(...collectCorpus());
+if (which === "test262" || which === "all") corpus.push(...stratifiedTest262(limit));
+if (which === "npm" || which === "all") corpus.push(...npmCorpus(Math.min(limit, 120)));
+console.log(`corpus: ${which} — ${corpus.length} inputs (${corpus.filter((c) => c.annotated).length} annotated)\n`);
 
 // ── Phase 1: fact divergence ──────────────────────────────────────────
 console.log("=".repeat(72));
@@ -151,7 +264,9 @@ const perFile: PerFile[] = [];
 const totalsByQuery = new Map<string, { agreements: number; weakened: number; conflicting: number }>();
 const conflictSamples: { file: string; query: string; checker: string; inhouse: string; node: string }[] = [];
 
+let phase1Done = 0;
 for (const input of corpus) {
+  if (++phase1Done % 200 === 0) console.log(`  ...divergence ${phase1Done}/${corpus.length}`);
   globalDivergenceLedger.reset();
   try {
     await compile(input.source, { oracleBackend: "differential" });
@@ -226,7 +341,9 @@ interface Row {
   inhouse: CodeShape | string;
 }
 const rows: Row[] = [];
+let phase2Done = 0;
 for (const input of corpus) {
+  if (++phase2Done % 200 === 0) console.log(`  ...codeshape ${phase2Done}/${corpus.length}`);
   rows.push({
     file: input.name,
     annotated: input.annotated,
