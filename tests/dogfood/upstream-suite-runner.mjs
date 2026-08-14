@@ -63,6 +63,10 @@ function __upstreamExpect(actual) {
     toBeDefined() { const n = ++__upstreamAssertion; if (actual === undefined) __upstreamFail("assertion " + n + " expected defined value"); },
     toBeNull() { const n = ++__upstreamAssertion; if (actual !== null) __upstreamFail("assertion " + n + " expected null, got " + __upstreamValue(actual)); },
     toHaveLength(expected) { const n = ++__upstreamAssertion; if (actual == null || actual.length !== expected) __upstreamFail("assertion " + n + " length mismatch"); },
+    toContain(expected) { const n = ++__upstreamAssertion; if (actual == null || typeof actual.includes !== "function" || !actual.includes(expected)) __upstreamFail("assertion " + n + " expected contained value"); },
+    toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
+    toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
+    toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toMatchSnapshot() { __upstreamFail("snapshot assertion requires a package-specific snapshot adapter"); },
     toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
     toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
@@ -76,6 +80,18 @@ function __upstreamExpect(actual) {
   return positive;
 }
 const expect = __upstreamExpect;
+const vi = {
+  fn(implementation) {
+    function spy() {
+      const args = Array.prototype.slice.call(arguments);
+      spy.mock.calls.push(args);
+      if (typeof implementation === "function") return implementation.apply(this, args);
+    }
+    spy.mock = { calls: [] };
+    spy.mockClear = function() { spy.mock.calls.length = 0; return spy; };
+    return spy;
+  },
+};
 const __upstreamBeforeEach = [];
 function describe(_name, body) {
   const hookCount = __upstreamBeforeEach.length;
@@ -144,7 +160,13 @@ export function runUpstreamTests(): number[] {
     __upstreamAssertion = 0;
     try {
       const result = __upstreamTests[i].body(__qunitAssert);
-      if (result && typeof result.then === "function") throw new Error("async upstream callback is not admitted");
+      if (result && typeof result.then === "function") {
+        // The synchronous Wasm runner cannot score async callbacks yet. Attach
+        // a rejection sink before classifying the callback so an intentionally
+        // unawaited upstream promise cannot crash the surrounding harness.
+        if (typeof result.catch === "function") result.catch(function() {});
+        throw new Error("async upstream callback is not admitted");
+      }
       statuses.push(1);
       __upstreamErrors.push("");
     } catch (error) {
