@@ -74,6 +74,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 17,
       registrationSites: 318,
     });
+    expect(pin("styled-components")).toMatchObject({
+      tag: "styled-components@6.4.4",
+      commit: "5f69a304df5de81aae114928dcd98896c627c94a",
+      testFileCount: 41,
+      registrationSites: 668,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -202,6 +208,21 @@ describe("small npm package upstream suites", () => {
       callbacksDeferred: 312,
     });
     expect(report.compile.modules).toBe(1);
+    expect(report.results.scored).toBe(6);
+  });
+
+  const styledComponentsHeavy = process.env.DOGFOOD_STYLED_COMPONENTS_UPSTREAM_SUITE === "1" ? it : it.skip;
+  styledComponentsHeavy("runs styled-components' selected original utility units", { timeout: 600_000 }, () => {
+    const report = run("styled-components");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 41,
+      filesSelected: 3,
+      filesDeferred: 38,
+      testsRegistered: 6,
+      nativePassed: 6,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(3);
     expect(report.results.scored).toBe(6);
   });
 });

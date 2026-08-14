@@ -285,6 +285,7 @@
     "commit": "5f69a304df5de81aae114928dcd98896c627c94a",
     "cacheKey": "styled-components",
     "compileScript": "dogfood:styled-components",
+    "suiteScript": "dogfood:styled-components-upstream-suite",
     "inventory": {
       "directory": "packages/styled-components/src",
       "include": "^packages/styled-components/src/.*/test/.*\\.test\\.(?:js|jsx|ts|tsx)$",

@@ -231,13 +231,18 @@ async function withTimeout(promise, timeoutMs) {
   }
 }
 
-export async function compileAndRunUpstreamModule({ generatedPath, source, timeoutMs = 180_000 }) {
+export async function compileAndRunUpstreamModule({
+  generatedPath,
+  source,
+  nativeSource = source,
+  timeoutMs = 180_000,
+}) {
   mkdirSync(dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, source);
 
   let native;
   try {
-    native = await runNative(generatedPath, source);
+    native = await runNative(generatedPath, nativeSource);
   } catch (error) {
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }

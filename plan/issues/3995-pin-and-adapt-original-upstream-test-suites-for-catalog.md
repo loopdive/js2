@@ -352,3 +352,23 @@ loading, and asynchronous cases, remain explicit deferred coverage. The
 npm-compat generator invokes this adapter directly and publishes its numeric
 pass/total result on merge; the workflow guard rejects a missing or pending
 jsdom suite row.
+
+## 2026-08-14 styled-components synchronous utility slice
+
+styled-components 6.4.4 now verifies the complete 41-file source-unit
+inventory and 668 static registrations from the matching
+`styled-components@6.4.4` release tag (commit
+`5f69a304df5de81aae114928dcd98896c627c94a`). The first runtime adapter runs
+the original `addUnitIfNeeded`, `escape`, and `hyphenateStyleName` utility test
+files directly against their pinned release-source
+implementations, without changing callback bodies or inputs.
+
+All three generated modules compile and validate. Native Node passes **6/6**
+callbacks and Wasm also passes **6/6**. The native oracle normalizes the pinned
+monorepo's extra CommonJS default-export wrapper; the compiled source uses the
+release module directly, and both paths execute identical callback bodies.
+
+React, DOM, snapshot, SSR, Stylis, and larger object-graph files remain
+explicit deferred inventory. The npm-compat generator invokes the adapter
+directly so the merge-only refresh publishes numeric results and cannot fall
+back to `adapter pending`.

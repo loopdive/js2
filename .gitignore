@@ -103,6 +103,7 @@ tests/dogfood/report/
 /.stylelint-upstream-suite-generated/
 /.three-upstream-suite-generated/
 /.jsdom-upstream-suite-generated/
+/.styled-components-upstream-suite-generated/
 /check-*.ts
 /check-*.mts
 /debug-*.ts
