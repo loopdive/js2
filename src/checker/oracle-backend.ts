@@ -90,10 +90,25 @@ export class DivergenceLedger {
    * vocabulary (~15 names plus `propertyFactOf:<name>`), not the node count.
    */
   readonly byQuery = new Map<string, QueryDivergence>();
+  /**
+   * (#4218) Conflict samples, quota'd PER QUERY.
+   *
+   * `samples` cannot serve this purpose: it is a single FIFO over *all*
+   * divergences, and `weakened` outnumbers `conflicting` ~54:1 on a wide
+   * corpus — so the shared cap fills with weakened entries before a single
+   * conflict is seen. Measured on the 2,137-input run: 908 conflicts existed
+   * and 25 were sampled, none of them from `signatureOf`, the query with the
+   * *highest* conflict rate. A worklist you cannot see the top item of is not
+   * a worklist.
+   */
+  readonly conflictSamples: OracleDivergence[] = [];
+  private readonly conflictQuota = new Map<string, number>();
   private readonly maxSamples: number;
+  private readonly maxConflictsPerQuery: number;
 
-  constructor(maxSamples = 200) {
+  constructor(maxSamples = 200, maxConflictsPerQuery = 60) {
     this.maxSamples = maxSamples;
+    this.maxConflictsPerQuery = maxConflictsPerQuery;
   }
 
   private tally(query: string): QueryDivergence {
@@ -118,6 +133,11 @@ export class DivergenceLedger {
     } else {
       this.conflicting++;
       perQuery.conflicting++;
+      const used = this.conflictQuota.get(query) ?? 0;
+      if (used < this.maxConflictsPerQuery) {
+        this.conflictQuota.set(query, used + 1);
+        this.conflictSamples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node });
+      }
     }
     if (this.samples.length < this.maxSamples) {
       this.samples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node });
@@ -135,6 +155,8 @@ export class DivergenceLedger {
     this.weakened = 0;
     this.conflicting = 0;
     this.samples.length = 0;
+    this.conflictSamples.length = 0;
+    this.conflictQuota.clear();
     this.byQuery.clear();
   }
 }
