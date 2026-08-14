@@ -9,7 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot } from "../closures/capture-source-slot.js";
+import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -75,6 +75,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { emitThrowReferenceError } from "../js-errors.js"; // undeclared-identifier call → ReferenceError
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
@@ -1102,6 +1103,17 @@ export function compileIdentifierCall(
     // function binding whenever there is no lexical/module storage from which
     // this closure could actually be loaded. uuid exposed this as its local
     // test callback `rng` replacing the imported package `rng()` inside v1.
+    // (#3571 / #4394) Exact-shape uncurried-builtin aliases (propertyHelper's
+    // `__push`/`__join` = `Function.prototype.call.bind(Builtin.prototype.m)`)
+    // must be claimed BEFORE any stored-carrier dispatch: #4395's native-first
+    // bind provider otherwise routes the `$__bound_fn` through the stored
+    // `Function.prototype.call` VALUE, whose standalone body is the #2984
+    // degrade throw. The resolver only matches the immutable harness idiom.
+    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+      const uncurriedCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
+      if (uncurriedCall !== undefined) return uncurriedCall;
+    }
+
     let closureInfo =
       isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
@@ -1925,6 +1937,22 @@ export function compileIdentifierCall(
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal);
       if (dyn !== null) return dyn;
 
+      // §6.2.5.5 GetValue on an unresolvable Reference: calling a TRULY
+      // undeclared identifier (`$DETACHBUFFER(ab)` with no `includes:` that
+      // would define it — test262 harness/detachArrayBuffer.js) must throw
+      // ReferenceError, and the arguments must NOT be evaluated (the callee
+      // reference is resolved first, §13.3.6.1 step 1). The identifier READ
+      // path already throws for symbol-less names (#1380); this is the same
+      // rule at the call site, where the graceful undefined fallback below
+      // used to swallow it. Standalone/wasi only, and NOT under
+      // runtime-eval global bindings (an eval-defined global function has no
+      // static symbol yet is legitimately callable there).
+      if ((ctx.standalone || ctx.wasi) && !isRuntimeEvalGlobal && declaration === undefined && noJsHost(ctx)) {
+        emitThrowReferenceError(ctx, fctx, `${funcName} is not defined`);
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
+
       // Graceful fallback for unknown functions — compile arguments (for side effects)
       // then emit ref.null extern (undefined) as the return value.
       for (const arg of expr.arguments) {
@@ -2196,8 +2224,9 @@ export function compileIdentifierCall(
           const existing = fctx.boxedTdzFlags?.get(cap.name);
           if (existing) {
             // Already boxed by an enclosing closure construction or a prior
-            // call-site cap-prepend — share the box reference.
-            fctx.body.push({ op: "local.get", index: existing.localIdx });
+            // call-site cap-prepend — share the box reference. (#4394)
+            // Null-guarded: the teeing site may not dominate this one.
+            pushBoxedTdzFlagRef(fctx, existing);
           } else {
             // Fresh box: read the current i32 flag, struct.new an i32 ref cell,
             // tee into a new outer-fctx local, and re-aim
@@ -2261,6 +2290,9 @@ export function compileIdentifierCall(
               fctx.boxedTdzFlags.set(cap.name, {
                 refCellTypeIdx: i32RefCellTypeIdx,
                 localIdx: flagBoxLocal,
+                // (#4394) Record the raw i32 source so non-dominated reuse
+                // sites can lazily re-init the box from the true flag.
+                srcFlagIdx: liveFlagIdx,
               });
               if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
               fctx.tdzFlagLocals.set(cap.name, flagBoxLocal);

@@ -1827,9 +1827,10 @@ describe("#3522 object-method call ownership", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("keeps a captured method closure passed as a value on the direct path", async () => {
-    const result = await compile(
-      `export function run(input: number): number {
+  it.each(TARGETS)(
+    "prepares a captured method closure passed once to an immediate const consumer in the %s lane",
+    async (target) => {
+      const source = `export function run(input: number): number {
         const operations = {
           add(value: number): number { return value + 2; }
         };
@@ -1837,9 +1838,125 @@ describe("#3522 object-method call ownership", () => {
         const invoke = (value: number): number => add(value);
         const consume = (fn: (value: number) => number, value: number): number => fn(value);
         return consume(invoke, input);
+      }`;
+      const exactBodies = ["run", "run__closure_0", "run__closure_1", "run__closure_2"];
+      const direct = await compile(source, {
+        fileName: `object-method-value-destructured-capture-passed-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      let prepared: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = exactBodies.join(",");
+        prepared = await compile(source, {
+          fileName: `object-method-value-destructured-capture-passed-prepared-${target}.ts`,
+          emitWat: true,
+          experimentalIR: true,
+          optimize: true,
+          target,
+          trackIrOutcomes: true,
+        });
+      } finally {
+        if (previousPoison === undefined)
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+      }
+
+      for (const compiled of [direct, prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        expect((await instantiate(compiled)).run!(40)).toBe(42);
+      }
+      expect(outcome(prepared)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(prepared.irPostClaimErrors ?? []).toEqual([]);
+      expect(prepared.irCompiledFuncs ?? []).toEqual(exactBodies);
+      expect((prepared.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      expect(prepared.wat).not.toContain("__call_m_");
+      for (const bodyName of exactBodies) {
+        expect(watFunctionBody(prepared.wat, bodyName)).not.toMatch(/any\.convert_extern|extern\.convert_any/);
+      }
+      expectNoImportRegression(direct, prepared, target);
+      expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it.each([
+    [
+      "through a second callable pass",
+      "object-method-value-destructured-capture-deep-pass-direct.ts",
+      `
+        const consume = (fn: (value: number) => number, value: number): number => fn(value);
+        const relay = (fn: (value: number) => number, value: number): number => consume(fn, value);
+        return relay(invoke, input);
+      `,
+    ],
+    [
+      "through a callable return",
+      "object-method-value-destructured-capture-return-direct.ts",
+      `
+        const select = (fn: (value: number) => number): ((value: number) => number) => fn;
+        const selected = select(invoke);
+        return selected(input);
+      `,
+    ],
+    [
+      "to two immediate consumers",
+      "object-method-value-destructured-capture-two-consumers-direct.ts",
+      `
+        const consumeA = (fn: (value: number) => number, value: number): number => fn(value);
+        const consumeB = (fn: (value: number) => number, value: number): number => fn(value);
+        return consumeA(invoke, input) + consumeB(invoke, input) - 42;
+      `,
+    ],
+  ] as const)("keeps a captured method closure passed %s on the direct path", async (_label, fileName, body) => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number): number => add(value);
+        ${body}
       }`,
       {
-        fileName: "object-method-value-destructured-capture-passed-direct.ts",
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect((await instantiate(result)).run!(40)).toBe(42);
+    expect(outcome(result)).toMatchObject({
+      kind: "unsupported",
+      stage: "select",
+      legacyBodyEmitted: true,
+      irBodyEmitted: false,
+    });
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it("keeps a defaulted captured method closure on the direct path across a callable pass", async () => {
+    const result = await compile(
+      `export function run(input: number): number {
+        const operations = {
+          add(value: number): number { return value + 2; }
+        };
+        const { add } = operations;
+        const invoke = (value: number = 40): number => add(value);
+        const consume = (fn: (value: number) => number, value: number): number => fn(value);
+        return consume(invoke, input);
+      }`,
+      {
+        fileName: "object-method-value-destructured-capture-defaulted-pass-direct.ts",
         experimentalIR: true,
         trackIrOutcomes: true,
       },

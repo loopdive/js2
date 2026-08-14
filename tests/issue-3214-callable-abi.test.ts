@@ -72,6 +72,37 @@ export function test(): number {
 }
 `;
 
+// Neither callback consumer is reachable at runtime. They still contribute
+// distinct invoke-only callable signatures to the prepared IR graph. Keeping
+// allocation-only wrapper children alive for those signatures used to leave a
+// stale type index after optimization removed the unused function bodies.
+const INVOKE_ONLY_SIGNATURES_PROGRAM = `
+function zero(fn: () => number): number {
+  return fn();
+}
+function one(fn: (value: number) => number): number {
+  return fn(2);
+}
+export function run(input: number): number {
+  return input + 2;
+}
+`;
+
+const INVOKE_ONLY_SIGNATURE_BODIES = ["zero", "one", "run"] as const;
+
+// `fn` crosses a source FunctionTypeNode parameter boundary, so it is an
+// externref callable rather than an internal closure ref. A local consumer
+// must not reinterpret that value as the one-hop internal representation.
+const EXTERNAL_CALLABLE_CONSUMER_PROGRAM = `
+export function consumeExternal(fn: (value: number) => number, value: number): number {
+  const consume = (fn: (value: number) => number, value: number): number => fn(value);
+  return consume(fn, value);
+}
+export function run(input: number): number {
+  return input + 2;
+}
+`;
+
 async function compileAndRun(
   source: string,
   options: CompileOptions,
@@ -102,6 +133,11 @@ function watTypeLines(wat: string): string[] {
     .filter((line) => line.startsWith("(type "));
 }
 
+function watTypeLine(wat: string, typeRef: string): string | undefined {
+  if (/^\d+$/.test(typeRef)) return undefined;
+  return watTypeLines(wat).find((definition) => definition.startsWith(`(type ${typeRef} `));
+}
+
 function expectFunctionFirstParamExternref(wat: string, name: string): void {
   const header = wat.split("\n").find((line) => line.startsWith(`  (func $${name}`));
   expect(header, `missing $${name} WAT function`).toBeDefined();
@@ -109,10 +145,16 @@ function expectFunctionFirstParamExternref(wat: string, name: string): void {
 
   const typeRef = header!.match(/\(type ([^)]+)\)/)?.[1];
   expect(typeRef, `$${name} has neither inline params nor a type use`).toBeDefined();
-  const types = watTypeLines(wat);
-  const typeLine = /^\d+$/.test(typeRef!)
-    ? types[Number(typeRef)]
-    : types.find((line) => line.startsWith(`  (type ${typeRef} `));
+  if (/^\d+$/.test(typeRef!)) {
+    // Binaryen prints numeric type uses after recursive-type canonicalization,
+    // so their WAT indices cannot be reconstructed from textual order. The
+    // function's exact source ABI is still explicit in its retained local 0
+    // uses; pin that value carrier instead of accepting an unrelated type.
+    const body = functionBody(wat, name);
+    expect(body).toMatch(/local\.get 0\s+(?:local\.tee \d+\s+)?any\.convert_extern/);
+    return;
+  }
+  const typeLine = watTypeLine(wat, typeRef!);
   expect(typeLine, `missing WAT type ${typeRef} used by $${name}`).toContain("(param externref");
 }
 
@@ -202,7 +244,9 @@ function expectNamedPrivateCandidateArm(wat: string, callerName: string): void {
   expect(privateLifted, "same-arity named/private closure func type missing").toBeDefined();
   const privateSelfIdx = privateLifted!.match(/\(param \(ref null (\d+)\)\)/)?.[1];
   expect(privateSelfIdx).toBeDefined();
-  expect(functionBody(wat, callerName)).toMatch(new RegExp(`ref\\.cast \\(ref(?: null)? ${privateSelfIdx}\\)`));
+  expect(functionBody(wat, callerName)).toMatch(
+    new RegExp(`ref\\.cast(?: null)? \\(ref(?: null)? ${privateSelfIdx}\\)`),
+  );
 }
 
 function selectorPlan(source: string): ReturnType<typeof planIrCompilation> {
@@ -299,6 +343,169 @@ describe("#3214 B0 — canonical callable ABI", () => {
     expect(optimized.value).toBe(25);
     expect(unoptimized.result.irPostClaimErrors ?? []).toEqual([]);
     expect(optimized.result.irPostClaimErrors ?? []).toEqual([]);
+  });
+
+  it.each(["gc", "standalone"] as const)(
+    "keeps dead invoke-only callable signatures free of allocation dependencies in %s",
+    async (target) => {
+      const direct = await compile(INVOKE_ONLY_SIGNATURES_PROGRAM, {
+        fileName: `issue-3214-invoke-only-direct-${target}.ts`,
+        experimentalIR: false,
+        optimize: true,
+        target,
+      });
+      const previousPoison = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+      const prepared: CompileResult[] = [];
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = INVOKE_ONLY_SIGNATURE_BODIES.join(",");
+        for (const optimize of [false, true] as const) {
+          prepared.push(
+            await compile(INVOKE_ONLY_SIGNATURES_PROGRAM, {
+              fileName: `issue-3214-invoke-only-ir-${target}-${optimize}.ts`,
+              experimentalIR: true,
+              optimize,
+              target,
+              trackIrOutcomes: true,
+            }),
+          );
+        }
+      } finally {
+        if (previousPoison === undefined) {
+          Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+        } else {
+          process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previousPoison;
+        }
+      }
+
+      for (const compiled of [direct, ...prepared]) {
+        expect(compiled.success, compiled.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(WebAssembly.validate(compiled.binary)).toBe(true);
+        const run = (await instantiate(compiled)).run;
+        expect(run).toBeTypeOf("function");
+        expect((run as (input: number) => number)(40)).toBe(42);
+      }
+      for (const compiled of prepared) {
+        expect(compiled.irPostClaimErrors ?? []).toEqual([]);
+        expect(compiled.irCompiledFuncs ?? []).toEqual(INVOKE_ONLY_SIGNATURE_BODIES);
+        expect((compiled.irOutcomes ?? []).filter(({ legacyBodyEmitted }) => legacyBodyEmitted)).toEqual([]);
+      }
+
+      const optimized = prepared[1]!;
+      const directImports = WebAssembly.Module.imports(new WebAssembly.Module(direct.binary))
+        .map((entry) => `${entry.module}::${entry.name}`)
+        .sort();
+      const optimizedImports = WebAssembly.Module.imports(new WebAssembly.Module(optimized.binary))
+        .map((entry) => `${entry.module}::${entry.name}`)
+        .sort();
+      expect(optimizedImports.filter((label) => !directImports.includes(label))).toEqual([]);
+      expect(optimizedImports.length).toBeLessThanOrEqual(directImports.length);
+      if (target === "standalone") expect(optimizedImports).toEqual([]);
+      expect(optimized.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
+    },
+  );
+
+  it("keeps an external callable passed to a local consumer on the source-boundary ABI", async () => {
+    const result = await compile(EXTERNAL_CALLABLE_CONSUMER_PROGRAM, {
+      fileName: "issue-3214-external-callable-consumer.ts",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const run = (await instantiate(result)).run;
+    expect(run).toBeTypeOf("function");
+    expect((run as (input: number) => number)(40)).toBe(42);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect((result.irOutcomes ?? []).filter(({ displayName }) => displayName === "consumeExternal")).toEqual([
+      expect.objectContaining({
+        kind: "unsupported",
+        stage: "select",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      }),
+    ]);
+  });
+
+  it.each([
+    [
+      "a returned callable",
+      `
+function make(): (value: number) => number {
+  try { return (value: number): number => value + 2; } finally {}
+}
+export function run(input: number): number {
+  const external = make();
+  const consume = (fn: (value: number) => number, value: number): number => fn(value);
+  return consume(external, input);
+}
+`,
+    ],
+    [
+      "an object-method consumer",
+      `
+function make(): (value: number) => number {
+  try { return (value: number): number => value + 2; } finally {}
+}
+export function run(input: number): number {
+  const external = make();
+  const operations = {
+    consume(fn: (value: number) => number, value: number): number { return fn(value); }
+  };
+  return operations.consume(external, input);
+}
+`,
+    ],
+    [
+      "mixed internal and external consumer calls",
+      `
+function make(): (value: number) => number {
+  try { return (value: number): number => value + 2; } finally {}
+}
+export function run(input: number): number {
+  const external = make();
+  const local = (value: number): number => value + 2;
+  const consume = (fn: (value: number) => number, value: number): number => fn(value);
+  return consume(local, input) + consume(external, input) - 42;
+}
+`,
+    ],
+    [
+      "a top-level function value",
+      `
+function add(value: number): number { return value + 2; }
+export function run(input: number): number {
+  const consume = (fn: (value: number) => number, value: number): number => fn(value);
+  return consume(add, input);
+}
+`,
+    ],
+  ] as const)("keeps %s out of the internal one-hop closure ABI", async (_label, source) => {
+    const result = await compile(source, {
+      fileName: `issue-3214-one-hop-boundary-${_label.replaceAll(" ", "-")}.ts`,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const run = (await instantiate(result)).run;
+    expect(run).toBeTypeOf("function");
+    expect((run as (input: number) => number)(40)).toBe(42);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect((result.irOutcomes ?? []).filter(({ displayName }) => displayName === "run")).toEqual([
+      expect.objectContaining({
+        kind: "unsupported",
+        stage: "select",
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      }),
+    ]);
+    if (_label === "mixed internal and external consumer calls") {
+      // The consumer itself must not be prepared with the internal closure ABI
+      // after its second call supplies an externref/source-boundary callable.
+      expect(result.irCompiledFuncs ?? []).toEqual([]);
+    }
   });
 
   it("keeps callable call/coercion outside the linear backend before lowering", () => {
@@ -593,12 +800,12 @@ describe("#3214 B0 — canonical callable ABI", () => {
     expect(legacyConsumer.wat).not.toContain("__ir_closure_base_");
   });
 
-  it("does not widen selection to function-valued arguments or results", () => {
+  it("selects supported function-valued arguments and results without widening named values", () => {
     const inlineClaims = selectorClaims(`
       function apply(fn: () => number): number { return fn(); }
       export function inlineCaller(): number { return apply((): number => 1); }
     `);
-    expect(inlineClaims.has("inlineCaller")).toBe(false);
+    expect(inlineClaims.has("inlineCaller")).toBe(true);
 
     const namedClaims = selectorClaims(`
       function apply(fn: () => number): number { return fn(); }
@@ -614,10 +821,7 @@ describe("#3214 B0 — canonical callable ABI", () => {
         return fn();
       }
     `);
-    expect(resultPlan.funcs.has("make")).toBe(false);
-    expect(resultPlan.funcs.has("consume")).toBe(false);
-    expect(resultPlan.fallbacks?.find((fallback) => fallback.name === "make")?.reason).toBe(
-      "return-type-not-resolvable",
-    );
+    expect(resultPlan.funcs.has("make")).toBe(true);
+    expect(resultPlan.funcs.has("consume")).toBe(true);
   });
 });

@@ -2299,7 +2299,15 @@ jobs:
         if: always() && env.HOST_RAN == 'true'
         continue-on-error: true
         run: |
-          npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --all $META_ARGS \
+          # (#4394) $BASELINE / $META_ARGS were read from the GATE step's shell,
+          # but steps do not share environments — both were always empty here, so
+          # this step crashed with `ENOENT: open ''` on every run and the park
+          # comment's "N regressions" never named a file (it cost a full local
+          # A/B reconstruction on two parks in two days). BASELINE is the same
+          # static path the gate uses; META_ARGS is staleness metadata only and
+          # is deliberately dropped — the file listing is the evidence.
+          BASELINE="benchmarks/results/test262-current.jsonl"
+          npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --all \
             ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} \
             > merged-reports/test262-regressions-detail.txt 2>&1 || true
           echo "--- first 40 lines of the detailed report ---"
@@ -2677,7 +2685,14 @@ jobs:
           # so `git add -A` cannot stage them as deletions, and NEW runs/<sha>
           # cache files are staged explicitly via `git add -A --sparse`.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
+          # (#4362) `/runs/standalone-editions-index.json` MUST be materialized
+          # here: append-run-history.mjs reads the existing array off disk and
+          # rewrites it. Left out of the sparse spec the file reads as absent,
+          # the append starts a FRESH one-entry array, and `git add -A --sparse`
+          # commits that over the real history — capping the standalone
+          # per-edition trend at a single point forever (and a one-point series
+          # is below the chart's 2-point floor, so the curve never renders).
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json' '/runs/standalone-editions-index.json'
           git -C /tmp/js2wasm-baselines checkout main
           cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
           cp /tmp/js2wasm-baselines/test262-standalone-current.jsonl /tmp/js2wasm-baselines/test262-standalone-current.before.jsonl 2>/dev/null || true
@@ -3106,6 +3121,17 @@ jobs:
             # feature-examples.json and wedge generate:feature-badges:check.
             [ -f website/public/feature-examples.json ] && \
               git add -f website/public/feature-examples.json || true
+            # (#4362) The STANDALONE (host-free) twins of the two artifacts
+            # above, written by the same "Regenerate edition buckets" step.
+            # They back the per-edition pass bars and feature rows whenever the
+            # "JS host" toggle is off. Unstaged, they froze at whatever the
+            # #4362 PR happened to commit while their host counterparts were
+            # refreshed on every promote — so the standalone lane silently
+            # served older numbers than the host lane on the same page.
+            [ -f website/public/benchmarks/results/test262-standalone-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-standalone-editions.json || true
+            [ -f website/public/feature-examples-standalone.json ] && \
+              git add -f website/public/feature-examples-standalone.json || true
             # Landing-page feature-support badges, re-derived from the promoted
             # baseline just above. Staged so the badges and the committed
             # test262-current.json land in ONE atomic commit (keeps
@@ -3538,8 +3564,16 @@ jobs:
           # Metadata-only clone, materialize root files + runs/index.json (skip
           # the huge runs/ blob history — #3392). NEW runs/<sha> files are staged
           # explicitly with `git add -A --sparse` below.
+          # (#4362) `/runs/standalone-editions-index.json` is listed even though
+          # this job never writes it: an index entry that exists on the remote
+          # but is NOT materialized here can be staged as a DELETION by the
+          # `git add -A --sparse` below, which is how the file promote-baseline
+          # appends kept disappearing from the baselines repo (it re-appears as
+          # "create mode" on the next promote, then gets removed again — so the
+          # standalone per-edition trend never accumulated a second point and
+          # the chart's 2-point floor kept the curve permanently hidden).
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json' '/runs/standalone-editions-index.json'
           git -C /tmp/js2wasm-baselines checkout main
 
           # Snapshot the pre-refresh JSONLs for the #3335 trap-growth gate.
