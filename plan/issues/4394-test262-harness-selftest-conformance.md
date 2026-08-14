@@ -10,8 +10,16 @@ created: 2026-08-13
 related: [4251, 4304, 4262]
 loc-budget-allow:
   # ALL grants below are for the parallel-bucket integration change-set
-  # (async / tostring-dispatch / string-callable), each measured by its bucket
-  # agent with a targeted standalone A/B (0 flips) and an unchanged GC lane.
+  # (async / tostring-dispatch / string-callable / verifyproperty), each
+  # measured by its bucket agent with a targeted standalone A/B (0 flips) and
+  # an unchanged GC lane.
+  # +10 lines: the global-object-receiver gate for the standalone
+  # defineProperty arm lives beside the host-lane #4394 gate it mirrors; the
+  # barrel carries only the wiring to the new vec-length-set leaf module.
+  - src/codegen/index.ts
+  # +6 lines: the standalone global-object receiver exclusion, next to the
+  # identical host-lane exclusion (#4432 root cause 9) it extends.
+  - src/codegen/object-ops.ts
   # +186 lines: the two silent-drop repairs behind every "async completion
   # marker not observed" stall — a .then handler without compile-time
   # ClosureInfo was treated as ABSENT, and the standalone .then rejection path
@@ -57,6 +65,16 @@ coercion-sites-allow:
   # Number/Boolean carriers join the same mechanism.
   - src/codegen/builtin-ctor-callable.ts
 func-budget-allow:
+  # +9 lines: the wiring that registers the vec-length-set leaf module and the
+  # standalone global-object defineProperty gate — both single guarded calls
+  # whose bodies live in their own modules (verifyproperty bucket).
+  - src/codegen/index.ts::generateModule
+  # +6 lines: the standalone global-object receiver exclusion beside the
+  # host-lane #4432 root-cause-9 exclusion it extends (verifyproperty bucket).
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # +3 lines: the symbol-keyed entry skip in the for-in vec arm — enumeration
+  # must not surface a Symbol key as its numeric slot index (verifyproperty).
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
   # +10 lines: one more condition in the widening scan (unannotated
   # numeric-first literals), inside the scan whose order is load-bearing.
   - src/codegen/literals.ts::compileArrayLiteral

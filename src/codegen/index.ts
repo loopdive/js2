@@ -269,6 +269,7 @@ import {
   unshiftExternGetProtoCacheArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
@@ -5343,6 +5344,15 @@ export function generateModule(
     // reads (`arr[k]`, `arr["length"]`) instead of empty / undefined. Standalone
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
+
+    // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
+    // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
+    // own-property arm into `__hasOwnProperty`/`__object_hasOwn`, so
+    // propertyHelper's `isWritable(array, "length")` write/read/revert cycle
+    // round-trips host-free (see vec-length-set.ts). Runs after the vec fills
+    // above and BEFORE `fillTaDynViewMopArms` (dyn-view arms keep the front
+    // slot). Standalone only (no-op otherwise).
+    fillVecLengthDynamicArms(ctx);
 
     // (#3251 S1) Array-descriptor overlay: fill the reserved
     // `__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd` bodies (companion
