@@ -1,4 +1,36 @@
+import type { Instr } from "../../ir/types.js";
 import type { FunctionContext } from "../context/types.js";
+
+/**
+ * (#4394) Push an EXISTING boxed-TDZ-flag ref (`fctx.boxedTdzFlags` entry),
+ * null-guarded. The box local is teed by whichever capture-prepend site runs
+ * first, and that site does NOT dominate its siblings: deepEqual.js's `format`
+ * builds the `usage` box inside its first `return lazyResult…` branch, so
+ * every other branch read the local while still null and the callee trapped on
+ * the TDZ check (`struct.get` on a null `(ref null $i32cell)`). Re-init the
+ * SAME local lazily — from the recorded raw i32 flag when the box was built
+ * from one, else flag=1 ("treat as initialized", the pre-#1205 behaviour the
+ * fresh-box arm already falls back to) — so all sites converge on one box.
+ */
+export function pushBoxedTdzFlagRef(
+  fctx: FunctionContext,
+  entry: { refCellTypeIdx: number; localIdx: number; srcFlagIdx?: number },
+): void {
+  const initFlag: Instr[] =
+    entry.srcFlagIdx !== undefined ? [{ op: "local.get", index: entry.srcFlagIdx }] : [{ op: "i32.const", value: 1 }];
+  fctx.body.push({ op: "local.get", index: entry.localIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      ...initFlag,
+      { op: "struct.new", typeIdx: entry.refCellTypeIdx },
+      { op: "local.set", index: entry.localIdx },
+    ],
+  });
+  fctx.body.push({ op: "local.get", index: entry.localIdx });
+}
 
 /**
  * Which local a capture-argument prepend should read when it hands a lifted
