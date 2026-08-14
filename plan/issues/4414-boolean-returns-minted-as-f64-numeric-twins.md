@@ -1,6 +1,6 @@
 ---
-id: 4407
-title: "boolean-returning functions minted as f64 numeric twins — live standalone miscompile on string concatenation"
+id: 4414
+title: "devirtualized prototype-method call returns a boolean as a number — live standalone miscompile"
 status: ready
 sprint: current
 created: 2026-08-14
@@ -9,10 +9,14 @@ horizon: s
 feasibility: medium
 task_type: bug
 area: codegen
-related: [4406, 4405, 3754]
+related: [4406, 4405, 3754, 4157]
 ---
 
-# #4407 — boolean returns treated as numeric: `("" + p.eat(5)).length` → 1, not 4
+# #4414 — devirtualized boolean return typed as a number: `("" + p.eat(5)).length` → 1, not 4
+
+> **Read the Localization section below FIRST.** The original framing (the
+> `numericFunctions` fixpoint / `refinedTwinReturnType`) was measured and
+> RULED OUT. The defect is in the direct-call devirtualization path.
 
 ## Problem
 
