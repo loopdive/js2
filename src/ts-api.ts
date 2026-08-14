@@ -80,12 +80,77 @@ function getNodeRequire(): CjsRequire | null {
   }
 }
 
+// ── Lane policy (project decision, 2026-08-14) ───────────────────────
+//
+// TypeScript 7 may back the parser/checker frontend **only in the Node
+// lane**. Two lanes stay pinned to typescript@5 *permanently* — this is a
+// settled architectural boundary, not work-in-progress:
+//
+//   - **browser** — TS7's programmatic API (`typescript7/unstable/sync`) is a
+//     Go binary spoken to over IPC. A browser cannot spawn it. Compiling tsgo
+//     to Wasm was evaluated and rejected (2026-08-14): the native binary is
+//     24 MB (vs typescript@5's 8.7 MB of JS), Go's Wasm targets are
+//     single-threaded so the parallelism behind tsgo's speed is lost, and the
+//     playground would still bundle TypeScript regardless because Monaco
+//     ships its own language service for editor IntelliSense.
+//   - **runtime-eval** — `src/runtime-eval.ts` re-enters the pipeline
+//     SYNCHRONOUSLY (`compileSourceSync`) when a compiled module calls
+//     `__extern_eval` at runtime, and it must work in the browser too. A
+//     subprocess round-trip cannot serve a synchronous in-process re-entry.
+//
+// Consumers must gate on {@link isTs7Active}, NOT on the raw {@link isTs7}
+// flag: the runtime-eval carve-out is a *dynamic* scope (the process may be
+// mid-eval while the outer compile legitimately used TS7), so it cannot be
+// answered at module-load time. See #1029.
+export type TsFrontendLane = "node" | "browser" | "runtime-eval";
+
+/** The lane policy itself — pure, so it can be asserted in tests. */
+export function ts7EligibleForLane(lane: TsFrontendLane): boolean {
+  return lane === "node";
+}
+
+// Depth, not a boolean: eval can nest (an eval'd module may itself eval).
+let runtimeEvalDepth = 0;
+
+/**
+ * Run `fn` with the frontend pinned to typescript@5 for its whole dynamic
+ * extent. `src/runtime-eval.ts` wraps every pipeline re-entry in this, so the
+ * eval carve-out holds no matter which backend the outer compile chose.
+ */
+export function runWithTs5Pinned<T>(fn: () => T): T {
+  runtimeEvalDepth++;
+  try {
+    return fn();
+  } finally {
+    runtimeEvalDepth--;
+  }
+}
+
+/** The lane this call is executing in, right now. */
+export function currentTsFrontendLane(): TsFrontendLane {
+  if (runtimeEvalDepth > 0) return "runtime-eval";
+  return isBrowserLikeRuntime() ? "browser" : "node";
+}
+
 // Resolve which TypeScript implementation to use as the runtime backend. The
 // CLI sets `process.env.JS2WASM_TS7` BEFORE this module is first imported (it
 // parses argv synchronously and dynamically imports the rest of the compiler),
 // so this single decision is stable for the lifetime of the process.
+//
+// NOTE: this is the *opt-in flag*, resolved once. It already excludes the
+// browser (which is decided at load time), but it CANNOT see the
+// runtime-eval scope — query `isTs7Active()` at the point of use instead.
 export const isTs7: boolean =
   !isBrowserLikeRuntime() && typeof process !== "undefined" && !!process.env && process.env.JS2WASM_TS7 === "1";
+
+/**
+ * Is the TS7 frontend active for THIS call? The opt-in flag AND the lane
+ * policy. Every site that would route parsing/checking through TS7 must gate
+ * on this rather than on `isTs7`.
+ */
+export function isTs7Active(): boolean {
+  return isTs7 && ts7EligibleForLane(currentTsFrontendLane());
+}
 
 function loadTs5Module(): typeof import("typescript") {
   // The default backend is already statically imported above. Returning it

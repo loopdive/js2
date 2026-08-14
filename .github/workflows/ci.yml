@@ -119,7 +119,14 @@ jobs:
         run: |
           # These checks are independent and read-only. Running them as three
           # lanes keeps the required `quality` context intact while bounding
-          # this stage by typecheck (the long pole) instead of their sum.
+          # this stage by the slowest lane instead of their sum.
+          #
+          # (#1029) `typecheck` is tsgo (TypeScript 7) since 2026-08-14 — same
+          # src/ tree, zero diagnostics, ~21s vs ~122s for TS5, so typecheck is
+          # no longer the long pole. TS5 remains available as
+          # `pnpm run typecheck:ts5`, and `prepublishOnly` still runs the full
+          # build (vite-plugin-dts emits declarations with TS5), so TS5's
+          # opinion still gates anything that reaches npm.
           set +e
           tmp_dir=$(mktemp -d)
 
