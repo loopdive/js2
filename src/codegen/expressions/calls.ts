@@ -3723,9 +3723,9 @@ export function tryEmitInlineDynamicCall(
   // Capture the helper indices AFTER the flush: the flush re-bases `funcMap`
   // for defined functions, so these are the settled, final indices (see the
   // stale-capture note above).
-  const boxNumberIdx = ctx.funcMap.get("__box_number");
-  const unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
-  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  let boxNumberIdx = ctx.funcMap.get("__box_number");
+  let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
+  let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
 
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
@@ -3755,7 +3755,7 @@ export function tryEmitInlineDynamicCall(
       vecPushIdx: vecBuilders.pushIdx,
     };
   }
-  const applyFallback = wantApplyFallback ? reserveDynamicApplyFallback(ctx) : undefined;
+  let applyFallback = wantApplyFallback ? reserveDynamicApplyFallback(ctx) : undefined;
   // (#2933) Variadic builtin value-closure arm pieces. Set at Math.max/Math.min
   // value-read time (all of its types + the closure func are then already
   // registered — DEFINED funcs only, no import, no index shift). One lifted
@@ -3808,6 +3808,49 @@ export function tryEmitInlineDynamicCall(
     fctx.body.push({ op: "local.set", index: argLocal });
     argLocals.push(argLocal);
   }
+
+  // Compiling the callee/arguments above can itself add late imports —
+  // `new Function("…")()` as the CALLEE routes through
+  // `emitStandaloneDynamicFunctionRuntime` → `ensureLateImport(
+  // "__runtime_new_function")` + flush — which shifts every defined-function
+  // index AFTER the captures above. The flush repairs `funcMap` and bodies
+  // already attached to a tracked FunctionContext, but the captured LOCALS
+  // stay stale-low, so every dispatch arm baked `call <box-1>` — the adjacent
+  // `__str_to_number` native instead of `__box_number` — and the module failed
+  // validation ("call[0] expected type externref, found call_ref of type
+  // f64"; test262 harness/wellKnownIntrinsicObjects.js standalone). This is
+  // the same stale-capture class the ensure-before-capture block above fixed
+  // for this function's OWN import insertions; the callee/argument compile was
+  // the remaining insertion point. Flush (idempotent) and re-capture, and
+  // re-materialize the arm pieces whose funcIdxs were captured pre-callee
+  // (all reserve*/ensure* here are funcMap-backed and idempotent).
+  flushLateImportShifts(ctx, fctx);
+  boxNumberIdx = ctx.funcMap.get("__box_number");
+  unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
+  isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) {
+    // The helpers existed at the first capture; funcMap entries are shifted,
+    // never removed, so this cannot happen — bail defensively if it ever does
+    // (callee/args are all consumed into locals, the stack is empty here).
+    return null;
+  }
+  if (proxyArm !== undefined) {
+    const dispatchIdx = ctx.funcMap.get("__proxy_apply_dispatch");
+    const vecBuilders = ensureObjVecBuilders(ctx);
+    if (dispatchIdx !== undefined) {
+      proxyArm = { ...proxyArm, dispatchIdx, vecNewIdx: vecBuilders.newIdx, vecPushIdx: vecBuilders.pushIdx };
+    }
+  }
+  if (boundArm !== undefined) {
+    const vecBuilders = ensureObjVecBuilders(ctx);
+    boundArm = {
+      ...boundArm,
+      applyIdx: reserveApplyClosure(ctx),
+      vecNewIdx: vecBuilders.newIdx,
+      vecPushIdx: vecBuilders.pushIdx,
+    };
+  }
+  if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);
 
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).

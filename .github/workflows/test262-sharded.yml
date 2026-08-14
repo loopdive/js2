@@ -2299,7 +2299,15 @@ jobs:
         if: always() && env.HOST_RAN == 'true'
         continue-on-error: true
         run: |
-          npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --all $META_ARGS \
+          # (#4394) $BASELINE / $META_ARGS were read from the GATE step's shell,
+          # but steps do not share environments — both were always empty here, so
+          # this step crashed with `ENOENT: open ''` on every run and the park
+          # comment's "N regressions" never named a file (it cost a full local
+          # A/B reconstruction on two parks in two days). BASELINE is the same
+          # static path the gate uses; META_ARGS is staleness metadata only and
+          # is deliberately dropped — the file listing is the evidence.
+          BASELINE="benchmarks/results/test262-current.jsonl"
+          npx tsx scripts/diff-test262.ts "$BASELINE" merged-reports/test262-results-merged.jsonl --all \
             ${TEST262_SCOPE:+--path-filter "$TEST262_SCOPE"} \
             > merged-reports/test262-regressions-detail.txt 2>&1 || true
           echo "--- first 40 lines of the detailed report ---"

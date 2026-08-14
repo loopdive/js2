@@ -175,6 +175,17 @@ jobs:
             if (!packages.every((entry) => entry.name && entry.compile)) {
               throw new Error(`${path} has entries missing name/compile; refusing to publish`);
             }
+            const byName = new Map(packages.map(entry => [entry.name, entry]));
+            const suitePins = JSON.parse(fs.readFileSync("tests/dogfood/npm-compat-upstream-sources.json", "utf8"));
+            for (const pin of suitePins.filter(entry => entry.suiteScript)) {
+              const tests = byName.get(pin.name)?.tests;
+              if (!tests || typeof tests.passed !== "number" || typeof tests.total !== "number") {
+                throw new Error(`${pin.name} has ${pin.suiteScript} but its unit-test result is absent from ${path}`);
+              }
+              if (tests.status === "not-integrated") {
+                throw new Error(`${pin.name} still reports adapter pending despite ${pin.suiteScript}`);
+              }
+            }
             console.log(`ok: ${packages.length} packages`);
           '
 

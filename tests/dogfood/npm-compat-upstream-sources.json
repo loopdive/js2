@@ -98,6 +98,7 @@
     "commit": "90983f40dce5e20beea4e5618b5e0426a6a7f4f0",
     "cacheKey": "prettier",
     "compileScript": "dogfood:prettier",
+    "suiteScript": "dogfood:prettier-upstream-suite",
     "inventory": {
       "directory": "tests/unit",
       "include": "^tests/unit/[^/]+\\.js$",
@@ -128,6 +129,7 @@
     "commit": "1337d6b537afb2d3f501074c8ac4ef4308221197",
     "cacheKey": "axios",
     "compileScript": "dogfood:axios",
+    "suiteScript": "dogfood:axios-upstream-suite",
     "inventory": {
       "directory": "tests/unit",
       "include": "^tests/unit/.*\\.test\\.js$",
@@ -239,6 +241,7 @@
     "commit": "50b010210df25c470386f7e39a9389a4a77b3842",
     "cacheKey": "redux",
     "compileScript": "dogfood:redux",
+    "suiteScript": "dogfood:redux-upstream-suite",
     "inventory": {
       "directory": "test",
       "include": "^test/.*\\.spec\\.ts$",

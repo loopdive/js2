@@ -221,3 +221,61 @@ scores and pins directly. Remaining packages with no runtime adapter stay
 explicitly `adapter-pending`; the next slices should expand the unified runner
 in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
 large compiler/tooling suites).
+
+## 2026-08-14 Redux complete runtime suite
+
+Redux 5.0.1 now uses all nine original `*.spec.ts` runtime files from
+`reduxjs/redux@v5.0.1` (commit
+`50b010210df25c470386f7e39a9389a4a77b3842`). All 82 callbacks register and
+all nine generated test modules compile to valid Wasm. The synchronous Node
+oracle reproduces 78 callbacks; the four promise-returning callbacks are
+explicitly harness-incompatible until the shared runner supports async Wasm
+tests. The measured Wasm baseline is **5/78**: ten callbacks reach an assertion
+and diverge, while 63 encounter a module-level runtime trap in the larger
+`bindActionCreators`, `combineReducers`, and `createStore` files. The existing
+1/1 package API workload remains visible as a separate secondary result.
+
+Vitest's spy/assertion surface and the one RxJS protocol test use narrow test
+infrastructure shims; the original callback bodies and inputs are unchanged.
+
+## 2026-08-14 Axios synchronous unit slice and publication contract
+
+Axios 1.16.1 now verifies the complete 49-file `tests/unit/**/*.test.js`
+inventory and its 645 static registration sites at
+`axios/axios@v1.16.1` (commit
+`1337d6b537afb2d3f501074c8ac4ef4308221197`). The first runtime adapter selects
+25 self-contained synchronous files: **170/170** callbacks pass in Node, all 25
+generated modules compile and validate, and **16/170** pass in Wasm. Two
+callbacks reach differing assertions; the other 152 scored failures are
+module-level runtime traps. The remaining 24 files are counted as deferred and
+require async execution plus HTTP server/socket/stream/filesystem test
+infrastructure.
+
+This result is not a local-only report. The main npm-compat generator invokes
+the Axios adapter and writes its upstream counts into the Axios card. The
+merge-only `npm-compat-refresh.yml` workflow now derives the set of configured
+suite adapters from `npm-compat-upstream-sources.json` and refuses to publish
+if any adapter lacks numeric pass/total results. This also protects the Redux,
+clsx, cookie, and pre-existing upstream lanes from silently reverting to
+`adapter pending` on `npm-compat.html`.
+
+## 2026-08-14 Prettier synchronous source-unit slice
+
+Prettier 3.8.1 now verifies all 20 top-level `tests/unit/*.js` files and 48
+static registration sites from `prettier/prettier@3.8.1` (commit
+`90983f40dce5e20beea4e5618b5e0426a6a7f4f0`). The first runtime adapter runs
+the three self-contained synchronous files `ast-path.js`, `errors.js`, and
+`make-string.js` without rewriting their callback bodies or inputs. All three
+generated modules compile and validate, all **8/8** callbacks pass in native
+Node, and **1/8** passes in Wasm.
+
+The seven measured failures are useful compatibility evidence rather than a
+gate: the four `AstPath` callbacks trap with `illegal cast`, while the three
+custom `Error` subclasses expose the existing builtin-subclass/name gap
+([#1366a](https://github.com/loopdive/js2wasm/blob/main/plan/issues/1366a-class-extends-error-builtin-subclassing.md),
+[#2962](https://github.com/loopdive/js2wasm/blob/main/plan/issues/2962-native-error-identity-stringification.md)).
+The remaining 17 source files are explicitly deferred for async plugin loading,
+snapshots, Node-only helpers, external development dependencies, or larger
+document/parser graphs. The npm-compat generator now publishes this score, and
+the merge-only workflow's configured-suite guard requires the numeric Prettier
+result before it can update `npm-compat.html`.

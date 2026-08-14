@@ -29,7 +29,7 @@ import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { emitTest262ErrorWithModuleCtor } from "./test262-error-ctor.js";
-import { errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
+import { errorCtorNameIsUserFunctionShadowed, errorCtorNameIsUserShadowed } from "./shadowed-error-ctor.js"; // (#4394) intrinsic-name shadow guard
 import { coerceType, compileArrowAsClosure, compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -358,7 +358,27 @@ export function tryCompileBuiltinGlobalNew(
       ctorName === "URIError" ||
       ctorName === "EvalError" ||
       ctorName === "ReferenceError";
-    if ((isIntrinsicErrorName && !errorCtorNameIsUserShadowed(expr, ctorName)) || ctorName === "Test262Error") {
+    // (#4394 standalone) The literal harness DECLARES `function Test262Error`
+    // (sta.js). The standalone `$Error_struct` interception below returns a
+    // value that FAILS the `$__fnctor_Test262Error` cast at the binding site —
+    // the instance lands as NULL: `.message`/`.constructor` undefined,
+    // `instanceof` null-derefs, and a thrown value renders "undefined". Decline
+    // the claim for the declared-FUNCTION shape only (narrow helper), so the
+    // ordinary user-fnctor lowering constructs it; the wrapped-harness `class
+    // Test262Error extends Error` injection (#2902) keeps the interception.
+    // Host mode is reconciled by emitTest262ErrorWithModuleCtor instead.
+    const test262StandaloneUserFn =
+      ctorName === "Test262Error" &&
+      (ctx.wasi || ctx.standalone) &&
+      errorCtorNameIsUserFunctionShadowed(expr, ctorName);
+    // (#4394) A declined instance is an ordinary user struct — tell the #2962
+    // exception renderer, or a thrown one renders "[object Object]" and the
+    // merged report loses the "Test262Error: …" signature (the #4484 park).
+    if (test262StandaloneUserFn) (ctx.exnRenderFnctorErrorNames ??= new Set()).add(ctorName);
+    if (
+      (isIntrinsicErrorName && !errorCtorNameIsUserShadowed(expr, ctorName)) ||
+      (ctorName === "Test262Error" && !test262StandaloneUserFn)
+    ) {
       const args = expr.arguments ?? [];
       if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Compile the message argument to externref

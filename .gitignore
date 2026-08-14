@@ -94,6 +94,9 @@ tests/dogfood/report/
 /.clsx-upstream-suite-generated/
 /.cookie-upstream-suite-generated/
 /.marked-upstream-suite-generated/
+/.redux-upstream-suite-generated/
+/.axios-upstream-suite-generated/
+/.prettier-upstream-suite-generated/
 /.lodash-upstream-suite-generated/
 /.lodash-es-upstream-suite-generated/
 /.moment-upstream-suite-generated/

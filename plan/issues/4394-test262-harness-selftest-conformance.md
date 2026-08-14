@@ -10,8 +10,23 @@ created: 2026-08-13
 related: [4251, 4304, 4262]
 loc-budget-allow:
   # ALL grants below are for the parallel-bucket integration change-set
-  # (async / tostring-dispatch / string-callable), each measured by its bucket
-  # agent with a targeted standalone A/B (0 flips) and an unchanged GC lane.
+  # (async / tostring-dispatch / string-callable / verifyproperty), each
+  # measured by its bucket agent with a targeted standalone A/B (0 flips) and
+  # an unchanged GC lane.
+  # +10 lines: the global-object-receiver gate for the standalone
+  # defineProperty arm lives beside the host-lane #4394 gate it mirrors; the
+  # barrel carries only the wiring to the new vec-length-set leaf module.
+  - src/codegen/index.ts
+  # +6 lines: the standalone global-object receiver exclusion, next to the
+  # identical host-lane exclusion (#4432 root cause 9) it extends.
+  - src/codegen/object-ops.ts
+  # +10 lines: the standalone bound-function arm's #3571-uncurried-dispatch
+  # ordering guard — the #4395 provider widening must not run ahead of it
+  # (test262error-identity bucket; regression attributed to dbccc693).
+  - src/codegen/fnctor-escape-gate.ts
+  # +2 lines: routing the caught-error property fallback through its new leaf
+  # module; the dispatch ladder carries only the call.
+  - src/codegen/property-access-dispatch.ts
   # +186 lines: the two silent-drop repairs behind every "async completion
   # marker not observed" stall — a .then handler without compile-time
   # ClosureInfo was treated as ABSENT, and the standalone .then rejection path
@@ -48,6 +63,28 @@ loc-budget-allow:
   # +4 lines: the identifier-call arm consults the exact-signature match
   # before the kind-only fallback.
   - src/codegen/expressions/call-identifier.ts
+  # ALL typedarray-intrinsics bucket grants below: agent-measured, 200-file
+  # TypedArray A/B zero pass->fail, GC lane byte-identical.
+  # +44 net: the funcIdx stale-capture fix lives inside tryEmitInlineDynamicCall
+  # in this frozen file — re-flush + re-capture after callee/arg compiles; the
+  # #329/#1677/#1839/#1886/#2043 index-desync family.
+  - src/codegen/expressions/calls.ts
+  # +56: nullish-receiver TypeError guards in the closed-method dispatchers.
+  - src/codegen/closed-method-dispatch.ts
+  # +17: undeclared-callee ReferenceError arm (S13.3.6.1 ordering).
+  - src/codegen/expressions/call-identifier.ts
+  # +9: union-receiver skip of the covered-form NamedEvaluation .name fold.
+  - src/codegen/array-object-proto.ts
+  # +13 (net +6): Symbol.toStringTag routing to the $__ta_dyn_view MOP arm.
+  - src/codegen/property-access-dispatch.ts
+  # +47: the Symbol-key arm answering [[TypedArrayName]] (S23.2.3.34) — this
+  # module is the designated owner of $__ta_dyn_view MOP arms.
+  - src/codegen/ta-dyn-mop.ts
+  # +71 lines: the #4394 renderer arms for declined harness error fnctors —
+  # they live in emitExceptionRenderExports beside the index-shift-safety
+  # contract they must obey, and mirror the __error_to_string concat idiom
+  # defined in this same file.
+  - src/codegen/native-strings.ts
 coercion-sites-allow:
   # +3 sites (__extern_toString, __unbox_number, __is_truthy), all inside the
   # new [[Call]] arm for the builtin `String` carrier. Calling `String(x)` IS
@@ -56,7 +93,37 @@ coercion-sites-allow:
   # the #1917/#2108 coercion engine is the recorded follow-up for when the
   # Number/Boolean carriers join the same mechanism.
   - src/codegen/builtin-ctor-callable.ts
+  # +1 site (__unbox_number) in the array-length WRITE arm: setting `.length`
+  # performs ToNumber/ToUint32 on the incoming value (§10.4.2.4 ArraySetLength)
+  # — the coercion is the arm's substance (verifyproperty bucket). Same
+  # follow-up as above: route through the #1917/#2108 engine.
+  - src/codegen/vec-length-set.ts
 func-budget-allow:
+  # +9 lines: the wiring that registers the vec-length-set leaf module and the
+  # standalone global-object defineProperty gate — both single guarded calls
+  # whose bodies live in their own modules (verifyproperty bucket).
+  - src/codegen/index.ts::generateModule
+  # +6 lines: the standalone global-object receiver exclusion beside the
+  # host-lane #4432 root-cause-9 exclusion it extends (verifyproperty bucket).
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # +3 lines: the symbol-keyed entry skip in the for-in vec arm — enumeration
+  # must not surface a Symbol key as its numeric slot index (verifyproperty).
+  - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  # ALL typedarray-intrinsics bucket function grants: agent-measured A/B clean.
+  # +47: the Symbol-key [[TypedArrayName]] arm in the designated $__ta_dyn_view
+  # MOP owner; the arm switches on the view's kind field, inherently inline.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  # +43: the stale-capture fix — re-flush + re-capture of every baked funcIdx
+  # after callee/arg compilation, inside the function that owns the bake sites.
+  - src/codegen/expressions/calls.ts::tryEmitInlineDynamicCall
+  # +9: union-receiver dynamic .name read beside the static fold it bypasses.
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  # +2: the nullish-receiver guard splice points; guard bodies live in helpers.
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  # +16 lines: the standalone Test262Error prototype-method binding arm beside
+  # the host-lane #4394 arm it mirrors (test262error-identity bucket); the
+  # bodies live in shadowed-error-ctor.ts / caught-error-prop-fallback.ts.
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   # +10 lines: one more condition in the widening scan (unannotated
   # numeric-first literals), inside the scan whose order is load-bearing.
   - src/codegen/literals.ts::compileArrayLiteral

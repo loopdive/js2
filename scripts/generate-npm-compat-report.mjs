@@ -44,8 +44,10 @@ import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
 import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
 import { runHarness as runReduxWorkload } from "../tests/dogfood/redux-workload-harness.mjs";
+import { runHarness as runReduxUpstreamSuite } from "../tests/dogfood/redux-upstream-suite.mjs";
 import { runHarness as runJsdomWorkload } from "../tests/dogfood/jsdom-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
+import { runHarness as runPrettierUpstreamSuite } from "../tests/dogfood/prettier-upstream-suite.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
@@ -55,6 +57,7 @@ import { runHarness as runHonoUpstreamSuite } from "../tests/dogfood/hono-upstre
 import { runHarness as runLodashUpstreamSuite } from "../tests/dogfood/lodash-upstream-suite.mjs";
 import { runHarness as runUuidUpstreamSuite } from "../tests/dogfood/uuid-upstream-suite.mjs";
 import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-upstream-suite.mjs";
+import { runHarness as runAxiosUpstreamSuite } from "../tests/dogfood/axios-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1667,8 +1670,9 @@ if (selectedPackages.has("eslint")) {
 }
 
 if (selectedPackages.has("prettier")) {
-  console.log("[npm-compat] prettier — bounded package-entry compile/validate...");
+  console.log("[npm-compat] prettier — package entry + selected original upstream unit tests...");
   const prettierReport = await runPrettier({ quiet: true });
+  const prettierSuite = await runPrettierUpstreamSuite({ quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "prettier",
@@ -1677,7 +1681,25 @@ if (selectedPackages.has("prettier")) {
       entryFile: prettierReport.prettier.entryModule.replace(/^package\//, ""),
       shape: "esm-project",
       report: prettierReport,
-      tests: null,
+      tests: {
+        kind: "upstream-suite",
+        passed: prettierSuite.results?.passed ?? null,
+        total: prettierSuite.results?.scored ?? null,
+        passRatePct:
+          prettierSuite.results?.scored > 0
+            ? Number(((prettierSuite.results.passed / prettierSuite.results.scored) * 100).toFixed(1))
+            : null,
+        admitted: prettierSuite.extraction?.testsRegistered ?? null,
+        executed: prettierSuite.results?.scored ?? null,
+        upstreamTestsSeen: prettierSuite.upstreamSuite?.registrationSites ?? null,
+        harnessIncompatible: prettierSuite.extraction?.nativeFailed ?? null,
+        sourceIssue: 3995,
+        upstreamPin: {
+          repo: prettierSuite.upstreamSuite?.repo ?? null,
+          tag: prettierSuite.upstreamSuite?.tag ?? null,
+          commit: prettierSuite.upstreamSuite?.commit ?? null,
+        },
+      },
       perf: null,
     }),
   );
@@ -1858,9 +1880,13 @@ for (const entry of NPM_COMPAT_CATALOG) {
           ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })
           : entry.name === "uuid"
             ? runUuidUpstreamSuite
-            : entry.name === "moment"
-              ? runMomentUpstreamSuite
-              : null;
+            : entry.name === "redux"
+              ? runReduxUpstreamSuite
+              : entry.name === "axios"
+                ? runAxiosUpstreamSuite
+                : entry.name === "moment"
+                  ? runMomentUpstreamSuite
+                  : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
@@ -1888,7 +1914,6 @@ for (const entry of NPM_COMPAT_CATALOG) {
       }
     : null;
   const tests =
-    workload?.tests ??
     (catalogUpstreamReport
       ? {
           kind: "upstream-suite",
@@ -1905,7 +1930,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             catalogUpstreamReport.extraction?.upstreamTestsSeen ??
             catalogUpstreamReport.results?.scored ??
             null,
-          harnessIncompatible: 0,
+          harnessIncompatible: catalogUpstreamReport.extraction?.nativeFailed ?? 0,
           quarantined: 0,
           sourceIssue: 3995,
           upstreamPin: {
@@ -1913,8 +1938,10 @@ for (const entry of NPM_COMPAT_CATALOG) {
             tag: catalogUpstreamReport.upstreamSuite?.tag ?? null,
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
+          packageApiWorkload: workload?.tests ?? undefined,
         }
       : null) ??
+    workload?.tests ??
     upstreamTests ??
     (hasApiWorkload
       ? {
