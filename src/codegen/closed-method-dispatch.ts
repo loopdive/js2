@@ -171,6 +171,12 @@ function reserveNullishReceiverThrow(ctx: CodegenContext, methodName: string): v
  */
 function nullishReceiverGuardInstrs(ctx: CodegenContext, methodName: string): Instr[] {
   if (!ctx.standalone && !ctx.wasi) return [];
+  // (#4394) `.then` is exempt: the standalone then-chain native (async-scheduler
+  // + then-thenable-miss) OWNS then-receiver semantics — its thenable/miss arms
+  // must observe the receiver themselves, and guarding here composes into an
+  // illegal cast on a user-thenable receiver (measured: the guard alone flips
+  // harness/asyncHelpers-throwsAsync-func-never-settles.js pass→fail).
+  if (methodName === "then") return [];
   const newTypeErrIdx = ctx.funcMap.get("__new_TypeError");
   if (newTypeErrIdx === undefined || ctx.exnTagIdx < 0) return [];
   const nullishIdx = ctx.funcMap.get("__nullish_to_null");
