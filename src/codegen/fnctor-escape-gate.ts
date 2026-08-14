@@ -458,6 +458,7 @@ function classifyUse(
   checker: ts.TypeChecker,
   useNode: ts.Expression,
   ownFields: ReadonlySet<string>,
+  standalone?: boolean,
 ): "typed" | "dynamic" | "neutral" {
   const parent = useNode.parent;
 
@@ -565,6 +566,15 @@ function classifyUse(
       return "neutral";
     }
   }
+
+  // (#4394) `throw inst;` — a thrown instance escapes to arbitrary catch
+  // sites, which consume it ONLY dynamically (`thrown.constructor` in
+  // assert.throws, `e instanceof F`, the prototype-walking `e.toString()`).
+  // Classifying it neutral left the harness's own `Test262Error` keep-static,
+  // so none of the identity machinery (reserved struct idx, #4155 typed
+  // instances, #2660 S2 prototype `$Object`, #3962 instanceof arm) engaged.
+  // STANDALONE-ONLY, the same narrowest-site wiring as the #4261 clause below.
+  if (ts.isThrowStatement(parent) && standalone === true) return "dynamic";
 
   // `return inst;` from a function whose return type is `any` → dynamic escape.
   if (ts.isReturnStatement(parent)) {
@@ -1611,7 +1621,7 @@ export function analyzeFnctorEscapeGate(
       const uses = bindSym ? (usesBySymbol.get(canonicalSymbol(bindSym)) ?? []) : [];
       for (const use of uses) {
         if (use === bind) continue; // the declaration name itself
-        const c = classifyUse(checker, use, ownFields);
+        const c = classifyUse(checker, use, ownFields, standalone);
         if (c === "typed") sawTyped = true;
         else if (c === "dynamic") sawDynamic = true;
       }
@@ -1637,7 +1647,7 @@ export function analyzeFnctorEscapeGate(
         inner = parent;
         parent = parent.parent;
       }
-      const c = classifyUse(checker, inner, ownFields);
+      const c = classifyUse(checker, inner, ownFields, standalone);
       if (c === "typed") sawTyped = true;
       else if (c === "dynamic") sawDynamic = true;
       // any other inline use → neither; stays keep-static.
