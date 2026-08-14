@@ -431,6 +431,25 @@ filesystem-heavy files remain explicit deferred inventory. The npm-compat
 generator invokes this adapter directly, so the merge-only refresh publishes a
 numeric result and cannot fall back to `adapter pending`.
 
+## 2026-08-14 complete workflow wiring
+
+All 24 packages rendered on npm-compat now declare an executable `suiteScript`.
+The report generator uses one registry for those 24 adapters and refuses to
+start if the configured and executable package sets differ. Catalog packages
+no longer pass through a nullable conditional chain that could silently fall
+back to `adapter pending` after an adapter had shipped.
+
+The merge-only npm-compat workflow independently rejects its generated artifact
+unless every configured adapter produces numeric `passed` and `total` fields.
+Performance measurements and regressions remain reporting data rather than unit
+test gates.
+
+The complete `generate:npm-compat --no-write` path was run locally after this
+wiring change. It completed all 24 packages, left one numeric suite report per
+package, and exited successfully. Its aggregate correctness rollup reported 8
+verified, 14 divergent, and 2 unverified packages; those compatibility gaps are
+reported data, not hidden or converted into performance gates.
+
 ## 2026-08-14 webpack synchronous utility slice
 
 webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and
