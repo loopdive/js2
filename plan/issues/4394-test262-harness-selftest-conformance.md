@@ -88,6 +88,11 @@ coercion-sites-allow:
   # the #1917/#2108 coercion engine is the recorded follow-up for when the
   # Number/Boolean carriers join the same mechanism.
   - src/codegen/builtin-ctor-callable.ts
+  # +1 site (__unbox_number) in the array-length WRITE arm: setting `.length`
+  # performs ToNumber/ToUint32 on the incoming value (§10.4.2.4 ArraySetLength)
+  # — the coercion is the arm's substance (verifyproperty bucket). Same
+  # follow-up as above: route through the #1917/#2108 engine.
+  - src/codegen/vec-length-set.ts
 func-budget-allow:
   # +9 lines: the wiring that registers the vec-length-set leaf module and the
   # standalone global-object defineProperty gate — both single guarded calls
