@@ -1,0 +1,16 @@
+{
+  "name": "styled-components",
+  "version": "6.4.4",
+  "repo": "https://github.com/styled-components/styled-components.git",
+  "tag": "styled-components@6.4.4",
+  "commit": "5f69a304df5de81aae114928dcd98896c627c94a",
+  "testFileCount": 41,
+  "testFilePathSha256": "df2509ffafb8041e04371f3f34ff5237a9fd756344e3f6f7713af23890ba1724",
+  "registrationSites": 668,
+  "selectedFiles": [
+    "packages/styled-components/src/utils/test/addUnitIfNeeded.test.ts",
+    "packages/styled-components/src/utils/test/escape.test.ts",
+    "packages/styled-components/src/utils/test/hyphenateStyleName.test.ts"
+  ],
+  "_note": "The complete styled-components source-unit inventory is verified. This first adapter runs three original dependency-light synchronous utility files against their matching release-tag source implementations. React, DOM, snapshot, SSR, Stylis, build-time constant, and larger object-graph files remain explicit deferred inventory."
+}

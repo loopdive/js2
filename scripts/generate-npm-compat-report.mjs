@@ -62,8 +62,14 @@ import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-up
 import { runHarness as runAxiosUpstreamSuite } from "../tests/dogfood/axios-upstream-suite.mjs";
 import { runHarness as runStylelintUpstreamSuite } from "../tests/dogfood/stylelint-upstream-suite.mjs";
 import { runHarness as runThreeUpstreamSuite } from "../tests/dogfood/three-upstream-suite.mjs";
+import { runHarness as runStyledComponentsUpstreamSuite } from "../tests/dogfood/styled-components-upstream-suite.mjs";
+import { runHarness as runWebpackUpstreamSuite } from "../tests/dogfood/webpack-upstream-suite.mjs";
+import { runHarness as runJestUpstreamSuite } from "../tests/dogfood/jest-upstream-suite.mjs";
+import { runHarness as runTailwindcssUpstreamSuite } from "../tests/dogfood/tailwindcss-upstream-suite.mjs";
+import { runHarness as runTypescriptUpstreamSuite } from "../tests/dogfood/typescript-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
+import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstream-sources.mjs";
 
 import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
@@ -85,6 +91,48 @@ const ROOT = resolve(import.meta.dirname, "..");
 const PACKAGE_NAMES = [
   ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
 ];
+const UPSTREAM_SUITE_RUNNERS = new Map([
+  ["acorn", runAcornOfficialSuite],
+  ["axios", runAxiosUpstreamSuite],
+  ["clsx", runClsxUpstreamSuite],
+  ["cookie", runCookieUpstreamSuite],
+  ["eslint", runEslintUpstreamSuite],
+  ["hono", runHonoUpstreamSuite],
+  ["jest", runJestUpstreamSuite],
+  ["jsdom", runJsdomUpstreamSuite],
+  ["lit", runLitUpstreamSuite],
+  ["lodash", (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash" })],
+  ["lodash-es", (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })],
+  ["marked", runMarkedUpstreamSuite],
+  ["moment", runMomentUpstreamSuite],
+  ["prettier", runPrettierUpstreamSuite],
+  ["react", runReactUpstreamSuite],
+  ["react-dom", runReactDomUpstreamSuite],
+  ["redux", runReduxUpstreamSuite],
+  ["styled-components", runStyledComponentsUpstreamSuite],
+  ["stylelint", runStylelintUpstreamSuite],
+  ["tailwindcss", runTailwindcssUpstreamSuite],
+  ["three", runThreeUpstreamSuite],
+  ["typescript", runTypescriptUpstreamSuite],
+  ["uuid", runUuidUpstreamSuite],
+  ["webpack", runWebpackUpstreamSuite],
+]);
+
+const CONFIGURED_UPSTREAM_NAMES = NPM_COMPAT_UPSTREAM_SOURCES.filter((entry) => entry.suiteScript)
+  .map((entry) => entry.name)
+  .sort();
+const WIRED_UPSTREAM_NAMES = [...UPSTREAM_SUITE_RUNNERS.keys()].sort();
+if (JSON.stringify(CONFIGURED_UPSTREAM_NAMES) !== JSON.stringify(WIRED_UPSTREAM_NAMES)) {
+  throw new Error(
+    `npm-compat upstream runner registry mismatch\nconfigured: ${CONFIGURED_UPSTREAM_NAMES.join(", ")}\nwired: ${WIRED_UPSTREAM_NAMES.join(", ")}`,
+  );
+}
+
+function runConfiguredUpstreamSuite(name, options) {
+  const runner = UPSTREAM_SUITE_RUNNERS.get(name);
+  if (!runner) throw new Error(`npm-compat has no upstream suite runner for ${name}`);
+  return runner(options);
+}
 // Committed npm API snapshot keeps report generation deterministic and offline.
 // Refresh these together from:
 // https://api.npmjs.org/downloads/point/last-week/{package}
@@ -1475,7 +1523,7 @@ if (selectedPackages.has("acorn")) {
   } else {
     console.log("[npm-compat] acorn — compile/validate/diff + official test suite (this takes ~1 min)...");
     const acornReport = await runAcorn({ quiet: true });
-    const acornSuite = await runAcornOfficialSuite({ quiet: true });
+    const acornSuite = await runConfiguredUpstreamSuite("acorn", { quiet: true });
     const acornPerf = await perfAcorn();
     packages.push(
       await buildPackageEntry({
@@ -1501,7 +1549,7 @@ if (selectedPackages.has("acorn")) {
 if (selectedPackages.has("marked")) {
   console.log("[npm-compat] marked — package entry + selected original upstream unit tests...");
   const markedReport = await runMarked({ quiet: true });
-  const markedSuite = await runMarkedUpstreamSuite({ quiet: true });
+  const markedSuite = await runConfiguredUpstreamSuite("marked", { quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "marked",
@@ -1558,7 +1606,7 @@ if (selectedPackages.has("clsx")) {
   } else {
     console.log("[npm-compat] clsx — compile/validate/diff + complete original upstream unit suite + perf...");
     const clsxReport = await runClsx({ quiet: true });
-    const clsxSuite = await runClsxUpstreamSuite({ quiet: true });
+    const clsxSuite = await runConfiguredUpstreamSuite("clsx", { quiet: true });
     const clsxPerf = await perfClsx();
     packages.push(
       await buildPackageEntry({
@@ -1614,7 +1662,7 @@ if (selectedPackages.has("cookie")) {
   } else {
     console.log("[npm-compat] cookie — compile/validate/diff + complete original upstream unit suite + perf...");
     const cookieReport = await runCookie({ quiet: true });
-    const cookieSuite = await runCookieUpstreamSuite({ quiet: true });
+    const cookieSuite = await runConfiguredUpstreamSuite("cookie", { quiet: true });
     const cookiePerf = await perfCookie();
     packages.push(
       await buildPackageEntry({
@@ -1657,7 +1705,7 @@ if (selectedPackages.has("cookie")) {
 if (selectedPackages.has("eslint")) {
   console.log("[npm-compat] eslint — bounded package entry + selected original upstream unit...");
   const eslintReport = await runEslint({ quiet: true });
-  const eslintSuite = await runEslintUpstreamSuite({ quiet: true });
+  const eslintSuite = await runConfiguredUpstreamSuite("eslint", { quiet: true });
   // Do not spend a second bounded compile on a package-entry failure. Once
   // lib/api.js is a valid module, the workload harness compiles a generated
   // driver that calls the real Linter.verify API and compares its primitive
@@ -1703,7 +1751,7 @@ if (selectedPackages.has("eslint")) {
 if (selectedPackages.has("prettier")) {
   console.log("[npm-compat] prettier — package entry + selected original upstream unit tests...");
   const prettierReport = await runPrettier({ quiet: true });
-  const prettierSuite = await runPrettierUpstreamSuite({ quiet: true });
+  const prettierSuite = await runConfiguredUpstreamSuite("prettier", { quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "prettier",
@@ -1739,7 +1787,7 @@ if (selectedPackages.has("prettier")) {
 if (selectedPackages.has("react")) {
   console.log("[npm-compat] react — package entry + React's own upstream unit tests...");
   const reactReport = await runReact({ quiet: true });
-  const reactSuite = await runReactUpstreamSuite({ quiet: true });
+  const reactSuite = await runConfiguredUpstreamSuite("react", { quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "react",
@@ -1788,7 +1836,7 @@ if (selectedPackages.has("lit")) {
   } else {
     console.log("[npm-compat] lit — package entry + lit's own upstream unit tests...");
     const litReport = await runNpmCompatCatalogHarness("lit", { quiet: true });
-    const litSuite = await runLitUpstreamSuite({ quiet: true });
+    const litSuite = await runConfiguredUpstreamSuite("lit", { quiet: true });
     packages.push(
       await buildPackageEntry({
         name: "lit",
@@ -1830,7 +1878,7 @@ if (selectedPackages.has("react-dom")) {
   console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
-  const reactDomSuite = await runReactDomUpstreamSuite({ quiet: true });
+  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", { quiet: true });
   const reactDomImplementationReport = {
     ...reactDomReport,
     // The package-entry probe only compiles the small environment selector.
@@ -1902,29 +1950,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
       ? await workloadRunner({ quiet: true })
       : null;
   const hasApiWorkload = workloadRunner !== null;
-  const catalogUpstreamRunner =
-    entry.name === "hono"
-      ? runHonoUpstreamSuite
-      : entry.name === "lodash"
-        ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash" })
-        : entry.name === "lodash-es"
-          ? (options) => runLodashUpstreamSuite({ ...options, packageName: "lodash-es" })
-          : entry.name === "uuid"
-            ? runUuidUpstreamSuite
-            : entry.name === "redux"
-              ? runReduxUpstreamSuite
-              : entry.name === "jsdom"
-                ? runJsdomUpstreamSuite
-                : entry.name === "axios"
-                  ? runAxiosUpstreamSuite
-                  : entry.name === "moment"
-                    ? runMomentUpstreamSuite
-                    : entry.name === "stylelint"
-                      ? runStylelintUpstreamSuite
-                      : entry.name === "three"
-                        ? runThreeUpstreamSuite
-                        : null;
-  const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
+  const catalogUpstreamReport = await runConfiguredUpstreamSuite(entry.name, { quiet: true });
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite
     ? {
