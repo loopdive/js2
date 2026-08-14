@@ -163,6 +163,7 @@
     "dogfood:lodash-es": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package lodash-es",
     "dogfood:lodash-es-upstream-suite": "node --import tsx tests/dogfood/lodash-upstream-suite.mjs --package=lodash-es",
     "dogfood:axios": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package axios",
+    "dogfood:axios-upstream-suite": "node --import tsx tests/dogfood/axios-upstream-suite.mjs",
     "dogfood:react-dom": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package react-dom",
     "dogfood:jsdom": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package jsdom",
     "dogfood:jsdom-workload": "npx tsx tests/dogfood/jsdom-harness.mjs",

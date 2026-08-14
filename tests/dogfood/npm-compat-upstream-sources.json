@@ -128,6 +128,7 @@
     "commit": "1337d6b537afb2d3f501074c8ac4ef4308221197",
     "cacheKey": "axios",
     "compileScript": "dogfood:axios",
+    "suiteScript": "dogfood:axios-upstream-suite",
     "inventory": {
       "directory": "tests/unit",
       "include": "^tests/unit/.*\\.test\\.js$",

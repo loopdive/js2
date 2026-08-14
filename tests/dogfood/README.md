@@ -188,6 +188,26 @@ It consumes `combineReducers`, `createStore`, `subscribe`, and
 `bindActionCreators`, then compares one numeric summary with the same package
 running in native Node.
 
+## Axios 1.16.1 upstream suite
+
+Tracked by [issue 3995](https://github.com/loopdive/js2wasm/blob/main/plan/issues/3995-pin-and-adapt-original-upstream-test-suites-for-catalog.md).
+
+```bash
+pnpm run dogfood:axios-upstream-suite
+```
+
+The source pin verifies all 49 original `tests/unit/**/*.test.js` files and 645
+static registration sites. The initial self-contained synchronous slice runs
+all 170 expanded callbacks from 25 files against the matching published Axios
+modules. Node passes 170/170; all 25 generated modules compile and validate;
+Wasm currently passes **16/170**. The other 24 files remain explicitly deferred
+because they require the async Wasm runner, live HTTP servers, sockets, streams,
+or filesystem test infrastructure.
+
+The npm-compat report generator runs this adapter directly. The merge-only
+refresh workflow also verifies that every configured upstream adapter emitted
+numeric pass/total results before it can publish the six dashboard artifacts.
+
 ## acorn (#1710)
 
 Mechanizes the acorn self-hosting dogfood loop: **compile acorn with

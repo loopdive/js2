@@ -20,7 +20,7 @@ function run(name: string) {
 }
 
 describe("small npm package upstream suites", () => {
-  it("pins complete clsx, cookie, and Redux unit-file inventories", () => {
+  it("pins complete clsx, cookie, Redux, and Axios unit-file inventories", () => {
     expect(pin("clsx")).toMatchObject({
       tag: "v2.1.1",
       commit: "925494cf31bcd97d3337aacd34e659e80cae7fe2",
@@ -37,6 +37,12 @@ describe("small npm package upstream suites", () => {
       commit: "50b010210df25c470386f7e39a9389a4a77b3842",
       testFileCount: 9,
       registrationSites: 82,
+    });
+    expect(pin("axios")).toMatchObject({
+      tag: "v1.16.1",
+      commit: "1337d6b537afb2d3f501074c8ac4ef4308221197",
+      testFileCount: 49,
+      registrationSites: 645,
     });
   });
 
@@ -75,5 +81,21 @@ describe("small npm package upstream suites", () => {
     expect(report.compile).toMatchObject({ modules: 9, succeeded: 9, validated: 9 });
     expect(report.results).toMatchObject({ scored: 78 });
     expect(report.results.passed).toBeGreaterThanOrEqual(5);
+  });
+
+  const axiosHeavy = process.env.DOGFOOD_AXIOS_UPSTREAM_SUITE === "1" ? it : it.skip;
+  axiosHeavy("runs Axios's selected original synchronous unit files", { timeout: 600_000 }, () => {
+    const report = run("axios");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 49,
+      filesSelected: 25,
+      filesDeferred: 24,
+      testsRegistered: 170,
+      nativePassed: 170,
+      nativeFailed: 0,
+    });
+    expect(report.compile).toMatchObject({ modules: 25, succeeded: 25, validated: 25 });
+    expect(report.results).toMatchObject({ scored: 170 });
+    expect(report.results.passed).toBeGreaterThanOrEqual(16);
   });
 });

@@ -41,4 +41,11 @@ describe("npm-compat upstream GitHub source pins", () => {
     expect(gitignore).toContain("tests/dogfood/.npm-upstream-suites/");
     expect(existsSync(join(HERE, "npm-compat-upstream-sources.json"))).toBe(true);
   });
+
+  it("makes the merge-only refresh refuse missing adapter results", () => {
+    const workflow = readFileSync(join(HERE, "../../.github/workflows/npm-compat-refresh.yml"), "utf-8");
+    expect(workflow).toContain("suitePins.filter(entry => entry.suiteScript)");
+    expect(workflow).toContain("its unit-test result is absent");
+    expect(workflow).toContain("still reports adapter pending");
+  });
 });
