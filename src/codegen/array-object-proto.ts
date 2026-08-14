@@ -53,6 +53,7 @@ import {
 } from "./native-strings.js";
 import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
+import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
@@ -2236,6 +2237,14 @@ export function emitTypedArrayIntrinsicCtorObject(ctx: CodegenContext, fctx: Fun
     for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
     if (emitLazyNativeProtoGet(ctx, fctx, brand)) {
       fctx.body.push({ op: "call", funcIdx: setIdx });
+      // `%TypedArray%` is the abstract base CONSTRUCTOR (§23.2.1) — a function,
+      // not a plain object. Brand the carrier callable/constructible so
+      // `typeof TypedArray === "function"` (the literal testTypedArray.js
+      // harness self-check, L17) answers through the #4120 branded-carrier
+      // typeof arm. Actually CALLING it still goes through the generic
+      // dispatch (a real `%TypedArray%()` invocation must throw TypeError —
+      // out of scope here; the brand only fixes classification).
+      pushMarkBuiltinCarrierCallable(ctx, fctx, objLocal);
       fctx.body.push({ op: "local.get", index: objLocal });
       fctx.body.push({ op: "global.set", index: globalIdx });
     } else {

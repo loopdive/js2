@@ -3603,6 +3603,15 @@ export interface CodegenContext {
    */
   fnctorReservedTypeIdx: Map<string, number>;
   /**
+   * (#4394) Harness error fnctors whose `new <Name>` interception was DECLINED
+   * because the module DECLARES `function <Name>` (sta.js's `Test262Error`) —
+   * their thrown instances are ordinary user structs, so the #2962 exception
+   * renderer bakes a per-fnctor "Name: message" arm for them (see
+   * `emitExceptionRenderExports`); without it every such throw rendered
+   * "[object Object]" and the merged standalone report lost the signature.
+   */
+  exnRenderFnctorErrorNames?: Set<string>;
+  /**
    * (#3927) fnctor name → reserved `$__fnctor_<Name>__cold` tail-struct type
    * index, reserved alongside the main struct in `reserveFnctorStructTypes` so
    * both indices are pass-invariant. Present only when

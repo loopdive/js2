@@ -8857,7 +8857,10 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                 { op: "local.get", index: gAny },
                 { op: "ref.cast", typeIdx: vecBaseIdx },
                 { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
-                { op: "f64.convert_i32_s" },
+                // UNSIGNED: a `length` of 2**32-1 (stored as 0xFFFFFFFF by the
+                // vec-length-set.ts ArraySetLength arm) must read back as
+                // 4294967295, not -1. Ordinary lengths (< 2**31) are unchanged.
+                { op: "f64.convert_i32_u" },
                 { op: "call", funcIdx: boxNumberIdx },
                 { op: "return" },
               ],
