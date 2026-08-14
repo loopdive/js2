@@ -137,6 +137,13 @@ coercion-sites-allow:
   # the two helpers it fuses to match and replace them. The fused helper is
   # emitted from the same engine vocabulary, not a fresh hand-rolled matrix.
   - src/codegen/tonumber-fast-paths.ts
+  # (#4157 unboxed boolean fusion, JS2WASM_UNBOXED_BOOL_FUSE) Same shape as the
+  # inline truthy IC above: the pass MATCHES `call $__is_truthy` sinks that
+  # consume a `__box_boolean` merge and DELETES them, rewriting the merge tree
+  # to `(result i32)`. Both references are pattern-matching only — one funcMap
+  # lookup to find the sites, one skip guard so the helper bodies themselves are
+  # never rewritten. It removes coercion calls; it adds no coercion matrix.
+  - src/codegen/box-boolean-fuse.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
