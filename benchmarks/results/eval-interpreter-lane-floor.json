@@ -1,0 +1,10 @@
+{
+  "issue": 4242,
+  "engine": "interpreter",
+  "scope": "language/eval-code/",
+  "pass": 782,
+  "total": 816,
+  "tolerance": 3,
+  "recorded": "2026-08-12",
+  "source": "test262-standalone-results-20260812-023758.jsonl"
+}

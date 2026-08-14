@@ -740,6 +740,7 @@ function buildCodegenOptions(
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: targetProfile.target === "wasi",
+    nodeGlobals: options.emulateNode === true || options.platform === "node",
     // #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
     // (deduped). `link: ["node:fs"]` is the only spelling; the old `linkNodeShims`
     // boolean was removed.

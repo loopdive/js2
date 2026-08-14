@@ -1,10 +1,11 @@
 ---
 id: 4303
 title: "Stylelint plans module TDZ global noop before its value global"
-status: ready
+status: done
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-11
+completed: 2026-08-11
 priority: high
 horizon: m
 feasibility: medium
@@ -48,11 +49,28 @@ Resume by locating the declaration/value observations for `noop`, reducing the
 same ordering from Stylelint's resolved graph, and fixing the generic registry
 ordering without package-specific renaming or initializer deletion.
 
+## Resolution
+
+The three `css-tree` modules in Stylelint's graph declare the same bare name,
+`noop`, using two module-level function expressions and one function
+declaration. Compatibility maps still expose that shared name, so a later
+declaration could find an earlier declaration's value global and attach its TDZ
+observation to a declaration that did not own that value. Program ABI planning
+then saw the TDZ observation before the matching value observation and aborted.
+
+Module TDZ registration now records an observation only when the exact
+declaration already owns the value global. The reduced four-module fixture
+keeps the value global before the TDZ global, emits valid Wasm, and executes to
+`42`. The real Stylelint graph no longer emits the `noop` TDZ diagnostic: it
+continues past the former 42.352 second abort and remained actively compiling
+beyond the 120 second catalog budget. The remaining package frontier is tracked
+separately by [#4302](./4302-package-async-await-inside-try-shapes.md).
+
 ## Acceptance criteria
 
-- [ ] A reduced multi-source fixture reproduces the `noop` ordering failure.
-- [ ] The program ABI registers a TDZ global and its value in a stable order.
-- [ ] Stylelint no longer reports this error when the #4302 diagnostics are
+- [x] A reduced multi-source fixture reproduces the `noop` ordering failure.
+- [x] The program ABI registers a TDZ global and its value in a stable order.
+- [x] Stylelint no longer reports this error when the #4302 diagnostics are
       measured independently.
-- [ ] Existing module-global identity, ambient declaration, and init-order
+- [x] Existing module-global identity, ambient declaration, and init-order
       suites remain green.

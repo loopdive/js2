@@ -102,6 +102,7 @@ import {
   buildInstancePropGetArm,
   reserveInstanceProps,
 } from "./instance-props.js";
+import { buildErrorPropSetArm, reserveErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` MOP
 import {
   INSTANCE_FIELD_DELETED,
   buildTombstoneScreen,
@@ -1035,6 +1036,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
+    reserveErrorPropHelpers(ctx); // (#4098) before every write/define/visibility call site bakes its funcIdx
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
@@ -2792,7 +2794,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then: [
           // Tri-state adapter: 0 means "not an admitted boundary object";
           // non-zero means the JS-owned receiver handled (or refused) the
-          // write, so it must not fall into a Wasm side table.
+          // write, so it must not fall into a Wasm side table. This gate runs
+          // FIRST because it decides ownership: a JS-owned receiver must never
+          // reach any Wasm-side carrier, including the Error sidecar below.
           ...(boundaryObjectSetIdx !== undefined
             ? ([
                 { op: "local.get", index: 0 },
@@ -2806,6 +2810,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 },
               ] satisfies Instr[])
             : []),
+          // (#4098) Native Error values own an open `$props` sidecar. Its arm
+          // precedes the disjoint instance/vec/closure carriers and preserves the
+          // original Error receiver when an accessor is invoked.
+          ...buildErrorPropSetArm(ctx),
           ...buildInstanceOrVecOrClosurePropSetMissArm(ctx),
         ],
       },
@@ -5836,12 +5844,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // (object runtime). S1 intentionally pulls NO error machinery (see header).
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxArr = ctx.funcMap.get("__extern_get_idx");
-  if (externLengthIdx === undefined || externGetIdxArr === undefined) {
-    // Dependencies absent (object runtime not emitted after all) — keep a valid
-    // body that returns undefined so the module verifies.
-    bridgeFn.body = [{ op: "ref.null.extern" }];
-    return;
-  }
+  const hasGenericArgsReader = externLengthIdx !== undefined && externGetIdxArr !== undefined;
 
   // S1 undefined sentinel: every non-dispatchable case (arity > 8, or a missing
   // arity-N dispatcher) returns undefined rather than throwing. S2 replaces
@@ -5884,54 +5887,88 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // compiled-acorn parse. Non-$ObjVec args keep the generic path.
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
-  const fastArgs = objVecTypeIdx !== undefined && objVecArrTypeIdx !== undefined;
-  let argDataLocal = -1;
-  let argLenLocal = -1;
-  if (fastArgs) {
-    argDataLocal = 3 + locals.length;
-    locals.push({ name: "__argdata", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } });
-    argLenLocal = 3 + locals.length;
-    locals.push({ name: "__arglen", type: { kind: "i32" } });
+  const fastObjArgs = objVecTypeIdx !== undefined && objVecArrTypeIdx !== undefined;
+
+  // The materialized arguments object is the canonical externref vec, not the
+  // object runtime's growable $ObjVec. Read that carrier directly so
+  // `.apply(_, arguments)` also works in JS-host modules that never emitted the
+  // native object runtime (the host cannot inspect an opaque WasmGC vec).
+  const directVecTypeIdx = ctx.vecTypeMap.get("externref");
+  const directVecDef = directVecTypeIdx === undefined ? undefined : ctx.mod.types[directVecTypeIdx];
+  const directDataField = directVecDef?.kind === "struct" ? directVecDef.fields[1] : undefined;
+  const directArrDef = directDataField?.type.kind === "ref" ? ctx.mod.types[directDataField.type.typeIdx] : undefined;
+  const directVecArrTypeIdx =
+    directDataField?.type.kind === "ref" && directArrDef?.kind === "array" && directArrDef.element.kind === "externref"
+      ? directDataField.type.typeIdx
+      : undefined;
+  const fastDirectArgs = directVecTypeIdx !== undefined && directVecArrTypeIdx !== undefined;
+
+  if (!hasGenericArgsReader && !fastObjArgs && !fastDirectArgs) {
+    bridgeFn.body = [{ op: "ref.null.extern" }];
+    return;
+  }
+
+  let objArgDataLocal = -1;
+  let objArgLenLocal = -1;
+  if (fastObjArgs) {
+    objArgDataLocal = 3 + locals.length;
+    locals.push({ name: "__obj_argdata", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } });
+    objArgLenLocal = 3 + locals.length;
+    locals.push({ name: "__obj_arglen", type: { kind: "i32" } });
+  }
+  let directArgDataLocal = -1;
+  let directArgLenLocal = -1;
+  if (fastDirectArgs) {
+    directArgDataLocal = 3 + locals.length;
+    locals.push({ name: "__vec_argdata", type: { kind: "ref_null", typeIdx: directVecArrTypeIdx } });
+    directArgLenLocal = 3 + locals.length;
+    locals.push({ name: "__vec_arglen", type: { kind: "i32" } });
   }
 
   // Locals: 0=fn 1=recv 2=args (params); 3=n(i32), then widen locals, result,
   // and (fast path) __argdata.
   const ARG_OF = (k: number): Instr[] => {
-    const generic: Instr[] = [
-      { op: "local.get", index: 2 },
-      { op: "f64.const", value: k },
-      { op: "call", funcIdx: externGetIdxArr },
-    ];
-    if (!fastArgs) return generic;
+    let fallback: Instr[] = hasGenericArgsReader
+      ? [
+          { op: "local.get", index: 2 },
+          { op: "f64.const", value: k },
+          { op: "call", funcIdx: externGetIdxArr! },
+        ]
+      : (undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }]);
     // OOB (an under-applied call widened up by the #3592 selector widening
     // reads k >= len) answers the undefined sentinel — exactly what the
     // generic `__extern_get_idx` returns for an out-of-bounds index.
     const oob: Instr[] = undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
-    return [
-      { op: "local.get", index: argDataLocal },
+    const fastRead = (dataLocal: number, lenLocal: number, arrTypeIdx: number, prior: Instr[]): Instr[] => [
+      { op: "local.get", index: dataLocal },
       { op: "ref.is_null" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: generic,
+        then: prior,
         else: [
           { op: "i32.const", value: k },
-          { op: "local.get", index: argLenLocal },
+          { op: "local.get", index: lenLocal },
           { op: "i32.lt_s" },
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
             then: [
-              { op: "local.get", index: argDataLocal },
+              { op: "local.get", index: dataLocal },
               { op: "ref.as_non_null" },
               { op: "i32.const", value: k },
-              { op: "array.get", typeIdx: objVecArrTypeIdx },
+              { op: "array.get", typeIdx: arrTypeIdx },
             ],
             else: oob,
           },
         ],
       },
     ];
+    if (fastObjArgs) fallback = fastRead(objArgDataLocal, objArgLenLocal, objVecArrTypeIdx, fallback);
+    if (fastDirectArgs) {
+      fallback = fastRead(directArgDataLocal, directArgLenLocal, directVecArrTypeIdx, fallback);
+    }
+    return fallback;
   };
 
   const buildArm = (n: number): Instr[] => {
@@ -5968,32 +6005,37 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     ];
   }
 
-  // n = args.len via the $ObjVec fast path when it applies, else the generic
-  // `__extern_length` (also fills __argdata for ARG_OF).
-  const computeN: Instr[] = fastArgs
-    ? [
+  // n = args.len. Prefer a native carrier read, then retain the historical
+  // generic array-like reader for other callers of __apply_closure.
+  let computeN: Instr[] = hasGenericArgsReader
+    ? [{ op: "local.get", index: 2 }, { op: "call", funcIdx: externLengthIdx! }, { op: "i32.trunc_f64_s" }]
+    : [{ op: "i32.const", value: 0 }];
+  const fastLength = (carrierTypeIdx: number, dataLocal: number, lenLocal: number, prior: Instr[]): Instr[] => [
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: carrierTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
         { op: "local.get", index: 2 },
         { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: objVecTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [
-            { op: "local.get", index: 2 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: objVecTypeIdx },
-            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
-            { op: "local.set", index: argDataLocal },
-            { op: "local.get", index: 2 },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: objVecTypeIdx },
-            { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
-            { op: "local.tee", index: argLenLocal },
-          ],
-          else: [{ op: "local.get", index: 2 }, { op: "call", funcIdx: externLengthIdx }, { op: "i32.trunc_f64_s" }],
-        },
-      ]
-    : [{ op: "local.get", index: 2 }, { op: "call", funcIdx: externLengthIdx }, { op: "i32.trunc_f64_s" }];
+        { op: "ref.cast", typeIdx: carrierTypeIdx },
+        { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 1 },
+        { op: "local.set", index: dataLocal },
+        { op: "local.get", index: 2 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: carrierTypeIdx },
+        { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
+        { op: "local.tee", index: lenLocal },
+      ],
+      else: prior,
+    },
+  ];
+  if (fastObjArgs) computeN = fastLength(objVecTypeIdx, objArgDataLocal, objArgLenLocal, computeN);
+  if (fastDirectArgs) {
+    computeN = fastLength(directVecTypeIdx, directArgDataLocal, directArgLenLocal, computeN);
+  }
 
   // Preserve the raw call-site count in `__argc` before widening only the
   // dispatcher selector. This keeps omitted formals undefined without turning
@@ -6101,7 +6143,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // own vector before re-entering __apply_closure, where the target's concrete
   // shape is known.
   const runtimeEvalCarrier = ctx.runtimeEvalAotCallableCarrier;
-  if (runtimeEvalCarrier !== undefined) {
+  if (runtimeEvalCarrier !== undefined && externLengthIdx !== undefined && externGetIdxArr !== undefined) {
     body.unshift(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -6167,7 +6209,13 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const truthyIdx = ctx.funcMap.get("__is_truthy");
   const runtimeEvalPushGlobalsIdx = ctx.funcMap.get("__runtime_eval_push_globals");
   const runtimeEvalPullGlobalsIdx = ctx.funcMap.get("__runtime_eval_pull_globals");
-  if (runtimeInterpTypeIdx !== undefined && runtimeInterpApplyIdx !== undefined && truthyIdx !== undefined) {
+  if (
+    runtimeInterpTypeIdx !== undefined &&
+    runtimeInterpApplyIdx !== undefined &&
+    truthyIdx !== undefined &&
+    externLengthIdx !== undefined &&
+    externGetIdxArr !== undefined
+  ) {
     const runtimeEvalActiveGlobalIdx = ensureRuntimeEvalProviderActiveGlobal(ctx);
     const callbackLocal = 3 + locals.length;
     locals.push({ name: "runtimeEvalCallback", type: { kind: "ref_null", typeIdx: runtimeInterpTypeIdx } });
@@ -6267,7 +6315,13 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // (`ctx.boundFnTypeIdx < 0`) — byte-identical for bind-free modules.
   const objVecNewIdx2 = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx2 = ctx.funcMap.get("__objvec_push");
-  if (ctx.boundFnTypeIdx >= 0 && objVecNewIdx2 !== undefined && objVecPushIdx2 !== undefined) {
+  if (
+    ctx.boundFnTypeIdx >= 0 &&
+    objVecNewIdx2 !== undefined &&
+    objVecPushIdx2 !== undefined &&
+    externLengthIdx !== undefined &&
+    externGetIdxArr !== undefined
+  ) {
     const bfIdx = ctx.boundFnTypeIdx;
     // Locals appended after `n` (+ the #3592 arity-probe trio when emitted);
     // params fn/recv/args = 0..2, n = 3. Indices are derived from

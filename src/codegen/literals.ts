@@ -198,10 +198,13 @@ function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpres
 /**
  * Does a first-object array literal contain another element that cannot inhabit
  * the first object's exact closed struct? `compileArrayLiteral` historically
- * keyed the vec to element zero, then guarded-cast every later object to it;
- * differing field sets therefore became null and trapped at construction.
+ * keyed the vec to element zero, then guarded-cast every later object to it.
+ * Equal property names are not sufficient: `{params: {a: 1}}` and
+ * `{params: {b: 2}}` have the same outer key but incompatible nested-field
+ * carriers. Compare the resolved closed structs as well as the conservative
+ * static key proof before retaining element zero's carrier.
  */
-function hasHeterogeneousObjectLiteralFields(
+function hasIncompatibleObjectLiteralCarrier(
   ctx: CodegenContext,
   expr: ts.ArrayLiteralExpression,
   first: ts.Expression,
@@ -210,6 +213,7 @@ function hasHeterogeneousObjectLiteralFields(
   if (!firstObject) return false;
   const firstKeys = staticObjectLiteralDataKeys(ctx, firstObject);
   if (!firstKeys) return true;
+  const firstCarrier = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(firstObject));
 
   for (const element of expr.elements) {
     if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) continue;
@@ -217,6 +221,8 @@ function hasHeterogeneousObjectLiteralFields(
     if (!object) return true;
     const keys = staticObjectLiteralDataKeys(ctx, object);
     if (!keys || keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) return true;
+    const carrier = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(object));
+    if (!valTypesMatch(carrier, firstCarrier)) return true;
   }
   return false;
 }
@@ -4026,7 +4032,7 @@ export function compileArrayLiteral(
       !hasSpread &&
       !hasContextualRefCarrier &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
-      hasHeterogeneousObjectLiteralFields(ctx, expr, firstElem)
+      hasIncompatibleObjectLiteralCarrier(ctx, expr, firstElem)
     ) {
       elemWasm = { kind: "externref" };
     }

@@ -2,19 +2,21 @@
 //
 // CommonJS `require()` → ESM import rewrite (#1279).
 //
-// Phase 1: detect static `const X = require('Y')` and `const { a, b } = require('Y')`
-// patterns at module top-level — including grouped `const a = require("a"),
+// Phase 1: detect static top-level `X = require('Y')` declarations — including
+// grouped `const a = require("a"),
 // b = require("b")` declarations — and rewrite them to ESM `import`
 // declarations. After rewrite, the existing import resolver
 // (`resolveAllImports`), preprocessor (`preprocessImports`) and TypeScript-based
 // multi-source analyzer all see them as regular ESM imports and link them
 // correctly.
 //
-// We deliberately keep this conservative — only top-level `const` declarations whose
+// We deliberately keep this conservative — only top-level declarations whose
 // initializer is a direct call to `require` with a single string-literal argument.
-// Anything else (dynamic specifiers, `let`/`var`, nested scopes, default-value
-// destructuring, `require(...).foo` chained access) is left untouched so we don't
-// silently change semantics.
+// A `var`/`let` binding is rewritten only when a source-wide conservative scan
+// proves it is never reassigned; otherwise it remains CommonJS so an immutable
+// ESM binding cannot change its semantics. Anything else (dynamic specifiers,
+// nested scopes, default-value destructuring, `require(...).foo` chained
+// access) is left untouched.
 
 import { ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
@@ -47,8 +49,11 @@ export function rewriteCjsRequire(source: string): string {
  * they replace, shifting everything below.
  */
 export function rewriteCjsRequireWithMap(source: string): { source: string; positionMap: PositionMap } {
-  // Cheap pre-check: if the source doesn't even contain `require(`, skip parsing.
-  if (!source.includes("require(")) return { source, positionMap: PositionMap.identity() };
+  // Cheap pre-check: dependency leaves may have no `require()` calls but still
+  // need their `module.exports` value surfaced for a rewritten importer.
+  if (!source.includes("require(") && !source.includes("module.exports")) {
+    return { source, positionMap: PositionMap.identity() };
+  }
 
   const sf = ts.createSourceFile("__cjs_rewrite__.ts", source, ts.ScriptTarget.Latest, true);
   const rewrites: RequireRewrite[] = [];
@@ -58,11 +63,48 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
     if (rewrite) rewrites.push(rewrite);
   }
 
-  if (rewrites.length === 0) return { source, positionMap: PositionMap.identity() };
+  // A static require rewrite turns a CommonJS file into an ESM file. Surface
+  // its `module.exports` value explicitly before that happens, including
+  // assignment expressions nested in a UMD wrapper. Otherwise TypeScript no
+  // longer exposes a default-export symbol for the rewritten dependency and
+  // importers silently receive null.
+  const wrapModuleExports = shouldWrapModuleExports(sf);
+  if (wrapModuleExports) {
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "module" &&
+        node.name.text === "exports"
+      ) {
+        rewrites.push({
+          start: node.getStart(sf),
+          end: node.end,
+          text: "__cjs_default_export",
+        });
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
 
-  const positionMap = new PositionMap(
-    rewrites.map((r) => ({ origStart: r.start, origEnd: r.end, newLength: r.text.length })),
-  );
+  if (rewrites.length === 0 && !wrapModuleExports) {
+    return { source, positionMap: PositionMap.identity() };
+  }
+
+  const modulePrelude = wrapModuleExports
+    ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
+      "/** @type {any} */ const exports = __cjs_default_export;\n" +
+      "/** @type {any} */ const module = {};\n"
+    : "";
+  const moduleFooter = wrapModuleExports ? "\nexport default __cjs_default_export;\n" : "";
+
+  const positionMap = new PositionMap([
+    ...(modulePrelude ? [{ origStart: 0, origEnd: 0, newLength: modulePrelude.length }] : []),
+    ...rewrites.map((r) => ({ origStart: r.start, origEnd: r.end, newLength: r.text.length })),
+    ...(moduleFooter ? [{ origStart: source.length, origEnd: source.length, newLength: moduleFooter.length }] : []),
+  ]);
 
   // Apply rewrites in reverse order so positions stay valid.
   rewrites.sort((a, b) => b.start - a.start);
@@ -70,7 +112,58 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
   for (const r of rewrites) {
     result = result.substring(0, r.start) + r.text + result.substring(r.end);
   }
+  result = modulePrelude + result + moduleFooter;
   return { source: result, positionMap };
+}
+
+/** True for a script that mutates the ambient CommonJS `module.exports`. */
+function shouldWrapModuleExports(sf: ts.SourceFile): boolean {
+  // A genuine ESM source owns its module surface already. Rewriting an
+  // incidental `module.exports` reference there would invent a second default
+  // export and can change user-defined `module` semantics.
+  if (
+    sf.statements.some(
+      (stmt) =>
+        ts.isImportDeclaration(stmt) ||
+        ts.isImportEqualsDeclaration(stmt) ||
+        ts.isExportAssignment(stmt) ||
+        ts.isExportDeclaration(stmt) ||
+        (ts.canHaveModifiers(stmt) &&
+          (ts.getModifiers(stmt)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false)),
+    )
+  ) {
+    return false;
+  }
+
+  // Do not shadow a real top-level binding named `module`.
+  for (const stmt of sf.statements) {
+    if (
+      ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name?.text === "module") ||
+      (ts.isVariableStatement(stmt) &&
+        stmt.declarationList.declarations.some(
+          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "module",
+        ))
+    ) {
+      return false;
+    }
+  }
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "module" &&
+      node.name.text === "exports"
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
 }
 
 /**
@@ -79,10 +172,24 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
  */
 function tryRewriteStatement(stmt: ts.Statement, sf: ts.SourceFile): RequireRewrite | null {
   if (!ts.isVariableStatement(stmt)) return null;
-  // Only `const X = require(...)` — never `let`/`var`, since those have different
-  // semantics (mutable rebinding) that ESM imports can't express.
   const flags = stmt.declarationList.flags & ts.NodeFlags.BlockScoped;
-  if (!(flags & ts.NodeFlags.Const)) return null;
+  const isConst = (flags & ts.NodeFlags.Const) !== 0;
+
+  if (!isConst) {
+    const imports: string[] = [];
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || bindingIsReassigned(sf, decl)) return null;
+      const rendered = tryRenderRequireImport(decl);
+      if (rendered === null) return null;
+      imports.push(rendered);
+    }
+    if (imports.length === 0) return null;
+    return {
+      start: stmt.getStart(sf),
+      end: stmt.end,
+      text: imports.join("\n"),
+    };
+  }
 
   const imports: string[] = [];
   for (const decl of stmt.declarationList.declarations) {
@@ -94,6 +201,52 @@ function tryRewriteStatement(stmt: ts.Statement, sf: ts.SourceFile): RequireRewr
   }
   if (imports.length === 0) return null;
   return { start: stmt.getStart(sf), end: stmt.end, text: imports.join("\n") };
+}
+
+/**
+ * Prove that changing a mutable CommonJS require binding into an ESM import is
+ * representation-safe. The scan deliberately over-approximates writes: a
+ * same-named shadowed local may make us decline a valid rewrite, but can never
+ * make us freeze a genuinely reassigned binding.
+ */
+function bindingIsReassigned(sf: ts.SourceFile, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return true;
+  const name = declaration.name.text;
+  let reassigned = false;
+  const contains = (root: ts.Node, candidate: ts.Node): boolean =>
+    candidate.pos >= root.pos && candidate.end <= root.end;
+  const visit = (node: ts.Node): void => {
+    if (reassigned) return;
+    if (ts.isIdentifier(node) && node !== declaration.name && node.text === name) {
+      for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
+        if (
+          ts.isBinaryExpression(parent) &&
+          contains(parent.left, node) &&
+          parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+          reassigned = true;
+          return;
+        }
+        if (
+          (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+          contains(parent.operand, node) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+        ) {
+          reassigned = true;
+          return;
+        }
+        if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && contains(parent.initializer, node)) {
+          reassigned = true;
+          return;
+        }
+        if (ts.isStatement(parent) || ts.isSourceFile(parent)) break;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return reassigned;
 }
 
 /** Render one static require declarator as an ESM import, or reject it. */

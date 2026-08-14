@@ -519,6 +519,8 @@ interface NodeEmuUsage {
   bareProcess: boolean;
   /** A bare global `Buffer` is referenced (NOT bound by an import). */
   bareBuffer: boolean;
+  /** Node's legacy `global` alias is referenced. */
+  bareGlobal: boolean;
 }
 
 /**
@@ -614,7 +616,12 @@ function scanNodeEmuUsage(source: string, scriptKind: ts.ScriptKind): NodeEmuUsa
   // diagnostic. Same regex-approximation + dup-identifier fallback as `process`.
   const bareBuffer = !bindsBufferLocal && /\bBuffer\b/.test(source);
 
-  return { modules, bareProcess, bareBuffer };
+  // #3995 — Node exposes `global` as a legacy alias of `globalThis`. Keep the
+  // ambient declaration import-scoped like process/Buffer so unrelated source
+  // does not gain another synthetic root.
+  const bareGlobal = /\bglobal\b/.test(source);
+
+  return { modules, bareProcess, bareBuffer, bareGlobal };
 }
 
 /**
@@ -652,6 +659,10 @@ function buildNodeEnvDts(usage: NodeEmuUsage): string | undefined {
   if (usage.bareBuffer) {
     parts.push(BUFFER_INTERFACE_DECLS);
     parts.push(`declare var Buffer: BufferConstructor;`);
+  }
+
+  if (usage.bareGlobal) {
+    parts.push(`declare var global: typeof globalThis;`);
   }
 
   // `node:<mod>` modules, each scoped to its imported members.

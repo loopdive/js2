@@ -81,6 +81,47 @@ let _AsyncIteratorPrototypeCache: any = null;
 // `Iterator.prototype.<helper>` lookup was undefined. One SHARED cached
 // middle object keeps getPrototypeOf identity stable across iterators.
 let _SynthArrayIteratorPrototypeCache: any = null;
+
+// Test262 runs sloppy and strict variants as separate realm-equivalent module
+// instances. The host runtime normally keeps these synthetic intrinsics for
+// the lifetime of the JS realm, which is correct for ordinary consumers but
+// lets one variant's deliberate descriptor mutation leak into the next. Keep
+// the original host Iterator descriptor so the harness can discard the
+// synthetic realm without permanently changing a host that lacked Iterator.
+const _InitialHostIteratorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Iterator");
+
+/**
+ * Drop compiler-owned iterator/generator intrinsic caches between isolated
+ * harness realms. Existing generator objects keep their prototype objects;
+ * only later `buildImports` calls allocate a fresh intrinsic graph.
+ *
+ * This is intentionally an explicit harness hook rather than an automatic
+ * `buildImports` side effect: concurrently-live production instances share a
+ * JS realm and must not have their intrinsics reset behind their backs.
+ */
+function _resetIteratorRuntimeIntrinsicsForRealmIsolation(): void {
+  _GeneratorPrototypeCache = null;
+  _GeneratorFunctionPrototypeCache = null;
+  _AsyncGeneratorPrototypeCache = null;
+  _AsyncGeneratorFunctionPrototypeCache = null;
+  _GeneratorInstancePrototypeCache = null;
+  _AsyncGeneratorInstancePrototypeCache = null;
+  _IteratorPrototypeCache = null;
+  _AsyncIteratorPrototypeCache = null;
+  _SynthArrayIteratorPrototypeCache = null;
+  _iteratorHelpersInstalled = false;
+
+  try {
+    if (_InitialHostIteratorDescriptor) {
+      Object.defineProperty(globalThis, "Iterator", _InitialHostIteratorDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "Iterator");
+    }
+  } catch {
+    // A test may have made the global non-configurable. The worker's existing
+    // poison/recycle path handles that unrecoverable realm mutation.
+  }
+}
 function _getSynthArrayIteratorPrototype(base: any): any {
   if (_SynthArrayIteratorPrototypeCache) return _SynthArrayIteratorPrototypeCache;
   const proto = Object.create(base ?? null);
@@ -1308,4 +1349,5 @@ export {
   _getAsyncGeneratorInstancePrototype,
   _getAsyncGeneratorFunctionPrototype,
   _installIteratorHelperPolyfills,
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 };

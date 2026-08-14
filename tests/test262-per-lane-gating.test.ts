@@ -137,6 +137,19 @@ describe("test262 per-lane gating — the `detect` step", () => {
     });
   });
 
+  it.each([
+    "scripts/build-quickjs-eval-provider.mjs",
+    "scripts/quickjs-eval-provider.mjs",
+    "scripts/runtime-eval-provider.mjs",
+    "scripts/quickjs-artifact/build.sh",
+  ])("classifies standalone eval-provider path %s as standalone-only", (path) => {
+    expect(runDetect(path)).toEqual({
+      run_shards: "true",
+      run_host: "false",
+      run_standalone: "true",
+    });
+  });
+
   it("drops the standalone lane for a js-host-only shard-weight refresh", () => {
     expect(runDetect("tests/test262-slow-tests.json")).toEqual({
       run_shards: "true",

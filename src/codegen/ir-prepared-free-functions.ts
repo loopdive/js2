@@ -35,6 +35,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
+import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -125,6 +126,8 @@ export interface PreparedIrBodies {
   readonly freeFunctions: PreparedIrFreeFunctionBodies;
   readonly classMembers?: PreparedIrClassMemberBodies;
   readonly moduleInit?: PreparedIrModuleInitBody;
+  /** Exact support units whose plain implicit constructor bodies were prepared before direct emission. */
+  readonly implicitConstructorUnitIds: ReadonlySet<IrUnitId>;
 }
 
 function topLevelClassDeclarationsByName(sourceFile: ts.SourceFile): ReadonlyMap<string, ts.ClassDeclaration> {
@@ -166,18 +169,11 @@ export function selectPreparedClassMemberUnitIds(
   const selectedUnitIds = selection.classMemberUnitIds;
   const memberUnitIds = new Set<IrUnitId>();
   const topLevelClassesBySource = new Map<ts.SourceFile, ReadonlyMap<string, ts.ClassDeclaration>>();
-  const localCallEdgesBySource = new Map<ts.SourceFile, ReturnType<typeof collectLocalCallEdgesByIdentity>>();
-  const localCallEdges = (sourceFile: ts.SourceFile): ReturnType<typeof collectLocalCallEdgesByIdentity> => {
-    const cached = localCallEdgesBySource.get(sourceFile);
-    if (cached) return cached;
-    const collected = collectLocalCallEdgesByIdentity(sourceFile, identityPlan.identityContext);
-    localCallEdgesBySource.set(sourceFile, collected);
-    return collected;
-  };
   for (const claim of identityPlan.identitySelection.classMembers?.values() ?? []) {
     const terminal = identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
     const declaration = identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
-    const owner = declaration?.parent;
+    const implicitConstructorBody = terminal?.kind === "class-implicit-constructor";
+    const owner = implicitConstructorBody ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? identityPlan.identityContext.classIdByDeclaration.get(owner)
@@ -203,33 +199,23 @@ export function selectPreparedClassMemberUnitIds(
       terminal?.kind === "class-instance-setter";
     const instanceAccessorBody =
       terminal?.kind === "class-instance-getter" || terminal?.kind === "class-instance-setter";
-    const constructorBody = terminal?.kind === "class-constructor";
+    const constructorBody = terminal?.kind === "class-constructor" || implicitConstructorBody;
     const staticAccessorBody = terminal?.kind === "class-static-getter" || terminal?.kind === "class-static-setter";
     const nestedAccessorBody =
       (instanceAccessorBody || staticAccessorBody) && terminal?.containingTerminalOwnerId !== undefined;
     const selectedTopLevelStaticAccessorBody = staticAccessorBody && terminal?.containingTerminalOwnerId === undefined;
-    // Cross-owner class -> free-function components are the next serial R3
-    // family. Preparing only the member would make its direct call target
-    // remain legacy-owned and leave no exact AST-site call plan. Keep that
-    // complete structural edge on the established direct route for now.
-    const crossesFreeFunctionBoundary = [
-      ...(declaration ? (localCallEdges(declaration.getSourceFile()).callees.get(claim.unitId) ?? []) : []),
-    ].some((calleeUnitId) => {
-      const callee = identityPlan.identityContext.declarationByUnitId.get(calleeUnitId);
-      return callee !== undefined && ts.isFunctionDeclaration(callee) && ts.isSourceFile(callee.parent);
-    });
     if (
       (selectedUnitIds ? selectedUnitIds.has(claim.unitId) : selectedNames.has(claim.legacyMatchName)) &&
       (terminal?.kind === "class-static-method" ||
         ((instanceBody || constructorBody) && instanceHierarchyIsPreparable) ||
         ((nestedAccessorBody || selectedTopLevelStaticAccessorBody) && classOwnerIsPreparable)) &&
-      !crossesFreeFunctionBoundary &&
       declaration !== undefined &&
       (ts.isMethodDeclaration(declaration) ||
         ts.isGetAccessorDeclaration(declaration) ||
         ts.isSetAccessorDeclaration(declaration) ||
+        (implicitConstructorBody && (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration))) ||
         (ts.isConstructorDeclaration(declaration) && constructorHasIrSafeReceiverSemantics(declaration))) &&
-      !containsNestedExecutableSyntax(declaration)
+      (implicitConstructorBody || !containsNestedExecutableSyntax(declaration as ts.FunctionLikeDeclaration))
     ) {
       memberUnitIds.add(claim.unitId);
     }
@@ -858,18 +844,19 @@ export function finalizeR3PreparedOwnerPopulation(input: {
 }
 
 /**
- * R2 prepares only components whose top-level callable contracts have one
- * backend-stable Program ABI projection: scalars, strings, selected vectors,
- * and opaque JS-host externrefs. Other reference-shaped contracts, fast-mode
- * grounded numerics, and async/generator frames still require direct discovery
- * and remain on the post-direct overlay. Nested callable syntax inside an
- * otherwise admitted owner does not by itself block that owner.
+ * R2/R3 prepare only components whose free-function and class-member contracts
+ * have one backend-stable Program ABI projection: scalars, strings, selected
+ * vectors, and opaque JS-host externrefs. Other reference-shaped contracts,
+ * fast-mode grounded numerics, and async/generator frames still require direct
+ * discovery and remain on the post-direct overlay. Nested callable syntax
+ * inside an otherwise admitted owner does not by itself block that owner.
  */
-export function selectR2PreparedFreeFunctions(input: {
+export function selectR2PreparedOwnerComponents(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly selectedLegacyNames: ReadonlySet<string>;
   readonly baselineLegacyNames: ReadonlySet<string>;
+  readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
   readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
   readonly overridesByUnitId: ReadonlyMap<
@@ -877,8 +864,11 @@ export function selectR2PreparedFreeFunctions(input: {
     { readonly params: readonly IrType[]; readonly returnType: IrType | null }
   >;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
-}): ReadonlySet<string> {
-  const candidates = new Set<IrUnitId>();
+}): {
+  readonly freeFunctionNames: ReadonlySet<string>;
+  readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
+} {
+  const freeFunctionCandidates = new Set<IrUnitId>();
   const baseline = new Set<IrUnitId>();
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
@@ -897,7 +887,7 @@ export function selectR2PreparedFreeFunctions(input: {
       );
     }
     if (baseline.has(unitId)) {
-      candidates.add(unitId);
+      freeFunctionCandidates.add(unitId);
       continue;
     }
     const isAsync = claim.declaration.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.AsyncKeyword) ?? false;
@@ -914,9 +904,14 @@ export function selectR2PreparedFreeFunctions(input: {
     ) {
       continue;
     }
-    candidates.add(unitId);
+    freeFunctionCandidates.add(unitId);
   }
 
+  // Close free functions and class members together. A class-to-free edge is
+  // safe only when both endpoints survive the same bidirectional ownership
+  // fixed point; preparing either family in isolation would leave an exact
+  // source call without a callable plan or retain a legacy caller.
+  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const callers = new Map<IrUnitId, Set<IrUnitId>>();
   for (const [callerUnitId, calleeUnitIds] of callEdges.callees) {
@@ -940,19 +935,25 @@ export function selectR2PreparedFreeFunctions(input: {
     }
   }
 
-  return new Set(
-    [...candidates].map((unitId) => {
-      const claim = input.claimsByUnitId.get(unitId);
-      if (!claim) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "resolve",
-          `R2 retained prepared candidate ${unitId} lost its exact claim`,
-        );
-      }
-      return claim.legacyName;
-    }),
+  const freeFunctionNames = new Set(
+    [...candidates]
+      .filter((unitId) => freeFunctionCandidates.has(unitId))
+      .map((unitId) => {
+        const claim = input.claimsByUnitId.get(unitId);
+        if (!claim) {
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "resolve",
+            `R2 retained prepared candidate ${unitId} lost its exact claim`,
+          );
+        }
+        return claim.legacyName;
+      }),
   );
+  return {
+    freeFunctionNames,
+    classMemberUnitIds: new Set([...input.classMemberUnitIds].filter((unitId) => candidates.has(unitId))),
+  };
 }
 
 /**
@@ -1073,6 +1074,7 @@ function prepareIrClassMemberPopulation(input: {
     if (terminal?.kind === "class-static-method") continue;
     if (
       terminal?.kind !== "class-constructor" &&
+      terminal?.kind !== "class-implicit-constructor" &&
       terminal?.kind !== "class-instance-method" &&
       terminal?.kind !== "class-instance-getter" &&
       terminal?.kind !== "class-instance-setter" &&
@@ -1086,7 +1088,7 @@ function prepareIrClassMemberPopulation(input: {
       );
     }
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
-    const owner = declaration?.parent;
+    const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && (ts.isClassDeclaration(owner) || ts.isClassExpression(owner))
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
@@ -1116,9 +1118,10 @@ function prepareIrClassMemberPopulation(input: {
   // the final post-pass IR, after that mutation window has closed.
   prepareClassConstructorSupports(input.ctx, input.classShapes);
   for (const unitId of claimsByUnitId.keys()) {
-    if (input.identityPlan.identityContext.terminalByUnitId.get(unitId)?.kind !== "class-constructor") continue;
+    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(unitId);
+    if (terminal?.kind !== "class-constructor" && terminal?.kind !== "class-implicit-constructor") continue;
     const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
-    const owner = declaration?.parent;
+    const owner = terminal.kind === "class-implicit-constructor" ? declaration : declaration?.parent;
     const classId =
       owner !== undefined && ts.isClassDeclaration(owner)
         ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
@@ -1273,6 +1276,14 @@ export function prepareIrBodies(input: {
     classMemberUnitIds: classPopulation?.memberUnitIds ?? new Set<IrUnitId>(),
     moduleInit: input.selection.moduleInit,
   };
+  const implicitConstructorUnitIds = prepareImplicitConstructorSupports({
+    ctx: input.ctx,
+    sourceFile: input.sourceFile,
+    ownerUnitIds: new Set(claimsByUnitId.keys()),
+    identityPlan: input.identityPlan,
+    classShapes: input.classShapes,
+    classShapesById: input.classShapesById,
+  });
   const stagedTopLevelAccessorSetterUnitIds = classPopulation
     ? stageSelectedTopLevelAccessorSetterAbis({
         ctx: input.ctx,
@@ -1373,6 +1384,7 @@ export function prepareIrBodies(input: {
   return {
     report,
     freeFunctions,
+    implicitConstructorUnitIds,
     ...(classPopulation && classRequestedSkipProjection && classPreparedProjection
       ? {
           classMembers: {

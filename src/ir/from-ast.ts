@@ -53,6 +53,7 @@ import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
 import { remainderFastPathPlan } from "../codegen/analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
+import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "../codegen/statements/loop-analysis.js";
@@ -660,6 +661,10 @@ export interface AstToIrOptions {
    * `selfParam`.
    */
   readonly constructorInitClassShape?: IrClassShape;
+  /** Ordered own-instance field work executed by this constructor `_init`. */
+  readonly constructorFieldInitializers?: readonly IrClassInstanceInitializer[];
+  /** Synthesized derived constructor: forward every ABI parameter to this parent. */
+  readonly implicitConstructorParentShape?: IrClassShape;
   /**
    * If present, overrides the IR types for the function's own parameters.
    * Indexed by parameter position. Used when the AST lacks explicit TS
@@ -798,6 +803,39 @@ function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boole
     return ts.forEachChild(node, findVarDecl) === true;
   };
   return statements.some((statement) => !isDirectSourceVarStatement(statement) && findVarDecl(statement));
+}
+
+function lowerConstructorBody(
+  builder: IrFunctionBuilder,
+  statements: readonly ts.Statement[],
+  options: AstToIrOptions,
+  thisValue: IrValueId,
+  parameterValues: readonly IrValueId[],
+  cx: LowerCtx,
+  name: string,
+): void {
+  const fieldInitializers = options.constructorFieldInitializers ?? [];
+  const parentShape = options.constructorInitClassShape?.parent;
+  if (options.implicitConstructorParentShape) {
+    if (options.implicitConstructorParentShape !== parentShape) {
+      throw new Error(`ir/from-ast: implicit constructor parent shape mismatch (${name})`);
+    }
+    builder.emitClassSuperInit(options.implicitConstructorParentShape, thisValue, parameterValues);
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+  } else if (parentShape && fieldInitializers.length > 0) {
+    // Selection admits explicit derived constructors only with one leading
+    // `super(...)`. Own fields run immediately after it and before the rest
+    // of the source constructor body (ECMA-262 InitializeInstanceElements).
+    const [first, ...rest] = statements;
+    if (!first) throw new Error(`ir/from-ast: derived constructor has no leading super (${name})`);
+    lowerStmt(first, cx);
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+    for (const statement of rest) lowerStmt(statement, cx);
+  } else {
+    lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
+    for (const statement of statements) lowerStmt(statement, cx);
+  }
+  builder.terminate({ kind: "return", values: [thisValue] });
 }
 
 export function lowerFunctionAstToIr(
@@ -942,12 +980,14 @@ export function lowerFunctionAstToIr(
   }
   // #1372 — track binding-pattern params + their SSA values for the post-
   // openBlock destructure preamble.
+  const parameterValues: IrValueId[] = [];
   const pendingDestructures: { pattern: ts.BindingPattern; value: IrValueId }[] = [];
   const pendingMutableParams: { name: string; type: IrType; value: IrValueId }[] = [];
   for (let i = 0; i < params.length; i++) {
     const p = params[i]!;
     const astParam = fn.parameters[i]!;
     const v = builder.addParam(p.name, p.type);
+    parameterValues.push(v);
     if (ts.isObjectBindingPattern(astParam.name) || ts.isArrayBindingPattern(astParam.name)) {
       // Don't bind the synthesized __pattern_param_N name in user-visible
       // scope — leaf names will be bound below by lowerBindingPattern.
@@ -1124,23 +1164,25 @@ export function lowerFunctionAstToIr(
   if (isCtor) {
     // The AST-free `_new` wrapper allocates; this source-owned `_init` receives
     // the exact instance as its final parameter and owns all source writes.
-    const thisV = constructorInitSelf!;
-    // Constructor body statements are plain (non-tail) statements — the
-    // return is the implicit `return this`, not any body statement. Lower
-    // each via the body-statement dispatcher (the SAME shapes the selector's
-    // `isPhase1BodyStatement` admits), then synthesise the epilogue.
-    for (const s of stmts) {
-      lowerStmt(s, cx);
-      // A break/continue can't appear at ctor-body top level (no enclosing
-      // loop) — the selector rejects it — so no dead-code guard is needed.
-    }
-    builder.terminate({ kind: "return", values: [thisV] });
+    lowerConstructorBody(builder, stmts, options, constructorInitSelf!, parameterValues, cx, name);
     return { main: builder.finish(), lifted, liftedUnitProvenance };
   }
 
   lowerStatementList(stmts, cx);
 
   return { main: builder.finish(), lifted, liftedUnitProvenance };
+}
+
+/** Lower an implicit constructor through the same constructor IR pipeline. */
+export function lowerImplicitConstructorAstToIr(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  options: AstToIrOptions & { readonly constructorInitClassShape: IrClassShape },
+): LoweredFunctionResult {
+  const parameters = options.constructorInitClassShape.constructorParams.map((_type, index) =>
+    ts.factory.createParameterDeclaration(undefined, undefined, `__arg${index}`, undefined, undefined, undefined),
+  );
+  const synthetic = ts.factory.createConstructorDeclaration(undefined, parameters, ts.factory.createBlock([]));
+  return lowerFunctionAstToIr(synthetic, options);
 }
 
 /**
@@ -6975,19 +7017,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       }
       throw new Error(`ir/from-ast: class ${recvType.shape.className} has no field "${fieldName}" in ${cx.funcName}`);
     }
-    const rawValue = lowerExpr(expr.right, cx, field.type);
-    // (#3673) A natively-annotated field (`pos: i32`) legitimately receives an
-    // f64-typed JS expression; bridge it exactly as legacy `coerceType` does.
-    const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
-      ? rawValue
-      : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
-    const newValueType = cx.builder.typeOf(newValue);
-    if (!irTypeEquals(newValueType, field.type)) {
-      throw new Error(
-        `ir/from-ast: assignment to ${recvType.shape.className}.${fieldName} (${describeIrType(field.type)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
-      );
-    }
-    cx.builder.emitClassSet(recv, fieldName, newValue);
+    lowerCheckedClassFieldSet(recv, recvType.shape, fieldName, expr.right, cx);
     return;
   }
 
@@ -7044,6 +7074,52 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     "build",
     `ir/from-ast: property assignment on ${describeIrType(recvType)} is not in slice 4 (${cx.funcName})`,
   );
+}
+
+/** Shared typed field write for source assignments and constructor elements. */
+function lowerCheckedClassFieldSet(
+  receiver: IrValueId,
+  shape: IrClassShape,
+  fieldName: string,
+  expression: ts.Expression,
+  cx: LowerCtx,
+): void {
+  const field = shape.fields.find((candidate) => candidate.name === fieldName);
+  if (!field) {
+    throw new Error(`ir/from-ast: class ${shape.className} has no field "${fieldName}" in ${cx.funcName}`);
+  }
+  const rawValue = lowerExpr(expression, cx, field.type);
+  // (#3673) Native numeric slots retain their physical representation while
+  // JavaScript expressions remain number-valued at the source boundary.
+  const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
+    ? rawValue
+    : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
+  const newValueType = cx.builder.typeOf(newValue);
+  if (!irTypeEquals(newValueType, field.type)) {
+    throw new Error(
+      `ir/from-ast: assignment to ${shape.className}.${fieldName} (${describeIrType(field.type)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
+    );
+  }
+  cx.builder.emitClassSet(receiver, fieldName, newValue);
+}
+
+function lowerConstructorFieldInitializers(
+  initializers: readonly IrClassInstanceInitializer[],
+  receiver: IrValueId,
+  cx: LowerCtx,
+): void {
+  const receiverType = cx.builder.typeOf(receiver);
+  if (receiverType.kind !== "class") {
+    throw new Error(`ir/from-ast: constructor receiver is not class-shaped (${cx.funcName})`);
+  }
+  let priorOrdinal = -1;
+  for (const initializer of initializers) {
+    if (initializer.sourceOrdinal <= priorOrdinal) {
+      throw new Error(`ir/from-ast: constructor field plan is not in source order (${cx.funcName})`);
+    }
+    priorOrdinal = initializer.sourceOrdinal;
+    lowerCheckedClassFieldSet(receiver, receiverType.shape, initializer.fieldName, initializer.expression, cx);
+  }
 }
 
 // ---------------------------------------------------------------------------

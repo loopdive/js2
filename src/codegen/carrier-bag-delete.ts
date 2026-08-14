@@ -79,6 +79,9 @@ const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 /** #3537 array-expando side table (`vec-props.ts`). */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
 const VEC_BAG_LOOKUP = "__vec_bag_lookup";
+/** (#4098) Native `$Error_struct.$props` carrier (`error-props.ts`). */
+const IS_ERROR_PROP_CARRIER = "__is_error_prop_carrier";
+const ERROR_PROP_BAG_LOOKUP = "__error_prop_bag_lookup";
 
 /** Sole local of `__carrier_bag_delete` (params are 0=obj, 1=key). */
 const BAG = 2;
@@ -94,7 +97,9 @@ export function reserveCarrierBagDelete(ctx: CodegenContext): number | undefined
   const existing = ctx.funcMap.get(CARRIER_BAG_DELETE);
   if (existing !== undefined) return existing;
   const hasCarrier =
-    ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER) !== undefined || ctx.funcMap.get(IS_VEC_PROP_CARRIER) !== undefined;
+    ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER) !== undefined ||
+    ctx.funcMap.get(IS_VEC_PROP_CARRIER) !== undefined ||
+    ctx.funcMap.get(IS_ERROR_PROP_CARRIER) !== undefined;
   if (!hasCarrier) return undefined;
 
   const externref = { kind: "externref" } as const;
@@ -204,7 +209,7 @@ export function buildNonObjectDeleteArms(
 
 /**
  * Fill `__carrier_bag_delete` at FINALIZE, once `__delete_property` /
- * `__obj_find` and both carrier substrates are in `funcMap`:
+ * `__obj_find` and the carrier substrates are in `funcMap`:
  *
  * ```
  * bag = closure-carrier ? __closure_bag_lookup(obj)
@@ -255,12 +260,14 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
 
   const closureArm = lookupArm(ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER), ctx.funcMap.get(CLOSURE_BAG_LOOKUP));
   const vecArm = lookupArm(ctx.funcMap.get(IS_VEC_PROP_CARRIER), ctx.funcMap.get(VEC_BAG_LOOKUP));
-  if (closureArm.length === 0 && vecArm.length === 0) return;
+  const errorArm = lookupArm(ctx.funcMap.get(IS_ERROR_PROP_CARRIER), ctx.funcMap.get(ERROR_PROP_BAG_LOOKUP));
+  if (closureArm.length === 0 && vecArm.length === 0 && errorArm.length === 0) return;
 
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
   fn.body = [
     ...closureArm,
     ...vecArm,
+    ...errorArm,
     { op: "local.get", index: BAG },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },

@@ -133,11 +133,14 @@ import {
 import {
   IR_STRING_COMPARE_FN,
   lowerFunctionAstToIr,
+  lowerImplicitConstructorAstToIr,
   STRING_METHOD_TABLE,
+  type AstToIrOptions,
   type IrFromAstResolver,
   type LoweredFunctionResult,
   type ModuleBindingGlobal,
 } from "./from-ast.js";
+import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { prepareSuspendingIrFunction } from "./async-prepare.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import {
@@ -1380,13 +1383,19 @@ export function compileIrPathFunctions(
       const terminal = moduleBindingIdentityContext.terminalByUnitId.get(selectedUnitId);
       if (
         !member ||
-        (!ts.isConstructorDeclaration(member) &&
+        (!ts.isClassDeclaration(member) &&
+          !ts.isClassExpression(member) &&
+          !ts.isConstructorDeclaration(member) &&
           !ts.isMethodDeclaration(member) &&
           !ts.isGetAccessorDeclaration(member) &&
           !ts.isSetAccessorDeclaration(member)) ||
-        !member.body ||
         !terminal ||
-        terminal.observedKind !== "class-member"
+        terminal.observedKind !== "class-member" ||
+        ((ts.isConstructorDeclaration(member) ||
+          ts.isMethodDeclaration(member) ||
+          ts.isGetAccessorDeclaration(member) ||
+          ts.isSetAccessorDeclaration(member)) &&
+          !member.body)
       ) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -1394,7 +1403,8 @@ export function compileIrPathFunctions(
           `ir/integration: exact class member ${selectedUnitId} has no callable terminal declaration`,
         );
       }
-      const classDeclaration = member.parent;
+      const isImplicitCtorMember = terminal.kind === "class-implicit-constructor";
+      const classDeclaration = isImplicitCtorMember ? member : member.parent;
       if (!ts.isClassDeclaration(classDeclaration) && !ts.isClassExpression(classDeclaration)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -1411,7 +1421,7 @@ export function compileIrPathFunctions(
           `ir/integration: exact class member ${selectedUnitId} has no exact projected class shape`,
         );
       }
-      const isCtorMember = ts.isConstructorDeclaration(member);
+      const isCtorMember = ts.isConstructorDeclaration(member) || isImplicitCtorMember;
       const isStatic = terminal.staticClassMember;
       const descriptorKind = ts.isMethodDeclaration(member)
         ? isStatic
@@ -1462,13 +1472,34 @@ export function compileIrPathFunctions(
             `ir/integration: ${semanticName} artifact ${ownerUnitId} does not match exact owner ${selectedUnitId}`,
           );
         }
-        const result = lowerFunctionAstToIr(member, {
+        const constructorFieldInitializers = isCtorMember
+          ? collectIrClassInstanceInitializers(classDeclaration)
+          : undefined;
+        if (isCtorMember && constructorFieldInitializers === undefined) {
+          throw new IrUnsupportedError(
+            "class-member-unsupported",
+            "build",
+            `ir/integration: ${semanticName} has a dynamically computed instance field name`,
+          );
+        }
+        if (!isImplicitCtorMember) directCallsFor(member, ownerUnitId);
+        for (const initializer of constructorFieldInitializers ?? []) {
+          directCallsFor(initializer.expression, ownerUnitId);
+        }
+        const loweringOptions: AstToIrOptions = {
           exported: false,
           funcName: semanticName,
           ownerUnitId,
-          directCalls: directCallsFor(member, ownerUnitId),
+          directCalls: preparedDirectCalls,
           ...(isCtorMember
-            ? { constructorInitClassShape: classShape, paramTypeOverrides }
+            ? {
+                constructorInitClassShape: classShape,
+                paramTypeOverrides,
+                constructorFieldInitializers,
+                ...(isImplicitCtorMember && classShape.parent
+                  ? { implicitConstructorParentShape: classShape.parent }
+                  : {}),
+              }
             : terminal.kind === "class-static-method"
               ? { paramTypeOverrides, returnTypeOverride }
               : {
@@ -1488,8 +1519,31 @@ export function compileIrPathFunctions(
           resolver: fromAstResolver,
           allocRegistry,
           checker: ctx.checker,
-          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        });
+          numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
+        };
+        let result: LoweredFunctionResult;
+        if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
+          if (!isImplicitCtorMember) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "build",
+              `ir/integration: non-implicit member ${semanticName} resolves to a class declaration`,
+            );
+          }
+          result = lowerImplicitConstructorAstToIr(member, {
+            ...loweringOptions,
+            constructorInitClassShape: classShape,
+          });
+        } else {
+          if (isImplicitCtorMember) {
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "build",
+              `ir/integration: implicit constructor ${semanticName} lost its class declaration`,
+            );
+          }
+          result = lowerFunctionAstToIr(member, loweringOptions);
+        }
         if (result.main.unitId !== selectedUnitId) {
           throw new IrInvariantError(
             "selection-preparation-mismatch",

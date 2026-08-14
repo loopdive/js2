@@ -4,7 +4,7 @@ title: "Calling a function stored in a MIXED-type array literal silently returns
 status: ready
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-12
 priority: high
 horizon: m
 feasibility: medium
@@ -97,3 +97,12 @@ works.
       including the nested `[[value, callback]]` form.
 - [ ] The fix does not convert the silent `null` into a trap — the call must
       work, not merely fail loudly.
+
+## 2026-08-12 upstream-suite measurement
+
+The generic upstream runner now proves that closure properties in records
+pushed into an initially empty heterogeneous array execute correctly, which is
+enough for the selected Lodash QUnit registry. The literal tuple forms above
+remain broken: both `[1, () => 7][1]()` and `[[1, () => 7]][0][1]()` return 0
+instead of 7. The regression file records those two as explicit expected
+failures; this issue is not resolved by the npm-suite integration work.

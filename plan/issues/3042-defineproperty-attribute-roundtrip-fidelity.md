@@ -103,3 +103,24 @@ explicitly separates from attribute fidelity — a distinct root cause left for 
 (`15.2.3.6-4-243/-289`) are likewise separate receiver paths.
 
 Tests: `tests/issue-3042.test.ts`.
+
+## Standalone Object.create twin (2026-08-11)
+
+The fresh maintained standalone ES5 baseline exposed the same `null` versus
+`undefined` default at a second construction site. The static
+`Object.create(proto, properties)` expansion passed `ref.null.extern` to
+`__defineProperty_value` whenever a descriptor literal omitted `value`. In the
+standalone carrier regime that is observable JS `null`, so seven
+`15.2.3.5-4-204..211` `verifyProperty` rows and the two plain empty-descriptor
+rows `15.2.3.5-4-153/-232` failed. The expansion now uses the canonical
+regime-aware `emitUndefined`, matching this issue's widened-object fix.
+
+IR boundary: the verdict-bearing Test262 lane compiles the literal harness and
+test body as one multi-statement Script module initializer. That initializer is
+not currently IR-claimable (the prepared IR module-init owner is intentionally
+bounded to a one-statement exact-map shape), and IR has no `Object.create`
+operation today. This fix therefore repairs the existing pre-IR compatibility
+adapter only; it adds no second descriptor semantic model. A future IR
+`Object.create` lowering must call the same runtime descriptor primitives and
+use the canonical JS-undefined value representation rather than copying this
+AST expansion.

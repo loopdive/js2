@@ -13,6 +13,7 @@ import { reportError } from "./context/errors.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
 import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
@@ -35,9 +36,11 @@ import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
 import {
   emitGlobalEnvironmentDelete,
-  emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalBindingDelete,
+  emitRuntimeEvalBindingRead,
   tryEmitNonConfigurableGlobalObjectDelete,
 } from "./global-environment.js";
+import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -345,6 +348,25 @@ function emitPropertyDeleteWithUnmappedArgumentsWriteback(
   fctx.body.push({ op: "local.get", index: resultLocal });
 }
 
+function emitStaticIdentifierDelete(ctx: CodegenContext, fctx: FunctionContext, ident: ts.Identifier): void {
+  const identSym = ctx.checker.getSymbolAtLocation(ident);
+  const notEvalBody = ident.getSourceFile().fileName !== EVAL_SOURCE_FILENAME;
+  if (identSym === undefined && notEvalBody) {
+    emitGlobalEnvironmentDelete(ctx, fctx, ident.text);
+    return;
+  }
+  // §13.5.1.2 step 5: configurable ambient globals are deletable. User
+  // declarations and the three intrinsic non-configurable globals are not.
+  if (identSym !== undefined && notEvalBody && !NON_CONFIGURABLE_GLOBALS.has(ident.text)) {
+    const decls = identSym.declarations ?? [];
+    if (decls.length > 0 && decls.every((d) => d.getSourceFile().isDeclarationFile)) {
+      fctx.body.push({ op: "i32.const", value: 1 });
+      return;
+    }
+  }
+  fctx.body.push({ op: "i32.const", value: 0 });
+}
+
 /**
  * Compile `delete expr`.
  * - `delete obj.prop` / `delete obj[key]`: set the field to a sentinel (undefined) value, return true
@@ -449,37 +471,16 @@ export function compileDeleteExpression(
     // such nodes, so fall through to the existing `false` (the prior behaviour,
     // correct for the resolvable-outer-binding case `11.4.1-4.a-7.js`). Precise
     // eval-scope delete resolution is out of scope (eval-substrate lane).
-    const identSym = ctx.checker.getSymbolAtLocation(ident);
-    const notEvalBody = ident.getSourceFile().fileName !== EVAL_SOURCE_FILENAME;
-    if (identSym === undefined && notEvalBody) {
-      emitGlobalEnvironmentDelete(ctx, fctx, ident.text);
-      return { kind: "i32" };
-    }
-    // (#2726 group (b), partial) §13.5.1.2 step 5: a `delete IdentifierReference`
-    // that resolves to a CONFIGURABLE property of the global object evaluates to
-    // `true` in sloppy mode (the property is deletable). Per ECMA-262 §19 every
-    // built-in global (`JSON`/`Object`/`Math`/`parseInt`/…) is
-    // `{[[Configurable]]: true}` EXCEPT the three intrinsics `NaN`/`Infinity`/
-    // `undefined`. Distinguish a built-in global from a user-declared
-    // var/function (whose global binding is non-configurable ⇒ `false`) by
-    // symbol provenance: a built-in's declarations are ALL in ambient `.d.ts`
-    // lib files, whereas a user binding is declared in the program's own source.
-    //   - `undefined`/`globalThis`/`arguments` have NO declarations (empty
-    //     `declarations`), so the `decls.length > 0` guard keeps them out — and
-    //     `undefined` is name-excluded anyway.
-    //   - eval-body nodes never reach here (their symbol is `undefined`, handled
-    //     above), so no explicit eval guard is needed for this branch.
-    if (identSym !== undefined && notEvalBody && !NON_CONFIGURABLE_GLOBALS.has(ident.text)) {
-      const decls = identSym.declarations ?? [];
-      const allAmbient = decls.length > 0 && decls.every((d) => d.getSourceFile().isDeclarationFile);
-      if (allAmbient) {
-        fctx.body.push({ op: "i32.const", value: 1 });
+    if (runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text)) {
+      const savedFallback = pushBody(fctx);
+      emitStaticIdentifierDelete(ctx, fctx, ident);
+      const fallbackBody = fctx.body;
+      popBody(fctx, savedFallback);
+      if (emitRuntimeEvalBindingDelete(ctx, fctx, ident.text, fallbackBody)) {
         return { kind: "i32" };
       }
     }
-    // A resolvable non-configurable binding (var/let/const/param/function, or a
-    // non-configurable intrinsic global) is not deletable — return false.
-    fctx.body.push({ op: "i32.const", value: 0 });
+    emitStaticIdentifierDelete(ctx, fctx, ident);
     return { kind: "i32" };
   }
   const globalObjectDelete = tryEmitNonConfigurableGlobalObjectDelete(ctx, fctx, expr);
@@ -1451,7 +1452,11 @@ function emitAnnexBModuleTypeofRead(ctx: CodegenContext, fctx: FunctionContext, 
   return { kind: "externref" };
 }
 
-function runtimeEvalMayRebindIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+function runtimeEvalMayRebindIdentifier(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+): boolean {
   if (!(ctx.standalone || ctx.wasi) || !ctx.runtimeEvalGlobalFunctionBindings) return false;
   let bare = expression;
   while (
@@ -1462,7 +1467,9 @@ function runtimeEvalMayRebindIdentifier(ctx: CodegenContext, expression: ts.Expr
   ) {
     bare = bare.expression;
   }
-  if (!ts.isIdentifier(bare) || !ctx.moduleGlobals.has(bare.text)) return false;
+  if (!ts.isIdentifier(bare)) return false;
+  if (runtimeEvalStateMayShadowBinding(ctx, fctx, bare.text)) return true;
+  if (!ctx.moduleGlobals.has(bare.text)) return false;
   return (
     (ctx.globalObjectVarBindings?.has(bare.text) ?? false) || (ctx.liveFuncBindingGlobals?.has(bare.text) ?? false)
   );
@@ -1567,6 +1574,7 @@ export function compileTypeofExpression(
       if (
         (ctx.standalone || ctx.wasi) &&
         ident.text === "structuredClone" &&
+        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
         !!sym?.declarations?.length &&
         sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
       ) {
@@ -1576,7 +1584,7 @@ export function compileTypeofExpression(
         if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
           addUnionImports(ctx);
           const typeofIdx = ctx.funcMap.get("__typeof");
-          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          const valueType = emitRuntimeEvalBindingRead(ctx, fctx, ident.text, true);
           if (typeofIdx !== undefined && valueType !== null) {
             fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
             return { kind: "externref" };
@@ -1643,7 +1651,7 @@ export function compileTypeofExpression(
     // sense, irrespective of the checker's flow type at this source position.
     // Eval may have replaced `var initial` (statically `undefined`) with an
     // interpreted function, so folding `typeof initial` is unsound.
-    if (runtimeEvalMayRebindIdentifier(ctx, bareTdz)) {
+    if (runtimeEvalMayRebindIdentifier(ctx, fctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#4204) Slot is externref, checker still says primitive — folding
@@ -1828,7 +1836,7 @@ export function compileTypeofComparison(
           else if (stringLiteral === "object") helperName = "__typeof_object";
           else if (stringLiteral === "function") helperName = "__typeof_function";
           const helperIdx = helperName === null ? undefined : ctx.funcMap.get(helperName);
-          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          const valueType = emitRuntimeEvalBindingRead(ctx, fctx, ident.text, true);
           if (helperIdx !== undefined && valueType !== null) {
             fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(helperName!) ?? helperIdx });
             if (isNeq) fctx.body.push({ op: "i32.eqz" });
@@ -1850,6 +1858,7 @@ export function compileTypeofComparison(
       if (
         (ctx.standalone || ctx.wasi) &&
         ident.text === "structuredClone" &&
+        !runtimeEvalStateMayShadowBinding(ctx, fctx, ident.text) &&
         !!sym.declarations?.length &&
         sym.declarations.every((d) => d.getSourceFile().isDeclarationFile)
       ) {
@@ -1874,7 +1883,7 @@ export function compileTypeofComparison(
   } else {
     staticTypeof = staticTypeofForType(ctx, tsType);
   }
-  if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, operand)) {
+  if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, fctx, operand)) {
     staticTypeof = null;
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
@@ -2002,7 +2011,10 @@ export function compileTypeofComparison(
   // `typeof resolve === "function"` was false for a stored host function.
   // Route through compileExpression, whose identifier path derefs the cell.
   if (ts.isIdentifier(operand)) {
-    const localIdx = fctx.boxedCaptures?.has(operand.text) ? undefined : fctx.localMap.get(operand.text);
+    const localIdx =
+      fctx.boxedCaptures?.has(operand.text) || runtimeEvalStateMayShadowBinding(ctx, fctx, operand.text)
+        ? undefined
+        : fctx.localMap.get(operand.text);
     if (localIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: localIdx });
     } else {

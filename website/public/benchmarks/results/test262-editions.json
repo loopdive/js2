@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 7376,
-    "fail": 1631,
-    "ce": 22,
+    "pass": 7386,
+    "fail": 1619,
+    "ce": 24,
     "skip": 0,
     "total": 9029,
     "pct": 82,
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8926,
-    "fail": 2674,
-    "ce": 103,
+    "pass": 8927,
+    "fail": 2672,
+    "ce": 104,
     "skip": 1,
     "total": 11704,
     "pct": 76,
@@ -94,8 +94,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 461,
-        "fail": 291,
-        "ce": 42,
+        "fail": 290,
+        "ce": 43,
         "skip": 1,
         "total": 795,
         "pct": 58
@@ -435,12 +435,12 @@
       },
       {
         "name": "Symbol.unscopables",
-        "pass": 8,
-        "fail": 9,
+        "pass": 9,
+        "fail": 8,
         "ce": 1,
         "skip": 0,
         "total": 18,
-        "pct": 44
+        "pct": 50
       },
       {
         "name": "Symbol.hasInstance",
@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 94,
-    "fail": 28,
+    "pass": 95,
+    "fail": 27,
     "ce": 2,
     "skip": 0,
     "total": 124,
-    "pct": 76,
+    "pct": 77,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 14,
-        "fail": 15,
+        "pass": 15,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 48
+        "pct": 52
       },
       {
         "name": "u180e",
@@ -1316,12 +1316,12 @@
   },
   {
     "edition": "ES2019",
-    "pass": 82,
-    "fail": 54,
+    "pass": 84,
+    "fail": 52,
     "ce": 0,
     "skip": 0,
     "total": 136,
-    "pct": 60,
+    "pct": 62,
     "features": [
       {
         "name": "string-trimming",
@@ -1370,21 +1370,21 @@
       },
       {
         "name": "Array.prototype.flatMap",
-        "pass": 7,
-        "fail": 14,
+        "pass": 8,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 21,
-        "pct": 33
+        "pct": 38
       },
       {
         "name": "Array.prototype.flat",
-        "pass": 5,
-        "fail": 10,
+        "pass": 6,
+        "fail": 9,
         "ce": 0,
         "skip": 0,
         "total": 15,
-        "pct": 33
+        "pct": 40
       },
       {
         "name": "Symbol.iterator",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4213,
-    "fail": 1530,
+    "pass": 4214,
+    "fail": 1529,
     "ce": 49,
     "skip": 0,
     "total": 5792,
@@ -2492,12 +2492,12 @@
       },
       {
         "name": "Array.prototype.at",
-        "pass": 5,
-        "fail": 7,
+        "pass": 6,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 42
+        "pct": 50
       },
       {
         "name": "exponentiation",
@@ -2683,21 +2683,21 @@
   },
   {
     "edition": "ES2023",
-    "pass": 177,
-    "fail": 155,
+    "pass": 183,
+    "fail": 149,
     "ce": 2,
     "skip": 0,
     "total": 334,
-    "pct": 53,
+    "pct": 55,
     "features": [
       {
         "name": "change-array-by-copy",
-        "pass": 84,
-        "fail": 48,
+        "pass": 88,
+        "fail": 44,
         "ce": 0,
         "skip": 0,
         "total": 132,
-        "pct": 64
+        "pct": 67
       },
       {
         "name": "TypedArray",
@@ -2710,12 +2710,12 @@
       },
       {
         "name": "array-find-from-last",
-        "pass": 65,
-        "fail": 42,
+        "pass": 67,
+        "fail": 40,
         "ce": 2,
         "skip": 0,
         "total": 109,
-        "pct": 60
+        "pct": 61
       },
       {
         "name": "ShadowRealm",
@@ -3571,12 +3571,12 @@
   },
   {
     "edition": "ES2026",
-    "pass": 142,
-    "fail": 168,
+    "pass": 146,
+    "fail": 164,
     "ce": 0,
     "skip": 0,
     "total": 310,
-    "pct": 46,
+    "pct": 47,
     "features": [
       {
         "name": "Array.fromAsync",
@@ -3598,21 +3598,21 @@
       },
       {
         "name": "TypedArray",
-        "pass": 35,
-        "fail": 33,
+        "pass": 39,
+        "fail": 29,
         "ce": 0,
         "skip": 0,
         "total": 68,
-        "pct": 51
+        "pct": 57
       },
       {
         "name": "uint8array-base64",
-        "pass": 35,
-        "fail": 33,
+        "pass": 39,
+        "fail": 29,
         "ce": 0,
         "skip": 0,
         "total": 68,
-        "pct": 51
+        "pct": 57
       },
       {
         "name": "WeakMap",
@@ -4268,11 +4268,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4104,
-    "fail": 1256,
-    "ce": 85,
+    "pass": 4128,
+    "fail": 1228,
+    "ce": 89,
     "skip": 0,
     "total": 5445,
-    "pct": 75
+    "pct": 76
   }
 ]

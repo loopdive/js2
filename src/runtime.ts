@@ -35,11 +35,18 @@ import {
   _getGeneratorFunctionPrototype,
   _getAsyncGeneratorInstancePrototype,
   _getAsyncGeneratorFunctionPrototype,
+  // NB: _installIteratorHelperPolyfills is deliberately NOT imported here.
+  // origin called it inline in buildImports; this branch moved that call (and
+  // the #1333 legacy-RegExp install) into installAmbientCompatibility in
+  // runtime/compatibility-adapter.ts, which imports it directly. The behaviour
+  // is preserved — importing it here too would just be unused.
+  _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 export { buildStringConstants, buildStringConstants16 };
+export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 import {
   compiledClosureNativeSource,
   createNativeFunctionCallbackBridge,

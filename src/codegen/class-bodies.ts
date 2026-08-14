@@ -1637,6 +1637,9 @@ export interface ClassBodyCompileRouting {
   readonly skipBodyUnitIds?: ReadonlySet<IrUnitId>;
   readonly preserveSkippedBodyUnitIds?: ReadonlySet<IrUnitId>;
   readonly skippedUnitIds?: IrUnitId[];
+  /** Exact non-terminal implicit-constructor support units installed during preparation. */
+  readonly skipImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
+  readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
 }
 
 function skipExactPreparedClassBody(
@@ -1727,24 +1730,53 @@ function skipPreparedClassConstructorBody(
   ctx: CodegenContext,
   funcByName: ReadonlyMap<string, number>,
   routing: ClassBodyCompileRouting | undefined,
+  classDeclaration: ts.ClassDeclaration | ts.ClassExpression,
   declaration: ts.ConstructorDeclaration | undefined,
   className: string,
   ctorName: string,
 ): boolean {
+  if (!declaration) {
+    const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(classDeclaration);
+    if (unitId !== undefined && routing?.skipImplicitConstructorUnitIds?.has(unitId) === true) {
+      const unit = ctx.irPlanningIdentityContext?.unitByUnitId.get(unitId);
+      const initKey = classMemberFuncKey(ctx, `${className}_init`);
+      const initLocalIdx = funcByName.get(initKey);
+      const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
+      const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
+      const newFunc = newFuncIdx === undefined ? undefined : definedFuncAt(ctx, newFuncIdx);
+      if (
+        unit?.kind !== "class-implicit-constructor" ||
+        unit.terminalOwnerId !== null ||
+        ctx.irPlanningIdentityContext?.terminalByUnitId.has(unitId) ||
+        ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== classDeclaration ||
+        ctx.programAbiClassCallables?.functionForUnit(unitId) !== initFunc ||
+        !initFunc ||
+        initFunc.body.length === 0 ||
+        !newFunc ||
+        newFunc.body.length === 0
+      ) {
+        throw new Error(`prepared implicit constructor ${ctorName} has no exact installed support pair`);
+      }
+      if (routing.skippedImplicitConstructorUnitIds && !routing.skippedImplicitConstructorUnitIds.includes(unitId)) {
+        routing.skippedImplicitConstructorUnitIds.push(unitId);
+      }
+      return true;
+    }
+  }
   if (!routing?.skipBodies.has(ctorName)) return false;
   const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
   const initKey = classMemberFuncKey(ctx, `${className}_init`);
   const initLocalIdx = funcByName.get(initKey);
   const initFuncIdx = ctx.funcMap.get(initKey);
   const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
-  const unitId = declaration ? ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration) : undefined;
+  const unitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(declaration ?? classDeclaration);
   const terminal = unitId ? ctx.irPlanningIdentityContext?.terminalByUnitId.get(unitId) : undefined;
   const allocated = unitId ? ctx.programAbiClassCallables?.functionForUnit(unitId) : undefined;
   if (
     unitId === undefined ||
     routing.skipBodyUnitIds?.has(unitId) !== true ||
-    terminal?.kind !== "class-constructor" ||
-    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== declaration ||
+    (terminal?.kind !== "class-constructor" && terminal?.kind !== "class-implicit-constructor") ||
+    ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== (declaration ?? classDeclaration) ||
     !initFunc ||
     allocated !== initFunc
   ) {
@@ -1791,7 +1823,7 @@ function compileClassBodiesInner(
   const ctorLocalIdx = funcByName.get(classMemberFuncKey(ctx, ctorName)); // (#1983)
   if (
     ctorLocalIdx !== undefined &&
-    !skipPreparedClassConstructorBody(ctx, funcByName, routing, ctor, className, ctorName)
+    !skipPreparedClassConstructorBody(ctx, funcByName, routing, decl, ctor, className, ctorName)
   ) {
     const func = ctx.mod.functions[ctorLocalIdx]!;
     assertDirectClassBodyAllowed(ctorName);

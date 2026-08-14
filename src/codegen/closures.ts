@@ -131,7 +131,22 @@ import {
 } from "./closures/callback-classification.js";
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { emitUndefined } from "./expressions/late-imports.js";
 export { emitFuncRefAsClosure };
+
+function emitClosureDefaultReturnValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  returnType: ValType | null,
+  alreadyHasValue: boolean,
+): void {
+  const lastInstr = fctx.body[fctx.body.length - 1];
+  if (returnType?.kind === "externref" && !alreadyHasValue && (!lastInstr || lastInstr.op !== "return")) {
+    emitUndefined(ctx, fctx);
+    return;
+  }
+  emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
+}
 import { spliceNullGuarded, emitDefaultReturnValue } from "./closures/param-emit-helpers.js";
 import type { ArrowClosureCapture } from "./closures/arrow-phases.js";
 import {
@@ -149,8 +164,11 @@ import {
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
+  emitEnsureDirectEvalActivationStatePoolInitialized,
+  enclosingFunctionOwnScopeMayReachDirectEval,
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
+  RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
 } from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
@@ -499,6 +517,65 @@ export function collectOverBody(
   } else {
     collectFn(body, names, shadowed);
   }
+}
+
+/**
+ * True when every value reference with `name` in a closure resolves to the
+ * closure's imported binding. Import bindings are live views of the exporting
+ * module, not values captured when a closure is constructed. Keeping one in a
+ * capture slot can snapshot the export's pre-initialization null value when a
+ * CommonJS/ESM dependency is initialized later in the combined module.
+ */
+export function closureNameResolvesToImportBinding(
+  ctx: CodegenContext,
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  name: string,
+): boolean {
+  let sawReference = false;
+  let allReferencesAreImports = true;
+
+  const isImportDeclaration = (declaration: ts.Declaration): boolean =>
+    ts.isImportClause(declaration) ||
+    ts.isImportSpecifier(declaration) ||
+    ts.isNamespaceImport(declaration) ||
+    ts.isImportEqualsDeclaration(declaration);
+
+  const isValueReference = (id: ts.Identifier): boolean => {
+    const parent = id.parent;
+    if (!parent) return true;
+    if (ts.isVariableDeclaration(parent) && parent.name === id) return false;
+    if (ts.isParameter(parent) && parent.name === id) return false;
+    if (ts.isBindingElement(parent) && parent.name === id) return false;
+    if (
+      (ts.isFunctionDeclaration(parent) ||
+        ts.isFunctionExpression(parent) ||
+        ts.isClassDeclaration(parent) ||
+        ts.isClassExpression(parent)) &&
+      parent.name === id
+    ) {
+      return false;
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false;
+    if (ts.isPropertyAssignment(parent) && parent.name === id) return false;
+    if (ts.isLabeledStatement(parent) && parent.label === id) return false;
+    if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === id) return false;
+    return true;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (!allReferencesAreImports) return;
+    if (ts.isIdentifier(node) && node.text === name && isValueReference(node)) {
+      sawReference = true;
+      const declarations = ctx.oracle.declarationsOf(node);
+      if (declarations.length === 0 || !declarations.some(isImportDeclaration)) {
+        allReferencesAreImports = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(closure);
+  return sawReference && allReferencesAreImports;
 }
 
 /**
@@ -1610,6 +1687,21 @@ export function computeClosureWrapperSig(
   for (const p of runtimeParameters(arrow)) {
     const paramType = ctx.checker.getTypeAtLocation(p);
     let wasmType = resolveWasmType(ctx, paramType);
+    // An unannotated JavaScript parameter whose default is object-valued is
+    // still structurally open: callers may supply any property bag. TypeScript
+    // infers the default's exact closed shape, but using that shape as the Wasm
+    // ABI rejects narrower custom maps (Hono's getMimeType(filename, mimes =
+    // baseMimes)). Keep the call boundary dynamic; the body already performs
+    // ordinary computed-property reads through the externref object path.
+    if (
+      /\.(?:[cm]?js|jsx)$/i.test(p.getSourceFile().fileName) &&
+      p.type === undefined &&
+      ts.getJSDocType(p) === undefined &&
+      p.initializer !== undefined &&
+      (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+    ) {
+      wasmType = { kind: "externref" };
+    }
     if (p.initializer && wasmType.kind === "ref") {
       wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
     }
@@ -2256,6 +2348,15 @@ export function compileLiftedClosureBody(
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE + i });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
+      if (cap.name === RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME) {
+        liftedFctx.directEvalActivationStatePoolLocal = localIdx;
+        liftedFctx.directEvalRefCellTypeIdx = fctx.directEvalRefCellTypeIdx;
+        liftedFctx.directEvalOuterBindingNames = new Set(
+          captures
+            .filter((capture) => capture.name !== RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME)
+            .map((capture) => capture.name),
+        );
+      }
     }
   }
   rehydrateWithEnvironmentScopes(fctx, liftedFctx, closureName, arrowOwnLocals(arrow));
@@ -2703,7 +2804,7 @@ export function compileLiftedClosureBody(
   }
 
   // Ensure return value for non-void functions (skip if concise body already left a value)
-  emitDefaultReturnValue(liftedFctx, closureReturnType, conciseBodyHasValue);
+  emitClosureDefaultReturnValue(ctx, liftedFctx, closureReturnType, conciseBodyHasValue);
 
   if (savedFunc) ctx.funcStack.pop();
   if (savedFunc) ctx.parentBodiesStack.pop();
@@ -2801,6 +2902,42 @@ function reportClosureNameMap(arrow: ts.ArrowFunction | ts.FunctionExpression, c
   console.error(`[js2:closure-map] ${closureName} <- ${label || "(anonymous)"} @${line + 1}`);
 }
 
+/**
+ * A closure with no direct-eval subtree can still outlive and observe a var
+ * binding created by direct eval in its owning activation. Thread the stable
+ * pool pointer as an impossible-name internal capture, initialized before
+ * construction so a closure created textually before eval does not capture a
+ * null pre-state. A closure that reaches direct eval needs an inner+outer pool
+ * chain and stays on the existing path; reusing its owner's pool would merge
+ * two VarEnvs.
+ */
+function captureOwningDirectEvalState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  reachesDirectEval: boolean,
+  captures: ArrowClosureCapture[],
+): void {
+  if (
+    !(ctx.standalone || ctx.wasi) ||
+    reachesDirectEval ||
+    (fctx.directEvalActivationStatePoolLocal === undefined &&
+      !enclosingFunctionOwnScopeMayReachDirectEval(arrow, ctx.oracle))
+  ) {
+    return;
+  }
+  const state = emitEnsureDirectEvalActivationStatePoolInitialized(ctx, fctx);
+  captures.push({
+    name: RUNTIME_EVAL_STATE_POOL_CAPTURE_NAME,
+    type: { kind: "externref" },
+    localIdx: state.poolLocal,
+    mutable: false,
+    alreadyBoxed: false,
+    hasTdzFlag: false,
+    eagerDominatingBox: false,
+  });
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -2814,9 +2951,7 @@ export function compileArrowAsClosure(
 
   // Check if this is a generator function expression (function*() { ... })
   const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
-  if (isGenerator) {
-    ctx.generatorFunctions.add(closureName);
-  }
+  if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.
   const isAsync = arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
@@ -2858,6 +2993,7 @@ export function compileArrowAsClosure(
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
   const additionalCaptureNames = planAdditionalWithEnvironmentCaptureNames(fctx, reachesDirectEval);
   const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body, additionalCaptureNames);
+  captureOwningDirectEvalState(ctx, fctx, arrow, reachesDirectEval, captures);
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
   //    For mutable captures, the field type is a ref cell (struct { value: T })
@@ -3331,6 +3467,18 @@ export function compileArrowAsCallback(
   // present in the global `funcMap`.
   const directReferencedNames = addWithEnvironmentCaptureNames(referencedNames, fctx);
 
+  // Import bindings are live module views, so callback closures must read the
+  // aliased function/global at invocation time instead of capturing an early
+  // module-initializer staging value.
+  for (const name of [...referencedNames]) {
+    if (
+      (ctx.moduleGlobals.has(name) || ctx.funcMap.has(name) || ctx.closureMap.has(name)) &&
+      closureNameResolvesToImportBinding(ctx, arrow, name)
+    ) {
+      referencedNames.delete(name);
+    }
+  }
+
   // A host callback can call a capturing nested declaration. Its callback
   // frame must carry that declaration's environment just like a lifted Wasm
   // closure does; otherwise the direct call reads owner-frame local indices
@@ -3636,7 +3784,7 @@ export function compileArrowAsCallback(
     }
   }
 
-  emitDefaultReturnValue(cbFctx, cbReturnType, exprBodyHasReturnValue);
+  emitClosureDefaultReturnValue(ctx, cbFctx, cbReturnType, exprBodyHasReturnValue);
 
   if (savedFunc) ctx.funcStack.pop();
   if (savedFunc) ctx.parentBodiesStack.pop();

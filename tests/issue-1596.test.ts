@@ -65,6 +65,41 @@ describe("#1596 Function.prototype.apply/.call on function expressions", () => {
     expect(e.test()).toBe(99);
   });
 
+  it("identifier.apply forwards the live arguments object", async () => {
+    const e = await compileAndRun(`
+      function target(a: number, b: number): number {
+        return a + b;
+      }
+      function forward(a: number, b: number): number {
+        return target.apply(null, arguments as any);
+      }
+      export function test(): number {
+        return forward(3, 4);
+      }
+    `);
+    expect(e.test()).toBe(7);
+  });
+
+  it("mutable module closure.apply preserves the live argument count and overflow values", async () => {
+    const e = await compileAndRun(`
+      var callback: any;
+      function setCallback(value: any): void {
+        callback = value;
+      }
+      function forward(a: any, b: any, c: any): number {
+        return callback.apply(null, arguments);
+      }
+      function target(first: any): number {
+        return arguments.length * 100 + first + arguments[2];
+      }
+      setCallback(target);
+      export function test(): number {
+        return forward(5, 6, 7);
+      }
+    `);
+    expect(e.test()).toBe(312);
+  });
+
   it("nested .call inside expression", async () => {
     const e = await compileAndRun(`
       export function test(): number {

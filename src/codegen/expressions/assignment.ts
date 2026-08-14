@@ -12,7 +12,7 @@ import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4
 import { emitHoleToUndefined } from "../array-holes.js";
 import { tryEmitLinearU8ElementCompound, tryEmitLinearU8ElementSet } from "../linear-uint8-codegen.js";
 import { emitAnyAdd, emitModulo, emitToInt32, emitToUint8Clamp } from "../binary-ops.js";
-import { pushBody } from "../context/bodies.js";
+import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -71,6 +71,7 @@ import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
   findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
+  isUnresolvableIdent,
   NOT_UNRESOLVABLE,
   tryCompileUnresolvableIdentifierAssign,
 } from "./unresolvable-assign.js";
@@ -126,8 +127,11 @@ import {
   resolveWithBinding,
 } from "../with-scope.js";
 import {
+  emitCaptureRuntimeEvalBindingValueCell,
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
+  emitRefreshRuntimeEvalBindingValueCellForWrite,
+  emitRuntimeEvalBindingCellWrite,
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
@@ -263,6 +267,64 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       // Assignment expression result is the RHS value.
       fctx.body.push({ op: "local.get", index: rhsTmp });
       return { kind: "externref" };
+    }
+    // A sloppy direct eval in this activation may have created a var binding
+    // that shadows a statically-resolved outer capture or ambient/global name.
+    // Resolve that dynamic Reference before evaluating the RHS, then write the
+    // RHS exactly once either through its stable value cell or through the
+    // compiler's ordinary static target on a miss. Truly unresolvable names
+    // keep the stricter GlobalEnvironmentRecord route below.
+    if (!isUnresolvableIdent(ctx, fctx, expr.left)) {
+      const runtimeBinding = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
+      if (runtimeBinding) {
+        const wrapRuntimeEvalCallable = isStaticallyCallableExpression(ctx, expr.right);
+        const rhsType = compileExpression(
+          ctx,
+          fctx,
+          expr.right,
+          wrapRuntimeEvalCallable ? undefined : { kind: "externref" },
+        );
+        if (!rhsType) {
+          reportError(ctx, expr, "Failed to compile runtime-eval-shadowed assignment value");
+          return null;
+        }
+        if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
+        const rhsLocal = allocLocal(fctx, `__runtime_eval_shadow_rhs_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: rhsLocal });
+
+        const savedPresent = pushBody(fctx);
+        let cellValueLocal = rhsLocal;
+        if (wrapRuntimeEvalCallable) {
+          fctx.body.push({ op: "local.get", index: rhsLocal });
+          emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+          cellValueLocal = allocLocal(fctx, `__runtime_eval_shadow_cell_value_${fctx.locals.length}`, {
+            kind: "externref",
+          });
+          fctx.body.push({ op: "local.set", index: cellValueLocal });
+        }
+        const refreshedBinding = emitRefreshRuntimeEvalBindingValueCellForWrite(ctx, fctx, name, runtimeBinding);
+        emitRuntimeEvalBindingCellWrite(fctx, refreshedBinding ?? runtimeBinding, cellValueLocal);
+        const presentBody = fctx.body;
+        popBody(fctx, savedPresent);
+
+        const savedMiss = pushBody(fctx);
+        if (!tryEmitAmbientIdentifierGlobalWriteFromLocal(ctx, fctx, expr.left, rhsLocal)) {
+          emitIdentifierWriteFromLocal(ctx, fctx, expr.left, rhsLocal);
+        }
+        const missBody = fctx.body;
+        popBody(fctx, savedMiss);
+
+        fctx.body.push(
+          { op: "local.get", index: runtimeBinding.valueCellLocal },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: presentBody, else: missBody },
+          { op: "local.get", index: rhsLocal },
+        );
+        return { kind: "externref" };
+      }
     }
     // const bindings — assignment throws TypeError at runtime
     if (fctx.constBindings?.has(name)) {
@@ -818,6 +880,34 @@ function emitIdentifierWriteFromLocal(
   const newLocalIdx = allocLocal(fctx, name, { kind: "externref" });
   fctx.body.push({ op: "local.get", index: rhsLocalIdx });
   fctx.body.push({ op: "local.set", index: newLocalIdx });
+}
+
+/** Write the miss arm of a runtime-eval-shadowable ambient name through its
+ * real GlobalEnvironmentRecord storage. Compiling a branch-only miss must not
+ * allocate a same-named local: that local would permanently redirect later
+ * fallback reads even when the runtime branch was never taken. */
+function tryEmitAmbientIdentifierGlobalWriteFromLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  rhsLocalIdx: number,
+): boolean {
+  const declarations = ctx.oracle.declarationsOf(id);
+  if (declarations.length === 0 || !declarations.every((decl) => decl.getSourceFile().isDeclarationFile)) {
+    return false;
+  }
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return false;
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    return false;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push(
+    { op: "local.get", index: rhsLocalIdx },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx },
+  );
+  return true;
 }
 
 export { isStrictContext } from "../helpers/is-strict-function.js";

@@ -11,13 +11,25 @@ import { emitNativeGlobalThisObject } from "./array-object-proto.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  ensureDirectEvalActivationStatePoolLocal,
+  ensureDirectEvalStateBindingDelete,
+  ensureDirectEvalStateValueCellLookup,
+  RUNTIME_EVAL_DELETABLE_BINDING_MARKER,
+  runtimeEvalStateMayShadowBinding,
+} from "./direct-eval-environment.js";
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { addFuncType } from "./registry/types.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
+
+const RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL = "__runtime_eval_claim_activation_state_value_cell";
 
 export function emitGlobalEnvironmentObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   if (ctx.standalone || ctx.wasi) {
@@ -65,6 +77,258 @@ export function runtimeEvalSharedValueUnwrapInstrs(ctx: CodegenContext, fctx: Fu
 
 export function emitRuntimeEvalSharedValueUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
   fctx.body.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+}
+
+export interface RuntimeEvalBindingValueCell {
+  poolLocal: number;
+  valueCellLocal: number;
+  cellTypeIdx: number;
+}
+
+/** Capture the provider-created binding decision at the current evaluation
+ * point. A null cell means "not present"; a non-null cell proves that this
+ * activation record owns the Reference. The cell itself can be tombstoned or
+ * reused while an RHS runs, so writes revalidate it by name below. */
+export function emitCaptureRuntimeEvalBindingValueCell(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+): RuntimeEvalBindingValueCell | undefined {
+  if (!runtimeEvalStateMayShadowBinding(ctx, fctx, name)) return undefined;
+  const state = ensureDirectEvalActivationStatePoolLocal(ctx, fctx);
+  const lookupIdx = ensureDirectEvalStateValueCellLookup(ctx, state.cellTypeIdx);
+  if (lookupIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, name);
+  const valueCellLocal = allocLocal(fctx, `__runtime_eval_binding_cell_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push(
+    { op: "local.get", index: state.poolLocal },
+    ...stringConstantExternrefInstrs(ctx, name),
+    { op: "call", funcIdx: lookupIdx },
+    { op: "local.set", index: valueCellLocal },
+  );
+  return { poolLocal: state.poolLocal, valueCellLocal, cellTypeIdx: state.cellTypeIdx };
+}
+
+/** Register the bounded vacancy-claim used after a captured Reference's RHS
+ * deletes its binding. The pre-RHS lookup has already proved that this exact
+ * declarative environment owned `name`; SetMutableBinding therefore recreates
+ * the name in that same environment instead of falling through to the global
+ * object. A provider may have reused the original four-cell group meanwhile,
+ * so the claim scans for a genuinely empty name/marker pair rather than
+ * blindly writing through the stale value-cell pointer. */
+function ensureRuntimeEvalStateValueCellClaim(ctx: CodegenContext, cellTypeIdx: number): number | undefined {
+  const existing = ctx.funcMap.get(RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL);
+  if (existing !== undefined) return existing;
+
+  ensureObjVecBuilders(ctx);
+  const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
+  const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
+  if (objVecTypeIdx === undefined || objVecArrTypeIdx === undefined) return undefined;
+
+  // params 0=pool, 1=name, 2=exact deletability marker; locals 3=poolAny,
+  // 4=vec, 5=data, 6=len, 7=i, 8=cellAny.
+  const poolAnyLocal = 3;
+  const vecLocal = 4;
+  const dataLocal = 5;
+  const lengthLocal = 6;
+  const indexLocal = 7;
+  const cellAnyLocal = 8;
+  const loadCellAny = (offset: number): Instr[] => [
+    { op: "local.get", index: dataLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: indexLocal },
+    ...(offset === 0 ? [] : [{ op: "i32.const", value: offset } as Instr, { op: "i32.add" } as Instr]),
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: cellAnyLocal },
+  ];
+  const setCell = (offset: number, value: Instr[]): Instr[] => [
+    ...loadCellAny(offset),
+    { op: "ref.cast", typeIdx: cellTypeIdx },
+    ...value,
+    { op: "struct.set", typeIdx: cellTypeIdx, fieldIdx: 0 },
+  ];
+  const returnValueCell: Instr[] = [
+    { op: "local.get", index: dataLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+    { op: "return" },
+  ];
+  const claimVacancy: Instr[] = [
+    ...setCell(0, [{ op: "local.get", index: 1 }]),
+    ...setCell(1, [{ op: "ref.null.extern" }]),
+    ...setCell(2, [{ op: "local.get", index: 2 }]),
+    ...setCell(3, [{ op: "ref.null.extern" }]),
+    ...returnValueCell,
+  ];
+  const loopBody: Instr[] = [
+    // One binding occupies four cells. A truncated/malformed tail is not a
+    // vacancy and must not produce an out-of-bounds access.
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 3 },
+    { op: "i32.add" },
+    { op: "local.get", index: lengthLocal },
+    { op: "i32.ge_u" },
+    { op: "br_if", depth: 1 },
+    ...loadCellAny(0),
+    { op: "ref.test", typeIdx: cellTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: cellAnyLocal },
+        { op: "ref.cast", typeIdx: cellTypeIdx },
+        { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...loadCellAny(2),
+            { op: "ref.test", typeIdx: cellTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: cellAnyLocal },
+                { op: "ref.cast", typeIdx: cellTypeIdx },
+                { op: "struct.get", typeIdx: cellTypeIdx, fieldIdx: 0 },
+                { op: "ref.is_null" },
+                { op: "if", blockType: { kind: "empty" }, then: claimVacancy },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.const", value: 4 },
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+    { op: "br", depth: 0 },
+  ];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: poolAnyLocal },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "ref.null.extern" }, { op: "return" }],
+    },
+    { op: "local.get", index: poolAnyLocal },
+    { op: "ref.cast", typeIdx: objVecTypeIdx },
+    { op: "local.set", index: vecLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataLocal },
+    { op: "local.get", index: vecLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: lengthLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: indexLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    },
+    { op: "ref.null.extern" },
+  ];
+  const funcIdx = mintDefinedFunc(ctx);
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    "$runtime_eval_claim_activation_state_value_cell_type",
+  );
+  ctx.funcMap.set(RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL,
+    typeIdx,
+    locals: [
+      { name: "poolAny", type: { kind: "anyref" } },
+      { name: "vec", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
+      { name: "data", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
+      { name: "len", type: { kind: "i32" } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "cellAny", type: { kind: "anyref" } },
+    ],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** Re-resolve a previously captured activation Reference after its RHS ran.
+ * If the RHS deleted that binding, SetMutableBinding recreates it in the same
+ * record; if it recreated the same name itself, this returns that new cell. */
+export function emitRefreshRuntimeEvalBindingValueCellForWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  binding: RuntimeEvalBindingValueCell,
+): RuntimeEvalBindingValueCell | undefined {
+  const lookupIdx = ensureDirectEvalStateValueCellLookup(ctx, binding.cellTypeIdx);
+  const claimIdx = ensureRuntimeEvalStateValueCellClaim(ctx, binding.cellTypeIdx);
+  if (lookupIdx === undefined || claimIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, name);
+  addStringConstantGlobal(ctx, RUNTIME_EVAL_DELETABLE_BINDING_MARKER);
+  const valueCellLocal = allocLocal(fctx, `__runtime_eval_refreshed_binding_cell_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push(
+    { op: "local.get", index: binding.poolLocal },
+    ...stringConstantExternrefInstrs(ctx, name),
+    { op: "call", funcIdx: ctx.funcMap.get("__runtime_eval_find_activation_state_value_cell") ?? lookupIdx },
+    { op: "local.tee", index: valueCellLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: binding.poolLocal },
+        ...stringConstantExternrefInstrs(ctx, name),
+        ...stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_DELETABLE_BINDING_MARKER),
+        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL) ?? claimIdx },
+        { op: "local.set", index: valueCellLocal },
+      ],
+    },
+  );
+  return { poolLocal: binding.poolLocal, valueCellLocal, cellTypeIdx: binding.cellTypeIdx };
+}
+
+/** Store an externref value through a captured provider-created value cell. */
+export function emitRuntimeEvalBindingCellWrite(
+  fctx: FunctionContext,
+  binding: RuntimeEvalBindingValueCell,
+  valueLocal: number,
+): void {
+  // Land the cast before struct.set. The serializer's backward receiver repair
+  // otherwise sees the original externref local.get and inserts a duplicate
+  // any.convert_extern/ref.cast in front of this already-correct conversion.
+  const structLocal = allocLocal(fctx, `__runtime_eval_binding_struct_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: binding.cellTypeIdx,
+  });
+  fctx.body.push(
+    { op: "local.get", index: binding.valueCellLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: binding.cellTypeIdx },
+    { op: "local.set", index: structLocal },
+    { op: "local.get", index: structLocal },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: valueLocal },
+    { op: "struct.set", typeIdx: binding.cellTypeIdx, fieldIdx: 0 },
+  );
 }
 
 /** Read a pre-scanned sloppy implicit global, throwing when it was deleted. */
@@ -148,6 +412,85 @@ export function emitRuntimeEvalGlobalRead(
     else: missingBody,
   });
   return { kind: "externref" };
+}
+
+/** Read an identifier that may have been introduced by an earlier direct eval
+ * in this AOT activation. The caller-owned state pool is the persistent
+ * VariableEnvironment sidecar; a miss falls through to the ordinary realm
+ * global lookup so direct-eval locals never leak onto `globalThis`.
+ *
+ * The shared lookup loop is called only after a direct-eval call allocated the
+ * pool local in this function. Functions without direct eval remain
+ * byte-identical. */
+export function emitRuntimeEvalBindingRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  missingAsUndefined: boolean,
+): ValType | null {
+  // Build the global miss arm first: it can add late imports, after which the
+  // state-lookup helper below sees the final late-import layout.
+  const savedBody = pushBody(fctx);
+  const fallbackType = emitRuntimeEvalGlobalRead(ctx, fctx, name, missingAsUndefined);
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedBody);
+  if (fallbackType === null) return null;
+
+  const captured = emitCaptureRuntimeEvalBindingValueCell(ctx, fctx, name);
+  if (!captured) {
+    fctx.body.push(...fallbackBody);
+    return fallbackType;
+  }
+
+  const presentBody: Instr[] = [
+    { op: "local.get", index: captured.valueCellLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: captured.cellTypeIdx },
+    { op: "struct.get", typeIdx: captured.cellTypeIdx, fieldIdx: 0 },
+    ...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx),
+  ];
+  fctx.body.push(
+    { op: "local.get", index: captured.valueCellLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: presentBody,
+      else: fallbackBody,
+    },
+  );
+  return { kind: "externref" };
+}
+
+/** Delete a provider-created binding before falling back to the ordinary
+ * global/static delete. Returns false when this activation cannot own such a
+ * binding, in which case the caller should emit its fallback directly. */
+export function emitRuntimeEvalBindingDelete(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  fallbackBody: Instr[],
+): boolean {
+  if (!runtimeEvalStateMayShadowBinding(ctx, fctx, name)) return false;
+  const state = ensureDirectEvalActivationStatePoolLocal(ctx, fctx);
+  const deleteIdx = ensureDirectEvalStateBindingDelete(ctx, state.cellTypeIdx);
+  if (deleteIdx === undefined) return false;
+  addStringConstantGlobal(ctx, name);
+  addStringConstantGlobal(ctx, RUNTIME_EVAL_DELETABLE_BINDING_MARKER);
+  fctx.body.push(
+    { op: "local.get", index: state.poolLocal },
+    ...stringConstantExternrefInstrs(ctx, name),
+    ...stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_DELETABLE_BINDING_MARKER),
+    { op: "call", funcIdx: deleteIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: fallbackBody,
+    },
+  );
+  return true;
 }
 
 /**

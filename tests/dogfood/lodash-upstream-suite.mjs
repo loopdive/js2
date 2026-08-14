@@ -16,9 +16,6 @@ import {
 } from "./upstream-suite-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const GENERATED_ROOT = resolve(HERE, "..", "..", ".lodash-upstream-suite-generated");
-const REPORT_PATH = join(HERE, "report", "lodash-upstream-suite.json");
-
 function moduleSpecifier(fromDirectory, target) {
   let value = relative(fromDirectory, target).replace(/\\/g, "/");
   if (!value.startsWith(".")) value = `./${value}`;
@@ -33,11 +30,16 @@ function extractModule(source, name) {
   return source.slice(start, next < 0 ? source.length : next);
 }
 
-export async function runHarness({ quiet = false } = {}) {
+export async function runHarness({ quiet = false, packageName = "lodash" } = {}) {
+  if (packageName !== "lodash" && packageName !== "lodash-es") {
+    throw new Error(`[dogfood] lodash upstream suite expects lodash or lodash-es, received ${packageName}`);
+  }
+  const generatedRoot = resolve(HERE, "..", "..", `.${packageName}-upstream-suite-generated`);
+  const reportPath = join(HERE, "report", `${packageName}-upstream-suite.json`);
   const log = quiet ? () => {} : (...values) => console.log(...values);
-  const packageSetup = setupNpmCompatCatalogPackage("lodash");
+  const packageSetup = setupNpmCompatCatalogPackage(packageName);
   const suite = setupLodashUpstreamSuite();
-  const generatedPath = join(GENERATED_ROOT, "lodash-selected-modules.ts");
+  const generatedPath = join(generatedRoot, "lodash-selected-modules.ts");
   const fullSource = readFileSync(suite.sourcePath, "utf-8");
   const slices = suite.pin.selectedModules.map((name) => extractModule(fullSource, name));
   const methodNames = suite.pin.selectedModules.map((name) => name.slice("lodash.".length));
@@ -53,11 +55,11 @@ export async function runHarness({ quiet = false } = {}) {
     UPSTREAM_TEST_EXPORTS,
   ].join("\n");
 
-  log(`[dogfood] lodash@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
+  log(`[dogfood] ${packageName}@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
   const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 300_000 });
   const runs = [{ file: basename(suite.sourcePath), result }];
   const report = summarizeUpstreamRuns({
-    name: `lodash@${packageSetup.version}`,
+    name: `${packageName}@${packageSetup.version}`,
     pin: suite.pin,
     testFiles: suite.testFiles,
     selectedFiles: suite.testFiles,
@@ -66,13 +68,16 @@ export async function runHarness({ quiet = false } = {}) {
   report.upstreamSuite.selectedModules = suite.pin.selectedModules;
   report.extraction.modulesSelected = suite.pin.selectedModules.length;
   report.extraction.registrationSitesDeferred = suite.pin.registrationSites - report.extraction.testsRegistered;
-  writeUpstreamReport(REPORT_PATH, report);
+  writeUpstreamReport(reportPath, report);
   log(
     `[dogfood] ${report.summary.headline}; ${report.extraction.registrationSitesDeferred} ` +
       `QUnit registration sites explicitly deferred`,
   );
-  log(`[dogfood] report → ${REPORT_PATH}`);
+  log(`[dogfood] report → ${reportPath}`);
   return report;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) cliUpstreamHarness(runHarness);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const packageArg = process.argv.find((argument) => argument.startsWith("--package="))?.slice("--package=".length);
+  cliUpstreamHarness((options) => runHarness({ ...options, packageName: packageArg ?? "lodash" }));
+}

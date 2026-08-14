@@ -91,6 +91,7 @@ tests/dogfood/.npm-compat/
 tests/dogfood/report/
 /.hono-upstream-suite-generated/
 /.lodash-upstream-suite-generated/
+/.lodash-es-upstream-suite-generated/
 /.moment-upstream-suite-generated/
 /check-*.ts
 /check-*.mts

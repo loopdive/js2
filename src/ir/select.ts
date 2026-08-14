@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import type { IrClassId, IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -1141,6 +1142,56 @@ export function constructorHasIrSafeReceiverSemantics(declaration: ts.Constructo
   return (!isDerived || superCalls === 1) && !hasReceiverDerivedCall && !hasReceiverCallableMemberAccess;
 }
 
+function constructorFieldInitializersAreIrSafe(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  scope: Set<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const initializers = collectIrClassInstanceInitializers(owner);
+  if (initializers === undefined) return shapeNo("constructor-field-name-unsupported", owner);
+  for (const initializer of initializers) {
+    if (!isPhase1Expr(initializer.expression, scope, localClasses)) return false;
+  }
+  return true;
+}
+
+/** Exact selector entry for a synthesized constructor owned by its class. */
+export function assessIrImplicitConstructorSubject(
+  owner: ts.ClassDeclaration | ts.ClassExpression,
+  localClasses: ReadonlySet<string>,
+): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  currentSubjectIsModuleInit = false;
+  currentDynMemberEqualitySubject = null;
+  currentDynEqualityBoxableParamNames = new Set<string>();
+  currentMutableSlotNames = new Set<string>();
+  currentStableFunctionCallSubject = null;
+  currentStableDynamicRootNames = new Set<string>();
+  currentNumericParamNames = new Set<string>();
+  currentSubjectFunctionName = null;
+  currentSubjectReturnsBoolean = false;
+  typedShapeRejectReason = null;
+  currentClaimClassName = owner.name?.text ?? null;
+  currentClassBindings = new Map<string, string>();
+  currentCallableArities = new Map<string, number>();
+  currentCallableReturnClasses = new Map<string, string>();
+  currentNestedFunctionNames = new Set<string>();
+  currentLexicalValueBindingNames = new Set<string>();
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 1;
+  forInitLeakedNames = new Set<string>();
+  currentFnIsGenerator = false;
+  currentFnIsVoidReturn = false;
+  currentFnIsAsync = false;
+  if (SHAPE_DIAG_ON) shapeRejectDetail = null;
+  const accepted = constructorFieldInitializersAreIrSafe(owner, new Set(["this"]), localClasses);
+  const reason = accepted ? null : (typedShapeRejectReason ?? "body-shape-rejected");
+  const detail =
+    reason === "body-shape-rejected" && SHAPE_DIAG_ON
+      ? (takeShapeRejectDetail() ?? "unattributed-arm:implicit-constructor-field")
+      : undefined;
+  return detail === undefined ? { reason } : { reason, detail };
+}
+
 /**
  * Variant of `isIrClaimable` that returns the rejection reason instead of a
  * boolean. Returns null on accept. Used by `planIrCompilation` when
@@ -1694,21 +1745,11 @@ function whyNotIrClaimable(
   // covers `this.field = expr;`, `this.method(...)`, and bare calls. This
   // mirrors how try/catch/finally bodies are checked (see `isPhase1TryStatement`).
   if (ts.isConstructorDeclaration(fn)) {
-    // #3000-C: the IR constructor lowering (`lowerFunctionAstToIr` Phase C)
-    // runs ONLY the constructor body statements — it allocates the instance
-    // with each struct field at its default, then replays the body's
-    // `this.field = …` writes. It does NOT execute two other construction-time
-    // effects the legacy path handles:
-    //   (a) parameter properties (`constructor(private name: string)`) — the
-    //       param both declares AND assigns a field; the IR path treats it as
-    //       a plain param and drops the field write.
-    //   (b) PropertyDeclaration initialisers (`age = 5;`) — these run at
-    //       construction; the IR path leaves the field at its struct default.
-    // A class using either would silently mis-construct (the typeIdx-parity
-    // guard can't catch it — same signature). Reject to legacy so construction
-    // stays correct. Flat classes whose fields are declared without an
-    // initialiser and assigned in the body (the common shape, e.g. classes.ts's
-    // `Animal`) are unaffected.
+    // #3000-C / #3522: parameter properties remain direct because they imply
+    // a field write not represented by a PropertyDeclaration initializer.
+    // Ordinary instance fields are now collected as one exact source-order
+    // constructor plan below; a dynamic name or unsupported initializer
+    // rejects the complete constructor before any body is emitted.
     if (!constructorHasIrSafeReceiverSemantics(fn)) return "body-shape-rejected";
     for (const p of fn.parameters) {
       const isParamProperty = p.modifiers?.some(
@@ -1721,10 +1762,12 @@ function whyNotIrClaimable(
       if (isParamProperty) return "body-shape-rejected";
     }
     const parent = fn.parent;
-    if (parent && (ts.isClassDeclaration(parent) || ts.isClassExpression(parent))) {
-      for (const m of parent.members) {
-        if (ts.isPropertyDeclaration(m) && m.initializer) return "body-shape-rejected";
-      }
+    if (
+      parent &&
+      (ts.isClassDeclaration(parent) || ts.isClassExpression(parent)) &&
+      !constructorFieldInitializersAreIrSafe(parent, new Set(scope), localClasses)
+    ) {
+      return typedShapeRejectReason ?? "body-shape-rejected";
     }
     const ctorScope = new Set(scope);
     // (#2856 C1) Constructor bodies never take the early-return arm — their
