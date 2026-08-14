@@ -282,12 +282,13 @@ for (const input of corpus) {
     t.conflicting += v.conflicting;
     totalsByQuery.set(q, t);
   }
-  for (const d of globalDivergenceLedger.samples) {
-    // Samples include weakened ones; keep only genuine conflicts (bugs).
-    const weak = ["unresolvable", "undefined", "mixed", "[]"].includes(d.inhouse);
-    if (!weak && conflictSamples.length < sampleLimit) {
-      conflictSamples.push({ file: input.name, ...d });
-    }
+  // (#4408) Read the ledger's per-query-quota'd conflict list, NOT `samples`.
+  // `samples` is one FIFO over every divergence and `weakened` outnumbers
+  // `conflicting` ~54:1, so the shared cap fills with weakened entries before
+  // a single conflict is recorded — the 2,137-input run surfaced 25 of 908,
+  // none from `signatureOf`, the query with the highest conflict count.
+  for (const d of globalDivergenceLedger.conflictSamples) {
+    if (conflictSamples.length < sampleLimit) conflictSamples.push({ file: input.name, ...d });
   }
 }
 
@@ -307,8 +308,19 @@ console.log(
   `  weakened    ${String(grand.weakened).padStart(7)}  (${pct(grand.weakened)}%)   inhouse declined — safe, lossy`,
 );
 console.log(
-  `  CONFLICTING ${String(grand.conflicting).padStart(7)}  (${pct(grand.conflicting)}%)   inhouse claimed a DIFFERENT fact — bug`,
+  `  CONFLICTING ${String(grand.conflicting).padStart(7)}  (${pct(grand.conflicting)}%)   both answered and the answers differ`,
 );
+// (#4408) This bucket is NOT a bug count. `isWeaker` only recognises an
+// abstention when the WHOLE answer string is one of four literals, so it
+// mislabels weakening nested in a composite (`(unresolvable)->unresolvable#1`),
+// weakening carried by a boolean polarity (`isBooleanProducing: false`), and
+// weakening on the CHECKER side (`declarationsOf: []`). Re-classifying the
+// 2,137-input run structurally turned 908 "conflicts" into 136 same-meaning,
+// 306 inhouse-weaker, 366 checker-weaker and 100 genuine. And a genuine
+// conflict still is not automatically an in-house bug — TypeScript is unsound
+// for `with`, direct `eval` and annexB hoisting, and is bound to a program
+// that excludes re-entrant eval'd sources (#4410).
+console.log("  (see #4408 — this classifier over-reports ~9x; #4410 — the checker is not ground truth)");
 
 console.log("\n--- by query (the worklist) ---");
 const qw = Math.max(...[...totalsByQuery.keys()].map((k) => k.length), 12);
@@ -322,7 +334,7 @@ for (const [q, v] of [...totalsByQuery].sort(
 }
 
 if (conflictSamples.length > 0) {
-  console.log("\n--- conflicting samples (these are bugs, not weakening) ---");
+  console.log("\n--- conflicting samples (adjudicate each; see #4408 / #4410) ---");
   for (const c of conflictSamples) {
     console.log(`  ${c.file}  ${c.query}`);
     console.log(`      checker=${c.checker}  inhouse=${c.inhouse}  node=${c.node}`);
