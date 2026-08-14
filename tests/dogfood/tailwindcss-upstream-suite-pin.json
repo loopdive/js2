@@ -1,0 +1,15 @@
+{
+  "name": "tailwindcss",
+  "version": "4.3.3",
+  "repo": "https://github.com/tailwindlabs/tailwindcss.git",
+  "tag": "v4.3.3",
+  "commit": "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
+  "testFileCount": 42,
+  "testFilePathSha256": "99c9e7c4483c38fb1ec9f25ff6c9d05e4bdaac65f8991138cb494812c7b98cf1",
+  "registrationSites": 1376,
+  "selectedFiles": [
+    "packages/tailwindcss/src/utils/segment.test.ts",
+    "packages/tailwindcss/src/utils/to-key-path.test.ts"
+  ],
+  "_note": "The complete packages/tailwindcss test inventory is verified. This first adapter runs the two original synchronous segment and key-path utility files against their matching release-tag TypeScript implementations. Scanner, Rust/native, CSS pipeline, snapshot, async, UI, and larger graph files remain explicit deferred coverage."
+}

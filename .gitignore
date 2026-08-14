@@ -105,6 +105,9 @@ tests/dogfood/report/
 /.jsdom-upstream-suite-generated/
 /.styled-components-upstream-suite-generated/
 /.webpack-upstream-suite-generated/
+/.jest-upstream-suite-generated/
+/.tailwindcss-upstream-suite-generated/
+/.typescript-upstream-suite-generated/
 /check-*.ts
 /check-*.mts
 /debug-*.ts

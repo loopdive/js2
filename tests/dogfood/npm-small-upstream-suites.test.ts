@@ -86,6 +86,24 @@ describe("small npm package upstream suites", () => {
       testFileCount: 98,
       registrationSites: 1357,
     });
+    expect(pin("jest")).toMatchObject({
+      tag: "v30.4.2",
+      commit: "746f2a0f57c56e3bba555280f0587d40f3db95c0",
+      testFileCount: 241,
+      registrationSites: 3288,
+    });
+    expect(pin("tailwindcss")).toMatchObject({
+      tag: "v4.3.3",
+      commit: "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
+      testFileCount: 42,
+      registrationSites: 1376,
+    });
+    expect(pin("typescript")).toMatchObject({
+      tag: "v5.9.3",
+      commit: "c63de15a992d37f0d6cec03ac7631872838602cb",
+      testFileCount: 256,
+      registrationSites: 1761,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -245,5 +263,50 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile.modules).toBe(3);
     expect(report.results.scored).toBe(16);
+  });
+
+  const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
+  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, () => {
+    const report = run("jest");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 241,
+      filesSelected: 2,
+      filesDeferred: 239,
+      testsRegistered: 32,
+      nativePassed: 32,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(2);
+    expect(report.results.scored).toBe(32);
+  });
+
+  const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
+  tailwindcssHeavy("runs Tailwind CSS's original segment utilities", { timeout: 600_000 }, () => {
+    const report = run("tailwindcss");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 42,
+      filesSelected: 2,
+      filesDeferred: 40,
+      testsRegistered: 13,
+      nativePassed: 13,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(2);
+    expect(report.results.scored).toBe(13);
+  });
+
+  const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
+  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, () => {
+    const report = run("typescript");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 256,
+      filesSelected: 1,
+      filesDeferred: 255,
+      testsRegistered: 1,
+      nativePassed: 1,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(1);
+    expect(report.results.scored).toBe(1);
   });
 });
