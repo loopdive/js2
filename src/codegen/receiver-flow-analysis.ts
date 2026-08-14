@@ -106,6 +106,20 @@ function isConstLike(decl: ts.VariableDeclaration): boolean {
  * in the unsafe direction: an unresolved or ambiguous name yields no verdict.
  */
 function resolveLocalBinding(id: ts.Identifier): ts.Node | undefined {
+  return resolveLocalBindingWithReason(id).decl;
+}
+
+/**
+ * (#4405 Phase 0) The same walk, reporting WHY it failed. Split out so the
+ * census can distinguish "the name is declared twice on the path" from "no
+ * declaration found at all" — the two have completely different fixes, and the
+ * #4405 spec names the first as a prime suspect. Behaviour is byte-identical:
+ * {@link resolveLocalBinding} is this function's `.decl`.
+ */
+function resolveLocalBindingWithReason(id: ts.Identifier): {
+  decl: ts.Node | undefined;
+  reason: "found" | "ambiguous" | "not-found";
+} {
   const name = id.text;
   let found: ts.Node | undefined;
   let scope: ts.Node | undefined = id.parent;
@@ -134,11 +148,11 @@ function resolveLocalBinding(id: ts.Identifier): ts.Node | undefined {
       ts.forEachChild(node, scan);
     };
     scan(container);
-    if (hitsInThisScope > 1) return undefined; // ambiguous — fail closed
-    if (found) return found;
+    if (hitsInThisScope > 1) return { decl: undefined, reason: "ambiguous" }; // fail closed
+    if (found) return { decl: found, reason: "found" };
     scope = scope.parent;
   }
-  return undefined;
+  return { decl: undefined, reason: "not-found" };
 }
 
 /**
@@ -527,4 +541,40 @@ export function receiverClassOf(
     if (decl) return result.byDeclaration.get(decl)?.className;
   }
   return undefined;
+}
+
+/**
+ * (#4405 Phase 0) Diagnosis-only: WHY did {@link receiverClassOf} decline?
+ *
+ * This exists because the #4405 spec's first instruction for Phase 1 is
+ * "instrument which pass drops `node` / `state` / `prop` / `expr`, do not
+ * guess". The reasons it distinguishes are exactly the ones with different
+ * fixes:
+ *
+ *  - `ambiguous` — {@link resolveLocalBindingWithReason} saw the name declared
+ *    twice on the path and failed closed. Fix: a real scope chain.
+ *  - `not-found` — no declaration at all on the syntactic path.
+ *  - `no-verdict:var-noinit` — the binding is declared bare (`var node;`) and
+ *    assigned later, so pass 1d's "initializer is syntactically a
+ *    `CallExpression`" precondition can never hold. Fix: an assignment-shaped
+ *    rule.
+ *  - `no-verdict:var-init:<kind>` — pass 1/1d SAW the initializer and still
+ *    produced nothing; the kind says which rule to strengthen.
+ *  - `no-verdict:param` — pass 2 refused the parameter (one unproven call site
+ *    is enough).
+ *
+ * Never called on a shipping compile — the caller gates it behind the census
+ * env var. Returns a low-cardinality string suitable for a histogram key.
+ */
+export function explainReceiverDecline(result: ReceiverFlowResult, receiver: ts.Identifier): string {
+  const { decl, reason } = resolveLocalBindingWithReason(receiver);
+  if (reason !== "found" || decl === undefined) {
+    return result.demoted.has(receiver.text) ? `${reason}+demoted` : reason;
+  }
+  if (ts.isParameter(decl)) return "no-verdict:param";
+  if (ts.isVariableDeclaration(decl)) {
+    if (decl.initializer === undefined) return "no-verdict:var-noinit";
+    return `no-verdict:var-init:${ts.SyntaxKind[decl.initializer.kind]}`;
+  }
+  return "no-verdict:other";
 }

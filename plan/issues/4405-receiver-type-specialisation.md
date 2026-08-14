@@ -10,6 +10,13 @@ feasibility: hard
 task_type: perf
 area: codegen
 related: [4157, 4406]
+# (#4405 Phase 0) The census instruments five early returns that live INSIDE
+# `resolveTypedThisField` / `resolveTypedThisWritableField`. A decline bucket has
+# to be recorded where the decline happens, so the growth is unavoidable and is
+# ~40 lines, most of it the comments explaining what each bucket means. The
+# counting logic itself is in the new `src/codegen/receiver-spec-census.ts`.
+loc-budget-allow:
+  - src/codegen/typed-this.ts
 ---
 
 # #4405 — receiver-type specialisation: prove, don't guess
