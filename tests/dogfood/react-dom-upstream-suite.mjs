@@ -8,8 +8,8 @@
 // same commit. Only three things are actually different, and each is the reason
 // a separate harness exists at all:
 //
-//   1. TWO published CJS modules make up the implementation (the shared entry
-//      plus the 536 KB client renderer), and each needs its OWN function scope:
+//   1. TWO published CJS modules make up the client implementation (the shared
+//      entry and the client renderer), and each needs its OWN function scope:
 //      react and react-dom both declare a top-level `noop`, so a bare
 //      concatenation dies with `Duplicate identifier 'noop'` before a single
 //      test runs.
@@ -155,29 +155,45 @@ exports.unstable_setDisableYieldValue = undefined;
 function buildImplementationSource({ reactSource, sharedSource, clientSource }) {
   const wiredClientSource = wireRequires(clientSource);
   return [
+    "var __REACT__, __SCHEDULER__, __REACTDOM_SHARED__, __REACTDOM__;",
+    "var __reactDomInitialized = false;",
     "function __reactModule() { var exports = {};",
     reactSource,
     "return exports; }",
-    "var __REACT__ = __reactModule();",
     "function __schedulerModule() { var exports = {};",
     REACT_DOM_SCHEDULER_SHIM,
     "return exports; }",
-    "var __SCHEDULER__ = __schedulerModule();",
     "function __reactDomSharedModule() { var exports = {};",
     wireRequires(sharedSource),
     "return exports; }",
-    "var __REACTDOM_SHARED__ = __reactDomSharedModule();",
     "function __reactDomClientModule() { var exports = {};",
     wiredClientSource,
     "return exports; }",
-    "var __REACTDOM__ = __reactDomClientModule();",
+    "function __reactDomEnsureInit() {",
+    "if (__reactDomInitialized) return;",
+    "__reactDomInitialized = true;",
+    "__REACT__ = __reactModule();",
+    "__SCHEDULER__ = __schedulerModule();",
+    "__REACTDOM_SHARED__ = __reactDomSharedModule();",
+    "__REACTDOM__ = __reactDomClientModule();",
+    "}",
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude) {
-  const lines = [`document.body.textContent = "";`];
+function reactDomTestSetup(prelude, testSource = prelude) {
+  const lines = [`__reactDomEnsureInit();`, `document.body.textContent = "";`];
   const binds = (name, expression) => {
-    if (new RegExp(`\\b(?:let|var)\\s+${name}\\b`).test(prelude)) lines.push(`${name} = ${expression};`);
+    const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
+    if (declaration && declaration[1] !== "const") {
+      lines.push(`${name} = ${expression};`);
+    } else if (!declaration && new RegExp(`\\b${name}\\b`).test(testSource)) {
+      // Imports are intentionally removed by the upstream extractor. A
+      // server-renderer import therefore has no surviving declaration even
+      // though the test body still uses the binding. Declare only bindings
+      // that the test actually reaches for; unconditional `var` declarations
+      // would collide with retained `const`/`let` preludes.
+      lines.push(`var ${name} = ${expression};`);
+    }
   };
   binds("React", "__REACT__");
   binds("ReactDOM", "__REACTDOM_SHARED__");
@@ -185,8 +201,12 @@ function reactDomTestSetup(prelude) {
   binds("OuterReactDOMClient", "__REACTDOM__");
   binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
   binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
-  if (/\b(?:let|var)\s+act\b/.test(prelude)) {
-    lines.push(`act = async function (callback) {
+  const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
+  if (actDeclaration && actDeclaration[1] === "const") {
+    // Preserve an upstream const binding; the extractor's import rewrite owns
+    // its value and assigning to it would turn a harness setup into a failure.
+  } else if (actDeclaration || /\bact\b/.test(testSource)) {
+    lines.push(`${actDeclaration ? "act" : "var act"} = async function (callback) {
   var result;
   __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
   if (result !== null && result !== undefined && typeof result.then === "function") await result;
@@ -197,8 +217,8 @@ function reactDomTestSetup(prelude) {
 }
 
 function withReactDomSetup(test) {
-  const leadingDeclarations = /^(?:(?:let|var)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
-  const setup = reactDomTestSetup(test.prelude);
+  const leadingDeclarations = /^(?:(?:let|var|const)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
+  const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`);
   const prelude = `${leadingDeclarations}${setup}\n${test.prelude.slice(leadingDeclarations.length)}`;
   return { ...test, prelude };
 }
@@ -207,6 +227,7 @@ function buildModuleSource(implementation, tests) {
   return [
     implementation,
     REACT_EXPECT_SHIM,
+    `export function __reactDomInit() { __reactDomEnsureInit(); }`,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test))),
     LAST_ERROR_EXPORT,
   ].join("\n");
@@ -217,7 +238,7 @@ function buildNativeRunners(implementation, tests) {
     implementation,
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test), { exported: false })),
-    `return { __lastError: function () { return __lastError; }, tests: { ${tests
+    `return { init: function () { __reactDomEnsureInit(); }, __lastError: function () { return __lastError; }, tests: { ${tests
       .map((test) => `${JSON.stringify(test.id)}: ${test.id}`)
       .join(", ")} } };`,
   ].join("\n");
@@ -229,6 +250,7 @@ async function runNative(implementation, tests) {
   try {
     const nativeRequire = createRequire(import.meta.url);
     const runners = buildNativeRunners(implementation, tests)(nativeRequire);
+    runners.init();
     const out = [];
     for (const test of tests) {
       nativeContextTest = test.id;
@@ -375,6 +397,18 @@ export async function runHarness({ quiet = false } = {}) {
     admitAll: process.env.DOGFOOD_REACT_DOM_ADMIT_ALL !== "0",
     supportedInfrastructure: new Set(["needs-react-dom", "needs-act", "needs-dom", "needs-scheduler"]),
   });
+  // The browser server renderer is a separate published CJS graph. Including
+  // it in this client module currently produces an invalid WasmGC type graph,
+  // so keep those original tests visible but explicitly deferred instead of
+  // turning every client test into an implementation-invalid zero.
+  const serverTests = extracted.tests.filter((test) => /\bReactDOMServer\b/.test(`${test.prelude}\n${test.body}`));
+  if (serverTests.length > 0) {
+    const serverIds = new Set(serverTests.map((test) => test.id));
+    extracted.tests = extracted.tests.filter((test) => !serverIds.has(test.id));
+    extracted.rejected.push(...serverTests.map((test) => ({ ...test, reason: "needs-react-dom-server" })));
+    extracted.rejectionCounts["needs-react-dom-server"] =
+      (extracted.rejectionCounts["needs-react-dom-server"] ?? 0) + serverTests.length;
+  }
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
     admitted: extracted.tests.length,
@@ -474,17 +508,29 @@ export async function runHarness({ quiet = false } = {}) {
       admitted = admitted.concat(batchTests);
       let compiled = null;
       if (validates) {
+        let instance = null;
         try {
           const imports = result.importObject ?? {};
-          const { instance } = await WebAssembly.instantiate(result.binary, imports);
+          ({ instance } = await WebAssembly.instantiate(result.binary, imports));
           imports.setInstance?.(instance);
           imports.__setInstance?.(instance);
+          instance.exports.__reactDomInit?.();
           compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
         } catch (error) {
           const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          let payload = "";
+          const tag = instance?.exports?.__exn_tag ?? instance?.exports?.__tag;
+          if (tag && typeof error?.getArg === "function") {
+            try {
+              const value = error.getArg(tag, 0);
+              payload = value === undefined || value === null ? "" : ` payload=${String(value)}`;
+            } catch {
+              // Foreign exception tags cannot be decoded by this instance.
+            }
+          }
           const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
           const source = offsetMatch ? sourceAtWasmOffset(result.sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
-          firstError = `instantiate failed: ${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
+          firstError = `instantiate failed: ${stack}${payload}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
         }
       }
 
