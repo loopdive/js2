@@ -187,7 +187,8 @@ Two test262 workflows currently run on PRs:
     the pre-#1956 behavior.
   - **Canonical queue configuration: `max_entries_to_build: 1` (no
     speculation), `max_entries_to_merge: 5` (BATCH UP TO 5 PRs PER GROUP),
-    `min_entries_to_merge: 1` (no quorum wait).** These live in the repo
+    `min_entries_to_merge: 2` with a 5-minute wait timer (#3914 Step 2, live
+    since 2026-08-14 — see the floor note below).** These live in the repo
     ruleset, not in any workflow file, so they are applied and read back with
     **`scripts/set-merge-queue-config.sh`** (`--show` to read, `--check` to
     diff, no flag to apply; needs repo-admin `gh`). Before that script existed
@@ -234,13 +235,22 @@ Two test262 workflows currently run on PRs:
     optimistic-batch/split-on-failure: re-enqueue the members singly to
     attribute. Cost is one wasted run, which is the `e`-weighted term in
     #3914's sizing.
-  - **`min_entries_to_merge` stays 1.** Raising the cap is free; raising the
-    floor is not — a group would wait for a quorum, so a genuinely solo PR pays
-    the wait timer as pure added latency (~1/3 of measured dispatches had no
-    peer waiting). Raise it to 2 with a **2-minute** timer only if groups are
-    observed to stay size-1 at cap 5, i.e. only if GitHub's group formation
-    turns out to be eager-with-minimum rather than `min(available, cap)`
-    (#3914 Step 2).
+  - **`min_entries_to_merge` is now 2 — #3914 Step 2 fired.** Its precondition
+    was "raise the floor only if groups are observed to stay size-1 at cap 5,
+    i.e. only if GitHub's formation is eager-with-minimum rather than
+    `min(available, cap)`". Measured 2026-08-14 and met: **all 30 merge groups
+    dispatched that day went out at size 1**, reconstructed by walking each
+    group's `base_sha` forward on `main` and counting the merge commits it
+    produced. That included a ~2h window (15:41–17:40Z) in which 2-3 green PRs
+    sat queued behind a head that could not go green, and they still merged one
+    at a time afterwards. Cap 5 alone never batches; the floor is what forms
+    groups.
+    The cost is unchanged and was always the point of the trigger: raising the
+    cap is free, raising the floor is not — a genuinely solo PR pays the wait
+    timer as pure added latency (~1/3 of measured dispatches had no peer
+    waiting). The live timer is **5 minutes**, not the 2 minutes this section
+    originally prescribed; that is the knob to revisit first if solo-PR latency
+    is felt, since it bounds the added wait directly.
   - **Intra-group masking is narrower than this doc used to claim.** It applies
     only to the test262 _delta_ gate, not to `quality` / `cheap gate` /
     `equivalence-*` (pass/fail), nor to the catastrophic guard (#1668) or the
