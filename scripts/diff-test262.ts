@@ -1808,6 +1808,17 @@ async function run(
   // Regressions
   const regColor = regressions.length > 0 ? "⚠️  " : "";
   console.log(`${regColor}=== Regressions (pass → other): ${regressions.length} ===`);
+  // (#4218 park triage) Under --quiet, a SMALL regression list is still
+  // printed: the required merge-group gate uploads/echoes only the quiet
+  // output, and a park comment without the failing paths is undiagnosable
+  // from outside CI (artifact blobs are unreachable from some agent
+  // environments). At <=20 entries the list is shorter than the summary.
+  if (quiet && regressions.length > 0 && regressions.length <= 20) {
+    for (const r of regressions) {
+      const errMsg = r.error ? ` (${truncate(r.error, 120)})` : "";
+      console.log(`  ${r.file}: pass → ${r.to}${errMsg}`);
+    }
+  }
   if (!quiet && regressions.length > 0) {
     const shown = regressions.slice(0, maxShow);
     for (const r of shown) {
