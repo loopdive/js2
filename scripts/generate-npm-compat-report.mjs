@@ -66,6 +66,7 @@ import { runHarness as runStyledComponentsUpstreamSuite } from "../tests/dogfood
 import { runHarness as runWebpackUpstreamSuite } from "../tests/dogfood/webpack-upstream-suite.mjs";
 import { runHarness as runJestUpstreamSuite } from "../tests/dogfood/jest-upstream-suite.mjs";
 import { runHarness as runTailwindcssUpstreamSuite } from "../tests/dogfood/tailwindcss-upstream-suite.mjs";
+import { runHarness as runTypescriptUpstreamSuite } from "../tests/dogfood/typescript-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1935,7 +1936,9 @@ for (const entry of NPM_COMPAT_CATALOG) {
                               ? runJestUpstreamSuite
                               : entry.name === "tailwindcss"
                                 ? runTailwindcssUpstreamSuite
-                                : null;
+                                : entry.name === "typescript"
+                                  ? runTypescriptUpstreamSuite
+                                  : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite

@@ -413,6 +413,24 @@ remain explicit deferred inventory. The npm-compat generator invokes the
 adapter directly so the merge-only refresh publishes numeric results and
 cannot fall back to `adapter pending`.
 
+## 2026-08-14 TypeScript base64 slice
+
+TypeScript 5.9.3 now verifies all 256 files and 1,761 static registrations under
+`src/testRunner/unittests` from `microsoft/TypeScript@v5.9.3` (commit
+`c63de15a992d37f0d6cec03ac7631872838602cb`). The first runtime adapter runs the
+original `base64.ts` callback unchanged. At setup time it projects the exact
+base64 declarations from the matching release's `src/compiler/utilities.ts`,
+avoiding the unrelated full compiler graph that exceeds the bounded catalog
+compile budget.
+
+The adapter registers one callback. It passes in native Node and after the
+release-tag source and original callback are compiled to Wasm.
+
+The remaining 255 compiler, server, watch, evaluator, snapshot, async, and
+filesystem-heavy files remain explicit deferred inventory. The npm-compat
+generator invokes this adapter directly, so the merge-only refresh publishes a
+numeric result and cannot fall back to `adapter pending`.
+
 ## 2026-08-14 webpack synchronous utility slice
 
 webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and
