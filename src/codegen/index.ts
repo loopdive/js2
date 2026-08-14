@@ -230,6 +230,7 @@ import { reserveColdTailAllocators } from "./fnctor-cold-tail.js"; // (#3927) ho
 import { fillClosedStructExternSetArms } from "./closed-struct-extern-set.js"; // (#4194) computed-write arms
 import { reserveFnctorResidAllocators } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
 import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
+import { fuseBoxBooleanSinks } from "./box-boolean-fuse.js"; // (#4157) unboxed boolean fusion, default OFF
 import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
 import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
 import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default ON
@@ -303,6 +304,9 @@ import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allo
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
 import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
+import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
+import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
+import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5276,6 +5280,7 @@ export function generateModule(
     // later remap treats both identically. DEFAULT ON since the tuned-set flip.
     inlineMemberGetCallSites(ctx);
     inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
+    fuseBoxBooleanSinks(ctx); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
@@ -5322,6 +5327,19 @@ export function generateModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
+    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
+
+    // (#4157) Inline the member-WRITE dispatchers' first arm at the call
+    // sites. Runs while the arm it copies and the copy share one type/funcIdx
+    // regime — after every `__set_member_*` body fill, before any index
+    // remap. DEFAULT OFF.
+    inlineMemberSetCallSites(ctx);
+    // (#4157) Devirtualize the filled `__call_m_<name>_<arity>` dispatchers:
+    // copy each one's outermost guard + hit arm to its plain `call` sites,
+    // with the unmodified dispatcher call as the miss arm. MUST run after
+    // every `__call_m_*` body fill (the pass reads the final fill shape) and
+    // BEFORE dead elimination / the census installs. DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
@@ -7658,6 +7676,7 @@ export function generateMultiModule(
     fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
     inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default ON
     inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
+    fuseBoxBooleanSinks(ctx); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
     // Mirror the single-source closed-struct own-property finalizer.
@@ -7703,6 +7722,16 @@ export function generateMultiModule(
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
     // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
+
+    // (#4157) Inline the member-WRITE dispatchers' first arm at the call
+    // sites — multi-source parity with the generateModule call above (same
+    // after-the-set-fills, before-any-index-remap ordering). DEFAULT OFF.
+    inlineMemberSetCallSites(ctx);
+    // (#4157) `__call_m_*` devirtualization — same finalize point as the
+    // single-source pipeline above (after all dispatcher fills, before
+    // dead-elim / census). DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
+    inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone

@@ -66,6 +66,7 @@
 import { ts } from "./ts-api.js";
 
 import { compileSourceSync } from "./compiler.js";
+import { runWithTs5Pinned } from "./ts-api.js";
 import { buildImports, buildStringConstants, jsString } from "./runtime.js";
 
 /**
@@ -317,17 +318,23 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
     // `eval("var x = 1")` which evaluates to `undefined`).
     let result;
     try {
-      result = compileSourceSync(`export function __eval_result() { return (${src}); }`, {
-        fileName: filename,
-        allowJs: true,
-        skipSemanticDiagnostics: true,
-        // (#2973) This is a semantics-critical fast path, not an IR-first
-        // measurement target. Under JS2WASM_IR_FIRST a claim-partial residual
-        // in the eval'd expression turns into a post-claim hard error, which
-        // the `catch` below swallows — silently degrading a correct answer to
-        // `undefined`. Always take the proven legacy-then-overlay pipeline.
-        disableIrFirst: true,
-      });
+      // (#1029) The frontend is pinned to typescript@5 for the whole dynamic
+      // extent of a runtime-eval re-entry: this is a SYNCHRONOUS in-process
+      // re-compile that must also work in the browser, so the TS7 subprocess
+      // API can never serve it. See the lane policy in ts-api.ts.
+      result = runWithTs5Pinned(() =>
+        compileSourceSync(`export function __eval_result() { return (${src}); }`, {
+          fileName: filename,
+          allowJs: true,
+          skipSemanticDiagnostics: true,
+          // (#2973) This is a semantics-critical fast path, not an IR-first
+          // measurement target. Under JS2WASM_IR_FIRST a claim-partial residual
+          // in the eval'd expression turns into a post-claim hard error, which
+          // the `catch` below swallows — silently degrading a correct answer to
+          // `undefined`. Always take the proven legacy-then-overlay pipeline.
+          disableIrFirst: true,
+        }),
+      );
     } catch {
       result = undefined;
     }
@@ -336,13 +343,16 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
       // Try statement-form wrapper.  A throw inside `src` will propagate as
       // an uncaught exception when the child's `__eval_result` runs.
       try {
-        result = compileSourceSync(`export function __eval_result() { ${src}; return undefined; }`, {
-          fileName: filename,
-          allowJs: true,
-          skipSemanticDiagnostics: true,
-          // (#2973) Same opt-out as the expression-form wrapper above.
-          disableIrFirst: true,
-        });
+        // (#1029) TS5-pinned, same reason as the expression-form wrapper.
+        result = runWithTs5Pinned(() =>
+          compileSourceSync(`export function __eval_result() { ${src}; return undefined; }`, {
+            fileName: filename,
+            allowJs: true,
+            skipSemanticDiagnostics: true,
+            // (#2973) Same opt-out as the expression-form wrapper above.
+            disableIrFirst: true,
+          }),
+        );
       } catch (e: any) {
         // Compiler crashed — surface as SyntaxError to mimic JS eval.
         throw new SyntaxError(`eval: failed to compile source: ${e?.message ?? String(e)}`);
@@ -557,14 +567,18 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
       | { success: boolean; binary: Uint8Array; imports: any; stringPool: string[]; errors?: { message: string }[] }
       | undefined;
     try {
-      result = compileSourceSync(src, {
-        fileName: filename,
-        allowJs: true,
-        skipSemanticDiagnostics: true,
-        // (#2973) Same rationale as the eval shim — take the proven legacy
-        // pipeline, not the IR-first measurement path.
-        disableIrFirst: true,
-      }) as typeof result;
+      // (#1029) TS5-pinned — see the lane policy in ts-api.ts.
+      result = runWithTs5Pinned(
+        () =>
+          compileSourceSync(src, {
+            fileName: filename,
+            allowJs: true,
+            skipSemanticDiagnostics: true,
+            // (#2973) Same rationale as the eval shim — take the proven legacy
+            // pipeline, not the IR-first measurement path.
+            disableIrFirst: true,
+          }) as typeof result,
+      );
     } catch (e: any) {
       const err = new SyntaxError(`new Function: failed to compile body: ${e?.message ?? String(e)}`);
       if (fnNegCache.size >= FN_CACHE_MAX) fnNegCache.delete(fnNegCache.keys().next().value!);

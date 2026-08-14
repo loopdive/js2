@@ -1,0 +1,20 @@
+{
+  "name": "jsdom",
+  "version": "30.0.1",
+  "repo": "https://github.com/jsdom/jsdom.git",
+  "tag": "v30.0.1",
+  "commit": "6584485f094d5b271553005b68804c93a455c002",
+  "testFileCount": 17,
+  "testFilePathSha256": "c23d751621c9fc6e1d98c571d2c234dca4a543ebeec67c723ff42866f793e4bb",
+  "registrationSites": 318,
+  "selectedFiles": ["test/api/virtual-console.js"],
+  "selectedTests": [
+    "should return the instance it was called on",
+    "should forward to the error() method by default, sending the message for most types",
+    "should forward \"unhandled-exception\"s to the error() method by default, sending the cause stack",
+    "should not forward to the error method when set to \"none\"",
+    "should only forward specific types when they are specified as an array",
+    "should not accept an invalid jsdomErrors option"
+  ],
+  "_note": "The complete test/api inventory is verified. This first adapter extracts six unchanged, synchronous VirtualConsole callbacks that do not construct a DOM and runs them against the matching published VirtualConsole implementation. The Node events dependency remains a platform import; full JSDOM construction and asynchronous resource tests remain explicit deferred coverage."
+}

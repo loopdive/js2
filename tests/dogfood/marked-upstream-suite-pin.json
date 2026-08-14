@@ -1,0 +1,12 @@
+{
+  "name": "marked",
+  "version": "18.0.2",
+  "repo": "https://github.com/markedjs/marked.git",
+  "tag": "v18.0.2",
+  "commit": "c4f4529d69d254458831f3c22187d080db2f3c83",
+  "testFileCount": 6,
+  "testFilePathSha256": "3e6097a2d40c3a2481c9110218b0fb66bd3a868e5d6537673e6cc27809b38d3a",
+  "registrationSites": 181,
+  "selectedFiles": ["test/unit/Hooks.test.js"],
+  "_note": "The complete six-file test/unit/*.test.js inventory is verified. The first adapter runs the original Hooks file against the matching published marked.esm.js build. Async callbacks are reported as harness-incompatible; Lexer, Parser, CLI, instance, and full marked modules remain explicitly deferred after the earlier bounded experiment exceeded the useful compile window."
+}

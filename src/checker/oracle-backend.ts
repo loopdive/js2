@@ -70,24 +70,55 @@ export interface OracleDivergence {
  * counts the ones where both backends claim a fact and the facts differ —
  * those ARE bugs and are what the parity tests assert on.
  */
+/** Per-query tally — which oracle question diverges, not just how often. */
+export interface QueryDivergence {
+  agreements: number;
+  weakened: number;
+  conflicting: number;
+}
+
 export class DivergenceLedger {
   agreements = 0;
   weakened = 0;
   conflicting = 0;
   readonly samples: OracleDivergence[] = [];
+  /**
+   * (#4218) Per-query breakdown. The global counters answer "is the in-house
+   * backend safe?"; this answers "which query do I fix next?" — the whole
+   * point of a differential run is to produce a worklist, and a single total
+   * cannot. Unbounded by design: the key space is the oracle's frozen query
+   * vocabulary (~15 names plus `propertyFactOf:<name>`), not the node count.
+   */
+  readonly byQuery = new Map<string, QueryDivergence>();
   private readonly maxSamples: number;
 
   constructor(maxSamples = 200) {
     this.maxSamples = maxSamples;
   }
 
+  private tally(query: string): QueryDivergence {
+    let entry = this.byQuery.get(query);
+    if (!entry) {
+      entry = { agreements: 0, weakened: 0, conflicting: 0 };
+      this.byQuery.set(query, entry);
+    }
+    return entry;
+  }
+
   record(query: string, checkerAnswer: string, inhouseAnswer: string, node: string): void {
+    const perQuery = this.tally(query);
     if (checkerAnswer === inhouseAnswer) {
       this.agreements++;
+      perQuery.agreements++;
       return;
     }
-    if (isWeaker(inhouseAnswer)) this.weakened++;
-    else this.conflicting++;
+    if (isWeaker(inhouseAnswer)) {
+      this.weakened++;
+      perQuery.weakened++;
+    } else {
+      this.conflicting++;
+      perQuery.conflicting++;
+    }
     if (this.samples.length < this.maxSamples) {
       this.samples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node });
     }
@@ -96,6 +127,15 @@ export class DivergenceLedger {
   summary(): { agreements: number; weakened: number; conflicting: number; total: number } {
     const total = this.agreements + this.weakened + this.conflicting;
     return { agreements: this.agreements, weakened: this.weakened, conflicting: this.conflicting, total };
+  }
+
+  /** Reset between corpus files so a run can attribute divergence per input. */
+  reset(): void {
+    this.agreements = 0;
+    this.weakened = 0;
+    this.conflicting = 0;
+    this.samples.length = 0;
+    this.byQuery.clear();
   }
 }
 
