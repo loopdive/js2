@@ -64,6 +64,7 @@ import { definedFuncAt } from "./func-space.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
+import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
@@ -1340,10 +1341,11 @@ export function tryNativeErrorMemberRead(
       if (resultType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, resultType);
       const thenInstrs = fctx.body;
       fctx.body = savedBody;
-      const elseInstrs: Instr[] =
-        resultType.kind === "externref"
-          ? [{ op: "ref.null.extern" }]
-          : [{ op: "ref.null", typeIdx: (resultType as { typeIdx: number }).typeIdx }];
+      // (#4394) Non-`$Error` else-arm: generic `__extern_get` read instead of
+      // a null string, so a caught user-fnctor instance (sta.js Test262Error,
+      // reified to `$Object` at the throw boundary) keeps its `.message` —
+      // see buildCaughtErrorPropFallback.
+      const elseInstrs: Instr[] = buildCaughtErrorPropFallback(ctx, fctx, tmpAny, propName, resultType);
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: resultType },

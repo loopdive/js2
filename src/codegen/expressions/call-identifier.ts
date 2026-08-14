@@ -1102,6 +1102,17 @@ export function compileIdentifierCall(
     // function binding whenever there is no lexical/module storage from which
     // this closure could actually be loaded. uuid exposed this as its local
     // test callback `rng` replacing the imported package `rng()` inside v1.
+    // (#3571 / #4394) Exact-shape uncurried-builtin aliases (propertyHelper's
+    // `__push`/`__join` = `Function.prototype.call.bind(Builtin.prototype.m)`)
+    // must be claimed BEFORE any stored-carrier dispatch: #4395's native-first
+    // bind provider otherwise routes the `$__bound_fn` through the stored
+    // `Function.prototype.call` VALUE, whose standalone body is the #2984
+    // degrade throw. The resolver only matches the immutable harness idiom.
+    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+      const uncurriedCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
+      if (uncurriedCall !== undefined) return uncurriedCall;
+    }
+
     let closureInfo =
       isLocallyShadowed || nestedBindingVisible || (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined

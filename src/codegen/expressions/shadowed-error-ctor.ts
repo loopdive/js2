@@ -62,6 +62,44 @@ function parametersDeclare(params: readonly ts.ParameterDeclaration[], name: str
  * `function TypeError` at module scope genuinely shadows the intrinsic for
  * every `new TypeError()` below it.
  */
+/** Does this statement list declare `name` as a FUNCTION declaration? */
+function statementsDeclareFunction(statements: readonly ts.Statement[], name: string): boolean {
+  for (const stmt of statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name !== undefined && stmt.name.text === name) return true;
+  }
+  return false;
+}
+
+/**
+ * (#4394 standalone) True when `name` is shadowed by a user FUNCTION
+ * DECLARATION in the scope chain enclosing `node` — the literal sta.js shape
+ * (`function Test262Error(message) { … }`).
+ *
+ * Deliberately NARROWER than {@link errorCtorNameIsUserShadowed}: a `class
+ * Test262Error extends Error` (the wrapped-harness injection #2902 was built
+ * for) or a `var Test262Error = …` does NOT match, so the standalone
+ * `$Error_struct` interception keeps claiming those shapes and the ~2,779
+ * host-free wrapped tests are untouched. Only the declared-function shape —
+ * where the interception's `$Error_struct` return FAILS the
+ * `$__fnctor_Test262Error` cast at the binding site and leaves the instance
+ * NULL (no `.message`, no `.constructor`, `instanceof` null-deref, thrown
+ * value rendered "undefined") — declines into the ordinary user-fnctor
+ * lowering.
+ */
+export function errorCtorNameIsUserFunctionShadowed(node: ts.Node, name: string): boolean {
+  let cursor: ts.Node | undefined = node.parent;
+  while (cursor !== undefined) {
+    if (ts.isSourceFile(cursor)) return statementsDeclareFunction(cursor.statements, name);
+    if (ts.isBlock(cursor) || ts.isModuleBlock(cursor)) {
+      if (statementsDeclareFunction(cursor.statements, name)) return true;
+    } else if (ts.isCaseClause(cursor) || ts.isDefaultClause(cursor)) {
+      if (statementsDeclareFunction(cursor.statements, name)) return true;
+    }
+    cursor = cursor.parent;
+  }
+  return false;
+}
+
 export function errorCtorNameIsUserShadowed(node: ts.Node, name: string): boolean {
   let cursor: ts.Node | undefined = node.parent;
   while (cursor !== undefined) {

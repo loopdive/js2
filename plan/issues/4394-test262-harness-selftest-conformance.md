@@ -20,6 +20,13 @@ loc-budget-allow:
   # +6 lines: the standalone global-object receiver exclusion, next to the
   # identical host-lane exclusion (#4432 root cause 9) it extends.
   - src/codegen/object-ops.ts
+  # +10 lines: the standalone bound-function arm's #3571-uncurried-dispatch
+  # ordering guard — the #4395 provider widening must not run ahead of it
+  # (test262error-identity bucket; regression attributed to dbccc693).
+  - src/codegen/fnctor-escape-gate.ts
+  # +2 lines: routing the caught-error property fallback through its new leaf
+  # module; the dispatch ladder carries only the call.
+  - src/codegen/property-access-dispatch.ts
   # +186 lines: the two silent-drop repairs behind every "async completion
   # marker not observed" stall — a .then handler without compile-time
   # ClosureInfo was treated as ABSENT, and the standalone .then rejection path
@@ -75,6 +82,10 @@ func-budget-allow:
   # +3 lines: the symbol-keyed entry skip in the for-in vec arm — enumeration
   # must not surface a Symbol key as its numeric slot index (verifyproperty).
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
+  # +16 lines: the standalone Test262Error prototype-method binding arm beside
+  # the host-lane #4394 arm it mirrors (test262error-identity bucket); the
+  # bodies live in shadowed-error-ctor.ts / caught-error-prop-fallback.ts.
+  - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
   # +10 lines: one more condition in the widening scan (unannotated
   # numeric-first literals), inside the scan whose order is load-bearing.
   - src/codegen/literals.ts::compileArrayLiteral
