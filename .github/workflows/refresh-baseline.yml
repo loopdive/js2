@@ -532,6 +532,14 @@ jobs:
           cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
           cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
           cp merged-reports/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
+          # …and the SERVED copy under website/public (the vite publicDir since
+          # #1656), mirroring the host line above. The landing page reads this
+          # path FIRST for its standalone donut — the default lane now — so a
+          # committed copy that never refreshes is a stale-headline trap
+          # whenever a deploy's baselines fetch fails.
+          mkdir -p website/public/benchmarks/results
+          cp merged-reports/test262-standalone-report-merged.json \
+            website/public/benchmarks/results/test262-standalone-report.json
 
       - name: Raise standalone pass-count high-water mark (#2097)
         run: |
@@ -826,6 +834,9 @@ jobs:
             public/benchmarks/results/test262-standalone-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
+          # The SERVED standalone report (website/public, copied above) — the
+          # landing page's first source for its standalone donut.
+          git add -f website/public/benchmarks/results/test262-standalone-report.json 2>/dev/null || true
           # #2871 follow-up — per-file edition index (Error Patterns / Skipped Tests filter).
           git add -f website/public/benchmarks/results/test262-file-editions.json 2>/dev/null || true
           # (#4362) Standalone twins of the edition buckets + feature-row counts,

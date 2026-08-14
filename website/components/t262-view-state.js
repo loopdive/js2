@@ -46,14 +46,16 @@
    * navigation, so they must not stack history entries the Back button then
    * has to unwind one edition at a time.
    *
-   * `mode: "host"` and `edition: "overall"` are the defaults and are DROPPED
-   * from the URL rather than written out, so the common case stays a clean
-   * link and a shared URL only ever names what actually differs.
+   * `mode: "standalone"` and `edition: "overall"` are the DEFAULTS on both
+   * pages and are dropped from the URL rather than written out, so the common
+   * case stays a clean link and a shared URL only ever names what differs. The
+   * mode default follows the pages: standalone (pure Wasm) is the lane both
+   * surfaces open on, so `?mode=host` is the explicit opt-in.
    */
   const write = ({ mode, edition } = {}) => {
     const search = params();
-    if (mode === "standalone") search.set(MODE_PARAM, "standalone");
-    else if (mode === "host") search.delete(MODE_PARAM);
+    if (mode === "host") search.set(MODE_PARAM, "host");
+    else if (mode === "standalone") search.delete(MODE_PARAM);
 
     if (typeof edition === "string" && edition && edition !== "overall") search.set(EDITION_PARAM, edition);
     else if (edition === "overall" || edition === null) search.delete(EDITION_PARAM);
@@ -75,7 +77,7 @@
    */
   const linkTo = (href, { mode, edition } = {}) => {
     const search = new URLSearchParams();
-    if (mode === "standalone") search.set(MODE_PARAM, "standalone");
+    if (mode === "host") search.set(MODE_PARAM, "host");
     if (typeof edition === "string" && edition && edition !== "overall") search.set(EDITION_PARAM, edition);
     const query = search.toString();
     return query ? `${href}?${query}` : href;
