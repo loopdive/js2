@@ -54,6 +54,21 @@
  */
 import ts from "typescript";
 
+import { optInFlagEnabled } from "../perf-flags.js";
+
+/**
+ * (#4405) `JS2WASM_RECEIVER_SPEC` — receiver-type specialisation for NON-`this`
+ * receivers. Default **OFF**; with it unset this module behaves exactly as it
+ * did before #4405 Phase 1, which is what makes the byte-identity check
+ * meaningful. Off-tokens are the shared `perf-flags` family's.
+ *
+ * Read per call rather than cached in a module constant so a test can flip it
+ * between compiles in one process.
+ */
+export function receiverSpecEnabled(): boolean {
+  return optInFlagEnabled(process.env.JS2WASM_RECEIVER_SPEC);
+}
+
 /** A per-binding or per-parameter verdict: the single class it always holds. */
 export interface ReceiverVerdict {
   /** The approved fnctor class name (matches `ctx.structMap` key `__fnctor_<name>`). */
@@ -156,55 +171,47 @@ function resolveLocalBindingWithReason(id: ts.Identifier): {
 }
 
 /**
- * Run the receiver-flow analysis over one source file.
+ * Pass 1 — `new F(...)` bindings. A `var p = new Parser(...)` binding holds a
+ * Parser unless something later writes it.
  *
- * `approvedClasses` is the fnctor escape gate's approved-name set: a class the
- * gate rejected has no `$__fnctor_<name>` struct, so proving a receiver is an
- * instance of it buys nothing and must not be recorded.
+ * `const` AND `var`/`let` are admitted: real prototype-style JS (acorn's dist
+ * is ES5, `var` everywhere) never uses `const`, and restricting to it admitted
+ * ZERO bindings. Safety comes from pass 3, which WITHDRAWS any binding written
+ * after its initializer — so an admitted `var` is one the whole file never
+ * reassigns, which is the property this rule actually needs. {@link isConstLike}
+ * is kept as the fast path for the common case.
  */
-export function analyzeReceiverFlow(
+function collectNewBindings(
   sourceFile: ts.SourceFile,
   approvedClasses: ReadonlySet<string>,
-): ReceiverFlowResult {
-  if (approvedClasses.size === 0) return EMPTY;
-
-  const byDeclaration = new Map<ts.Node, ReceiverVerdict>();
-  const demoted = new Set<string>();
-
-  // ── Pass 1: `new F(...)` bindings ────────────────────────────────────────
-  // A `const p = new Parser(...)` binding always holds a Parser. A `let` is
-  // excluded outright rather than reassignment-tracked: cheap, and the pattern
-  // this targets (acorn's `var parser = new Parser(options, input)`) is const
-  // in the compiled output and re-scanned by pass 2 through the parameter rule
-  // when it is not.
-  const collectNewBindings = (node: ts.Node): void => {
+  byDeclaration: Map<ts.Node, ReceiverVerdict>,
+): void {
+  const walk = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const cls = newExpressionClassName(node.initializer);
       if (cls !== undefined && approvedClasses.has(cls)) {
-        // `const` AND `var`/`let`: real prototype-style JS (acorn's dist is
-        // ES5, `var` everywhere) never uses `const`, and restricting to it
-        // admitted ZERO bindings. Safety comes from pass 3, which WITHDRAWS
-        // any binding written after its initializer — so an admitted `var` is
-        // one the whole file never reassigns, which is the property we need.
-        // `isConstLike` is kept as the fast path for the common case.
         void isConstLike(node);
         byDeclaration.set(node, { className: cls, source: "new-binding" });
       }
     }
-    ts.forEachChild(node, collectNewBindings);
+    ts.forEachChild(node, walk);
   };
-  collectNewBindings(sourceFile);
+  walk(sourceFile);
+}
 
-  // ── Pass 1b: prototype ALIAS map ─────────────────────────────────────────
-  // Real-world prototype-style JS almost never writes `F.prototype.m = …`
-  // directly: acorn's dist has `var pp$8 = Parser.prototype;` and then
-  // `pp$8.parseTopLevel = function (node) { … }`, with NINE such aliases. The
-  // first tally of this analysis over real acorn admitted ZERO receivers for
-  // exactly this reason — the unit tests used the direct form, the shipping
-  // code does not. Map every `<alias> = <Class>.prototype` binding so a method
-  // assigned through an alias still identifies its class.
+/**
+ * Pass 1b — prototype ALIAS map.
+ *
+ * Real-world prototype-style JS almost never writes `F.prototype.m = …`
+ * directly: acorn's dist has `var pp$8 = Parser.prototype;` and then
+ * `pp$8.parseTopLevel = function (node) { … }`, with NINE such aliases. The
+ * first tally of this analysis over real acorn admitted ZERO receivers for
+ * exactly this reason — the unit tests used the direct form, the shipping code
+ * does not.
+ */
+function collectPrototypeAliases(sourceFile: ts.SourceFile, approvedClasses: ReadonlySet<string>): Map<string, string> {
   const prototypeAlias = new Map<string, string>();
-  const collectAliases = (node: ts.Node): void => {
+  const walk = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const init = node.initializer;
       if (
@@ -219,25 +226,29 @@ export function analyzeReceiverFlow(
         else prototypeAlias.set(node.name.text, init.expression.text);
       }
     }
-    ts.forEachChild(node, collectAliases);
+    ts.forEachChild(node, walk);
   };
-  collectAliases(sourceFile);
+  walk(sourceFile);
+  return prototypeAlias;
+}
 
-  // ── Pass 1c: prototype METHOD map + return-class inference ───────────────
-  // The first alias-aware tally admitted only 20 of acorn's 2,363 non-`this`
-  // property accesses, because its dominant shape is a PARAMETER fed from a
-  // CALL result: `pp.finishNode = function (node, type) { … node.start … }`
-  // receives what `this.startNode()` returned, and `pp.startNode = function ()
-  // { return new Node(this, …) }`. Without a return-class rule every such
-  // argument is "unproven" and the parameter rule refuses.
-  //
-  // So: map (class, method) → its function body, infer a return class for each
-  // (every `return` yields the same proven class, and there is no bare `return`
-  // / implicit-undefined path), and let a `this.m()` call site count as proven.
-  // Computed to a FIXED POINT because a return can itself depend on a
-  // parameter verdict; monotone growth only, capped to keep it linear-ish.
-  const methodBodies = new Map<string, ts.FunctionExpression>(); // `${class}.${method}`
-  const collectMethods = (node: ts.Node): void => {
+/**
+ * Pass 1c — prototype METHOD map, keyed `${class}.${method}`.
+ *
+ * The first alias-aware tally admitted only 20 of acorn's 2,363 non-`this`
+ * property accesses, because its dominant shape is a PARAMETER fed from a CALL
+ * result: `pp.finishNode = function (node, type) { … node.start … }` receives
+ * what `this.startNode()` returned, and `pp.startNode = function () { return new
+ * Node(this, …) }`. Without a return-class rule every such argument is
+ * "unproven" and the parameter rule refuses.
+ */
+function collectPrototypeMethods(
+  sourceFile: ts.SourceFile,
+  approvedClasses: ReadonlySet<string>,
+  prototypeAlias: ReadonlyMap<string, string>,
+): Map<string, ts.FunctionExpression> {
+  const methodBodies = new Map<string, ts.FunctionExpression>();
+  const walk = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const lhs = node.left;
       if (ts.isPropertyAccessExpression(lhs) && ts.isFunctionExpression(node.right)) {
@@ -254,45 +265,202 @@ export function analyzeReceiverFlow(
         if (cls !== undefined) methodBodies.set(`${cls}.${lhs.name.text}`, node.right);
       }
     }
-    ts.forEachChild(node, collectMethods);
+    ts.forEachChild(node, walk);
   };
-  collectMethods(sourceFile);
+  walk(sourceFile);
+  return methodBodies;
+}
 
-  /** Class returned by every `return` in `fn`, when they agree and none is bare. */
-  const returnClassOf = new Map<ts.Node, string>();
-  const inferReturnClass = (
-    fn: ts.FunctionExpression | ts.FunctionDeclaration,
-    argClass: (e: ts.Expression, enclosing: string | undefined) => string | undefined,
-    enclosing: string | undefined,
-  ): string | undefined => {
-    const seen = new Set<string>();
-    let bare = false;
-    let any = false;
-    const walk = (node: ts.Node): void => {
-      // Do not descend into nested functions — their returns are not ours.
-      if (
-        node !== fn &&
-        (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isArrowFunction(node))
-      ) {
+/** Class returned by every `return` in `fn`, when they agree and none is bare. */
+function inferReturnClass(
+  fn: ts.FunctionExpression | ts.FunctionDeclaration,
+  argClass: (e: ts.Expression, enclosing: string | undefined) => string | undefined,
+  enclosing: string | undefined,
+): string | undefined {
+  const seen = new Set<string>();
+  let bare = false;
+  let any = false;
+  const walk = (node: ts.Node): void => {
+    // Do not descend into nested functions — their returns are not ours.
+    if (node !== fn && (ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node) || ts.isArrowFunction(node))) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      any = true;
+      if (!node.expression) {
+        bare = true;
         return;
       }
-      if (ts.isReturnStatement(node)) {
-        any = true;
-        if (!node.expression) {
-          bare = true;
-          return;
-        }
-        const cls = argClass(node.expression, enclosing);
-        if (cls === undefined) bare = true;
-        else seen.add(cls);
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(fn);
-    // A function that can fall off the end returns undefined on that path.
-    if (!any || bare || seen.size !== 1) return undefined;
-    return [...seen][0];
+      const cls = argClass(node.expression, enclosing);
+      if (cls === undefined) bare = true;
+      else seen.add(cls);
+    }
+    ts.forEachChild(node, walk);
   };
+  walk(fn);
+  // A function that can fall off the end returns undefined on that path.
+  if (!any || bare || seen.size !== 1) return undefined;
+  return [...seen][0];
+}
+
+/**
+ * The approved class whose prototype method / constructor body `node` sits
+ * inside, so `this` in that body has a known class. Recognizes both shapes
+ * acorn uses: `F.prototype.m = function () {}` and `pp.m = function () {}`
+ * where `pp = F.prototype` (pass 1b).
+ */
+function enclosingThisClassOf(
+  node: ts.Node,
+  approvedClasses: ReadonlySet<string>,
+  prototypeAlias: ReadonlyMap<string, string>,
+): string | undefined {
+  let cur: ts.Node | undefined = node;
+  while (cur) {
+    if (ts.isFunctionExpression(cur) || ts.isFunctionDeclaration(cur)) {
+      const parent: ts.Node | undefined = cur.parent;
+      if (parent && ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const lhs = parent.left;
+        if (ts.isPropertyAccessExpression(lhs)) {
+          // `F.prototype.m = function () {}`
+          if (ts.isPropertyAccessExpression(lhs.expression)) {
+            const base = lhs.expression;
+            if (base.name.text === "prototype" && ts.isIdentifier(base.expression)) {
+              const cls = base.expression.text;
+              if (approvedClasses.has(cls)) return cls;
+            }
+          }
+          // `pp$8.m = function () {}` where `var pp$8 = F.prototype` (pass 1b)
+          if (ts.isIdentifier(lhs.expression)) {
+            const viaAlias = prototypeAlias.get(lhs.expression.text);
+            if (viaAlias !== undefined) return viaAlias;
+          }
+        }
+      }
+      // `function F(...) { this.x = … }` — the constructor itself.
+      if (cur.name && approvedClasses.has(cur.name.text)) return cur.name.text;
+      // A `var F = function F(...)` constructor binding.
+      if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+        const cls = parent.name.text;
+        if (approvedClasses.has(cls)) return cls;
+      }
+      return undefined; // a non-method function resets `this`
+    }
+    if (ts.isArrowFunction(cur)) {
+      cur = cur.parent; // arrows inherit `this`
+      continue;
+    }
+    cur = cur.parent;
+  }
+  return undefined;
+}
+
+/** (#4405 Phase 1) method NAME → every class that declares a method of that name. */
+function buildMethodNameOwners(methodBodies: ReadonlyMap<string, ts.FunctionExpression>): Map<string, Set<string>> {
+  const owners = new Map<string, Set<string>>();
+  for (const key of methodBodies.keys()) {
+    const dot = key.lastIndexOf(".");
+    const name = key.slice(dot + 1);
+    let set = owners.get(name);
+    if (set === undefined) {
+      set = new Set<string>();
+      owners.set(name, set);
+    }
+    set.add(key.slice(0, dot));
+  }
+  return owners;
+}
+
+/**
+ * (#4405 Phase 1) Poison every method whose slot ESCAPES callee position.
+ *
+ * `pp.parseStatement.call(this, node)`, `[pp.a, pp.b]`, `f(pp.parseIdent)`: each
+ * can reach the body with arguments this pass never inspects, which would make
+ * pass 2's "every call site agrees" claim false. Only the defining assignment
+ * (`pp.m = function () {}`, pass 1c's own shape) and a direct callee position
+ * are safe.
+ */
+function poisonEscapingMethodSlots(
+  sourceFile: ts.SourceFile,
+  methodNameOwners: ReadonlyMap<string, ReadonlySet<string>>,
+  poison: (name: string) => void,
+): void {
+  const walk = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && methodNameOwners.has(node.name.text)) {
+      const parent: ts.Node | undefined = node.parent;
+      const isCallee = parent !== undefined && ts.isCallExpression(parent) && parent.expression === node;
+      const isDefiningWrite =
+        parent !== undefined &&
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.left === node;
+      if (!isCallee && !isDefiningWrite) poison(node.name.text);
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sourceFile);
+}
+
+/**
+ * Pass 3 — demote anything ever written or deleted. A verdict says "this
+ * binding ALWAYS holds an instance of F"; any write after the initializer, or a
+ * `delete`, breaks that. Monotonic: once removed, never restored.
+ */
+function demoteWrittenBindings(
+  sourceFile: ts.SourceFile,
+  byDeclaration: Map<ts.Node, ReceiverVerdict>,
+  demoted: Set<string>,
+): void {
+  const walk = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const lhs = node.left;
+      if (ts.isIdentifier(lhs)) {
+        const decl = resolveLocalBinding(lhs);
+        if (decl && byDeclaration.has(decl)) {
+          const cls = newExpressionClassName(node.right);
+          if (cls === undefined || cls !== byDeclaration.get(decl)!.className) {
+            byDeclaration.delete(decl);
+            demoted.add(lhs.text);
+          }
+        }
+      }
+    }
+    if (ts.isDeleteExpression(node) && ts.isIdentifier(node.expression)) {
+      const decl = resolveLocalBinding(node.expression);
+      if (decl && byDeclaration.delete(decl)) demoted.add(node.expression.text);
+    }
+    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && ts.isIdentifier(node.operand)) {
+      const decl = resolveLocalBinding(node.operand);
+      if (decl && byDeclaration.delete(decl)) demoted.add(node.operand.text);
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sourceFile);
+}
+
+/**
+ * Run the receiver-flow analysis over one source file.
+ *
+ * `approvedClasses` is the fnctor escape gate's approved-name set: a class the
+ * gate rejected has no `$__fnctor_<name>` struct, so proving a receiver is an
+ * instance of it buys nothing and must not be recorded.
+ */
+export function analyzeReceiverFlow(
+  sourceFile: ts.SourceFile,
+  approvedClasses: ReadonlySet<string>,
+): ReceiverFlowResult {
+  if (approvedClasses.size === 0) return EMPTY;
+
+  const specEnabled = receiverSpecEnabled(); // (#4405) read once per analysis
+  const byDeclaration = new Map<ts.Node, ReceiverVerdict>();
+  const demoted = new Set<string>();
+
+  // Passes 1 / 1b / 1c — see each collector's own doc comment.
+  collectNewBindings(sourceFile, approvedClasses, byDeclaration);
+  const prototypeAlias = collectPrototypeAliases(sourceFile, approvedClasses);
+  const methodBodies = collectPrototypeMethods(sourceFile, approvedClasses, prototypeAlias);
+
+  /** Class returned by every `return` in a method body, once inferable. */
+  const returnClassOf = new Map<ts.Node, string>();
 
   // ── Pass 2: parameters whose every call site passes a proven value ────────
   // Motivating case: acorn's `var Node = function Node(parser, pos, loc) { …
@@ -330,59 +498,78 @@ export function analyzeReceiverFlow(
     return undefined;
   };
 
+  const enclosingThisClass = (node: ts.Node): string | undefined =>
+    enclosingThisClassOf(node, approvedClasses, prototypeAlias);
+
+  // (#4405 Phase 1) method NAME → the classes that declare it. Needed twice
+  // below: to route a `recv.m(…)` call site to the right body, and to POISON
+  // every same-named body when a call site's receiver is unprovable.
+  const methodNameOwners = buildMethodNameOwners(methodBodies);
+
   /**
-   * The approved class whose prototype method / constructor body `node` sits
-   * inside, so `this` in that body has a known class. Recognizes the
-   * prototype-assignment shape acorn uses (`F.prototype.m = function () {}`,
-   * `pp.m = function () {}` where `pp = F.prototype`) only through the direct
-   * form; the aliased form is left to the #3683 write-once analysis, which
-   * already models it, when this module is wired up.
+   * (#4405 Phase 1) Bodies whose parameter observations cannot be trusted.
+   *
+   * Pass 2's rule is "every call site passes the same proven class", so it is
+   * only sound while we can SEE every call site. A prototype method reached
+   * through a receiver we cannot classify — `foo.parseStatement(x)` with `foo`
+   * unproven, or `pp.parseStatement.call(that, x)`, or the slot passed around as
+   * a value — is a call site whose argument we never looked at. Rather than
+   * trust the guard to clean that up, poison the body: no verdict at all for its
+   * parameters.
    */
-  const enclosingThisClass = (node: ts.Node): string | undefined => {
-    let cur: ts.Node | undefined = node;
-    while (cur) {
-      if (ts.isFunctionExpression(cur) || ts.isFunctionDeclaration(cur)) {
-        const parent: ts.Node | undefined = cur.parent;
-        // `F.prototype.m = function () {}`
-        if (parent && ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-          const lhs = parent.left;
-          if (ts.isPropertyAccessExpression(lhs)) {
-            // `F.prototype.m = function () {}`
-            if (ts.isPropertyAccessExpression(lhs.expression)) {
-              const base = lhs.expression;
-              if (base.name.text === "prototype" && ts.isIdentifier(base.expression)) {
-                const cls = base.expression.text;
-                if (approvedClasses.has(cls)) return cls;
-              }
-            }
-            // `pp$8.m = function () {}` where `var pp$8 = F.prototype` (pass 1b)
-            if (ts.isIdentifier(lhs.expression)) {
-              const viaAlias = prototypeAlias.get(lhs.expression.text);
-              if (viaAlias !== undefined) return viaAlias;
-            }
-          }
-        }
-        // `function F(...) { this.x = … }` — the constructor itself.
-        if (cur.name && approvedClasses.has(cur.name.text)) return cur.name.text;
-        // A `var F = function F(...)` constructor binding.
-        if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
-          const cls = parent.name.text;
-          if (approvedClasses.has(cls)) return cls;
-        }
-        return undefined; // a non-method function resets `this`
-      }
-      if (ts.isArrowFunction(cur)) {
-        cur = cur.parent; // arrows inherit `this`
-        continue;
-      }
-      cur = cur.parent;
+  const poisonedBodies = new Set<ts.Node>();
+  const poisonMethodName = (name: string): void => {
+    for (const cls of methodNameOwners.get(name) ?? []) {
+      const body = methodBodies.get(`${cls}.${name}`);
+      if (body !== undefined) poisonedBodies.add(body);
     }
-    return undefined;
   };
 
-  /** The callee's declaration, when the call target is a locally-declared function. */
-  const calleeDeclaration = (call: ts.CallExpression | ts.NewExpression): ts.Node | undefined => {
+  /**
+   * The callee's declaration, when the call target is a locally-declared
+   * function OR — (#4405 Phase 1) — a prototype method reached through a
+   * receiver whose class is proven.
+   *
+   * ## Why the property-access half exists
+   *
+   * Measured (#4405 Phase 0 census, standalone acorn): **1,240 of 3,244
+   * identifier receivers the analysis refused were `no-verdict:param`**, led by
+   * `state` 434, `node` 243, `prop` 120, `expr` 112 — precisely the receivers
+   * the issue targets. They were not being *rejected*: with this function
+   * bailing on any non-identifier callee, every `this.parseStatement(node)` site
+   * was invisible, so prototype-method parameters were never OBSERVED and the
+   * verdict loop (which iterates `observations`) never saw them at all.
+   *
+   * Pass 1c already built `methodBodies`; this just uses it on the call side.
+   */
+  const calleeDeclaration = (
+    call: ts.CallExpression | ts.NewExpression,
+    enclosing: string | undefined,
+  ): ts.Node | undefined => {
     const callee = call.expression;
+    if (ts.isPropertyAccessExpression(callee)) {
+      if (!specEnabled) return undefined; // (#4405) flag off ⇒ pre-Phase-1 behaviour
+      const name = callee.name.text;
+      if (!methodNameOwners.has(name)) return undefined;
+      // ROUND-INDEPENDENT receiver classification only — see the note on the
+      // fixed point below. `this` inside a known method body and a literal
+      // `new F()` are both decided before the loop starts and never revised, so
+      // the set of observed call sites is FIXED across rounds. That is what
+      // makes the fixed point a least one: an argument can only go
+      // unproven→proven, never the reverse, so an admitted parameter stays
+      // admitted. Classifying the receiver through `argumentClass` instead
+      // would let a call site become visible in round 3 and retract a verdict
+      // granted in round 1.
+      const recvCls =
+        callee.expression.kind === ts.SyntaxKind.ThisKeyword ? enclosing : newExpressionClassName(callee.expression);
+      if (recvCls === undefined || !approvedClasses.has(recvCls)) {
+        // An unclassifiable receiver MIGHT be an instance of the owning class,
+        // which would make this an unobserved call site. Fail closed.
+        poisonMethodName(name);
+        return undefined;
+      }
+      return methodBodies.get(`${recvCls}.${name}`);
+    }
     if (!ts.isIdentifier(callee)) return undefined;
     const decl = resolveLocalBinding(callee);
     if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
@@ -399,20 +586,8 @@ export function analyzeReceiverFlow(
     return found;
   };
 
-  // Fixed point over return classes (monotone; 3 rounds is ample — acorn's
-  // deepest chain is startNode → finishNode → parse*).
-  for (let round = 0; round < 3; round++) {
-    let changed = false;
-    for (const [key, body] of methodBodies) {
-      if (returnClassOf.has(body)) continue;
-      const cls = inferReturnClass(body, argumentClass, key.slice(0, key.lastIndexOf(".")));
-      if (cls !== undefined) {
-        returnClassOf.set(body, cls);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
+  // (#4405 Phase 1) Poison methods whose slot escapes callee position.
+  if (specEnabled) poisonEscapingMethodSlots(sourceFile, methodNameOwners, poisonMethodName);
 
   // ── Pass 1d: bindings initialized from a call with an inferred return class ─
   // acorn's `var node = this.startNode()` — the shape that feeds every
@@ -432,11 +607,11 @@ export function analyzeReceiverFlow(
     }
     ts.forEachChild(node, collectCallBindings);
   };
-  collectCallBindings(sourceFile);
 
   const collectCallSites = (node: ts.Node): void => {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      const decl = calleeDeclaration(node);
+      const enclosing = enclosingThisClass(node);
+      const decl = calleeDeclaration(node, enclosing);
       const params =
         decl && (ts.isFunctionExpression(decl) || ts.isFunctionDeclaration(decl)) ? decl.parameters : undefined;
       if (decl && params) {
@@ -445,7 +620,6 @@ export function analyzeReceiverFlow(
           obs = params.map(() => ({ classes: new Set<string>(), unproven: false }));
           observations.set(decl, obs);
         }
-        const enclosing = enclosingThisClass(node);
         const args = node.arguments ?? ts.factory.createNodeArray([]);
         for (let i = 0; i < obs.length; i++) {
           const arg = args[i];
@@ -461,57 +635,83 @@ export function analyzeReceiverFlow(
     }
     ts.forEachChild(node, collectCallSites);
   };
-  collectCallSites(sourceFile);
 
-  for (const [decl, obs] of observations) {
-    const params = (decl as ts.FunctionLikeDeclaration).parameters;
-    for (let i = 0; i < obs.length; i++) {
-      const o = obs[i]!;
-      const param = params[i];
-      if (!param || !ts.isIdentifier(param.name)) continue;
-      if (o.unproven || o.classes.size !== 1) {
-        if (o.classes.size > 0) demoted.add(param.name.text);
-        continue;
-      }
-      // A parameter with a default or a rest parameter can hold something else.
-      if (param.initializer !== undefined || param.dotDotDotToken !== undefined) {
-        demoted.add(param.name.text);
-        continue;
-      }
-      const cls = [...o.classes][0]!;
-      byDeclaration.set(param, { className: cls, source: "parameter" });
-    }
-  }
+  // ── (#4405 Phase 1) One fixed point over 1c + 1d + 2, not three sequential
+  // passes ──────────────────────────────────────────────────────────────────
+  // The three feed each other and acorn chains them several deep: a PARAMETER
+  // verdict (`pp.finishNode = function (node, …)`) makes `node` a provable
+  // ARGUMENT at the next call site, which makes another parameter provable, and
+  // a provable receiver makes another method's RETURN class inferable, which
+  // makes another `var x = this.m()` binding provable. Running each pass once
+  // stops at the first link.
+  //
+  // Monotone by construction — every step only ADDS to `byDeclaration` /
+  // `returnClassOf`, and `argumentClass` is monotone in both — so the loop
+  // terminates and the order of the three within a round does not change the
+  // fixed point, only how fast it is reached. Rounds are capped because the
+  // walks are whole-file; 4 is comfortably past acorn's deepest chain
+  // (startNode → finishNode → parseX → parseSubscripts).
+  //
+  // Parameter DEMOTIONS are collected per round and merged only at the end: a
+  // parameter unproven in round 1 is routinely proven in round 2, and recording
+  // the intermediate state would make `demoted` (diagnostics) lie.
+  //
+  // With the flag OFF the loop runs exactly ONE round, which is the original
+  // "returns fixed point (3 inner rounds), then 1d, then 2, then the verdict
+  // loop" sequence unchanged — that is what keeps flag-off byte-identical.
+  const paramDemotions = new Set<string>();
+  for (let round = 0; round < (specEnabled ? 4 : 1); round++) {
+    const before = byDeclaration.size + returnClassOf.size;
+    paramDemotions.clear();
 
-  // ── Pass 3: demote anything ever written or deleted ───────────────────────
-  // A verdict says "this binding ALWAYS holds an instance of F". Any write
-  // after the initializer, or a `delete`, breaks that. Monotonic: once
-  // removed, never restored.
-  const demoteWrites = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      const lhs = node.left;
-      if (ts.isIdentifier(lhs)) {
-        const decl = resolveLocalBinding(lhs);
-        if (decl && byDeclaration.has(decl)) {
-          const cls = newExpressionClassName(node.right);
-          if (cls === undefined || cls !== byDeclaration.get(decl)!.className) {
-            byDeclaration.delete(decl);
-            demoted.add(lhs.text);
-          }
+    // Inner fixed point over return classes (monotone; 3 rounds is ample —
+    // acorn's deepest chain is startNode → finishNode → parse*). It breaks out
+    // as soon as nothing changed, so re-entering it per outer round is free.
+    for (let inner = 0; inner < 3; inner++) {
+      let changed = false;
+      for (const [key, body] of methodBodies) {
+        if (returnClassOf.has(body)) continue;
+        const cls = inferReturnClass(body, argumentClass, key.slice(0, key.lastIndexOf(".")));
+        if (cls !== undefined) {
+          returnClassOf.set(body, cls);
+          changed = true;
         }
       }
+      if (!changed) break;
     }
-    if (ts.isDeleteExpression(node) && ts.isIdentifier(node.expression)) {
-      const decl = resolveLocalBinding(node.expression);
-      if (decl && byDeclaration.delete(decl)) demoted.add(node.expression.text);
+
+    collectCallBindings(sourceFile);
+
+    observations.clear();
+    collectCallSites(sourceFile);
+
+    for (const [decl, obs] of observations) {
+      if (poisonedBodies.has(decl)) continue; // an unobserved call site exists
+      const params = (decl as ts.FunctionLikeDeclaration).parameters;
+      for (let i = 0; i < obs.length; i++) {
+        const o = obs[i]!;
+        const param = params[i];
+        if (!param || !ts.isIdentifier(param.name)) continue;
+        if (o.unproven || o.classes.size !== 1) {
+          if (o.classes.size > 0) paramDemotions.add(param.name.text);
+          continue;
+        }
+        // A parameter with a default or a rest parameter can hold something else.
+        if (param.initializer !== undefined || param.dotDotDotToken !== undefined) {
+          paramDemotions.add(param.name.text);
+          continue;
+        }
+        const cls = [...o.classes][0]!;
+        byDeclaration.set(param, { className: cls, source: "parameter" });
+      }
     }
-    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && ts.isIdentifier(node.operand)) {
-      const decl = resolveLocalBinding(node.operand);
-      if (decl && byDeclaration.delete(decl)) demoted.add(node.operand.text);
-    }
-    ts.forEachChild(node, demoteWrites);
-  };
-  demoteWrites(sourceFile);
+
+    if (byDeclaration.size + returnClassOf.size === before) break;
+  }
+  for (const name of paramDemotions) demoted.add(name);
+
+  // Pass 3 — see {@link demoteWrittenBindings}.
+  demoteWrittenBindings(sourceFile, byDeclaration, demoted);
 
   const tally: Record<ReceiverVerdict["source"], number> = {
     "new-binding": 0,
