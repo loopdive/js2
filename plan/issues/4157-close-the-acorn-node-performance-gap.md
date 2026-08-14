@@ -4101,3 +4101,37 @@ proven call-elimination machinery for when the compiled-code-quality work
 (receiver-type specialisation, return-type unboxing ABI) shrinks the
 compiled bucket and re-exposes helper share, and (b) the site-IC pattern
 library the next levers copy from.
+
+## 2026-08-14 (45) — the call-dispatch IC went to ZERO matches under main, and why that is a shape-drift lesson
+
+`tests/issue-4157-call-dispatch-ic.test.ts` failed 2/3 in #4491's `quality`
+run — `armed=0`, `patchedSites=0` — while the flag-unset byte-identity test
+still passed. The lever was not broken; **main moved the shape out from
+under it**.
+
+#4394 (`closed-method-dispatch.ts:1465`) now prepends a nullish-receiver
+TypeError guard to every FILLED dispatcher body on the standalone/WASI lane:
+
+```
+local.get 0 ; [call $__nullish_to_null] ; ref.is_null ; if (empty) { throw }
+```
+
+`analyzeDispatcher` matched the fill prologue at **exactly `body[0..2]`**, so
+with 3-4 guard instrs in front, every dispatcher declined with reason
+`prologue` — a total, silent zeroing of the pass. Note the failure mode: the
+OFF path stayed byte-identical and every other lever's test stayed green, so
+only the ON-path count assertions caught it. **Exact-offset shape matching
+against another pass's emission is a standing liability**; the count
+assertions are what make it visible, and they earned their keep here.
+
+Fix: `nullishGuardPrefixLength(body)` recognises that guard EXACTLY (the real
+prologue's second instr is `any.convert_extern`, never `call`/`ref.is_null`,
+so the shapes cannot be confused) and offsets the prologue and guard-region
+slices by its length. An unrecognised prefix still declines as `prologue`
+rather than being skipped blindly.
+
+The guard is deliberately **not** copied to the call site: a nullish receiver
+fails the copied arm's type test and falls through to the else arm — the
+unmodified dispatcher call, guard included — so the TypeError is still
+thrown, by the dispatcher, exactly as before. Verified: all 3 tests green
+including the poison probe (the arm really executes); `tsc` clean.

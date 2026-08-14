@@ -181,6 +181,35 @@ function scanRegion(instrs: Instr[], outDepth: number, used: Set<number>): strin
 }
 
 /**
+ * Length of the standalone/WASI nullish-receiver TypeError guard that #4394
+ * prepends to a filled dispatcher body, or 0 when absent (host lane, `.then`,
+ * or the machinery never reserved). Shape, from
+ * `closed-method-dispatch.ts:nullishReceiverGuardInstrs`:
+ *
+ *   local.get 0 ; [call $__nullish_to_null] ; ref.is_null ; if (empty) { throw }
+ *
+ * Matched EXACTLY — the real prologue's second instr is `any.convert_extern`,
+ * never `call`/`ref.is_null`, so the two shapes cannot be confused, and an
+ * unrecognised prefix still declines as `prologue` rather than being skipped.
+ *
+ * The guard is deliberately NOT copied to the call site. A nullish receiver
+ * fails the copied arm's type test and falls through to the else arm — which
+ * is the unmodified dispatcher call, guard included — so the TypeError is
+ * still thrown, by the dispatcher, exactly as before.
+ */
+function nullishGuardPrefixLength(body: Instr[]): number {
+  const b0 = body[0] as AnyInstr | undefined;
+  if (!b0 || b0.op !== "local.get" || b0.index !== 0) return 0;
+  let i = 1;
+  if ((body[i] as AnyInstr | undefined)?.op === "call") i++;
+  if ((body[i] as AnyInstr | undefined)?.op !== "ref.is_null") return 0;
+  i++;
+  const iff = body[i] as AnyInstr | undefined;
+  if (!iff || iff.op !== "if" || iff.blockType?.kind !== "empty") return 0;
+  return i + 1;
+}
+
+/**
  * Recognise one FILLED fixed-arity dispatcher body and build its copy plan.
  * Returns a decline reason string instead when the body is not the exact
  * fill-emitted shape (placeholder `unreachable` stubs decline as `too-short`).
@@ -197,11 +226,12 @@ function analyzeDispatcher(
   if (t.results.length !== 1 || t.results[0]!.kind !== "externref") return "result-shape";
 
   const body = fn.body;
-  if (body.length < 4) return "too-short";
+  const skip = nullishGuardPrefixLength(body);
+  if (body.length < skip + 4) return "too-short";
   const anyLocalIdx = arity + 1;
-  const p0 = body[0] as AnyInstr;
-  const p1 = body[1] as AnyInstr;
-  const p2 = body[2] as AnyInstr;
+  const p0 = body[skip] as AnyInstr;
+  const p1 = body[skip + 1] as AnyInstr;
+  const p2 = body[skip + 2] as AnyInstr;
   if (p0.op !== "local.get" || p0.index !== 0) return "prologue";
   if (p1.op !== "any.convert_extern") return "prologue";
   if (p2.op !== "local.set" || p2.index !== anyLocalIdx) return "prologue";
@@ -220,7 +250,7 @@ function analyzeDispatcher(
     return "no-outer-if";
   }
 
-  const guards = body.slice(3, -1);
+  const guards = body.slice(skip + 3, -1);
   const arm = last.then;
   const used = new Set<number>();
   used.add(anyLocalIdx); // the copied prologue always writes it
