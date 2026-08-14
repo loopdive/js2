@@ -619,7 +619,46 @@ two-arm `if`, so an imprecise verdict costs a slow read and never a wrong
 value. That guard — not the analysis — is what makes a missed call site
 tolerable. It does **not** license dropping the guard (spec §2(b)).
 
+### Phase 1 — CODE COMPLETE, NOT YET MEASURED (commit `f385d7dfe`)
+
+Session ended before the acorn measurement run. **The code is written, typechecks,
+and passes the scoped unit tests; the coverage claim is UNVERIFIED.** Do not
+quote a coverage number from this branch — there isn't one yet. What exists:
+
+- `optInFlagEnabled` in `src/perf-flags.ts` — the opt-in member of the tuned
+  family (unset ⇒ **OFF**, shared off-tokens). `JS2WASM_RECEIVER_SPEC` uses it.
+- `calleeDeclaration` resolves **property-access callees** via pass 1c's
+  existing `methodBodies` map — the actual fix for the 1,240.
+- The receiver of such a call is classified **round-independently** (`this` in a
+  known method body, or a literal `new F()`), never through `argumentClass`.
+  This is load-bearing: it fixes the observed-call-site set across rounds so an
+  argument can only go unproven→proven, which is what keeps the fixed point a
+  *least* one. Classifying through `argumentClass` lets a call site appear in
+  round 3 and retract a verdict granted in round 1 — I started that way and
+  backed it out; do not re-introduce it.
+- **Poisoning** for call sites we therefore cannot see: `recv.m(…)` with an
+  unclassifiable receiver, and any escape of a method slot out of callee
+  position (`pp.m.call(…)`, `f(pp.m)`). Fails closed rather than leaning on the
+  consumer's `ref.test`.
+- Passes 1c/1d/2 now run as ONE fixed point (cap 4 rounds). **Flag OFF ⇒ exactly
+  one round**, reproducing the original sequence — that is the byte-identity
+  mechanism, and it is the thing to check first if flag-off identity fails.
+- `analyzeReceiverFlow`'s passes split into named module-level functions rather
+  than taking a `func-budget-allow`. Both budget gates pass with no allowance
+  beyond the Phase 0 `typed-this.ts` one.
+
+Scoped tests green: `issue-3685-receiver-flow`, `issue-3685-proven-receiver-calls`,
+`issue-3683-typed-this-twin` — 36/36.
+
 ### Next steps, in order
+
+0. **Measure Phase 1.** `JS2WASM_RECEIVER_SPEC=1 JS2WASM_RECEIVER_SPEC_STATS=1
+   JS2WASM_PROVEN_RECEIVER_STATS=1 npx tsx .tmp/probe-4405.mjs` against the same
+   command with the flag unset (~108 s each; `.tmp/probe-4405.mjs` and
+   `.tmp/probe-4405-sha.mjs` are gitignored, recreate from the spec §0 snippet).
+   Expect `reason:no-verdict:param` to fall from 1,240 and `proven` to rise off
+   244. Then the flag-off sha256 identity check and the poison probe — **neither
+   has been run**.
 
 1. Extend `calleeDeclaration` to property-access callees (above). Expect the
    `no-verdict:param` bucket to fall and `proven` to rise off 244.
