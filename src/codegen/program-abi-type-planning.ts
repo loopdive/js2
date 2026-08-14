@@ -40,9 +40,13 @@ export interface ProgramAbiDynamicCarrierSupport {
   readonly valueType: string;
 }
 
+export type ProgramAbiClosureSupportRole = "carrier" | "invoke" | "allocate";
+
 export interface ProgramAbiClosureSupportLayoutRequest {
   readonly signature: IrClosureSignature;
   readonly captureFieldTypes: readonly IrType[];
+  /** Strongest physical capability the final IR actually uses for this layout. */
+  readonly role: ProgramAbiClosureSupportRole;
   /** Canonical module-wide wrapper root already allocated by the closure registry. */
   readonly wrapperRootType: StructTypeDef;
   /** Signature allocation wrapper; equal to wrapperRootType for the first signature. */
@@ -96,6 +100,24 @@ interface CanonicalClosureSupportRequest {
   readonly request: ProgramAbiClosureSupportLayoutRequest;
   readonly signatureKey: string;
   readonly layoutKey: string;
+}
+
+function closureSupportRoleRank(role: ProgramAbiClosureSupportRole): number {
+  switch (role) {
+    case "carrier":
+      return 0;
+    case "invoke":
+      return 1;
+    case "allocate":
+      return 2;
+  }
+}
+
+function strongestClosureSupportRequest(
+  left: CanonicalClosureSupportRequest,
+  right: CanonicalClosureSupportRequest,
+): CanonicalClosureSupportRequest {
+  return closureSupportRoleRank(right.request.role) > closureSupportRoleRank(left.request.role) ? right : left;
 }
 
 function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unknown {
@@ -645,6 +667,13 @@ export class ProgramAbiTypeRegistry {
           );
         }
         this.assertSameClosurePhysicalLayout(observed.request, request, layoutKey);
+        if (closureSupportRoleRank(request.role) > closureSupportRoleRank(observed.request.role)) {
+          throw new ProgramAbiInvariantError(
+            "planning-sealed",
+            `closure support layout ${layoutKey} expanded from ${observed.request.role} to ${request.role} after ` +
+              "the canonical batch was planned",
+          );
+        }
         return observed.layout;
       });
     }
@@ -674,6 +703,7 @@ export class ProgramAbiTypeRegistry {
             `closure signature ${candidate.signatureKey} maps to different physical wrapper/funcref types`,
           );
         }
+        bySignature.set(candidate.signatureKey, strongestClosureSupportRequest(priorSignature, candidate));
       } else {
         bySignature.set(candidate.signatureKey, candidate);
       }
@@ -681,11 +711,15 @@ export class ProgramAbiTypeRegistry {
       const priorLayout = byLayout.get(candidate.layoutKey);
       if (priorLayout) {
         this.assertSameClosurePhysicalLayout(priorLayout.request, candidate.request, candidate.layoutKey);
+        byLayout.set(candidate.layoutKey, strongestClosureSupportRequest(priorLayout, candidate));
       } else {
         byLayout.set(candidate.layoutKey, candidate);
       }
 
-      if (candidate.request.allocationWrapperType === candidate.request.wrapperRootType) {
+      if (
+        candidate.request.role === "allocate" &&
+        candidate.request.allocationWrapperType === candidate.request.wrapperRootType
+      ) {
         if (rootAllocationSignatureKey !== undefined && rootAllocationSignatureKey !== candidate.signatureKey) {
           throw new ProgramAbiInvariantError(
             "type-remap-mismatch",
@@ -709,38 +743,50 @@ export class ProgramAbiTypeRegistry {
     const resultByLayout = new Map<string, ProgramAbiClosureSupportLayout>();
     for (const [signatureKey, candidate] of [...bySignature].sort(([left], [right]) => left.localeCompare(right))) {
       const signatureOrdinal = signatureOrdinals.get(signatureKey)!;
+      const allocatesSignature = candidate.request.role === "allocate";
+      const invokesSignature = allocatesSignature || candidate.request.role === "invoke";
       const allocationWrapperRef =
         candidate.request.allocationWrapperType === candidate.request.wrapperRootType
           ? rootRef
-          : this.planClosureSupportType({
-              semanticRole: `signature-wrapper:${signatureKey}`,
-              adapterName: `__ir_closure_wrapper_${signatureOrdinal}`,
-              type: candidate.request.allocationWrapperType,
-              roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureSignatureWrapper,
-              derivedOrdinal: signatureOrdinal,
-            });
-      const liftedFuncRef = this.planClosureSupportType({
-        semanticRole: `lifted-func:${signatureKey}`,
-        adapterName: `__ir_closure_lifted_func_${signatureOrdinal}`,
-        type: candidate.request.liftedFuncType,
-        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureLiftedFunc,
-        derivedOrdinal: signatureOrdinal,
-      });
+          : this.closureSupportTypeRef(
+              {
+                semanticRole: `signature-wrapper:${signatureKey}`,
+                adapterName: `__ir_closure_wrapper_${signatureOrdinal}`,
+                type: candidate.request.allocationWrapperType,
+                roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureSignatureWrapper,
+                derivedOrdinal: signatureOrdinal,
+              },
+              allocatesSignature,
+            );
+      const liftedFuncRef = this.closureSupportTypeRef(
+        {
+          semanticRole: `lifted-func:${signatureKey}`,
+          adapterName: `__ir_closure_lifted_func_${signatureOrdinal}`,
+          type: candidate.request.liftedFuncType,
+          roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureLiftedFunc,
+          derivedOrdinal: signatureOrdinal,
+        },
+        invokesSignature,
+      );
 
       for (const [layoutKey, layoutCandidate] of [...byLayout]
         .filter(([, value]) => value.signatureKey === signatureKey)
         .sort(([left], [right]) => left.localeCompare(right))) {
         const layoutOrdinal = layoutOrdinals.get(layoutKey)!;
+        const allocatesLayout = layoutCandidate.request.role === "allocate";
         const capturedSubtypeRef =
           layoutCandidate.request.capturedSubtypeType === layoutCandidate.request.allocationWrapperType
             ? allocationWrapperRef
-            : this.planClosureSupportType({
-                semanticRole: `captured-subtype:${layoutKey}`,
-                adapterName: `__ir_closure_captured_${layoutOrdinal}`,
-                type: layoutCandidate.request.capturedSubtypeType,
-                roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureCapturedSubtype,
-                derivedOrdinal: layoutOrdinal,
-              });
+            : this.closureSupportTypeRef(
+                {
+                  semanticRole: `captured-subtype:${layoutKey}`,
+                  adapterName: `__ir_closure_captured_${layoutOrdinal}`,
+                  type: layoutCandidate.request.capturedSubtypeType,
+                  roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureCapturedSubtype,
+                  derivedOrdinal: layoutOrdinal,
+                },
+                allocatesLayout,
+              );
         resultByLayout.set(
           layoutKey,
           Object.freeze({
@@ -1156,13 +1202,16 @@ export class ProgramAbiTypeRegistry {
     return index;
   }
 
-  private planClosureSupportType(input: {
-    readonly semanticRole: string;
-    readonly adapterName: string;
-    readonly type: TypeDef;
-    readonly roleOrdinal: number;
-    readonly derivedOrdinal: number;
-  }): IrTypeRef {
+  private closureSupportTypeRef(
+    input: {
+      readonly semanticRole: string;
+      readonly adapterName: string;
+      readonly type: TypeDef;
+      readonly roleOrdinal: number;
+      readonly derivedOrdinal: number;
+    },
+    plan = true,
+  ): IrTypeRef {
     const entrySourceId = canonicalEntrySource(this.session);
     const ref = irSupportTypeRef(
       entrySourceId,
@@ -1170,15 +1219,40 @@ export class ProgramAbiTypeRegistry {
       input.adapterName,
       input.derivedOrdinal,
     );
+    if (!plan) return ref;
     const cell = this.session.typeCellFor(input.type) ?? this.session.createTypeCell(input.type);
     const previousOwner = this.session.locatorBindingId(cell);
     if (previousOwner !== undefined && previousOwner !== ref.binding.bindingId) {
-      throw new ProgramAbiInvariantError(
-        "type-remap-mismatch",
-        `closure support type ${input.semanticRole} is already owned by ${previousOwner}`,
-      );
+      const previousDraft = this.session.getDraft(previousOwner);
+      if (previousDraft?.intent.kind !== "type") {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `closure support type ${input.semanticRole} shares a physical type with non-type binding ${previousOwner}`,
+        );
+      }
+      const canonicalRef = Object.freeze({
+        ...ref,
+        binding: Object.freeze({ kind: "support" as const, bindingId: previousOwner }),
+      });
+      if (previousDraft.structuralReferenceKey !== irTypeBindingKey(canonicalRef.binding)) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `closure support type ${input.semanticRole} cannot reuse non-support type binding ${previousOwner}`,
+        );
+      }
+      return canonicalRef;
     }
     this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal);
     return ref;
+  }
+
+  private planClosureSupportType(input: {
+    readonly semanticRole: string;
+    readonly adapterName: string;
+    readonly type: TypeDef;
+    readonly roleOrdinal: number;
+    readonly derivedOrdinal: number;
+  }): IrTypeRef {
+    return this.closureSupportTypeRef(input);
   }
 }

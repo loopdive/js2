@@ -38,6 +38,7 @@ files:
   - src/ir/integration-identity.ts
   - src/ir/select-identity.ts
   - src/ir/passes/constant-fold.ts
+  - src/ir/prepared-closure-support.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/class-bodies.ts
@@ -61,26 +62,33 @@ files:
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/class-expressions.test.ts
+  - tests/issue-3214-callable-abi.test.ts
+  - tests/issue-2859.test.ts
   - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
+  - tests/issue-3522-ir-object-method-call-ownership.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
   - tests/issue-3522-test262-shard-completion.test.ts
   - tests/test262-shared.ts
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
+  - tests/issue-4102-program-abi-closure-support.test.ts
 loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-type-planning.ts
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/module-bindings.ts
   - src/ir/nodes.ts
+  - src/ir/prepared-closure-support.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
 func-budget-allow:
@@ -2302,3 +2310,81 @@ flows, closure escapes, mutable callable ref cells, receiver-sensitive methods,
 accessors, open or mutable objects, and optional calls remain direct. No shared
 legacy implementation has zero consumers at this checkpoint, so none is
 deleted here.
+
+### Usage-sensitive closure support and bounded callable pass checkpoint (2026-08-14)
+
+Closure-support preparation now records the strongest physical role that final
+IR actually uses. Internal closure carriers retain only the canonical wrapper
+root, invocation retains the root plus its exact lifted function type, and
+allocation/capture retains the complete signature wrapper and captured subtype.
+Callable source boundaries remain externref and publish an identity-exact empty
+carrier proof. Missing support still fails closed, and an empty proof is valid
+only for a callable carrier: closure, boxed, and object types still require
+nonempty support refs.
+
+The Program ABI planner unions repeated requests by semantic signature/layout
+before its sorted canonical batch. It does not publish unused allocation
+wrappers as required slots, so DCE can remove speculative child types without
+weakening exact prepared-layout remap checks or growing binaries. A regression
+with two unreachable invoke-only callable signatures now passes in GC and
+standalone with optimization both off and on. The three bodies are poisoned,
+all three IR bodies emit with zero legacy bodies/post-claim errors, Wasm
+validates, `run(40)` returns 42, standalone remains zero-import, and optimized
+IR has no new imports and is no larger than direct.
+
+Semantically distinct signatures that share one physical Wasm function type
+reuse the already planned type binding rather than claiming the allocator
+object twice. A direct Program ABI regression uses signed and unsigned `i32`
+signature facts—which erase to the same physical lifted type—to prove the
+single required type slot is retained and remapped through one canonical
+binding.
+
+The same repair makes the pre-existing boolean callback fixture execute again:
+the canonical root is no longer mistaken for two allocating semantic
+signatures when one role is invoke-only. Its two stale void-callback assertions
+now match the already-landed zero-result-signature contract: the signature is
+expressible, while the value-position call still rejects at the call-graph
+boundary.
+
+That support repair unlocks one bounded captured-method handoff. An exact
+captured method closure may be passed once to an immediately declared `const`
+arrow/function expression when the matching required FunctionTypeNode
+parameter is invoked directly, the signatures are identical, the source has
+no defaulted parameters, and the consumer has exactly that one outer call. A
+captured closure may cross at most one such handoff. The local boundary stays
+compiler-internal closure-to-closure; it does not add an externref pack/unpack
+round trip. Source-boundary callables remain externref and cannot enter this
+path. Explicit negatives cover a callback parameter, a returned callable, an
+object-method consumer, mixed internal/external call sites, and a top-level
+function value; all compile and run by value with clean select-stage fallback,
+and the mixed case emits no IR consumer body. A poisoned four-body fixture
+(`run`, method, captured `invoke`, and `consume`) emits entirely through IR in
+GC and standalone, validates, returns 42, adds no imports, and keeps the
+optimized IR binary no larger than direct.
+
+The proof remains deliberately atomic. A second callable forwarding hop,
+callable return, object storage, deeper owner, mutation, alias escape, or
+optional invocation stays on the direct path; focused negatives cover the new
+relay and return boundaries beside the existing escape/optional corpus. No
+shared legacy implementation has zero remaining consumers in this checkpoint,
+so no direct implementation is deleted yet.
+
+The five focused callable/support/object files pass **141/141**, including the
+**70/70** object-method suite and **30/30** callable/Program ABI tests. The
+adjacent eight-family closure/object matrix passes **108/108**. Hybrid IR-only
+shadow validation remains **37/37 IR bodies, 0 legacy bodies, 0 Unsupported,
+and 0 Invariants**. The fallback ratchet has zero unintended, post-claim, or
+module-level increases and only the two unchanged deferred string-builder
+candidates. Native-first host-import policy remains **379 imports, 0
+legacy-semantic, and 0 unknown**. Full equivalence remains **1,645 passing, 24
+known failures, 12 baseline improvements, and zero new regressions**.
+The committed optimization-retirement census is also asserted at its current
+**46 rows, 32 IR-owned, 3 retirement-ready, and 2 source-anchored** state; its
+fail-closed `--require-ready` check reports the remaining **43/46** rows.
+
+Next resumable R3 slices, in order: bounded callable return/escape where an
+exact ownership proof can keep the value internal; transitive capture plumbing
+for deeper nested owners; mutable callable ref-cell support; then
+receiver-sensitive/accessor/open-object methods. Each slice must keep the same
+runtime, import, optimized-size, IR-only shadow, and direct-optimization parity
+requirements before retiring its obsolete direct consumer.

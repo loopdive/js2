@@ -6,6 +6,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../codegen/func-space.js";
 import type {
   ProgramAbiClosureSupportLayout,
   ProgramAbiClosureSupportLayoutRequest,
+  ProgramAbiClosureSupportRole,
   ProgramAbiRefCellSupportRequest,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
@@ -224,14 +225,17 @@ function requireFuncType(ctx: CodegenContext, typeIdx: number): FuncTypeDef {
   return type;
 }
 
-function distinctRefs(layout: ProgramAbiClosureSupportLayout): readonly IrTypeRef[] {
-  return Object.freeze([
-    ...new Map(
-      [layout.wrapperRootRef, layout.allocationWrapperRef, layout.liftedFuncRef, layout.capturedSubtypeRef].map(
-        (ref) => [irTypeBindingKey(ref.binding), ref] as const,
-      ),
-    ).values(),
-  ]);
+function distinctRefs(
+  layout: ProgramAbiClosureSupportLayout,
+  role: ProgramAbiClosureSupportRole,
+): readonly IrTypeRef[] {
+  const refs =
+    role === "carrier"
+      ? [layout.wrapperRootRef]
+      : role === "invoke"
+        ? [layout.wrapperRootRef, layout.liftedFuncRef]
+        : [layout.wrapperRootRef, layout.allocationWrapperRef, layout.liftedFuncRef, layout.capturedSubtypeRef];
+  return Object.freeze([...new Map(refs.map((ref) => [irTypeBindingKey(ref.binding), ref] as const)).values()]);
 }
 
 /** Prepare exact final-IR closure types and publish identity-keyed ABI evidence. */
@@ -246,6 +250,7 @@ export function prepareDependencyCompleteClosureSupport(
   const functionRefs = new Map<IrFunction, readonly IrTypeRef[]>();
   const pending: Array<{
     readonly request: ProgramAbiClosureSupportLayoutRequest;
+    readonly role: ProgramAbiClosureSupportRole;
     readonly publish: (refs: readonly IrTypeRef[]) => void;
   }> = [];
   const pendingRefCells: Array<{
@@ -348,6 +353,7 @@ export function prepareDependencyCompleteClosureSupport(
   const schedule = (
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
+    role: ProgramAbiClosureSupportRole,
     publish: (refs: readonly IrTypeRef[]) => void,
     mode: ClosureAllocationMode = "support",
   ): void => {
@@ -366,11 +372,13 @@ export function prepareDependencyCompleteClosureSupport(
       request: {
         signature,
         captureFieldTypes,
+        role,
         wrapperRootType: requireStructType(ctx, rootTypeIdx, "wrapper root"),
         allocationWrapperType: requireStructType(ctx, base.structTypeIdx, "signature wrapper"),
         liftedFuncType: requireFuncType(ctx, base.funcTypeIdx),
         capturedSubtypeType: requireStructType(ctx, subtype.structTypeIdx, "captured subtype"),
       },
+      role,
       publish,
     });
   };
@@ -396,8 +404,16 @@ export function prepareDependencyCompleteClosureSupport(
       }
     }
     for (const type of exactTypes) {
-      if (type.kind === "closure" || type.kind === "callable") {
-        schedule(type.signature, [], (refs) => typeRefs.set(type, refs));
+      if (type.kind === "closure") {
+        schedule(type.signature, [], "carrier", (refs) => typeRefs.set(type, refs));
+      } else if (type.kind === "callable") {
+        // Callable values cross the public boundary as externref. Recording an
+        // explicit empty proof distinguishes that complete carrier contract
+        // from missing preparation without pinning a speculative wrapper. We
+        // still resolve the signature in the canonical batch: wrapper-root
+        // allocation order is a compilation-wide ABI invariant shared with
+        // legacy closures, even when this exact carrier needs no type ref.
+        schedule(type.signature, [], "carrier", () => typeRefs.set(type, Object.freeze([])));
       } else if (type.kind === "boxed") {
         scheduleRefCell(type, (refs) => typeRefs.set(type, refs));
       }
@@ -406,6 +422,7 @@ export function prepareDependencyCompleteClosureSupport(
       schedule(
         fn.closureSubtype.signature,
         fn.closureSubtype.captureFieldTypes,
+        "allocate",
         (refs) => functionRefs.set(fn, refs),
         fn.closureSubtype.hostOneShot ? "host-one-shot" : "ordinary",
       );
@@ -417,13 +434,14 @@ export function prepareDependencyCompleteClosureSupport(
             schedule(
               nested.signature,
               nested.captureFieldTypes,
+              "allocate",
               (refs) => instructionRefs.set(nested, refs),
               nested.hostOneShot ? "host-one-shot" : "ordinary",
             );
           } else if (nested.kind === "closure.call") {
             const calleeType = valueTypes.get(nested.callee);
             if (calleeType?.kind === "closure" || calleeType?.kind === "callable") {
-              schedule(calleeType.signature, [], (refs) => instructionRefs.set(nested, refs));
+              schedule(calleeType.signature, [], "invoke", (refs) => instructionRefs.set(nested, refs));
             }
           } else if (nested.kind === "refcell.new" && nested.resultType?.kind === "boxed") {
             scheduleRefCell(nested.resultType, (refs) => instructionRefs.set(nested, refs));
@@ -455,7 +473,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared closure support planning returned a non-parallel layout population",
       );
     }
-    layouts.forEach((layout, index) => pending[index]!.publish(distinctRefs(layout)));
+    layouts.forEach((layout, index) => {
+      const entry = pending[index]!;
+      entry.publish(distinctRefs(layout, entry.role));
+    });
   }
 
   if (pendingRefCells.length > 0) {
