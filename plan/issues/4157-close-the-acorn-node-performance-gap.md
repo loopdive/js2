@@ -20,7 +20,25 @@ loc-budget-allow:
   # one-line pass invocations, one per compile pipeline. The pass itself is a
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
+  # (#4157 call-dispatch devirtualization, JS2WASM_CALL_DISPATCH_IC) +13 lines
+  # of WIRING: one import plus one guarded pass invocation per compile
+  # pipeline, immediately after inlineExternGetCallSites. The pass itself is a
+  # new subsystem module (src/codegen/call-dispatch-ic.ts).
   - src/codegen/index.ts
+  # (#4157 write-side member IC, JS2WASM_SET_MEMBER_IC) +12 lines in the
+  # driver: one import plus one pass invocation per compile pipeline
+  # (generateModule + generateMultiModule), immediately after
+  # inlineExternGetCallSites. The pass itself is a new subsystem module
+  # (src/codegen/member-set-inline-ic.ts); there is no smaller way to WIRE a
+  # finalize pass than to call it from the finalize sequence.
+  # (#4157 flat-str IC, JS2WASM_FLAT_STR_IC) +3 lines: one import plus a
+  # one-line pass invocation per compile pipeline. Extraction, both site
+  # rewrites and every correctness argument live in the new subsystem module
+  # src/codegen/flat-str-ic.ts; there is no smaller way to wire a finalize
+  # pass than to call it from the finalize sequence.
+  # (#4157 unboxed boolean fusion) +3 lines of WIRING in the driver: one
+  # import and two one-line finalize invocations of fuseBoxBooleanSinks.
+  # The pass itself is a new subsystem module (src/codegen/box-boolean-fuse.ts).
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
   # (src/codegen/nonnull-proof.ts); what remains in these two files is
@@ -119,6 +137,13 @@ coercion-sites-allow:
   # the two helpers it fuses to match and replace them. The fused helper is
   # emitted from the same engine vocabulary, not a fresh hand-rolled matrix.
   - src/codegen/tonumber-fast-paths.ts
+  # (#4157 unboxed boolean fusion, JS2WASM_UNBOXED_BOOL_FUSE) Same shape as the
+  # inline truthy IC above: the pass MATCHES `call $__is_truthy` sinks that
+  # consume a `__box_boolean` merge and DELETES them, rewriting the merge tree
+  # to `(result i32)`. Both references are pattern-matching only — one funcMap
+  # lookup to find the sites, one skip guard so the helper bodies themselves are
+  # never rewritten. It removes coercion calls; it adds no coercion matrix.
+  - src/codegen/box-boolean-fuse.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -4057,3 +4082,63 @@ hotness 3.8 + rewrite 14 ms post-fix). Runner note: a fresh worktree needs
 BOTH gitignored bundles (`pnpm run build:compiler-bundle` AND the
 `src/runtime.ts` esbuild) or every pool worker dies at startup and all tests
 "fail" as worker-less timeouts.
+
+## 2026-08-14 (44) — the four levers' wall A/B: a NULL on this box, and why that was predictable
+
+Order-reversed (ON/OFF/OFF/ON), completed `-O4` in every leg (the 600 s
+wasm-opt timeout imported; ZERO unoptimized-fallback warnings), both arms on
+the tuned-11 base so this measures the levers' MARGINAL wall value:
+
+| leg | wasm ms | node ms |
+| --- | ---: | ---: |
+| ON a | 94.9 | 15.2 |
+| OFF a | 97.8 | 13.4 |
+| OFF b | 98.7 | 13.2 |
+| ON b | 101.2 | 14.3 |
+
+ON mean 98.1 vs OFF mean 98.2 — **≈ 0 %, below the box's noise floor** (ON
+legs bracket the OFF legs; node's own reference drifts 13.2–15.2 ms). The
+executed-call wins are real and proven (−46.3 % across the six families,
+checksum 422, poison-proven per lever); the WALL effect is capped by entry
+39's decomposition — post-flip these helper families hold ~10-15 % of the
+wasm run, so even halving them lands under the ~10 % resolution floor
+(#3927 §6). Verdict: flags stay DEFAULT OFF; certifying a wall win needs a
+quieter environment or a CI perf lane. The levers remain valuable as (a)
+proven call-elimination machinery for when the compiled-code-quality work
+(receiver-type specialisation, return-type unboxing ABI) shrinks the
+compiled bucket and re-exposes helper share, and (b) the site-IC pattern
+library the next levers copy from.
+
+## 2026-08-14 (45) — the call-dispatch IC went to ZERO matches under main, and why that is a shape-drift lesson
+
+`tests/issue-4157-call-dispatch-ic.test.ts` failed 2/3 in #4491's `quality`
+run — `armed=0`, `patchedSites=0` — while the flag-unset byte-identity test
+still passed. The lever was not broken; **main moved the shape out from
+under it**.
+
+#4394 (`closed-method-dispatch.ts:1465`) now prepends a nullish-receiver
+TypeError guard to every FILLED dispatcher body on the standalone/WASI lane:
+
+```
+local.get 0 ; [call $__nullish_to_null] ; ref.is_null ; if (empty) { throw }
+```
+
+`analyzeDispatcher` matched the fill prologue at **exactly `body[0..2]`**, so
+with 3-4 guard instrs in front, every dispatcher declined with reason
+`prologue` — a total, silent zeroing of the pass. Note the failure mode: the
+OFF path stayed byte-identical and every other lever's test stayed green, so
+only the ON-path count assertions caught it. **Exact-offset shape matching
+against another pass's emission is a standing liability**; the count
+assertions are what make it visible, and they earned their keep here.
+
+Fix: `nullishGuardPrefixLength(body)` recognises that guard EXACTLY (the real
+prologue's second instr is `any.convert_extern`, never `call`/`ref.is_null`,
+so the shapes cannot be confused) and offsets the prologue and guard-region
+slices by its length. An unrecognised prefix still declines as `prologue`
+rather than being skipped blindly.
+
+The guard is deliberately **not** copied to the call site: a nullish receiver
+fails the copied arm's type test and falls through to the else arm — the
+unmodified dispatcher call, guard included — so the TypeError is still
+thrown, by the dispatcher, exactly as before. Verified: all 3 tests green
+including the poison probe (the arm really executes); `tsc` clean.
