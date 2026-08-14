@@ -491,6 +491,8 @@ const COMPONENTS_DIR = join(WEBSITE, "components");
 for (const file of [
   "site-nav.js",
   "t262-charts.js",
+  "t262-conformance-trend.js",
+  "t262-view-state.js",
   "trend-chart.js",
   "perf-benchmark-chart.js",
   "npm-compat-chart.js",
