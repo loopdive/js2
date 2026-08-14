@@ -41,9 +41,18 @@ function __upstreamSame(a, b) {
   }
   return true;
 }
-function __upstreamThrows(value) {
-  try { value(); } catch (_error) { return true; }
-  return false;
+function __upstreamThrown(value) {
+  try { value(); } catch (error) { return error; }
+  return null;
+}
+function __upstreamThrownMatches(error, expected) {
+  if (error === null) return false;
+  if (expected === undefined) return true;
+  const message = error && error.message !== undefined ? String(error.message) : String(error);
+  if (expected instanceof RegExp) return expected.test(message);
+  if (typeof expected === "string") return message.includes(expected);
+  if (typeof expected === "function") return error instanceof expected || error.name === expected.name;
+  return true;
 }
 function __upstreamExpect(actual) {
   const positive = {
@@ -54,21 +63,55 @@ function __upstreamExpect(actual) {
     toBeDefined() { const n = ++__upstreamAssertion; if (actual === undefined) __upstreamFail("assertion " + n + " expected defined value"); },
     toBeNull() { const n = ++__upstreamAssertion; if (actual !== null) __upstreamFail("assertion " + n + " expected null, got " + __upstreamValue(actual)); },
     toHaveLength(expected) { const n = ++__upstreamAssertion; if (actual == null || actual.length !== expected) __upstreamFail("assertion " + n + " length mismatch"); },
-    toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrows(actual)) __upstreamFail("assertion " + n + " expected throw"); },
-    toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrows(actual)) __upstreamFail("assertion " + n + " expected throw"); },
+    toMatchSnapshot() { __upstreamFail("snapshot assertion requires a package-specific snapshot adapter"); },
+    toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
+    toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
   };
   positive.not = {
     toBe(expected) { const n = ++__upstreamAssertion; if (Object.is(actual, expected)) __upstreamFail("assertion " + n + " unexpected equal value"); },
     toEqual(expected) { const n = ++__upstreamAssertion; if (__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + " unexpected deep equality"); },
-    toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrows(actual)) __upstreamFail("assertion " + n + " unexpected throw"); },
-    toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrows(actual)) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
   return positive;
 }
 const expect = __upstreamExpect;
-function describe(_name, body) { body(); }
-function it(name, body) { __upstreamTests.push({ name: String(name), body }); }
-function test(name, body) { __upstreamTests.push({ name: String(name), body }); }
+const __upstreamBeforeEach = [];
+function describe(_name, body) {
+  const hookCount = __upstreamBeforeEach.length;
+  body();
+  __upstreamBeforeEach.length = hookCount;
+}
+function beforeEach(body) { __upstreamBeforeEach.push(body); }
+function __upstreamRegister(name, body) {
+  const hooks = __upstreamBeforeEach.slice();
+  __upstreamTests.push({
+    name: String(name),
+    body: function(assertion) {
+      for (let index = 0; index < hooks.length; index++) hooks[index]();
+      return body(assertion);
+    },
+  });
+}
+function it(name, body) { __upstreamRegister(name, body); }
+function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamEach(cases) {
+  return function(name, body) {
+    for (let index = 0; index < cases.length; index++) {
+      const row = Array.isArray(cases[index]) ? cases[index] : [cases[index]];
+      const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
+      it(displayName, function() {
+        if (row.length === 0) return body();
+        if (row.length === 1) return body(row[0]);
+        if (row.length === 2) return body(row[0], row[1]);
+        if (row.length === 3) return body(row[0], row[1], row[2]);
+        return body(row[0], row[1], row[2], row[3]);
+      });
+    }
+  };
+}
+it.each = __upstreamEach;
+test.each = __upstreamEach;
 const __qunitAssert = {
   expect(_count) {},
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },
@@ -78,7 +121,7 @@ const __qunitAssert = {
   strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch") + "; " + __upstreamValue(actual) + " !== " + __upstreamValue(expected)); },
   notStrictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual === expected) __upstreamFail("assertion " + n + ": " + (message || "notStrictEqual mismatch") + "; unexpected " + __upstreamValue(actual)); },
   deepEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (!__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + ": " + (message || "deepEqual mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
-  throws(fn, _expected, message) { if (!__upstreamThrows(fn)) __upstreamFail(message || "expected throw"); },
+  throws(fn, expected, message) { if (!__upstreamThrownMatches(__upstreamThrown(fn), expected)) __upstreamFail(message || "expected matching throw"); },
 };
 function suiteModule(_name) {}
 const QUnit = {
