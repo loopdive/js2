@@ -131,6 +131,10 @@ then compares its result with the same operation in native Node.
 | **three upstream suite**                | #3995 | `src/math/MathUtils.js`   | pinned original QUnit module; complete `test/unit/src` inventory tracked      |
 | **jsdom upstream suite**                | #3995 | `lib/jsdom/virtual-console.js` | pinned original VirtualConsole callbacks; complete `test/api` inventory tracked |
 | **styled-components upstream suite**    | #3995 | `src/utils/*.ts`        | pinned original utility callbacks; complete source-unit inventory tracked |
+| **webpack upstream suite**              | #3995 | `lib/util/*.js`         | pinned original utility callbacks; complete top-level unit inventory tracked |
+| **jest upstream suite**                 | #3995 | `jest-get-type/src/index.ts` | pinned original get-type callbacks; complete monorepo unit inventory tracked |
+| **tailwindcss upstream suite**          | #3995 | `src/utils/{segment,to-key-path}.ts` | pinned original utility callbacks; complete package test inventory tracked |
+| **typescript upstream suite**           | #3995 | `unittests/base64.ts`   | pinned original base64 callback; complete compiler-unit inventory tracked |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)

@@ -1,0 +1,12 @@
+{
+  "name": "webpack",
+  "version": "5.109.2",
+  "repo": "https://github.com/webpack/webpack.git",
+  "tag": "v5.109.2",
+  "commit": "6a24bd65b72c43207c36ce61b54e1f5833486906",
+  "testFileCount": 98,
+  "testFilePathSha256": "78dbd5743a1a3ad12574f4c0e0a8c05a39e4dda24a1e1c41d29fbb7034f80feb",
+  "registrationSites": 1357,
+  "selectedFiles": ["test/ArrayHelpers.unittest.js", "test/formatSize.unittest.js", "test/objectToMap.unittest.js"],
+  "_note": "The complete top-level webpack unit inventory is verified. This first adapter runs three original dependency-light synchronous utility files against the matching published CommonJS implementations. Compiler, filesystem, loader, snapshot, async, and larger graph files remain explicit deferred coverage."
+}

@@ -120,8 +120,9 @@ function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
 function __upstreamEach(cases) {
   return function(name, body) {
+    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
     for (let index = 0; index < cases.length; index++) {
-      const row = Array.isArray(cases[index]) ? cases[index] : [cases[index]];
+      const row = expandRows ? cases[index] : [cases[index]];
       const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
       it(displayName, function() {
         if (row.length === 0) return body();
