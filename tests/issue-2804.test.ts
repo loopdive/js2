@@ -35,7 +35,10 @@ async function run(source: string, opts: { standalone?: boolean } = {}): Promise
   expect(WebAssembly.validate(result.binary)).toBe(true);
   const built = buildImports(result.imports, {}, result.stringPool);
   const { instance } = await instantiateWasm(result.binary, built.env, built.string_constants);
-  built.setExports?.(instance.exports as Record<string, Function>);
+  // The data-struct field projection is authenticated from the genuine
+  // instance, so use the preferred lifecycle hook rather than a raw export
+  // record (which intentionally cannot establish bridge authority).
+  built.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 
