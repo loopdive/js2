@@ -20,7 +20,9 @@ async function run(source: string, fn = "test"): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // `setInstance` preserves the compiler-authored data-struct bridge manifest;
+  // a raw `setExports` record is deliberately not trusted to establish it.
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 

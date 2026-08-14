@@ -3,9 +3,17 @@
 #
 # Enabled when JS2WASM_LOCAL_CI=1. Ensures the container has node_modules
 # and the test262 submodule, then runs the full test262 suite at
-# COMPILER_POOL_SIZE=4 (one worker per core on this 4-core container).
+# COMPILER_POOL_SIZE=$(nproc)-1 — one worker per core, less one left for the
+# shell, the editor and sshd. Do NOT hardcode a core count here: this script
+# runs on containers from 4 cores upward, and the previous `$(nproc)` default
+# took *every* core, which starves interactive use on the bigger boxes.
+# The floor is 1, so a single-core container still runs.
 #
-# Baseline (2026-05-20, 4 cores / 16GB RAM / 0 swap):
+# This matches `tests/test262-shared.ts`, whose POOL_SIZE default is already
+# `availableParallelism() - 1`; the env var set here just makes the choice
+# explicit and visible in the run banner.
+#
+# Baseline (2026-05-20, 4 cores / 16GB RAM / 0 swap, then at pool 4):
 #   wall-clock ~68 min, peak RAM ~2.8 GB (massive headroom)
 #
 # Usage:
@@ -14,7 +22,7 @@
 #   JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh --run     # skip setup, just run
 #
 # Tunables:
-#   COMPILER_POOL_SIZE=4   override worker count (default: nproc)
+#   COMPILER_POOL_SIZE=N   override worker count (default: nproc - 1, min 1)
 #   TEST262_SHALLOW=1      shallow-clone the test262 submodule (default)
 
 set -euo pipefail
@@ -62,8 +70,16 @@ setup() {
   fi
 }
 
+# Default parallelism: one worker per core, less one for the shell/editor/sshd.
+# Derived from nproc at run time — never a hardcoded core count.
+default_workers() {
+  local cores
+  cores="$(nproc 2>/dev/null || echo 1)"
+  if [ "$cores" -gt 1 ]; then echo "$((cores - 1))"; else echo 1; fi
+}
+
 run() {
-  local workers="${COMPILER_POOL_SIZE:-$(nproc)}"
+  local workers="${COMPILER_POOL_SIZE:-$(default_workers)}"
   echo "==> Local CI test262 run (COMPILER_POOL_SIZE=$workers)"
   COMPILER_POOL_SIZE="$workers" pnpm run test:262
 }
