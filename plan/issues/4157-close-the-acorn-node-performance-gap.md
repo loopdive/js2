@@ -4564,8 +4564,13 @@ a class instance already IS an `externref`, so no coercion is ever due.
 verbatim out of `fixups.ts` and generalised from `locateCallArgProducers` to
 `locateOperandProducers` — the producer index of every value each instruction
 POPS. It already models `if`/`block`/`loop` exactly, which is the whole point.
-`stack-balance.ts` gains `repairCrossHierarchyOperands`, running BEFORE the
-backward walk (which then sees the coercion in place and queues nothing).
+`src/codegen/cross-hierarchy-operands.ts` (new) consumes it and runs as its own
+pipeline step immediately BEFORE `stackBalance(mod)`, so both legacy repairs see
+the coercion already in place and queue nothing. It is a separate module rather
+than more lines in `stack-balance.ts` because that file is a god-file sitting
+exactly at its LOC budget (2,836) — `stack-balance.ts` only exports four helpers
+it already had (`resolveFuncType`, `getFullParamTypes`, `inferInstrType`,
+`callArgCoercionInstrs`) and does not grow by a line.
 
 It repairs **only** `externref` ⇄ concrete-GC-ref, in either direction. Those
 hierarchies are disjoint in Wasm, so such a pair can never validate under any
@@ -4583,10 +4588,12 @@ Real fix, not a target gate: the −12 % standalone acorn win is kept whole.
   unchanged with all four canaries (2/3/4/5); the 172,617-byte test262 harness
   module sha256 `e30ad07f…` unchanged. Both measured base-vs-new by file copy.
 - Tuned-default acorn: success, canaries 2/3/4/5, no host imports.
-- Equivalence gate shards 1–8: no new regressions, and shard 2 reports **4
-  FIXED** — `coercion/arithmetic-add` standalone / standalone-O string
-  concatenation, i.e. the same defect was already costing us tests before the
-  flip.
+- Equivalence gate shards 1–8: no new regressions, and **12 baseline failures
+  now PASS** (8 on shard 2, 1 on shard 4, 1 on shard 6, 2 on shard 7) —
+  `coercion/arithmetic-add` standalone / standalone-O string concatenation,
+  `math-pow-test262-pattern`, `issue-1197`, `symbol-basic`. The same defect was
+  already costing us tests before the flip. Baseline deliberately NOT ratcheted
+  in this commit: this is a park fix, and the ratchet belongs in its own change.
 - New regression test `tests/issue-4157-park6-cross-hierarchy-operand.test.ts`
   pins both consumer shapes (call operand, `local.set` operand).
 
