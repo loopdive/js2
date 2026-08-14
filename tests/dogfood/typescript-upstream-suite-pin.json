@@ -1,0 +1,12 @@
+{
+  "name": "typescript",
+  "version": "5.9.3",
+  "repo": "https://github.com/microsoft/TypeScript.git",
+  "tag": "v5.9.3",
+  "commit": "c63de15a992d37f0d6cec03ac7631872838602cb",
+  "testFileCount": 256,
+  "testFilePathSha256": "5f735da50b2a27e0e9274a21d759cedf845e7b91c1896bc817aaa5f940e97743",
+  "registrationSites": 1761,
+  "selectedFiles": ["src/testRunner/unittests/base64.ts"],
+  "_note": "The complete src/testRunner/unittests inventory is verified. This first adapter runs the original base64 callback against an exact projection of the release-tag base64 implementation. Compiler, server, watch, evaluator, snapshot, async, and filesystem-heavy files remain explicit deferred coverage."
+}
