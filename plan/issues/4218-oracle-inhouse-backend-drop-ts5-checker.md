@@ -13,6 +13,31 @@ updated: 2026-08-13
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/compiler.ts
+  # Kill-order item 1/4 dual-path slice (2026-08-14): the lib walk gains a
+  # syntactic branch NEXT TO the checker branch (extern-declarations), and
+  # from-ast/integration/index thread the oracle option. The checker branches
+  # are deleted in Phase 3, returning the LOC.
+  - src/codegen/extern-declarations.ts
+  - src/ir/from-ast.ts
+  - src/codegen/index.ts
+  - src/ir/integration.ts
+  # Phase-1 CP1 (2026-08-14): oracle-source plumbing + candidate helper in
+  # module-bindings (+30) — replaces four raw getSymbolAtLocation preludes.
+  - src/ir/module-bindings.ts
+# Same slice: a few lines of index construction / option threading inside the
+# existing drivers (no new logic in the god-functions themselves).
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/ir/from-ast.ts::lowerBinary
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
+# Kill-order item 1 (syntactic lib walk) REMOVES ~254k runtime checker calls;
+# the +1 static ctxChecker count in extern-declarations.ts is an inlining
+# artifact of restructuring the user-path else-branches (net behavior change
+# is a large DECREASE in checker usage — see the 2026-08-14 audit section).
+oracle-ratchet-allow:
+  - src/codegen/extern-declarations.ts
 priority: medium
 horizon: xl
 feasibility: hard
@@ -190,6 +215,63 @@ Findings:
   backend option**: `ir/from-ast.ts` (×4), `ir/fmod-selection.ts:36`,
   `ir/update-retyped-bindings.ts:24` — they hit TS5 even under
   `oracleBackend: "inhouse"`.
+
+### Kill order items 1 + 4 — LANDED (2026-08-14)
+
+- **Item 1 (lib walk → syntactic)**: `src/codegen/lib-decl-index.ts` — a
+  one-shot name-keyed index over the program's `lib.*.d.ts` files plus a
+  TypeNode→ValType mapper mirroring `mapTsTypeToWasm` decision-for-decision
+  (lib files are fully annotated, so every checker query in the walk was
+  answerable from syntax). The lib-file scan in `extern-declarations.ts`
+  now passes a `libIndex` and issues ZERO checker calls; the user-file
+  `declare` path keeps the checker (input-driven, cheap). Same traversal
+  order ⇒ identical import/type tables.
+- **Item 4 (constructor bypasses)**: `oracle?: TypeOracle` threaded through
+  `AstToIrOptions`/`LowerCtx` (from-ast) and `fmodRefFor`; integration
+  passes `ctx.oracle`, so the former ad-hoc `new TsCheckerOracle(checker)`
+  sites now honor `oracleBackend`. Ad-hoc wrap remains only as no-oracle
+  fallback. (`update-retyped-bindings.ts` already accepted an oracle; its
+  module-bindings caller still passes a checker — part of the tail.)
+
+Measured (same corpus/audit as above):
+
+| backend | before | after | Δ |
+| --- | --- | --- | --- |
+| `checker` | 271,405 | 35,403 | **−87 %** |
+| `inhouse` | 263,748 | 27,658 | **−89.5 %** |
+
+Wasm output byte-identical to the pre-change baseline on all 21 corpus
+inputs, BOTH backends. `type-mapper.ts getBaseConstraintOfType` (item 2)
+disappeared with the lib walk — it was only ever called from it. The
+remaining traffic is now dominated by `ir/module-bindings.ts`
+`getSymbolAtLocation`/`getResolvedSignature` (binder-shaped work → Phase 1
+`valueDeclarationOf` territory) plus the ~25-site tail.
+
+### Phase-1 CP1 — module-bindings helpers + oracle memoization (2026-08-14)
+
+The four binding-resolution helpers in `ir/module-bindings.ts` (the largest
+consumer after the lib-walk kill) now resolve declaration candidates through
+`valueDeclarationOf`/`declarationsOf`, and `TsCheckerOracle` memoizes both
+per node (the "memoized" invariant previously covered only `typeFactOf`).
+Total corpus checker calls: 35,403 → **15,121** (−94.4 % cumulative from
+271,405). Byte-identical output vs the original baseline, both backends.
+
+**Flat-tail finding (updates the plan).** After CP1 the remaining traffic
+has NO concentrated consumer: the top site is the oracle's own memoized
+resolution (~130 calls), everything else ≤75 calls spread across ~30 files
+(import-collector, identifiers, usage-inference, propagate, host-extern,
+resolved-signature sites…). Consequences:
+
+- Per-compile TS5 checker cost is now ~15k memoized queries — milliseconds,
+  no longer a compile-time lever. The compile-time story moves to parser/
+  program construction (#1029 tsgo batch parse).
+- The remaining Phase-0 sweep (routing the flat tail through the oracle so
+  the INHOUSE backend reaches zero) is mechanical, parallelizable,
+  per-file work — dev-lane material, not a single hard slice. The audit
+  script's site list is the worklist.
+- Symbol-identity comparison sites (`getSymbolAtLocation(a) ===
+  getSymbolAtLocation(b)`, ~10 sites in module-bindings) need one new
+  oracle query ("same binding") before they can convert.
 
 ### Measured kill order (refines the Plan phases above)
 

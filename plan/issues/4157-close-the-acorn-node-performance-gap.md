@@ -4409,3 +4409,92 @@ uniform.
 
 Profiles: `.tmp/gap/{wasm,node}.cpuprofile`, census `.tmp/gap/census.json`,
 method as entry (30) (closure-name map + bucket fold).
+## 2026-08-14 — RECOVERY NOTE: entries 40-43 restored from session context after a container loss
+
+The container holding the four-lever integration branch and entries 40-43 was
+rebuilt before those commits were pushed. The entries below are restored from
+the session's verified reports; the lever IMPLEMENTATIONS are being rebuilt on
+fresh branches (`recover/lever-*`) from the same final designs. Numbers cited
+are round-1 measurements on their stated bases and must be re-verified after
+the rebuild (main has moved — notably a caller-side `__str_flatten` deletion,
+`a0655cb6e`, landed independently and overlaps lever 3's target).
+
+## 2026-08-13 (40) — WRITE-side member IC (`JS2WASM_SET_MEMBER_IC`, default OFF): −71.5 % of executed `__set_member_*` calls
+
+New finalize pass `src/codegen/member-set-inline-ic.ts`: at call sites of
+`__set_member_<prop>` / `__set_member_nonstrict_<prop>` (and `__f64` twins
+under `SET_MEMBER_F64`), speculate on the dispatcher's FIRST candidate —
+`ref.test → ref.cast → <coerce> → struct.set` inline, unmodified dispatcher
+call as the else arm. The inline arm is EXTRACTED verbatim from the emitted
+dispatcher body via a strict pattern (the extern-get-IC discipline);
+`$shape`-stamped, presence-bit, ref-field brand-guarded, cold/layout/resid and
+empty-candidate first arms decline wholesale. No producer-shape analysis: the
+value sits on top of the receiver, both captured with typed `local.set`
+scratch locals (never `tee`) — the dispatcher's own
+`(externref, externref|f64)` signature guarantees operand types at every site.
+
+Round-1 measured (exec census, family `__set_member`, checksum 422): 344,896 →
+98,375 executed (**−71.5 %**), 74/424 dispatchers eligible, 890 sites patched;
+all four 41,890-call `lastTok*` dispatchers plus `end` (32,468) and
+`exprAllowed` (20,606) at ZERO residual. `__set_member_type` (32,468) declines
+(first arm not the plain shape; declines body-shape=330/arm-shape=18/
+arm-tail=1/polymorphic=1) — the next slice. Poison traps in
+`__dc_Parser_next_0`; byte-identity off; composes with
+INLINE_PROP_IC+EXTERN_GET_IC+SET_MEMBER_F64.
+
+## 2026-08-13 (41) — call-dispatch devirtualization: `__call_m_*` −99.9 % executed calls (`JS2WASM_CALL_DISPATCH_IC`, default OFF)
+
+New finalize pass `src/codegen/call-dispatch-ic.ts`: for every FILLED
+fixed-arity `__call_m_<name>_<arity>` dispatcher whose body matches the exact
+fill-emitted shape (`local.get 0; any.convert_extern; local.set __any;
+<guard>; if(externref) then=HIT else=REST`), copy the guard chain and the
+OUTERMOST arm verbatim to each call site — locals re-homed onto site-minted
+twins, `return` converted to depth-tracked `br`; any escaping
+branch/br_table/tail-call declines the dispatcher — with the unmodified
+dispatcher call as the site's else arm. The outermost arm is the hot one by
+the fill's own wrap order (regex `.test` brand #3507, closure `.call` fast arm
+#4185, method-cache direct call #3673 r13, vec push/indexOf brands), so one
+generic transform devirtualizes all 22+ families with no per-family logic.
+
+Round-1 measured: `__call_m_*` 103,652 → **105** (−99.9 %; residual =
+`return_call`-position sites, deliberately unmatched), armed-dispatchers=318,
+patched-sites=1,572 across 808 functions, binary +5.9 % at optimize:0.
+`__call_fn_method_*` (76,827) and `__named_this_call` (32,468) deliberately
+out of scope. Poison: parse throws WebAssembly.Exception, no checksum.
+
+## 2026-08-13 (42) — unboxed boolean fusion (`JS2WASM_UNBOXED_BOOL_FUSE`, default OFF): −118,595 executed `__is_truthy`, −23,084 `__box_boolean` on legacy defaults
+
+New finalize pass `src/codegen/box-boolean-fuse.ts`: sink `__is_truthy` into
+materialized logical-value `if`s, fusing `__box_boolean` producers to raw i32
+(fused-sink=162 sites; leaves box-call=174, cond-reuse=206). On the FLIP tree
+the `__is_truthy` cut disappears (INLINE_TRUTHY_IC already claimed those
+sites) — residual value is the `__box_boolean` cut only (−5.4 % composed).
+The dominant residual is CROSS-FUNCTION (declines prev-call=372, arm
+tail-call=98, prev-local.tee=532, prev-local.get=433): closing it needs an
+i32-returning callee twin (return-type unboxing ABI), not a bigger peephole
+window.
+
+## 2026-08-13 (43) — the shard slowdown DIAGNOSED and the fix package: parks 2-3 were the flip's compile-time tax meeting a heap ceiling
+
+Under the tuned defaults, standalone test262 shards ran ~40 %+ slower
+(baseline median 13.9 min; park 3: two completions at 18.2/21.6 min, twelve
+killed at the 30-min timeout exactly; js-host medians identical 8.1 vs 8.2).
+Local decomposition: **+12-15 % per-compile fixed cost** (flag bisection:
+IR_INLINE dominant; instantiation/execution exonerated at ms), amplified by
+the pool workers' **512 MiB heap ceiling** (tuned compiles ~60 MB hotter; V8
+near its cap GC-thrashes superlinearly). Fix package (landed on the #4455
+branch): ir-inline eager whole-module body clone → COPY-ON-WRITE
+(`createOriginalBodyTracker`) + per-callee memoization of
+calleeIsSafe/countInstrs/effectiveSize/hasCall (`CalleeFacts`) — byte-identity
+sha `9c172186` proven before/after three times; CI shard `timeout-minutes`
+25→40; `TEST262_WORKER_MAX_OLD_SPACE_SIZE` 512→1024.
+
+Order-reversed local mini-shard A/B (385 tests, `language/statements/for/`,
+identical verdicts 331/54 in all legs): off 192 s / on 246 s / off 193 s —
+**+28.0 %**, projecting ~18 min/shard against the 40-min ceiling. Method note:
+the flag bisection over-credited IR_INLINE (~55 ms) because the box's noise
+band is ±20 ms; internal phase timers located the real split (callgraph 2.4 +
+hotness 3.8 + rewrite 14 ms post-fix). Runner note: a fresh worktree needs
+BOTH gitignored bundles (`pnpm run build:compiler-bundle` AND the
+`src/runtime.ts` esbuild) or every pool worker dies at startup and all tests
+"fail" as worker-less timeouts.

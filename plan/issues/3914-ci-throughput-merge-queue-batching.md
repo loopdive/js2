@@ -314,11 +314,38 @@ they will not silently under-park if the repo's merge method ever changes.
 Every live path is fail-safe **towards today's behaviour**: a compare-API error
 returns `[refNamedPr]`, so the worst case is the pre-#3914 outcome, never worse.
 
-### Remaining step: the ruleset (requires repo admin — NOT changeable from the repo)
+### Remaining step: the ruleset — now scripted (`scripts/set-merge-queue-config.sh`)
 
 The merge-queue settings are **not** in `scripts/enable-branch-protection.sh`
-(checked — it manages required checks and reviewers only). They live solely in
-Settings → Rules → Rulesets, so this last step is a UI/API change by an admin:
+(it manages required checks and reviewers only, and deliberately *preserves*
+whatever merge-queue parameters it finds live). They lived solely in
+Settings → Rules → Rulesets, which is why this issue could not even determine
+which knob was binding.
+
+**That gap is now closed.** `scripts/set-merge-queue-config.sh` reads and writes
+exactly the merge-queue slice of the ruleset, preserving everything else:
+
+```bash
+./scripts/set-merge-queue-config.sh --show    # read live params (was impossible before)
+./scripts/set-merge-queue-config.sh --check   # diff live vs canonical
+./scripts/set-merge-queue-config.sh           # apply (needs repo-admin gh)
+```
+
+Canonical values are the script's defaults: `max_entries_to_merge: 5`,
+`min_entries_to_merge: 1`, `max_entries_to_build: 1`. The cap is 5 per the
+project lead; the model above puts 4 and 5 within noise of each other
+(N=5 wins at e=0.05, N=4 at e=0.10) and both ≈1.85× serial — what matters is
+that the curve is a bowl, so 5 is a **cap to hold**, not a floor to raise.
+The script hard-refuses `max_entries_to_build > 1` without
+`--allow-speculative-build`, with the Part 1 arithmetic in the refusal message,
+so the reverted setting cannot be re-enabled by accident a third time.
+Covered by `tests/issue-3914-merge-queue-config.test.ts`, which runs the script
+against a stubbed `gh` and pins both invariants: unrelated ruleset fields
+(required checks, bypass actors, conditions) survive the replace-style PUT
+verbatim, and speculation is refused.
+
+Applying it still needs an admin-scoped `gh`; the values themselves are now a
+reviewed artifact rather than a click. Original step list, unchanged:
 
 **Step 1 — raise the cap only. This is the free experiment; do it first.**
 
@@ -453,10 +480,17 @@ that converts directly into queue throughput.
 - [x] Every pipeline site that assumes one PR per merge group identified and
       fixed (P1 predecessor baseline, P2 auto-park, P3 park-race guard), each a
       verified no-op at batch size 1 and fail-safe towards today's behaviour.
-- [ ] **Follow-up (needs repo admin — the only remaining step):** Step 1, raise
-      `max_entries_to_merge` to 4 leaving `min_entries_to_merge: 1`, and observe
-      one backed-up window. Only if groups stay size-1, Step 2: `min: 2` with a
-      2-minute wait timer. Rollback is reverting the ruleset; no code revert.
+- [x] Queue config is readable and appliable from the repo —
+      `scripts/set-merge-queue-config.sh` (`--show` / `--check` / apply), with
+      the speculation guard and `tests/issue-3914-merge-queue-config.test.ts`.
+      `docs/ci-policy.md` §3 records the canonical values, why the two knobs
+      differ, and why a tail append never ejects a running group.
+- [ ] **Follow-up (needs an admin-scoped `gh` — the only remaining step):**
+      run `./scripts/set-merge-queue-config.sh` (cap 5, floor 1, build 1) and
+      observe one backed-up window. Only if groups stay size-1, Step 2:
+      `MIN_ENTRIES_TO_MERGE=2` with a 2-minute wait timer. Rollback is
+      `MAX_ENTRIES_TO_MERGE=1 ./scripts/set-merge-queue-config.sh`; no code
+      revert, since every code change here is a no-op at batch size 1.
 - [ ] **Verify after merge:** on the first post-merge `merge_group` run, confirm
       (a) max shard start < 60 s, (b) both lanes' max job within ~1 min,
       (c) `changes` job < 20 s, (d) total run wall ≈ 11 min.

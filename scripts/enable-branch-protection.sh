@@ -22,6 +22,11 @@
 #     legacy branch-protection endpoint. This script fetches the current ruleset
 #     and preserves merge-queue parameters, conditions, enforcement, and bypass
 #     actors while replacing only the required-check list.
+#   - The merge-queue parameters this script preserves are owned by
+#     `scripts/set-merge-queue-config.sh` (batch cap, quorum floor, speculation
+#     depth — #3914). The two are mirror images: each reads the live ruleset and
+#     rewrites only its own slice, so they are safe to run in either order.
+#     Use that script's `--show` to read the live queue config.
 #   - Required-check names below MUST match the GitHub job names exactly.
 #     Update `docs/ci-policy.md` and this file together when adding checks.
 #

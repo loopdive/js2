@@ -27,10 +27,10 @@ per-agent worktree of a repo whose other worktrees have no active agents), or
 **when you are provably the only agent working on that copy**. The hazard was
 never the command — it is two writers interleaving on one shared stack. When
 ANY concurrent agent shares the same `.git` (the normal state in this repo's
-`/workspace` + multi-agent worktree setup), the full prohibition above stands,
-and commits / file copies / throwaway worktrees remain the default tools.
-When in doubt about whether another agent is active on the same repo, assume
-contention and do not stash.
+multi-agent worktree setup), the full prohibition stands, and commits / file
+copies / throwaway worktrees remain the default tools. When in doubt about
+whether another agent is active on the same repo, assume contention and do not
+stash.
 
 ## ⚠ The `cp` workaround has its OWN hazard: never restore ACROSS a moved base
 

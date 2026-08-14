@@ -126,9 +126,6 @@
         gap: 0.875rem;
         align-content: start;
       }
-      .summary-history-chart {
-        min-height: 260px;
-      }
       .summary-meta {
         position: absolute;
         right: 0;
@@ -167,33 +164,13 @@
         color: var(--text-muted);
         margin: 0 0 1.25rem;
       }
-      .diagram-legend {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1rem;
-        font-family: var(--mono);
-        font-size: 0.68rem;
-        color: var(--text-muted);
-        letter-spacing: 0.04em;
-      }
-      .diagram-legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
-      .diagram-legend-line {
-        width: 18px;
-        height: 0;
-        border-top: 2px solid rgba(255, 255, 255, 0.9);
-      }
-      .diagram-legend-line.total {
-        border-top-width: 1px;
-        border-top-color: rgba(141, 154, 184, 1);
-        border-top-style: dotted;
-      }
-      .diagram-legend-line.passed {
-        border-top-width: 1px;
-        border-top-color: rgba(255, 255, 255, 0.82);
+      /* The chart and its legend live in <t262-conformance-trend>'s shadow DOM
+         (shared with the landing page); the page only supplies the theme. */
+      .summary-history-chart {
+        --t262-trend-font-mono: var(--mono);
+        --t262-trend-text: var(--text);
+        --t262-trend-text-muted: var(--text-muted);
+        --t262-trend-legend-size: 0.68rem;
       }
       .edition-section {
         margin: -0.35rem 0 2rem;
@@ -640,6 +617,10 @@
     <script src="../components/site-nav.js"></script>
     <script type="module" src="../components/t262-charts.js"></script>
     <script src="../components/trend-chart.js"></script>
+    <!-- Plain script (not a module) so the inline page script can call
+         window.t262ViewState synchronously. -->
+    <script src="../components/t262-view-state.js"></script>
+    <script type="module" src="../components/t262-conformance-trend.js"></script>
     <script>
       const REPORT_JSON = "results/test262-report.json";
       const RESULTS_JSONL = "results/test262-results.jsonl";
@@ -660,6 +641,12 @@
       const HOST_EDITIONS_JSON = "results/test262-editions.json";
       const PROPOSAL_LABEL = "Proposals";
       const BASE_PATH = window.location.pathname.replace(/\/benchmarks\/.*$/, "");
+
+      // Snapshot ?mode=/?edition= BEFORE the first render writes the CURRENT
+      // knobs back to the query string, which would erase an incoming link's
+      // state a moment before it was read. Shared with the landing page —
+      // components/t262-view-state.js.
+      const initialViewState = window.t262ViewState?.read?.() ?? { mode: null, edition: null };
 
       function assetPath(path) {
         if (!BASE_PATH) return `/${path}`;
@@ -819,174 +806,10 @@
         }
       }
 
-      const CONFORMANCE_PROJECT_START = new Date("2026-02-27T00:00:00Z");
-
-      function parseConformanceRunTimestamp(value) {
-        const raw = String(value || "");
-        if (!raw) return null;
-        const isoDate = new Date(raw);
-        if (Number.isFinite(isoDate.getTime())) return isoDate;
-        const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-        if (compact) {
-          const [, y, m, d, hh, mm, ss] = compact;
-          return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
-        }
-        return null;
-      }
-
-      function formatConformanceHistoryLabel(date) {
-        return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-      }
-
-      function buildConformanceHistoryPoints(runs) {
-        const comparableRuns = Array.isArray(runs)
-          ? runs
-              .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
-              .sort((a, b) => {
-                const ta = parseConformanceRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-                const tb = parseConformanceRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-                return ta - tb;
-              })
-          : [];
-
-        const rawPoints = comparableRuns
-          .map((run) => {
-            const total = Number(run.total || 0);
-            const pass = Number(run.pass || 0);
-            const ts = String(run.timestamp || "");
-            const date = parseConformanceRunTimestamp(ts);
-            return {
-              label: date ? formatConformanceHistoryLabel(date) : "",
-              timestamp: ts,
-              time: date?.getTime() ?? 0,
-              pass,
-              total,
-              rate: total > 0 ? (pass / total) * 100 : 0,
-            };
-          })
-          .filter((point) => point.total > 0 && point.rate >= 5);
-
-        const points = [];
-        for (const point of rawPoints) {
-          const prev = points.at(-1);
-          if (prev && point.total < prev.total * 0.75) continue;
-          points.push(point);
-        }
-
-        const firstPoint = points[0];
-        if (firstPoint?.timestamp) {
-          const firstDate = new Date(firstPoint.timestamp);
-          if (
-            Number.isFinite(firstDate.getTime()) &&
-            firstDate.getTime() - CONFORMANCE_PROJECT_START.getTime() > 12 * 60 * 60 * 1000
-          ) {
-            points.unshift({
-              label: formatConformanceHistoryLabel(CONFORMANCE_PROJECT_START),
-              timestamp: CONFORMANCE_PROJECT_START.toISOString(),
-              time: CONFORMANCE_PROJECT_START.getTime(),
-              pass: 0,
-              total: 0,
-              rate: 0,
-            });
-          }
-        }
-
-        const lastRun = comparableRuns.at(-1);
-        if (lastRun) {
-          const ts = String(lastRun.timestamp || "");
-          const total = Number(lastRun.total || 0);
-          const pass = Number(lastRun.pass || 0);
-          const lastRate = total > 0 ? (pass / total) * 100 : 0;
-          const lastDate = ts ? new Date(ts) : null;
-          const now = new Date();
-          if (
-            Number.isFinite(lastRate) &&
-            lastRate >= 5 &&
-            lastDate instanceof Date &&
-            Number.isFinite(lastDate.getTime()) &&
-            now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
-          ) {
-            points.push({
-              label: formatConformanceHistoryLabel(now),
-              timestamp: now.toISOString(),
-              time: now.getTime(),
-              pass,
-              total,
-              rate: lastRate,
-            });
-          }
-        }
-
-        if (points.length === 0) {
-          const now = new Date();
-          points.push(
-            {
-              label: formatConformanceHistoryLabel(CONFORMANCE_PROJECT_START),
-              timestamp: CONFORMANCE_PROJECT_START.toISOString(),
-              time: CONFORMANCE_PROJECT_START.getTime(),
-              pass: 0,
-              total: 0,
-              rate: 0,
-            },
-            {
-              label: formatConformanceHistoryLabel(now),
-              timestamp: now.toISOString(),
-              time: now.getTime(),
-              pass: 0,
-              total: 0,
-              rate: 0,
-            },
-          );
-        }
-
-        return points.length >= 2 ? points : null;
-      }
-
-      function configureConformanceHistoryChart(chart, runs) {
-        const points = buildConformanceHistoryPoints(runs);
-        if (!(chart instanceof HTMLElement) || !points) return;
-
-        chart.setAttribute("labels-key", "label");
-        chart.setAttribute(
-          "series",
-          JSON.stringify([
-            {
-              key: "rate",
-              color: "#ffffff",
-              fill: true,
-            },
-            {
-              key: "pass",
-              color: "rgba(255,255,255,0.82)",
-              axis: "right",
-              lineWidth: 1,
-              lineOpacity: 0.5,
-            },
-            {
-              key: "total",
-              color: "rgba(141, 154, 184, 1)",
-              axis: "right",
-              lineWidth: 1,
-              lineOpacity: 1,
-              dasharray: "1 3",
-            },
-          ]),
-        );
-
-        const applyData = () => {
-          chart.data = points;
-        };
-
-        if (customElements.get("trend-chart")) {
-          applyData();
-          return;
-        }
-
-        customElements
-          .whenDefined("trend-chart")
-          .then(applyData)
-          .catch(() => {});
-      }
+      // The pass-rate-over-time chart (point building, two-lane merge, legend)
+      // now lives in the shared <t262-conformance-trend> component, which the
+      // landing page renders too — see components/t262-conformance-trend.js.
+      const CONFORMANCE_RUNS_BASE = assetPath("benchmarks/results/runs");
 
       function shortName(cat) {
         return cat
@@ -1036,8 +859,12 @@
 
       // Per-ES-edition pass-rate trend history for the mini sparklines in the
       // edition legend, sourced from benchmarks/results/runs/editions-index.json
-      // (see scripts/append-run-history.mjs). Host-mode only — no per-edition
-      // standalone history exists yet.
+      // and its host-free twin standalone-editions-index.json (see
+      // scripts/append-run-history.mjs). The caller picks the file matching the
+      // active view: the standalone view used to pass `null` here, so its
+      // edition cards showed a donut with no sparkline at all — and feeding it
+      // the HOST series instead would have put a js-host curve under a
+      // standalone number, which is worse than showing nothing.
       function buildEditionTrendSeries(editionRuns) {
         const seriesByEdition = new Map();
         if (!Array.isArray(editionRuns)) return seriesByEdition;
@@ -1535,8 +1362,8 @@
         });
       }
 
-      function renderConformance(view, container, conformanceRuns, editionRuns) {
-        const editionTrendSeries = view.mode === "host" ? buildEditionTrendSeries(editionRuns) : null;
+      function renderConformance(view, container, editionRunsByLane) {
+        const editionTrendSeries = buildEditionTrendSeries(editionRunsByLane?.[view.mode]);
         const data = view.report;
         // Point per-file detail/error-pattern lookups at this view's source.
         activeFileResultsSrc = view.fileResultsSrc;
@@ -1549,6 +1376,9 @@
           editionScope: "overall",
         };
         let editionDetail = null;
+        // Assigned when the history panel is built below; declared here so
+        // applyEditionScope() can push the slider's scope into it.
+        let historyTrendChart = null;
 
         let summaryStamp = null;
         if (data.timestamp || data.baseline_generated_at) {
@@ -1641,6 +1471,11 @@
           syncToggleStyles();
           renderSummaryCard();
           renderEditionSection();
+          // The shared trend chart follows the slider, like the donut does.
+          historyTrendChart?.setAttribute("scope", scoreState.editionScope);
+          // Keep ?mode=/?edition= in step so the view can be linked to —
+          // shared with the landing page (components/t262-view-state.js).
+          window.t262ViewState?.write({ mode: view.mode, edition: scoreState.editionScope });
           // (#1398) Re-filter the category table when the edition scope
           // changes. `applyFilters` is hoisted (declared via function
           // statement later in this scope) so it's safe to call here even
@@ -1704,38 +1539,18 @@
 
         const historyPanel = el("div", { className: "summary-visual-panel summary-history-panel" });
         historyPanel.appendChild(el("h3", { className: "diagram-title" }, "Test Pass Rate Over Time"));
-        const historyChart = el("trend-chart", {
+        // Shared with the landing page. Both lanes are plotted; `mode` picks
+        // which one is the thick white line, and `scope` follows the edition
+        // slider — the chart used to ignore both, showing the js-host overall
+        // curve even in the standalone view at an ES2015 selection.
+        historyTrendChart = el("t262-conformance-trend", {
           className: "summary-history-chart",
-          mode: "step",
           height: "260",
-          "x-key": "time",
+          mode: view.mode,
+          scope: scoreState.editionScope,
+          "runs-base": CONFORMANCE_RUNS_BASE,
         });
-        historyPanel.appendChild(historyChart);
-        historyPanel.appendChild(
-          el(
-            "div",
-            { className: "diagram-legend" },
-            el(
-              "span",
-              { className: "diagram-legend-item" },
-              el("span", { className: "diagram-legend-line" }),
-              el("span", null, "Pass rate"),
-            ),
-            el(
-              "span",
-              { className: "diagram-legend-item" },
-              el("span", { className: "diagram-legend-line passed" }),
-              el("span", null, "Tests passed"),
-            ),
-            el(
-              "span",
-              { className: "diagram-legend-item" },
-              el("span", { className: "diagram-legend-line total" }),
-              el("span", null, "Total tests run"),
-            ),
-          ),
-        );
-        configureConformanceHistoryChart(historyChart, conformanceRuns);
+        historyPanel.appendChild(historyTrendChart);
         summaryVisuals.appendChild(historyPanel);
 
         summary.appendChild(summaryVisuals);
@@ -1768,8 +1583,28 @@
         } else {
           editionTimeline.removeAttribute("show-proposals");
         }
+        // (?edition=) Apply the incoming URL scope once the timeline has
+        // published its own scope map, and VALIDATE against it — an unknown
+        // value would leave the slider on a selection the donut, category
+        // table and trend chart all ignore. The snapshot is taken in main()
+        // before any render writes the query string back.
+        let urlEditionApplied = false;
+        const applyUrlEditionOnce = (detail) => {
+          if (urlEditionApplied) return;
+          urlEditionApplied = true;
+          const edition = initialViewState.edition;
+          if (!edition) return;
+          const scopeMap = detail?.scopeMap;
+          const isKnownScope =
+            edition === "overall" ||
+            edition === "overall+proposal" ||
+            (scopeMap instanceof Map && scopeMap.has(edition));
+          if (isKnownScope && edition !== detail?.scope) editionTimeline.value = edition;
+        };
+
         editionTimeline.addEventListener("edition-change", (event) => {
           applyEditionScope(event.detail);
+          applyUrlEditionOnce(event.detail);
         });
         editionTimeline.setAttribute("value", "overall");
 
@@ -2553,13 +2388,20 @@
       }
 
       async function main() {
-        const [conformance, standaloneReport, conformanceRuns, categoryEditions, editionRuns] = await Promise.all([
-          loadReportWithFallback(),
-          loadJSON(STANDALONE_REPORT_JSON),
-          loadJSON(assetPath("benchmarks/results/runs/index.json")),
-          loadJSON(CATEGORY_EDITIONS_JSON),
-          loadJSON(assetPath("benchmarks/results/runs/editions-index.json")),
-        ]);
+        // The overall pass-rate history is fetched by the shared
+        // <t262-conformance-trend> component itself; what main() still needs is
+        // the PER-EDITION history for the edition-legend sparklines — one file
+        // per lane, so the standalone view gets standalone sparklines instead
+        // of none (#4362).
+        const [conformance, standaloneReport, categoryEditions, hostEditionRuns, standaloneEditionRuns] =
+          await Promise.all([
+            loadReportWithFallback(),
+            loadJSON(STANDALONE_REPORT_JSON),
+            loadJSON(CATEGORY_EDITIONS_JSON),
+            loadJSON(assetPath("benchmarks/results/runs/editions-index.json")),
+            loadJSON(assetPath("benchmarks/results/runs/standalone-editions-index.json")),
+          ]);
+        const editionRunsByLane = { host: hostEditionRuns, standalone: standaloneEditionRuns };
         const app = document.getElementById("app");
         app.textContent = "";
 
@@ -2610,12 +2452,15 @@
             : null;
 
           // Mode switch (only shown when standalone data is available).
+          // ?mode= wins over the remembered choice: an explicit link should
+          // show what it says regardless of what this browser last looked at.
           const conformanceHost = el("div");
-          let activeMode = standaloneView && localStorage.getItem("t262-mode") === "standalone" ? "standalone" : "host";
+          const preferredMode = initialViewState.mode || localStorage.getItem("t262-mode");
+          let activeMode = standaloneView && preferredMode === "standalone" ? "standalone" : "host";
           const renderActive = () => {
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
-            renderConformance(view, conformanceHost, conformanceRuns, editionRuns);
+            renderConformance(view, conformanceHost, editionRunsByLane);
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });
@@ -2630,6 +2475,7 @@
                 if (activeMode === mode) return;
                 activeMode = mode;
                 localStorage.setItem("t262-mode", mode);
+                window.t262ViewState?.write({ mode });
                 modeSwitch.querySelectorAll("button").forEach((x) => x.classList.remove("active"));
                 b.classList.add("active");
                 renderActive();
