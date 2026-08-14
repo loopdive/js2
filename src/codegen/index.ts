@@ -301,6 +301,7 @@ import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic e
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
 import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157) __extern_get static-name IC
 import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
+import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { brandCollidingShapeTypes } from "./shape-brand.js";
 import {
   addImport,
@@ -5317,6 +5318,12 @@ export function generateModule(
     // regime — after every `__set_member_*` body fill, before any index
     // remap. DEFAULT OFF.
     inlineMemberSetCallSites(ctx);
+    // (#4157) Devirtualize the filled `__call_m_<name>_<arity>` dispatchers:
+    // copy each one's outermost guard + hit arm to its plain `call` sites,
+    // with the unmodified dispatcher call as the miss arm. MUST run after
+    // every `__call_m_*` body fill (the pass reads the final fill shape) and
+    // BEFORE dead elimination / the census installs. DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
@@ -7681,6 +7688,10 @@ export function generateMultiModule(
     // sites — multi-source parity with the generateModule call above (same
     // after-the-set-fills, before-any-index-remap ordering). DEFAULT OFF.
     inlineMemberSetCallSites(ctx);
+    // (#4157) `__call_m_*` devirtualization — same finalize point as the
+    // single-source pipeline above (after all dispatcher fills, before
+    // dead-elim / census). DEFAULT OFF.
+    inlineCallDispatchSites(ctx);
     fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
