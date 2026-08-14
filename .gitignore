@@ -88,8 +88,15 @@ tests/dogfood/.moment-upstream-suite/
 /.uuid-upstream-suite/
 tests/dogfood/.lit-implementation/
 tests/dogfood/.npm-compat/
+tests/dogfood/.npm-upstream-suites/
 tests/dogfood/report/
 /.hono-upstream-suite-generated/
+/.clsx-upstream-suite-generated/
+/.cookie-upstream-suite-generated/
+/.marked-upstream-suite-generated/
+/.redux-upstream-suite-generated/
+/.axios-upstream-suite-generated/
+/.prettier-upstream-suite-generated/
 /.lodash-upstream-suite-generated/
 /.lodash-es-upstream-suite-generated/
 /.moment-upstream-suite-generated/

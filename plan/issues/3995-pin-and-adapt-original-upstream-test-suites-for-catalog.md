@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-12
+updated: 2026-08-14
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -186,3 +186,96 @@ implementation files (28 tests total) still emit invalid call operands before
 execution. The report also contains 92 invalid per-test batches. #3978 remains
 the active owner for that compiler frontier; this umbrella continues to own the
 missing consistent runtime adapters and report integration.
+
+## 2026-08-14 unified GitHub-source setup and complete small-package suites
+
+`npm-compat-upstream-sources.json` now pins the GitHub repository, release tag,
+and immutable commit for every one of the 24 packages rendered by
+`npm-compat.html`. The source acquisition command accepts either
+`--package <name>` or `--all`; a single-package run does not acquire, compile,
+or execute any unrelated package. For the 14 packages that had no source-suite
+adapter when this slice started, the committed metadata also verifies the
+complete unit-file inventory by count and path digest. This closes the
+provenance/setup gap without presenting packages that merely compile as if
+their original tests passed.
+
+The first complete new runtime adapters are measured on current main:
+
+- clsx 2.1.1: all 3 upstream uvu files and all 32 callbacks run; **20/32** pass
+  in Wasm and **32/32** pass natively. The 12 real Wasm divergences are retained
+  in the report. The existing 18/18 differential operation workload remains a
+  separate secondary signal.
+- cookie 2.0.1: all 4 upstream Vitest files and all 63,740 expanded callbacks
+  run. **63,625/63,672** natively reproducible cases pass in Wasm. The 68
+  top-site snapshot cases are explicitly harness-incompatible until the
+  snapshot adapter is implemented; they are not counted as passes. Both
+  stringify files are fully green (63,625/63,625); the 47 scored failures are
+  in parse modules, including an invalid `parse-set-cookie` Wasm module.
+- marked 18.0.2: the complete 6-file unit inventory is pinned. An adapter
+  experiment reached the original Hooks callbacks, but a full bounded run was
+  still too slow in the Lexer/Parser compilation phase. The experiment is not
+  shipped as a runnable adapter and no pass-rate claim is made.
+
+The npm-compat generator now publishes the clsx and cookie upstream-suite
+scores and pins directly. Remaining packages with no runtime adapter stay
+explicitly `adapter-pending`; the next slices should expand the unified runner
+in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
+large compiler/tooling suites).
+
+## 2026-08-14 Redux complete runtime suite
+
+Redux 5.0.1 now uses all nine original `*.spec.ts` runtime files from
+`reduxjs/redux@v5.0.1` (commit
+`50b010210df25c470386f7e39a9389a4a77b3842`). All 82 callbacks register and
+all nine generated test modules compile to valid Wasm. The synchronous Node
+oracle reproduces 78 callbacks; the four promise-returning callbacks are
+explicitly harness-incompatible until the shared runner supports async Wasm
+tests. The measured Wasm baseline is **5/78**: ten callbacks reach an assertion
+and diverge, while 63 encounter a module-level runtime trap in the larger
+`bindActionCreators`, `combineReducers`, and `createStore` files. The existing
+1/1 package API workload remains visible as a separate secondary result.
+
+Vitest's spy/assertion surface and the one RxJS protocol test use narrow test
+infrastructure shims; the original callback bodies and inputs are unchanged.
+
+## 2026-08-14 Axios synchronous unit slice and publication contract
+
+Axios 1.16.1 now verifies the complete 49-file `tests/unit/**/*.test.js`
+inventory and its 645 static registration sites at
+`axios/axios@v1.16.1` (commit
+`1337d6b537afb2d3f501074c8ac4ef4308221197`). The first runtime adapter selects
+25 self-contained synchronous files: **170/170** callbacks pass in Node, all 25
+generated modules compile and validate, and **16/170** pass in Wasm. Two
+callbacks reach differing assertions; the other 152 scored failures are
+module-level runtime traps. The remaining 24 files are counted as deferred and
+require async execution plus HTTP server/socket/stream/filesystem test
+infrastructure.
+
+This result is not a local-only report. The main npm-compat generator invokes
+the Axios adapter and writes its upstream counts into the Axios card. The
+merge-only `npm-compat-refresh.yml` workflow now derives the set of configured
+suite adapters from `npm-compat-upstream-sources.json` and refuses to publish
+if any adapter lacks numeric pass/total results. This also protects the Redux,
+clsx, cookie, and pre-existing upstream lanes from silently reverting to
+`adapter pending` on `npm-compat.html`.
+
+## 2026-08-14 Prettier synchronous source-unit slice
+
+Prettier 3.8.1 now verifies all 20 top-level `tests/unit/*.js` files and 48
+static registration sites from `prettier/prettier@3.8.1` (commit
+`90983f40dce5e20beea4e5618b5e0426a6a7f4f0`). The first runtime adapter runs
+the three self-contained synchronous files `ast-path.js`, `errors.js`, and
+`make-string.js` without rewriting their callback bodies or inputs. All three
+generated modules compile and validate, all **8/8** callbacks pass in native
+Node, and **1/8** passes in Wasm.
+
+The seven measured failures are useful compatibility evidence rather than a
+gate: the four `AstPath` callbacks trap with `illegal cast`, while the three
+custom `Error` subclasses expose the existing builtin-subclass/name gap
+([#1366a](https://github.com/loopdive/js2wasm/blob/main/plan/issues/1366a-class-extends-error-builtin-subclassing.md),
+[#2962](https://github.com/loopdive/js2wasm/blob/main/plan/issues/2962-native-error-identity-stringification.md)).
+The remaining 17 source files are explicitly deferred for async plugin loading,
+snapshots, Node-only helpers, external development dependencies, or larger
+document/parser graphs. The npm-compat generator now publishes this score, and
+the merge-only workflow's configured-suite guard requires the numeric Prettier
+result before it can update `npm-compat.html`.

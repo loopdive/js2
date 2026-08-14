@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "nativeFirst": {
     "minimumProbes": 33,
-    "maximumImports": 379,
+    "maximumImports": 393,
     "maximumLegacySemanticImports": 0,
     "maximumUnknownImports": 0
   },

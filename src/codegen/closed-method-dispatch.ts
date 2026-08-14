@@ -47,7 +47,8 @@ import { ensureNativeIterHof, isIterHofForm, NATIVE_ITER_HOF_METHODS } from "./i
 import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js"; // nullish-receiver TypeError (§13.3 EvaluateCall step 5)
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
@@ -141,6 +142,61 @@ function varargDispatcherName(methodName: string): string {
 }
 
 /**
+ * §13.3 EvaluateCall step 5 / §7.3.14: `undefined.m(...)` / `null.m(...)` must
+ * throw TypeError BEFORE any dispatch. The standalone dispatchers historically
+ * fell through every receiver arm to a silent `undefined` result, so the
+ * test262 TypedArray harness's own negative test
+ * (harness/testTypedArray-conversions-call-error.js — `values.forEach(...)` on
+ * an absent `bcv.values`) saw no throw at all. One shared message per method;
+ * registered at RESERVE time (with `__new_TypeError` + the exn tag) so the
+ * fill stays funcMap-read-only.
+ */
+function nullishReceiverMessage(methodName: string): string {
+  return `Cannot read properties of undefined (reading '${methodName}')`;
+}
+
+/** Reserve-time registration of the nullish-receiver TypeError machinery. */
+function reserveNullishReceiverThrow(ctx: CodegenContext, methodName: string): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  ensureExnTag(ctx);
+  addStringConstantGlobal(ctx, nullishReceiverMessage(methodName));
+}
+
+/**
+ * Fill-time guard instrs: throw TypeError when the receiver is nullish.
+ * `__nullish_to_null` canonicalizes the (#2106 S1) undefined singleton to
+ * null first; a bare null receiver is caught either way. Empty when the
+ * machinery is absent (host lane, or the reserve never ran).
+ */
+function nullishReceiverGuardInstrs(ctx: CodegenContext, methodName: string): Instr[] {
+  if (!ctx.standalone && !ctx.wasi) return [];
+  // (#4394) `.then` is exempt: the standalone then-chain native (async-scheduler
+  // + then-thenable-miss) OWNS then-receiver semantics — its thenable/miss arms
+  // must observe the receiver themselves, and guarding here composes into an
+  // illegal cast on a user-thenable receiver (measured: the guard alone flips
+  // harness/asyncHelpers-throwsAsync-func-never-settles.js pass→fail).
+  if (methodName === "then") return [];
+  const newTypeErrIdx = ctx.funcMap.get("__new_TypeError");
+  if (newTypeErrIdx === undefined || ctx.exnTagIdx < 0) return [];
+  const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+  return [
+    { op: "local.get", index: 0 },
+    ...(nullishIdx !== undefined ? ([{ op: "call", funcIdx: nullishIdx }] satisfies Instr[]) : []),
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...stringConstantExternrefInstrs(ctx, nullishReceiverMessage(methodName)),
+        { op: "call", funcIdx: newTypeErrIdx },
+        { op: "throw", tagIdx: ctx.exnTagIdx },
+      ],
+    },
+  ];
+}
+
+/**
  * Reserve (or fetch) the closed-struct dispatcher `__call_m_<name>_<arity>`
  * funcIdx with a placeholder body. The real body is built by
  * {@link fillClosedMethodDispatch} at finalize. Idempotent; records the
@@ -181,6 +237,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
     addUnionImportsViaRegistry(ctx);
   }
   addStringConstantGlobal(ctx, methodName);
+  reserveNullishReceiverThrow(ctx, methodName);
 
   // (#3117) The fill adds FIELD-STORED-closure arms (a pre-shaped closed struct
   // whose externref FIELD `<name>` holds a boxed closure — `o.f = function(){}`
@@ -336,6 +393,7 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
     addUnionImportsViaRegistry(ctx);
   }
   addStringConstantGlobal(ctx, methodName);
+  reserveNullishReceiverThrow(ctx, methodName);
   // (#3117) Field-stored-closure arms invoke via `__apply_closure` — see the
   // fixed-arity reserve above.
   if (ctx.standalone || ctx.wasi) reserveApplyClosure(ctx);
@@ -1405,6 +1463,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
 
     dispFn.locals = locals;
     dispFn.body = [
+      ...nullishReceiverGuardInstrs(ctx, methodName),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
@@ -1497,6 +1556,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
 
     dispFn.locals = varargLocals;
     dispFn.body = [
+      ...nullishReceiverGuardInstrs(ctx, methodName),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
