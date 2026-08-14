@@ -8,6 +8,7 @@
   "codegen/async-scheduler.ts": 3,
   "codegen/binary-ops-typed-dispatch.ts": 26,
   "codegen/binary-ops.ts": 10,
+  "codegen/box-boolean-fuse.ts": 2,
   "codegen/builtin-ctor-callable.ts": 3,
   "codegen/builtin-value-read.ts": 5,
   "codegen/char-at-transfer.ts": 1,

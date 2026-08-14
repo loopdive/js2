@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-14T11:09:21.026Z",
-  "baseline_generated_at": "2026-08-14T11:09:21.026Z",
-  "baseline_sha": "fc60ea8aa34f36585591586a28b1aae019d34fd9",
+  "timestamp": "2026-08-14T12:48:44.240Z",
+  "baseline_generated_at": "2026-08-14T12:48:44.241Z",
+  "baseline_sha": "39a7761e14339a7da2fa728d0ad8f957d7c234c7",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1288,15 +1288,15 @@
           "Proposals": 4477
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDate/prototype/subtract/basic.js",
-          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/until/roundingmode-halfExpand.js",
+          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/subtract/basic.js",
           "test/built-ins/Temporal/PlainDate/prototype/subtract/argument-duration-max-plus-min-date.js",
-          "test/built-ins/Temporal/Instant/prototype/until/argument-string-calendar-annotation.js"
+          "test/built-ins/Temporal/PlainDateTime/from/argument-string-date-with-utc-offset.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check, env::__temporal_duration_from_string_field, env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check (##)",
+          "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check, env::__temporal_duration_from_string_field, env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check, env::__temporal_duration_from_string_field, env::__temporal_plain_date_add_field (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check, env::__temporal_duration_to_string (##)",
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals, env::__instanceof_check, env::__temporal_plain_time_to_string (##)"
@@ -1453,15 +1453,15 @@
           "test/built-ins/JSON/stringify/replacer-array-abrupt.js",
           "test/built-ins/JSON/parse/reviver-get-name-err.js",
           "test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js",
-          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js",
-          "test/built-ins/JSON/stringify/value-tojson-not-function.js"
+          "test/built-ins/JSON/stringify/value-tojson-not-function.js",
+          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (##). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the Phas",
           "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «#») to be true",
-          "assertion_fail:Test262Error: Expected a [object Object] to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"{\\\"toJSON\\\":{}}\"») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"{\\\"toJSON\\\":{}}\"») to be true",
+          "assertion_fail:Test262Error: Expected a [object Object] to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -1983,15 +1983,15 @@
           "test/built-ins/TypedArray/prototype/filter/speciesctor-get-species-abrupt.js",
           "test/built-ins/TypedArray/prototype/at/returns-undefined-for-out-of-range-index.js",
           "test/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-toobject-offset.js",
-          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
-          "test/built-ins/TypedArray/prototype/toLocaleString/length.js"
+          "test/built-ins/TypedArray/prototype/toLocaleString/length.js",
+          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: The value of `typeof TypedArray.prototype.at` is \"function\" Expected SameValue(«\"undefined\"», «\"function\"») to be true",
           "assertion_fail:Test262Error: undefined Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
-          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
-          "type_error:TypeError: Cannot convert undefined or null to object"
+          "type_error:TypeError: Cannot convert undefined or null to object",
+          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)"
         ]
       },
       {
@@ -2217,14 +2217,14 @@
           "test/built-ins/Date/S15.9.3.1_A4_T2.js",
           "test/built-ins/Date/UTC/fp-evaluation-order.js",
           "test/built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js",
-          "test/built-ins/Date/value-symbol-to-prim-err.js"
+          "test/built-ins/Date/parse/time-value-maximum-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot read properties of undefined (reading 'call')",
           "assertion_fail:Test262Error: `new Date(new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#))` throws a Test262Error exception Expected a [object Object] to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: order of operations / precision in MakeTime Expected SameValue(«NaN», «#») to be true",
-          "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: parse below minimum time value Expected SameValue(«-#», «NaN») to be true"
+          "assertion_fail:Test262Error: parse below minimum time value Expected SameValue(«-#», «NaN») to be true",
+          "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -3006,8 +3006,8 @@
           "test/built-ins/Atomics/and/good-views.js",
           "test/built-ins/Atomics/sub/non-views.js",
           "test/built-ins/SharedArrayBuffer/allocation-limit.js",
-          "test/built-ins/Atomics/xor/validate-arraytype-before-value-coercion.js",
-          "test/built-ins/Atomics/notify/descriptor.js"
+          "test/built-ins/Atomics/notify/descriptor.js",
+          "test/built-ins/Atomics/compareExchange/descriptor.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
