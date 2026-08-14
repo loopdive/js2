@@ -3985,3 +3985,29 @@ harmful arm maximisation and silent unoptimized fallbacks.
 Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6–7.1×**.
 Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
 reuse), partial inlining of user functions, and receiver-type specialisation.
+
+## 2026-08-14 (44) — the four levers' wall A/B: a NULL on this box, and why that was predictable
+
+Order-reversed (ON/OFF/OFF/ON), completed `-O4` in every leg (the 600 s
+wasm-opt timeout imported; ZERO unoptimized-fallback warnings), both arms on
+the tuned-11 base so this measures the levers' MARGINAL wall value:
+
+| leg | wasm ms | node ms |
+| --- | ---: | ---: |
+| ON a | 94.9 | 15.2 |
+| OFF a | 97.8 | 13.4 |
+| OFF b | 98.7 | 13.2 |
+| ON b | 101.2 | 14.3 |
+
+ON mean 98.1 vs OFF mean 98.2 — **≈ 0 %, below the box's noise floor** (ON
+legs bracket the OFF legs; node's own reference drifts 13.2–15.2 ms). The
+executed-call wins are real and proven (−46.3 % across the six families,
+checksum 422, poison-proven per lever); the WALL effect is capped by entry
+39's decomposition — post-flip these helper families hold ~10-15 % of the
+wasm run, so even halving them lands under the ~10 % resolution floor
+(#3927 §6). Verdict: flags stay DEFAULT OFF; certifying a wall win needs a
+quieter environment or a CI perf lane. The levers remain valuable as (a)
+proven call-elimination machinery for when the compiled-code-quality work
+(receiver-type specialisation, return-type unboxing ABI) shrinks the
+compiled bucket and re-exposes helper share, and (b) the site-IC pattern
+library the next levers copy from.
