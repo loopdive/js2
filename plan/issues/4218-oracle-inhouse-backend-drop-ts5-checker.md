@@ -247,6 +247,32 @@ remaining traffic is now dominated by `ir/module-bindings.ts`
 `getSymbolAtLocation`/`getResolvedSignature` (binder-shaped work → Phase 1
 `valueDeclarationOf` territory) plus the ~25-site tail.
 
+### Phase-1 CP1 — module-bindings helpers + oracle memoization (2026-08-14)
+
+The four binding-resolution helpers in `ir/module-bindings.ts` (the largest
+consumer after the lib-walk kill) now resolve declaration candidates through
+`valueDeclarationOf`/`declarationsOf`, and `TsCheckerOracle` memoizes both
+per node (the "memoized" invariant previously covered only `typeFactOf`).
+Total corpus checker calls: 35,403 → **15,121** (−94.4 % cumulative from
+271,405). Byte-identical output vs the original baseline, both backends.
+
+**Flat-tail finding (updates the plan).** After CP1 the remaining traffic
+has NO concentrated consumer: the top site is the oracle's own memoized
+resolution (~130 calls), everything else ≤75 calls spread across ~30 files
+(import-collector, identifiers, usage-inference, propagate, host-extern,
+resolved-signature sites…). Consequences:
+
+- Per-compile TS5 checker cost is now ~15k memoized queries — milliseconds,
+  no longer a compile-time lever. The compile-time story moves to parser/
+  program construction (#1029 tsgo batch parse).
+- The remaining Phase-0 sweep (routing the flat tail through the oracle so
+  the INHOUSE backend reaches zero) is mechanical, parallelizable,
+  per-file work — dev-lane material, not a single hard slice. The audit
+  script's site list is the worklist.
+- Symbol-identity comparison sites (`getSymbolAtLocation(a) ===
+  getSymbolAtLocation(b)`, ~10 sites in module-bindings) need one new
+  oracle query ("same binding") before they can convert.
+
 ### Measured kill order (refines the Plan phases above)
 
 1. **Extern-declarations lib walk → build-time table** (−96 %): the lib
