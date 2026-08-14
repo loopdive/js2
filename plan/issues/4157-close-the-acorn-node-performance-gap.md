@@ -21,6 +21,9 @@ loc-budget-allow:
   # new subsystem module (src/codegen/const-box-hoist.ts); there is no smaller
   # way to WIRE a finalize pass than to call it from the finalize sequence.
   - src/codegen/index.ts
+  # (#4157 unboxed boolean fusion) +3 lines of WIRING in the driver: one
+  # import and two one-line finalize invocations of fuseBoxBooleanSinks.
+  # The pass itself is a new subsystem module (src/codegen/box-boolean-fuse.ts).
   # (#4157 non-null guard elision) +43 / +11 lines of WIRING. The analysis and
   # both emission shapes live in a new subsystem module
   # (src/codegen/nonnull-proof.ts); what remains in these two files is
