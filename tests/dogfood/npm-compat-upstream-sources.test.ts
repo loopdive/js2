@@ -30,9 +30,8 @@ describe("npm-compat upstream GitHub source pins", () => {
         expect(pin.inventory.fileCount).toBeGreaterThan(0);
         expect(pin.inventory.pathSha256).toMatch(/^[0-9a-f]{64}$/);
       }
-      if (pin.suiteScript) {
-        expect(packageJson.scripts[pin.suiteScript]).toBeTypeOf("string");
-      }
+      expect(pin.suiteScript).toBeTypeOf("string");
+      expect(packageJson.scripts[pin.suiteScript]).toBeTypeOf("string");
     }
   });
 
@@ -47,5 +46,12 @@ describe("npm-compat upstream GitHub source pins", () => {
     expect(workflow).toContain("suitePins.filter(entry => entry.suiteScript)");
     expect(workflow).toContain("its unit-test result is absent");
     expect(workflow).toContain("still reports adapter pending");
+  });
+
+  it("makes report generation reject configured suites missing from its executable registry", () => {
+    const generator = readFileSync(join(HERE, "../../scripts/generate-npm-compat-report.mjs"), "utf-8");
+    expect(generator).toContain("UPSTREAM_SUITE_RUNNERS");
+    expect(generator).toContain("npm-compat upstream runner registry mismatch");
+    expect(generator).toContain("runConfiguredUpstreamSuite(entry.name");
   });
 });

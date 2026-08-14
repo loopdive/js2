@@ -128,6 +128,13 @@ then compares its result with the same operation in native Node.
 | **lodash-es upstream suite**            | #3995 | modular ESM method files  | the same unchanged QUnit module slices against the ESM distribution           |
 | **moment upstream suite**               | #3995 | `moment.js`               | pinned original QUnit callbacks; complete core/locale inventory tracked       |
 | **stylelint upstream suite**            | #3995 | `lib/utils/*.mjs`         | pinned original utility-unit callbacks; complete `lib/**/__tests__` inventory tracked |
+| **three upstream suite**                | #3995 | `src/math/MathUtils.js`   | pinned original QUnit module; complete `test/unit/src` inventory tracked      |
+| **jsdom upstream suite**                | #3995 | `lib/jsdom/virtual-console.js` | pinned original VirtualConsole callbacks; complete `test/api` inventory tracked |
+| **styled-components upstream suite**    | #3995 | `src/utils/*.ts`        | pinned original utility callbacks; complete source-unit inventory tracked |
+| **webpack upstream suite**              | #3995 | `lib/util/*.js`         | pinned original utility callbacks; complete top-level unit inventory tracked |
+| **jest upstream suite**                 | #3995 | `jest-get-type/src/index.ts` | pinned original get-type callbacks; complete monorepo unit inventory tracked |
+| **tailwindcss upstream suite**          | #3995 | `src/utils/{segment,to-key-path}.ts` | pinned original utility callbacks; complete package test inventory tracked |
+| **typescript upstream suite**           | #3995 | `unittests/base64.ts`   | pinned original base64 callback; complete compiler-unit inventory tracked |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
@@ -201,6 +208,19 @@ from Stylelint's pinned GitHub release. The initial synchronous slice selects
 five dependency-light utility files: all five generated modules compile and
 validate, Node passes **9/9**, and Wasm passes **7/9**. The two runtime traps and
 all 276 deferred files remain visible in the report.
+
+## Three.js r185 upstream MathUtils unit module
+
+```bash
+pnpm run dogfood:three-upstream-suite
+DOGFOOD_THREE_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/npm-small-upstream-suites.test.ts
+```
+
+The harness verifies all 232 matching source files and 1,313 QUnit registration
+sites from the pinned Three.js release. The initial dependency-light MathUtils
+module compiles and validates, Node passes **18/18**, and Wasm currently reports
+**0/18** at the QUnit callback boundary. All 231 deferred files and the per-test
+zeroes remain visible; none is converted into a pass.
 
 ## Axios 1.16.1 upstream suite
 

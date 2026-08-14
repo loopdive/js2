@@ -120,8 +120,9 @@ function it(name, body) { __upstreamRegister(name, body); }
 function test(name, body) { __upstreamRegister(name, body); }
 function __upstreamEach(cases) {
   return function(name, body) {
+    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
     for (let index = 0; index < cases.length; index++) {
-      const row = Array.isArray(cases[index]) ? cases[index] : [cases[index]];
+      const row = expandRows ? cases[index] : [cases[index]];
       const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
       it(displayName, function() {
         if (row.length === 0) return body();
@@ -146,7 +147,7 @@ const __qunitAssert = {
   deepEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (!__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + ": " + (message || "deepEqual mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
   throws(fn, expected, message) { if (!__upstreamThrownMatches(__upstreamThrown(fn), expected)) __upstreamFail(message || "expected matching throw"); },
 };
-function suiteModule(_name) {}
+function suiteModule(_name, body) { if (typeof body === "function") body(); }
 const QUnit = {
   module: suiteModule,
   test(name, body) { __upstreamTests.push({ name: String(name), body }); },
@@ -231,13 +232,18 @@ async function withTimeout(promise, timeoutMs) {
   }
 }
 
-export async function compileAndRunUpstreamModule({ generatedPath, source, timeoutMs = 180_000 }) {
+export async function compileAndRunUpstreamModule({
+  generatedPath,
+  source,
+  nativeSource = source,
+  timeoutMs = 180_000,
+}) {
   mkdirSync(dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, source);
 
   let native;
   try {
-    native = await runNative(generatedPath, source);
+    native = await runNative(generatedPath, nativeSource);
   } catch (error) {
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }
