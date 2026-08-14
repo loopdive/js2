@@ -330,3 +330,142 @@ those measured zeroes and all 231 deferred browser, WebGL, DOM, loader, and
 larger object-graph files. The npm-compat generator invokes the suite directly,
 so the merge-only refresh publishes the numeric result and upstream pin rather
 than leaving Three.js at `adapter pending`.
+
+## 2026-08-14 jsdom VirtualConsole slice
+
+jsdom 30.0.1 now verifies the complete 17-file `test/api/*.js` inventory and
+all 318 static registration sites from `jsdom/jsdom@v30.0.1` (commit
+`6584485f094d5b271553005b68804c93a455c002`). The first runtime adapter selects
+six unchanged synchronous callbacks from `virtual-console.js` which exercise
+`VirtualConsole.forwardTo()` without constructing a DOM. They run against the
+matching published `lib/jsdom/virtual-console.js`; its Node `events` dependency
+is left at the platform boundary rather than replaced with a harness fake.
+
+The selected module compiles and validates in about half a second. Native Node
+passes **6/6** callbacks and Wasm passes **1/6**. Each of the five failures
+reports `on is not a function`, isolating the remaining gap to callable method
+projection on the host-provided `EventEmitter`; the invalid-option callback
+passes because it does not need to register a listener.
+
+The remaining 312 registrations, including full DOM construction, resource
+loading, and asynchronous cases, remain explicit deferred coverage. The
+npm-compat generator invokes this adapter directly and publishes its numeric
+pass/total result on merge; the workflow guard rejects a missing or pending
+jsdom suite row.
+
+## 2026-08-14 styled-components synchronous utility slice
+
+styled-components 6.4.4 now verifies the complete 41-file source-unit
+inventory and 668 static registrations from the matching
+`styled-components@6.4.4` release tag (commit
+`5f69a304df5de81aae114928dcd98896c627c94a`). The first runtime adapter runs
+the original `addUnitIfNeeded`, `escape`, and `hyphenateStyleName` utility test
+files directly against their pinned release-source
+implementations, without changing callback bodies or inputs.
+
+All three generated modules compile and validate. Native Node passes **6/6**
+callbacks and Wasm also passes **6/6**. The native oracle normalizes the pinned
+monorepo's extra CommonJS default-export wrapper; the compiled source uses the
+release module directly, and both paths execute identical callback bodies.
+
+React, DOM, snapshot, SSR, Stylis, and larger object-graph files remain
+explicit deferred inventory. The npm-compat generator invokes the adapter
+directly so the merge-only refresh publishes numeric results and cannot fall
+back to `adapter pending`.
+
+## 2026-08-14 Jest get-type slice
+
+Jest 30.4.2 now verifies all 241 matching files under
+`packages/**/__tests__` and 3,288 static registrations from
+`jestjs/jest@v30.4.2` (commit
+`746f2a0f57c56e3bba555280f0587d40f3db95c0`). The first runtime adapter runs
+the original `@jest/get-type` `getType` and `isPrimitive` test files directly
+against their matching release-tag TypeScript implementation without changing
+callback bodies or inputs.
+
+Both selected modules compile and validate. Native Node passes **32/32**
+callbacks and Wasm passes **16/32**. The failures share a representation cause:
+several primitive values reach the generic `unknown` helper boxed as objects,
+so JavaScript `typeof` and `Object(value) !== value` checks misclassify them.
+The native oracle also confirmed all 32 callbacks after the shared `test.each`
+shim learned to distinguish a table of scalar cases from a table of tuples.
+
+Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs
+remain explicit deferred inventory. The npm-compat generator invokes the
+adapter directly so the merge-only refresh publishes numeric results and
+cannot fall back to `adapter pending`.
+
+## 2026-08-14 Tailwind CSS segment utility slice
+
+Tailwind CSS 4.3.3 now verifies all 42 matching tests under
+`packages/tailwindcss` and 1,376 static registrations from
+`tailwindlabs/tailwindcss@v4.3.3` (commit
+`c2b24dd15fed1c59dd521bd86082f520c9f5ad0d`). The first runtime adapter runs
+the original `segment.test.ts` and `to-key-path.test.ts` callbacks directly
+against their matching release-tag TypeScript implementations without changing
+callback bodies or inputs.
+
+The adapter registers 13 callbacks. All 13 pass in native Node and all 13 pass
+after compiling the release-tag sources and original callbacks to Wasm.
+
+Scanner, Rust/native, CSS pipeline, snapshot, async, UI, and larger graph files
+remain explicit deferred inventory. The npm-compat generator invokes the
+adapter directly so the merge-only refresh publishes numeric results and
+cannot fall back to `adapter pending`.
+
+## 2026-08-14 TypeScript base64 slice
+
+TypeScript 5.9.3 now verifies all 256 files and 1,761 static registrations under
+`src/testRunner/unittests` from `microsoft/TypeScript@v5.9.3` (commit
+`c63de15a992d37f0d6cec03ac7631872838602cb`). The first runtime adapter runs the
+original `base64.ts` callback unchanged. At setup time it projects the exact
+base64 declarations from the matching release's `src/compiler/utilities.ts`,
+avoiding the unrelated full compiler graph that exceeds the bounded catalog
+compile budget.
+
+The adapter registers one callback. It passes in native Node and after the
+release-tag source and original callback are compiled to Wasm.
+
+The remaining 255 compiler, server, watch, evaluator, snapshot, async, and
+filesystem-heavy files remain explicit deferred inventory. The npm-compat
+generator invokes this adapter directly, so the merge-only refresh publishes a
+numeric result and cannot fall back to `adapter pending`.
+
+## 2026-08-14 complete workflow wiring
+
+All 24 packages rendered on npm-compat now declare an executable `suiteScript`.
+The report generator uses one registry for those 24 adapters and refuses to
+start if the configured and executable package sets differ. Catalog packages
+no longer pass through a nullable conditional chain that could silently fall
+back to `adapter pending` after an adapter had shipped.
+
+The merge-only npm-compat workflow independently rejects its generated artifact
+unless every configured adapter produces numeric `passed` and `total` fields.
+Performance measurements and regressions remain reporting data rather than unit
+test gates.
+
+The complete `generate:npm-compat --no-write` path was run locally after this
+wiring change. It completed all 24 packages, left one numeric suite report per
+package, and exited successfully. Its aggregate correctness rollup reported 8
+verified, 14 divergent, and 2 unverified packages; those compatibility gaps are
+reported data, not hidden or converted into performance gates.
+
+## 2026-08-14 webpack synchronous utility slice
+
+webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and
+1,357 static registrations from `webpack/webpack@v5.109.2` (commit
+`6a24bd65b72c43207c36ce61b54e1f5833486906`). The first runtime adapter runs
+the original `ArrayHelpers`, `formatSize`, and `objectToMap` unit files against
+their matching published CommonJS implementations without changing callbacks
+or inputs.
+
+All three generated modules compile and validate. Native Node passes **16/16**
+callbacks and Wasm passes **13/16**. Both `ArrayHelpers.groupBy` callbacks trap
+with `illegal cast` on their nested array results. The remaining failure is
+`formatSize(undefined)`, where Wasm produces `0 bytes` instead of Node's
+`unknown size`; the `objectToMap` callback passes.
+
+Compiler, filesystem, loader, snapshot, async, and larger graph files remain
+explicit deferred inventory. The npm-compat generator invokes the adapter
+directly so the merge-only refresh publishes numeric results and cannot fall
+back to `adapter pending`.
