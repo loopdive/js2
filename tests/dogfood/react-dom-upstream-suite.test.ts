@@ -72,6 +72,9 @@ describe("react-dom upstream suite", () => {
       expect(typeof report.compile.implementationInvalid.error).toBe("string");
       expect(report.compile.implementationInvalid.error.length).toBeGreaterThan(0);
       expect(report.summary.implementationError).toBe(report.compile.implementationInvalid.error);
+      expect(report.results.scored).toBe(0);
+      expect(report.results.failed).toBe(0);
+      expect(report.results.implementationInvalidTests).toBe(report.extraction.selected);
     }
     for (const batch of report.compile.batches) {
       if (!batch.validates) expect(typeof batch.firstError).toBe("string");

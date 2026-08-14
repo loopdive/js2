@@ -367,12 +367,25 @@ class TrendChart extends HTMLElement {
     const leftSeries = seriesDef.filter((s) => (s.axis || "left") !== "right");
     const rightSeries = seriesDef.filter((s) => s.axis === "right");
 
+    // A point may legitimately have NO value for a series — e.g. the
+    // conformance chart plots the js-host and standalone lanes together and
+    // the standalone lane starts later than the host one. `null` / `undefined`
+    // / non-numeric means "no measurement here": the line breaks instead of
+    // diving to zero, and the point contributes nothing to the y domain.
+    const valueAt = (series, i) => {
+      const raw = data[i]?.[series.key];
+      if (raw === null || raw === undefined || raw === "") return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    };
+
     const calcDomain = (series) => {
       let min = Infinity;
       let max = -Infinity;
       for (const s of series) {
-        for (const d of data) {
-          const v = Number(d[s.key] || 0);
+        for (let i = 0; i < n; i++) {
+          const v = valueAt(s, i);
+          if (v === null) continue;
           if (v < min) min = v;
           if (v > max) max = v;
         }
@@ -395,13 +408,36 @@ class TrendChart extends HTMLElement {
     const yRight = rightDomain ? makeY(rightDomain) : null;
     const yForSeries = (series) => (series.axis === "right" && yRight ? yRight : yLeft);
 
-    const linePath = (valFn) => {
-      let p = `M ${x(0)} ${valFn(0)}`;
-      for (let i = 1; i < n; i++) {
+    // Split a series into runs of consecutive points that HAVE a value, so a
+    // gap renders as a break in the line rather than a plunge through zero.
+    const buildSegments = (series) => {
+      const y = yForSeries(series);
+      const segments = [];
+      let current = null;
+      for (let i = 0; i < n; i++) {
+        const v = valueAt(series, i);
+        if (v === null) {
+          current = null;
+          continue;
+        }
+        if (!current) {
+          current = [];
+          segments.push(current);
+        }
+        current.push({ i, y: y(v) });
+      }
+      return segments;
+    };
+
+    const segmentPath = (segment) => {
+      let p = `M ${x(segment[0].i)} ${segment[0].y}`;
+      for (let k = 1; k < segment.length; k++) {
+        const prev = segment[k - 1];
+        const point = segment[k];
         if (stepped) {
-          p += ` L ${x(i)} ${valFn(i - 1)} L ${x(i)} ${valFn(i)}`;
+          p += ` L ${x(point.i)} ${prev.y} L ${x(point.i)} ${point.y}`;
         } else {
-          p += ` L ${x(i)} ${valFn(i)}`;
+          p += ` L ${x(point.i)} ${point.y}`;
         }
       }
       return p;
@@ -434,11 +470,15 @@ class TrendChart extends HTMLElement {
       const width = s.lineWidth ?? (si === 0 ? 2 : 1.5);
       const opacity = s.lineOpacity ?? 1;
       const dasharray = s.dasharray ? ` stroke-dasharray="${s.dasharray}"` : "";
-      const y = yForSeries(s);
+      const segments = buildSegments(s);
 
-      paths += `<path d="${linePath((i) => y(Number(data[i][s.key] || 0)))}" fill="none" stroke="${color}" stroke-width="${width}" opacity="${opacity}"${dasharray}/>`;
+      for (const segment of segments) {
+        paths += `<path d="${segmentPath(
+          segment,
+        )}" fill="none" stroke="${color}" stroke-width="${width}" opacity="${opacity}"${dasharray}/>`;
+      }
 
-      if (s.fill) {
+      if (s.fill && segments.length > 0) {
         const gradId = `grad-${si}`;
         paths =
           `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
@@ -446,9 +486,14 @@ class TrendChart extends HTMLElement {
           <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
         </linearGradient></defs>` + paths;
 
-        let fillPath = linePath((i) => y(Number(data[i][s.key] || 0)));
-        fillPath += ` L ${x(n - 1)} ${PAD.top + plotH} L ${x(0)} ${PAD.top + plotH} Z`;
-        paths += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+        // Fill each contiguous run separately — a single closed path across a
+        // gap would shade a stretch the series has no data for.
+        for (const segment of segments) {
+          const fillPath = `${segmentPath(segment)} L ${x(segment.at(-1).i)} ${PAD.top + plotH} L ${x(
+            segment[0].i,
+          )} ${PAD.top + plotH} Z`;
+          paths += `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+        }
       }
     }
 
@@ -457,10 +502,11 @@ class TrendChart extends HTMLElement {
     if (seriesDef.length > 0) {
       const s = seriesDef[0];
       const y = yForSeries(s);
-      let peakIdx = 0;
+      let peakIdx = null;
       let peakVal = -Infinity;
       for (let i = 0; i < n; i++) {
-        const v = Number(data[i][s.key] || 0);
+        const v = valueAt(s, i);
+        if (v === null) continue;
         dots += `<circle cx="${x(i)}" cy="${y(v)}" r="2.5" fill="rgba(255,255,255,0.9)"/>`;
         if (v > peakVal) {
           peakVal = v;
@@ -468,8 +514,10 @@ class TrendChart extends HTMLElement {
         }
       }
       // Show value label above the peak point
-      const peakLabel = peakVal % 1 !== 0 ? peakVal.toFixed(1) + "%" : peakVal.toLocaleString();
-      dots += `<text x="${x(peakIdx)}" y="${y(peakVal) - 8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10" font-weight="600" font-family="monospace">${peakLabel}</text>`;
+      if (peakIdx !== null) {
+        const peakLabel = peakVal % 1 !== 0 ? peakVal.toFixed(1) + "%" : peakVal.toLocaleString();
+        dots += `<text x="${x(peakIdx)}" y="${y(peakVal) - 8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10" font-weight="600" font-family="monospace">${peakLabel}</text>`;
+      }
     }
 
     this.shadowRoot.innerHTML = `

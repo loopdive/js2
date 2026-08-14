@@ -275,7 +275,7 @@ function assertLocalRefsInRange(func: WasmFunction, ft: FuncTypeDef | null, stag
         `stack-balance invariant (${stage}): '${func.name}' references local ${instr.index}, ` +
           `but only ${ft?.params.length ?? 0} params + ${func.locals.length} locals are declared ` +
           `(locals: ${func.locals.map((local, index) => `${(ft?.params.length ?? 0) + index}:${local.name}`).join(", ")}; ` +
-          `body: ${JSON.stringify(func.body)})`,
+          `body: ${JSON.stringify(func.body, (_key, value) => (typeof value === "bigint" ? `${value}n` : value))})`,
       );
     }
   });

@@ -627,6 +627,7 @@ function prepareClosureTransaction(input: {
   const refCells = new RefCellRegistry(input.ctx);
   let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
+  resolveValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells, registry);
   const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry, refCells);
   const freshSlots = allocatePreparedDerivedCallableSlots(
     input.ctx,

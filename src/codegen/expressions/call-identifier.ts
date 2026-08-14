@@ -10,6 +10,7 @@
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
+import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -2009,6 +2010,13 @@ export function compileIdentifierCall(
       const captureParamTypes = getFuncParamTypes(ctx, funcIdx);
       for (let capIdx = 0; capIdx < nestedCaptures.length; capIdx++) {
         const cap = nestedCaptures[capIdx]!;
+        // Direct calls prepend a nested declaration's captures without going
+        // through closure construction. If that capture is another hoisted
+        // Function value in a recursive dependency cycle, its preallocated
+        // live cell still contains null until the lazy materializer fills it.
+        // Publish the value before passing the cell to the callee, matching
+        // emitClosureConstruction's capture path.
+        materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
         // #1177: TDZ check for captured let/const/using variables — fires
         // BEFORE the cap-prepend so we throw ReferenceError before the callee
         // observes an uninitialized value. Apply to BOTH the mutable and

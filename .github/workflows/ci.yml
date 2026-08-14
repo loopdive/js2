@@ -540,7 +540,7 @@ jobs:
           # Sparse + blob-filtered clone (#3028): a plain --depth=1 clone pulls
           # every tip blob incl. the ~500 MB runs/ tree — minutes for one file.
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines \
-            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json /runs/editions-index.json /runs/standalone-index.json \
+            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json /runs/editions-index.json /runs/standalone-index.json /runs/standalone-editions-index.json \
             && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/runs/index.json ]; then
             mkdir -p benchmarks/results/runs
@@ -552,6 +552,14 @@ jobs:
           [ -f /tmp/js2wasm-baselines/runs/standalone-index.json ] && \
             mkdir -p benchmarks/results/runs && \
             cp /tmp/js2wasm-baselines/runs/standalone-index.json benchmarks/results/runs/standalone-index.json
+          # (#4362) Per-edition STANDALONE trend series — the host-free twin of
+          # editions-index.json. The landing-page conformance chart plots both
+          # lanes at once, so a missing file here silently drops the standalone
+          # curve from every per-edition view.
+          [ -f /tmp/js2wasm-baselines/runs/standalone-editions-index.json ] && \
+            mkdir -p benchmarks/results/runs && \
+            cp /tmp/js2wasm-baselines/runs/standalone-editions-index.json \
+               benchmarks/results/runs/standalone-editions-index.json
 
       - name: Regenerate planning artifacts
         if: steps.npm_compat.outputs.only != 'true' && github.event_name == 'push'

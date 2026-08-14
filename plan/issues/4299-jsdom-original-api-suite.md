@@ -4,7 +4,7 @@ title: "Compile jsdom and run its 318 original API tests against Wasm"
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-13
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -60,6 +60,13 @@ so replacing the API call with a harness-authored approximation would be
 misleading.
 
 ## Work
+
+Architecture constraint: compile jsdom's JavaScript and its reachable package
+dependencies to Wasm. Keep only concrete Node capability APIs as explicit host
+imports. Do not replace the `JSDOM` implementation with a whole-package host
+proxy or count calls into native host jsdom as compiled execution. This makes
+the resulting compiled DOM usable by the ReactDOM lane in
+[#3982](3982-react-dom-own-unit-tests-against-compiled-wasm.md).
 
 1. Profile `compileProject(package/lib/api.js)` by phase and graph unit to
    distinguish slow progress from a non-converging analysis.

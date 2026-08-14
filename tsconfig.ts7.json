@@ -1,0 +1,23 @@
+{
+  // (#1029) TypeScript 7 (tsgo) typecheck lane — `pnpm run typecheck:ts7`.
+  //
+  // Verified 2026-08-13 against typescript@7.0.2: checks the same src/ tree
+  // as `pnpm run typecheck` with ZERO diagnostics in ~21s vs ~122s for TS5
+  // (5.9× on a 4-core container). Two deliberate deltas from tsconfig.json:
+  //
+  // - `types: ["node"]` — tsgo does not auto-include every node_modules/@types
+  //   package the way TS5 does; without this, `process`/`require`/`__filename`
+  //   produce ~440 false TS2591/TS2304 errors.
+  // - `incremental: false` — tsgo has no .tsbuildinfo support; keep the flag
+  //   off rather than letting it be silently ignored.
+  //
+  // NOTE: `pnpm run typecheck` (the `quality` CI gate) stays pinned to the
+  // TS5 binary by explicit path — both `typescript` and the `typescript7`
+  // alias ship a `tsc` bin, and the node_modules/.bin/tsc link is whichever
+  // pnpm linked last. Never invoke bare `tsc` in scripts.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "incremental": false
+  }
+}

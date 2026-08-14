@@ -3,16 +3,75 @@ id: 1029
 title: "Migrate to TypeScript 7.x (Go rewrite / typescript-go) when compiler API stabilizes"
 status: backlog
 created: 2026-04-11
-updated: 2026-05-03
+updated: 2026-08-13
 priority: low
 feasibility: hard
 reasoning_effort: high
 goal: platform
 sprint: Backlog
-blocked_by: external
-related: [1288]
+related: [1288, 4218]
 ---
 # #1029 — Migrate to TypeScript 7.x (Go rewrite / `typescript-go`)
+
+## GA re-audit (2026-08-13) — the external blocker is GONE
+
+`typescript@7.0.2` is the `latest` dist-tag on npm; `@typescript/native-preview`
+is frozen (last publish 2026-07-07) and superseded. The repo now installs GA
+under the `typescript7` npm alias (`typescript7@npm:typescript@^7.0.2`) so it
+coexists with the `typescript@^5.7` runtime dependency; `src/ts-api.ts` loads
+the `typescript7/unstable/*` subpaths under `--ts7`. `blocked_by: external` is
+removed — everything below in this issue's earlier sections describes the
+preview era; these are the GA facts that matter:
+
+- **A synchronous Checker API now EXISTS** (`typescript/unstable/sync`):
+  `new API({cwd}); api.updateSnapshot({openProjects: [tsconfig]})` →
+  `snapshot.getDefaultProjectForFile(f)` → `project.{program,checker}`.
+  The Checker covers every method our #4218 audit measured as live:
+  `getTypeAtLocation`, `getSymbolAtLocation`, `getTypeOfSymbol(AtLocation)`,
+  `getResolvedSignature`, `getSignatureFromDeclaration`,
+  `getReturnTypeOfSignature`, `getContextualType`, `getNonNullableType`,
+  `getApparentType`, `getBaseConstraintOfType`, `getTypeArguments`,
+  `getTypeFromTypeNode`, `isArrayType`/`isTupleType`, `isTypeAssignableTo`
+  (only `getSymbolsInScope` — 1 call site — is absent). Many take batch
+  (array) overloads for round-trip amortization. Measured: ~70ms cold
+  API+project, ~0.12ms per sequential warm query over IPC. At the current
+  ~264k-call volume that is ~30s/compile — per-node IPC is NOT viable until
+  the #4218 kill order shrinks the query volume; at the post-kill ~1.6k
+  residual it is ~0.2s.
+- **`SyntaxKind` numeric values DIVERGED from TS5 at GA** (195/396 members
+  renumbered; `EndOfFileToken`→`EndOfFile`, `ShebangTrivia` dropped,
+  `Identifier` 80→79). The preview-era "identical enum values" finding in
+  the audit below is NO LONGER TRUE. Symbolic access through the active
+  backend's namespace (the `ts-api.ts` design) is fine; any numeric
+  cross-backend comparison or persisted kind number is a latent bug.
+- **AST shape otherwise holds up**: `node.forEachChild` instance method,
+  `.parent` chains, node identity across repeated access, `statements`
+  arrays, and the `ast/is` predicates all verified working against GA.
+- **The root export is a bare version string** (`./lib/version.cjs`) — the
+  Strada-style `import ts from "typescript"` namespace is gone for good.
+- **`typescript/lib` no longer ships `lib.*.d.ts` files** (libs are embedded
+  in the Go binary; platform binaries arrive via optionalDependencies).
+  `src/checker/index.ts` reads TS5's lib files at runtime — that stays on
+  typescript@5 until the #4218 extern-table work removes the need.
+- The API subpaths are named `unstable/*` — upstream reserves the right to
+  break them; pin exact versions when the compile pipeline starts using them.
+
+**Immediate win landed with this re-audit — the repo's own typecheck.**
+tsgo checks the same `src/` tree as `pnpm run typecheck` with ZERO
+diagnostics in ~21s vs ~122s for TS5 (5.9×, 4-core container). It only
+needed `types: ["node"]` (tsgo does not auto-include `@types/*`; without it,
+~440 false `process`/`require` errors). `pnpm run typecheck:ts7` +
+`tsconfig.ts7.json` are committed; the `quality` gate's `typecheck` script
+is now pinned to the TS5 binary BY PATH — both packages ship a `tsc` bin
+and `node_modules/.bin/tsc` is whichever pnpm linked last (it is tsgo
+today), so bare `tsc` in any script is a silent-engine-swap hazard.
+Flipping the CI gate to `typecheck:ts7` is a deliberate lead decision once
+it has soaked.
+
+Migration order stays as #4218 concludes: make the checker droppable first
+(inhouse oracle), then swap the parser to tsgo batch parse; the TS7 sync
+Checker is a candidate for TS-mode differential validation, not for per-node
+oracle traffic.
 
 ## Problem
 

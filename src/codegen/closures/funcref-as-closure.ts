@@ -512,14 +512,22 @@ export function materializeHoistedFunctionValueBinding(
   if (
     !fctx.hoistedFunctionValueBindings?.has(name) ||
     fctx.liftedCaptureNames?.has(name) ||
-    fctx.materializedHoistedFunctionValueBindings?.has(name)
+    fctx.materializedHoistedFunctionValueBindings?.has(name) ||
+    fctx.materializingHoistedFunctionValueBindings?.has(name)
   ) {
-    return fctx.materializedHoistedFunctionValueBindings?.has(name) ?? false;
+    return (
+      fctx.materializedHoistedFunctionValueBindings?.has(name) ||
+      fctx.materializingHoistedFunctionValueBindings?.has(name) ||
+      false
+    );
   }
 
   const localIdx = fctx.localMap.get(name);
   const funcIdx = ctx.funcMap.get(name);
   if (localIdx === undefined || funcIdx === undefined) return false;
+  const boxed = fctx.boxedCaptures?.get(name);
+
+  (fctx.materializingHoistedFunctionValueBindings ??= new Set()).add(name);
 
   // Capture-free declarations share the canonical lazy module singleton used
   // by ordinary identifier reads. Besides preserving JavaScript identity, the
@@ -542,11 +550,23 @@ export function materializeHoistedFunctionValueBinding(
     !nestedCaptures || nestedCaptures.length === 0
       ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, constructible)
       : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, constructible);
-  if (!valueType) return false;
+  if (!valueType) {
+    fctx.materializingHoistedFunctionValueBindings.delete(name);
+    return false;
+  }
   if (valueType.kind !== "externref" && valueType.kind !== "ref_extern") {
     fctx.body.push({ op: "extern.convert_any" });
   }
-  fctx.body.push({ op: "local.set", index: localIdx });
+  if (boxed?.valType.kind === "externref") {
+    const valueLocalIdx = allocLocal(fctx, `__fnvalue_${name}_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: valueLocalIdx });
+    fctx.body.push({ op: "local.get", index: localIdx });
+    fctx.body.push({ op: "local.get", index: valueLocalIdx });
+    fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  } else {
+    fctx.body.push({ op: "local.set", index: localIdx });
+  }
+  fctx.materializingHoistedFunctionValueBindings.delete(name);
   (fctx.materializedHoistedFunctionValueBindings ??= new Set()).add(name);
   return true;
 }

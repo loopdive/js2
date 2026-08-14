@@ -410,8 +410,8 @@ export async function runHarness({ quiet = false } = {}) {
 
   if (!baseline.validates) {
     // The whole corpus is behind this one fact. The tests still RUN natively so
-    // the report can say how many the compiler would have to get right, and they
-    // are scored as failures rather than quietly dropped.
+    // the report can say how many the compiler would have to get right. They are
+    // implementation-blocked, not compiled failures: no Wasm test body ran.
     implementationInvalid = { error: String(baseline.error), compileMs: baseline.compileMs };
     admitted = selectedTests;
     // Build one native oracle per upstream file.  A single ESM helper import
@@ -592,23 +592,27 @@ export async function runHarness({ quiet = false } = {}) {
     tests.push(entry);
   }
 
-  const scored = tests.filter((test) => test.status !== "harness-incompatible");
+  const scored = tests.filter((test) => ["pass", "fail", "trapped"].includes(test.status));
   const passed = tests.filter((test) => test.status === "pass").length;
   const failed = scored.length - passed;
+  const harnessIncompatible = tests.filter((test) => test.status === "harness-incompatible").length;
+  const implementationInvalidTests = tests.filter((test) => test.status === "skipped").length;
 
   report.results = {
     scored: scored.length,
     passed,
     failed,
-    harnessIncompatible: tests.length - scored.length,
+    harnessIncompatible,
+    implementationInvalidTests,
     nativeHostErrors,
     tests,
   };
   report.summary = {
     headline:
-      `${passed}/${scored.length} scored upstream react-dom tests pass against compiled Wasm ` +
-      `(${report.extraction.admitted} of ${report.extraction.upstreamTestsSeen} upstream tests run; ` +
-      `${tests.length - scored.length} need infrastructure the harness cannot supply)` +
+      `${passed}/${scored.length} executed upstream react-dom tests pass against compiled Wasm ` +
+      `(${report.extraction.admitted} of ${report.extraction.upstreamTestsSeen} upstream tests admitted; ` +
+      `${harnessIncompatible} need infrastructure the harness cannot supply; ` +
+      `${implementationInvalidTests} blocked before Wasm execution)` +
       (implementationInvalid ? " — react-dom's own implementation does not compile to a valid module" : ""),
     passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
     upstreamTestsSeen: report.extraction.upstreamTestsSeen,
@@ -617,6 +621,7 @@ export async function runHarness({ quiet = false } = {}) {
     passed,
     failed,
     harnessIncompatible: report.results.harnessIncompatible,
+    implementationInvalidTests,
     nativeHostErrors: nativeHostErrors.length,
     compileMs: totalCompileMs,
     binaryBytes: report.compile.binaryBytes,

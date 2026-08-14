@@ -1275,8 +1275,15 @@ function collectFunctionEvidence(
       detail: "prepared async vec type has no exact backend layout sidecar",
     });
   }
-  const recordPreparedClosureRefs = (refs: readonly IrTypeRef[] | undefined, detail: string): boolean => {
-    if (!refs || refs.length === 0) return false;
+  const recordPreparedClosureRefs = (
+    refs: readonly IrTypeRef[] | undefined,
+    detail: string,
+    allowEmpty = false,
+  ): boolean => {
+    // A present empty collection is meaningful evidence: callable carriers
+    // lower directly to externref and require no Wasm support type. Absence,
+    // by contrast, remains a closed-world preparation failure.
+    if (!refs || (!allowEmpty && refs.length === 0)) return false;
     for (const ref of refs) recordSupportTypeReference(evidence, ref, input.abi, ownership, detail);
     return true;
   };
@@ -1326,7 +1333,11 @@ function collectFunctionEvidence(
     const preparedRefs = input.closureSupport?.typeRefs.get(type);
     if (
       (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed" || type.kind === "object") &&
-      recordPreparedClosureRefs(preparedRefs, `prepared IR ${type.kind} type must use Program ABI support refs`)
+      recordPreparedClosureRefs(
+        preparedRefs,
+        `prepared IR ${type.kind} type must use Program ABI support refs`,
+        type.kind === "callable",
+      )
     ) {
       if (type.kind === "boxed") {
         collectType(type.inner);
