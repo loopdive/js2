@@ -21,8 +21,8 @@ if (args[0] === "explain") {
   explainMode = "text";
 }
 
-// `--ts7` swaps the parser/checker frontend to `@typescript/native-preview`
-// (TS7 Go-port preview, #1288). The decision is made by `src/ts-api.ts` at
+// `--ts7` swaps the parser/checker frontend to TypeScript 7 (the Go-port,
+// GA on npm; `typescript7` alias, #1288). The decision is made by `src/ts-api.ts` at
 // module-load time, so the env var MUST be set before any compiler imports
 // resolve. We use a dynamic import below for that reason.
 if (args.includes("--ts7")) {
@@ -133,9 +133,9 @@ Options:
                     'production' sets process.env.NODE_ENV="production" and
                     typeof process / typeof window to "undefined".
                     'development' sets process.env.NODE_ENV="development".
-  --ts7             Use @typescript/native-preview (TypeScript 7 Go-port) as
-                    the parser/checker frontend (preview; full migration
-                    tracked in #1029). Equivalent to JS2WASM_TS7=1.
+  --ts7             Use TypeScript 7 (the Go-port, GA) as the parser/checker
+                    frontend (experimental; full migration tracked in #1029).
+                    Equivalent to JS2WASM_TS7=1.
   -q, --quiet       Suppress the post-compile "how to run" hint
   -v, --version     Print version and exit
   -h, --help        Show this help

@@ -10,27 +10,41 @@
 // Default: `typescript@^5.7` (the canonical Microsoft TypeScript compiler).
 //
 // `JS2WASM_TS7=1` (set by the `--ts7` CLI flag): opt-in attempt to use
-// `@typescript/native-preview` (TypeScript 7 Go-port preview). The shim
-// detects the env var at module load time and exposes the active backend via
-// `tsRuntime` and `isTs7`. The static re-export below (`export * from
-// "typescript"`) always points at typescript@5 so type-level access (`ts.Node`,
-// `ts.SourceFile`, `ts.SyntaxKind`, …) keeps working in either mode — the
-// native-preview package does not expose a typescript@5-shaped namespace.
+// TypeScript 7 (the Go-port, GA on npm as `typescript@7` since 7.0 — installed
+// here under the `typescript7` npm alias so it can coexist with the
+// typescript@5 runtime dependency). The shim detects the env var at module
+// load time and exposes the active backend via `tsRuntime` and `isTs7`. The
+// static re-export below (`export { ts }`) always points at typescript@5 so
+// type-level access (`ts.Node`, `ts.SourceFile`, `ts.SyntaxKind`, …) keeps
+// working in either mode — typescript@7's root export is a bare version
+// string, not a typescript@5-shaped namespace.
 //
-// NOTE on TS7 compatibility (#1288, #1029):
-//   `@typescript/native-preview` is NOT a drop-in replacement for `typescript`
-//   at the JS API level. Its public surface is split into subpath exports
-//   (`./sync`, `./async`, `./ast`, `./ast/factory`, `./ast/is`, …) and the
-//   parsing/checking work happens in a Go subprocess accessed over LSP. There
-//   is no namespace export that mirrors `import ts from "typescript"`.
+// NOTE on TS7 compatibility (#1288, #1029 — re-audited against GA 7.0.2,
+// 2026-08-13):
+//   typescript@7 is NOT a drop-in replacement for typescript@5 at the JS API
+//   level. Its public surface is split into `unstable/` subpath exports
+//   (`typescript/unstable/sync`, `/async`, `/ast`, `/ast/factory`, `/ast/is`,
+//   `/ast/utils`, `/ast/scanner`, `/ast/visitor`, `/ast/clone`) and the
+//   parsing/checking work happens in a Go subprocess over IPC. GA news vs the
+//   old native-preview audit:
+//   - A synchronous Checker API now EXISTS (`typescript/unstable/sync`:
+//     API → updateSnapshot({openProjects}) → Project.{program,checker}) with
+//     batch overloads; measured ~0.12ms/call warm, ~70ms cold project load.
+//   - `SyntaxKind` numeric values DIVERGED from typescript@5 at GA (195/396
+//     members renumbered; e.g. `EndOfFileToken` is now `EndOfFile`,
+//     `Identifier` 80→79). The preview-era "identical enums" finding no
+//     longer holds: NEVER compare a node's `.kind` against the OTHER
+//     backend's enum object — always resolve kinds symbolically through the
+//     namespace that produced the node.
 //
 //   Under `JS2WASM_TS7=1` we synthesize a partial typescript@5-shaped object
-//   from the native-preview subpaths (SyntaxKind, isXxx predicates, factory
-//   helpers, scanner) and expose it via the `tsRuntime` named export. Call
-//   sites that need a real Program/TypeChecker still go through the static
-//   `typescript` namespace re-exported below — i.e. running `--ts7` today
-//   exercises the shim plumbing but does not yet replace the parser/checker.
-//   Full migration is tracked in #1029.
+//   from the TS7 subpaths (SyntaxKind, isXxx predicates, factory helpers)
+//   and expose it via the `tsRuntime` named export. Call sites that need a
+//   real Program/TypeChecker still go through the static `typescript`
+//   namespace re-exported below — i.e. running `--ts7` today exercises the
+//   shim plumbing but does not yet replace the parser/checker. Full
+//   migration is tracked in #1029; the checker-independence work it needs
+//   is #4218.
 
 import { createRequire } from "node:module";
 
@@ -80,8 +94,9 @@ function loadTs5Module(): typeof import("typescript") {
 }
 
 function loadTs7Module(): typeof import("typescript") {
-  // `@typescript/native-preview` is a devDependency. If the user opted in via
-  // --ts7 but the package isn't installed, surface a clear error.
+  // TypeScript 7 GA is a devDependency under the `typescript7` npm alias
+  // (`typescript7@npm:typescript@^7`). If the user opted in via --ts7 but the
+  // package isn't installed, surface a clear error.
   const require = getNodeRequire();
   if (!require) {
     throw new Error("--ts7: Node.js module loading is not available in this runtime.");
@@ -90,18 +105,18 @@ function loadTs7Module(): typeof import("typescript") {
   let factoryMod: Record<string, unknown>;
   let isMod: Record<string, unknown>;
   try {
-    astMod = require("@typescript/native-preview/ast") as Record<string, unknown>;
-    factoryMod = require("@typescript/native-preview/ast/factory") as Record<string, unknown>;
-    isMod = require("@typescript/native-preview/ast/is") as Record<string, unknown>;
+    astMod = require("typescript7/unstable/ast") as Record<string, unknown>;
+    factoryMod = require("typescript7/unstable/ast/factory") as Record<string, unknown>;
+    isMod = require("typescript7/unstable/ast/is") as Record<string, unknown>;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `--ts7: failed to load @typescript/native-preview. Install it as a devDependency: ` +
-        `\`npm install --save-dev @typescript/native-preview\`. Original error: ${msg}`,
+      `--ts7: failed to load TypeScript 7. Install it as a devDependency under the alias: ` +
+        `\`pnpm add -D typescript7@npm:typescript@^7\`. Original error: ${msg}`,
     );
   }
 
-  // Synthesize a typescript@5-shaped object from the native-preview subpaths
+  // Synthesize a typescript@5-shaped object from the TS7 subpaths
   // we can reach synchronously: SyntaxKind/NodeFlags enums, the `is*`
   // predicates, factory helpers. The synthesized object is INTENTIONALLY
   // incomplete — entry points that need a running Go subprocess (createProgram,
@@ -113,20 +128,20 @@ function loadTs7Module(): typeof import("typescript") {
     __js2wasmTs7: true,
     createProgram() {
       throw new Error(
-        "TS7 backend (#1288): ts.createProgram is not available through the " +
-          "@typescript/native-preview JS API. Full migration tracked in #1029.",
+        "TS7 backend (#1288): ts.createProgram has no in-process TS7 equivalent — " +
+          "use the subprocess API (typescript7/unstable/sync). Full migration tracked in #1029.",
       );
     },
     createSourceFile() {
       throw new Error(
-        "TS7 backend (#1288): ts.createSourceFile is not available through the " +
-          "@typescript/native-preview JS API. Full migration tracked in #1029.",
+        "TS7 backend (#1288): ts.createSourceFile has no in-process TS7 equivalent — " +
+          "use the subprocess API (typescript7/unstable/sync). Full migration tracked in #1029.",
       );
     },
     createCompilerHost() {
       throw new Error(
-        "TS7 backend (#1288): ts.createCompilerHost is not available through the " +
-          "@typescript/native-preview JS API. Full migration tracked in #1029.",
+        "TS7 backend (#1288): ts.createCompilerHost has no in-process TS7 equivalent — " +
+          "use the subprocess API (typescript7/unstable/sync). Full migration tracked in #1029.",
       );
     },
   };
@@ -136,7 +151,7 @@ function loadTs7Module(): typeof import("typescript") {
 
 /**
  * Active runtime TypeScript backend. Same shape as `import * as ts from
- * "typescript"` but possibly swapped to `@typescript/native-preview` under
+ * "typescript"` but possibly swapped to TypeScript 7 (`typescript7` alias) under
  * `--ts7`. Use this when you need behaviour that should follow the flag (e.g.
  * `tsRuntime.createProgram(...)` at the compile entry point).
  *
@@ -151,7 +166,7 @@ export const tsRuntime: typeof import("typescript") = isTs7 ? loadTs7Module() : 
  * Backend-agnostic `forEachChild` helper (#1290).
  *
  * `typescript@5` exposes `forEachChild` as a static function: `ts.forEachChild(node, cb)`.
- * `@typescript/native-preview` exposes it as an instance method on every AST node:
+ * TypeScript 7 exposes it as an instance method on every AST node:
  * `node.forEachChild(cb)`. The two forms accept the same signature.
  *
  * This helper dispatches automatically: if `node` carries an instance method
