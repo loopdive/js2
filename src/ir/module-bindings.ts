@@ -5,6 +5,7 @@
 // fallback gate can import it without pulling in codegen/index.ts.
 
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
+import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import {
@@ -782,14 +783,48 @@ export function withSelectedTopLevelAccessorUnitIds<T>(
 const MODULE_EXTERN_BUILTINS = new Set(["Map"]);
 const NON_F64_NATIVE_NUMBER_ALIASES = new Set(["i8", "i16", "i32", "u8", "u16", "u32", "f32"]);
 
+// ── (#4218 Phase 1) Binding queries through the oracle ────────────────
+//
+// The binding-resolution helpers below used to call
+// `checker.getSymbolAtLocation` directly — the single largest remaining
+// TS5-checker consumer after the lib-walk removal (~20k calls/corpus run).
+// They now go through the `TypeOracle` surface (`valueDeclarationOf` /
+// `declarationsOf`, added by #4218 P1): under the `checker` backend the
+// memoized `TsCheckerOracle` answers (same checker, per-node cache); under
+// the `inhouse` backend the binder answers with no checker at all.
+// Mirrors the `UpdateRetypeQuerySource` pattern in update-retyped-bindings.ts.
+type BindingQuerySource = ts.TypeChecker | Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf">;
+
+const checkerBindingOracles = new WeakMap<ts.TypeChecker, TsCheckerOracle>();
+
+function bindingOracle(source: BindingQuerySource): Pick<TypeOracle, "valueDeclarationOf" | "declarationsOf"> {
+  if ("valueDeclarationOf" in source && "declarationsOf" in source) return source;
+  let oracle = checkerBindingOracles.get(source);
+  if (!oracle) {
+    oracle = new TsCheckerOracle(source);
+    checkerBindingOracles.set(source, oracle);
+  }
+  return oracle;
+}
+
+/** Ordered declaration candidates: value declaration first, then the full
+ * merged list — the exact priority the raw
+ * `[symbol.valueDeclaration, ...symbol.declarations]` idiom encoded. */
+function bindingDeclarationCandidates(
+  node: ts.Identifier,
+  source: BindingQuerySource,
+): readonly (ts.Declaration | undefined)[] {
+  const oracle = bindingOracle(source);
+  return [oracle.valueDeclarationOf(node), ...oracle.declarationsOf(node)];
+}
+
 function uniqueTopLevelVariableDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
 ): ts.VariableDeclaration | undefined {
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol) return undefined;
   const sourceFile = node.getSourceFile();
-  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const candidates = bindingDeclarationCandidates(node, checker);
+  if (candidates.length === 0) return undefined;
   const directDeclarations = new Set<ts.VariableDeclaration>();
   for (const candidate of candidates) {
     if (!candidate || !ts.isVariableDeclaration(candidate)) continue;
@@ -809,9 +844,8 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
   const declaration = uniqueTopLevelVariableDeclaration(node, checker);
   if (!declaration) return undefined;
   const sourceFile = node.getSourceFile();
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol) return undefined;
-  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const candidates = bindingDeclarationCandidates(node, checker);
+  if (candidates.length === 0) return undefined;
   const list = declaration.parent as ts.VariableDeclarationList;
   if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return declaration;
 
@@ -838,10 +872,8 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
 }
 
 function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol) return undefined;
   const sourceFile = node.getSourceFile();
-  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const candidates = bindingDeclarationCandidates(node, checker);
   return candidates.find(
     (candidate): candidate is ts.VariableDeclaration =>
       candidate !== undefined && ts.isVariableDeclaration(candidate) && candidate.getSourceFile() === sourceFile,
@@ -849,10 +881,8 @@ function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker):
 }
 
 function localValueDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.Declaration | undefined {
-  const symbol = checker.getSymbolAtLocation(node);
-  if (!symbol) return undefined;
   const sourceFile = node.getSourceFile();
-  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const candidates = bindingDeclarationCandidates(node, checker);
   return candidates.find(
     (
       candidate,

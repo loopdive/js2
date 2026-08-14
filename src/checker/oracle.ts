@@ -204,6 +204,13 @@ export const BUILTIN_NAMES = new Set([
 export class TsCheckerOracle implements TypeOracle {
   private readonly factCache = new WeakMap<ts.Node, TypeFact>();
   private readonly keyCache = new WeakMap<object, OracleTypeKey>();
+  // (#4218 P1) Declaration-resolution queries are the hottest surface after
+  // the lib-walk removal (binding helpers call them per identifier READ, so
+  // the same node recurs many times per compile). Memoize per node like
+  // typeFactOf; `null` records a resolved-to-nothing answer so misses are
+  // cached too.
+  private readonly valueDeclCache = new WeakMap<ts.Node, ts.Declaration | null>();
+  private readonly declarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
   private keyCounter = 0;
 
   constructor(private readonly checker: ts.TypeChecker) {}
@@ -404,6 +411,14 @@ export class TsCheckerOracle implements TypeOracle {
   }
 
   valueDeclarationOf(id: ts.Node): ts.Declaration | undefined {
+    const cached = this.valueDeclCache.get(id);
+    if (cached !== undefined) return cached ?? undefined;
+    const resolved = this.valueDeclarationOfUncached(id);
+    this.valueDeclCache.set(id, resolved ?? null);
+    return resolved;
+  }
+
+  private valueDeclarationOfUncached(id: ts.Node): ts.Declaration | undefined {
     try {
       if (!ts.isIdentifier(id)) return undefined;
       // A shorthand assignment (`{ value }`) has a synthetic property symbol
@@ -424,11 +439,16 @@ export class TsCheckerOracle implements TypeOracle {
   }
 
   declarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    const cached = this.declarationsCache.get(node);
+    if (cached) return cached;
+    let decls: readonly ts.Declaration[];
     try {
-      return [...(this.checker.getSymbolAtLocation(node)?.declarations ?? [])];
+      decls = [...(this.checker.getSymbolAtLocation(node)?.declarations ?? [])];
     } catch {
-      return [];
+      decls = [];
     }
+    this.declarationsCache.set(node, decls);
+    return decls;
   }
 
   /** Internal: classify a checker type into a registry-free fact. */

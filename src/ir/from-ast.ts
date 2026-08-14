@@ -38,7 +38,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
-import { TsCheckerOracle } from "../checker/oracle.js";
+import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
   IR_DYN_ADD_FN,
   IR_DYN_GE_FN,
@@ -763,6 +763,13 @@ export interface AstToIrOptions {
   /** Optional-chain nullability check (#1281). When absent, `?.` / `?.()` throw to legacy. */
   readonly checker?: ts.TypeChecker;
   /**
+   * (#4218) The compile's `ctx.oracle` — the backend-selected type oracle.
+   * When present it is used for the numeric-fact queries below INSTEAD of
+   * wrapping `checker` in an ad-hoc `TsCheckerOracle`, so the
+   * `oracleBackend` option/env actually governs these paths.
+   */
+  readonly oracle?: TypeOracle;
+  /**
    * (#3765) Direct-codegen's whole-program proof that an implicit-any local
    * always contains a number. IR consumes the same proof before rejecting an
    * unboxed f64 local: the checker type remains `any` for ordinary JavaScript
@@ -1123,7 +1130,7 @@ export function lowerFunctionAstToIr(
     fn,
     mutatedLets,
     isGenerator,
-    options.checker ? new TsCheckerOracle(options.checker) : undefined,
+    options.oracle ?? (options.checker ? new TsCheckerOracle(options.checker) : undefined),
   );
   const cx: LowerCtx = {
     builder,
@@ -1157,6 +1164,7 @@ export function lowerFunctionAstToIr(
     funcKind: isGenerator ? "generator" : isAsync ? "async" : "regular",
     generatorBufferSlot,
     checker: options.checker,
+    oracle: options.oracle,
     // #4177 — outer function only; lifted-closure contexts deliberately omit
     // it (see the LowerCtx field doc).
     latticeParamFacts: collectLatticeParamFacts(fn, params),
@@ -2144,6 +2152,8 @@ interface LowerCtx {
   readonly generatorBufferSlot?: number;
   /** Optional-chain nullability check (#1281). When absent, `?.` / `?.()` throw to legacy. */
   readonly checker?: ts.TypeChecker;
+  /** (#4218) Backend-selected oracle threaded from AstToIrOptions (see there). */
+  readonly oracle?: TypeOracle;
   /**
    * #4177 — the enclosing function's OWN never-written parameter facts from
    * the SAME signature resolution selection claimed the function with,
@@ -10384,13 +10394,17 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // non-finite, out-of-i64, or zero-divisor constants) skips speculation.
     case ts.SyntaxKind.PercentToken: {
       requireF64(isF64, "%", cx.funcName);
-      const rangeContext = cx.checker ? { oracle: new TsCheckerOracle(cx.checker) } : undefined;
+      const rangeContext = cx.oracle
+        ? { oracle: cx.oracle }
+        : cx.checker
+          ? { oracle: new TsCheckerOracle(cx.checker) }
+          : undefined;
       return emitNumberRemainder(
         cx.builder,
         lhs,
         rhs,
         remainderFastPathPlan(rangeContext, expr.left, expr.right),
-        fmodRefFor(expr.right, cx.checker),
+        fmodRefFor(expr.right, cx.checker, cx.oracle),
       );
     }
     // #1126 Stage 3 — magnitude compares accept f64 OR i32 operands.
@@ -11644,12 +11658,16 @@ function liftNestedFunction(
     // same reasoning as mutatedLets above.
     i32PureNames: computeI32PureNames(fn),
     ownedStringAppendSymbols: fn.body ? collectOwnedStringAppendSymbols(fn.body, cx.checker) : new Set<ts.Symbol>(),
-    emptyArrayInference: inferEmptyArrayElementTypes(fn, cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
+    emptyArrayInference: inferEmptyArrayElementTypes(
+      fn,
+      cx.oracle ?? (cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
+    ),
     // Slice 7a (#1169f) — nested function decls are NEVER generators
     // in slice 7a (the selector rejects `function*` nesting via
     // `isPhase1NestedFunc`).
     funcKind: "regular",
     checker: cx.checker,
+    oracle: cx.oracle,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };
@@ -11778,11 +11796,15 @@ function liftClosureBody(
     ownedStringAppendSymbols: ts.isBlock(body)
       ? collectOwnedStringAppendSymbols(body, cx.checker)
       : new Set<ts.Symbol>(),
-    emptyArrayInference: inferEmptyArrayElementTypes(expr, cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
+    emptyArrayInference: inferEmptyArrayElementTypes(
+      expr,
+      cx.oracle ?? (cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
+    ),
     // Slice 7a (#1169f) — closures are never generator/async in 7a
     // (the selector rejects them in `isPhase1ClosureLiteral`).
     funcKind: "regular",
     checker: cx.checker,
+    oracle: cx.oracle,
     numericLocalScalarForDecl: cx.numericLocalScalarForDecl,
     allocRegistry: cx.allocRegistry,
   };
