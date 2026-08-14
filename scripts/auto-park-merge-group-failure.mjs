@@ -225,15 +225,21 @@ export function classifyRun(jobs) {
       job: j.name,
       url: j.html_url || null,
       failedSteps,
-      // The runner-kill signature: job failed, no step FAILED, >= 1 step
-      // CANCELLED mid-flight (the one the runner died in), and the job died
-      // well before the job timeout would have fired. Missing timestamps mean
-      // no positive duration evidence -> NOT a runner kill (conservative).
+      // The runner-kill signature, TWO variants (both require dying well
+      // before the job timeout; missing timestamps -> NOT a kill,
+      // conservative):
+      //  A. no step FAILED, >= 1 step CANCELLED mid-flight (the usual shape).
+      //  B. (#4455 park 5, 2026-08-14) the dying step is recorded as a
+      //     FAILURE (exit 143 surfaces as a step failure on some kills) — for
+      //     this variant we require POSITIVE annotation evidence: the caller
+      //     sets `shutdownAnnotated` when the job's check-run annotations
+      //     carry "The runner has received a shutdown signal". Without the
+      //     annotation, a failed step is judged as a real failure.
       runnerKilled:
-        failedSteps.length === 0 &&
-        steps.some((s) => s && s.conclusion === "cancelled") &&
         durationMs !== null &&
-        durationMs < RUNNER_KILL_MAX_MS,
+        durationMs < RUNNER_KILL_MAX_MS &&
+        ((failedSteps.length === 0 && steps.some((s) => s && s.conclusion === "cancelled")) ||
+          j.shutdownAnnotated === true),
     };
   });
   const realFailure = failed.length > 0;
@@ -281,7 +287,7 @@ function fetchJobs(runId) {
     "--paginate",
     `repos/${REPO}/actions/runs/${runId}/jobs?per_page=100`,
     "--jq",
-    ".jobs[] | {name, conclusion, html_url, started_at, completed_at, steps: [(.steps // [])[] | {name, conclusion}]}",
+    ".jobs[] | {id, name, conclusion, html_url, started_at, completed_at, steps: [(.steps // [])[] | {name, conclusion}]}",
   ]);
   // --jq with --paginate streams one JSON object per line.
   return out
@@ -289,6 +295,25 @@ function fetchJobs(runId) {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+}
+
+// (#4455 park 5) Variant-B runner-kill evidence: exit 143 can surface as a
+// FAILED step, indistinguishable from a real crash by steps alone. The
+// check-run annotations carry the positive marker. Enrich only failed jobs
+// that have a failed step and are not already variant-A kills — one extra
+// API call per such job, only on failure runs. Any fetch error leaves
+// `shutdownAnnotated` unset (conservative -> judged as a real failure).
+const SHUTDOWN_ANNOTATION = /runner has received a shutdown signal/i;
+function annotateShutdownKills(jobs) {
+  for (const j of jobs || []) {
+    if (!j || j.conclusion !== "failure" || !j.id) continue;
+    const steps = Array.isArray(j.steps) ? j.steps : [];
+    const hasFailedStep = steps.some((s) => s && s.conclusion === "failure");
+    if (!hasFailedStep) continue; // variant A handles the cancelled-step shape
+    const r = ghMaybe(["api", `repos/${REPO}/check-runs/${j.id}/annotations`, "--jq", ".[].message"]);
+    if (r.ok && SHUTDOWN_ANNOTATION.test(r.stdout)) j.shutdownAnnotated = true;
+  }
+  return jobs;
 }
 
 // #3914 — resolve every PR in the failed merge group. Returns a list that
@@ -561,6 +586,79 @@ function selfCheck() {
     },
     "cancelled step without timestamps -> no duration evidence -> park",
   );
+  // (#4455 park 5) Variant B: a runner kill whose dying step recorded as a
+  // FAILURE (exit 143). With the shutdown annotation + short duration -> infra.
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 3/36",
+          conclusion: "failure",
+          started_at: "2026-08-14T03:24:00Z",
+          completed_at: "2026-08-14T03:30:24Z",
+          shutdownAnnotated: true,
+          steps: [
+            { name: "Checkout", conclusion: "success" },
+            { name: "Run shard", conclusion: "failure" },
+          ],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 3/36"],
+      infraOnly: true,
+      unclassifiable: false,
+      shouldPark: false,
+    },
+    "variant-B kill: failed step + shutdown annotation + short duration -> infra, no park",
+  );
+  // Same failed step WITHOUT the annotation -> judged real -> park.
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 3/36",
+          conclusion: "failure",
+          started_at: "2026-08-14T03:24:00Z",
+          completed_at: "2026-08-14T03:30:24Z",
+          steps: [{ name: "Run shard", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 3/36"],
+      infraOnly: false,
+      unclassifiable: false,
+      shouldPark: true,
+    },
+    "failed step without annotation -> real failure -> park",
+  );
+  // Annotation cannot excuse a ~timeout-length death.
+  eq(
+    pick(
+      classifyRun([
+        {
+          name: "test262 standalone shard 3/36",
+          conclusion: "failure",
+          started_at: "2026-08-14T03:00:00Z",
+          completed_at: "2026-08-14T03:40:05Z",
+          shutdownAnnotated: true,
+          steps: [{ name: "Run shard", conclusion: "failure" }],
+        },
+      ]),
+    ),
+    {
+      realFailure: true,
+      failedJobs: ["test262 standalone shard 3/36"],
+      infraOnly: false,
+      unclassifiable: false,
+      shouldPark: true,
+    },
+    "variant-B annotation at ~timeout duration -> still park",
+  );
+
   // The derivative aggregate step does NOT get a pass when no runner kill
   // exists in the run — judged like any step, non-infra -> park.
   eq(
@@ -722,7 +820,7 @@ if (isMain()) {
     process.exit(0);
   }
 
-  const jobs = fetchJobs(runId);
+  const jobs = annotateShutdownKills(fetchJobs(runId));
   const { realFailure, failedJobs, failedDetails, infraOnly, unclassifiable } = classifyRun(jobs);
   if (!realFailure) {
     console.log(
