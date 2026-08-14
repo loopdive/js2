@@ -1,11 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, extname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
-
-import { compileProject } from "../../src/index.ts";
-import { wrapExports } from "../../src/runtime.ts";
 
 // The assertions are intentionally small, deterministic JavaScript. They are
 // runner infrastructure; the registered callback bodies remain the exact
@@ -218,18 +216,88 @@ async function runNative(generatedPath, source) {
   };
 }
 
-async function withTimeout(promise, timeoutMs) {
-  let timer;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`compile timeout after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * Compile and execute one upstream module in a child process.
+ *
+ * `compileProject` is intentionally synchronous from the event loop's point
+ * of view.  A Promise.race timeout therefore cannot interrupt a pathological
+ * module: the timer never gets a chance to fire while code generation is
+ * running.  Keeping the compiler and Wasm instance in a short-lived child
+ * gives the suite a real hard deadline and prevents one package from wedging
+ * the npm-compat workflow.
+ */
+function runIsolatedCompile(generatedPath, timeoutMs) {
+  return new Promise((resolve) => {
+    const workerPath = new URL("./upstream-suite-compile-worker.mjs", import.meta.url);
+    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(workerPath), generatedPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const started = performance.now();
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      finish({
+        compile: {
+          success: false,
+          validates: false,
+          durationMs: Math.round(performance.now() - started),
+          binaryBytes: 0,
+          errors: [{ message: errorText(error) }],
+        },
+        wasm: null,
+      });
+    });
+    child.on("exit", (code, signal) => {
+      if (settled) return;
+      try {
+        const result = JSON.parse(stdout.trim());
+        finish(result);
+      } catch {
+        const detail = stderr.trim() || stdout.trim() || `worker exited with ${signal ?? `code ${code}`}`;
+        finish({
+          compile: {
+            success: false,
+            validates: false,
+            durationMs: Math.round(performance.now() - started),
+            binaryBytes: 0,
+            errors: [{ message: detail }],
+          },
+          wasm: null,
+        });
+      }
+    });
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish({
+        compile: {
+          success: false,
+          validates: false,
+          durationMs: timeoutMs,
+          binaryBytes: 0,
+          timedOut: true,
+          errors: [{ message: `compile timeout after ${timeoutMs}ms${stderr ? `; worker: ${stderr.trim()}` : ""}` }],
+        },
+        wasm: null,
+      });
+    }, timeoutMs);
+    timer.unref?.();
+  });
 }
 
 export async function compileAndRunUpstreamModule({
@@ -248,73 +316,8 @@ export async function compileAndRunUpstreamModule({
     return { native: { fatal: errorText(error), count: 0, names: [], statuses: [] }, compile: null, wasm: null };
   }
 
-  const started = performance.now();
-  let result;
-  try {
-    result = await withTimeout(
-      compileProject(generatedPath, {
-        allowJs: true,
-        skipSemanticDiagnostics: true,
-        target: "gc",
-        platform: "node",
-        // Original suites frequently initialize object graphs at module load.
-        // In the JS-host lane, WasmGC field/callable reflection only becomes
-        // available after the instance is handed to the runtime. Run the same
-        // initializer after that handoff instead of inside WebAssembly.start.
-        deferTopLevelInit: true,
-      }),
-      timeoutMs,
-    );
-  } catch (error) {
-    result = { success: false, errors: [{ message: errorText(error) }] };
-  }
-  const durationMs = Math.round(performance.now() - started);
-  if (!result.success || !result.binary?.length) {
-    return {
-      native,
-      compile: { success: false, validates: false, durationMs, binaryBytes: 0, errors: result.errors ?? [] },
-      wasm: null,
-    };
-  }
-
-  try {
-    await WebAssembly.compile(result.binary);
-  } catch (error) {
-    return {
-      native,
-      compile: {
-        success: true,
-        validates: false,
-        durationMs,
-        binaryBytes: result.binary.length,
-        errors: [],
-        validationError: errorText(error),
-      },
-      wasm: null,
-    };
-  }
-
-  try {
-    const imports = result.importObject ?? {};
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setInstance?.(instance);
-    imports.__setInstance?.(instance);
-    instance.exports.__module_init?.();
-    const exports = wrapExports(instance, { signatures: result.exportSignatures });
-    const statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
-    const errors = Array.from(exports.upstreamTestErrors(), String);
-    return {
-      native,
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
-      wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
-    };
-  } catch (error) {
-    return {
-      native,
-      compile: { success: true, validates: true, durationMs, binaryBytes: result.binary.length, errors: [] },
-      wasm: { fatal: errorText(error), count: 0, statuses: [] },
-    };
-  }
+  const isolated = await runIsolatedCompile(generatedPath, timeoutMs);
+  return { native, ...isolated };
 }
 
 export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, runs }) {

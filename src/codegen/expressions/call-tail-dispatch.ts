@@ -67,6 +67,7 @@ import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
@@ -1182,10 +1183,10 @@ export function compileTailDispatch(
 
       // Try static method: ClassName.staticMethod via element access
       if (ts.isIdentifier(elemAccess.expression) && ctx.classSet.has(elemAccess.expression.text)) {
-        const clsName = elemAccess.expression.text;
+        const clsName = ctx.classExprNameMap.get(elemAccess.expression.text) ?? elemAccess.expression.text;
         const fullName = `${clsName}_${methodName}`;
         if (ctx.staticMethodSet.has(fullName)) {
-          const funcIdx = ctx.funcMap.get(fullName);
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
           if (funcIdx !== undefined) {
             const paramTypes = getFuncParamTypes(ctx, funcIdx);
             const eaStaticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
