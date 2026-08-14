@@ -5459,6 +5459,45 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-08-14T09:54:05.350Z",
+      "sourceRevision": "989a9fc414fc159a7e47fcbea9bc3742f14dacd1",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.002790133083863545
+          },
+          "standalone": {
+            "static": 90076.43397270258,
+            "dynamic": 0.10535795223339406
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0020686972422523505
+          },
+          "standalone": {
+            "static": 668.7413397195809,
+            "dynamic": 0.26199196962233334
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.09910266903226152
+          },
+          "standalone": {
+            "static": 21.195097689149595,
+            "dynamic": 0.1764462123015246
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009702933438956843
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
