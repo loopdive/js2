@@ -48,6 +48,14 @@ loc-budget-allow:
   # +4 lines: the identifier-call arm consults the exact-signature match
   # before the kind-only fallback.
   - src/codegen/expressions/call-identifier.ts
+coercion-sites-allow:
+  # +3 sites (__extern_toString, __unbox_number, __is_truthy), all inside the
+  # new [[Call]] arm for the builtin `String` carrier. Calling `String(x)` IS
+  # ToString (§22.1.1.1), so the coercion vocabulary is the arm's substance,
+  # not a fresh hand-rolled matrix beside the engine. Routing this arm through
+  # the #1917/#2108 coercion engine is the recorded follow-up for when the
+  # Number/Boolean carriers join the same mechanism.
+  - src/codegen/builtin-ctor-callable.ts
 func-budget-allow:
   # +10 lines: one more condition in the widening scan (unannotated
   # numeric-first literals), inside the scan whose order is load-bearing.
