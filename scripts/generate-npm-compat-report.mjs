@@ -56,6 +56,7 @@ import { runHarness as runHonoUpstreamSuite } from "../tests/dogfood/hono-upstre
 import { runHarness as runLodashUpstreamSuite } from "../tests/dogfood/lodash-upstream-suite.mjs";
 import { runHarness as runUuidUpstreamSuite } from "../tests/dogfood/uuid-upstream-suite.mjs";
 import { runHarness as runMomentUpstreamSuite } from "../tests/dogfood/moment-upstream-suite.mjs";
+import { runHarness as runAxiosUpstreamSuite } from "../tests/dogfood/axios-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1861,9 +1862,11 @@ for (const entry of NPM_COMPAT_CATALOG) {
             ? runUuidUpstreamSuite
             : entry.name === "redux"
               ? runReduxUpstreamSuite
-              : entry.name === "moment"
-                ? runMomentUpstreamSuite
-                : null;
+              : entry.name === "axios"
+                ? runAxiosUpstreamSuite
+                : entry.name === "moment"
+                  ? runMomentUpstreamSuite
+                  : null;
   const catalogUpstreamReport = catalogUpstreamRunner ? await catalogUpstreamRunner({ quiet: true }) : null;
   const upstreamSuite = entry.upstreamSuite;
   const upstreamTests = upstreamSuite

@@ -67,6 +67,9 @@ function __upstreamExpect(actual) {
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
     toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() { __upstreamFail("snapshot assertion requires a package-specific snapshot adapter"); },
     toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
     toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
@@ -74,6 +77,7 @@ function __upstreamExpect(actual) {
   positive.not = {
     toBe(expected) { const n = ++__upstreamAssertion; if (Object.is(actual, expected)) __upstreamFail("assertion " + n + " unexpected equal value"); },
     toEqual(expected) { const n = ++__upstreamAssertion; if (__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + " unexpected deep equality"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
     toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
     toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
@@ -89,6 +93,7 @@ const vi = {
     }
     spy.mock = { calls: [] };
     spy.mockClear = function() { spy.mock.calls.length = 0; return spy; };
+    spy.mockReturnValue = function(value) { implementation = function() { return value; }; return spy; };
     return spy;
   },
 };

@@ -237,4 +237,24 @@ and diverge, while 63 encounter a module-level runtime trap in the larger
 
 Vitest's spy/assertion surface and the one RxJS protocol test use narrow test
 infrastructure shims; the original callback bodies and inputs are unchanged.
-The next unadapted package remains Axios.
+
+## 2026-08-14 Axios synchronous unit slice and publication contract
+
+Axios 1.16.1 now verifies the complete 49-file `tests/unit/**/*.test.js`
+inventory and its 645 static registration sites at
+`axios/axios@v1.16.1` (commit
+`1337d6b537afb2d3f501074c8ac4ef4308221197`). The first runtime adapter selects
+25 self-contained synchronous files: **170/170** callbacks pass in Node, all 25
+generated modules compile and validate, and **16/170** pass in Wasm. Two
+callbacks reach differing assertions; the other 152 scored failures are
+module-level runtime traps. The remaining 24 files are counted as deferred and
+require async execution plus HTTP server/socket/stream/filesystem test
+infrastructure.
+
+This result is not a local-only report. The main npm-compat generator invokes
+the Axios adapter and writes its upstream counts into the Axios card. The
+merge-only `npm-compat-refresh.yml` workflow now derives the set of configured
+suite adapters from `npm-compat-upstream-sources.json` and refuses to publish
+if any adapter lacks numeric pass/total results. This also protects the Redux,
+clsx, cookie, and pre-existing upstream lanes from silently reverting to
+`adapter pending` on `npm-compat.html`.
