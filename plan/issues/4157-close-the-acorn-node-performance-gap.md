@@ -4902,8 +4902,35 @@ size delta. Then a `hotmax` sweep if (c) is a win.
      one leg's harness died silently after compile (banner-only stdout, clean
      stderr, no JSON). Re-run is load-gated (< 1.5) with 6 alternating legs
      and per-leg exit/size checks + empty-output retry.
-- **Not measured yet**: (d) size delta at -O4, the `hotmax` sweep, and entry
-  47's open (1) — Binaryen × `JS2WASM_CALL_DISPATCH_IC=1`.
+- **(d) MEASURED — the static picture, from the noisy round's artifacts**
+  (both legs `wasmOptimized=true, wasmOptimizeLevel=4`, verified in
+  `perfRows[0]`, base bytes deterministic across legs):
+
+  | | base (`on`) | hot (`on,hot`) | delta |
+  | --- | ---: | ---: | --- |
+  | -O4 binary | 2,013,600 B | 2,319,564 B | **+15.2 %** |
+  | pre-opt instrs | 902,125 | 1,092,517 | +21.1 % |
+  | p50 / p99 func | 64 / 2,864 | 73 / 3,268 | +14 % both |
+  | largest func | 43,040 | **75,702** | **+76 %** |
+
+  The 75.7k max is one mega-caller absorbing dozens of copies — evidence the
+  rule needs a **per-caller absorption cap**, not only a callee ceiling.
+
+- **Early wall read (noisy box, min-estimator)**: the contention noise is
+  ADDITIVE (per-leg samples are bimodal: a ~46k µs cluster + 60–80k
+  outliers), so the per-leg MINIMUM is the robust location estimate — and the
+  minimums are indistinguishable: hot 46k vs base 45k/47k. Provisional:
+  **wall-neutral at +15 % size ⇒ not flippable as-is.** The load-gated 6-leg
+  alternating re-run decides.
+- **If neutral confirms, the iteration order**: (1) `hotmax` sweep DOWN —
+  `__str_equals` alone is 908 sites × eff 95 ≈ half the added mass;
+  `hotmax=40` excludes exactly it while keeping the ≤37-instr family
+  (`__unbox_number`/`__to_number`/`__to_bigint`/`__extern_toString`/
+  `__nullish_to_null`/`__extern_set_strict`); (2) per-caller absorption cap;
+  (3) restrict to sites where the inlined body's box/unbox cancels against
+  the caller (the fold wasm-opt can prove).
+- **Not measured yet**: entry 47's open (1) — Binaryen ×
+  `JS2WASM_CALL_DISPATCH_IC=1`.
 
 ### Follow-ups noted while here
 
