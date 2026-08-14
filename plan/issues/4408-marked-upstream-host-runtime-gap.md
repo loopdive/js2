@@ -33,6 +33,8 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+oracle-ratchet-allow:
+  - src/codegen/literals.ts
 ---
 
 # #4408 — Marked upstream host-runtime compatibility
