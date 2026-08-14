@@ -518,3 +518,127 @@ Per PR:
   Any new emitter that assumes it can splice by index will be wrong.
 - **Oracle ratchet** will fail any touched file that gains a raw `checker.*`
   call (§ Phase 1).
+
+---
+
+## Handoff state
+
+**Senior dev, 2026-08-14.** Branch `impl-4405-receiver-spec`, pushed to
+`origin` (= upstream `loopdive/js2`). Measured on that branch, base
+`d98ea58a8`. Written mid-task because container restarts have destroyed
+unpushed work repeatedly today.
+
+### What landed (Phase 0, complete and measured)
+
+`src/codegen/receiver-spec-census.ts` (new) + the five previously-silent
+early returns promoted to named buckets, + `explainReceiverDecline()` in
+`receiver-flow-analysis.ts` (diagnosis only, reached only under the census
+gate). `loc-budget-allow` granted for `typed-this.ts` (+38): a decline
+bucket has to be recorded where the decline happens.
+
+Acorn standalone lane, both runs `success=true`, **1,408,321 B**, canaries
+`2,3,4,5`, zero imports, ~108 s per compile. Note the spec's §0 figure of
+1,157,936 B was on `recover/levers-integration`; this tree's base is bigger,
+which is a base difference, not a regression.
+
+**The census reproduces §1.6 exactly** — the same numbers, and the shape
+histogram matches the spec's list term for term:
+
+```
+[receiver-spec] bucket:not-in-twin=5884   bucket:receiver-not-this=2346
+[receiver-spec] shape: types$1=590 node=488 state=370 propaccess=134 prop=108
+                       expr=64 refDestructuringErrors=48 elemaccess=44
+                       this.type.<>=28 element=24 list=22 value=22 id=20
+                       scope=20 this.input.<>=18 key=18 …
+[proven-receiver] asked=4064 proven=244 inlined=88 declinedAfterProof=156
+[typed-this] twins=488 declinedTwin=0 get=1366 set=98 compound=18 incdec=98
+```
+
+### The Phase-1 diagnosis — and it is NOT what §4 Phase 1 predicted
+
+Splitting the 3,820 unproven receivers by whether the analysis ever looked at
+them: **3,244 are bare identifiers it looked at and refused; 576 are
+non-identifier shapes `provenReceiverClass` returns on before asking**
+(`propaccess` 281, `elemaccess` 86, `this.type.<>` 62, `this.input.<>` 38,
+`call` 35, …).
+
+Of the 3,244, attributed to the pass that refused:
+
+| reason | count | note |
+| --- | ---: | --- |
+| `no-verdict:var-init:ObjectLiteralExpression` | 1,361 | `types$1`=1,287 — **explicitly out of scope** (§4 Phase 1) |
+| **`no-verdict:param`** | **1,240** | **the dominant addressable bucket** |
+| `no-verdict:var-init:CallExpression` | 233 | pass 1d ran, `argumentClass` gave nothing |
+| `no-verdict:var-init:ElementAccessExpression` | 175 | |
+| `no-verdict:var-init:PropertyAccessExpression` | 130 | |
+| `no-verdict:var-init:BinaryExpression` | 42 | |
+| `no-verdict:var-init:Identifier` | 18 | |
+
+`no-verdict:param` is led by exactly the receivers the spec names: `state`
+434, `node` 243, `prop` 120, `expr` 112, `refDestructuringErrors` 68, then
+`init`/`pat`/`base`/`conf`/`method`/`statement`/`ref`/`id` at 20–28 each.
+
+**All three of the spec's prime suspects are refuted by measurement:**
+
+1. `isConstLike` const-only — **already fixed on `main`**. Pass 1 admits
+   `var`/`let` and leans on pass 3 demotion; the comment at
+   `receiver-flow-analysis.ts:171-176` says so explicitly. The spec was
+   written against `recover/levers-integration`, which predates that. Do not
+   redo it.
+2. `resolveLocalBinding` weak scope walk — contributes **zero**. Neither
+   `ambiguous` nor `not-found` appears anywhere in the census. The `scope$1` /
+   `node$1` rename worry does not materialise.
+3. Bare assignment with no declaration — **zero**. `no-verdict:var-noinit`
+   never fires.
+
+### Root cause of the 1,240 (found, not yet fixed)
+
+`calleeDeclaration` (`receiver-flow-analysis.ts:384`) returns early unless the
+callee is a bare **identifier**:
+
+```ts
+const callee = call.expression;
+if (!ts.isIdentifier(callee)) return undefined;
+```
+
+Every acorn prototype method is invoked as `this.parseStatement(node)` — a
+`PropertyAccessExpression`. So pass 2 records **no observations at all** for
+prototype-method parameters, and the final loop iterates `observations`, so an
+unobserved parameter simply never gets a verdict. `state` / `node` / `prop` /
+`expr` are not being *rejected*; they are never *asked about*.
+
+The fix is small and reuses machinery pass 1c already built: resolve a
+`this.<m>(…)` / `<protoAlias>.<m>(…)` / proven-receiver `<r>.<m>(…)` callee to
+`methodBodies.get(`${cls}.${m}`)` and let pass 2 observe those call sites.
+`enclosingThisClass` already supplies the `cls` for the `this.` form.
+
+**Soundness note for whoever picks this up:** both consumers of a verdict
+(`tryEmitProvenReceiverFieldGet`, and `tryEmitDirectTwinCall` at
+`typed-this.ts:1641` which sets `guardedReceiver = true`) emit a `ref.test`
+two-arm `if`, so an imprecise verdict costs a slow read and never a wrong
+value. That guard — not the analysis — is what makes a missed call site
+tolerable. It does **not** license dropping the guard (spec §2(b)).
+
+### Next steps, in order
+
+1. Extend `calleeDeclaration` to property-access callees (above). Expect the
+   `no-verdict:param` bucket to fall and `proven` to rise off 244.
+2. Re-measure the FULL funnel `asked → proven → inlined`, not the top line —
+   the 156 declined-after-proof are `nofield:Node.*`, so extra proofs on
+   `Node` receivers will convert at a poor rate until Phase 2 gives `Node` real
+   slots. A proof that does not convert to an inline is not a win.
+3. Only then the poison probe + flag-off sha256 identity.
+
+### Ruled out / do not repeat
+
+- `types$1` (590 shape hits, 1,287 decline records) can never be answered by
+  `receiverClassOf`: it is an object literal, so no `__fnctor_*` struct exists.
+  Out of scope by the spec, and now confirmed by measurement — it is 42 % of
+  the identifier declines and will distort any "coverage %" that includes it.
+- `gh` is not installed in this container and the GitHub REST API is refused
+  (`403 GitHub access is not enabled for this session`), so **the PR could not
+  be opened from here.** The branch is pushed; someone with API access needs to
+  open it.
+- The three `IR-FALLBACK` errors the probe reports (`function typeIdx parity
+  mismatch` on `parse`/`parseExpressionAt`/`tokenizer`) are pre-existing on
+  base — present in the very first baseline run before any edit. Not ours.
