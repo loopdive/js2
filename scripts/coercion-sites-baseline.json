@@ -16,6 +16,7 @@
   "codegen/closed-method-dispatch.ts": 1,
   "codegen/closure-exports.ts": 5,
   "codegen/collections-es2025.ts": 5,
+  "codegen/cross-hierarchy-operands.ts": 1,
   "codegen/dataview-native.ts": 5,
   "codegen/date-reflective-setters.ts": 3,
   "codegen/declarations/import-collector.ts": 21,
