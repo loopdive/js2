@@ -1758,9 +1758,13 @@
                  ~5k TC39 proposal tests on top of the ~43k current-standard
                  baseline. Off by default so the headline number reflects
                  shipped ECMAScript only. -->
+            <!-- Standalone (pure Wasm, no JS host imports) is the DEFAULT lane:
+                 it is the honest floor of what the compiler produces on its
+                 own, so the headline number is not propped up by host imports.
+                 Ticking "JS host" opts into the host-assisted lane. -->
             <div class="feat-filter conformance-scope-toggle">
               <label class="feat-toggle">
-                <input type="checkbox" id="host-support-toggle" checked />
+                <input type="checkbox" id="host-support-toggle" />
                 <span>JS host</span>
               </label>
               <label class="feat-toggle">
@@ -1785,6 +1789,11 @@
           </div>
         </div>
         <div class="edition-timeline-section">
+          <!-- src is swapped to the standalone edition buckets when the "JS
+               host" toggle is off, matching the report page. The host file is
+               the safe initial value: it is always published, and the swap
+               happens during hydration (which also falls back to it if the
+               standalone buckets are unavailable). -->
           <t262-edition-timeline
             id="conformance-edition-timeline"
             src="./benchmarks/results/test262-editions.json"
@@ -5668,8 +5677,49 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.updateConformanceDonut = () => {
             if (lastDetail) applyScopeFromDetail(lastDetail);
           };
+
+          // The edition slider is built from the SELECTED lane's edition
+          // buckets, the same as the report page — otherwise the standalone
+          // view (now the default) would derive its stops, published-edition
+          // limit and cumulative scope sums from js-host data. Falls back to
+          // the host file if the standalone buckets aren't published, so a
+          // missing artifact degrades to the previous behaviour instead of an
+          // "Unavailable" slider.
+          const EDITION_TIMELINE_SRC = {
+            host: "./benchmarks/results/test262-editions.json",
+            standalone: "./benchmarks/results/test262-standalone-editions.json",
+          };
+          let standaloneEditionsAvailable = null;
+          // Token guard: the standalone branch awaits an availability probe, so
+          // a call started earlier can resolve AFTER a later one and clobber
+          // its result — which is exactly what happens on a `?mode=host` load,
+          // where the default-lane sync is already in flight when the URL state
+          // flips the toggle. Only the newest call may write the attribute.
+          let editionSrcToken = 0;
+          const syncEditionTimelineSrc = async () => {
+            const token = ++editionSrcToken;
+            const hostEnabled = hostToggle ? hostToggle.checked : true;
+            let src = EDITION_TIMELINE_SRC.host;
+            if (!hostEnabled) {
+              if (standaloneEditionsAvailable === null) {
+                try {
+                  const resp = await fetch(EDITION_TIMELINE_SRC.standalone);
+                  standaloneEditionsAvailable = resp.ok;
+                } catch {
+                  standaloneEditionsAvailable = false;
+                }
+              }
+              if (standaloneEditionsAvailable) src = EDITION_TIMELINE_SRC.standalone;
+            }
+            if (token !== editionSrcToken) return;
+            if (editionTimeline.getAttribute("src") !== src) editionTimeline.setAttribute("src", src);
+          };
+
           strictToggle?.addEventListener("change", window.updateConformanceDonut);
-          hostToggle?.addEventListener("change", window.updateConformanceDonut);
+          hostToggle?.addEventListener("change", () => {
+            syncEditionTimelineSrc();
+            window.updateConformanceDonut();
+          });
 
           // (?mode=/?edition=) Apply the incoming URL state once, as soon as
           // the timeline has published its own scopes. Driven off the first
@@ -5715,6 +5765,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           } else {
             editionTimeline.removeAttribute("show-proposals");
           }
+          // Point the slider at the default lane's buckets before the first
+          // scope is published, so the standalone default doesn't render a
+          // js-host slider for one frame.
+          syncEditionTimelineSrc();
           editionTimeline.setAttribute("value", "overall");
 
           // #106 toggle removed (2026-05-24): the "Include TC39 proposals" scope

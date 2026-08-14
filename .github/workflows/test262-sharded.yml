@@ -2608,6 +2608,16 @@ jobs:
           cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl public/benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
+          # …and the SERVED copy under website/public (the vite publicDir since
+          # #1656). Its host twin is refreshed here, but the standalone one only
+          # ever landed via deploy-pages, so the committed file sat at a
+          # 2026-06-07 snapshot (16,298 pass, no host_free_pass field). The
+          # landing page reads this path FIRST for its standalone donut, so if a
+          # deploy's baselines fetch ever fails it serves that June number —
+          # now the site's default headline, since standalone is the default lane.
+          mkdir -p website/public/benchmarks/results
+          cp shard-artifacts/test262-standalone-report-merged.json \
+            website/public/benchmarks/results/test262-standalone-report.json
 
       # #2097 — ratchet the absolute standalone high-water mark UP when this
       # push improved standalone conformance. Only ever raises (never lowers);
@@ -3074,6 +3084,9 @@ jobs:
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-standalone-report.json
+            # The SERVED standalone report (website/public, copied above) — the
+            # landing page's first source for its standalone donut.
+            git add -f website/public/benchmarks/results/test262-standalone-report.json 2>/dev/null || true
             # #1853 — hard-error stability baseline, refreshed just above.
             git add -f scripts/test262-hard-error-baseline.json 2>/dev/null || true
             # #2108 — coercion-site drift baseline, refreshed just above. Staged
