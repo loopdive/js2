@@ -21,6 +21,9 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/codegen/index.ts
   - src/ir/integration.ts
+  # Phase-1 CP1 (2026-08-14): oracle-source plumbing + candidate helper in
+  # module-bindings (+30) — replaces four raw getSymbolAtLocation preludes.
+  - src/ir/module-bindings.ts
 # Same slice: a few lines of index construction / option threading inside the
 # existing drivers (no new logic in the god-functions themselves).
 func-budget-allow:
