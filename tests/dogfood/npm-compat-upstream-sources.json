@@ -17,6 +17,7 @@
     "commit": "c63de15a992d37f0d6cec03ac7631872838602cb",
     "cacheKey": "typescript",
     "compileScript": "dogfood:typescript",
+    "suiteScript": "dogfood:typescript-upstream-suite",
     "inventory": {
       "directory": "src/testRunner/unittests",
       "include": "^src/testRunner/unittests/.*\\.ts$",
@@ -114,6 +115,7 @@
     "commit": "c2b24dd15fed1c59dd521bd86082f520c9f5ad0d",
     "cacheKey": "tailwindcss",
     "compileScript": "dogfood:tailwindcss",
+    "suiteScript": "dogfood:tailwindcss-upstream-suite",
     "inventory": {
       "directory": "packages/tailwindcss",
       "include": "^packages/tailwindcss/(?:src|tests)/.*\\.(?:test|spec)\\.(?:js|ts|tsx)$",

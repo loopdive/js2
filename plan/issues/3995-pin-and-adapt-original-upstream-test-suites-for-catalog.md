@@ -395,6 +395,61 @@ remain explicit deferred inventory. The npm-compat generator invokes the
 adapter directly so the merge-only refresh publishes numeric results and
 cannot fall back to `adapter pending`.
 
+## 2026-08-14 Tailwind CSS segment utility slice
+
+Tailwind CSS 4.3.3 now verifies all 42 matching tests under
+`packages/tailwindcss` and 1,376 static registrations from
+`tailwindlabs/tailwindcss@v4.3.3` (commit
+`c2b24dd15fed1c59dd521bd86082f520c9f5ad0d`). The first runtime adapter runs
+the original `segment.test.ts` and `to-key-path.test.ts` callbacks directly
+against their matching release-tag TypeScript implementations without changing
+callback bodies or inputs.
+
+The adapter registers 13 callbacks. All 13 pass in native Node and all 13 pass
+after compiling the release-tag sources and original callbacks to Wasm.
+
+Scanner, Rust/native, CSS pipeline, snapshot, async, UI, and larger graph files
+remain explicit deferred inventory. The npm-compat generator invokes the
+adapter directly so the merge-only refresh publishes numeric results and
+cannot fall back to `adapter pending`.
+
+## 2026-08-14 TypeScript base64 slice
+
+TypeScript 5.9.3 now verifies all 256 files and 1,761 static registrations under
+`src/testRunner/unittests` from `microsoft/TypeScript@v5.9.3` (commit
+`c63de15a992d37f0d6cec03ac7631872838602cb`). The first runtime adapter runs the
+original `base64.ts` callback unchanged. At setup time it projects the exact
+base64 declarations from the matching release's `src/compiler/utilities.ts`,
+avoiding the unrelated full compiler graph that exceeds the bounded catalog
+compile budget.
+
+The adapter registers one callback. It passes in native Node and after the
+release-tag source and original callback are compiled to Wasm.
+
+The remaining 255 compiler, server, watch, evaluator, snapshot, async, and
+filesystem-heavy files remain explicit deferred inventory. The npm-compat
+generator invokes this adapter directly, so the merge-only refresh publishes a
+numeric result and cannot fall back to `adapter pending`.
+
+## 2026-08-14 complete workflow wiring
+
+All 24 packages rendered on npm-compat now declare an executable `suiteScript`.
+The report generator uses one registry for those 24 adapters and refuses to
+start if the configured and executable package sets differ. Catalog packages
+no longer pass through a nullable conditional chain that could silently fall
+back to `adapter pending` after an adapter had shipped.
+
+The merge-only npm-compat workflow independently rejects its generated artifact
+unless every configured adapter produces numeric `passed` and `total` fields.
+Performance measurements and regressions remain reporting data rather than unit
+test gates.
+
+The complete `generate:npm-compat --no-write` path was run locally after this
+wiring change. It completed all 24 packages, left one numeric suite report per
+package, and exited successfully. Its aggregate correctness rollup reported 8
+verified, 14 divergent, and 2 unverified packages; those compatibility gaps are
+reported data, not hidden or converted into performance gates.
+
 ## 2026-08-14 webpack synchronous utility slice
 
 webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and
