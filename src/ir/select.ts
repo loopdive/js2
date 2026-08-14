@@ -1962,25 +1962,48 @@ export function effectiveIrReturnTypeNode(
  * rest/optional/default params, and type parameters. Void returns are a
  * canonical zero-result closure signature; value-position calls still reject.
  */
+function primitiveClosureTypeFromTypeNode(node: ts.TypeNode | undefined): IrType | null {
+  if (!node) return null;
+  if (node.kind === ts.SyntaxKind.NumberKeyword) return { kind: "val", val: { kind: "f64" } };
+  if (node.kind === ts.SyntaxKind.BooleanKeyword) return { kind: "val", val: { kind: "i32" } };
+  if (node.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
+  return null;
+}
+
 export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode): IrClosureSignature | null {
   if (node.typeParameters && node.typeParameters.length > 0) return null;
-  const prim = (t: ts.TypeNode | undefined): IrType | null => {
-    if (!t) return null;
-    if (t.kind === ts.SyntaxKind.NumberKeyword) return { kind: "val", val: { kind: "f64" } };
-    if (t.kind === ts.SyntaxKind.BooleanKeyword) return { kind: "val", val: { kind: "i32" } };
-    if (t.kind === ts.SyntaxKind.StringKeyword) return { kind: "string" };
-    return null;
-  };
   const params: IrType[] = [];
   for (const p of node.parameters) {
     if (p.questionToken || p.dotDotDotToken || p.initializer) return null;
-    const ir = prim(p.type);
+    const ir = primitiveClosureTypeFromTypeNode(p.type);
     if (!ir) return null;
     params.push(ir);
   }
-  const returnType = node.type.kind === ts.SyntaxKind.VoidKeyword ? null : prim(node.type);
+  const returnType = node.type.kind === ts.SyntaxKind.VoidKeyword ? null : primitiveClosureTypeFromTypeNode(node.type);
   if (returnType === null && node.type.kind !== ts.SyntaxKind.VoidKeyword) return null;
   return { params, returnType };
+}
+
+function irClosureSignatureFromLocalLiteral(
+  declaration: ts.ArrowFunction | ts.FunctionExpression,
+): IrClosureSignature | null {
+  if (
+    !declaration.type ||
+    (ts.isFunctionExpression(declaration) && declaration.asteriskToken !== undefined) ||
+    (declaration.typeParameters?.length ?? 0) > 0 ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  ) {
+    return null;
+  }
+  const params: IrType[] = [];
+  for (const parameter of declaration.parameters) {
+    if (parameter.questionToken || parameter.dotDotDotToken || parameter.initializer) return null;
+    const type = primitiveClosureTypeFromTypeNode(parameter.type);
+    if (!type) return null;
+    params.push(type);
+  }
+  const returnType = primitiveClosureTypeFromTypeNode(declaration.type);
+  return returnType ? { params, returnType } : null;
 }
 
 /**
@@ -2011,18 +2034,12 @@ export function irClosureSignatureFromFunctionDeclaration(
       return null;
     }
     const type = effectiveIrParamTypeNode(parameter);
-    if (!type) return null;
-    if (type.kind === ts.SyntaxKind.NumberKeyword) params.push({ kind: "val", val: { kind: "f64" } });
-    else if (type.kind === ts.SyntaxKind.BooleanKeyword) params.push({ kind: "val", val: { kind: "i32" } });
-    else if (type.kind === ts.SyntaxKind.StringKeyword) params.push({ kind: "string" });
-    else return null;
+    const ir = primitiveClosureTypeFromTypeNode(type);
+    if (!ir) return null;
+    params.push(ir);
   }
-  const resultNode = effectiveIrReturnTypeNode(declaration);
-  let returnType: IrType;
-  if (resultNode?.kind === ts.SyntaxKind.NumberKeyword) returnType = { kind: "val", val: { kind: "f64" } };
-  else if (resultNode?.kind === ts.SyntaxKind.BooleanKeyword) returnType = { kind: "val", val: { kind: "i32" } };
-  else if (resultNode?.kind === ts.SyntaxKind.StringKeyword) returnType = { kind: "string" };
-  else return null;
+  const returnType = primitiveClosureTypeFromTypeNode(effectiveIrReturnTypeNode(declaration));
+  if (!returnType) return null;
   return { params, returnType };
 }
 
@@ -4897,7 +4914,8 @@ function isPhase1ClosureLiteral(
   if (defaultParamStart === null) return shapeNo("closure-param-default", expr);
   for (const p of expr.parameters) {
     if (p.questionToken || p.dotDotDotToken) return shapeNo("closure-param-shape", p);
-    if (!p.type || !isPhase1ClosureParameterTypeNode(p.type)) return shapeNo("closure-param-type", p.type ?? p);
+    if (!p.type || !isPhase1ClosureParameterTypeNode(p.type, p, expr))
+      return shapeNo("closure-param-type", p.type ?? p);
     if (ts.isIdentifier(p.name)) {
       if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
       inner.add(p.name.text);
@@ -4946,7 +4964,17 @@ function isPhase1ReturnedClosureLiteral(
  * top-level position-type planner. Keep the widened parameter family limited
  * to shapes that can therefore be reconstructed without checker state.
  */
-function isPhase1ClosureParameterTypeNode(node: ts.TypeNode): boolean {
+function isPhase1ClosureParameterTypeNode(
+  node: ts.TypeNode,
+  parameter: ts.ParameterDeclaration,
+  owner: Phase1ClosureLiteral,
+): boolean {
+  if (ts.isFunctionTypeNode(node)) {
+    return (
+      irClosureSignatureFromFunctionTypeNode(node) !== null &&
+      closureParameterHasExactImmediateInternalSource(parameter, owner)
+    );
+  }
   const primitive = annotationToResolvedKind(node);
   if (primitive === "f64" || primitive === "bool" || primitive === "string") return true;
   if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
@@ -4972,6 +5000,66 @@ function isPhase1ClosureParameterTypeNode(node: ts.TypeNode): boolean {
     names.add(name);
   }
   return true;
+}
+
+/**
+ * A FunctionTypeNode on a local closure is represented as an internal closure
+ * ref, not the externref callable ABI used at source boundaries. Admit it only
+ * when the sole consumer call receives an exact local closure literal through
+ * the bounded one-hop proof below.
+ */
+function closureParameterHasExactImmediateInternalSource(
+  parameter: ts.ParameterDeclaration,
+  consumer: Phase1ClosureLiteral,
+): boolean {
+  if ((!ts.isArrowFunction(consumer) && !ts.isFunctionExpression(consumer)) || !currentModuleBindingResolver) {
+    return false;
+  }
+  const consumerDeclaration = consumer.parent;
+  const consumerList = ts.isVariableDeclaration(consumerDeclaration) ? consumerDeclaration.parent : undefined;
+  const outerOwner = enclosingProjectionOwner(consumerDeclaration);
+  const parameterIndex = consumer.parameters.indexOf(parameter);
+  if (
+    !ts.isVariableDeclaration(consumerDeclaration) ||
+    consumerDeclaration.initializer !== consumer ||
+    !ts.isIdentifier(consumerDeclaration.name) ||
+    !consumerList ||
+    !ts.isVariableDeclarationList(consumerList) ||
+    !(consumerList.flags & ts.NodeFlags.Const) ||
+    !outerOwner ||
+    parameterIndex < 0
+  ) {
+    return false;
+  }
+
+  let accepted = false;
+  const visit = (candidate: ts.Node): void => {
+    if (accepted) return;
+    if (
+      ts.isCallExpression(candidate) &&
+      !candidate.questionDotToken &&
+      ts.isIdentifier(candidate.expression) &&
+      parameterIndex < candidate.arguments.length
+    ) {
+      const resolvedConsumer = currentModuleBindingResolver?.localVariableDeclaration(candidate.expression);
+      const argument = candidate.arguments[parameterIndex];
+      if (
+        resolvedConsumer &&
+        localDeclarationsMatch(consumerDeclaration, resolvedConsumer) &&
+        argument &&
+        ts.isIdentifier(argument)
+      ) {
+        const sourceDeclaration = currentModuleBindingResolver?.localVariableDeclaration(argument);
+        if (sourceDeclaration && exactImmediateCallableConsumerPass(argument, sourceDeclaration, outerOwner)) {
+          accepted = true;
+          return;
+        }
+      }
+    }
+    forEachChild(candidate, visit);
+  };
+  forEachChild(outerOwner, visit);
+  return accepted;
 }
 
 /**
@@ -7015,6 +7103,7 @@ function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOw
   const declarationName = declaration.name;
   let accepted = true;
   let observedCall = false;
+  let observedPass = false;
   const visit = (node: ts.Node): void => {
     if (!accepted) return;
     if (
@@ -7041,6 +7130,19 @@ function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOw
         observedCall = true;
         return;
       }
+      if (
+        enclosingProjectionOwner(node) === outerOwner &&
+        declaration.end <= node.pos &&
+        exactImmediateCallableConsumerPass(node, declaration, outerOwner)
+      ) {
+        if (observedPass) {
+          accepted = false;
+          return;
+        }
+        observedPass = true;
+        observedCall = true;
+        return;
+      }
       accepted = false;
       return;
     }
@@ -7048,6 +7150,118 @@ function capturingClosureHasOnlyOuterDirectCalls(capturedOwner: ts.Node, outerOw
   };
   forEachChild(outerOwner, visit);
   return accepted && observedCall;
+}
+
+/**
+ * Admit one exact closure-to-closure handoff without opening general escape.
+ * The consuming const closure must take the source value in one required
+ * function-typed slot, invoke that parameter directly, and itself be called
+ * exactly once by the outer owner at this handoff site.
+ */
+function exactImmediateCallableConsumerPass(
+  argument: ts.Identifier,
+  sourceDeclaration: ts.VariableDeclaration,
+  outerOwner: ts.Node,
+): boolean {
+  const call = argument.parent;
+  if (!ts.isCallExpression(call) || call.questionDotToken || !ts.isIdentifier(call.expression)) return false;
+  const argumentIndex = call.arguments.indexOf(argument);
+  if (argumentIndex < 0 || call.arguments.some(ts.isSpreadElement) || !currentModuleBindingResolver) return false;
+  const sourceList = sourceDeclaration.parent;
+  const resolvedSource = currentModuleBindingResolver.localVariableDeclaration(argument);
+  if (
+    !ts.isIdentifier(sourceDeclaration.name) ||
+    !sourceDeclaration.initializer ||
+    (!ts.isArrowFunction(sourceDeclaration.initializer) && !ts.isFunctionExpression(sourceDeclaration.initializer)) ||
+    !ts.isVariableDeclarationList(sourceList) ||
+    !(sourceList.flags & ts.NodeFlags.Const) ||
+    sourceDeclaration.end > argument.pos ||
+    enclosingProjectionOwner(sourceDeclaration) !== outerOwner ||
+    !resolvedSource ||
+    !localDeclarationsMatch(sourceDeclaration, resolvedSource)
+  ) {
+    return false;
+  }
+  const consumerDeclaration = currentModuleBindingResolver.localVariableDeclaration(call.expression);
+  if (
+    !consumerDeclaration ||
+    !ts.isIdentifier(consumerDeclaration.name) ||
+    !consumerDeclaration.initializer ||
+    (!ts.isArrowFunction(consumerDeclaration.initializer) &&
+      !ts.isFunctionExpression(consumerDeclaration.initializer)) ||
+    consumerDeclaration.end > call.pos ||
+    enclosingProjectionOwner(consumerDeclaration) !== outerOwner
+  ) {
+    return false;
+  }
+  const consumerList = consumerDeclaration.parent;
+  if (!ts.isVariableDeclarationList(consumerList) || !(consumerList.flags & ts.NodeFlags.Const)) return false;
+  const resolvedConsumer = currentModuleBindingResolver.localValueDeclaration(call.expression);
+  if (!resolvedConsumer || !localDeclarationsMatch(consumerDeclaration, resolvedConsumer)) return false;
+  const consumerName = consumerDeclaration.name.text;
+  const consumer = consumerDeclaration.initializer;
+  const parameter = consumer.parameters[argumentIndex];
+  if (
+    !parameter ||
+    !ts.isIdentifier(parameter.name) ||
+    parameter.questionToken ||
+    parameter.dotDotDotToken ||
+    parameter.initializer ||
+    !parameter.type ||
+    !ts.isFunctionTypeNode(parameter.type)
+  ) {
+    return false;
+  }
+  const parameterName = parameter.name.text;
+  const expected = irClosureSignatureFromFunctionTypeNode(parameter.type);
+  const source = sourceDeclaration.initializer;
+  if (!expected || !source || (!ts.isArrowFunction(source) && !ts.isFunctionExpression(source))) {
+    return false;
+  }
+  const actual = irClosureSignatureFromLocalLiteral(source);
+  if (!actual || !closureSignatureEquals(actual, expected)) return false;
+
+  const bodyCall = ts.isBlock(consumer.body)
+    ? consumer.body.statements.length === 1 && ts.isReturnStatement(consumer.body.statements[0]!)
+      ? consumer.body.statements[0]!.expression
+      : undefined
+    : consumer.body;
+  if (
+    !bodyCall ||
+    !ts.isCallExpression(bodyCall) ||
+    bodyCall.questionDotToken ||
+    !ts.isIdentifier(bodyCall.expression) ||
+    bodyCall.expression.text !== parameterName
+  ) {
+    return false;
+  }
+  const resolvedParameter = currentModuleBindingResolver.localValueDeclaration(bodyCall.expression);
+  if (!resolvedParameter || !localDeclarationsMatch(parameter, resolvedParameter)) return false;
+
+  let consumerUseCount = 0;
+  let consumerUsesAreExact = true;
+  const visit = (node: ts.Node): void => {
+    if (!consumerUsesAreExact) return;
+    if (
+      ts.isIdentifier(node) &&
+      node !== consumerDeclaration.name &&
+      node.text === consumerName &&
+      identifierIsValueReference(node)
+    ) {
+      const resolved = currentModuleBindingResolver?.localValueDeclaration(node);
+      if (!resolved) {
+        consumerUsesAreExact = false;
+        return;
+      }
+      if (!localDeclarationsMatch(consumerDeclaration, resolved)) return;
+      consumerUseCount++;
+      if (node !== call.expression) consumerUsesAreExact = false;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(outerOwner, visit);
+  return consumerUsesAreExact && consumerUseCount === 1;
 }
 
 /** Certify the entire pattern before exposing any callable projection. */

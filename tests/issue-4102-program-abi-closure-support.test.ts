@@ -14,7 +14,7 @@ import {
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { irSupportTypeRef, irTypeBindingKey } from "../src/ir/abi-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
-import { irVal, type IrClosureSignature, type IrType } from "../src/ir/nodes.js";
+import { irVal, irValSigned, type IrClosureSignature, type IrType } from "../src/ir/nodes.js";
 import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { lowerPreparedClosureSupportType } from "../src/ir/prepared-closure-support.js";
 import { ProgramAbiInvariantError } from "../src/ir/program-abi.js";
@@ -97,6 +97,7 @@ function appendLayout(
   return {
     signature: input.signature,
     captureFieldTypes: input.captures,
+    role: "allocate",
     wrapperRootType: root,
     allocationWrapperType: wrapper,
     liftedFuncType: lifted,
@@ -208,6 +209,133 @@ describe("#4102 Program ABI prepared closure support types", () => {
       );
     }
     expect(f.registry.prepareClosureSupportLayouts([executor, timer])).toEqual([executorLayout, timerLayout]);
+  });
+
+  it("plans only the root and lifted function for invoke-only closure support", () => {
+    const f = fixture();
+    const { timer } = promiseLayouts(f);
+    const invoke = { ...timer, role: "invoke" as const };
+    const [layout] = f.registry.prepareClosureSupportLayouts([invoke]);
+
+    expect(f.session.getDraft(layout!.wrapperRootRef.binding.bindingId)).toMatchObject({
+      slotPolicy: "required",
+      slotSpace: "type",
+    });
+    expect(f.session.getDraft(layout!.liftedFuncRef.binding.bindingId)).toMatchObject({
+      slotPolicy: "required",
+      slotSpace: "type",
+    });
+    expect(f.session.getDraft(layout!.allocationWrapperRef.binding.bindingId)).toBeUndefined();
+    expect(f.session.getDraft(layout!.capturedSubtypeRef.binding.bindingId)).toBeUndefined();
+  });
+
+  it("unions repeated closure roles to allocate within one batch and rejects a later expansion", () => {
+    const f = fixture();
+    const { timer } = promiseLayouts(f);
+    const carrier = { ...timer, role: "carrier" as const };
+    const invoke = { ...timer, role: "invoke" as const };
+    const [carrierLayout, invokeLayout, allocateLayout] = f.registry.prepareClosureSupportLayouts([
+      carrier,
+      invoke,
+      timer,
+    ]);
+
+    expect(carrierLayout).toBe(allocateLayout);
+    expect(invokeLayout).toBe(allocateLayout);
+    for (const ref of [
+      allocateLayout!.wrapperRootRef,
+      allocateLayout!.allocationWrapperRef,
+      allocateLayout!.liftedFuncRef,
+      allocateLayout!.capturedSubtypeRef,
+    ]) {
+      expect(f.session.getDraft(ref.binding.bindingId)).toMatchObject({
+        slotPolicy: "required",
+        slotSpace: "type",
+      });
+    }
+
+    const late = fixture();
+    const { timer: lateTimer } = promiseLayouts(late);
+    late.registry.prepareClosureSupportLayouts([{ ...lateTimer, role: "invoke" }]);
+    expectProgramAbiInvariant(() => late.registry.prepareClosureSupportLayouts([lateTimer]), "planning-sealed");
+  });
+
+  it("keeps a carrier-only sibling layout free of an allocation-only captured subtype", () => {
+    const f = fixture();
+    const { executor } = promiseLayouts(f);
+    const wrapperIndex = f.module.types.indexOf(executor.allocationWrapperType);
+    const carrierSubtype: StructTypeDef = {
+      kind: "struct",
+      name: "executor_carrier_only_capture",
+      fields: [...WRAPPER_FIELDS, { name: "cap0", type: { kind: "externref" }, mutable: false }],
+      superTypeIdx: wrapperIndex,
+    };
+    f.module.types.push(carrierSubtype);
+    const carrierLayout = {
+      ...executor,
+      captureFieldTypes: [EXTERNREF],
+      capturedSubtypeType: carrierSubtype,
+      role: "carrier" as const,
+    };
+
+    const [allocated, carrier] = f.registry.prepareClosureSupportLayouts([executor, carrierLayout]);
+    expect(carrier!.wrapperRootRef.binding.bindingId).toBe(allocated!.wrapperRootRef.binding.bindingId);
+    expect(carrier!.allocationWrapperRef.binding.bindingId).toBe(allocated!.allocationWrapperRef.binding.bindingId);
+    expect(carrier!.liftedFuncRef.binding.bindingId).toBe(allocated!.liftedFuncRef.binding.bindingId);
+    expect(f.session.getDraft(allocated!.allocationWrapperRef.binding.bindingId)).toMatchObject({
+      slotPolicy: "required",
+      slotSpace: "type",
+    });
+    expect(f.session.getDraft(allocated!.liftedFuncRef.binding.bindingId)).toMatchObject({
+      slotPolicy: "required",
+      slotSpace: "type",
+    });
+    expect(f.session.getDraft(carrier!.capturedSubtypeRef.binding.bindingId)).toBeUndefined();
+  });
+
+  it("reuses one physical lifted type across semantically distinct support signatures", () => {
+    const f = fixture();
+    const signedSignature: IrClosureSignature = {
+      params: [irValSigned({ kind: "i32" }, true)],
+      returnType: null,
+    };
+    const unsignedSignature: IrClosureSignature = {
+      params: [irValSigned({ kind: "i32" }, false)],
+      returnType: null,
+    };
+    const signed = appendLayout(f.module.types, {
+      signature: signedSignature,
+      captures: [],
+      name: "signed",
+    });
+    const unsignedAllocated = appendLayout(f.module.types, {
+      signature: unsignedSignature,
+      captures: [],
+      root: signed.wrapperRootType,
+      name: "unsigned",
+    });
+    const duplicateLiftedIndex = f.module.types.indexOf(unsignedAllocated.liftedFuncType);
+    expect(duplicateLiftedIndex).toBeGreaterThanOrEqual(0);
+    f.module.types.splice(duplicateLiftedIndex, 1);
+    const unsigned = { ...unsignedAllocated, liftedFuncType: signed.liftedFuncType, role: "invoke" as const };
+    const invokeSigned = { ...signed, role: "invoke" as const };
+
+    expect(canonicalProgramAbiClosureSignatureKey(signedSignature)).not.toBe(
+      canonicalProgramAbiClosureSignatureKey(unsignedSignature),
+    );
+    const [signedLayout, unsignedLayout] = f.registry.prepareClosureSupportLayouts([invokeSigned, unsigned]);
+    expect(signedLayout!.liftedFuncRef.binding.bindingId).toBe(unsignedLayout!.liftedFuncRef.binding.bindingId);
+    expect(f.session.getDraft(signedLayout!.liftedFuncRef.binding.bindingId)).toMatchObject({
+      intent: { kind: "type" },
+      slotPolicy: "required",
+      slotSpace: "type",
+    });
+    f.registry.planRetained();
+    const publication = f.session.publish(f.module);
+    const signedIndex = publication.abi.resolveFinalIndex(signedLayout!.liftedFuncRef.binding.bindingId);
+    const unsignedIndex = publication.abi.resolveFinalIndex(unsignedLayout!.liftedFuncRef.binding.bindingId);
+    expect(signedIndex).toEqual(unsignedIndex);
+    expect(signedIndex).toEqual({ space: "type", index: f.module.types.indexOf(signed.liftedFuncType) });
   });
 
   it("rejects one semantic layout mapping to different physical type objects before planning", () => {
