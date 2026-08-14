@@ -172,6 +172,7 @@
     "dogfood:typescript": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package typescript",
     "dogfood:redux": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package redux",
     "dogfood:redux-workload": "npx tsx tests/dogfood/redux-workload-harness.mjs",
+    "dogfood:redux-upstream-suite": "node --import tsx tests/dogfood/redux-upstream-suite.mjs",
     "dogfood:jest": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package jest",
     "dogfood:styled-components": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package styled-components",
     "dogfood:moment": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package moment",

@@ -25,12 +25,13 @@ vectors or implies that validation is a test pass. Matching upstream source
 suites can be pinned and adapted package by package, following the existing
 Acorn/React precedent.
 
-ESLint, jsdom, and Redux are the explicit runtime-workload exceptions. Their npm
+ESLint and jsdom are the explicit runtime-workload exceptions. Their npm
 tarballs still omit the upstream suites, but each has a separate API workload
 that is only scored after the generated Wasm driver actually runs and matches
 a native Node oracle. ESLint additionally pins one complete original upstream
-unit file as a deliberately named slice. A compile timeout or invalid module
-remains an unverified workload, never a pass.
+unit file as a deliberately named slice. Redux retains its API workload as a
+secondary signal and now also runs its complete original runtime unit suite. A
+compile timeout or invalid module remains an unverified workload, never a pass.
 
 The extracted catalog fixture is also given the installed package's importer
 context (`node_modules`), including pnpm's private dependency links. This keeps
@@ -166,17 +167,26 @@ The 2026-08-12 initial baselines are **Hono 25/31**, **Lodash 0/11**, and
 generated module compiles and validates. Lodash fails at the callback-runner
 boundary; Moment reaches the callbacks but differs on their assertions.
 
-## Redux 5.0.1 API workload (#3996)
+## Redux 5.0.1 upstream suite and API workload
+
+Tracked by [issue 3995](https://github.com/loopdive/js2wasm/blob/main/plan/issues/3995-pin-and-adapt-original-upstream-test-suites-for-catalog.md).
 
 ```bash
+pnpm run dogfood:redux-upstream-suite
 pnpm run dogfood:redux-workload
 ```
 
-The generated driver imports the pinned published bundle and consumes
-`combineReducers`, `createStore`, `subscribe`, and `bindActionCreators`. It
-returns one numeric summary after dispatch and unsubscribe operations; the
-same operations run against the installed package in native Node. This is an
-API workload, not a substitute for Redux's original upstream suite.
+The upstream lane verifies all nine original runtime test files at
+`reduxjs/redux@v5.0.1` and registers all 82 callbacks against the matching
+published bundle. Node reproduces 78 synchronous callbacks; four async
+callbacks remain explicitly harness-incompatible. All nine generated modules
+compile and validate, and the initial Wasm baseline is **5/78**. Per-file
+runtime traps and assertion differences are retained in the JSON report.
+
+The smaller generated API driver remains as an independent secondary signal.
+It consumes `combineReducers`, `createStore`, `subscribe`, and
+`bindActionCreators`, then compares one numeric summary with the same package
+running in native Node.
 
 ## acorn (#1710)
 
