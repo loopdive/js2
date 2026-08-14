@@ -1,0 +1,18 @@
+{
+  "name": "stylelint",
+  "version": "17.14.1",
+  "repo": "https://github.com/stylelint/stylelint.git",
+  "tag": "17.14.1",
+  "commit": "cd66b035087270dd62d33542154463266cc5e81a",
+  "testFileCount": 281,
+  "testFilePathSha256": "b70f2378fe3ed0fcc06082e14aadf174a4cba166943b81c4cf88c48ebd008ea3",
+  "registrationSites": 1574,
+  "selectedFiles": [
+    "lib/utils/__tests__/arrayEqual.test.mjs",
+    "lib/utils/__tests__/containsString.test.mjs",
+    "lib/utils/__tests__/isNonNegativeInteger.test.mjs",
+    "lib/utils/__tests__/isOnlyWhitespace.test.mjs",
+    "lib/utils/__tests__/pluralize.test.mjs"
+  ],
+  "_note": "The complete lib/**/__tests__ inventory is verified. This first adapter selects five synchronous utility modules with local implementation imports and no filesystem, PostCSS, snapshot, plugin, or async runner requirements. Original callback bodies and inputs are unchanged; all other files remain explicit deferred inventory."
+}
