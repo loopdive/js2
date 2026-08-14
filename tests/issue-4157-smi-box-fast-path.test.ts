@@ -8,8 +8,10 @@
 // become `ref.i31 0`), NaN, the infinities, and non-integers.
 //
 // Every case boxes a number into an `any` slot and reads it back inside Wasm,
-// so nothing opaque crosses the JS boundary. The flag is default OFF, so each
-// assertion runs in all three positions and must agree.
+// so nothing opaque crosses the JS boundary. The flag is **default `all`** since
+// the #4157 tuned-set flip, so the positions below are `0` (the legacy
+// emission), `1` (the restricted i32-only level), `all`, and unset — which must
+// behave exactly like `all` and is the one position an ordinary build takes.
 import { describe, it, expect, afterEach } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -84,9 +86,10 @@ function setFlag(value: string | undefined): void {
 afterEach(() => setFlag(PREVIOUS));
 
 describe.each([
-  ["flag OFF", undefined],
+  ["flag =0 (the legacy emission)", "0"],
   ["flag =1 (i32 sources)", "1"],
   ["flag =all (every boxing site)", "all"],
+  ["unset (the shipped default, = all)", undefined],
 ])("#4157 smi box guard — %s", (_label, flag) => {
   it("agrees with JS on every boundary value", async () => {
     setFlag(flag);

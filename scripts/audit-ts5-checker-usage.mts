@@ -91,11 +91,19 @@ async function runBackend(backend: Backend, corpus: { name: string; source: stri
   for (const { name, source } of corpus) {
     try {
       const result = await compile(source, { oracleBackend: backend });
-      const wasm: Uint8Array | undefined = (result as { wasm?: Uint8Array }).wasm;
+      // (#4218) The result field is `binary`, NOT `wasm`. Reading `.wasm` gave
+      // `undefined` for every input, so the parity check compared
+      // `undefined === undefined` and reported a vacuous 21/21 match. Treat a
+      // missing binary as a hard failure rather than silently "identical".
+      const binary: Uint8Array | undefined = (result as { binary?: Uint8Array }).binary;
+      if (!binary) {
+        outcomes.push({ file: name, ok: false, error: "compile returned no binary" });
+        continue;
+      }
       outcomes.push({
         file: name,
         ok: true,
-        wasmSha: wasm ? createHash("sha256").update(wasm).digest("hex").slice(0, 16) : undefined,
+        wasmSha: createHash("sha256").update(binary).digest("hex").slice(0, 16),
       });
     } catch (err) {
       outcomes.push({ file: name, ok: false, error: err instanceof Error ? err.message.slice(0, 200) : String(err) });

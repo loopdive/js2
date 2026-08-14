@@ -144,6 +144,14 @@ coercion-sites-allow:
   # lookup to find the sites, one skip guard so the helper bodies themselves are
   # never rewritten. It removes coercion calls; it adds no coercion matrix.
   - src/codegen/box-boolean-fuse.ts
+  # (#4157 park-6 fix) The cross-hierarchy operand repair does NOT author any
+  # coercion: it calls `callArgCoercionInstrs` — the SHARED engine helper in
+  # stack-balance.ts — and the two `findFunc` lookups exist only to hand that
+  # helper the `__box_number` / `__unbox_number` indices it takes as
+  # parameters. The gate counts the literal helper names; here they are an
+  # index lookup, not a hand-rolled ToNumber matrix. The pass repairs only
+  # externref ⇄ concrete-GC-ref operands, whose hierarchies are disjoint.
+  - src/codegen/cross-hierarchy-operands.ts
 origin: "2026-08-04 — synthesis of the #3780/#4155 measurement campaign into a scheduled program"
 ---
 
@@ -3993,6 +4001,447 @@ Cumulative session arc on this lane, all order-reversed: ~7.7–8.1× → **~6.6
 Not parity; the remaining program is entry (30)'s defect C (cross-IC guard
 reuse), partial inlining of user functions, and receiver-type specialisation.
 
+## 2026-08-13 (35) — defect C BUILT: cross-IC guard reuse, −829 static type tests and 319,847 executed reuses, for −0.17 % size
+
+Entry (30)'s third defect, behind `JS2WASM_IC_GUARD_REUSE`, DEFAULT OFF.
+`src/codegen/ic-guard-reuse.ts`, consumed by `member-get-inline-ic.ts`.
+
+### The design decision, and why option 2 was not available
+
+The brief offered two shapes: a finalize-time window pass, or extending
+emission-time receiver-CSE (entry 33) to also cache the post-`ref.cast` typed
+value. **Option 2 is structurally impossible, not merely worse.** `ref.cast $S`
+does not exist at emission time — the struct candidate set is only COMPLETE at
+finalize, which is the entire #2674 argument for making the IC a finalize pass.
+At emission a dynamic member read is a plain `call $__get_member_<name>` with no
+type to cache. So option 1 was forced.
+
+What made it safe is that entries (9)/(13)'s "re-derive dominance on linear
+wasm" problem does not arise here: the pass rewrites ONE instruction array at a
+time by strictly appending to a fresh `out`, and a wasm array is entered only at
+the top, so an earlier instruction dominates every later one in it. That is
+receiver-CSE's original (naive) argument — which failed there **only** because
+`fctx.body` is spliced during EMISSION. After emission nothing splices. The
+relocation probe is carried anyway, in receiver-CSE's exact form (`out[at-1]`
+must still be the recorded `tee` OBJECT), where it does a second job: it is what
+makes the pre-scan's prediction unfalsifiable, since a leader the pre-scan
+predicted may still be declined at emission.
+
+### Two things that were NOT obvious and are the difference between 0 and 829
+
+- **Keying on the local index finds almost nothing (388 reuses).** The emitter
+  copies the receiver into a fresh local per statement (`local.set $85
+  (local.get $7)`, `$86`, …) and routes each site through its own
+  `any.convert_extern ; local.tee $92 ; extern.convert_any` round trip, so six
+  reads of one `this` present six different locals. Locals are therefore tracked
+  by VERSIONED VALUE IDENTITY: a modelled copy propagates the source's id, any
+  unmodelled write mints a fresh one — which also subsumes invalidation, because
+  an id is never resurrected. Modelling only ONE conversion direction loses the
+  chain at its first hop; both directions are needed (388 → 586).
+- **Scope is dominance, not array identity** (586 → 829). A nested body is
+  dominated by everything preceding its parent instruction, so a child array
+  inherits a copy of the state; a parent never inherits from a child (a
+  conditional arm's guard does not dominate what follows the `if`) and siblings
+  never see each other. **Two re-entry shapes break that reading and are the one
+  real trap here:** a `loop` back edge re-enters the body after later body
+  instructions ran, and a `catch` body is entered from anywhere in the try
+  body — in both, a receiver reassigned in between would be tested with the
+  stale guard. Both are handled by clobbering the subtree's write set on the way
+  in. `tests/issue-4157-ic-guard-reuse.test.ts` pins this: with the clobber
+  removed the fixture answers WRONG against the native-Node oracle.
+
+### Results (tuned-11 as the base, i.e. all of entry (34)'s ON set)
+
+| | flag OFF | flag ON | Δ |
+| --- | ---: | ---: | ---: |
+| binary @ `optimize: 0` | 2,680,957 | 2,678,693 | −2,264 (−0.08 %) |
+| binary @ completed `-O4` | 1,324,402 | 1,322,110 | −2,292 (−0.17 %) |
+| static `ref.test` @ `optimize: 0` | 35,214 | 34,385 | **−829** |
+| static `ref.cast` @ `optimize: 0` | 49,292 | 48,463 | **−829** |
+| static `ref.test` @ `-O4` | 20,990 | 20,559 | −431 |
+| static `ref.cast` @ `-O4` | 21,399 | 20,968 | −431 |
+| **executed reuses / self-parse** | — | **319,847** | (identical at `-O4`) |
+
+469 leaders, **829 reuses of 4,301 patched sites (19.3 %)**; 12 sites had an
+unkeyable producer, 3,460 were simply the first read of that value in their
+scope. `declined-relocated=0` — the probe never had to fire.
+
+Two readings worth keeping:
+
+- **`wasm-opt` already finds about half of it.** 829 static removals at
+  `optimize: 0` become 431 at `-O4`, so binaryen's own redundancy elimination
+  would have taken the rest. The 431 that survive are ones it does not find, and
+  the executed count is unchanged by `-O4` (319,847 either way), so the sites do
+  survive optimisation and do run.
+- **Size is the wrong headline and the executed count is the right one.** Like
+  slice B of entry (33) this removes inline instructions, not calls, so
+  `JS2WASM_EXEC_CENSUS` is blind to it; the counter added here
+  (`JS2WASM_IC_GUARD_REUSE_CENSUS=1`, one exported `i32`) is what converts a
+  static claim into a dynamic one. 319,847 executed reuses each drop a
+  `local.tee` + `ref.test`, and on the hit path a `ref.cast` as well — for scale,
+  `__is_truthy` is 997,454 calls and `__extern_get` 506,752.
+
+### Correctness
+
+Flag unset ⇒ **sha256-identical**: `2a3aa6ad…` with no flags at all, `4a1cda96…`
+on tuned-11 — the latter reproduced with `JS2WASM_IC_GUARD_REUSE_POISON=1` also
+set, so the poison is provably inert flag-off. Flag ON: census checksum 422;
+**poison ON kills the parse with `RuntimeError: dereferencing a null pointer`**,
+so the reused cast is genuinely executed and not merely emitted. The 64-name
+per-field differential is clean in BOTH read paths (`computed` and `named`): 0
+hash divergence, 0 presence divergence, 32,506 nodes, body 422.
+`DOGFOOD_ACORN=1 tests/dogfood/acorn.test.ts` 4/4 with the flag on (621 reuses in
+that lane). 34 property/object/member/numeric/assignment equivalence files
+(216 tests) all pass with the flag on — **zero failures, so nothing to
+attribute**; but note those snippets reuse essentially nothing (single-statement
+programs have no repeated receiver), so the acorn dogfood and the differentials
+are the real evidence, exactly as entry (33) found for slice B.
+
+Gates: loc/func budget, oracle-ratchet (+0), pushraw, coercion-sites,
+stack-balance, any-box-sites, lint, prettier, `tsc` all clean. `check:godfiles`
+fails on `object-runtime.ts` / `array-methods.ts` — pre-existing on this branch,
+confirmed by restoring the touched file to its `HEAD` blob (file copies; `git
+stash` is a single shared stack across worktrees).
+
+### What is left of defect C
+
+Only the member-get IC participates. The other two ICs guard different
+predicates — `extern-get` on a key-global hash plus its own receiver
+classification, `is-truthy` on OPERAND type — so there is no shared guard to
+reuse between them; "cross-IC" here means between consecutive member-get caches,
+which is where entry (30) counted the `ref.test`. The write side is untouched
+and is the bigger remaining population: `__set_member_*` is 344,602 executed
+calls that each re-test the receiver INSIDE the callee, and no inline cache
+exists for it at all. That, not more reuse on the read side, is where the next
+increment of this defect lives.
+
+## 2026-08-13 (36) — PR #4455 parked on a PROVEN flake; and every park is currently blind
+
+The follow-up PR took an `auto-park-bot:merge-group-failure` hold at 17:22Z,
+**before** the defect-C commit and the defaults flip were on it. Shepherd
+diagnosis, verified causally rather than statistically:
+
+- The queued snapshot (head `fe20764`) differs from its content-current
+  merge-base in exactly two places:
+  `plan/issues/4403-function-body-valueof-object-arith-compile-failure.md` and 14 lines inside
+  `optimizeWithSystemBinary` — code reachable only under `options.optimize`,
+  which the test262 harness never sets (zero matches in `tests/test262*`). The
+  compiler on the validated path is behaviourally identical to baseline.
+- The failure is exactly **1 regression, net −1 (33,031→33,030), category
+  "other", wasm-hash changed** — the same cross-run-nondeterminism class as the
+  360–531 same-SHA canary flips the report itself documents, on a path outside
+  the 932-entry quarantine manifest.
+- The parked snapshot is also moot: it predates the content that will actually
+  merge, so re-validating it as-is answers nothing.
+
+**Plan (per the auto-park protocol's flake determination):** hold stays ON until
+the defaults flip lands on the branch; then remove it ONCE so `auto-enqueue`
+re-admits, and the merge group validates the real final content. No re-enqueue
+loops.
+
+### CI defect worth its own issue when allocation is healthy: parks are BLIND
+
+The regressed test's **path is unrecoverable from the park**: `--quiet`
+suppresses paths in the diff (`scripts/diff-test262.ts:1811`), and the
+detail-report step that would name them **crashes** (`ENOENT open ''` — its
+`$META_ARGS` from a prior step is empty in that step's environment). So every
+auto-park currently tells the shepherd *that* something regressed but not
+*what*, forcing exactly the artifact-archaeology this diagnosis needed. Fixing
+the empty-`META_ARGS` hand-off (or dropping `--quiet` in the park path) makes
+every future park self-describing.
+
+## 2026-08-13 (37) — DEFAULTS FLIPPED: the tuned eleven ship ON, and the byte-identity guarantee inverts
+
+Project-lead decision on entry (34)'s **−12.0 %**: the eleven flags below are
+now the compiler's default. The token rule and the whole table live in
+`src/perf-flags.ts`; every per-pass module delegates to it rather than
+re-implementing a parse, for the reason `derivation-flags.ts` gives — three
+copies of a parse drift, and a parse is what "unset ⇒ ON" turns a literal
+comparison into.
+
+| flag | default when unset | how OFF is spelled |
+| --- | --- | --- |
+| `JS2WASM_INLINE_PROP_IC` | `8` | `0` |
+| `JS2WASM_INLINE_TRUTHY_IC` | `1` (`anyval,boxbool`) | `0` |
+| `JS2WASM_IR_INLINE` | the `on` preset | `0` |
+| `JS2WASM_FUSED_TONUMBER` | on | `0` |
+| `JS2WASM_SMI_FASTPATH` | `all` | `0` |
+| `JS2WASM_LAZY_STR_FLATTEN` | on | `0` |
+| `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` | on | `0` |
+| `JS2WASM_INLINE_HINTS` | `1` (the `cold` profile) | `0` |
+| `JS2WASM_SET_MEMBER_F64` | on | `0` |
+| `JS2WASM_RECEIVER_CSE` | on | `0` |
+| `JS2WASM_EXTERN_GET_IC` | `1` (inline mode) | `0` |
+
+Token rule: `0` / `off` / `false` / `no` / empty disable; **anything else takes
+the tuned default**. That asymmetry is the point — a malformed value must never
+land in a half-enabled state, and for a flag whose OFF position exists to be a
+one-variable revert, "fails to disable" is the safe failure. The levelled flags
+keep their explicit levels (`INLINE_PROP_IC=4`, `SMI_FASTPATH=1`,
+`INLINE_TRUTHY_IC=all`, `EXTERN_GET_IC=census`, `IR_INLINE=adapters`); only a
+value that selects *nothing recognisable* falls back.
+
+### The revert is exact, and that is the load-bearing measurement
+
+`=0` on all eleven, standalone acorn, `optimize: 0`:
+
+| build | sha256 | bytes | checksum |
+| --- | --- | ---: | ---: |
+| pre-flip, everything unset | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| post-flip, everything `=0` | `d70f9e3a…80879c` | 2,487,935 | 422 |
+| pre-flip, explicit tuned-11 | `62f67369…2e3a7d` | 3,297,245 | 422 |
+| post-flip, everything unset | `62f67369…2e3a7d` | 3,297,245 | 422 |
+
+Both directions are **sha256-identical**, not merely the same size. So the flip
+moved the default and changed no emission: the legacy binary is still reachable
+with one variable per flag, and the new default is exactly what entry (34)
+measured rather than something adjacent to it.
+
+Deterministic counts at the new default (`JS2WASM_EXEC_CENSUS`), identical to the
+explicit tuned-11 on the same tree: `__extern_get` **64,691** (entry 31's
+−87.2 %), `__is_truthy` **239,764** (entry 23), `__str_flatten` **252,367**
+(entry 26), `__unbox_number` 214,677. The 64-name differential
+(`cold-tail-differential.mjs`) is identical between new-default and explicit
+tuned-11 in **both** read paths — every hash, every presence count, `nodes`
+32,506, `body` 422 — with only `compileMs` differing.
+
+**`__box_number` reads 1, not the ~401,521 of entry (33).** That figure is
+`SET_MEMBER_F64` measured ALONE; it does not survive composition. Under the full
+set `IR_INLINE` inlines `__box_number` into its callers, and `stripCensusPrefix`
+deliberately removes the entry counter from every inlined copy — so an inlined
+call is genuinely ABSENT from the count rather than double-counted. Reading 1 is
+the census working, not the helper vanishing. Any future single-slice number in
+this file is a single-slice number: entry (29) already recorded that these do
+not compose additively, and this is the same warning seen from the counting side.
+
+### What the flip broke, and what that says
+
+Two classes, both structural rather than incidental:
+
+1. **Every test pinning "unset ⇒ OFF" now pins the wrong contract.** Seven
+   fixtures were rewritten to pin `=0 ⇒ legacy` and to assert positively that
+   unset ENGAGES — the mechanism assertion has to move with the default, or the
+   fixture silently becomes a test that the tuned build merely compiles.
+   `tests/issue-4157-tonumber-fast-paths.test.ts` inverted hardest: its "junk
+   must be OFF" case is now "junk must take the default", which reads backwards
+   against its own pre-flip self and is exactly right.
+2. **`tests/issue-4157-const-box-hoist.test.ts` had to pin `SMI_FASTPATH=0`.**
+   Its unhoisted baseline counts 4 executed `__box_number` calls per iteration;
+   at the new default the SMI guard answers the i31-able `42` inline and the
+   baseline becomes 3. The fixture would have stayed GREEN and stopped meaning
+   what it says — `CONSTANTS_PER_ITERATION` would have drifted from "the
+   constants this pass removes" to "the constants some other pass had not
+   already removed". This is the general hazard of flipping a default under a
+   suite of count-based fixtures: the ones that break are the lucky ones.
+
+### Stderr had to be re-calibrated, and one refusal was demoted
+
+Five passes printed an unconditional "the mechanism fired" line when enabled.
+That was right for an opt-in flag — #4157 twice recorded a confident null from a
+mechanism that was never live — and is wrong for a default: it would put five to
+eight lines on stderr for **every compile in the project**. They now print only
+when the operator named the flag (or its `_DEBUG` channel).
+
+One of them is not a summary and deserves the note: `[extern-get-ic] REFUSED:
+… (prefix-not-key-load)`. `extern-get-cache-arm.ts` states plainly that a module
+where `fillDynamicForinVecArms` / `fillObjVecReflectionHelpers` unshifted ahead
+of the cache arm declines **by design** — and that class is common: it fires on
+essentially every small fixture, while acorn patches 964 of 975 static-key
+sites. Leaving it loud would have made a designed decline look like a defect on
+most compiles in the suite. It is demoted to the same channel, and the loudness
+is preserved for anyone who set the flag deliberately.
+
+### Not verified here, by construction
+
+This is the first time these eleven face the **test262 merge-group
+re-validation**. Every measurement above is acorn plus the targeted fixtures;
+there is no local test262 and the PR-level regression checks are designed
+no-ops. If a flag breaks conformance beyond acorn, the merge queue's auto-park
+is what will find it. Local green is not conformance-proven.
+
+`optimize.ts` is deliberately untouched — its `wasm-opt` timeout fix (entry 31)
+is a separate commit, and `JS2WASM_INLINE_HINTS` reaches it only through
+`inlineHintArgs`, whose OFF position still produces byte-identical argv.
+
+## 2026-08-13 (36) — the default flip's real cost: 37 SHAPE assertions across 14 files, and none of them a wrong answer
+
+A default flip is measured by what it breaks. Swept `tests/` for every file that
+compiles without setting these flags and asserts exact WAT, exact emitted-function
+sets, absolute function indices, or opcode counts (174 + 61 files), then re-ran
+every failing file with all eleven `=0` as the control. **The control is the
+whole method**: this branch already carries pre-existing failures — 24 in
+`tests/equivalence/`, 148 named tests in the WAT set, one OOM — and every one of
+them reproduces identically with the flags off. Without the control, the flip
+would have been blamed for all of them.
+
+**Attributable to the flip: 37 tests in 14 files.** Every single one is a
+*shape* assertion used as a proxy for a *different* feature, and the four
+signatures are worth recording because they are what a default flip does to a
+suite:
+
+| signature | what actually happened |
+| --- | --- |
+| `expected '(func $f …)' to match /\bcall\b/` | the call was INLINED |
+| `expected [] to deeply equal ['Base_init']` | the call EDGE was inlined away |
+| `expected 53 to be 50`, `to contain 'call 66'` | an ABSOLUTE function index shifted |
+| `to match /ref\.is_null[\s\S]*throw/` | the null guard was correctly ELIDED |
+
+Not one is a wrong value. The equivalence suite — 214 files, value assertions,
+run at the default — is clean against its own control.
+
+**Attribution, by bisection**: `JS2WASM_IR_INLINE` accounts for 32 of 37 (it
+removes call edges, and its rule-3 inlines `__dc_*` adapters unconditionally);
+`JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR` for 3 (the `ref.is_null … throw`
+marker); the ToNumber slices for 1 (`__unbox_number` is the marker for #3765's
+kill switch, and the fused call replaces it); one #3744 failure is pre-existing.
+
+### The fix is to PIN, not to relax — and pinning has a cost worth naming
+
+`tests/helpers/pin-perf-flags.ts` sets the narrowest interfering flag for a file
+and restores it after. The alternative — loosening each assertion — would leave
+14 files green while proving nothing, which is the exact failure this issue
+records twice (entries 22, 27: a confident null from a mechanism that never
+fired). These assertions ARE the evidence: #3522's "prepared exactly once"
+lists, #1761's "a non-provable length must NOT presize" soundness boundary,
+#4150's "the slow path is still a call".
+
+The cost is real and is stated at the helper: a pinned file no longer exercises
+the shipped default. That is acceptable *only* because these are shape
+assertions and the value-level coverage of the same features lives in
+`tests/equivalence/`, which runs at the default and is clean. Pin the narrowest
+set, never the whole table by reflex.
+
+### Two inversions worth reading twice
+
+- **#1761** asserts a soundness boundary by COUNTING the doubling grow call. The
+  inliner takes the call, the count reads 0, and the assertion flips to
+  "an unsound presize happened" — reporting a correctness failure that did not
+  occur. A count-of-calls instrument is not a proxy for a code path once
+  something is allowed to inline that call.
+- **#4150** asserts the SLOW path is still a `call`. Inlined, `call` vanishes and
+  the test reads "the fast path was taken" — the exact opposite of the truth.
+
+Both are green-when-wrong and wrong-when-green respectively; both were caught
+only because the OFF control existed.
+
+### Environment note, controlled and not ours
+
+The equivalence suite OOMs a vitest worker on this box at 4–6 GB. It OOMs
+**identically with every flag `=0`**, at the same file count, and
+`tests/equivalence/multi-file-compilation.test.ts` OOMs alone at 6 GB in both
+states. Pre-existing; swept around it by running in 20-file chunks.
+
+## 2026-08-13 (38) — first CI failure of the flip: the inliner DOUBLES a pre-existing fixup, and the gate counts the copy
+
+PR #4455's `quality` check failed on the stack-balance fixup gate:
+`default-value-lossy` 42→43 (+1) — while the same run banked `drop-excess`
+2→0 and `call-arg-coerce` 7→1 (net −7 fixups; the gate is per-bucket, so the
++1 alone fails it).
+
+Bisected in two steps with a focused probe (compile only
+`benchmarks/helpers.ts`, count `default-value-lossy`): flag-by-flag isolates
+`JS2WASM_IR_INLINE`; rule-by-rule isolates the **single-caller** rule; a new
+caller→callee line under `verbose` (added in this commit) names the pair:
+`__vec_get -> __cb_0`.
+
+**Not new wrong codegen — a duplicated old one.** `__vec_get`'s own body
+already carries one of the 42 baseline `default-value-lossy` fixups (the
+`__vec_*` family is essentially the whole baseline: 6 per corpus file × 7
+files). The single-caller rule copies that body into `__cb_0`'s wrapper
+block, and the stack-balance pass — which runs after the inliner — repairs
+the same missing-branch-value shape twice, with the identical
+`ref.null.extern` default. Runtime value unchanged either way; the count
+grows because the buggy shape now exists in two places.
+
+Resolution: the gate's sanctioned `--update` (baseline 42→43, and the two
+decreases banked). The true fix is upstream — emit `__vec_get`'s branch value
+correctly so the fixup vanishes from BOTH sites (and takes ~all 42 baseline
+entries with it, since the family repeats per file); that's its own issue,
+not a 3-line patch on a queued defaults-flip PR. Worth knowing for the
+future: **any inliner will multiply whatever masked emitter bugs live in the
+bodies it copies — a fixup-count ratchet and an inliner are in structural
+tension unless stack-balance runs first or the producer is fixed.**
+
+## 2026-08-13 (39) — the remaining gap, decomposed from paired profiles: GC is exonerated, helpers are 2.2×, and 3.2× lives INSIDE the compiled functions
+
+Paired 300-iteration V8 CPU profiles of the SAME workload — the tuned build
+(defaults-on head) and native Node — make sample counts directly comparable:
+**24,301 wasm samples vs 4,244 node = 5.7×** (wall measured 6.6×; sampling
+skips some host glue).
+
+In units of NODE'S TOTAL TIME (= 1.0), the wasm run spends:
+
+| where | share of wasm run | × node-total |
+| --- | ---: | ---: |
+| compiled acorn code (incl. inlined IC/boxing sequences) | 55.7 % | **3.19** |
+| runtime helpers (extern 8.6 %, dispatch 7.7 %, member get/set 6.7 %, object model 6.3 %, regex 3.6 %, string 2.8 %, boxing 1.9 %) | 37.9 % | **2.17** |
+| GC | 5.3 % | **0.30** |
+
+Two headlines:
+
+1. **WasmGC's GC is exonerated: absolute GC cost is 1.29× node's** (1,291 vs
+   1,001 samples — node spends 23.6 % of its much shorter run in GC, we spend
+   5.3 % of ours). Allocation-rate work (fnctor arenas, presize) would buy
+   almost nothing.
+2. **Deleting ALL helper time leaves ~3.5×** — the independently-derived ~3×
+   floor for helper-elimination approaches, now confirmed by direct
+   measurement. The majority of the remaining gap is code QUALITY inside
+   compiled function bodies, not calls out of them.
+
+Per-function ratios (same acorn function, wasm/node self-samples; V8's
+aggressive inlining concentrates its self-time, so treat as indicative —
+the big ones are far outside attribution noise):
+
+| function | node | wasm | ratio |
+| --- | ---: | ---: | ---: |
+| `pp.next` | 62 | 1,208 | **19.5×** |
+| `pp$5.parseSubscript` | 124 | 1,226 | **9.9×** |
+| `finishNodeAt` | 41 | 371 | **9.0×** |
+| `pp$5.parseMaybeAssign` | 67 | 468 | 7.0× |
+| `pp.skipSpace` | 99 | 611 | 6.2× |
+| `pp.getTokenFromCode` | 153 | 787 | 5.1× |
+| `pp.finishToken` | 43 | 217 | 5.0× |
+| `pp$2.finishNode` | 162 | 161 | 1.0× |
+| `stringToNumber` | 38 | 39 | 1.0× |
+
+`pp.next` — the function entry (30) dissected — is STILL the worst compiled
+function at 19.5×, after receiver CSE and the f64 set twins. The census names
+why: the write side still CALLS. `__set_member_*` executes **344,617** times
+per parse (89 distinct dispatchers; `lastTokStartLoc`/`lastTokEndLoc` are
+externref writes with no typed twin possible), `__get_member_*` 339,151,
+`__call_m_*` + `__call_fn_*` + `__named_this_call` 213,000 — the full
+executed-helper census totals **4.84 M calls/parse** (checksum 422).
+
+Other loud census rows with no owner yet: `__str_equals` 254,976 +
+`__str_flatten` 252,367 (the flatten count survives LAZY_STR_FLATTEN — worth
+finding the caller), `__box_boolean` 238,653 (comparison results boxed to be
+immediately consumed), `__is_truthy` 239,764 residual, `__extern_strict_eq`
+169,828, `__extern_get_idx` 95,565 (per-char `charCodeAt` traffic:
+`fullCharCodeAt`/`fullCharCodeAtPos` run 163,778 times EACH).
+
+Ranked next levers, by (share of wasm run) × (headroom implied by the ratio):
+
+1. **Write-side member IC** (`__set_member_*` inline dispatch, symmetric to
+   the read IC) — the standing #4157 lever; directly targets `pp.next` 19.5×
+   and `finishNodeAt` 9.0×.
+2. **Call-dispatch devirtualisation** (`__call_m_*`/`__call_fn_method_*`
+   inline fast paths) — targets `parseSubscript` 9.9× / `parseMaybeAssign`
+   7.0×, the two biggest compiled frames after `next`.
+3. **Char-loop fast path**: `skipSpace`/`getTokenFromCode`/`fullCharCodeAt*`
+   at 5–6× are a per-character `__extern_get_idx`+rope-flatten story —
+   a native i16-array `charCodeAt` loop shape (or caching the flattened
+   backing store) attacks `__str_flatten`'s 252 k and `__extern_get_idx`'s
+   96 k in one move.
+4. **Unboxed booleans**: `__box_boolean` 238 k producing values that
+   `__is_truthy`-class consumers immediately unbox — a producer/consumer
+   fusion inside compiled bodies, invisible to any helper-side IC.
+
+`pp$2.finishNode` and `stringToNumber` at 1.0× prove the emitted code CAN
+match V8 where the shape is already direct — the gap is concentrated, not
+uniform.
+
+Profiles: `.tmp/gap/{wasm,node}.cpuprofile`, census `.tmp/gap/census.json`,
+method as entry (30) (closure-name map + bucket fold).
 ## 2026-08-14 — RECOVERY NOTE: entries 40-43 restored from session context after a container loss
 
 The container holding the four-lever integration branch and entries 40-43 was
@@ -4142,3 +4591,106 @@ fails the copied arm's type test and falls through to the else arm — the
 unmodified dispatcher call, guard included — so the TypeError is still
 thrown, by the dispatcher, exactly as before. Verified: all 3 tests green
 including the poison probe (the arm really executes); `tsc` clean.
+
+## 2026-08-14 (46) — park 6 ROOT-CAUSED and FIXED: the receiver coercion two late repairs both mis-attribute, and the tuned set is what widened the window
+
+PR #4455's merge-group run 31790623974 completed all 102 shards and the
+standalone guard failed for real: **net −30 pass** (30,703 → 30,673, tolerance
+−15), 36 regressions vs 6 improvements, **wasm_compile 33** + assertion_fail 3,
+compile_error bucket 5,792 → 5,830. All 36 wasm-hash-changed (flip-attributable,
+zero compile_timeout involvement) and all shared one bucket signature. js-host
+passed its guards — standalone-only.
+
+### Recovering the file list without the CI artifact
+
+The per-file list lives only in an Azure-blob artifact this container's proxy
+blocks, and the GitHub API is unreachable from here too. Recovered locally
+instead: clone `loopdive/js2wasm-baselines`, take the 30,703 `pass` rows of
+`test262-standalone-current.jsonl`, and for each re-assemble the ORIGINAL
+harness exactly as the sharded runner does (`assembleOriginalHarness`), compile
+with `{target:"standalone", allowJs, skipSemanticDiagnostics, deferTopLevelInit}`
+and check `WebAssembly.validate`. A `wasm_compile` regression is a COMPILE-time
+property — no eval engine, no instantiation, no quickjs provider needed, ~0.6 s
+per test. Two random draws (4,641 tests) surfaced two hits; both were
+`cpn-class-*`, and sweeping that family directly gave **32 of the 36**:
+`language/{statements,expressions}/class/cpn-class-{decl,expr}-computed-property-name-from-*`
+(additive-add/subtract, multiplicative-mult/div, exponetiation, condition-true/false,
+null, identifier, math, string-literal, numeric/decimal/decimal-e/integer-e-notational,
+integer-separators).
+
+### Root cause — NOT a single culprit flag
+
+Single-flag bisection was misleading in both directions: with all eleven ON,
+turning any ONE off still failed; with all eleven OFF, turning `JS2WASM_IR_INLINE`
+**or** `JS2WASM_SMI_FASTPATH` on *independently* reproduced it. That is because
+neither is the defect. The defect is older and the two flags merely widen the
+window it needs.
+
+Standalone codegen emits a devirtualized method call as
+
+    global.get $__mod_c   ;; the receiver `c`, a (ref null $C) GC struct
+    call $C_2             ;; the devirtualized method — takes ZERO parameters
+    …                     ;; whatever consumes $C_2's f64 result
+    call $__call_m_sameValue_2 / local.set $x    ;; the operand's REAL consumer
+
+so the receiver's consumer is several instructions away, and nothing emits its
+`extern.convert_any`. Two late repairs are supposed to supply it, and both
+attribute the value by position rather than by stack model:
+
+- `fixCallArgTypesInBody` (stack-balance.ts) walks BACKWARD from the call and
+  **stops at the first `if`/`block`/`loop`** ("Stop at control flow boundaries");
+- `fixLocalSetCoercion` only ever inspects `body[i - 1]`.
+
+`smi-box-fast-path.ts` replaces `call $__box_number` with a guard ending in
+`if (result externref)`; `ir-inline.ts` replaces a call with `block (result …)`.
+Either lands inside that window, the coercion is silently never inserted, and
+V8 rejects the module with `call[0] expected type externref, found global.get of
+type (ref null 74)` — or, one shape over, the `local.set[0]` twin. Verified by
+instrumenting the pass chain: the `extern.convert_any` is absent BEFORE
+`finalizeModuleValueCaches` in every build and appears only `after-stack-balance`
+in the legacy one. It is standalone-only for the obvious reason: under a JS host
+a class instance already IS an `externref`, so no coercion is ever due.
+
+### Fix — model the stack instead of guessing the position
+
+`src/codegen/call-arg-producers.ts` (new): the #4077 exact forward model moved
+verbatim out of `fixups.ts` and generalised from `locateCallArgProducers` to
+`locateOperandProducers` — the producer index of every value each instruction
+POPS. It already models `if`/`block`/`loop` exactly, which is the whole point.
+`src/codegen/cross-hierarchy-operands.ts` (new) consumes it and runs as its own
+pipeline step immediately BEFORE `stackBalance(mod)`, so both legacy repairs see
+the coercion already in place and queue nothing. It is a separate module rather
+than more lines in `stack-balance.ts` because that file is a god-file sitting
+exactly at its LOC budget (2,836) — `stack-balance.ts` only exports four helpers
+it already had (`resolveFuncType`, `getFullParamTypes`, `inferInstrType`,
+`callArgCoercionInstrs`) and does not grow by a line.
+
+It repairs **only** `externref` ⇄ concrete-GC-ref, in either direction. Those
+hierarchies are disjoint in Wasm, so such a pair can never validate under any
+subtyping rule — the pass can only turn an invalid module valid, never perturb
+a valid one. Everything else (numerics, struct-to-struct `ref.cast_null`,
+`anyref` widening, which IS legal) is left to the two legacy repairs untouched.
+Real fix, not a target gate: the −12 % standalone acorn win is kept whole.
+
+### Verification
+
+- 32/32 recovered `cpn-class-*` tests: INVALID_WASM → valid. Re-run twice.
+- 4,000-test random A/B (same list, pre vs post): **zero new failures**, one
+  fixed; 560 → 559 non-ok rows (the rest are negative tests, identical in both).
+- Byte identity on the `=0`-everything path: standalone acorn 1,157,936 B
+  unchanged with all four canaries (2/3/4/5); the 172,617-byte test262 harness
+  module sha256 `e30ad07f…` unchanged. Both measured base-vs-new by file copy.
+- Tuned-default acorn: success, canaries 2/3/4/5, no host imports.
+- Equivalence gate shards 1–8: no new regressions, and **12 baseline failures
+  now PASS** (8 on shard 2, 1 on shard 4, 1 on shard 6, 2 on shard 7) —
+  `coercion/arithmetic-add` standalone / standalone-O string concatenation,
+  `math-pow-test262-pattern`, `issue-1197`, `symbol-basic`. The same defect was
+  already costing us tests before the flip. Baseline deliberately NOT ratcheted
+  in this commit: this is a park fix, and the ratchet belongs in its own change.
+- New regression test `tests/issue-4157-park6-cross-hierarchy-operand.test.ts`
+  pins both consumer shapes (call operand, `local.set` operand).
+
+Not accounted for: 1 `wasm_compile` + the 3 `assertion_fail` rows. The sweep
+compiles only the PRIMARY harness variant and never executes, so it cannot see a
+strict-rerun-only failure or a wrong-answer one; the merge-group re-run is the
+authoritative check on those.

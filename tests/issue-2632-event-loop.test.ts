@@ -28,6 +28,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) Asserts a literal `call <n>` in `_start` — an absolute function
+// index, which the tuned passes shift by adding helpers. Pin the inliner off.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 // wasmtime feature flags required for the WasmGC + exception-handling binaries
 // js2wasm emits (structs/arrays + the exception tag).

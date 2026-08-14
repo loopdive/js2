@@ -756,9 +756,12 @@ jobs:
     # A shard normally finishes in ~5-8 min; the prior 90-min cap let a single
     # hung shard (intermittent test262/runner stall, or the setup-node@v6 Node-25
     # tool-cache miss → flaky direct download) wedge the whole merge queue for up
-    # to 90 min before failing. 25 min fails a hung shard fast so the merge_group
-    # ejects + re-runs instead of stalling every other PR behind it.
-    timeout-minutes: 25
+    # to 90 min before failing. A bounded timeout fails a hung shard fast so the
+    # merge_group ejects + re-runs instead of stalling every other PR behind it.
+    # 25 → 40 (#4157 defaults flip): tuned emission adds per-compile cost, and
+    # the standalone lane's shards measured 18-22+ min under it — 25 left zero
+    # headroom and timed out 12 shards in merge-group run 31743784768.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -851,6 +854,14 @@ jobs:
       # on standalone shards 10/17 in #4402. Match the repo's issue/equivalence
       # gates and leave compiler-worker limits unchanged.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv
@@ -1031,10 +1042,10 @@ jobs:
       needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
-    # Same 25-min timeout as `test262-shard`. The per-target counts
-    # (js-host=66, standalone=36) target ~6-8 minutes in the current production
-    # configuration while leaving ample timeout headroom — see the generator.
-    timeout-minutes: 25
+    # Same 40-min timeout as `test262-shard` (25 → 40 for the #4157 defaults
+    # flip — see that job's comment; standalone shards measured 18-22+ min
+    # under tuned emission and 25 timed out 12 of them).
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.mg_shard_matrix) }}
@@ -1054,6 +1065,14 @@ jobs:
       # in this parent and need the same 1 GiB ceiling as the required issue and
       # equivalence gates.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       JS2WASM_IR_FIRST: ""
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"
@@ -2608,6 +2627,16 @@ jobs:
           cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl public/benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
+          # …and the SERVED copy under website/public (the vite publicDir since
+          # #1656). Its host twin is refreshed here, but the standalone one only
+          # ever landed via deploy-pages, so the committed file sat at a
+          # 2026-06-07 snapshot (16,298 pass, no host_free_pass field). The
+          # landing page reads this path FIRST for its standalone donut, so if a
+          # deploy's baselines fetch ever fails it serves that June number —
+          # now the site's default headline, since standalone is the default lane.
+          mkdir -p website/public/benchmarks/results
+          cp shard-artifacts/test262-standalone-report-merged.json \
+            website/public/benchmarks/results/test262-standalone-report.json
 
       # #2097 — ratchet the absolute standalone high-water mark UP when this
       # push improved standalone conformance. Only ever raises (never lowers);
@@ -2991,8 +3020,27 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           # Add a dedicated SSH remote for the deploy-key push + its rebase fetch.
           # The checkout's origin is HTTPS; we don't rewrite it (other steps may
-          # rely on it). github.repository is owner/name (e.g. loopdive/js2wasm).
-          MAIN_SSH_REMOTE="git@github.com:${{ github.repository }}.git"
+          # rely on it). $GITHUB_REPOSITORY is owner/name (e.g. loopdive/js2wasm).
+          #
+          # It is the RUNNER ENV VAR, deliberately not an Actions expression
+          # interpolation, and that is LOAD-BEARING. A `run:` script containing
+          # even one interpolation is compiled into a single format expression
+          # capped at 21,000 characters. This script is ~25 kB, so the lone
+          # interpolation that used to sit here put the step over the cap and
+          # GitHub rejected the whole file:
+          #   Invalid workflow file … Exceeded max expression length 21000
+          # That is not a normal test failure — the run fails instantly with
+          # ZERO jobs, so the required `merge shard reports` and `check for
+          # test262 regressions` contexts are never published for the merged
+          # state, the merge-queue entry can never satisfy them, and it sits at
+          # the queue head forever blocking every PR behind it. PR #4498 stalled
+          # ~2h this way, tipped over the cap by a two-line addition elsewhere
+          # in this same script. With no interpolation left the script is a
+          # plain string and the limit does not apply. Keep it that way: read
+          # workflow context here through env vars only — and note the ban
+          # covers COMMENTS too, since the expression compiler scans the whole
+          # script (spelling the token out in this comment re-broke the file).
+          MAIN_SSH_REMOTE="git@github.com:${GITHUB_REPOSITORY}.git"
           git remote remove deploykey 2>/dev/null || true
           git remote add deploykey "$MAIN_SSH_REMOTE"
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('benchmarks/results/test262-current.json','utf8')).summary.pass)")
@@ -3074,6 +3122,9 @@ jobs:
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-standalone-report.json
+            # The SERVED standalone report (website/public, copied above) — the
+            # landing page's first source for its standalone donut.
+            git add -f website/public/benchmarks/results/test262-standalone-report.json 2>/dev/null || true
             # #1853 — hard-error stability baseline, refreshed just above.
             git add -f scripts/test262-hard-error-baseline.json 2>/dev/null || true
             # #2108 — coercion-site drift baseline, refreshed just above. Staged

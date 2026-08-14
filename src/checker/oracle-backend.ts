@@ -27,6 +27,7 @@ import {
   type TypeOracle,
 } from "./oracle.js";
 import { InHouseOracle, factKey } from "./inhouse-oracle.js";
+import { classifyDivergence, type DivergenceVerdict } from "./divergence-classifier.js";
 
 export type OracleBackend = "checker" | "inhouse" | "differential";
 
@@ -58,49 +59,128 @@ export interface OracleDivergence {
   inhouse: string;
   /** Source text of the queried node, truncated. */
   node: string;
+  /** Four-way structural verdict (#4408). */
+  verdict: DivergenceVerdict;
 }
 
 /**
- * Divergence tally for a differential run. `agreements` counts queries where
- * both backends produced the same answer; `divergences` records the rest.
+ * Divergence tally for a differential run, bucketed by
+ * {@link classifyDivergence}'s four-way verdict (#4408).
  *
- * A divergence is NOT automatically a bug: the in-house backend is allowed to
- * answer `unresolvable`/`undefined` where the checker knows more (that is the
- * documented safe direction). `weakened` counts exactly those; `conflicting`
- * counts the ones where both backends claim a fact and the facts differ —
- * those ARE bugs and are what the parity tests assert on.
+ * `agreements` folds in `same-meaning`: two spellings of the same answer are
+ * an agreement, not a divergence. `weakened` is `inhouse-weaker` — the in-house
+ * backend declined, which its contract permits. `checkerWeaker` is the reverse
+ * and is NOT a bug signal on its own: the in-house backend knowing more than
+ * TypeScript is frequent and often correct (#4410). Only `conflicting` means
+ * both sides claim a fact and the facts are incompatible.
  */
+/** Per-query tally — which oracle question diverges, not just how often. */
+export interface QueryDivergence {
+  agreements: number;
+  weakened: number;
+  checkerWeaker: number;
+  conflicting: number;
+}
+
 export class DivergenceLedger {
   agreements = 0;
   weakened = 0;
+  /** In-house claimed a fact the checker declined — adjudicate, don't assume. */
+  checkerWeaker = 0;
   conflicting = 0;
   readonly samples: OracleDivergence[] = [];
+  /**
+   * (#4218) Per-query breakdown. The global counters answer "is the in-house
+   * backend safe?"; this answers "which query do I fix next?" — the whole
+   * point of a differential run is to produce a worklist, and a single total
+   * cannot. Unbounded by design: the key space is the oracle's frozen query
+   * vocabulary (~15 names plus `propertyFactOf:<name>`), not the node count.
+   */
+  readonly byQuery = new Map<string, QueryDivergence>();
+  /**
+   * (#4218) Conflict samples, quota'd PER QUERY.
+   *
+   * `samples` cannot serve this purpose: it is a single FIFO over *all*
+   * divergences, and `weakened` outnumbers `conflicting` ~54:1 on a wide
+   * corpus — so the shared cap fills with weakened entries before a single
+   * conflict is seen. Measured on the 2,137-input run: 908 conflicts existed
+   * and 25 were sampled, none of them from `signatureOf`, the query with the
+   * *highest* conflict rate. A worklist you cannot see the top item of is not
+   * a worklist.
+   */
+  readonly conflictSamples: OracleDivergence[] = [];
+  private readonly conflictQuota = new Map<string, number>();
   private readonly maxSamples: number;
+  private readonly maxConflictsPerQuery: number;
 
-  constructor(maxSamples = 200) {
+  constructor(maxSamples = 200, maxConflictsPerQuery = 60) {
     this.maxSamples = maxSamples;
+    this.maxConflictsPerQuery = maxConflictsPerQuery;
+  }
+
+  private tally(query: string): QueryDivergence {
+    let entry = this.byQuery.get(query);
+    if (!entry) {
+      entry = { agreements: 0, weakened: 0, checkerWeaker: 0, conflicting: 0 };
+      this.byQuery.set(query, entry);
+    }
+    return entry;
   }
 
   record(query: string, checkerAnswer: string, inhouseAnswer: string, node: string): void {
-    if (checkerAnswer === inhouseAnswer) {
+    const perQuery = this.tally(query);
+    const verdict = classifyDivergence(query, checkerAnswer, inhouseAnswer);
+    if (verdict === "same-meaning") {
       this.agreements++;
+      perQuery.agreements++;
       return;
     }
-    if (isWeaker(inhouseAnswer)) this.weakened++;
-    else this.conflicting++;
+    if (verdict === "inhouse-weaker") {
+      this.weakened++;
+      perQuery.weakened++;
+    } else if (verdict === "checker-weaker") {
+      this.checkerWeaker++;
+      perQuery.checkerWeaker++;
+    } else {
+      this.conflicting++;
+      perQuery.conflicting++;
+    }
+    // Sample everything that is not a plain in-house abstention: both a
+    // genuine conflict and a checker-weaker row need a human verdict.
+    if (verdict !== "inhouse-weaker") {
+      const used = this.conflictQuota.get(query) ?? 0;
+      if (used < this.maxConflictsPerQuery) {
+        this.conflictQuota.set(query, used + 1);
+        this.conflictSamples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node, verdict });
+      }
+    }
     if (this.samples.length < this.maxSamples) {
-      this.samples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node });
+      this.samples.push({ query, checker: checkerAnswer, inhouse: inhouseAnswer, node, verdict });
     }
   }
 
-  summary(): { agreements: number; weakened: number; conflicting: number; total: number } {
-    const total = this.agreements + this.weakened + this.conflicting;
-    return { agreements: this.agreements, weakened: this.weakened, conflicting: this.conflicting, total };
+  summary(): { agreements: number; weakened: number; checkerWeaker: number; conflicting: number; total: number } {
+    const total = this.agreements + this.weakened + this.checkerWeaker + this.conflicting;
+    return {
+      agreements: this.agreements,
+      weakened: this.weakened,
+      checkerWeaker: this.checkerWeaker,
+      conflicting: this.conflicting,
+      total,
+    };
   }
-}
 
-function isWeaker(answer: string): boolean {
-  return answer === "unresolvable" || answer === "undefined" || answer === "mixed" || answer === "[]";
+  /** Reset between corpus files so a run can attribute divergence per input. */
+  reset(): void {
+    this.agreements = 0;
+    this.weakened = 0;
+    this.checkerWeaker = 0;
+    this.conflicting = 0;
+    this.samples.length = 0;
+    this.conflictSamples.length = 0;
+    this.conflictQuota.clear();
+    this.byQuery.clear();
+  }
 }
 
 /** Process-wide ledger for env-driven differential runs. */

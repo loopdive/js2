@@ -25,7 +25,7 @@ Be concise. Lead with the answer, then only the context needed to act on it.
 - Run a specific test file: `npm test -- tests/issue-277.test.ts`
 - Run equivalence tests only: `npm test -- tests/equivalence.test.ts`
 - Test262: `pnpm run test:262` — vitest-based runner, creates its own worktree, writes to `benchmarks/results/`. Default 3 workers.
-- **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)`. Baseline 2026-05-20 on a 4-core/16GB container: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
+- **Local CI on Claude Code on Web** (or any 16GB+ container): `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — idempotent pnpm install + test262 submodule init, then `pnpm run test:262` with `COMPILER_POOL_SIZE=$(nproc)-1` (min 1 — one core is left for the shell/editor/sshd; boxes are not all 4-core, so never hardcode it). Baseline 2026-05-20 on a 4-core/16GB container, then at pool 4: ~68 min wall-clock, ~2.8 GB peak RAM. CI sharded is still faster end-to-end; this is for in-container validation runs. See `plan/issues/1522-race-local-test262-vs-ci.md` for the scoped pre-flight design.
 
 ## Dev scratch
 
@@ -656,7 +656,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,373 / 43,621 (74.2 %)
+**test262 conformance**: 32,369 / 43,621 (74.2 %)
 
 <!-- AUTO:conformance-end -->
 

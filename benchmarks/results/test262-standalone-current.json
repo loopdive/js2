@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-14T12:48:44.240Z",
-  "baseline_generated_at": "2026-08-14T12:48:44.241Z",
-  "baseline_sha": "39a7761e14339a7da2fa728d0ad8f957d7c234c7",
+  "timestamp": "2026-08-14T13:15:48.876Z",
+  "baseline_generated_at": "2026-08-14T13:15:48.876Z",
+  "baseline_sha": "8dd575955ec426a15af8fabad2334803707cb84e",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1293,9 +1293,9 @@
           "Proposals": 4477
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDateTime/prototype/until/roundingmode-halfExpand.js",
           "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/subtract/basic.js",
+          "test/built-ins/Temporal/PlainDateTime/prototype/until/roundingmode-halfExpand.js",
           "test/built-ins/Temporal/PlainDate/prototype/subtract/argument-duration-max-plus-min-date.js",
           "test/built-ins/Temporal/PlainDateTime/from/argument-string-date-with-utc-offset.js"
         ],
@@ -1468,15 +1468,15 @@
           "test/built-ins/JSON/stringify/replacer-array-abrupt.js",
           "test/built-ins/JSON/parse/reviver-get-name-err.js",
           "test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js",
-          "test/built-ins/JSON/stringify/value-tojson-not-function.js",
-          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js"
+          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js",
+          "test/built-ins/JSON/stringify/value-tojson-not-function.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (##). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the Phas",
           "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «#») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"{\\\"toJSON\\\":{}}\"») to be true",
-          "assertion_fail:Test262Error: Expected a [object Object] to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: Expected a [object Object] to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «\"{\\\"toJSON\\\":{}}\"») to be true"
         ]
       },
       {
@@ -1929,15 +1929,15 @@
           "test/language/expressions/class/elements/same-line-gen-computed-symbol-names.js",
           "test/language/expressions/class/elements/multiple-stacked-definitions-computed-names.js",
           "test/language/expressions/class/elements/after-same-line-static-gen-rs-privatename-identifier-initializer.js",
-          "test/language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-factory.js",
-          "test/language/expressions/class/elements/after-same-line-method-rs-static-privatename-identifier-alt-by-classname.js"
+          "test/language/expressions/class/elements/after-same-line-method-rs-static-privatename-identifier-alt-by-classname.js",
+          "test/language/expressions/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-alt.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: [object Object] should be an own property",
           "assertion_fail:Test262Error: b descriptor should be writable",
           "assertion_fail:Test262Error: m should be an own property",
-          "assertion_fail:Test262Error: invalid access of c1 private static method Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
+          "assertion_fail:Test262Error: invalid access of c1 private static method Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2040,15 +2040,15 @@
           "test/built-ins/TypedArray/prototype/filter/speciesctor-get-species-abrupt.js",
           "test/built-ins/TypedArray/prototype/at/returns-undefined-for-out-of-range-index.js",
           "test/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-toobject-offset.js",
-          "test/built-ins/TypedArray/prototype/toLocaleString/length.js",
-          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js"
+          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
+          "test/built-ins/TypedArray/prototype/toLocaleString/length.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: The value of `typeof TypedArray.prototype.at` is \"function\" Expected SameValue(«\"undefined\"», «\"function\"») to be true",
           "assertion_fail:Test262Error: undefined Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
-          "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)"
+          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
+          "type_error:TypeError: Cannot convert undefined or null to object"
         ]
       },
       {
@@ -2150,14 +2150,14 @@
           "test/language/expressions/object/dstr/object-rest-proxy-gopd-not-called-on-excluded-keys.js",
           "test/language/expressions/object/cpn-obj-lit-computed-property-name-from-math.js",
           "test/language/expressions/assignment/dstr/obj-rest-to-property.js",
-          "test/language/expressions/object/__proto__-fn-name.js"
+          "test/language/expressions/super/prop-expr-getsuperbase-before-topropertykey-putvalue-increment.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Invalid character.; L#:## Invalid character.; L#:## Unexpected keyword or identifier.; L#:## Unexpected token. A constructor, method, accessor, or property was expected.; L#:## An identifier or keyword cannot immediately follow a nume",
           "assertion_fail:Test262Error: Actual [] and expected [[object Object], includedString, #] should have the same contents.",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «#») to be true",
-          "type_error:TypeError: Cannot access property on null or undefined at #:#",
-          "assertion_fail:Test262Error: Expected SameValue(«NaN», «#») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«NaN», «#») to be true",
+          "type_error:TypeError: Cannot access property on null or undefined at #:#"
         ]
       },
       {
@@ -2807,8 +2807,8 @@
           "wasm_compile": 4,
           "runtime_error": 5,
           "other": 124,
-          "host_import_leak": 150,
           "illegal_cast": 102,
+          "host_import_leak": 150,
           "type_error": 87,
           "assertion_fail": 23,
           "promise_error": 26,
@@ -2818,8 +2818,8 @@
           "ES2024": 44,
           "ES2018": 63,
           "Unclassified (untagged)": 15,
-          "ES2020": 90,
           "ES2015": 175,
+          "ES2020": 90,
           "ES2021": 73,
           "ES2017": 16,
           "ES2027": 33,
@@ -2831,15 +2831,15 @@
           "test/built-ins/Atomics/waitAsync/negative-timeout.js",
           "test/language/expressions/object/method-definition/async-gen-meth-params-trailing-comma-multiple.js",
           "test/language/statements/async-function/try-throw-finally-reject.js",
-          "test/built-ins/Promise/allSettled/invoke-resolve.js",
-          "test/built-ins/Promise/race/iter-assigned-symbol-reject.js"
+          "test/built-ins/Promise/race/iter-assigned-symbol-reject.js",
+          "test/built-ins/Promise/allSettled/invoke-resolve.js"
         ],
         "sample_signatures": [
           "wasm_compile:L#:## invalid Wasm binary (WebAssembly.Module(): Compiling function ##:\"__closure_45\" failed: extern.convert_any[#] expected type shared anyref, found array.get of type i32 @+#) [in __closure_45()] [@+#] [wat: (type $type20 (func (param f64",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot read properties of undefined (reading a class field)",
           "other:Test262:AsyncTestFailure:Test262Error: [object Object]",
-          "host_import_leak:standalone target emitted host imports: env::Promise_new (##)",
-          "illegal_cast:async continuation threw before completion: illegal cast [in __then_fulfill_6() ← __drain_microtasks]"
+          "illegal_cast:async continuation threw before completion: illegal cast [in __then_fulfill_6() ← __drain_microtasks]",
+          "host_import_leak:standalone target emitted host imports: env::Promise_new (##)"
         ]
       },
       {
@@ -3143,8 +3143,8 @@
           "test/built-ins/Atomics/and/good-views.js",
           "test/built-ins/Atomics/sub/non-views.js",
           "test/built-ins/SharedArrayBuffer/allocation-limit.js",
-          "test/built-ins/Atomics/notify/descriptor.js",
-          "test/built-ins/Atomics/compareExchange/descriptor.js"
+          "test/built-ins/Atomics/xor/validate-arraytype-before-value-coercion.js",
+          "test/built-ins/Atomics/notify/descriptor.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",

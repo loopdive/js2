@@ -95,18 +95,34 @@
  * paths is still the acceptance gate — a structural argument is a reason to
  * expect the gate to pass, not a substitute for running it.)
  *
- * ## Flag
+ * ## Flag — DEFAULT `8` since the #4157 tuned-set flip
  *
- * DEFAULT OFF. `JS2WASM_INLINE_PROP_IC` unset / `0` → the pass returns before
- * touching anything, so the binary is byte-identical to the pre-#4157 emission.
+ * `JS2WASM_INLINE_PROP_IC` unset ⇒ **ceiling 8**, the operating point entry (29)
+ * measured (66.1 % of the dispatcher calls removed for +107 KB, versus 8.7 % for
+ * +38 KB at ceiling 1). `=0` / `off` returns before touching anything, which is
+ * the only way to get the pre-#4157 byte-identical emission back.
  *   - `=1`  monomorphic sites only (exactly one struct carries the name)
  *   - `=N`  speculate on `candidates[0]` at sites with up to N candidates
+ *   - `=0` / `off` / empty  OFF
+ *   - any other value ⇒ the default ceiling (see `src/perf-flags.ts` for why a
+ *     malformed value never lands in a half-enabled state)
  *   - `JS2WASM_INLINE_PROP_IC_DEBUG=1` prints patch counts and a histogram of
  *     DECLINED property names keyed by reason.
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import { tunedFlagEnabled } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import { funcSignatureOf } from "./func-space.js";
+import type { ReusePlan } from "./ic-guard-reuse.js";
+import {
+  emitReusedGuard,
+  guardReuseStats,
+  icGuardReuseEnabled,
+  leaderTees,
+  planGuardReuse,
+  recordLeader,
+  resetGuardReuseStats,
+} from "./ic-guard-reuse.js";
 import { isNativeGeneratorResultStruct } from "./generators-native.js";
 import { classAccessorCandidatesForProp } from "./member-get-dispatch.js";
 import { findAlternateStructsForField } from "./property-access.js";
@@ -123,12 +139,22 @@ interface IcPlan {
   armTail: Instr[];
 }
 
-/** Maximum struct candidates a site may have and still be speculated on. */
+/** The ceiling `JS2WASM_INLINE_PROP_IC` selects when unset — entry (29)'s optimum. */
+const DEFAULT_MAX_CANDIDATES = 8;
+
+/**
+ * Maximum struct candidates a site may have and still be speculated on.
+ *
+ * `0` when the flag is explicitly off. An explicit positive integer wins; every
+ * other spelling — unset, or junk — is the tuned default, so a typo cannot
+ * quietly demote the ceiling to a value nobody measured.
+ */
 function icMaxCandidates(): number {
   const raw = process.env.JS2WASM_INLINE_PROP_IC;
-  if (raw === undefined || raw === "" || raw === "0" || raw === "off") return 0;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 1;
+  if (!tunedFlagEnabled(raw)) return 0;
+  if (raw === undefined) return DEFAULT_MAX_CANDIDATES;
+  const n = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_CANDIDATES;
 }
 
 /** Declared type of local `index` in `fn` (params first, then declared locals). */
@@ -281,6 +307,7 @@ function rewriteInstrs(
   plans: Map<number, IcPlan>,
   scratch: () => number,
   stats: { patched: number; declinedProducer: number },
+  reuse: ReusePlan | undefined,
 ): void {
   const out: Instr[] = [];
   for (const instr of instrs) {
@@ -288,14 +315,18 @@ function rewriteInstrs(
       catches?: { body?: Instr[] }[];
       catchAll?: Instr[];
     };
-    // Recurse first (pre-order over the array, depth-first into children).
-    if (Array.isArray(a.body)) rewriteInstrs(ctx, fn, a.body, plans, scratch, stats);
-    if (Array.isArray(a.then)) rewriteInstrs(ctx, fn, a.then, plans, scratch, stats);
-    if (Array.isArray(a.else)) rewriteInstrs(ctx, fn, a.else, plans, scratch, stats);
+    // Recurse first (pre-order over the array, depth-first into children). This
+    // order is what lets a nested site reuse a guard from an ANCESTOR array: by
+    // the time a child is rewritten, the parent's `out` already carries
+    // everything that dominates it.
+    if (Array.isArray(a.body)) rewriteInstrs(ctx, fn, a.body, plans, scratch, stats, reuse);
+    if (Array.isArray(a.then)) rewriteInstrs(ctx, fn, a.then, plans, scratch, stats, reuse);
+    if (Array.isArray(a.else)) rewriteInstrs(ctx, fn, a.else, plans, scratch, stats, reuse);
     if (Array.isArray(a.catches)) {
-      for (const c of a.catches) if (Array.isArray(c.body)) rewriteInstrs(ctx, fn, c.body, plans, scratch, stats);
+      for (const c of a.catches)
+        if (Array.isArray(c.body)) rewriteInstrs(ctx, fn, c.body, plans, scratch, stats, reuse);
     }
-    if (Array.isArray(a.catchAll)) rewriteInstrs(ctx, fn, a.catchAll, plans, scratch, stats);
+    if (Array.isArray(a.catchAll)) rewriteInstrs(ctx, fn, a.catchAll, plans, scratch, stats, reuse);
 
     const plan = a.op === "call" && a.funcIdx !== undefined ? plans.get(a.funcIdx) : undefined;
     if (!plan) {
@@ -316,19 +347,40 @@ function rewriteInstrs(
     // is 2 instructions off every patched site and leaves the hit path free of
     // any conversion at all.
     const alreadyAny = (prev as { op: string }).op === "extern.convert_any";
+    const hitTail: Instr[] = [
+      { op: "struct.get", typeIdx: plan.structTypeIdx, fieldIdx: plan.fieldIdx },
+      ...plan.armTail.map((i) => ({ ...i }) as Instr),
+    ];
+    // (#4157 defect C) A follower's guard was already decided by its leader and
+    // its receiver's heap type cannot have changed since, so both the `ref.test`
+    // and the hit arm's `ref.cast` are dead here. Pop the producer only once the
+    // reuse is confirmed — every decline inside leaves `out` untouched.
+    const reused = reuse && emitReusedGuard(reuse, instr, out, alreadyAny, plan.resultType, hitTail, [instr]);
+    if (reused) {
+      out.push(...reused);
+      stats.patched++;
+      continue;
+    }
     if (alreadyAny) out.pop();
     const scratchIdx = scratch();
+    const lead = reuse?.leaders.has(instr) === true ? leaderTees(ctx, fn, plan.structTypeIdx) : undefined;
     if (!alreadyAny) out.push({ op: "any.convert_extern" });
     out.push({ op: "local.tee", index: scratchIdx });
     out.push({ op: "ref.test", typeIdx: plan.structTypeIdx });
+    if (lead) {
+      out.push(lead.guardTee);
+      // Recorded with the tee as the LAST entry of `out`, which is what the
+      // relocation probe re-verifies at every reuse.
+      recordLeader(reuse!, instr, lead.entry, lead.guardTee, out);
+    }
     out.push({
       op: "if",
       blockType: { kind: "val", type: plan.resultType },
       then: [
         { op: "local.get", index: scratchIdx },
         { op: "ref.cast", typeIdx: plan.structTypeIdx },
-        { op: "struct.get", typeIdx: plan.structTypeIdx, fieldIdx: plan.fieldIdx },
-        ...plan.armTail.map((i) => ({ ...i }) as Instr),
+        ...(lead ? [lead.castTee] : []),
+        ...hitTail,
       ],
       else: [{ op: "local.get", index: scratchIdx }, { op: "extern.convert_any" }, instr],
     });
@@ -348,12 +400,14 @@ function rewriteInstrs(
  * or function indices (`brandCollidingShapeTypes`, dead elimination), so the
  * operands it bakes are in the same regime as the dispatcher's own arms.
  *
- * No-op unless `JS2WASM_INLINE_PROP_IC` is set to a positive integer.
+ * Runs at ceiling 8 by default; a no-op only when `JS2WASM_INLINE_PROP_IC` is
+ * explicitly off.
  */
 export function inlineMemberGetCallSites(ctx: CodegenContext): void {
   const max = icMaxCandidates();
-  if (max <= 0) return; // DEFAULT OFF — byte-identical to base.
+  if (max <= 0) return; // explicitly OFF — byte-identical to the pre-#4157 base.
   const debug = process.env.JS2WASM_INLINE_PROP_IC_DEBUG === "1";
+  resetGuardReuseStats(); // the reported line is per module, not per process
 
   // Plan building calls `coercionInstrs`, which may register union box imports.
   // Every plan's coercion is one `fillMemberGetDispatch` already emitted for the
@@ -415,13 +469,36 @@ export function inlineMemberGetCallSites(ctx: CodegenContext): void {
       }
       return scratchIdx;
     };
-    rewriteInstrs(ctx, fn, fn.body, plans, scratch, stats);
+    // (#4157 defect C) Pair same-receiver / same-struct sites across the whole
+    // function BEFORE rewriting, so a leader only pays the two extra
+    // `local.tee`s when a follower will actually use them. `undefined` (flag
+    // off, or nothing pairs) keeps this function on the untouched path.
+    const reuse = planGuardReuse(
+      fn.body,
+      (index) => localTypeOf(ctx, fn, index)?.kind,
+      (i) => {
+        const c = i as { op: string; funcIdx?: number };
+        return c.op === "call" && c.funcIdx !== undefined ? plans.get(c.funcIdx)?.structTypeIdx : undefined;
+      },
+    );
+    rewriteInstrs(ctx, fn, fn.body, plans, scratch, stats, reuse);
     if (stats.patched > before) {
       fnsTouched++;
       if (debug && touched.length < 24) touched.push(`${fn.name}×${stats.patched - before}`);
     }
   }
 
+  // (#4157 defect C) One unconditional line whenever the reuse flag is on: a
+  // size delta alone cannot tell "the pass fired" from "the pass declined
+  // everything", and this class of change is invisible to the executed-call
+  // census by construction (it removes inline instructions, not calls).
+  if (icGuardReuseEnabled()) {
+    process.stderr.write(
+      `[ic-guard-reuse] leaders=${guardReuseStats.leaders} reuses=${guardReuseStats.reuses} ` +
+        `declined-relocated=${guardReuseStats.declinedRelocated} sites=${guardReuseStats.sites} ` +
+        `unkeyed-producer=${guardReuseStats.unkeyedProducer} unpaired=${guardReuseStats.unpaired}\n`,
+    );
+  }
   if (debug) {
     const hist = [...declines.entries()].sort((a, b) => b[1] - a[1]).map(([r, n]) => `${r}=${n}`);
     process.stderr.write(

@@ -15,8 +15,10 @@
  *    independently — a subset is a DIFFERENT emitted guard chain, not a
  *    configuration of one.
  *
- * 2. BYTE-IDENTITY when the flag is unset. The pass must be invisible by
- *    default.
+ * 2. BYTE-IDENTITY at `JS2WASM_INLINE_TRUTHY_IC=0`. The pass is **default ON**
+ *    (the two-arm profile) since the #4157 tuned-set flip, so the identity
+ *    guarantee hangs off an explicit off-token rather than off absence — and a
+ *    value naming no known arm takes the default rather than disabling.
  *
  * 3. The MECHANISM must be live. Parity also passes if the pass never engages —
  *    twice in one session (#4157 entry 22) a confident null was reported from a
@@ -113,6 +115,14 @@ interface Built {
 
 const ENV_IC = "JS2WASM_INLINE_TRUTHY_IC";
 const ENV_POISON = "JS2WASM_INLINE_TRUTHY_IC_POISON";
+/**
+ * The pass's summary line is printed only for an operator who named the flag or
+ * the debug channel — on a DEFAULT build it would otherwise appear on every
+ * compile. This fixture reads `patched-sites` out of that line, so it must ask
+ * for the channel; without it `build(undefined)` would report zero patches for
+ * a pass that ran, and every mechanism assertion would go vacuous.
+ */
+const ENV_DEBUG = "JS2WASM_INLINE_TRUTHY_IC_DEBUG";
 
 function setEnv(key: string, value: string | undefined): void {
   // `= undefined` coerces to the STRING "undefined", which reads as "set".
@@ -122,11 +132,12 @@ function setEnv(key: string, value: string | undefined): void {
 }
 
 async function build(ic: string | undefined, poison?: boolean): Promise<Built> {
-  const saved = { ic: process.env[ENV_IC], poison: process.env[ENV_POISON] };
+  const saved = { ic: process.env[ENV_IC], poison: process.env[ENV_POISON], debug: process.env[ENV_DEBUG] };
   const lines: string[] = [];
   const realWrite = process.stderr.write.bind(process.stderr);
   setEnv(ENV_IC, ic);
   setEnv(ENV_POISON, poison === true ? "1" : undefined);
+  setEnv(ENV_DEBUG, "1");
   process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
     const s = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString();
     if (s.startsWith("[truthy-ic]")) {
@@ -146,6 +157,7 @@ async function build(ic: string | undefined, poison?: boolean): Promise<Built> {
     process.stderr.write = realWrite;
     setEnv(ENV_IC, saved.ic);
     setEnv(ENV_POISON, saved.poison);
+    setEnv(ENV_DEBUG, saved.debug);
   }
 }
 
@@ -157,19 +169,29 @@ async function answerOf(binary: Uint8Array): Promise<number> {
 }
 
 describe("#4157 __is_truthy call-site inline fast path", () => {
-  it("is byte-identical to the base build when the flag is unset", async () => {
-    const off = await build(undefined);
+  it("is byte-identical to the legacy build when the flag is `0`", async () => {
     const zero = await build("0");
-    expect(off.patchedSites).toBe(0);
+    const off = await build("off");
     expect(zero.patchedSites).toBe(0);
-    expect(Buffer.from(zero.binary).equals(Buffer.from(off.binary))).toBe(true);
+    expect(off.patchedSites).toBe(0);
+    expect(Buffer.from(off.binary).equals(Buffer.from(zero.binary))).toBe(true);
     // POISON alone must be inert: it only ever touches an arm this pass emits.
-    const poisonedOff = await build(undefined, true);
-    expect(Buffer.from(poisonedOff.binary).equals(Buffer.from(off.binary))).toBe(true);
+    const poisonedOff = await build("0", true);
+    expect(Buffer.from(poisonedOff.binary).equals(Buffer.from(zero.binary))).toBe(true);
+  });
+
+  it("unset is the two-arm profile, and an unrecognised arm name falls back to it", async () => {
+    const unset = await build(undefined);
+    const one = await build("1");
+    const junk = await build("nosucharm");
+    expect(unset.arms, "unset must select the measured default, not `all`").toBe("anyval,boxbool");
+    expect(unset.patchedSites).toBeGreaterThan(0);
+    expect(Buffer.from(one.binary).equals(Buffer.from(unset.binary))).toBe(true);
+    expect(Buffer.from(junk.binary).equals(Buffer.from(unset.binary))).toBe(true);
   });
 
   it("engages, and a wider arm set patches a bigger binary", async () => {
-    const off = await build(undefined);
+    const off = await build("0");
     const dflt = await build("1");
     const all = await build("all");
     expect(dflt.patchedSites).toBeGreaterThan(0);
@@ -182,6 +204,7 @@ describe("#4157 __is_truthy call-site inline fast path", () => {
   it("answers exactly what native Node answers, for every arm subset", async () => {
     const subsets = [
       undefined,
+      "0",
       "1",
       "all",
       "anyval",

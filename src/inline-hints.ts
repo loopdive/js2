@@ -70,16 +70,24 @@
  *
  * ## Usage
  *
- * - unset / `0` — **default OFF**, no arguments added, binary byte-identical.
+ * - unset — **default `1`**, i.e. the `cold` profile, since the #4157 tuned-set
+ *   flip (`src/perf-flags.ts`). This is the one knob measured to SHRINK.
+ * - `0` / `off` / empty — no arguments added; argv byte-identical to the
+ *   pre-#4157 invocation, which is the only way to get that emission back.
  * - `1` — the measured profile: `cold` (see above).
  * - `cold` — `--no-inline` over the cold-by-construction error constructors.
  * - `no-inline=<pat|pat>` — the same, with explicit `*`-wildcard patterns.
  * - an explicit comma list, e.g. `fimfs=64,aimfs=8,ifwl,pii=2,cold`.
+ * - a spec that yields NO argument at all — every token unrecognised, or a
+ *   rejected multi-pattern `no-inline=` — falls back to the default profile
+ *   rather than to silence, so a typo cannot quietly un-tune the build.
  *
  * Only the `wasm-opt` CLI path honours these; the `binaryen` JS module fallback
  * exposes no equivalent setters, so a build that falls back to it is
  * unaffected.
  */
+
+import { tunedFlagEnabled } from "./perf-flags.js";
 
 /** Knobs binaryen 125 accepts, mapped to their long-form CLI flags. */
 const NUMERIC_KNOBS: Record<string, string> = {
@@ -117,8 +125,8 @@ export interface InlineHintArgs {
 
 /**
  * Translate `JS2WASM_INLINE_HINTS` into `wasm-opt` arguments. Both lists are
- * empty when the flag is unset or `0`, so an OFF build passes byte-identical
- * arguments to the optimizer.
+ * empty only when the flag is explicitly `0`/`off`/empty, so an OFF build
+ * passes byte-identical arguments to the optimizer.
  *
  * ## `no-inline` takes ONE pattern, and a list is a SILENT no-op
  *
@@ -137,10 +145,10 @@ export interface InlineHintArgs {
  * rejected rather than forwarded.
  */
 export function inlineHintArgs(raw = process.env.JS2WASM_INLINE_HINTS): InlineHintArgs {
-  const value = (raw ?? "").trim();
   const empty: InlineHintArgs = { pre: [], post: [] };
-  if (value === "" || value === "0") return empty;
-  const spec = value === "1" ? DEFAULT_PROFILE : value;
+  if (!tunedFlagEnabled(raw)) return empty;
+  const value = (raw ?? "").trim();
+  const spec = value === "" || value === "1" ? DEFAULT_PROFILE : value;
   const pre: string[] = [];
   const post: string[] = [];
   let noInline: string | undefined;
@@ -174,6 +182,10 @@ export function inlineHintArgs(raw = process.env.JS2WASM_INLINE_HINTS): InlineHi
     // more confusing failure than an ignored typo.
     if (flag && Number.isFinite(num)) post.push(`${flag}=${num}`);
   }
+  // Every token was dropped — an all-typo spec, or a `no-inline=` the one-pattern
+  // rule refused. That must not read as "off": off is `0`, and only `0`. Take
+  // the default profile instead of silently shipping the untuned invocation.
+  if (noInline === undefined && post.length === 0) noInline = COLD_PATTERN;
   if (noInline !== undefined) pre.push("--no-inline", `--pass-arg=no-inline@${noInline}`);
   return { pre, post };
 }

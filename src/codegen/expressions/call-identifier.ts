@@ -2120,8 +2120,41 @@ export function compileIdentifierCall(
             fctx.body.push({ op: "ref.as_non_null" });
           } else if (fctx.boxedCaptures?.has(cap.name) || candidateIsBoxed) {
             // Already a ref cell — pass the ref cell reference directly
-            const currentLocalIdx = fctx.localMap.get(cap.name) ?? cap.outerLocalIdx;
-            fctx.body.push({ op: "local.get", index: currentLocalIdx });
+            // A nested function can capture a module binding whose name is
+            // shadowed by a local `var` in the current function (for example,
+            // React's `forceStoreRerender` has a local `root` while a sibling
+            // function still captures the module-level `root`).  The leading
+            // capture parameter is the cell we must forward; the name-based
+            // localMap entry is the shadow value and has the wrong ABI type.
+            const currentLocalIdx = fctx.liftedCaptureSlots?.has(cap.name)
+              ? captureSourceSlot(fctx, cap)
+              : (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx);
+            const refCellType: ValType = { kind: "ref", typeIdx: refCellTypeIdx };
+            const sourceType = getLocalType(fctx, currentLocalIdx);
+            const sourceIsSameCell =
+              sourceType !== undefined &&
+              (sourceType.kind === "ref" || sourceType.kind === "ref_null") &&
+              sourceType.typeIdx === refCellTypeIdx;
+            if (sourceIsSameCell) {
+              fctx.body.push({ op: "local.get", index: currentLocalIdx });
+              if (sourceType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+            } else if (sourceType !== undefined) {
+              // The source frame may expose the capture as its raw value
+              // (usually a leading i32/f64/externref parameter) even though
+              // this callee needs the shared mutable cell.  Materialize the
+              // cell at this forwarding boundary and re-aim the current
+              // binding so later reads/writes use the same storage.
+              fctx.body.push({ op: "local.get", index: currentLocalIdx });
+              if (!valTypesMatch(sourceType, cap.valType)) coerceType(ctx, fctx, sourceType, cap.valType);
+              const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, refCellType);
+              fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+              fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+              fctx.localMap.set(cap.name, boxedLocalIdx);
+              if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+              fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+            } else {
+              fctx.body.push({ op: "local.get", index: currentLocalIdx });
+            }
             // Backfill boxedCaptures only when we hit the new candidateIsBoxed
             // branch — preserves invariants for downstream helpers that key on
             // boxedCaptures membership.

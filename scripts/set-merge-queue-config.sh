@@ -37,7 +37,7 @@
 set -euo pipefail
 
 REPO_OWNER="${REPO_OWNER:-loopdive}"
-REPO_NAME="${REPO_NAME:-js2}"
+REPO_NAME="${REPO_NAME:-js2wasm}"
 RULESET_ID="${RULESET_ID:-16700772}"
 
 # -----------------------------------------------------------------------------
@@ -59,14 +59,20 @@ RULESET_ID="${RULESET_ID:-16700772}"
 #   back near the N=2 result — so this is a cap to hold, not a floor to raise.
 MAX_ENTRIES_TO_MERGE="${MAX_ENTRIES_TO_MERGE:-5}"
 #
-# MIN_ENTRIES_TO_MERGE — the quorum FLOOR. Stays 1, deliberately. A floor > 1
-#   makes a group wait for peers, so a genuinely solo PR pays the wait timer as
+# MIN_ENTRIES_TO_MERGE — the quorum FLOOR. Now 2: #3914 Step 2 is LIVE.
+#   Step 2's precondition was "raise to 2 ONLY if Step 1 (cap 5) leaves groups
+#   at size 1", i.e. only if GitHub's formation is eager-with-minimum rather
+#   than min(available, cap). That precondition was measured and met on
+#   2026-08-14: all 30 merge groups dispatched that day went out at size 1
+#   under cap 5, including during a ~2h window where 2-3 green PRs sat queued
+#   behind a wedged head. Formation is eager; the cap alone never batches.
+#   The cost is unchanged and real — a genuinely solo PR pays the wait timer as
 #   pure added latency (~1/3 of dispatches on the measured day had no peer
-#   waiting). Raising the cap is free; raising the floor is not. #3914 Step 2
-#   raises this to 2 with a 2-minute timer ONLY if Step 1 leaves groups at
-#   size 1 — i.e. only if GitHub's formation turns out to be
-#   eager-with-minimum rather than min(available, cap).
-MIN_ENTRIES_TO_MERGE="${MIN_ENTRIES_TO_MERGE:-1}"
+#   waiting), which is why the floor is the knob that needs a trigger and the
+#   cap does not.
+#   This default MUST track the live ruleset. Apply is this script's DEFAULT
+#   mode, so a stale 1 here silently reverts the floor on the next bare run.
+MIN_ENTRIES_TO_MERGE="${MIN_ENTRIES_TO_MERGE:-2}"
 #
 # MAX_ENTRIES_TO_BUILD — SPECULATION DEPTH. Stays 1. This is NOT the batching
 #   knob and raising it is the thing that must not happen a third time.
