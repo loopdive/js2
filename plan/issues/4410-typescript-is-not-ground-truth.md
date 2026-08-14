@@ -134,7 +134,12 @@ Restated gate for #4218:
 - genuine both-claim-different-facts == 0 (currently **88**, #4408), **and**
 - every `checker-weaker` row adjudicated into A (in-house right — keep), B
   (contract gap — specify the query), or C (in-house wrong — fix), **and**
-- zero standalone-mode test262 regressions under `JS2WASM_ORACLE_BACKEND=inhouse`.
+- zero standalone-mode test262 regressions under `JS2WASM_ORACLE_BACKEND=inhouse`
+  — **currently −37** (1891 → 1854 pass over 3,137 tests in the divergence
+  areas, 2026-08-14). 39 of the 42 regressions are the `with`-scope class
+  (#4409, 27) and annexB B.3.3 block-function hoisting (12, i.e. B2 below);
+  3 are undiagnosed. Five tests improve. So the gate is **not met**, and B2 is
+  not merely an "under-specified question" — it costs conformance.
 
 ## Acceptance criteria
 
