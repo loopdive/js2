@@ -2232,6 +2232,57 @@ export function resolveAccessorPropName(ctx: CodegenContext, name: ts.PropertyNa
 }
 
 /**
+ * (#4394) Record the closure struct type(s) a `valueOf`/`toString` eqref field
+ * may hold, so the per-instance `__call_valueOf`/`__call_toString` dispatchers
+ * (`closure-eqref-multi`, index.ts) get a candidate to `ref.test`. Extends the
+ * old inline PropertyAssignment-only flat scan on two axes that deepEqual.js
+ * exposed:
+ *   - the value expression may build its closure NESTED inside an `if` (the
+ *     lazy singleton / memoized nested-fn shapes emit `struct.new` inside the
+ *     init arm), which a flat `fctx.body[bi]` walk never saw;
+ *   - the value may only REFERENCE an already-built closure (`global.get` +
+ *     `ref.cast`), with no `struct.new` at this site at all — so `ref.cast`/
+ *     `ref.cast_null`/`ref.test` of a registered closure type counts too.
+ * Shorthand `{ toString }` (the deepEqual.js idiom) now calls this as well.
+ */
+function trackToPrimitiveClosureTypes(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  typeName: string,
+  field: { name: string; type: ValType },
+  bodyLenBefore: number,
+): void {
+  if (field.name !== "valueOf" && field.name !== "toString") return;
+  if (field.type.kind !== "eqref") return;
+  const record = (typeIdx: number): void => {
+    if (!ctx.closureInfoByTypeIdx.has(typeIdx)) return;
+    const existing = ctx.valueOfClosureTypes.get(typeName) ?? [];
+    if (!existing.includes(typeIdx)) {
+      existing.push(typeIdx);
+      ctx.valueOfClosureTypes.set(typeName, existing);
+    }
+  };
+  const walk = (instrs: Instr[]): void => {
+    for (const instr of instrs) {
+      const op = instr.op;
+      if (op === "struct.new" || op === "ref.cast" || op === "ref.cast_null" || op === "ref.test") {
+        const typeIdx = (instr as { typeIdx?: number }).typeIdx;
+        if (typeIdx !== undefined) record(typeIdx);
+      }
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[]);
+      }
+      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+      if (Array.isArray(catches)) {
+        for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+      }
+    }
+  };
+  walk(fctx.body.slice(bodyLenBefore));
+}
+
+/**
  * Compile an empty object literal ({}) that has widened properties from
  * later property assignments (e.g. `var obj = {}; obj.x = 42;`).
  * Registers a struct type with the widened fields and emits struct.new
@@ -2784,23 +2835,16 @@ export function compileObjectLiteralForStruct(
       // Track closure types for valueOf/toString fields
       const bodyLenBefore = fctx.body.length;
       compileExpression(ctx, fctx, prop.initializer, field.type);
-      if ((field.name === "valueOf" || field.name === "toString") && field.type.kind === "eqref") {
-        // Find the struct.new instruction that creates the closure struct
-        for (let bi = bodyLenBefore; bi < fctx.body.length; bi++) {
-          const instr = fctx.body[bi]!;
-          if (instr.op === "struct.new" && ctx.closureInfoByTypeIdx.has((instr as any).typeIdx)) {
-            const closureTypeIdx = (instr as any).typeIdx as number;
-            const existing = ctx.valueOfClosureTypes.get(typeName) ?? [];
-            if (!existing.includes(closureTypeIdx)) {
-              existing.push(closureTypeIdx);
-              ctx.valueOfClosureTypes.set(typeName, existing);
-            }
-          }
-        }
-      }
+      trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
     } else if (shorthandProp && ts.isShorthandPropertyAssignment(shorthandProp)) {
-      // Shorthand { x } means the value is the identifier x — compile it
+      // Shorthand { x } means the value is the identifier x — compile it.
+      // (#4394) Track valueOf/toString closure types here too: the deepEqual.js
+      // harness stores its lazy toString as `return { toString };`, and an
+      // untracked eqref field left the per-instance `__call_toString` dispatch
+      // with zero candidates — ToPrimitive fell to "[object Object]".
+      const bodyLenBefore = fctx.body.length;
       compileExpression(ctx, fctx, shorthandProp.name, field.type);
+      trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
     } else {
       // Check spread sources (last spread wins — JS semantics)
       let found = false;
@@ -4219,7 +4263,17 @@ export function compileArrayLiteral(
               : ctxArrTypeNum
                 ? ctx.checker.getTypeArguments(ctxArrTypeNum as ts.TypeReference)[0]
                 : undefined;
-          if (ctxElemNum && (ctxElemNum.flags & ts.TypeFlags.Any) !== 0) {
+          // (#4394, standalone twin of the GC-lane StringLiteral fix above) An
+          // UNANNOTATED binding (`var fixture = [0, 'a', undefined]`) has NO
+          // contextual type at all — the inferred `(number|string|undefined)[]`
+          // is exactly as unconstrained as `any`, but the `ctxElemNum` gate
+          // below only accepted the literal-`any` spelling. The numeric-first
+          // heuristic then kept the f64 vec and the string/undefined elements
+          // read back NaN (`compareArray.format` printed `[0, NaN, NaN]`). A
+          // declared `number[]` / `(number|string)[]` context still bypasses
+          // this scan (ctxArrTypeNum is defined), preserving the #1021/#786
+          // first-element fast path.
+          if (ctxArrTypeNum === undefined || (ctxElemNum && (ctxElemNum.flags & ts.TypeFlags.Any) !== 0)) {
             hasNativeStringElem = expr.elements.some((el) => {
               if (ts.isOmittedExpression(el) || _isUndefinedLike(el) || ts.isSpreadElement(el)) return false;
               if (el.kind === ts.SyntaxKind.StringLiteral) return true;

@@ -1358,6 +1358,7 @@ export function compileIrPathFunctions(
         // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
         // can discharge the widening-escape proof via `getContextualType`.
         checker: ctx.checker,
+        oracle: ctx.oracle,
         // #3765: share direct-codegen's grounded numeric-local oracle with IR.
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
       });
@@ -1573,6 +1574,7 @@ export function compileIrPathFunctions(
           resolver: fromAstResolver,
           allocRegistry,
           checker: ctx.checker,
+          oracle: ctx.oracle,
           numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
         };
         let result: LoweredFunctionResult;
@@ -1772,6 +1774,7 @@ export function compileIrPathFunctions(
             // #2780 (hybrid Row 6): thread the TS checker for the
             // ArrayLiteral widening-escape proof in method bodies too.
             checker: ctx.checker,
+            oracle: ctx.oracle,
             numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
           });
           if (result.main.unitId !== ownerUnitId) {
@@ -1923,6 +1926,7 @@ export function compileIrPathFunctions(
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
+        oracle: ctx.oracle,
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
       });
       if (result.main.unitId !== moduleInitUnitId) {

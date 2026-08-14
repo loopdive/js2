@@ -270,6 +270,8 @@ import {
   unshiftExternGetProtoCacheArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillVecLengthDynamicArms } from "./vec-length-set.js";
+import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { moduleMentionsObjectIdentifier, moduleReadsConstructorProp } from "./wrapper-constructor-carrier.js"; // (#4223/#4232)
 import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (#4248) builtin-proto own members
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
@@ -490,6 +492,7 @@ import {
   rejectTimersUnderWasi,
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
+import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -4444,12 +4447,20 @@ export function generateModule(
       // pre-#2520 behaviour while preserving the wasi/standalone flood fix.
       const libRefs =
         ctx.wasi || ctx.standalone ? collectReferencedGlobalNames([ast.sourceFile], ctx.checker) : undefined;
-      for (const sf of ast.program.getSourceFiles()) {
+      // (#4218) The lib-file walk resolves every declared type SYNTACTICALLY
+      // through a one-shot declaration index — lib files are fully annotated,
+      // so the ~254k per-compile checker queries this loop used to issue are
+      // unnecessary. Same traversal order ⇒ identical import/type tables.
+      const libSfs = ast.program.getSourceFiles().filter((sf) => {
         const baseName = sf.fileName.split("/").pop() ?? sf.fileName;
-        if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-          collectExternDeclarations(ctx, sf, libRefs);
-          collectDeclaredGlobals(ctx, sf, ast.sourceFile);
-        }
+        return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
+      });
+      // JS2WASM_LIB_SCAN=checker forces the legacy checker-driven walk — the
+      // A/B escape hatch for parity triage (#4218).
+      const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+      for (const sf of libSfs) {
+        collectExternDeclarations(ctx, sf, libRefs, libIndex);
+        collectDeclaredGlobals(ctx, sf, ast.sourceFile, libIndex);
       }
     }
 
@@ -5362,6 +5373,15 @@ export function generateModule(
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
 
+    // Dynamic-path ArraySetLength-lite + vec-"length" own-ness: splice the
+    // `$__vec_base` `"length"` WRITE arm into `__extern_set` and the
+    // own-property arm into `__hasOwnProperty`/`__object_hasOwn`, so
+    // propertyHelper's `isWritable(array, "length")` write/read/revert cycle
+    // round-trips host-free (see vec-length-set.ts). Runs after the vec fills
+    // above and BEFORE `fillTaDynViewMopArms` (dyn-view arms keep the front
+    // slot). Standalone only (no-op otherwise).
+    fillVecLengthDynamicArms(ctx);
+
     // (#3251 S1) Array-descriptor overlay: fill the reserved
     // `__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd` bodies (companion
     // `$Object` per vec receiver, delegating ValidateAndApply/merge/gOPD to
@@ -5388,6 +5408,13 @@ export function generateModule(
     // value resolve its spec `name`/`length` at runtime, host-free. No-op when
     // no builtin closure was materialized (standalone only).
     fillBuiltinFnMeta(ctx);
+
+    // `$__ta_ctor` name/length arm for the same meta consult — a TypedArray
+    // constructor VALUE's `TA.name` / `TA.length` resolves host-free (the
+    // test262 TypedArray harness's `TA.name.slice(0, -5)` trapped on the null
+    // miss). Disjoint receiver guard, so order relative to fillBuiltinFnMeta
+    // is immaterial; no-op unless a `$__ta_ctor` type is registered.
+    fillTaCtorGetMetaArm(ctx);
 
     // (#3130) Splice the `$Error_struct` arm into `__extern_get` so dynamic
     // reads of `err.message`/`err.name`/`err.stack`/`err.constructor` resolve
@@ -7172,14 +7199,17 @@ export function generateMultiModule(
         // comment in generateModule above.
         const libRefs =
           ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
-        for (const libSf of multiAst.program.getSourceFiles()) {
+        // (#4218) Same syntactic lib-walk as generateModule above.
+        const libSfs = multiAst.program.getSourceFiles().filter((libSf) => {
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
-          if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-            collectExternDeclarations(ctx, libSf, libRefs);
-            for (const sf of multiAst.sourceFiles) {
-              if (sourceUsesLibGlobals(sf)) {
-                collectDeclaredGlobals(ctx, libSf, sf);
-              }
+          return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
+        });
+        const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
+        for (const libSf of libSfs) {
+          collectExternDeclarations(ctx, libSf, libRefs, libIndex);
+          for (const sf of multiAst.sourceFiles) {
+            if (sourceUsesLibGlobals(sf)) {
+              collectDeclaredGlobals(ctx, libSf, sf, libIndex);
             }
           }
         }

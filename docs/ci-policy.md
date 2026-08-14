@@ -185,20 +185,69 @@ Two test262 workflows currently run on PRs:
     own delta. Fallback order when a predecessor artifact is unavailable:
     #1081 runs/<merge-base> cache, then latest-main baseline — i.e. exactly
     the pre-#1956 behavior.
-  - **Live queue configuration: `max_entries_to_build: 1` (SERIAL),
-    `max_entries_to_merge: 5`, `min_entries_to_merge: 1`.** #1956 restored
-    per-PR attribution and this doc previously recorded the resulting
-    `max_entries_to_build: 5`, but that setting was reverted during the
-    2026-06-20 merge-queue wedge (#2519 / #2522) and the ruleset has been
-    serial ever since. The shard matrix is now sized _for_ a serial queue —
-    `scripts/gen-test262-mg-matrix.mjs` assigns 102 of the 120 runners to a
-    single merge group — so raising `max_entries_to_build` again without
-    first shrinking the matrix would put 200+ jobs on a 120-runner pool and
-    reproduce the oversubscription that caused the wedge. **Do not re-enable
-    speculative batching**; the arithmetic, the four historical failure
-    modes, and the alternative (`min_entries_to_merge > 1`, which amortises
-    fixed overhead instead of competing for runners) are written up in
-    `plan/issues/3914-ci-throughput-merge-queue-batching.md`.
+  - **Canonical queue configuration: `max_entries_to_build: 1` (no
+    speculation), `max_entries_to_merge: 5` (BATCH UP TO 5 PRs PER GROUP),
+    `min_entries_to_merge: 1` (no quorum wait).** These live in the repo
+    ruleset, not in any workflow file, so they are applied and read back with
+    **`scripts/set-merge-queue-config.sh`** (`--show` to read, `--check` to
+    diff, no flag to apply; needs repo-admin `gh`). Before that script existed
+    the values were invisible from the repo and this doc's record of them went
+    six weeks stale — it still said `max_entries_to_build: 5` long after the
+    2026-06-20 wedge reverted it. Treat the script's `--show` output as
+    authoritative and this paragraph as the intent.
+  - **The two knobs are not the same thing, and only one of them is safe.**
+    - `max_entries_to_merge` (**the batch cap, 5**) puts up to five queued PRs
+      into **one** merge group validated by **one** shard-matrix run. Runner
+      pressure is unchanged and the fixed ~170 s per-run overhead is divided
+      across the batch. It costs the batched PRs no latency: the queue is
+      serial, so they were already waiting for that run. Measured 2026-07-31:
+      the median PR waited 23.6 min for a 13.3 min run and 13 of 20 groups had
+      another PR already waiting when they were dispatched — all of which still
+      went out as size-1 groups.
+    - `max_entries_to_build` (**speculation depth, 1**) builds up to N
+      _separate_ groups concurrently, each with its own full run. It is capped
+      at a ~1.25× theoretical win, it puts 5 × ~102 shard jobs on a
+      ~120-runner pool, and it is the **only** setting under which a queue
+      change ejects other PRs' in-flight runs (any membership change
+      invalidates every descendant speculative group). It was enabled by #1956,
+      reverted during the 2026-06-20 wedge (#2519 / #2522), and the shard
+      matrix has since been resized _for_ a serial queue —
+      `scripts/gen-test262-mg-matrix.mjs` assigns 102 of the 120 runners to a
+      single merge group. **Do not re-enable it**;
+      `set-merge-queue-config.sh` refuses a value > 1 without
+      `--allow-speculative-build`. The arithmetic and the four historical
+      failure modes are in
+      `plan/issues/3914-ci-throughput-merge-queue-batching.md`.
+  - **Adding a PR to the queue tail never ejects or cancels anything.** A merge
+    group's membership is fixed when the group is created; a later arrival
+    forms the *next* group. The one operation that _does_ cancel a run is
+    re-adding a PR that is already **in** the in-flight group, which is why
+    `scripts/enqueue-green-prs.mjs` is trailing-add-only (#2560,
+    `isTrailingAddCandidate`) and why agents never enqueue (#2786). Raising the
+    batch cap does not change this — see `project_merge_queue_requeue_cancels_run`.
+  - **A red batch ejects every PR in it — that is priced in, and handled.**
+    GitHub removes the whole failed group from the queue and does not bisect.
+    #3914 landed the three sites that previously assumed one PR per group:
+    the predecessor-baseline lookup uses `merge_group.base_sha` (P1),
+    `auto-park` parks **every** member and names the co-members (P2), and the
+    #2975 park-race guard maps the failure onto every member (P3). Recovery is
+    optimistic-batch/split-on-failure: re-enqueue the members singly to
+    attribute. Cost is one wasted run, which is the `e`-weighted term in
+    #3914's sizing.
+  - **`min_entries_to_merge` stays 1.** Raising the cap is free; raising the
+    floor is not — a group would wait for a quorum, so a genuinely solo PR pays
+    the wait timer as pure added latency (~1/3 of measured dispatches had no
+    peer waiting). Raise it to 2 with a **2-minute** timer only if groups are
+    observed to stay size-1 at cap 5, i.e. only if GitHub's group formation
+    turns out to be eager-with-minimum rather than `min(available, cap)`
+    (#3914 Step 2).
+  - **Intra-group masking is narrower than this doc used to claim.** It applies
+    only to the test262 _delta_ gate, not to `quality` / `cheap gate` /
+    `equivalence-*` (pass/fail), nor to the catastrophic guard (#1668) or the
+    standalone floor (#1897/#2097), which are **absolute** thresholds. And even
+    for the delta gate the merged JSONL is per-test, so a batch that regresses
+    three tests still names those three ids. Batching costs **attribution**
+    (which member did it), not detection.
   - Path filter restricts the matrix to PRs that touch source / test /
     config files. Docs-only PRs skip the full matrix.
   - The `cheap gate (main-ancestor + lint)` job in the same workflow is

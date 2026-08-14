@@ -1344,10 +1344,16 @@ export function compileObjectDefineProperty(
 
   // Check if obj is a struct type with the given field
   // (#4394) …unless the receiver IS the global object — see `isGlobalObjectExpr`.
-  // JS-host only: standalone/WASI build globalThis as a real native `$Object`
-  // struct (`emitNativeGlobalThisObject`), so the struct arm is correct there.
+  // ALL lanes: in JS-host mode the global object is a host value with no
+  // compiled struct. Standalone/WASI build globalThis as the native `$Object`
+  // singleton (`emitNativeGlobalThisObject`) — that is a RUNTIME-internal
+  // struct type, NOT the checker-minted `typeof globalThis` struct that
+  // `resolveStructName` returns, so the struct arm's guarded `ref.test`
+  // misses there too (else-arm `ref.null` → the misleading "called on null"
+  // TypeError). The extern arm routes to the native `__defineProperty_value`
+  // runtime, which handles the `$Object` receiver host-free.
   const objTsType = ctx.checker.getTypeAtLocation(objArg);
-  const receiverIsHostGlobalObject = !ctx.standalone && !ctx.wasi && isGlobalObjectExpr(ctx, fctx, objArg);
+  const receiverIsHostGlobalObject = isGlobalObjectExpr(ctx, fctx, objArg);
   let structName = receiverIsHostGlobalObject
     ? undefined
     : resolveStructName(ctx, objTsType) || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
