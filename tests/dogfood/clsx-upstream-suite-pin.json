@@ -1,0 +1,12 @@
+{
+  "name": "clsx",
+  "repo": "https://github.com/lukeed/clsx.git",
+  "tag": "v2.1.1",
+  "commit": "925494cf31bcd97d3337aacd34e659e80cae7fe2",
+  "inventoryDirectory": "test",
+  "testFileCount": 3,
+  "testFilePathSha256": "8746cc44a9e6bf780cff17e92f32ad57ae25f08bc13e791777a46ea0fd4fc966",
+  "registrationSites": 32,
+  "selectedFiles": ["test/classnames.js", "test/index.js", "test/lite.js"],
+  "_note": "The published clsx tarball omits its uvu tests. This pin verifies the complete test/*.js inventory at the immutable v2.1.1 source commit. The adapter executes every original callback against the matching byte-verified published ESM implementation; only uvu registration/assertion plumbing is replaced."
+}

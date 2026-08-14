@@ -143,6 +143,25 @@ export function typeRefName(name: ts.EntityName): string {
   return ts.isQualifiedName(name) ? name.right.text : name.text;
 }
 
+/**
+ * Resolve a type NAME through non-generic alias chains
+ * (`type WindowProxy = Window` → "Window"), mirroring how the checker's
+ * symbol for an alias-typed declaration reports the ALIASED type's name.
+ * Names that are not aliases (or generic aliases, or alias targets that are
+ * not plain type references) resolve to themselves at the last step reached.
+ * The merge-group park of PR #4481 traced to exactly this: `declare var
+ * parent: WindowProxy` classified as non-extern because the alias was not
+ * followed, silently dropping the `global_parent` host-import registration.
+ */
+export function resolveLibTypeName(name: string, index: LibDeclIndex, depth = 0): string {
+  if (depth > MAX_TYPE_DEPTH) return name;
+  const alias = index.aliases.get(name);
+  if (!alias || (alias.typeParameters && alias.typeParameters.length > 0)) return name;
+  const target = alias.type;
+  if (!ts.isTypeReferenceNode(target)) return name;
+  return resolveLibTypeName(typeRefName(target.typeName), index, depth + 1);
+}
+
 /** Identifier/rightmost name of a heritage `extends X<…>` expression, mirroring
  * the checker's `getTypeAtLocation → getSymbol().name` on the heritage ref. */
 export function heritageBaseName(typeRef: ts.ExpressionWithTypeArguments): string | undefined {
@@ -166,6 +185,8 @@ export function isVoidTypeNode(node: ts.TypeNode | undefined): boolean {
   if (!node) return false;
   if (node.kind === ts.SyntaxKind.VoidKeyword || node.kind === ts.SyntaxKind.UndefinedKeyword) return true;
   if (ts.isParenthesizedTypeNode(node)) return isVoidTypeNode(node.type);
+  // `asserts value [is T]` — the checker types assertion signatures as void.
+  if (ts.isTypePredicateNode(node) && node.assertsModifier) return true;
   return false;
 }
 
@@ -177,7 +198,7 @@ export function isVoidTypeNode(node: ts.TypeNode | undefined): boolean {
  */
 export function libConstructSignatures(name: string, index: LibDeclIndex): ts.ConstructSignatureDeclaration[] {
   const out: ts.ConstructSignatureDeclaration[] = [];
-  for (const iface of index.interfaces.get(name) ?? []) {
+  for (const iface of index.interfaces.get(resolveLibTypeName(name, index)) ?? []) {
     for (const m of iface.members) {
       if (ts.isConstructSignatureDeclaration(m)) out.push(m);
     }
@@ -193,7 +214,10 @@ export function libConstructSignatures(name: string, index: LibDeclIndex): ts.Co
  *  - `declare var X: XConstructor` where the referenced interface has
  *    construct signatures AND X is not a wasm-native builtin.
  */
-export function isExternDeclaredLibName(name: string, index: LibDeclIndex): boolean {
+export function isExternDeclaredLibName(rawName: string, index: LibDeclIndex): boolean {
+  // Aliases (`type WindowProxy = Window`) classify as their target — the
+  // checker's merged symbol never sees the alias name.
+  const name = resolveLibTypeName(rawName, index);
   if (index.classes.has(name)) return true;
   const v = index.vars.get(name);
   if (!v || !v.type) return false;
@@ -204,6 +228,35 @@ export function isExternDeclaredLibName(name: string, index: LibDeclIndex): bool
     return libConstructSignatures(typeRefName(v.type.typeName), index).length > 0;
   }
   return false;
+}
+
+/** Declared type of the property `prop` on the given declared TYPE node —
+ * looks through TypeLiteral members directly and TypeReference targets via
+ * the merged interface index. */
+function memberTypeOf(typeNode: ts.TypeNode, prop: string, index: LibDeclIndex): ts.TypeNode | undefined {
+  const memberIn = (members: readonly ts.TypeElement[]): ts.TypeNode | undefined => {
+    for (const m of members) {
+      if (ts.isPropertySignature(m) && m.name && ts.isIdentifier(m.name) && m.name.text === prop) return m.type;
+    }
+    return undefined;
+  };
+  if (ts.isTypeLiteralNode(typeNode)) return memberIn(typeNode.members);
+  if (ts.isTypeReferenceNode(typeNode)) {
+    const target = resolveLibTypeName(typeRefName(typeNode.typeName), index);
+    for (const iface of index.interfaces.get(target) ?? []) {
+      const t = memberIn(iface.members);
+      if (t) return t;
+    }
+  }
+  return undefined;
+}
+
+/** Resolve `typeof <entity>` to the entity's declared type node: `typeof X`
+ * is the ambient `declare var X`'s type; `typeof X.Y` is member `Y` on it. */
+function resolveTypeQueryNode(name: ts.EntityName, index: LibDeclIndex): ts.TypeNode | undefined {
+  if (ts.isIdentifier(name)) return index.vars.get(name.text)?.type;
+  const base = resolveTypeQueryNode(name.left, index);
+  return base ? memberTypeOf(base, name.right.text, index) : undefined;
 }
 
 /**
@@ -253,6 +306,15 @@ export function mapLibTypeNodeToWasm(
       break;
   }
   if (ts.isParenthesizedTypeNode(node)) return mapLibTypeNodeToWasm(node.type, index, scope, depth + 1);
+  // Type predicates (`x is T`) are boolean-valued at runtime — the checker
+  // maps the signature's return type to boolean (branded i32). `asserts`
+  // predicates are void; callers check isVoidTypeNode first.
+  if (ts.isTypePredicateNode(node)) return { kind: "i32", boolean: true };
+  // `unique symbol` (SymbolConstructor.iterator etc.) — checker maps
+  // UniqueESSymbol to i32, same as `symbol`.
+  if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.UniqueKeyword) {
+    return mapLibTypeNodeToWasm(node.type, index, scope, depth + 1);
+  }
   if (ts.isLiteralTypeNode(node)) {
     switch (node.literal.kind) {
       case ts.SyntaxKind.NumericLiteral:
@@ -283,6 +345,13 @@ export function mapLibTypeNodeToWasm(
       if (mapped.every((m) => m.kind === mapped[0].kind)) return mapped[0];
     }
     return { kind: "externref" };
+  }
+  // `typeof X` / `typeof X.Y` queries (FileReader.readyState is declared as
+  // `typeof FileReader.EMPTY | …`). Resolve through the ambient declare-var's
+  // declared type; unresolvable queries stay externref.
+  if (ts.isTypeQueryNode(node)) {
+    const resolved = resolveTypeQueryNode(node.exprName, index);
+    return resolved ? mapLibTypeNodeToWasm(resolved, index, scope, depth + 1) : { kind: "externref" };
   }
   if (ts.isTypeReferenceNode(node)) {
     const name = typeRefName(node.typeName);

@@ -3,7 +3,7 @@ id: 3995
 title: "npm-compat: pin and adapt original upstream test suites for catalog packages"
 status: ready
 created: 2026-07-30
-updated: 2026-08-12
+updated: 2026-08-14
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -186,3 +186,38 @@ implementation files (28 tests total) still emit invalid call operands before
 execution. The report also contains 92 invalid per-test batches. #3978 remains
 the active owner for that compiler frontier; this umbrella continues to own the
 missing consistent runtime adapters and report integration.
+
+## 2026-08-14 unified GitHub-source setup and complete small-package suites
+
+`npm-compat-upstream-sources.json` now pins the GitHub repository, release tag,
+and immutable commit for every one of the 24 packages rendered by
+`npm-compat.html`. The source acquisition command accepts either
+`--package <name>` or `--all`; a single-package run does not acquire, compile,
+or execute any unrelated package. For the 14 packages that had no source-suite
+adapter when this slice started, the committed metadata also verifies the
+complete unit-file inventory by count and path digest. This closes the
+provenance/setup gap without presenting packages that merely compile as if
+their original tests passed.
+
+The first complete new runtime adapters are measured on current main:
+
+- clsx 2.1.1: all 3 upstream uvu files and all 32 callbacks run; **20/32** pass
+  in Wasm and **32/32** pass natively. The 12 real Wasm divergences are retained
+  in the report. The existing 18/18 differential operation workload remains a
+  separate secondary signal.
+- cookie 2.0.1: all 4 upstream Vitest files and all 63,740 expanded callbacks
+  run. **63,625/63,672** natively reproducible cases pass in Wasm. The 68
+  top-site snapshot cases are explicitly harness-incompatible until the
+  snapshot adapter is implemented; they are not counted as passes. Both
+  stringify files are fully green (63,625/63,625); the 47 scored failures are
+  in parse modules, including an invalid `parse-set-cookie` Wasm module.
+- marked 18.0.2: the complete 6-file unit inventory is pinned. An adapter
+  experiment reached the original Hooks callbacks, but a full bounded run was
+  still too slow in the Lexer/Parser compilation phase. The experiment is not
+  shipped as a runnable adapter and no pass-rate claim is made.
+
+The npm-compat generator now publishes the clsx and cookie upstream-suite
+scores and pins directly. Remaining packages with no runtime adapter stay
+explicitly `adapter-pending`; the next slices should expand the unified runner
+in ascending harness complexity (Redux/Axios first, then jsdom/Prettier and the
+large compiler/tooling suites).

@@ -15,6 +15,7 @@ import { isStringType } from "../checker/type-mapper.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4394) null-carrier ToString
 
 const MIN_BATCHED_CONCAT_ARITY = 3;
 const MAX_BATCHED_CONCAT_ARITY = 8;
@@ -69,7 +70,27 @@ export function ensureNativeBatchedConcat(ctx: CodegenContext, arity: number): n
   const totalLenLocal = arity;
   const outputLocal = arity + 1;
   const offsetLocal = arity + 2;
-  const body: Instr[] = [{ op: "i32.const", value: 0 }];
+  const body: Instr[] = [];
+  // (#4394) Null-carrier ToString guard. A statically-string-typed operand can
+  // carry the null $AnyString sentinel at runtime — the JS `undefined` of a
+  // missing property/param that flowed through a string-typed slot (the #3548
+  // carrier convention; e.g. `expectedErrorConstructor.name` in the test262
+  // asyncHelpers, JSDoc-typed `string`). The length sum below would trap on it
+  // ("dereferencing a null pointer in __str_concat_N"). §7.1.17 ToString of
+  // that carrier is "undefined", so substitute exactly that — never the empty
+  // string, which would silently corrupt the concatenation.
+  for (let index = 0; index < arity; index++) {
+    body.push(
+      { op: "local.get", index },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...nativeStringLiteralInstrs(ctx, "undefined"), { op: "local.set", index }],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
   for (let index = 0; index < arity; index++) {
     body.push({ op: "local.get", index }, { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, { op: "i32.add" });
   }

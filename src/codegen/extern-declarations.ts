@@ -25,6 +25,7 @@ import {
   isVoidTypeNode,
   libConstructSignatures,
   mapLibTypeNodeToWasm,
+  resolveLibTypeName,
   typeParamScopeOf,
   typeRefName,
   type LibDeclIndex,
@@ -1344,8 +1345,12 @@ export function collectDeclaredGlobals(
       let isExternClassGlobal: boolean;
       let declaredClassName: string | undefined;
       if (libIndex) {
+        // Resolve alias-typed globals (`parent: WindowProxy`) to the aliased
+        // class name — the checker's symbol reports the target ("Window").
         declaredClassName =
-          decl.type && ts.isTypeReferenceNode(decl.type) ? typeRefName(decl.type.typeName) : undefined;
+          decl.type && ts.isTypeReferenceNode(decl.type)
+            ? resolveLibTypeName(typeRefName(decl.type.typeName), libIndex)
+            : undefined;
         isExternClassGlobal = declaredClassName !== undefined && isExternDeclaredLibName(declaredClassName, libIndex);
       } else {
         const type = ctx.checker.getTypeAtLocation(decl);
