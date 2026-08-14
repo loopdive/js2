@@ -297,3 +297,20 @@ as blocked, carries all 15 implementation-invalid tests and the exact validator
 message, and still publishes numeric pass/total fields for the workflow
 contract. The five heavier Lexer, Parser, CLI, instance, and full marked files
 remain explicit deferred inventory rather than disappearing from the report.
+
+## 2026-08-14 Stylelint synchronous utility slice
+
+Stylelint 17.14.1 now verifies all 281 matching files under `lib/**/__tests__`
+and their 1,574 static `it()`/`test()` registration sites from
+`stylelint/stylelint@17.14.1` (commit
+`cd66b035087270dd62d33542154463266cc5e81a`). The first runtime adapter runs
+five dependency-light original utility test files without changing their
+callbacks or inputs. All five generated modules compile and validate, native
+Node passes **9/9**, and Wasm passes **7/9**.
+
+Both remaining callbacks are in `arrayEqual.test.mjs` and trap with `illegal
+cast`; this is a real mixed-array runtime gap rather than missing runner
+infrastructure. The other 276 inventory files remain explicitly deferred. The
+npm-compat generator invokes the runner directly, so the merge-only refresh
+publishes the 7/9 result and the configured-suite guard rejects a missing or
+`adapter pending` Stylelint row.

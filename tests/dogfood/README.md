@@ -127,6 +127,7 @@ then compares its result with the same operation in native Node.
 | **lodash upstream suite**               | #3995 | modular method files      | unchanged QUnit module slices from the monolithic upstream suite              |
 | **lodash-es upstream suite**            | #3995 | modular ESM method files  | the same unchanged QUnit module slices against the ESM distribution           |
 | **moment upstream suite**               | #3995 | `moment.js`               | pinned original QUnit callbacks; complete core/locale inventory tracked       |
+| **stylelint upstream suite**            | #3995 | `lib/utils/*.mjs`         | pinned original utility-unit callbacks; complete `lib/**/__tests__` inventory tracked |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
@@ -187,6 +188,19 @@ The smaller generated API driver remains as an independent secondary signal.
 It consumes `combineReducers`, `createStore`, `subscribe`, and
 `bindActionCreators`, then compares one numeric summary with the same package
 running in native Node.
+
+## Stylelint 17.14.1 upstream utility units
+
+```bash
+pnpm run dogfood:stylelint-upstream-suite
+DOGFOOD_STYLELINT_UPSTREAM_SUITE=1 pnpm exec vitest run tests/dogfood/npm-small-upstream-suites.test.ts
+```
+
+The harness verifies all 281 matching files and 1,574 static registration sites
+from Stylelint's pinned GitHub release. The initial synchronous slice selects
+five dependency-light utility files: all five generated modules compile and
+validate, Node passes **9/9**, and Wasm passes **7/9**. The two runtime traps and
+all 276 deferred files remain visible in the report.
 
 ## Axios 1.16.1 upstream suite
 

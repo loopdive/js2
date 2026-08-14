@@ -298,6 +298,7 @@
     "commit": "cd66b035087270dd62d33542154463266cc5e81a",
     "cacheKey": "stylelint",
     "compileScript": "dogfood:stylelint",
+    "suiteScript": "dogfood:stylelint-upstream-suite",
     "inventory": {
       "directory": "lib",
       "include": "^lib/.*/__tests__/.*\\.(?:js|mjs|cjs)$",

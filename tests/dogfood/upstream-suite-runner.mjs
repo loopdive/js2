@@ -62,6 +62,8 @@ function __upstreamExpect(actual) {
     toBeUndefined() { const n = ++__upstreamAssertion; if (actual !== undefined) __upstreamFail("assertion " + n + " expected undefined, got " + __upstreamValue(actual)); },
     toBeDefined() { const n = ++__upstreamAssertion; if (actual === undefined) __upstreamFail("assertion " + n + " expected defined value"); },
     toBeNull() { const n = ++__upstreamAssertion; if (actual !== null) __upstreamFail("assertion " + n + " expected null, got " + __upstreamValue(actual)); },
+    toBeTruthy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " expected truthy value"); },
+    toBeFalsy() { const n = ++__upstreamAssertion; if (actual) __upstreamFail("assertion " + n + " expected falsey value"); },
     toHaveLength(expected) { const n = ++__upstreamAssertion; if (actual == null || actual.length !== expected) __upstreamFail("assertion " + n + " length mismatch"); },
     toContain(expected) { const n = ++__upstreamAssertion; if (actual == null || typeof actual.includes !== "function" || !actual.includes(expected)) __upstreamFail("assertion " + n + " expected contained value"); },
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },

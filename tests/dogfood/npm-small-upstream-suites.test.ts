@@ -56,6 +56,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 6,
       registrationSites: 181,
     });
+    expect(pin("stylelint")).toMatchObject({
+      tag: "17.14.1",
+      commit: "cd66b035087270dd62d33542154463266cc5e81a",
+      testFileCount: 281,
+      registrationSites: 1574,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -137,5 +143,20 @@ describe("small npm package upstream suites", () => {
     expect(report.compile).toMatchObject({ succeeded: 1, validated: 0 });
     expect(report.results.scored).toBe(15);
     expect(report.results.passed).toBe(0);
+  });
+
+  const stylelintHeavy = process.env.DOGFOOD_STYLELINT_UPSTREAM_SUITE === "1" ? it : it.skip;
+  stylelintHeavy("runs Stylelint's selected original utility units", { timeout: 600_000 }, () => {
+    const report = run("stylelint");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 281,
+      filesSelected: 5,
+      filesDeferred: 276,
+      testsRegistered: 9,
+      nativePassed: 9,
+      nativeFailed: 0,
+    });
+    expect(report.compile).toMatchObject({ modules: 5, succeeded: 5, validated: 5 });
+    expect(report.results.scored).toBe(9);
   });
 });
