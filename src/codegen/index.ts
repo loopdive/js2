@@ -233,7 +233,7 @@ import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-g
 import { fuseBoxBooleanSinks } from "./box-boolean-fuse.js"; // (#4157) unboxed boolean fusion, default OFF
 import { inlineIsTruthyCallSites } from "./is-truthy-inline-ic.js"; // (#4157) ToBoolean call-site fast path
 import { inlineMemberGetCallSites } from "./member-get-inline-ic.js"; // (#4157) call-site inline cache
-import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { fillFusedToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default ON
 import { fillTypedMemberSetF64Dispatch } from "./member-set-f64.js"; // (#4157 A) write-side f64 twin
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
@@ -299,6 +299,7 @@ import {
 import { emitInlineMathFunctions } from "./math-helpers.js";
 import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
+import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
 import { installAllocCensus } from "./alloc-census.js"; // (#3921) per-type allocation census
 import { installExecCensus } from "./exec-census.js"; // (#4157) deterministic executed-call counts
 import { inlineUserFunctions } from "./ir-inline.js"; // (#4157) IR-level inliner for user code
@@ -5276,9 +5277,9 @@ export function generateModule(
 
     // (#4157) Inline-cache the READ SITES against the arms just filled. Placed
     // HERE so the copied arm and the copy share one type/funcIdx regime — every
-    // later remap treats both identically. DEFAULT OFF.
+    // later remap treats both identically. DEFAULT ON since the tuned-set flip.
     inlineMemberGetCallSites(ctx);
-    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
     fuseBoxBooleanSinks(ctx); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
@@ -5324,7 +5325,7 @@ export function generateModule(
     // that arm is still the PREFIX — which is also the property the arm's own
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
-    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
     inlineFlatStrCallSites(ctx); // (#4157) flatten/equals site fast paths — rationale in flat-str-ic.ts
 
@@ -5583,8 +5584,8 @@ export function generateModule(
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
     installExecCensus(ctx);
-    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
-    // is set, so the default binary stays byte-identical. This exact slot is
+    // (#4157) IR-level inliner for USER code — runs by DEFAULT since the
+    // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);
@@ -5603,6 +5604,9 @@ export function generateModule(
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
+    // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
+    // position-guessing repairs inside stackBalance. See its own header.
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.
@@ -7670,8 +7674,8 @@ export function generateMultiModule(
     fillMemberGetDispatch(ctx);
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
     fillTypedMemberSetF64Dispatch(ctx); // (#4157 A) the WRITE-side f64 twins
-    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default OFF
-    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default OFF
+    inlineMemberGetCallSites(ctx); // (#4157) call-site inline cache, default ON
+    inlineIsTruthyCallSites(ctx); // (#4157) ToBoolean call-site fast path, default ON
     fuseBoxBooleanSinks(ctx); // (#4157) unboxed boolean fusion — AFTER the truthy IC, default OFF
     fillFusedToNumber(ctx); // (#4157) fused __to_number — no-op unless reserved
 
@@ -7716,7 +7720,7 @@ export function generateMultiModule(
     // that arm is still the PREFIX — which is also the property the arm's own
     // soundness rests on. Later fills (`fillDynamicForinVecArms`, the
     // `ta-dyn-mop` arm) unshift in front of it, so running after them makes the
-    // extraction fail and the pass decline wholesale. DEFAULT OFF.
+    // extraction fail and the pass decline wholesale. DEFAULT ON since the flip.
     inlineExternGetCallSites(ctx);
 
     // (#4157) Inline the member-WRITE dispatchers' first arm at the call
@@ -7955,8 +7959,8 @@ export function generateMultiModule(
     // so the index on each `struct.new` is the one the reader will see.
     installAllocCensus(ctx);
     installExecCensus(ctx);
-    // (#4157) IR-level inliner for USER code — no-op unless JS2WASM_IR_INLINE
-    // is set, so the default binary stays byte-identical. This exact slot is
+    // (#4157) IR-level inliner for USER code — runs by DEFAULT since the
+    // tuned-set flip; a no-op only at JS2WASM_IR_INLINE=0. This exact slot is
     // load-bearing; the four preconditions are spelled out under "Placement
     // contract" in `ir-inline.ts`. Do not move it without reading them.
     inlineUserFunctions(ctx);
@@ -7971,6 +7975,9 @@ export function generateMultiModule(
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
+    // (#4157 park 6) Cross-hierarchy operand repair — must run BEFORE the two
+    // position-guessing repairs inside stackBalance. See its own header.
+    repairCrossHierarchyOperands(mod);
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
     // #1918 — drain fixup telemetry: per-compile debug log + optional strict mode.

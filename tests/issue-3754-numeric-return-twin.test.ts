@@ -40,6 +40,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) One case asserts the call site literally calls `$__dc_P_inc_0_g`.
+// The IR inliner's adapter rule inlines `__dc_*` trampolines UNCONDITIONALLY
+// (that is rule 3, its cheapest and most reliable win), so the call is gone
+// while the twin's f64 result type — what this file actually tests, and what
+// every other assertion here reads — is unchanged. Pin the inliner off.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 /**
  * The `method` axis shape, verbatim from `benchmarks/cross-engine/axes-core.js`:

@@ -38,6 +38,14 @@ import { attachIrVecLayouts } from "../src/ir/vec-layout.js";
 import { irSupportTypeRef, irTypeBindingKey } from "../src/ir/abi-bindings.js";
 import type { WasmFunction } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) "emits the exact owner and both helpers once with NO DIRECT BODY" is
+// asserted as a literal `call <n>` operand — an absolute function index, which
+// the tuned passes shift by adding helpers, and which the IR inliner can remove
+// outright. Pin the inliner off: the ownership property this file tests is
+// established during IR preparation, upstream of it.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 const EXACT_SOURCE = `
   function delay(ms: number, value: number): Promise<number> {

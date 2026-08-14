@@ -222,16 +222,28 @@ async function answersOf(binary: Uint8Array): Promise<{ run: number; dyn: number
 }
 
 describe("#4157 member-get call-site inline cache", () => {
-  it("is byte-identical to the base build when the flag is unset", async () => {
-    const off = await build(undefined);
+  // Since the tuned-set flip the byte-identity guarantee hangs off `=0`, not
+  // off absence: unset now selects ceiling 8. `off` is the spelling twin.
+  it("is byte-identical to the legacy build when the flag is `0`", async () => {
     const zero = await build("0");
-    expect(off.patchedSites).toBe(0);
+    const off = await build("off");
     expect(zero.patchedSites).toBe(0);
-    expect(Buffer.from(zero.binary).equals(Buffer.from(off.binary))).toBe(true);
+    expect(off.patchedSites).toBe(0);
+    expect(Buffer.from(off.binary).equals(Buffer.from(zero.binary))).toBe(true);
+  });
+
+  it("unset is ceiling 8, and a malformed value falls back to it — never to OFF", async () => {
+    const eight = await build("8");
+    const unset = await build(undefined);
+    const junk = await build("maybe");
+    expect(unset.patchedSites, "unset must patch — the pass is default ON").toBeGreaterThan(0);
+    expect(unset.patchedSites).toBe(eight.patchedSites);
+    expect(unset.eligible).toBe(eight.eligible);
+    expect(Buffer.from(junk.binary).equals(Buffer.from(unset.binary))).toBe(true);
   });
 
   it("engages, and the candidate ceiling bites", async () => {
-    const off = await build(undefined);
+    const off = await build("0");
     const mono = await build("1");
     const poly = await build("4");
     expect(mono.patchedSites).toBeGreaterThan(0);
@@ -242,19 +254,19 @@ describe("#4157 member-get call-site inline cache", () => {
   });
 
   it("answers exactly what native Node answers, at every candidate ceiling", async () => {
-    for (const ic of [undefined, "1", "4"]) {
+    for (const ic of ["0", "1", "4", undefined]) {
       const built = await build(ic);
       const answers = await answersOf(built.binary);
       expect(answers.run, `JS2WASM_INLINE_PROP_IC=${ic ?? "unset"}`).toBe(NODE_ANSWER);
     }
   });
 
-  it("answers exactly what the base build answers on the MISS cases", async () => {
-    const base = await answersOf((await build(undefined)).binary);
-    for (const ic of ["1", "4"]) {
+  it("answers exactly what the legacy build answers on the MISS cases", async () => {
+    const base = await answersOf((await build("0")).binary);
+    for (const ic of ["1", "4", undefined]) {
       const answers = await answersOf((await build(ic)).binary);
-      expect(answers.dyn, `JS2WASM_INLINE_PROP_IC=${ic}`).toBe(base.dyn);
-      expect(answers.run, `JS2WASM_INLINE_PROP_IC=${ic}`).toBe(base.run);
+      expect(answers.dyn, `JS2WASM_INLINE_PROP_IC=${ic ?? "unset"}`).toBe(base.dyn);
+      expect(answers.run, `JS2WASM_INLINE_PROP_IC=${ic ?? "unset"}`).toBe(base.run);
     }
   });
 });

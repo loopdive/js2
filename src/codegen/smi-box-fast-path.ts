@@ -5,9 +5,10 @@
  * `__box_number`.
  *
  * Companion to `tonumber-fast-paths.ts` (the *operand* half) and gated by the
- * same `JS2WASM_SMI_FASTPATH` flag. **Default OFF; the flag-off binary is
- * byte-identical**, because {@link inlineSmiBoxGuards} returns before it reads
- * anything.
+ * same `JS2WASM_SMI_FASTPATH` flag. **Default ON at the `all` level** since the
+ * #4157 tuned-set flip; with `JS2WASM_SMI_FASTPATH=0` the binary is
+ * byte-identical to the pre-#4157 base, because {@link inlineSmiBoxGuards}
+ * returns before it reads anything.
  *
  * ## Why this is a finalize pass and not the specced binary-op transform
  *
@@ -167,7 +168,8 @@ function f64Guard(fTmp: number, tTmp: number, boxCall: Instr): Instr[] {
  * `stackBalance` / `repairStructTypeMismatches` / `peepholeOptimize` passes read
  * the local table off the function rather than caching it.
  *
- * No-op unless `JS2WASM_SMI_FASTPATH` is set.
+ * Runs at the `all` level by default; a no-op only when `JS2WASM_SMI_FASTPATH`
+ * is explicitly off.
  */
 export function inlineSmiBoxGuards(ctx: CodegenContext): void {
   if (!smiFastPathEnabled()) return;

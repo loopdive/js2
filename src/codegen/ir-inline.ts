@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4157) IR-level inliner for USER code — `JS2WASM_IR_INLINE`, default OFF.
+ * (#4157) IR-level inliner for USER code — `JS2WASM_IR_INLINE`, **default `on`**
+ * since the tuned-set flip (see `src/perf-flags.ts`). `=0` / `off` is the revert.
  *
  * ## Why this exists at all
  *
@@ -119,12 +120,18 @@
  *
  * ## Flag surface
  *
+ *   (unset)                                   the `on` preset — the DEFAULT
+ *   JS2WASM_IR_INLINE=0 | off                 the pass does not run at all
  *   JS2WASM_IR_INLINE=report                  analyse + print, mutate NOTHING
  *   JS2WASM_IR_INLINE=on                      adapters + single-caller + loop-leaf
  *   JS2WASM_IR_INLINE=adapters,single,loop    pick rules individually
  *   JS2WASM_IR_INLINE=on,count                + runtime site-execution counter
  *   JS2WASM_IR_INLINE=on,poison               + perturb every inlined result
  *   ...,maxsize=N  ...,growth=N  ...,verbose
+ *
+ * A value that selects no rule at all — `count` on its own, or a typo — gets
+ * the `on` preset plus whatever modifiers it did name, rather than silently
+ * disabling the inliner; only an explicit off-token disables it.
  *
  * `poison` exists because a confident null from a mechanism that never fired
  * closes a door that was never opened — #4157 records that failure twice in one
@@ -133,6 +140,7 @@
  */
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
 
@@ -190,14 +198,32 @@ const DEFAULTS: InlineOptions = {
   verbose: false,
 };
 
+/** The `on` preset: every rule, no modifiers. Applied in place. */
+function applyOnPreset(o: InlineOptions): void {
+  o.enabled = true;
+  o.adapters = true;
+  o.single = true;
+  o.loop = true;
+  o.specialise = true;
+}
+
 export function parseInlineOptions(raw: string | undefined): InlineOptions {
   const o: InlineOptions = { ...DEFAULTS };
-  if (!raw) return o;
+  // Unset ⇒ the tuned default. An off-token ⇒ genuinely off. Everything else
+  // is parsed, and falls back to the preset below if it selected no rule.
+  if (!tunedFlagEnabled(raw)) return o;
+  if (raw === undefined) {
+    applyOnPreset(o);
+    return o;
+  }
   const toks = raw
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 0);
-  if (toks.length === 0) return o;
+  if (toks.length === 0) {
+    applyOnPreset(o);
+    return o;
+  }
   for (const t of toks) {
     const eq = t.indexOf("=");
     if (eq > 0) {
@@ -214,20 +240,12 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
       case "off":
         return { ...DEFAULTS };
       case "report":
-        o.enabled = true;
+        applyOnPreset(o);
         o.report = true;
-        o.adapters = true;
-        o.single = true;
-        o.loop = true;
-        o.specialise = true;
         break;
       case "1":
       case "on":
-        o.enabled = true;
-        o.adapters = true;
-        o.single = true;
-        o.loop = true;
-        o.specialise = true;
+        applyOnPreset(o);
         break;
       case "adapters":
         o.enabled = true;
@@ -262,6 +280,11 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
         break;
     }
   }
+  // A spec that named only modifiers (`count`, `verbose`, `growth=…`) or
+  // nothing recognisable at all selected no RULE. Under the tuned default that
+  // must not read as "off" — it reads as "the default set, plus what you asked
+  // for", which is also what `JS2WASM_IR_INLINE=count` obviously means.
+  if (!o.enabled) applyOnPreset(o);
   return o;
 }
 
@@ -672,6 +695,56 @@ function blockTypeFor(results: ValType[]): BlockType {
   return { kind: "val", type: results[0] };
 }
 
+/** Memoized per-callee analysis results — see the site loop in `inlineUserFunctions`. */
+interface CalleeFacts {
+  unsafe: DeclineReason | null;
+  rawSize: number;
+  effSize: number;
+  isLeaf: boolean;
+}
+
+/**
+ * ORIGINAL-body views: inlining is SINGLE-LEVEL. Callee bodies are read from
+ * their pre-pass ORIGINAL, so a function that has itself had callees inlined
+ * into it still contributes its original body. That bounds growth to one
+ * level and removes any need for a cycle check beyond direct self-recursion.
+ *
+ * Reading a live `f.body` alias instead makes the pass silently iterative in
+ * `mod.functions` order — inlining A into B and then the already-inflated B
+ * into C. Measured on acorn with all rules on, the alias grew the module by
+ * 243,492 instructions where single-level costs 137,072, i.e. 78 % of the
+ * growth came from an order-dependent transitive effect nobody had asked for.
+ * It is not unsound (the relocation is uniform over the whole local space,
+ * which the alias also widens), but it is unpredictable and unbudgetable, so
+ * it is not what this pass does.
+ *
+ * (#4157 shard-slowdown fix) The original guarantee is COPY-ON-WRITE, not an
+ * eager whole-module deep clone. Eagerly cloning every body cost ~55 ms +
+ * tens of MB of garbage PER COMPILE — irrelevant amortized over one acorn
+ * build, but a large share of the tuned-defaults compile-time tax that pushed
+ * test262 standalone shards past their CI timeout (the runtime helper set is
+ * cloned wholesale even when nothing inlines). A function's body is
+ * deep-cloned exactly once, immediately BEFORE its first mutation as a caller
+ * (`preserveOriginal`); an unmutated function's live body IS its original, so
+ * reading it directly (`originalOf`) is byte-for-byte identical to the eager
+ * snapshot.
+ */
+function createOriginalBodyTracker(mod: WasmModule): {
+  originalOf: (idx: number) => { body: Instr[]; locals: LocalDef[] };
+  preserveOriginal: (idx: number) => void;
+} {
+  const snapshot: ({ body: Instr[]; locals: LocalDef[] } | undefined)[] = new Array(mod.functions.length);
+  return {
+    originalOf: (idx) => snapshot[idx] ?? mod.functions[idx],
+    preserveOriginal: (idx) => {
+      if (snapshot[idx] === undefined) {
+        const f = mod.functions[idx];
+        snapshot[idx] = { body: f.body.map(cloneInstr), locals: [...f.locals] };
+      }
+    },
+  };
+}
+
 export function inlineUserFunctions(ctx: CodegenContext): void {
   const opts = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   if (!opts.enabled) return;
@@ -746,21 +819,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     mod.exports.push({ name: "__ir_inline_execs", desc: { kind: "global", index: counterGlobalIdx } });
   }
 
-  // --- snapshot every body: inlining is SINGLE-LEVEL -----------------------
-  // Callee bodies are read from this snapshot, so a function that has itself
-  // had callees inlined into it still contributes its ORIGINAL body. That
-  // bounds growth to one level and removes any need for a cycle check beyond
-  // direct self-recursion.
-  //
-  // The clone is DEEP, and that is load-bearing: a shallow `f.body` alias makes
-  // the pass silently iterative in `mod.functions` order — inlining A into B
-  // and then the already-inflated B into C. Measured on acorn with all rules
-  // on, the alias grew the module by 243,492 instructions where single-level
-  // costs 137,072, i.e. 78 % of the growth came from an order-dependent
-  // transitive effect nobody had asked for. It is not unsound (the relocation
-  // is uniform over the whole local space, which the alias also widens), but it
-  // is unpredictable and unbudgetable, so it is not what this pass does.
-  const snapshot = mod.functions.map((f) => ({ body: f.body.map(cloneInstr), locals: [...f.locals] }));
+  const { originalOf, preserveOriginal } = createOriginalBodyTracker(mod);
+  // Per-callee analysis cache — see the comment at its use in the site loop.
+  const calleeFacts = new Map<number, CalleeFacts>();
 
   const stats: Stats = {
     functions: mod.functions.length,
@@ -822,8 +883,25 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
           declined(callee.name, "cold-callee");
           continue;
         }
-        const calleeBody = snapshot[cp].body;
-        const unsafe = calleeIsSafe({ ...callee, body: calleeBody }, calleeType.results);
+        const calleeBody = originalOf(cp).body;
+        // (#4157 shard-slowdown fix) The four analyses below are functions of
+        // the callee's ORIGINAL body only (guaranteed stable by the
+        // copy-on-write contract of `snapshot`), so they are computed once per
+        // callee, not once per call site. A hot helper is a callee at hundreds
+        // of sites per compile; re-walking its body at each was the dominant
+        // per-compile cost of this pass. Memoization changes no decision —
+        // every cached value is exactly what the per-site computation returned.
+        let facts = calleeFacts.get(cp);
+        if (facts === undefined) {
+          facts = {
+            unsafe: calleeIsSafe({ ...callee, body: calleeBody }, calleeType.results),
+            rawSize: countInstrs(calleeBody),
+            effSize: effectiveSize(calleeBody),
+            isLeaf: !hasCall(calleeBody),
+          };
+          calleeFacts.set(cp, facts);
+        }
+        const unsafe = facts.unsafe;
         if (unsafe) {
           declined(callee.name, unsafe);
           continue;
@@ -831,9 +909,9 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
 
         const nParams = calleeType.params.length;
         const siteCost = nParams + 2;
-        const rawSize = countInstrs(calleeBody);
-        const effSize = effectiveSize(calleeBody);
-        const isLeaf = !hasCall(calleeBody);
+        const rawSize = facts.rawSize;
+        const effSize = facts.effSize;
+        const isLeaf = facts.isLeaf;
 
         // Rule 2 — specialisation delta. Measured on the actual site facts.
         let specBody: Instr[] | null = null;
@@ -873,12 +951,18 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         }
         bump(stats.byRule, rule);
         bump(stats.byRule, `${rule}:${calleeFamily(callee.name)}`);
+        if (opts.verbose)
+          process.stderr.write(`[ir-inline]   ${rule}: ${callee.name} -> ${caller.name ?? `func#${ci}`}\n`);
         stats.inlined++;
         growth += rawSize - 1;
         stats.addedInstrs += rawSize - 1;
         if (opts.report) continue;
 
         // ---- the rewrite --------------------------------------------------
+        // First mutation of this caller: preserve its original body NOW, so a
+        // later read of it as a CALLEE still sees the pre-pass content
+        // (copy-on-write contract of `snapshot`, see its declaration).
+        preserveOriginal(ci);
         const base = callerType.params.length + caller.locals.length;
         const fresh: LocalDef[] = [];
         for (let p = 0; p < nParams; p++)
@@ -886,7 +970,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // The callee's locals come from the SNAPSHOT too: `callee.locals` is
         // live and may already carry another inline's temporaries, which would
         // not match `calleeBody`'s (snapshotted) local index space.
-        for (const l of snapshot[cp].locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
+        for (const l of originalOf(cp).locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
         caller.locals.push(...fresh);
 
         const source = specBody ?? calleeBody.map(cloneInstr);
@@ -942,6 +1026,10 @@ function hasCall(body: Instr[]): boolean {
 }
 
 function report(stats: Stats, opts: InlineOptions, mod: WasmModule): void {
+  // Three dense lines per compile is a diagnostic, not a compiler message.
+  // Printed when the operator asked for the flag (including `report`, whose
+  // whole purpose is the print) — silent on a plain default build.
+  if (!opts.report && !opts.verbose && !tunedFlagExplicit(process.env.JS2WASM_IR_INLINE)) return;
   const w = (s: string): void => void process.stderr.write(s);
   const sizes = mod.functions.map((f) => countInstrs(f.body)).sort((a, b) => a - b);
   const pct = (p: number): number =>

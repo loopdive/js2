@@ -30,6 +30,12 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) The fast path is detected by a `;; __str_concat_owned` marker and by
+// the presence of `run` in the emitted-function list. The IR inliner (default
+// ON since the tuned-set flip) inlines both away. Pin it off.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 function functionBodyWithCallNames(wat: string, name: string): string {
   const lines = wat.split("\n");

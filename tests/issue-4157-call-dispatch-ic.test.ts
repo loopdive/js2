@@ -131,7 +131,14 @@ describe("#4157 call-dispatch devirtualization (__call_m_* site inline)", () => 
     const on = await build("1");
     expect(on.armed).toBeGreaterThan(0);
     expect(on.patchedSites).toBeGreaterThan(0);
-    expect(on.binary.length).toBeGreaterThan(off.binary.length);
+    // NOT asserted: that the ON binary is LARGER. Copying an arm to each site
+    // usually grows the module, but that is incidental, not the property under
+    // test — and it is FALSE under the tuned-11 defaults, where devirtualizing
+    // lets the tuned passes drop enough dispatcher machinery to come out net
+    // smaller (measured on the flip branch: 121,730 ON vs 121,945 OFF). The
+    // real invariants are below: same answer as the flag-off baseline, plus
+    // the poison test proving the copied arm actually executes.
+    expect(on.binary.length).not.toBe(off.binary.length);
     const baseline = await answerOf(off.binary);
     expect(baseline).toBe(NODE_ANSWER);
     expect(await answerOf(on.binary)).toBe(baseline);

@@ -21,6 +21,15 @@
 import { describe, expect, it } from "vitest";
 import binaryen from "binaryen";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) The soundness boundary here — "a non-provable length must NOT
+// presize" — is measured by COUNTING the doubling grow CALL. The IR inliner
+// (default ON since the tuned-set flip) inlines that helper, so the count goes
+// to zero while the grow path is still emitted: the assertion inverts and
+// reports an unsound presize that did not happen. Pin the inliner off; this
+// file's subject is the presize decision, not the call ABI under it.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 async function compileNative(source: string): Promise<{ wat: string; emittedWat: string; binary: Uint8Array }> {
   const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true, emitWat: true });

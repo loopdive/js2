@@ -756,9 +756,12 @@ jobs:
     # A shard normally finishes in ~5-8 min; the prior 90-min cap let a single
     # hung shard (intermittent test262/runner stall, or the setup-node@v6 Node-25
     # tool-cache miss → flaky direct download) wedge the whole merge queue for up
-    # to 90 min before failing. 25 min fails a hung shard fast so the merge_group
-    # ejects + re-runs instead of stalling every other PR behind it.
-    timeout-minutes: 25
+    # to 90 min before failing. A bounded timeout fails a hung shard fast so the
+    # merge_group ejects + re-runs instead of stalling every other PR behind it.
+    # 25 → 40 (#4157 defaults flip): tuned emission adds per-compile cost, and
+    # the standalone lane's shards measured 18-22+ min under it — 25 left zero
+    # headroom and timed out 12 shards in merge-group run 31743784768.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -851,6 +854,14 @@ jobs:
       # on standalone shards 10/17 in #4402. Match the repo's issue/equivalence
       # gates and leave compiler-worker limits unchanged.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv
@@ -1031,10 +1042,10 @@ jobs:
       needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
-    # Same 25-min timeout as `test262-shard`. The per-target counts
-    # (js-host=66, standalone=36) target ~6-8 minutes in the current production
-    # configuration while leaving ample timeout headroom — see the generator.
-    timeout-minutes: 25
+    # Same 40-min timeout as `test262-shard` (25 → 40 for the #4157 defaults
+    # flip — see that job's comment; standalone shards measured 18-22+ min
+    # under tuned emission and 25 timed out 12 of them).
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.changes.outputs.mg_shard_matrix) }}
@@ -1054,6 +1065,14 @@ jobs:
       # in this parent and need the same 1 GiB ceiling as the required issue and
       # equivalence gates.
       VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      # (#4157 defaults flip) Compiler pool workers default to a 512 MiB
+      # max-old-space (scripts/compiler-pool.ts). Tuned emission allocates
+      # measurably more per compile (bigger bodies, IC arm copies), and V8
+      # near its heap ceiling degrades superlinearly into GC thrash — the
+      # amplifier that turned a ~12-15 % per-compile cost into 40 %+ shard
+      # wall. ubuntu-latest has 16 GB; 4 workers x 1 GiB + the 1 GiB parent
+      # still leaves two-thirds of the machine free.
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
       JS2WASM_IR_FIRST: ""
       JS2WASM_FNCTOR_LAYOUT_EMIT: ""
       TEST262_INCLUDE_PROPOSALS: "1"

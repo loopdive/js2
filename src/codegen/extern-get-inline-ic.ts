@@ -68,10 +68,12 @@
  *    `struct.new $HashedString`. That is strictly stronger than the runtime
  *    `ref.test` it replaces.
  *
- * ## Flag — DEFAULT OFF
+ * ## Flag — DEFAULT `1` since the #4157 tuned-set flip
  *
- * `JS2WASM_EXTERN_GET_IC` unset / `0` / `off` → the pass returns before
- * touching anything and the binary is byte-identical (sha256-verified) to base.
+ * `JS2WASM_EXTERN_GET_IC` unset ⇒ inline mode. `=0` / `off` → the pass returns
+ * before touching anything and the binary is byte-identical (sha256-verified)
+ * to the pre-#4157 base. `=census` is the only other recognised value; anything
+ * else takes the default rather than disabling (`src/perf-flags.ts`).
  *   - `=1` / `=on`  inline the cache arm at every eligible static-name site
  *   - `=census`     do NOT inline; only count static-name sites and route them
  *                   through a `__extern_get_sk` shim so `JS2WASM_EXEC_CENSUS`
@@ -84,6 +86,7 @@
  *     null was reported twice from a flag that did not exist).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import { extractExternGetCacheArm, type ExternGetCacheArm } from "./extern-get-cache-arm.js";
 import { addFuncType } from "./registry/types.js";
@@ -94,8 +97,8 @@ type Mode = "off" | "inline" | "census";
 
 function mode(): Mode {
   const raw = process.env.JS2WASM_EXTERN_GET_IC;
-  if (raw === undefined || raw === "" || raw === "0" || raw === "off") return "off";
-  if (raw === "census") return "census";
+  if (!tunedFlagEnabled(raw)) return "off";
+  if (raw !== undefined && raw.trim().toLowerCase() === "census") return "census";
   return "inline";
 }
 
@@ -308,11 +311,11 @@ function mintCensusShim(ctx: CodegenContext, getIdx: number): number {
  * / dead elimination, so the `typeIdx` and `funcIdx` operands it copies stay in
  * the helper's own regime.
  *
- * No-op unless `JS2WASM_EXTERN_GET_IC` is set.
+ * Runs by default; a no-op only when `JS2WASM_EXTERN_GET_IC` is explicitly off.
  */
 export function inlineExternGetCallSites(ctx: CodegenContext): void {
   const m = mode();
-  if (m === "off") return; // DEFAULT OFF — byte-identical to base.
+  if (m === "off") return; // explicitly OFF — byte-identical to the pre-#4157 base.
   const debug = process.env.JS2WASM_EXTERN_GET_IC_DEBUG === "1";
   const getIdx = ctx.funcMap.get("__extern_get");
   if (getIdx === undefined || getIdx < ctx.numImportFuncs) {
@@ -336,7 +339,17 @@ export function inlineExternGetCallSites(ctx: CodegenContext): void {
   if (m === "inline") {
     const got = extractExternGetCacheArm(ctx, helper);
     if (!got.arm) {
-      process.stderr.write(`[extern-get-ic] REFUSED: __extern_get body is not the cache-arm shape (${got.reason})\n`);
+      // NOT a defect, and NOT rare: `extern-get-cache-arm.ts` states that a
+      // module where `fillDynamicForinVecArms` / `fillObjVecReflectionHelpers`
+      // unshifted in front of the cache arm declines by design. That refusal
+      // was loud while the flag was opt-in — someone who typed the flag needs
+      // to know it did nothing. Now that the pass runs on EVERY compile, an
+      // unconditional line here would print on every module of that (common)
+      // class, so it moves to the debug channel and stays loud only for an
+      // operator who asked for the flag by name.
+      if (debug || tunedFlagExplicit(process.env.JS2WASM_EXTERN_GET_IC)) {
+        process.stderr.write(`[extern-get-ic] REFUSED: __extern_get body is not the cache-arm shape (${got.reason})\n`);
+      }
       return;
     }
     arm = got.arm;
@@ -373,11 +386,15 @@ export function inlineExternGetCallSites(ctx: CodegenContext): void {
     if (stats.patched > before) fnsTouched++;
   }
 
-  process.stderr.write(
-    `[extern-get-ic] mode=${m} static-key-sites=${stats.staticKeySites} other-key-sites=${stats.otherKeySites} ` +
-      `patched-sites=${stats.patched} functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
-      `${process.env.JS2WASM_EXTERN_GET_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
-  );
+  // Printed only when the flag was asked for: the pass runs on every default
+  // build now, and this line is a flag-experiment diagnostic, not a message.
+  if (debug || tunedFlagExplicit(process.env.JS2WASM_EXTERN_GET_IC)) {
+    process.stderr.write(
+      `[extern-get-ic] mode=${m} static-key-sites=${stats.staticKeySites} other-key-sites=${stats.otherKeySites} ` +
+        `patched-sites=${stats.patched} functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
+        `${process.env.JS2WASM_EXTERN_GET_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
+    );
+  }
   if (debug && arm) {
     process.stderr.write(
       `[extern-get-ic] arm: ${arm.then.length} top-level instr(s), scratch locals ` +

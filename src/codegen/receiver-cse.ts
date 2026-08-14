@@ -51,21 +51,23 @@
  * DIFFERENT ladders never share a slot — the #4190 top-level-IIFE case, where
  * an inlined body's strictness differs from `__module_init`'s around it.
  *
- * OFF unless `JS2WASM_RECEIVER_CSE=1`; with the flag unset nothing here runs
- * and the emitted binary is byte-identical.
+ * **Default ON** since the #4157 tuned-set flip (`src/perf-flags.ts`). With
+ * `JS2WASM_RECEIVER_CSE=0` nothing here runs and the emitted binary is
+ * byte-identical to the pre-#4157 base.
  */
 import type ts from "typescript";
 import { SyntaxKind } from "typescript";
 
 import type { Instr } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { explicitNullReceiverActive } from "./explicit-null-receiver.js";
 import { unboundThisIsGlobalObject } from "./helpers/sloppy-this-global.js";
 
-/** Flag gate. Default OFF ⇒ every `this` operand keeps its own ladder. */
+/** Flag gate. Default ON; `=0` ⇒ every `this` operand keeps its own ladder. */
 export function receiverCseEnabled(): boolean {
-  return process.env.JS2WASM_RECEIVER_CSE === "1";
+  return tunedFlagEnabled(process.env.JS2WASM_RECEIVER_CSE);
 }
 
 /** Per-instruction-array cache: lowering-shape key → the slot holding `this`. */
@@ -160,8 +162,13 @@ export function recordResolvedThis(ctx: CodegenContext, fctx: FunctionContext, e
   slots++;
 }
 
-/** One line of evidence that the pass fired, printed at finalize. */
+/**
+ * One line of evidence that the pass fired, printed at finalize — only when the
+ * flag was asked for. On a default build the pass always runs, so an
+ * unconditional line here would print on every single compile.
+ */
 export function reportReceiverCse(): void {
   if (!receiverCseEnabled()) return;
+  if (!tunedFlagExplicit(process.env.JS2WASM_RECEIVER_CSE) && process.env.JS2WASM_RECEIVER_CSE_TRACE !== "1") return;
   process.stderr.write(`[receiver-cse] ladders=${slots} reuses=${hits}\n`);
 }

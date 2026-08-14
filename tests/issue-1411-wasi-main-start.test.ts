@@ -23,6 +23,13 @@
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) This file pins an ABSOLUTE function index (the `_start` entry). The
+// tuned passes add helper functions, so those indices shift — a shift is not a
+// wrong `_start`, but this instrument cannot tell the two apart. Pin the
+// inliner off to keep the indices the ones this file counted.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 
 /** Return the funcIdx that `(func $_start ...)` calls (its first `call N`). */
 function startCallTarget(wat: string): number | undefined {

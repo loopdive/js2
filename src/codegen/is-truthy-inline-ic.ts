@@ -49,13 +49,20 @@
  *    `$undefined` singleton is a tag-1 `$AnyValue` and is answered by the
  *    `anyval` arm's `tag > 1`, exactly as the helper does.
  *
- * ## Flag — DEFAULT OFF
+ * ## Flag — DEFAULT `1` since the #4157 tuned-set flip
  *
- * `JS2WASM_INLINE_TRUTHY_IC` unset / `0` → the pass returns before touching
- * anything and the binary is byte-identical (sha256-verified) to base.
+ * `JS2WASM_INLINE_TRUTHY_IC` unset ⇒ the two-arm {@link DEFAULT_ARMS} profile.
+ * **Not `all`** — see the measured table on `DEFAULT_ARMS`: `boxnum` and
+ * `bigint` fire zero times on acorn and cost +121 KB between them, and entry
+ * (29) measured arm maximisation as a net wall regression. `=0` / `off` → the
+ * pass returns before touching anything and the binary is byte-identical
+ * (sha256-verified) to the pre-#4157 base.
  *   - `=1` / `=on`  the default arm set (`DEFAULT_ARMS`)
  *   - `=all`        every extracted arm
  *   - `=anyval,i31` an explicit ladder-order subset
+ *   - `=0` / `off` / empty  OFF
+ *   - a value naming no known arm falls back to `DEFAULT_ARMS` rather than
+ *     silently disabling the pass (`src/perf-flags.ts`)
  *   - `JS2WASM_INLINE_TRUTHY_IC_DEBUG=1` per-arm patch counts + decline reasons
  *   - `JS2WASM_INLINE_TRUTHY_IC_POISON=1` **deliberately corrupts the fast arms**
  *     (appends `i32.eqz`). A workload whose answer is unchanged under poison did
@@ -64,6 +71,7 @@
  *     twice this session from a mechanism that was never live).
  */
 import type { Instr, WasmFunction } from "../ir/types.js";
+import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext } from "./context/types.js";
 import { extractTruthyLadder, type TruthyArm } from "./is-truthy-ladder.js";
 import { producesExternref } from "./member-get-inline-ic.js";
@@ -92,17 +100,33 @@ import { producesExternref } from "./member-get-inline-ic.js";
  */
 const DEFAULT_ARMS = ["anyval", "boxbool"];
 
-/** Selected arm names, or `undefined` when the pass is off. */
+/**
+ * Names `armName` (`is-truthy-ladder.ts`) can produce, plus the `t<idx>`
+ * positional escape hatch. Used only to tell an explicit arm SELECTION from a
+ * malformed value: a selection naming nothing recognisable is a typo, and a
+ * typo must land on the tuned default rather than silently disabling the pass.
+ */
+const KNOWN_ARMS = new Set(["i31", "anyval", "boxnum", "boxbool", "bigint", "str"]);
+const isArmName = (s: string): boolean => KNOWN_ARMS.has(s) || /^t\d+$/.test(s);
+
+/** Selected arm names, or `undefined` when the pass is explicitly off. */
 function selectedArms(): string[] | undefined {
   const raw = process.env.JS2WASM_INLINE_TRUTHY_IC;
-  if (raw === undefined || raw === "" || raw === "0" || raw === "off") return undefined;
-  if (raw === "1" || raw === "on") return DEFAULT_ARMS;
-  if (raw === "all") return ["*"];
-  const names = raw
+  if (!tunedFlagEnabled(raw)) return undefined;
+  if (raw === undefined) return DEFAULT_ARMS;
+  const norm = raw.trim().toLowerCase();
+  if (norm === "1" || norm === "on") return DEFAULT_ARMS;
+  if (norm === "all") return ["*"];
+  const names = norm
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  return names.length > 0 ? names : undefined;
+  return names.some(isArmName) ? names : DEFAULT_ARMS;
+}
+
+/** Did the operator name this flag, as opposed to inheriting the tuned default? */
+function truthyIcExplicit(): boolean {
+  return tunedFlagExplicit(process.env.JS2WASM_INLINE_TRUTHY_IC);
 }
 
 /** Declared supertype chain of `typeIdx`, itself first. */
@@ -307,11 +331,12 @@ function definedTruthy(ctx: CodegenContext): { funcIdx: number; fn: WasmFunction
  * MUST run at the same finalize point as `inlineMemberGetCallSites` — after the
  * helper bodies are final and BEFORE any pass that remaps type or function
  * indices — so the `typeIdx` operands it copies stay in the helper's own
- * regime. No-op unless `JS2WASM_INLINE_TRUTHY_IC` is set.
+ * regime. Runs by default; a no-op only when `JS2WASM_INLINE_TRUTHY_IC` is
+ * explicitly off.
  */
 export function inlineIsTruthyCallSites(ctx: CodegenContext): void {
   const want = selectedArms();
-  if (!want) return; // DEFAULT OFF — byte-identical to base.
+  if (!want) return; // explicitly OFF — byte-identical to the pre-#4157 base.
   const debug = process.env.JS2WASM_INLINE_TRUTHY_IC_DEBUG === "1";
   const target = definedTruthy(ctx);
   if (!target) {
@@ -362,12 +387,17 @@ export function inlineIsTruthyCallSites(ctx: CodegenContext): void {
     if (stats.perFn > 0) fnsTouched++;
   }
 
-  process.stderr.write(
-    `[truthy-ic] arms=${arms.map((x) => x.name).join(",")} patched-sites=${stats.patched} ` +
-      `functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
-      `${declines.length > 0 ? ` declined-arms=${declines.join(" ")}` : ""}` +
-      `${process.env.JS2WASM_INLINE_TRUTHY_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
-  );
+  // The "it fired" line is evidence for someone experimenting with the flag,
+  // and pure noise on every ordinary compile now that the pass runs by default
+  // — so it is printed only when the flag (or the debug channel) was asked for.
+  if (debug || truthyIcExplicit()) {
+    process.stderr.write(
+      `[truthy-ic] arms=${arms.map((x) => x.name).join(",")} patched-sites=${stats.patched} ` +
+        `functions=${fnsTouched} declined-producer-shape=${stats.declinedProducer}` +
+        `${declines.length > 0 ? ` declined-arms=${declines.join(" ")}` : ""}` +
+        `${process.env.JS2WASM_INLINE_TRUTHY_IC_POISON === "1" ? " POISON=ON" : ""}\n`,
+    );
+  }
   if (debug) {
     process.stderr.write(
       `[truthy-ic] ladder: ${ladder.arms.map((x) => `${x.name}#${x.typeIdx}(${x.tail.length})`).join(" ")}\n`,

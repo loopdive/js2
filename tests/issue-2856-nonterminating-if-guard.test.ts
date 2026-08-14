@@ -20,6 +20,12 @@
 // may intentionally converge to the same bytes.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
+
+// (#4157) "emits the trailing tail ONCE" is counted as call sites in the WAT.
+// The IR inliner rewrites those sites, so the count reads 0 and the
+// emitted-once property becomes unobservable rather than false. Pin it off.
+pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 import { buildImports } from "../src/runtime.js";
 
 const ENV_STUB = {

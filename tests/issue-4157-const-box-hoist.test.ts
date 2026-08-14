@@ -119,11 +119,32 @@ const NODE_ANSWER: number = new Function(
     .replace(/ as number/g, ""),
 )() as number;
 
+/**
+ * The SMI box guard is pinned OFF for this fixture, and the reason is the whole
+ * point of the file.
+ *
+ * `JS2WASM_SMI_FASTPATH` is **default `all`** since the #4157 tuned-set flip,
+ * and at that level `smi-box-fast-path.ts` inlines `__box_number`'s i31 arm at
+ * every boxing site. Three of `loop`'s four constants (`Infinity`, `-0`, `1.5`)
+ * fail the i31 round trip and still call the helper; `42` is i31-able, so the
+ * inlined guard HITS and the call never executes. The unhoisted baseline would
+ * then measure 3 calls per iteration, not 4 — the fixture would still be green,
+ * but `CONSTANTS_PER_ITERATION` would have quietly stopped meaning "the
+ * constants this pass removes" and started meaning "the constants some OTHER
+ * pass did not already remove".
+ *
+ * Pinning it off keeps the two censuses measuring the const-box hoist alone.
+ * The 4-vs-3 split between the call census and the allocation census below is
+ * this fixture's actual subject and depends on that isolation.
+ */
+const FLAGS_PINNED_OFF: Record<string, string> = { JS2WASM_SMI_FASTPATH: "0" };
+
 async function build(hoist: boolean, census: boolean): Promise<Uint8Array> {
   const saved = {
     hoist: process.env.JS2WASM_HOIST_CONST_BOXES,
     census: process.env.JS2WASM_ALLOC_CENSUS,
     calls: process.env.JS2WASM_ALLOC_CENSUS_CALLS,
+    pinned: Object.fromEntries(Object.keys(FLAGS_PINNED_OFF).map((k) => [k, process.env[k]])),
   };
   const set = (key: string, value: string | undefined): void => {
     // `= undefined` coerces to the STRING "undefined", which reads as "set".
@@ -134,6 +155,7 @@ async function build(hoist: boolean, census: boolean): Promise<Uint8Array> {
   set("JS2WASM_HOIST_CONST_BOXES", hoist ? undefined : "0");
   set("JS2WASM_ALLOC_CENSUS", census ? "1" : undefined);
   set("JS2WASM_ALLOC_CENSUS_CALLS", census ? "__box_number" : undefined);
+  for (const [k, v] of Object.entries(FLAGS_PINNED_OFF)) set(k, v);
   try {
     const result = await compile(SOURCE, { fileName: "issue-4157-const-box-hoist.ts", target: "standalone" });
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
@@ -142,6 +164,7 @@ async function build(hoist: boolean, census: boolean): Promise<Uint8Array> {
     set("JS2WASM_HOIST_CONST_BOXES", saved.hoist);
     set("JS2WASM_ALLOC_CENSUS", saved.census);
     set("JS2WASM_ALLOC_CENSUS_CALLS", saved.calls);
+    for (const [k, v] of Object.entries(saved.pinned)) set(k, v);
   }
 }
 

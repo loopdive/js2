@@ -250,7 +250,7 @@ function eliminateDeadCode(body: Instr[]): number {
 /**
  * Resolve a FuncTypeDef from the module's type table, handling sub/rec wrappers.
  */
-function resolveFuncType(types: TypeDef[], typeIdx: number): FuncTypeDef | null {
+export function resolveFuncType(types: TypeDef[], typeIdx: number): FuncTypeDef | null {
   const t = types[typeIdx];
   if (!t) return null;
   if (t.kind === "func") return t;
@@ -1255,7 +1255,7 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
 /**
  * Resolve full param types for a function by index.
  */
-function getFullParamTypes(mod: WasmModule, funcIdx: number, numImports: number): ValType[] | null {
+export function getFullParamTypes(mod: WasmModule, funcIdx: number, numImports: number): ValType[] | null {
   // (#1916 S3) normalize a possibly-stable handle to the absolute index first.
   funcIdx = absoluteFuncIndexCached(mod, numImports, funcIdx);
   if (funcIdx < numImports) {
@@ -1282,7 +1282,7 @@ function getFullParamTypes(mod: WasmModule, funcIdx: number, numImports: number)
  * Infer the Wasm type produced by a single instruction, given local/param type info.
  * Returns the ValType or null if unknown.
  */
-function inferInstrType(
+export function inferInstrType(
   instr: Instr,
   localTypes: ValType[],
   globalTypes: ValType[],
@@ -1445,7 +1445,7 @@ function inferInstrType(
  * Check if a coercion is needed and generate the coercion instruction(s).
  * Returns an array of instructions to insert, or empty if no coercion needed.
  */
-function callArgCoercionInstrs(
+export function callArgCoercionInstrs(
   actual: ValType,
   expected: ValType,
   boxNumberIdx: number | null,
