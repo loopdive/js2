@@ -4449,7 +4449,9 @@ export function generateModule(
         const baseName = sf.fileName.split("/").pop() ?? sf.fileName;
         return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
       });
-      const libIndex = buildLibDeclIndex(libSfs);
+      // JS2WASM_LIB_SCAN=checker forces the legacy checker-driven walk — the
+      // A/B escape hatch for parity triage (#4218).
+      const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
       for (const sf of libSfs) {
         collectExternDeclarations(ctx, sf, libRefs, libIndex);
         collectDeclaredGlobals(ctx, sf, ast.sourceFile, libIndex);
@@ -7166,7 +7168,7 @@ export function generateMultiModule(
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
           return baseName.startsWith("lib.") && baseName.endsWith(".d.ts");
         });
-        const libIndex = buildLibDeclIndex(libSfs);
+        const libIndex = process.env.JS2WASM_LIB_SCAN === "checker" ? undefined : buildLibDeclIndex(libSfs);
         for (const libSf of libSfs) {
           collectExternDeclarations(ctx, libSf, libRefs, libIndex);
           for (const sf of multiAst.sourceFiles) {
