@@ -5,7 +5,7 @@ status: in-progress
 sprint: Backlog
 assignee: "ttraenkler/fable-remote"
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-13
 # Phase-1 slice adds the `oracleBackend` option to the two option bundles
 # (CodegenOptions is a type barrel, CompileOptions' resolver is the driver) —
 # +14 / +2 LOC of option + doc comment. There is no subsystem module to put a
@@ -45,10 +45,13 @@ js2wasm depends on the `typescript` npm package for two separable things:
    ~445 legacy raw `checker.`/`ctxChecker` references still in codegen
    under the oracle-ratchet (#1930/#3273) baseline.
 
-The checker is the reason we cannot move the compile pipeline to tsgo:
-TS 7.0 went GA (2026-07-08) **without a programmatic compiler API** — the
-Strada JS API is not carried forward; a new (subprocess/IPC, async-flavored)
-API is expected around 7.1. #1029 is therefore blocked on upstream.
+The checker is the reason we cannot move the compile pipeline to tsgo.
+**Update 2026-08-13**: TS7 GA (`typescript@7.0.2`, npm `latest`) ships a
+synchronous subprocess Checker API after all (`typescript/unstable/sync`, see
+the #1029 GA re-audit) — but at ~0.12ms/IPC-query it only becomes viable
+once this issue's kill order shrinks query volume from ~264k to the ~1.6k
+residual. The in-house backend remains the plan of record for the hot path;
+the TS7 checker is a candidate for TS-mode differential validation.
 
 This issue removes that blockage from our side: back `ctx.oracle` with an
 **in-house binder + annotation-propagation engine** so the TS5 checker
@@ -130,13 +133,97 @@ measured in #1288) becomes a cheap, reversible decision.
 - [ ] Module resolution / npm-compat unaffected (explicitly re-run the
       npm-compat suite before any phase that touches `checker/index.ts`).
 
+## TS5 API dependency audit — measured (2026-08-13)
+
+Instrumentation landed with this audit: `src/checker/ts5-trace.ts` (an
+env-gated recording proxy wrapped at the three `program.getTypeChecker()`
+sites in `checker/index.ts`, zero overhead when `JS2WASM_TRACE_TS5` unset)
+and `scripts/audit-ts5-checker-usage.mts` (compiles the playground-examples
+corpus + 8 unannotated plain-JS snippets under both oracle backends and
+diffs the traces). Re-run any time with:
+
+```bash
+npx tsx scripts/audit-ts5-checker-usage.mts
+```
+
+### Static surface (grep, 306 distinct `ts.*` members in src/)
+
+| class | members (occurrences) | TS7 status |
+| --- | --- | --- |
+| AST shape: `SyntaxKind`/enums, ~200 `is*` predicates, node type names, `factory`, `forEachChild` | ~95 % of all occurrences | tsgo-compatible (#1029 audit: identical enum values, node props, `.parent`) |
+| Syntactic helpers: `getModifiers` (47), `canHaveModifiers` (37), `tokenToString` (13), `isExternalModule` (12), `getJSDocType`/`getCombined*Flags`/`setTextRange`/`skipOuterExpressions`/… | ~170 occurrences total | pure-syntax; shim or reimplement, no checker needed |
+| Parser/program: `createSourceFile` (40), `createProgram` (8), `sys`, `resolveModuleName` (3), `createScanner` (3), config-file readers, language-service surface (`createLanguageService` (4), `DocumentRegistry`, `ScriptSnapshot`) | TS5-bound | replaced by tsgo project parse (#1029) once the checker is out of the hot path |
+| `ts.TypeChecker` runtime calls | measured below | the actual migration blocker |
+
+### Dynamic measurement (corpus = 13 examples + 8 plain-JS snippets)
+
+| backend | checker calls | compile parity |
+| --- | --- | --- |
+| `checker` (default) | 271,405 | — |
+| `inhouse` (#4218 P1) | 263,748 | **21/21 byte-identical wasm** |
+
+Findings:
+
+- **Perfect parity**: the inhouse backend produced byte-identical output on
+  the whole corpus. Phase 1 works; the oracle surface is sound.
+- **The oracle was never the traffic**: flipping the backend removes only
+  ~3 % of checker calls. The mass is legacy raw `ctx.checker` sites.
+- **96 % of the remaining dependency is ONE mechanism**: the
+  `extern-declarations.ts` lib-file walk (`getTypeAtLocation` 155k,
+  `getSignatureFromDeclaration` 34k, `getReturnTypeOfSignature` 34k,
+  `getSymbolAtLocation` 30k). Whenever `sourceUsesLibGlobals()` fires (any
+  lib-global identifier or regex literal in user code), codegen walks every
+  `lib.*.d.ts` in the program issuing per-member checker queries
+  (`collectExternDeclarations`/`collectDeclaredGlobals`,
+  `src/codegen/index.ts:4441-4450`). This is fixed per-compile overhead
+  proportional to lib.d.ts, not to user input — a large slice of the
+  "TypeScript is 90 % of compile time" complaint.
+- **3 % is `type-mapper.ts`** (`getBaseConstraintOfType` 8.2k).
+- **The tail is ~1.6k calls over ~25 live sites** (ir/module-bindings,
+  ir/integration, expressions.ts, closures, literals, index.ts) — NOT the
+  ~933 grep-count `ctx.checker` references; most raw sites are cold on real
+  inputs.
+- **JS-mode is close but not checker-free**: a single unannotated snippet
+  still makes ~276 checker calls under the inhouse backend, dominated by
+  `ir/module-bindings.ts:789` (`getSymbolAtLocation`, 196).
+- **8 direct `new TsCheckerOracle(checker)` constructions bypass the
+  backend option**: `ir/from-ast.ts` (×4), `ir/fmod-selection.ts:36`,
+  `ir/update-retyped-bindings.ts:24` — they hit TS5 even under
+  `oracleBackend: "inhouse"`.
+
+### Measured kill order (refines the Plan phases above)
+
+1. **Extern-declarations lib walk → build-time table** (−96 %): the lib
+   shapes are static per TypeScript version; generate the
+   `ExternClassInfo`/globals table once at build time (or curate it, per
+   "What is genuinely hard") instead of re-deriving it through the checker
+   on every compile. Also a straight compile-time win independent of TS7.
+2. **`type-mapper.ts` constraint path** (−3 %).
+3. **Ratchet the measured ~25-site tail through oracle facts** — the
+   audit's site list IS the Phase-0 worklist; the other ~900 grep sites can
+   be swept mechanically later since they're cold.
+4. **Honor `oracleBackend` at the 8 direct `TsCheckerOracle` constructions.**
+
+Then JS-mode compiles are checker-free, the tsgo batch parser (#1029) can
+carry the pipeline, and typescript@5 remains only as the optional TS-mode
+checker / differential-validation dev tool.
+
+**Bottom line for "does the compiler, given the AST, still need TS5?"** —
+Yes, today: one lib-scan mechanism + ~25 live call sites + 8 constructor
+bypasses. No, architecturally: parity is already byte-identical where the
+oracle answers, and every remaining dependency is enumerated above with a
+measured, bounded fix.
+
 ## Non-goals
 
 - Replacing the TS AST *shape* (oxc/swc/home-grown parser): rewriting a
   ~424k-LOC front end for no user-visible gain. Ruled out.
 - Reimplementing full TypeScript inference (generics, conditional types,
   flow narrowing). The oracle vocabulary defines the ceiling.
-- Waiting on the TS 7.1 API: even when it ships it will be
-  subprocess/IPC-based, so synchronous per-node oracle queries would each
-  cost a round-trip — an in-house backend avoids that architecture problem
-  entirely.
+- Waiting on the TS7 API was the plan's original non-goal; GA has now shipped
+  it (`typescript/unstable/sync`) and the audit's measurement confirms the
+  reasoning: per-node IPC queries cost ~0.12ms each, so at today's ~264k
+  calls/compile the TS7 checker cannot back the hot path — an in-house
+  backend avoids that architecture problem entirely. The TS7 checker becomes
+  useful only after the kill order lands (residual ~1.6k queries ≈ 0.2s),
+  and then only as a TS-mode validation/differential backend.

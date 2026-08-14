@@ -90,7 +90,7 @@ export async function buildStandaloneCli({
     define: {
       __JS2WASM_CLI_VERSION__: JSON.stringify(packageJson.version),
     },
-    external: ["binaryen", "@typescript/native-preview", "@typescript/native-preview/*"],
+    external: ["binaryen", "typescript7", "typescript7/*"],
     logLevel: "info",
   });
 
