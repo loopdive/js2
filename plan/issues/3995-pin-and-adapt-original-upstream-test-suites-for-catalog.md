@@ -373,6 +373,28 @@ explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
 
+## 2026-08-14 Jest get-type slice
+
+Jest 30.4.2 now verifies all 241 matching files under
+`packages/**/__tests__` and 3,288 static registrations from
+`jestjs/jest@v30.4.2` (commit
+`746f2a0f57c56e3bba555280f0587d40f3db95c0`). The first runtime adapter runs
+the original `@jest/get-type` `getType` and `isPrimitive` test files directly
+against their matching release-tag TypeScript implementation without changing
+callback bodies or inputs.
+
+Both selected modules compile and validate. Native Node passes **32/32**
+callbacks and Wasm passes **16/32**. The failures share a representation cause:
+several primitive values reach the generic `unknown` helper boxed as objects,
+so JavaScript `typeof` and `Object(value) !== value` checks misclassify them.
+The native oracle also confirmed all 32 callbacks after the shared `test.each`
+shim learned to distinguish a table of scalar cases from a table of tuples.
+
+Runner, snapshot, filesystem, worker, async, DOM, and larger package graphs
+remain explicit deferred inventory. The npm-compat generator invokes the
+adapter directly so the merge-only refresh publishes numeric results and
+cannot fall back to `adapter pending`.
+
 ## 2026-08-14 webpack synchronous utility slice
 
 webpack 5.109.2 now verifies all 98 top-level `test/*.unittest.js` files and

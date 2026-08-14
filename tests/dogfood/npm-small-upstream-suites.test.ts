@@ -86,6 +86,12 @@ describe("small npm package upstream suites", () => {
       testFileCount: 98,
       registrationSites: 1357,
     });
+    expect(pin("jest")).toMatchObject({
+      tag: "v30.4.2",
+      commit: "746f2a0f57c56e3bba555280f0587d40f3db95c0",
+      testFileCount: 241,
+      registrationSites: 3288,
+    });
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -245,5 +251,20 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile.modules).toBe(3);
     expect(report.results.scored).toBe(16);
+  });
+
+  const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
+  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, () => {
+    const report = run("jest");
+    expect(report.extraction).toMatchObject({
+      filesSeen: 241,
+      filesSelected: 2,
+      filesDeferred: 239,
+      testsRegistered: 32,
+      nativePassed: 32,
+      nativeFailed: 0,
+    });
+    expect(report.compile.modules).toBe(2);
+    expect(report.results.scored).toBe(32);
   });
 });
