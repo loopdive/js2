@@ -173,6 +173,16 @@ Grep of `src/`, `scripts/`, `tests/` for `GUARD_REUSE`/`guardReuse`/
 elimination between adjacent ICs, 6,723 `ref.test` of one struct type) is
 **unbuilt**. Do not plan around a pass that isn't there.
 
+> **Correction (main session, 2026-08-14) — branch skew, not absence.**
+> `JS2WASM_IC_GUARD_REUSE` IS built: `src/codegen/ic-guard-reuse.ts` on PR
+> #4455's branch (`claude/acorn-performance-optimization-hagjht`, in the
+> merge queue at time of writing), default OFF, measured −829 static type
+> tests / 319,847 executed reuses per parse. This spec's base
+> (`recover/levers-integration`, stacked on main) predates that merge, which
+> is why the grep was empty. Consequence for Phase 4: do NOT rebuild defect
+> C's fix — price guard hoisting against `ic-guard-reuse.ts` once #4455
+> lands, and extend it rather than adding a second pass.
+
 #### 1.4 `ELIDE_PROVEN_NONNULL_TYPEERROR` is not usable proof plumbing
 
 Real name `JS2WASM_ELIDE_PROVEN_NONNULL_TYPEERROR`, `nonnull-proof.ts:72-78`,
@@ -191,6 +201,15 @@ decomposition" but the table itself is unrecovered.
 cannot be evaluated** — there is no committed 19.5×. Phase 0 below
 re-establishes the baseline before any optimisation is judged against it.
 Whoever recovers entry 39 should paste it back into #4157.
+
+> **Correction (main session, 2026-08-14) — same branch skew as §1.3.**
+> Entry 39 (the paired-profile table with pp.next 19.5× / parseSubscript
+> 9.9× / finishNodeAt 9.0×) IS committed — on PR #4455's branch; entries
+> 40–43 are on PR #4490's. Both are in the merge queue; once they land, the
+> table is on main and the acceptance criterion is evaluable as written.
+> Phase 0's re-measurement stays worthwhile regardless (the 19.5× was
+> measured pre-flip; the post-flip, post-#4455 baseline is the honest
+> "before" for this issue).
 
 #### 1.6 The real decomposition, measured
 
