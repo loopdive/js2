@@ -14,6 +14,10 @@ area: codegen
 es_edition: es5
 goal: standalone-mode
 related: [4444, 3031, 4490]
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -210,6 +214,166 @@ only surfaced on the sweep — the read spelling matters.)
 (3) is a new component, not in the original D-a scope, and it is a hard abort
 rather than a wrong answer — split out as **#4498** (allocation policy, blast
 radius over every array grow path).
+
+### Step 7 — the D-a gate, and the PRICED SKIP of the full regression run
+
+**Gate composition (corrected by reading each test's FIRST failing assertion,
+not its bucket label).** The "8-test D-a gate" is really three groups:
+
+| tests | first failing assertion | owner |
+| ----- | ----------------------- | ----- |
+| `defineProperties/15.2.3.7-6-a-{180,181,182}` | `arr[K]` value read (their `hasOwnProperty` already PASSES) | **this slice (element-read fall-through)** |
+| `defineProperty/15.2.3.6-4-{184,185,186}` | `hasOwnProperty(K)` | blocked on the `__hasOwnProperty` fall-through, HELD behind #2175 P2 |
+| `defineProperty/15.2.3.6-4-155`, `defineProperties/15.2.3.7-6-a-151` | `arr.length === 4294967295` | **re-bucketed to #4497** (needs index 4294967294 to be legal) |
+
+So the element-read slice's honest bar is **3 flips**, not 8. Recorded before
+implementing so the slice is not later read as underdelivering.
+
+**Priced skip — why the full (a)/(c) regression run was NOT done.** Measured
+throughput of the per-file driver on this box: **3.67 s/file** (timed, 30 files;
+the pooled runner measured no faster at 2.9 s/file). Populations:
+
+| gate | population | cost |
+| ---- | ---------: | ---: |
+| (a) `built-ins/**/{name,length}.js` — the propertyHelper set that burned 684 passes | 1,240 | 75 min |
+| (c) `built-ins/Array` + `built-ins/Object/defineProperty` | 4,213 | 257 min |
+| | **before-state** | **~5.5 h** |
+| | before + after | **~11 h** |
+
+Eleven hours for a read-side arm addition is the wrong trade, so the gate was
+**substituted** (approved): emitted-BYTE identity over a bracketing corpus
+(`.tmp/byte-corpus.mts`, 23 programs × gc + standalone) + the functional D-a
+gate + a **random 200-file** spot-check of gate (a), **seed 20260815**
+(`.tmp/sample-gate-a.mjs`; the sample is random precisely because path order
+correlates with feature families, so an alphabetical head-200 is not a sample).
+
+Byte identity is the STRONGER proof for the population that must not move: a
+program whose emitted binary is unchanged cannot have changed behaviour, which
+is exactly the claim needed about the 684-pass propertyHelper set. The corpus
+program whose bytes are EXPECTED to change (non-index numeric read) gets its own
+functional before/after so the only observable delta is the intended
+absent → found.
+
+### Step 9 — D-a element-read fall-through: LANDED, gates measured
+
+**Change.** `vec-overlay.ts` — the existing finalize-time overlay read prologue
+is now spliced into **both** `__extern_get` and `__vec_prop_get`, by iterating
+the two lane names rather than duplicating the body, so they cannot drift.
+Standalone routes a non-index named read on an array to `__vec_prop_get`
+(`resolveNamedPropHelper`, deliberately — the `__extern_*` prologue would
+swallow the key as an element), and that lane never received the prologue while
+the gc/host lane has had it since #3251. That asymmetry was the whole bug.
+
+**Functional delta (the intended one, and only it):**
+
+| probe | before | after |
+| ----- | ------ | ----- |
+| `a[4294967295]` after `defineProperty` | miss | **7** ✅ |
+| `a["4294967295"]` | miss | **7** ✅ |
+| `a.hasOwnProperty(K)` | false | false (HELD step-3 edit) |
+| `Object.hasOwn(a,K)` / plain-object / `a.hasOwnProperty("foo")` | ok | unchanged ✅ |
+
+**Gate (b) — exactly the predicted 3 flips, 0 regressions:**
+`defineProperties/15.2.3.7-6-a-{180,181,182}` fail → **pass**;
+`defineProperty/15.2.3.6-4-{184,185,186}` still fail (blocked on the held
+`__hasOwnProperty` fall-through); `4-155` / `-151` still fail (#4497).
+
+**Gate (a), seeded 200 (seed 20260815) — 129 pass / 40 fail / 31 skip →
+129 / 40 / 31. Zero pass→non-pass.** This is the population that burned 684
+passes last time; it does not move.
+
+**Gate: byte matrix — DEVIATED from its stated expectation, and the deviation is
+the GATE's flaw, not the change's.** Expected exactly one program to change;
+**11 standalone programs changed**, including `syn:obj-prop` and `syn:hasown`,
+which contain no array at all. Cause, verified rather than assumed: a standalone
+module links the WHOLE runtime, so editing any native shifts every standalone
+module's bytes. Probed directly — a program with no array still contains
+`__vec_prop_get`, `__extern_get` and `__vec_overlay_lookup`.
+
+So byte-identity is only a blast-radius proof when linkage is per-program. For
+standalone whole-runtime linking it proves **lane-level** isolation and nothing
+finer. What it does prove here is worth keeping: **the gc lane is 100 %
+unchanged (23/23 programs)** — the host lane is provably untouched. Within
+standalone, the functional gates above are the binding evidence, not the bytes.
+
+**Gate: FUNCTIONAL corpus, standalone, base vs branch — IDENTICAL on all 23.**
+Same 23 programs, same lane, comparing observed OUTPUT instead of bytes
+(`.tmp/func-corpus.mts`, A/B with both sides derived from git at use time). This
+converts "the 11 byte deltas are benign code-shift" from inference into
+measurement: every one of those programs computes exactly what it did before.
+
+Note the corpus program I predicted WOULD change functionally
+(`syn:array-nonindex-numeric`) did not — correctly. It reads
+`a[4294967295]` on an array that never had `defineProperty` called on it, so
+there is no companion entry and `undefined` is the right answer on both sides.
+The behavioural delta is confined to programs that actually install a
+descriptor, which is what gate (b) and the R4/R5 probes measure directly. That
+is the third time in this slice that a stated expectation was wrong in the
+SAFE direction; each was caught by measuring rather than asserting.
+
+### Step 10 — step-3 (`hasOwnProperty`) recon: the two predicates DIVERGE
+
+Not implemented. Recon only, recorded so the next attempt starts from measured
+facts rather than the plan's assumption.
+
+The step-3 target was expected to be `fillVecHasOwnHelpers` — which lives in
+**`vec-bag-seed.ts`** (moved out of `vec-overlay.ts`; NOT `object-runtime.ts`,
+so no collision with reflection's `emitHasOwn`/`__extern_set` work). That
+function unshifts ONE shared prologue into BOTH `__hasOwnProperty` and
+`__object_hasOwn`, via a `for` loop over the two names.
+
+**But the two answers diverge on the same receiver and key**, which the shared
+prologue cannot explain:
+
+| spelling | answer |
+| -------- | ------ |
+| `Object.hasOwn(a, "4294967295")` | **true** ✅ |
+| `a.hasOwnProperty("4294967295")` | **false** ❌ |
+| `Object.prototype.hasOwnProperty.call(a, "4294967295")` | **false** ❌ |
+| `a.hasOwnProperty("foo")` (non-numeric, same overlay store) | **true** ✅ |
+
+The generic `.call` spelling failing too rules out an Array.prototype
+borrowed-method quirk. And `__vec_gopd` is NOT the problem: the prologue's
+affirmative arm calls it, and `Object.getOwnPropertyDescriptor(a, K)` — which
+reaches the same companion — returns `{value: 7}`.
+
+So the open question for step 3 is narrow and specific: **why does the prologue
+produce a different answer in `__hasOwnProperty` than in `__object_hasOwn` when
+`fillVecHasOwnHelpers` unshifts the same instructions into both?** Candidates
+worth instrumenting first: (a) `ctx.mod.functions.find(name)` not resolving
+`__hasOwnProperty` at splice time (so it silently never gets the prologue —
+the same class of failure as Step 8's dead code), or (b) an earlier prologue
+already unshifted into `__hasOwnProperty` by another lane returning before
+this one runs. Both are cheap to distinguish with a single emitted-body dump.
+
+### Step 8 — implementation attempt: right native, WRONG WIRING POINT
+
+Tried, measured, **reverted** (byte-identity confirmed zero residue).
+
+The element read for a non-index key on a vec goes to `__vec_prop_get`
+(`resolveNamedPropHelper` returns `VEC_PROP_GET` in standalone, deliberately NOT
+`__extern_get` — see the `array-nonindex-key.ts` header on why the `__extern_*`
+prologue would eat the key as an element). So `__vec_prop_get` IS the right
+native to teach about the overlay.
+
+**But its body is built too early.** Instrumented:
+`[vpget] overlayLookup=undefined externHas=2097294` — `__vec_overlay_lookup`
+does not exist yet when `fillVecPropHelpers` sets the body, exactly as
+`vec-overlay.ts`'s own header warns ("the descriptor natives are built EARLY …
+the per-carrier vec types and index helpers are only complete at FINALIZE").
+The arm I added was therefore **dead code**: guarded on a `funcMap` miss, it
+emitted nothing. Reverted rather than kept — an unvalidated change that fixes
+nothing is the same call #4492 attempts 2 and 3 made, for the same reason.
+
+**Correct wiring point:** a FINALIZE-time splice in `vec-overlay.ts`, beside the
+existing overlay read prologues — `__extern_get_idx` (~L2093) and `__extern_get`
+(~L2266). `__vec_prop_get` simply never got the third one. The `__extern_get`
+prologue is a working template for the exact shape needed (probe companion →
+answer if present → otherwise fall through untouched).
+
+**Why the standalone lane misses while gc does not:** the gc/host lane reads
+through `__extern_get`, which HAS the overlay prologue. Standalone routes to
+`__vec_prop_get`, which does not. That asymmetry is the whole bug.
 
 ### Step 6 — CORRECTION: the store is NOT lost. Step 5 below was wrong.
 
