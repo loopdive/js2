@@ -1012,10 +1012,13 @@ jobs:
     # one merge-group entry at a time (`max_entries_to_build=1`).
     #
     # With the queue serialized, the matrix instead uses 102 of the 120
-    # four-core runners: js-host=66 and standalone=36, based on the 1.835:1
-    # measured work ratio from run 30631849709 (#3914 — re-derived; the
-    # previous 72/34 came from a 2.13:1 ratio measured at run 29807524490 and
-    # had drifted, leaving standalone the long pole again). The remaining 18
+    # four-core runners, split by the MEASURED per-lane work ratio — currently
+    # js-host=52 and standalone=50 at a 1.03:1 ratio (#4441, re-derived from
+    # merge_group runs 31870031833/31872537807/31873778381 on 2026-08-15).
+    # That ratio has drifted at every measurement (2.13 -> 1.835 -> 1.31 ->
+    # 1.03), each time leaving one lane the long pole, so the live numbers and
+    # the re-derivation procedure live in scripts/gen-test262-mg-matrix.mjs,
+    # which is the single source of truth for the split. The remaining 18
     # runners cover the overlapping CI/equivalence/differential/gate jobs —
     # raised from 14 because run 30631849709 showed 5 shard jobs starting
     # 90-184 s late, i.e. 106 was genuinely over the ceiling. pull_request,

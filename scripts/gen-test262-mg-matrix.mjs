@@ -59,8 +59,8 @@
 // merge_group run, sum them per lane, and split the shard budget by the two
 // sums. If one lane's max job is consistently more than ~1 min past the
 // other's, the ratio has drifted again — that is the signal to redo it, and
-// it has now drifted twice (2.13 -> 1.835), so treat it as a recurring check
-// rather than a constant.
+// it has now drifted four times (2.13 -> 1.835 -> 1.31 -> 1.03), so treat it
+// as a recurring check rather than a constant.
 //
 // The underlying partition (assignBalancedChunk, test262-shared.ts) is a
 // pure function of (chunkIndex, totalChunks): it re-derives the FULL test262
@@ -86,8 +86,29 @@ export const MERGE_GROUP_RESERVED_RUNNERS = 18;
 // post-flip 36-way standalone shards ran 20-36+ min — 2-4x the exposure of
 // every PR that merged through the same windows. 44-way puts standalone jobs
 // back at the ~15-min profile that demonstrably survives.
-export const JS_HOST_CHUNKS = 58;
-export const STANDALONE_CHUNKS = 44;
+// FOURTH ratio drift (2026-08-15): the THIRD split above was an ESTIMATE
+// (standalone 16,000 rs x 1.4 for the tuned-emission flip) and it overshot.
+// Measured `Run shard` totals across three green merge_group runs at 58/44:
+//   run 31870031833 (pr-4536): js-host 22,923 rs, mean 395 s, max 536 s
+//                              standalone 21,769 rs, mean 495 s, max 568 s
+//   run 31872537807 (pr-4537): js-host 22,452 rs, mean 387 s, max 445 s
+//                              standalone 21,384 rs, mean 486 s, max 576 s
+//   run 31873778381 (pr-4538): js-host 22,261 rs, mean 384 s, max 431 s
+//                              standalone 21,730 rs, mean 494 s, max 560 s
+// True work ratio is **1.02-1.05** (call it 1.03), not the assumed 1.31.
+// BOTH lanes moved, which is why the estimate missed: standalone grew roughly
+// as predicted (16,000 -> ~21.6k rs) but js-host also FELL hard (29,353 ->
+// ~22.5k rs) as the compile-speedup work landed (#4425/#4431/#4432 among
+// others), so scaling only the standalone side could not land on the right
+// ratio. At 58/44 standalone is therefore still the tail of every run (~490 s
+// vs ~385 s per shard, i.e. ~105 s of avoidable tail; the last finisher was a
+// standalone shard on all three runs). 52/50 of the same 102-shard budget puts
+// both lanes at ~428-441 s mean. Unchanged: MERGE_GROUP_RUNNER_CAPACITY (120)
+// and MERGE_GROUP_RESERVED_RUNNERS (18). Shorter standalone shards also cut
+// exposure to the hosted-runner shutdown waves the THIRD note was worried
+// about (~495 -> ~435 s).
+export const JS_HOST_CHUNKS = 52;
+export const STANDALONE_CHUNKS = 50;
 
 /**
  * @param {string} targetName matrix job-name suffix, e.g. "js-host"

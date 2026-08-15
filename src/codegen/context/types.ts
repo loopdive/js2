@@ -3390,6 +3390,31 @@ export interface CodegenContext {
    *  `struct.new` in a shift-covered function body — NOT a const-init, whose
    *  embedded `ref.func` the late-import funcidx shifter does not walk). */
   builtinFnSingletonGlobalByTypeIdx?: Map<number, number>;
+  /** (#4437) Type index of `$__fn_instance_meta` — `{externref name, i32 length}`,
+   *  the nominal per-DECLARATION metadata struct a user closure's `$fnmeta` slot
+   *  points at. Minted lazily by `ensureFnInstanceMetaStructType`
+   *  (function-instance-meta.ts) at the first closure that carries the slot, so
+   *  its index is always LOWER than every referring closure struct — a backward
+   *  reference, which keeps it a singleton rec group (`computeRecGroups` would
+   *  otherwise merge everything in between, perturbing the #2514 canonical
+   *  runtime rec-group boundary). */
+  fnInstanceMetaStructTypeIdx?: number;
+  /** (#4437) `"<length>:<name>"` → index of the mutable `(ref null
+   *  $__fn_instance_meta)` global holding that entry's ONE instance. Two
+   *  declarations with the same name and expected-argument-count share it: the
+   *  struct is immutable, so sharing is unobservable. */
+  fnInstanceMetaGlobalByKey?: Map<string, number>;
+  /** (#4437) Closure struct-type index → the field index of its `$fnmeta` slot.
+   *  One `ref.test` arm per entry is emitted into `__fninst_meta` at finalize
+   *  (function-instance-props.ts). The slot always sits LAST, so the index
+   *  differs per family — the shared wrapper has 3 own fields, the constructible
+   *  wrapper 4, and a capture subtype 3+N. */
+  fnInstanceMetaFamilies?: Map<number, number>;
+  /** (#4437) Base closure struct-type index → the `$fnmeta`-carrying SUBTYPE
+   *  minted over it. Needed only where the base is SHARED across functions (the
+   *  per-signature wrapper and its constructible variant); a capture subtype is
+   *  already per-function and grows the slot in place. */
+  fnInstanceMetaSubtypeByBase?: Map<number, number>;
   /** (#2193 PR-B) Struct-type indices of `$NativeProto` member closures whose
    *  FIRST user param is the receiver (`this`) — e.g. `Array.prototype.slice`'s
    *  `(self, this, start, end)` closure. Unlike a plain user function (which
