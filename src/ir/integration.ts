@@ -63,6 +63,13 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
+import {
+  ensureIrNativeMapAdapters,
+  IR_NATIVE_MAP_GET_NUM_FN,
+  IR_NATIVE_MAP_NEW_FN,
+  IR_NATIVE_MAP_SET_NUM_FN,
+} from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -884,6 +891,9 @@ export function compileIrPathFunctions(
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+    // (#4461) Native `$Map` storage is the host-free carrier of the same
+    // builtin; it must agree with the selector-side option in codegen/index.ts.
+    allowNativeMapStorage: ctx.nativeStrings,
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
@@ -3513,6 +3523,23 @@ function resolveModuleBindingGlobal(
       type = { kind: "extern", className: identity.valueKind.className };
       storageType = { kind: "externref" };
       break;
+    case "native-map": {
+      // (#4461) Legacy allocated `__mod_<name>` from `resolveTypeToValType`'s
+      // #1103a arm, i.e. `(ref null $Map)`. Materialize the SAME struct here
+      // (idempotent) and carry its exact ValType so the storage check below is
+      // a real agreement test rather than a restatement.
+      ensureMapHelpers(ctx);
+      if (ctx.mapTypeIdx < 0) {
+        throw new IrInvariantError(
+          "unknown-type-ref",
+          "build",
+          `module-init: native-map binding '${name}' has no registered $Map struct`,
+        );
+      }
+      storageType = { kind: "ref_null", typeIdx: ctx.mapTypeIdx };
+      type = { kind: "val", val: storageType };
+      break;
+    }
   }
   const storageMatches =
     global.type.kind === storageType.kind &&
@@ -4413,6 +4440,21 @@ function makeFromAstResolver(
     hasHostNumberBox(): boolean {
       return !ctx.nativeStrings;
     },
+    // (#4461) The three host-free capabilities the native-`$Map` arms consult.
+    // They live here, on the lower/integration side, for the same #2955 reason
+    // the box/unbox predicates do: from-ast reads no mode flags of its own.
+    nativeMapStorageType(): IrType | undefined {
+      if (!ctx.nativeStrings) return undefined;
+      ensureMapHelpers(ctx);
+      if (ctx.mapTypeIdx < 0) return undefined;
+      return { kind: "val", val: { kind: "ref_null", typeIdx: ctx.mapTypeIdx } };
+    },
+    externIsUndefinedIsNative(): boolean {
+      return ctx.standalone || ctx.wasi || ctx.nativeStrings;
+    },
+    hasNativeNumberUnbox(): boolean {
+      return ctx.targetProfile.semanticProviders === "native-first";
+    },
     // Boolean values share the host union-import family with numbers, but
     // retain their own boxer so `true` never crosses an externref boundary as
     // the number `1`.
@@ -4585,6 +4627,24 @@ function makeFromAstResolver(
       return t === nonNull;
     },
   };
+}
+
+/**
+ * (#4461) Give a reserve-time native runtime function its Program ABI identity
+ * NOW, while planning can still see it.
+ *
+ * Prepared-component dependency discovery runs BEFORE lowering, and it fails a
+ * component whose external callables have no planned identity
+ * (`unplanned-abi-binding`). `resolveAndObserveCallableProvider` observes at
+ * resolve time, which is too late for that check — so any runtime symbol the
+ * reserve pass materializes must also be observed by the reserve pass.
+ * Best-effort by design: a symbol the lane did not register simply stays
+ * unobserved, and the component fails the same way it would have.
+ */
+function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void {
+  const index = ctx.funcMap.get(symbol);
+  if (index === undefined) return;
+  ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
 
 function resolveAndObserveCallableProvider(
@@ -5864,6 +5924,11 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
   // union family in every lane.
   let usesOrdinaryToPrimitiveObjectRuntime = false;
   let usesRuntimeUnboxNumber = false;
+  // (#4461) The host-free `Map` carrier and the native undefined predicate.
+  // Both are REAL Wasm functions on this lane, so they are reserved here —
+  // before any Phase-3 body bakes a funcIdx — exactly like the union family.
+  let usesNativeMapAdapters = false;
+  let usesNativeExternIsUndefined = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -5888,6 +5953,15 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
+                break;
+              // (#4461) native `$Map` module-binding storage.
+              case IR_NATIVE_MAP_NEW_FN:
+              case IR_NATIVE_MAP_GET_NUM_FN:
+              case IR_NATIVE_MAP_SET_NUM_FN:
+                usesNativeMapAdapters = true;
+                break;
+              case "__extern_is_undefined":
+                usesNativeExternIsUndefined = true;
                 break;
               case "__new_Boolean":
                 primitiveWrapperConstructors.add("Boolean");
@@ -5958,6 +6032,25 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
     }
   }
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
+  // (#4461) Reserve the native undefined predicate and the `$Map` adapters
+  // BEFORE Phase 3. `ensureObjectRuntime` / `ensureIrNativeMapAdapters` are
+  // both idempotent and both may add an import batch, so they flush here where
+  // a funcIdx shift is still hazard-free.
+  if (usesNativeExternIsUndefined) {
+    ensureObjectRuntime(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (usesNativeMapAdapters) {
+    ensureIrNativeMapAdapters(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_NEW_FN);
+    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_GET_NUM_FN);
+    observeNativeRuntimeProvider(ctx, IR_NATIVE_MAP_SET_NUM_FN);
+    // A native-map `.get` result reaching an `f64` return unboxes through the
+    // native `__unbox_number`, so its provider is discovered here too.
+    observeNativeRuntimeProvider(ctx, "__unbox_number");
+  }
   // (#3143) A named union-import call needs the host/native import family
   // registered even when no `dyn.*` op is present (the boxing-coercion path).
   // `addUnionImports` covers host (env imports) AND wasi/standalone (native

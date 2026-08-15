@@ -1,9 +1,12 @@
 ---
 id: 4461
 title: "IR: model the native $Map struct as module-binding storage so Map claims in standalone"
-status: ready
+status: done
 sprint: current
 created: 2026-08-15
+updated: 2026-08-15
+completed: 2026-08-15
+assignee: ttraenkler/opus-4461
 priority: medium
 horizon: l
 feasibility: medium
@@ -12,6 +15,15 @@ task_type: refactor
 area: ir
 goal: ir-full-coverage
 related: [4457, 3518, 2856, 1103]
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
+func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #4461 — IR has no storage model for the native `$Map`, so `Map` never claims in standalone
