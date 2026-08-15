@@ -49,6 +49,9 @@ import {
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
 import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
+// (#4479) the `Properties` MAP half of Object.defineProperties — key naming and
+// `$Object` materialization. Reasoning lives in that module's header.
+import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./define-properties-map.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
   descriptorFieldName,
@@ -3083,26 +3086,6 @@ function emitExternDefinePropertyNoValue(
  *
  * Dynamic fallback: delegate to __defineProperties host import.
  */
-/**
- * (#4479) The property key a `Properties` map entry contributes, when the
- * static expansion can name it exactly; `undefined` otherwise (caller must
- * decline to the dynamic `__defineProperties` native rather than skip).
- *
- * A NUMERIC literal key is accepted only when its source text already IS the
- * canonical ToString of its value (`0`, `12`), so `1e3` / `0x10` / legacy octal
- * — whose real key is "1000" / "16" / "8", not the literal text — decline
- * instead of defining a wrongly-named property. Computed and shorthand names
- * decline too: they are not statically known.
- */
-function staticDescriptorMapKey(name: ts.PropertyName): string | undefined {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
-  if (ts.isNumericLiteral(name)) {
-    const canonical = String(Number(name.text));
-    return canonical === name.text ? canonical : undefined;
-  }
-  return undefined;
-}
-
 export function compileObjectDefineProperties(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3289,20 +3272,9 @@ export function compileObjectDefineProperties(
     let allWellFormed = true;
     for (const prop of descsArg.properties) {
       if (!ts.isPropertyAssignment(prop)) continue;
-      // (#4479) A key the expansion below cannot name is NOT "nothing to do" —
-      // the loop's `if (propName === undefined) continue` SILENTLY DROPPED the
-      // whole entry, so `Object.defineProperties(obj, { 0: { value: 2 } })`
-      // defined nothing and reported success. Measured on this branch's base
-      // (`.tmp/run-src.mts`, `--target standalone`): redefining a
-      // non-configurable non-writable `"0"` through the plural spelling did not
-      // throw, while the SAME redefine spelled with a string key ("a") and the
-      // same redefine through singular `Object.defineProperty` both threw
-      // correctly — `built-ins/Object/defineProperties/15.2.3.7-6-a-93-2/-93-4`.
-      // Declining here routes the call to the dynamic `__defineProperties`
-      // native, whose ToPropertyDescriptor is the complete implementation
-      // (absent-not-wrong); a numeric key that round-trips through ToString is
-      // handled inline, exactly as `Object.defineProperty`'s own propArg
-      // normalization already accepts numeric literals.
+      // (#4479) A key the expansion cannot name DECLINES the whole call; the
+      // old per-entry `propName === undefined ⇒ continue` silently dropped it
+      // (`define-properties-map.ts`, defect 1).
       if (staticDescriptorMapKey(prop.name) === undefined) {
         allWellFormed = false;
         break;
@@ -3311,77 +3283,6 @@ export function compileObjectDefineProperties(
         allWellFormed = false;
         break;
       }
-    }
-    // (#4479) A literal `Properties` map whose only unmodellable part is that
-    // some inner descriptor is a runtime EXPRESSION (`{ prop: descObj }`) has a
-    // better destination than the plural native: expand it per key into the
-    // SINGULAR `Object.defineProperty(obj, key, <expr>)`, which already routes a
-    // non-literal descriptor to `__obj_define_from_desc` and reads its fields
-    // with the accessor-aware, proto-walking helpers.
-    //
-    // Measured on this branch's base (`.tmp/run-src.mts`, `--target standalone`):
-    //
-    //   var descObj = { enumerable: true };
-    //   Object.defineProperties(obj, { prop: descObj });   // enumerable LOST (false)
-    //   Object.defineProperty (obj, "prop", descObj);      // enumerable true  ✓
-    //   Object.defineProperties(obj, { prop: { enumerable: true } });  // true ✓
-    //
-    // i.e. the SAME descriptor was modelled correctly through both the singular
-    // spelling and the all-literal plural spelling, and only the mixed plural
-    // spelling lost it (`built-ins/Object/defineProperties/15.2.3.7-5-b-*`).
-    // The plural native's own ToPropertyDescriptor is complete, but the
-    // descriptor VALUE it receives here is a closed-shape struct literal whose
-    // fields `__hasOwnProperty` cannot see, so every field read misses.
-    //
-    // Scope is deliberately narrow — only the `!isObjectLiteralExpression`
-    // rejection is re-routed. A literal that `isStaticDescWellFormed` rejected
-    // for a SEMANTIC reason (`get: null`, data+accessor conflict) still goes to
-    // the native, which owns those TypeErrors.
-    //
-    // Order caveat (pre-existing, unchanged): §20.1.2.3.1 gathers every
-    // descriptor before defining any, so a throw on a later key leaves earlier
-    // keys undefined. This expansion — like the #3782 `stableDescriptorMapEntries`
-    // one directly above, which has always done exactly this — defines as it
-    // goes. No test262 row in the swept buckets distinguishes the two.
-    const expandableNonLiteralDescriptors = ((): { key: string; descriptor: ts.Expression }[] | undefined => {
-      if (allWellFormed) return undefined;
-      const entries: { key: string; descriptor: ts.Expression }[] = [];
-      let sawNonLiteral = false;
-      for (const prop of descsArg.properties) {
-        if (!ts.isPropertyAssignment(prop)) return undefined;
-        const key = staticDescriptorMapKey(prop.name);
-        if (key === undefined) return undefined;
-        const inner = unwrapTransparentExpression(prop.initializer);
-        if (ts.isObjectLiteralExpression(inner)) {
-          // A literal the static gate accepted is fine; one it rejected is a
-          // semantic rejection the native owns.
-          if (!isStaticDescWellFormed(inner)) return undefined;
-        } else if (isStaticallyNonObjectDescExpr(inner)) {
-          // A statically-provable non-object descriptor is a ToPropertyDescriptor
-          // TypeError; `compileObjectDefineProperty` emits it directly.
-          sawNonLiteral = true;
-        } else {
-          sawNonLiteral = true;
-        }
-        entries.push({ key, descriptor: prop.initializer });
-      }
-      return sawNonLiteral && entries.length > 0 ? entries : undefined;
-    })();
-    if (expandableNonLiteralDescriptors) {
-      let resultType: ValType | null = null;
-      for (let index = 0; index < expandableNonLiteralDescriptors.length; index++) {
-        const { key, descriptor } = expandableNonLiteralDescriptors[index]!;
-        const syntheticCall = ts.factory.createCallExpression(
-          ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
-          undefined,
-          [objArg, ts.factory.createStringLiteral(key), descriptor],
-        );
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as ts.CallExpression & { parent: ts.Node }).parent = expr.parent;
-        resultType = compileObjectDefineProperty(ctx, fctx, syntheticCall);
-        if (resultType && index + 1 < expandableNonLiteralDescriptors.length) fctx.body.push({ op: "drop" });
-      }
-      return resultType;
     }
     if (!allWellFormed) {
       // Fall through to dynamic runtime — __defineProperties validates and throws TypeError.
@@ -3394,8 +3295,7 @@ export function compileObjectDefineProperties(
 
       for (const prop of descsArg.properties) {
         if (!ts.isPropertyAssignment(prop)) continue;
-        // (#4479) Unnameable keys can no longer reach here — the well-formed
-        // pre-scan above already routed the whole call to the dynamic native.
+        // (#4479) unnameable keys can no longer reach here (pre-scan declined).
         const propName = staticDescriptorMapKey(prop.name);
         if (propName === undefined) continue;
 
@@ -3964,7 +3864,13 @@ export function compileObjectDefineProperties(
   } else if (objType.kind !== "externref") {
     coerceType(ctx, fctx, objType, { kind: "externref" });
   }
-  const descsType = compileExpression(ctx, fctx, descsArg, { kind: "externref" });
+  // (#4479) Standalone: the literal `Properties` map must reach the native as a
+  // real `$Object`, not the closed struct its `PropertyDescriptorMap` contextual
+  // type produces — a struct answers no `__desc_has_own`/`__extern_get`, so every
+  // field read missed. Declines (emits nothing) elsewhere: define-properties-map.ts.
+  const descsType =
+    compileDescriptorMapAsDynamicObject(ctx, fctx, descsArg) ??
+    compileExpression(ctx, fctx, descsArg, { kind: "externref" });
   if (!descsType) {
     return { kind: "externref" };
   }

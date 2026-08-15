@@ -1,10 +1,43 @@
 ---
 id: 4479
 title: "ES5 standalone: plain-object property-descriptor attribute semantics — defineProperty/defineProperties/create/gOPD on $Object receivers (~90 rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
+loc-budget-allow:
+  # +13. The bulk of this issue's `object-ops.ts` work was EXTRACTED to the new
+  # `src/codegen/define-properties-map.ts` (the gate's own prescribed remedy),
+  # taking the file from +87 to +13. What remains is irreducible at the call
+  # site: the `staticDescriptorMapKey` decline in the well-formedness pre-scan,
+  # and the `compileDescriptorMapAsDynamicObject` dispatch in the dynamic
+  # fallback — each with a one-sentence pointer to the module that owns the
+  # reasoning. Shaving further deletes the pointer, not the code.
+  - src/codegen/object-ops.ts
+  # +9. A ONE-ARGUMENT change to a closure inside the `__obj_define_from_desc`
+  # native builder (`getField(key, nullishToNull = true)`), plus the comment for
+  # why `value` opts out of the #2106 nullish→null normalization when no other
+  # field does. That builder is a single emitter for one Wasm function; lifting
+  # a two-line local closure out of it would obscure, not clarify. Its twin in
+  # `__defineProperties` (L1197) has carried the identical signature since
+  # #3991 — this change is what makes the two appliers agree.
+  - src/codegen/object-runtime-descriptors.ts
+func-budget-allow:
+  # +10, and the same +13/+9 change-set as the LOC entries above — the two gates
+  # are measuring one edit from two angles, so the rationale is the same one.
+  # `compileObjectDefineProperties` is the §20.1.2.3.1 dispatcher: a
+  # well-formedness pre-scan, three expansion arms, and the dynamic fallback.
+  # Both additions are one-line dispatches within existing arms
+  # (`staticDescriptorMapKey` in the pre-scan, `compileDescriptorMapAsDynamicObject`
+  # in the fallback) whose bodies already live in `define-properties-map.ts`.
+  # Splitting the dispatcher itself is real work with real ordering risk and is
+  # #3399's, not this issue's.
+  - src/codegen/object-ops.ts::compileObjectDefineProperties
+  # +9. `buildObjectDescriptorHelpers` emits several Wasm natives in one scope
+  # BECAUSE `registerNative` call ORDER fixes their function indices (its own
+  # header says so). Splitting it is index-shifting surgery; the change here is
+  # one default parameter on a local closure.
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
 priority: high
 horizon: l
 feasibility: hard
