@@ -208,14 +208,19 @@ function coerceTrampolineThisSlot(
   // an absent receiver.  Keeping the nullable value also avoids narrowing a
   // provisional signature before the method body pass settles its ABI.
   if (!methodUsesThis) return;
+  // (#4468) NEVER reconcile toward another GC struct reference here.  The slot
+  // this function post-processes is deliberately NULLABLE: `buildTrampolineThisSlot`
+  // passes `ref.null` for the "structurally-different but present receiver" case
+  // (#2025 — `this.#m.call(o)` with a plain `{}`), and the recorded `this` ValType
+  // can still read as the non-nullable `{ kind: "ref" }` while the method's EMITTED
+  // parameter is `(ref null $Struct)`.  Coercing `ref_null` → `ref` on that stale
+  // reading appends `ref.as_non_null`, which turns the legal null receiver into an
+  // UNCATCHABLE `null_deref` trap instead of running the method.  Nullability and
+  // struct identity are the method-arg reconciliation path's job; the receiver path
+  // only bridges a genuinely different CARRIER (`externref`/`anyref`/…), which is
+  // the validation failure this reconciliation exists for.
+  if (methodThisType.kind === "ref" || methodThisType.kind === "ref_null") return;
   const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
-  if (source.kind === methodThisType.kind) {
-    // Same-kind references are already compatible when they name the same
-    // struct.  A distinct type index is handled by the existing method-arg
-    // reconciliation path; the receiver path should not add an unsafe cast
-    // for an unrelated object shape.
-    return;
-  }
   body.push(...coercionInstrs(ctx, source, methodThisType, fctx));
 }
 

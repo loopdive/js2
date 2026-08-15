@@ -420,6 +420,55 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
   return funcIdx;
 }
 
+function findOptionalParam(optionalParams: OptionalParamInfo[], index: number): OptionalParamInfo | undefined {
+  return optionalParams.find((candidate) => candidate.index === index);
+}
+
+/**
+ * (#4468) The value an OMITTED formal must receive so the CALLEE recognizes the
+ * argument as "not provided" and evaluates its own default — or `undefined` when
+ * this dispatcher cannot express that for the formal's Wasm type, in which case
+ * the caller must decline the arm and fall back to host dispatch.
+ *
+ * The encodings mirror `pushParamSentinel` on the identifier-call path:
+ *   - a compile-time-constant default: pass the constant itself (the callee
+ *     never checks — the value IS the default);
+ *   - `f64`: the sNaN sentinel `0x7FF00000DEADC0DE` the prologue compares against;
+ *   - `externref`: the host `undefined` value.  `ref.null.extern` is NOT a
+ *     substitute on the JS-host lane — JS `null` is a real, provided argument
+ *     there, so the default silently fails to fire.  This is the one encoding
+ *     PR #4507 got wrong: `{ method({} = obj) {} }` called as `obj.method()`
+ *     received a raw `ref.null.extern` and threw "Cannot destructure 'null' or
+ *     'undefined'".  Standalone/WASI collapse `undefined` onto
+ *     `ref.null.extern` by design (see `emitUndefinedValue`), so there the
+ *     legacy encoding is already correct;
+ *   - every other type keeps `defaultValueInstrs` (a null struct ref for a
+ *     `ref`/`ref_null` formal such as marked's `inline(text, tokens = [])`,
+ *     zero for the integer carriers) — the same value the identifier-call path
+ *     hands the callee.
+ * When the `externref` `undefined` value is unreachable the arm is DECLINED
+ * (`undefined`) rather than guessed, and the call falls back to host dispatch.
+ */
+function missingArgInstrs(ctx: CodegenContext, want: ValType, opt: OptionalParamInfo | undefined): Instr[] | undefined {
+  if (!opt) return undefined;
+  if (opt.constantDefault) {
+    return [
+      opt.constantDefault.kind === "f64"
+        ? { op: "f64.const", value: opt.constantDefault.value }
+        : { op: "i32.const", value: opt.constantDefault.value },
+    ];
+  }
+  if (want.kind === "externref" || want.kind === "ref_extern") {
+    const getUndefinedIdx = ctx.funcMap.get("__get_undefined");
+    if (getUndefinedIdx !== undefined) return [{ op: "call", funcIdx: getUndefinedIdx }];
+    const singleton = undefinedExternInstrs(ctx);
+    if (singleton !== undefined) return singleton;
+    if (ctx.standalone || ctx.wasi || ctx.nativeStrings) return [{ op: "ref.null.extern" }];
+    return undefined;
+  }
+  return defaultValueInstrs(want);
+}
+
 /** One candidate closed struct that carries `<Struct>_<methodName>`. */
 type MethodEntry = {
   typeIdx: number;
@@ -468,9 +517,23 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     // prologue recognizes the same sentinels as identifier calls; rejecting
     // this case sends valid calls (e.g. marked's `inline(text)` where the
     // second parameter defaults to `[]`) to the host fallback instead.
+    //
+    // (#4468) "has an optional marker" is NOT sufficient — the dispatcher must
+    // also be able to EXPRESS "not provided" in the omitted formal's Wasm type
+    // (see `missingArgInstrs`).  When it cannot, the arm would hand the callee a
+    // value the callee reads as a real argument, so its default never fires:
+    // `{ method({} = obj) {} }` called as `obj.method()` received a raw
+    // `ref.null.extern` (JS `null`, not `undefined`) and threw
+    // "Cannot destructure 'null' or 'undefined'".  Skipping the entry sends the
+    // call to the host fallback, which applies the default correctly.
     if (exactArity !== null) {
       if (paramTypes.length < exactArity) continue;
-      if (paramTypes.slice(exactArity).some((_type, i) => !optionalParams.some((o) => o.index === exactArity + i))) {
+      const omitted = paramTypes.slice(exactArity);
+      if (
+        omitted.some(
+          (type, i) => missingArgInstrs(ctx, type, findOptionalParam(optionalParams, exactArity + i)) === undefined,
+        )
+      ) {
         continue;
       }
     }
@@ -530,6 +593,7 @@ type CoerceIdxs = { boxNumIdx?: number; unboxNumIdx?: number; unboxBoolIdx?: num
  * fills so the coercion logic stays single-sourced.
  */
 function buildEntryArm(
+  ctx: CodegenContext,
   ci: CoerceIdxs,
   anyLocalIdx: number,
   entry: MethodEntry,
@@ -545,19 +609,13 @@ function buildEntryArm(
     const want = entry.paramTypes[a] ?? { kind: "externref" };
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
-      const opt = entry.optionalParams.find((candidate) => candidate.index === a);
-      if (!opt) return [{ op: "ref.null.extern" }];
-      if (opt.constantDefault) {
-        arm.push(
-          opt.constantDefault.kind === "f64"
-            ? { op: "f64.const", value: opt.constantDefault.value }
-            : { op: "i32.const", value: opt.constantDefault.value },
-        );
-      } else if (want.kind === "f64" && opt.hasExpressionDefault) {
-        arm.push({ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" });
-      } else {
-        arm.push(...defaultValueInstrs(want));
-      }
+      // (#4468) Single source of truth with `collectMethodEntries`' admission
+      // test, so an arm is only ever built for formals whose "absent" value the
+      // callee can actually recognize.  The `undefined` branch is defensive:
+      // the entry should already have been declined.
+      const instrs = missingArgInstrs(ctx, want, findOptionalParam(entry.optionalParams, a));
+      if (!instrs) return [{ op: "ref.null.extern" }];
+      arm.push(...instrs);
       continue;
     }
     arm.push(...pushArg(a)); // the arg, as externref, onto the stack
@@ -1483,8 +1541,9 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       }
     }
 
+    const pushFixedArg = (a: number): Instr[] => [{ op: "local.get", index: 1 + a }];
     for (const entry of entries) {
-      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }], arity);
+      const callAndCoerce = buildEntryArm(ctx, ci, anyLocalIdx, entry, pushFixedArg, arity);
       current = [
         { op: "local.get", index: anyLocalIdx },
         { op: "ref.test", typeIdx: entry.typeIdx },
@@ -1595,7 +1654,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       // source args → skip (defensive; it is always present via reserve).
       const callAndCoerce =
         externGetIdxIdx !== undefined
-          ? buildEntryArm(ci, anyLocalIdx, entry, (a) => [
+          ? buildEntryArm(ctx, ci, anyLocalIdx, entry, (a) => [
               { op: "local.get", index: argsLocalIdx },
               { op: "f64.const", value: a },
               { op: "call", funcIdx: externGetIdxIdx },

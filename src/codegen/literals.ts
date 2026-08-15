@@ -811,14 +811,17 @@ function compileObjectLiteralWithAccessors(
       // Compile spread source and call __object_assign(target, [source])
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        // A spread source whose STATIC type is a closed-shape struct
-        // (`{...typedObj}`) must be materialized into a real open `$Object`
-        // before `__object_assign`.  Reinterpreting the struct with
-        // `extern.convert_any` leaves its GC fields invisible to the dynamic
-        // own-key walk, so inherited fields (notably Marked's rule tables) are
-        // silently lost.  This applies to the JS-host and native providers;
-        // both consume the same open-object representation here.
+        // (#3222 C1) In standalone/WASI a closed-struct spread source reinterpreted
+        // as externref is invisible to `__object_assign`'s open-`$Object` key walk, so
+        // it copies NOTHING; materialize it into a real open `$Object` first.
+        // (#4468) The `native-first` gate is LOAD-BEARING — PR #4507 widened it to the
+        // JS-host lane and regressed test262 `spread-obj-manipulate-outter-obj-in-getter`.
+        // `materializeStructAsDynamicObject` snapshots STATICALLY DECLARED fields, so it
+        // cannot see a key `delete`d from the source or an expando added to it; the host's
+        // own `__object_assign` reflects the LIVE object, which is what CopyDataProperties
+        // needs when an earlier spread's getter mutates a later spread's source.
         const spreadStructIdx =
+          ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&
           typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
           ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
