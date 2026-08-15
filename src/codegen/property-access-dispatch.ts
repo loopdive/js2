@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
+import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -2430,15 +2431,14 @@ export function tryLengthAndNameReads(
         !fctx.localMap.has(rootNode.text) &&
         !(fctx.boxedCaptures?.has(rootNode.text) ?? false);
       if (!isLibrarySig || !rootIsReachableBuiltin) {
-        // ES spec: Function.length = number of required params before first
-        // optional/default/rest. TS forbids required-after-optional, so filtering
-        // out optional/default/rest is equivalent to iterating until the first one.
+        // (#4436) ES §15.1.5 ExpectedArgumentCount — a PREFIX count that stops
+        // at the first defaulted/optional/rest parameter, NOT a filter of them.
+        // The old `filter().length` justified itself with "TS forbids
+        // required-after-optional", which is false for the JS this compiler
+        // accepts: `function f(x = 42, y) {}` has `length === 0`, not 1. See
+        // function-expected-argument-count.ts for the measured divergence table.
         const sig = lengthSigs[0]!;
-        const paramCount = sig.parameters.filter((p: any) => {
-          const decl = p.valueDeclaration;
-          if (!decl || !ts.isParameter(decl)) return true;
-          return !decl.dotDotDotToken && !decl.questionToken && !decl.initializer;
-        }).length;
+        const paramCount = expectedArgumentCountOfSignature(sig);
         fctx.body.push({ op: "f64.const", value: paramCount });
         return { kind: "f64" };
       }

@@ -105,6 +105,7 @@ import {
   reserveInstanceProps,
 } from "./instance-props.js";
 import { buildErrorPropSetArm, reserveErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` MOP
+import { reserveFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) `length` own-property on user closures
 import {
   INSTANCE_FIELD_DELETED,
   buildTombstoneScreen,
@@ -1044,6 +1045,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
+    reserveFunctionInstanceProps(ctx); // (#4436) `length` own-property on a user function instance
     // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
     // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
     // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
