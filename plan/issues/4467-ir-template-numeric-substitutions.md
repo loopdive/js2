@@ -187,7 +187,20 @@ handles it correctly.
   to the same command on base `9e17d34f`; none in a file this change touches.
 - `node scripts/check-oracle-ratchet.mjs`, `check-issue-ids.mjs
   --against-main`, `prettier --check`, `biome lint` — all clean.
-- `scripts/equivalence-gate.mjs`, all 8 shards — no new regressions. (Shard 2
-  additionally reports one baseline known-failure as `fixed`:
-  `coercion/arithmetic-add standalone-O any string + any string concatenates`.
-  Not attributed to this change — the shape has no template literal in it.)
+- `scripts/equivalence-gate.mjs`, **all 8 shards — no new regressions.**
+  Several shards additionally report baseline known-failures as `fixed`
+  (`coercion/arithmetic-add`, `symbol-basic`, `Math.pow`, the #1197 i32
+  peephole). **These are NOT this change's doing, and that is measured, not
+  assumed**: running shard 2 in a worktree at base `9e17d34f` reports SIX
+  `fixed` entries in that shard alone — including the exact
+  `coercion/arithmetic-add standalone-O any string + any string concatenates`
+  the branch reported — against the branch's one. The baseline is simply stale
+  (and partly nondeterministic) relative to main; the gate does not fail on it.
+
+  **Methodology note, worth keeping:** `equivalence-gate.mjs` calls
+  `process.exit()`, which TRUNCATES pending stdout writes when stdout is a
+  PIPE. `node scripts/equivalence-gate.mjs 2>&1 | tail -N` therefore showed
+  only the stderr `JSON report written …` line for shards 4 and 8, which reads
+  exactly like a crashed/failing shard. Both were clean on re-run with a file
+  REDIRECT (`> file 2>&1`), which is synchronous and loses nothing. Redirect,
+  don't pipe, when you need this script's verdict.
