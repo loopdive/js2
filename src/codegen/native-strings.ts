@@ -2019,6 +2019,32 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
       prefixInstrs: nativeStringLiteralInstrs(ctx, `${name}: `),
     });
   }
+  // (#4097) Same arm shape for a thrown USER-CLASS error instance. Legacy
+  // throws such a struct only for a class the builtin-error interception does
+  // NOT claim; the IR throws it for `class Test262Error` too (measured: both
+  // paths register the IDENTICAL struct — same typeIdx, name and fields — so
+  // the divergence is which VALUE the `new` site allocates, not struct
+  // identity, and #4035 declined the throw over the resulting
+  // "[object Object]"). Arms key on the struct's own registered name and are
+  // PATH-INDEPENDENT, so IR and legacy render alike. Gated on `ctx.classSet`
+  // (local class declarations only) plus a `message` field, so a plain data
+  // class keeps the canonical "[object Object]"; `$Error_struct` is skipped —
+  // `__any_to_string` already routes it through §20.5.3.4.
+  for (const [structTypeIdx, structName] of ctx.typeIdxToStructName) {
+    if (structTypeIdx === ctx.errorStructTypeIdx) continue;
+    if (!ctx.classSet.has(structName)) continue;
+    const fields = ctx.structFields.get(structName);
+    const fieldIdx = fields === undefined ? -1 : fields.findIndex((f) => f.name === "message");
+    if (fields === undefined || fieldIdx < 0) continue;
+    const ft = fields[fieldIdx].type;
+    if (ft.kind !== "externref" && ft.kind !== "anyref" && ft.kind !== "ref" && ft.kind !== "ref_null") continue;
+    fnctorArms.push({
+      typeIdx: structTypeIdx,
+      fieldIdx,
+      fieldIsExtern: ft.kind === "externref",
+      prefixInstrs: nativeStringLiteralInstrs(ctx, `${structName}: `),
+    });
+  }
   const fnctorConcatIdx = fnctorArms.length === 0 ? undefined : ctx.nativeStrHelpers.get("__str_concat");
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
 
