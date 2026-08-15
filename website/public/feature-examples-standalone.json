@@ -52,7 +52,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 38,
+      "passCount": 40,
       "totalCount": 59
     },
     {
