@@ -45,8 +45,8 @@ const SECTIONS = [
       [
         "`ExpressionStatement`",
         "mixed",
-        "Calls, assignments, compound assigns (`y += x`) and pre/post `++ --` claim. VALUE-DISCARDING statements still reject: `x + 1;` at `nontail-compound-or-binary-stmt`, `x;` / `1;` / `cond ? a : b;` at `nontail-exprstmt-other` (measured 2026-08-15, #3583).",
-        "#3518",
+        "Calls, assignments, compound assigns (`y += x`) and pre/post `++ --` claim. VALUE-DISCARDING statements ADOPTED (#4459): `x + 1;`, `x;`, `1;`, `cond ? a : b;`, `-x;`, `a, b;` and `void e;` all claim and lower, at top level and inside loop / try body buffers — `lowerDiscardedExpression` already handled every one of those shapes for `return voidCall()`, so the gap was the STATEMENT-position gate alone. A discarded ternary emits `if.stmt` with one buffer per arm, so only the TAKEN arm evaluates. Residual, all mutating shapes with no dedicated arm (measured 2026-08-15): `o.x += 1;` / `a[i] += 1;` at `nontail-compound-or-binary-stmt`, chained `a = b = 1;` at `nontail-assign-nonprop-lhs`, `o.x++;` at `nontail-incdec-stmt`, and `new.target;` / a parenthesized arrow at `nontail-exprstmt-other`.",
+        "#4459",
       ],
       [
         "`IfStatement`",
