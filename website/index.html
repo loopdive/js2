@@ -415,6 +415,13 @@
         overflow: visible;
       }
 
+      /* The donut's desktop orbit keeps its top stat and glow visible outside
+         the chart host. Reserve that overhang so the skipped count cannot
+         overlap the CTA row above it. */
+      #conformance-donut-slot {
+        padding-top: 72px;
+      }
+
       .bench-test-group {
         grid-column: 1 / -1;
         margin: 0 0 40px;
@@ -581,6 +588,12 @@
       @media (max-width: 720px) {
         .diagram-panel {
           padding: 0;
+        }
+      }
+
+      @media (max-width: 440px) {
+        #conformance-donut-slot {
+          padding-top: 0;
         }
       }
 

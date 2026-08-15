@@ -1427,7 +1427,7 @@ export function compileReceiverMethodCall(
         }
         // Re-resolve funcIdx after receiver compilation — emitUndefined (for `this` in static
         // context) triggers addUnionImports which shifts all function indices (#998)
-        const resolvedStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+        const resolvedStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? funcIdx; // (#1983)
         const paramTypes = getFuncParamTypes(ctx, resolvedStaticIdx);
         const paramCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsStatic = ctx.funcUsesArguments.has(fullName);
@@ -1453,7 +1453,7 @@ export function compileReceiverMethodCall(
         }
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
-        const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? resolvedStaticIdx; // (#1983)
+        const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? resolvedStaticIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const sig = ctx.checker.getResolvedSignature(expr);
         if (sig) {
@@ -3148,6 +3148,7 @@ export function compileReceiverMethodCall(
         userMethodArities.every((arity) => arity === userMethodArities[0]) &&
         [...userMethodFuncsByCarrierShape.values()].every((funcs) => funcs.size === 1);
       const needsRuntimeUserMethodDispatch =
+        dispatchArgs !== null &&
         hasUniformUserMethodAbi &&
         (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod);
       if (

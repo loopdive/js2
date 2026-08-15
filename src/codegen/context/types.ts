@@ -708,6 +708,31 @@ export interface FunctionContext {
   materializingHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
+  /**
+   * (#4464) This is a synthesized `new F()` body for a plain FUNCTION
+   * constructor ("fnctor"), not a `class` constructor.
+   *
+   * It exists as a SEPARATE bit from {@link isConstructor} on purpose. The
+   * §10.2.1.3 step-13 return rule (an Object return overrides `this`; a
+   * primitive / bare return is discarded and `this` is the result) applies to
+   * both, and the fnctor body never had it — so `function F(){ this.x=1;
+   * return true }` fell through to the generic value-return path, which pushed
+   * a `ref.null $__fnctor_F` and the `new` site trapped "dereferencing a null
+   * pointer" (`S13.2.2_A6_T2`, `_A7_T1`, `_A8_T1/T2`). But `isConstructor` ALSO
+   * gates `new.target`, whose lowering reads a class-id global that no fnctor
+   * `new` site writes; reusing it would silently swap `new.target === undefined`
+   * for a stale class id. One bit per question.
+   */
+  isFnctorConstructor?: boolean;
+  /**
+   * (#4464) Local index of the constructed `this` receiver when the
+   * construction result is an EXTERNREF object rather than a nominal struct —
+   * the `new function(){…}` FunctionExpression lowering. Set ⇒
+   * `compileReturnStatement` applies §10.2.1.3 step 13 with a RUNTIME
+   * Type(V)-is-Object probe (`__typeof_object`/`__typeof_function`), because
+   * the operand's type here is a runtime property, not a static one.
+   */
+  constructThisExternLocal?: number;
   /** Whether this constructor belongs to a class declared with `extends`. Spec §10.2.1.3
    * step 13c requires a derived constructor that returns a non-object, non-undefined
    * value to throw TypeError instead of silently coercing and null-dereffing. */
@@ -3041,6 +3066,8 @@ export interface CodegenContext {
   ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
   /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
   ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /** Module-global names whose direct non-specific spread initializer is an open object. */
+  hostSpreadObjectGlobals: Set<string>;
   /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
@@ -3415,6 +3442,17 @@ export interface CodegenContext {
    *  per-signature wrapper and its constructible variant); a capture subtype is
    *  already per-function and grows the slot in place. */
   fnInstanceMetaSubtypeByBase?: Map<number, number>;
+  /** (#4440) Physical function name (`ClassName_m`, `ClassName_get_p`,
+   *  `ClassName_set_p`, `LiteralType_field`) → the member DECLARATION behind it.
+   *  The method mint sites take a name + funcIdx, never a node, so this is how
+   *  `function-instance-meta-methods.ts` recovers the parameter list for §15.1.5
+   *  and the property key for §10.2.9. Keyed by NAME rather than funcIdx because
+   *  funcIdx is shift-sensitive and the name is what those sites already
+   *  re-resolve by. Written by `class-bodies.ts` at registration time. */
+  fnMetaMemberDecls?: Map<
+    string,
+    ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration | ts.PropertyAssignment
+  >;
   /** (#2193 PR-B) Struct-type indices of `$NativeProto` member closures whose
    *  FIRST user param is the receiver (`this`) — e.g. `Array.prototype.slice`'s
    *  `(self, this, start, end)` closure. Unlike a plain user function (which

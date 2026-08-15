@@ -11,6 +11,7 @@ import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { IrUnitId } from "../ir/identity.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -19,6 +20,7 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
@@ -1144,6 +1146,18 @@ export function collectClassDeclaration(
   // Register method functions (own methods defined on this class).
   // Bodyless overload signatures and abstract methods are type-only.
   const ownMethodNames = new Set<string>();
+  // Populate both method-kind sets before minting any function keys. A class
+  // may legally define `static m()` alongside `m()`; the static key helper
+  // needs to see the instance member even when the static declaration appears
+  // first in source order.
+  for (const member of decl.members) {
+    if (!ts.isMethodDeclaration(member) || !member.name || !member.body) continue;
+    const methodName = resolveClassMemberName(ctx, member.name);
+    if (methodName === undefined) continue;
+    const fullName = `${className}_${methodName}`;
+    if (hasStaticModifier(member)) ctx.staticMethodSet.add(fullName);
+    else ctx.classMethodSet.add(fullName);
+  }
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
       const methodName = resolveClassMemberName(ctx, member.name);
@@ -1172,12 +1186,12 @@ export function collectClassDeclaration(
         ctx.generatorFunctions.add(fullName);
       }
 
-      // Skip if a function with this name is already registered (e.g., when
-      // both a static and instance method share the same name, they produce
-      // the same function name — avoid creating duplicate placeholders).
       // (#1983) check the relocated key so a user `function ClassName_m()` does
       // not look like an already-registered method and suppress the real one.
-      if (ctx.funcMap.has(classMemberFuncKey(ctx, fullName))) continue;
+      // Static and instance members intentionally use distinct keys when their
+      // source names collide.
+      const memberKind = isStatic ? "static" : "instance";
+      if (ctx.funcMap.has(classMemberFuncKey(ctx, fullName, memberKind))) continue;
 
       // Static methods have no self parameter; instance methods get self: (ref $structTypeIdx)
       const methodParams: ValType[] = isStatic ? [] : [{ kind: "ref", typeIdx: structTypeIdx }];
@@ -1219,7 +1233,7 @@ export function collectClassDeclaration(
           nativeGen = registerNativeGenerator(
             ctx,
             member,
-            classMemberFuncKey(ctx, fullName),
+            classMemberFuncKey(ctx, fullName, memberKind),
             methodParams,
             /* synthesizedThis */ !isStatic,
           );
@@ -1248,8 +1262,11 @@ export function collectClassDeclaration(
       // (#1983) Use the collision-free key for the funcMap entry AND the wasm
       // display name, so the `funcByName` body-fill lookup (which keys on the
       // display name) does not collide with a user `function ClassName_m()`.
-      const methodKey = classMemberFuncKey(ctx, fullName);
+      const methodKey = classMemberFuncKey(ctx, fullName, memberKind);
       ctx.funcMap.set(methodKey, methodFuncIdx);
+      // (#4440) The method mint sites key everything by `fullName`; record the
+      // node under the same key so they can read §15.1.5 / §10.2.9 from it.
+      recordFnMetaMemberDeclaration(ctx, fullName, member);
 
       pushProgramAbiClassCallable(ctx, member, "unit", methodFuncIdx, {
         name: methodKey,
@@ -1305,6 +1322,7 @@ export function collectClassDeclaration(
       const getterFuncIdx = mintDefinedFunc(ctx);
       const getterKey = classMemberFuncKey(ctx, getterName); // (#1983) key + display name
       ctx.funcMap.set(getterKey, getterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, getterName, member); // (#4440) `get p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", getterFuncIdx, {
         name: getterKey,
@@ -1338,6 +1356,7 @@ export function collectClassDeclaration(
       const setterFuncIdx = mintDefinedFunc(ctx);
       const setterKey = classMemberFuncKey(ctx, setterName); // (#1983) key + display name
       ctx.funcMap.set(setterKey, setterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, setterName, member); // (#4440) `set p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", setterFuncIdx, {
         name: setterKey,
@@ -1744,9 +1763,18 @@ function skipPreparedClassConstructorBody(
       const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
       const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
       const newFunc = newFuncIdx === undefined ? undefined : definedFuncAt(ctx, newFuncIdx);
+      // (#3522) A top-level implicit constructor has no containing terminal; a
+      // NESTED one records its enclosing executable. Membership in
+      // `skipImplicitConstructorUnitIds` is already the preparer's proof that
+      // the containing owner was prepared in the same transaction, so the
+      // residual obligation here is that the nesting belongs to the admitted
+      // bounded ordinary-class family — which excludes heritage, statics,
+      // computed keys, and initialized fields, and therefore cannot reach the
+      // shadow-identity inheritance surface (#4448).
+      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
       if (
         unit?.kind !== "class-implicit-constructor" ||
-        unit.terminalOwnerId !== null ||
+        !nestedFamilyOk ||
         ctx.irPlanningIdentityContext?.terminalByUnitId.has(unitId) ||
         ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== classDeclaration ||
         ctx.programAbiClassCallables?.functionForUnit(unitId) !== initFunc ||
@@ -2370,10 +2398,12 @@ function compileClassBodiesInner(
       const methodName = resolveClassMemberName(ctx, member.name);
       if (methodName === undefined) continue; // dynamic computed name — skip
       const fullName = `${className}_${methodName}`;
-      if (compiledMethods.has(fullName)) continue; // already compiled
-      compiledMethods.add(fullName);
-      const isStatic = ctx.staticMethodSet.has(fullName);
-      const methodLocalIdx = funcByName.get(classMemberFuncKey(ctx, fullName)); // (#1983)
+      const isStatic = hasStaticModifier(member);
+      const memberKind = isStatic ? "static" : "instance";
+      const compileKey = `${fullName}:${memberKind}`;
+      if (compiledMethods.has(compileKey)) continue; // already compiled
+      compiledMethods.add(compileKey);
+      const methodLocalIdx = funcByName.get(classMemberFuncKey(ctx, fullName, memberKind)); // (#1983)
       if (methodLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[methodLocalIdx]!;
@@ -2427,7 +2457,9 @@ function compileClassBodiesInner(
       // classMemberFuncKey); its fctx returnType must match that wasm result
       // type, not the eager-buffer `externref`. JS-host (no native registration)
       // keeps `externref`.
-      const nativeGenInfo = isGeneratorMethod ? ctx.nativeGenerators.get(classMemberFuncKey(ctx, fullName)) : undefined;
+      const nativeGenInfo = isGeneratorMethod
+        ? ctx.nativeGenerators.get(classMemberFuncKey(ctx, fullName, memberKind))
+        : undefined;
       const genMethodReturnType: ValType = nativeGenInfo
         ? { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx }
         : { kind: "externref" };

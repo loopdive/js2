@@ -39,6 +39,8 @@ import { spliceNullGuarded } from "./param-emit-helpers.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
+// (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
+import { fnMetaSlotForMemberDecl } from "../function-instance-meta-methods.js";
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -716,7 +718,12 @@ export function mintClosureStructTypes(
   meta?: { allocTypeIdx: number; init: Instr[] };
 } {
   const { captures, arrowParams, closureResults, closureName, isNamedFuncExpr, constructible } = opts;
-  const metaSlot = fnMetaSlot(ctx, opts.decl);
+  // (#4440) An object-literal accessor/method reaches this mint site as its
+  // OWN declaration node (`literals.ts` casts a `Get/SetAccessorDeclaration` to
+  // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
+  // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
+  // property KEY, not from a function name. The member walk answers it.
+  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;

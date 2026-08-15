@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import type { IrClassShape } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -10,11 +11,62 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 
+type ImplicitConstructorClass = ts.ClassDeclaration | ts.ClassExpression;
+
 function hasStaticModifier(node: ts.Node): boolean {
   return (
     ts.canHaveModifiers(node) &&
     (ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false)
   );
+}
+
+/**
+ * (#3522) Class owners whose implicit constructor may be prepared.
+ *
+ * Two disjoint admissions:
+ *
+ *   - an exact TOP-LEVEL class declaration, the family established by the
+ *     2026-08-12 plain implicit-constructor checkpoint, whose derived
+ *     forwarding chain is represented by the parent-init walk below; and
+ *   - an exact NESTED bounded ordinary class — declaration or the
+ *     `const C = class { … }` expression form. `isBoundedPreparedNestedOrdinaryClass`
+ *     rejects heritage, decorators, statics, computed keys, and initialized
+ *     fields, so its ClassDefinitionEvaluation is inert in the containing
+ *     frame and it can never carry a parent chain. That is what keeps this
+ *     admission out of the shadow-identity inheritance surface (#4448): a
+ *     nested class admitted here has `parentShape === undefined` by
+ *     construction, so the forwarding path below is unreachable for it.
+ *
+ * Anything else — a class expression at module scope, a nested class with
+ * heritage or static/initialized members — stays direct.
+ */
+function isAdmissibleImplicitConstructorClass(
+  declaration: ImplicitConstructorClass,
+  sourceFile: ts.SourceFile,
+): boolean {
+  if (ts.isClassDeclaration(declaration) && declaration.parent === sourceFile) return true;
+  return declaration.parent !== sourceFile && isBoundedPreparedNestedOrdinaryClass(declaration);
+}
+
+/**
+ * The exact class owner a `new <identifier>(...)` callee denotes, when that
+ * owner is one this pass may prepare. A class expression is reached only
+ * through its immutable `const` binding, matching the selector's bounded
+ * projection; the binding identity is re-proven by
+ * `boundedPreparedNestedOrdinaryClassBindingName` on the selector side.
+ */
+function implicitConstructorClassForDeclaration(declaration: ts.Declaration): ImplicitConstructorClass | undefined {
+  if (ts.isClassDeclaration(declaration)) return declaration;
+  if (
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer &&
+    ts.isClassExpression(declaration.initializer) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+  ) {
+    return declaration.initializer;
+  }
+  return undefined;
 }
 
 function sameValType(left: ValType, right: ValType): boolean {
@@ -39,7 +91,7 @@ export function prepareImplicitConstructorSupports(input: {
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly classShapesById: ReadonlyMap<IrClassId, IrClassShape>;
 }): ReadonlySet<IrUnitId> {
-  const referencedClassDeclarations = new Set<ts.ClassDeclaration>();
+  const referencedClassDeclarations = new Set<ImplicitConstructorClass>();
   for (const ownerUnitId of input.ownerUnitIds) {
     const root = input.identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
     if (!root) continue;
@@ -49,8 +101,9 @@ export function prepareImplicitConstructorSupports(input: {
       }
       if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
         for (const declaration of input.ctx.oracle.declarationsOf(node.expression)) {
-          if (ts.isClassDeclaration(declaration) && declaration.parent === input.sourceFile) {
-            referencedClassDeclarations.add(declaration);
+          const owner = implicitConstructorClassForDeclaration(declaration);
+          if (owner && isAdmissibleImplicitConstructorClass(owner, input.sourceFile)) {
+            referencedClassDeclarations.add(owner);
           }
         }
       }
@@ -74,7 +127,7 @@ export function prepareImplicitConstructorSupports(input: {
       if (
         parentDeclaration &&
         ts.isClassDeclaration(parentDeclaration) &&
-        parentDeclaration.parent === input.sourceFile
+        isAdmissibleImplicitConstructorClass(parentDeclaration, input.sourceFile)
       ) {
         referencedClassDeclarations.add(parentDeclaration);
       }
@@ -96,21 +149,30 @@ export function prepareImplicitConstructorSupports(input: {
     readonly selfParamIndex: number;
     readonly parentInitUnitId?: IrUnitId;
     readonly parentInitFuncIdx?: FuncHandle;
+    /** `null` for a top-level class; the enclosing prepared owner when nested. */
+    readonly containingTerminalOwnerId: IrUnitId | null;
   }[] = [];
   for (const declaration of referencedClassDeclarations) {
     const classId = input.identityPlan.identityContext.classIdByDeclaration.get(declaration);
     const shape = classId ? input.classShapesById.get(classId) : undefined;
     const parentShape = shape?.parent;
-    const className = declaration.name?.text;
+    // A class declaration owns its source name; an admitted class expression is
+    // anonymous and carries the projected name the shape was registered under.
+    // Requiring the declaration name to AGREE when present keeps the existing
+    // top-level proof exactly as strong, while the `classShapes` round trip
+    // below remains the bidirectional identity check in both forms.
+    const className = shape?.className;
+    const sourceName = declaration.name?.text;
     const hasExtends =
       declaration.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) ?? false;
     if (
       !className ||
       !shape ||
+      (sourceName !== undefined && sourceName !== className) ||
       classId !== shape.classId ||
       input.classShapes.get(className) !== shape ||
       input.identityPlan.identityContext.declarationByClassId.get(shape.classId) !== declaration ||
-      declaration.parent !== input.sourceFile ||
+      !isAdmissibleImplicitConstructorClass(declaration, input.sourceFile) ||
       (hasExtends && !parentShape) ||
       declaration.members.some(ts.isConstructorDeclaration) ||
       declaration.members.some(
@@ -128,11 +190,21 @@ export function prepareImplicitConstructorSupports(input: {
     const layout = types.layoutForClass(shape.classId);
     const parentInitTarget = parentShape?.constructorInitTarget;
     const parentLayout = parentShape ? types.layoutForClass(parentShape.classId) : undefined;
+    // A top-level implicit constructor has no containing terminal. A NESTED one
+    // records its enclosing executable as `terminalOwnerId`, and that is exactly
+    // the atomicity obligation: its support pair may be installed only when the
+    // containing owner is itself in THIS preparation transaction. Otherwise the
+    // owner would keep a legacy body while its class allocation was prepared —
+    // the split-ownership state R3 exists to prevent.
+    const containingTerminalOwnerId = unit?.terminalOwnerId ?? null;
+    const containingOwnerPrepared =
+      containingTerminalOwnerId === null || input.ownerUnitIds.has(containingTerminalOwnerId);
     if (
       !unitId ||
       unit?.kind !== "class-implicit-constructor" ||
       unit.lexicalOwnerId !== shape.classId ||
-      unit.terminalOwnerId !== null ||
+      !containingOwnerPrepared ||
+      (containingTerminalOwnerId !== null && !isBoundedPreparedNestedOrdinaryClass(declaration)) ||
       input.identityPlan.identityContext.terminalByUnitId.has(unitId) ||
       input.identityPlan.identityContext.declarationByUnitId.get(unitId) !== declaration ||
       newTarget?.binding.kind !== "support" ||
@@ -205,6 +277,7 @@ export function prepareImplicitConstructorSupports(input: {
       selfParamIndex: newSignature.params.length,
       ...(parentInitUnitId ? { parentInitUnitId } : {}),
       ...(parentInitFuncIdx !== undefined ? { parentInitFuncIdx } : {}),
+      containingTerminalOwnerId,
     });
   }
 
@@ -272,6 +345,7 @@ export function prepareImplicitConstructorSupports(input: {
       ...(candidate.parentInitUnitId && candidate.parentInitFuncIdx !== undefined
         ? { parent: { unitId: candidate.parentInitUnitId, funcIdx: candidate.parentInitFuncIdx } }
         : {}),
+      containingTerminalOwnerId: candidate.containingTerminalOwnerId,
     });
     if (preparedInitFuncIdx !== candidate.initFuncIdx) {
       throw new IrInvariantError(

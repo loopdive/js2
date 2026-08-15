@@ -90,6 +90,12 @@ import {
   hasInterveningLexicalBinder,
 } from "../annexb-cancel.js";
 import { emitArgumentsVecTail } from "../arguments-vector-tail.js";
+import {
+  beginNestedFunctionNameScope,
+  endNestedFunctionNameScope,
+  nestedFuncDeclNeedsShadow,
+  shadowNestedFuncName,
+} from "../nested-function-name-scope.js"; // (#4456) lexical scope for the flat funcMap namespace
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -526,11 +532,31 @@ function shouldCaptureEnclosingDirectEvalState(
   );
 }
 
+/**
+ * (#4456) Compile a nested function declaration inside its own bare-name
+ * scope, so names its body hoists stop being visible when the body is done.
+ * Rationale, and why restoring is load-bearing rather than tidiness, in
+ * `../nested-function-name-scope.ts`.
+ */
 export function compileNestedFunctionDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmt: ts.FunctionDeclaration,
   opts: CompileNestedFunctionOptions = {},
+): void {
+  const scope = beginNestedFunctionNameScope(ctx);
+  try {
+    compileNestedFunctionDeclarationInScope(ctx, fctx, stmt, opts);
+  } finally {
+    endNestedFunctionNameScope(ctx, scope);
+  }
+}
+
+function compileNestedFunctionDeclarationInScope(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  opts: CompileNestedFunctionOptions,
 ): void {
   if (!stmt.name || !stmt.body) return;
   const funcName = stmt.name.text;
@@ -2121,6 +2147,10 @@ export function hoistFunctionDeclarations(
       if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
       if (isShadowedDuplicate(stmt)) continue;
       const funcName = stmt.name.text;
+      // (#4456) Same shadow as the compile loop, one phase earlier, so a
+      // capturing sibling colliding with an outer scope still gets its
+      // bodyless reservation and stays a resolvable mutual-recursion target.
+      if (nestedFuncDeclNeedsShadow(ctx, stmt, funcName)) shadowNestedFuncName(ctx, funcName);
       if (ctx.funcMap.has(funcName)) continue;
       if (ctx.hoistFailedFuncs?.has(funcName)) continue;
 
@@ -2234,6 +2264,12 @@ export function hoistFunctionDeclarations(
           fctx.annexBOuterBindings.add(funcName);
         }
       }
+      // (#4456) The name may already be live for a declaration in ANOTHER
+      // scope, in which case the gate below would read "already compiled" and
+      // skip THIS declaration entirely. Free it so this one compiles its own
+      // function. MUST precede the reserved-entry lookup, which is itself
+      // name-keyed and would otherwise adopt the outer scope's reservation.
+      if (nestedFuncDeclNeedsShadow(ctx, stmt, funcName)) shadowNestedFuncName(ctx, funcName);
       const hasReservedBodylessEntry = ctx.preRegisteredBodyless?.has(funcName) ?? false;
       const reservedFuncIdx = hasReservedBodylessEntry ? ctx.funcMap.get(funcName) : undefined;
       const reservedEntry = reservedFuncIdx !== undefined ? definedFuncAt(ctx, reservedFuncIdx) : undefined;

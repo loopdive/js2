@@ -276,7 +276,11 @@ class T262Donut extends HTMLElement {
         :host {
           display: block;
           max-width: 100%;
-          overflow: clip;
+          /* The desktop orbit is intentionally wider than a compact host: its
+             pass-count labels can overhang by a few pixels near the 440px
+             breakpoint. Keep those labels and the glow visible; the parent
+             page owns the viewport-level overflow policy. */
+          overflow: visible;
           --_pass: var(--t262-pass, #3fb950);
           --_fail: var(--t262-fail, #f85149);
           --_ce: var(--t262-ce, #d29922);
@@ -433,10 +437,8 @@ class T262Donut extends HTMLElement {
                250px ring is CENTERED in the 300px padding box (height 280 +
                padding-top 20). Centered leaves ~25px above and below the ring —
                enough for the .gauge-glow (inset:-8px + blur(6px), ≈14px bleed)
-               to fully render instead of being clipped at the bottom by
-               :host { overflow: clip }. This override cascades to .gauge-core
-               (a descendant) and is scoped to the media query, so desktop
-               orbit-label overflow protection is unaffected. */
+               to fully render even when an ancestor clips overflow. This
+               override cascades to .gauge-core (a descendant). */
             --_donut-top-inset: 0px;
           }
           .orbit-stat {

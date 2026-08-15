@@ -38,7 +38,7 @@
  * them for any string usage); returns `null` otherwise so the caller can
  * demote with a clear message.
  */
-import type { Instr, WasmFunction } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
@@ -49,6 +49,35 @@ export const JSSTR_CHARCODEAT_FN = "__jsstr_charCodeAt";
 export const JSSTR_SUBSTRING_FN = "__jsstr_substring";
 /** Reserved name for the native-mode guarded charCodeAt helper. */
 export const NATIVE_CHARCODEAT_FN = "__str_charCodeAt";
+
+// --- (#3931) canonical char-read-loop hoist helpers ------------------------
+//
+// The IR port of #2682 (`ir/char-read-loop.ts`) proves `0 <= i < recv.length`
+// at every read site in the loop body, which makes the §22.1.3.3 OOB/NaN arm
+// of the helpers above DEAD CODE there. These two helpers are the unguarded
+// counterparts the proof licenses; they are small enough for the module
+// inliner to fold into the loop body.
+//
+// Both return an i32 rather than an f64 code unit: the proof is exactly what
+// lets `ir/i32-pure-bitwise.ts` treat the read as an int32-range LEAF, so
+// `(h * 31 + s.charCodeAt(i)) | 0` composes in native i32 instead of paying
+// the f64 ToInt32 bit-decomposition per iteration.
+//
+// Both take the STRING CARRIER ValType (`ref null $AnyString` / `externref`),
+// never a raw descriptor type. That is not cosmetic: an IR value typed with a
+// raw `ref N` has no symbolic Program ABI type identity, and a prepared
+// component carrying one is REFUSED (`implicit-support-reference-unavailable`
+// in `ir/prepared-component-dependencies.ts`) — which demotes the whole
+// function back to legacy and silently undoes the optimisation. So the
+// descriptor (`.data`/`.off`) stays INSIDE the native helper; what the IR
+// hoists is the flatten, which is the expensive half.
+
+/** `(ref $AnyString) -> (ref $NativeString)` — the existing rope-flattening helper. */
+export const NATIVE_FLATTEN_FN = "__str_flatten";
+/** `(ref null $AnyString, i32) -> i32` — UNGUARDED read of an already-FLAT receiver. */
+export const NATIVE_FLAT_CHARCODEAT_FN = "__str_flat_charCodeAt";
+/** `(externref, i32) -> i32` — UNGUARDED host code-unit read (caller proved in-bounds). */
+export const JSSTR_CHARCODEAT_TRUSTED_FN = "__jsstr_charCodeAt_trusted";
 
 /**
  * Ensure a host-string substring helper backed by the engine's
@@ -269,4 +298,98 @@ export function ensureNativeCharCodeAtHelper(ctx: CodegenContext): number | null
   pushDefinedFunc(ctx, funcIdx, fn);
   ctx.funcMap.set(NATIVE_CHARCODEAT_FN, funcIdx);
   return funcIdx;
+}
+
+/**
+ * (#3931) Register a tiny defined helper under `name`, once. Shares the
+ * `mintDefinedFunc` + `funcMap` discipline of the guarded helpers above so a
+ * later late-import addition shifts this index with every other one.
+ */
+function ensureTinyHelper(
+  ctx: CodegenContext,
+  name: string,
+  params: ValType[],
+  results: ValType[],
+  locals: WasmFunction["locals"],
+  body: Instr[],
+): number {
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const sigIdx = addFuncType(ctx, params, results);
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = { name, typeIdx: sigIdx, locals, body, exported: false };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+/**
+ * (#3931) `__str_flat_charCodeAt(flat, i) -> i32` — the UNGUARDED code-unit
+ * read of an ALREADY-FLATTENED receiver, i.e. the body of legacy's
+ * `emitHoistedCharCodeAtRead` (`data[off + i]`) with the flatten and the
+ * `0 <= i < len` guard both removed: the caller hoisted the flatten into the
+ * loop preheader and `ir/char-read-loop.ts` proved the bound.
+ *
+ * The parameter is the string CARRIER (`ref null $AnyString`), not
+ * `ref $NativeString`, so the IR never has to name a raw descriptor type —
+ * see the note by the constants above for why that matters. The hoisted value
+ * is always the flatten helper's own result, so the `ref.cast` is a proven
+ * downcast, not a check that can fail in practice.
+ *
+ * `null` when the native-string struct types are not registered (caller keeps
+ * the guarded lowering).
+ */
+export function ensureNativeFlatCharCodeAtHelper(ctx: CodegenContext): number | null {
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
+  if (anyStrTypeIdx < 0 || strTypeIdx < 0 || strDataTypeIdx < 0) return null;
+
+  const S = 0; // (ref null $AnyString) — the hoisted, already-flat receiver
+  const IDX = 1; // i32 index, proven in [0, len)
+  const FLAT = 2; // (ref null $NativeString)
+  return ensureTinyHelper(
+    ctx,
+    NATIVE_FLAT_CHARCODEAT_FN,
+    [{ kind: "ref_null", typeIdx: anyStrTypeIdx }, { kind: "i32" }],
+    [{ kind: "i32" }],
+    [{ name: "$flat", type: { kind: "ref_null", typeIdx: strTypeIdx } }],
+    [
+      { op: "local.get", index: S },
+      { op: "ref.cast", typeIdx: strTypeIdx },
+      { op: "local.set", index: FLAT },
+      { op: "local.get", index: FLAT },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // .data
+      { op: "local.get", index: FLAT },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // .off
+      { op: "local.get", index: IDX },
+      { op: "i32.add" },
+      { op: "array.get_u", typeIdx: strDataTypeIdx },
+    ],
+  );
+}
+
+/**
+ * (#3931) `__jsstr_charCodeAt_trusted(s, i) -> i32` — the host-mode unguarded
+ * read. Host strings have no flattenable descriptor to hoist, so the whole
+ * optimisation there is dropping the guard: the raw `wasm:js-string.charCodeAt`
+ * builtin TRAPS out of range (#2003), which is exactly why the guarded helper
+ * exists — and exactly what the in-bounds proof makes unreachable. `null` when
+ * the builtins are not registered (caller keeps the guarded lowering).
+ */
+export function ensureHostCharCodeAtTrusted(ctx: CodegenContext): number | null {
+  const charCodeAtIdx = ctx.jsStringImports.get("charCodeAt");
+  if (charCodeAtIdx === undefined) return null;
+  return ensureTinyHelper(
+    ctx,
+    JSSTR_CHARCODEAT_TRUSTED_FN,
+    [{ kind: "externref" }, { kind: "i32" }],
+    [{ kind: "i32" }],
+    [],
+    [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: charCodeAtIdx },
+    ],
+  );
 }
