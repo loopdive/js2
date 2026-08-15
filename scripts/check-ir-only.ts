@@ -18,6 +18,17 @@ export const SINGLE_HOST_ENTRIES = [
   "website/playground/examples/js/classes.ts",
 ] as const;
 
+/**
+ * #3518 standalone lane — the SAME five terminals compiled with
+ * `target: "standalone"` (no JS host imports). This lane is deliberately NOT
+ * required to reach IR-only readiness: standalone IR coverage is still partial,
+ * so the lane is a **regression ratchet** over honestly measured floors, per
+ * the epic's rule 5 ("no corpus-zero shortcuts"). Its readiness mode is
+ * `"baseline"`, which keeps `--policy=ir-only` from asserting compile-once on a
+ * population that provably is not there yet.
+ */
+export const STANDALONE_ENTRIES = SINGLE_HOST_ENTRIES;
+
 export type IrOnlyEntryFailureCode = "compile-threw" | "compile-failed" | "fatal-diagnostic" | "missing-telemetry";
 
 export interface IrOnlyEntryFailure {
@@ -36,10 +47,24 @@ export interface IrOnlyEntryObservation {
   readonly failures: readonly IrOnlyEntryFailure[];
 }
 
+/**
+ * How a lane participates in the `--policy=ir-only` verdict.
+ *
+ * - `"ir-only"` (default): the lane must be compile-once — zero unsupported
+ *   units, zero legacy bodies, one IR body per terminal.
+ * - `"baseline"`: the lane is measured and ratcheted against its committed
+ *   floors/ceilings, but is not asserted to be IR-only. Every anti-vacuity,
+ *   telemetry-consistency, invariant, and baseline check still applies; only
+ *   the compile-once assertions are withheld.
+ */
+export type IrOnlyLaneReadiness = "ir-only" | "baseline";
+
 export interface IrOnlyLaneObservation {
   readonly name: string;
   readonly expectedEntries: number;
   readonly entries: readonly IrOnlyEntryObservation[];
+  /** Defaults to `"ir-only"` when absent. */
+  readonly readiness?: IrOnlyLaneReadiness;
 }
 
 export interface IrOnlyBaselineLane {
@@ -61,6 +86,7 @@ export interface IrOnlyBaseline {
 
 export interface IrOnlyLaneSummary {
   readonly name: string;
+  readonly readiness: IrOnlyLaneReadiness;
   readonly entries: number;
   readonly expectedEntries: number;
   readonly terminalUnits: number;
@@ -87,9 +113,15 @@ export type CompileSeedEntry = (source: string, entry: string) => Promise<Compil
 const defaultCompileSeedEntry: CompileSeedEntry = (source, entry) =>
   compile(source, { fileName: entry, trackIrOutcomes: true });
 
-export async function observeSingleHostLane(
-  entries: readonly string[] = SINGLE_HOST_ENTRIES,
-  compileEntry: CompileSeedEntry = defaultCompileSeedEntry,
+const standaloneCompileSeedEntry: CompileSeedEntry = (source, entry) =>
+  compile(source, { fileName: entry, trackIrOutcomes: true, target: "standalone" });
+
+async function observeLane(
+  name: string,
+  entries: readonly string[],
+  compileEntry: CompileSeedEntry,
+  readiness: IrOnlyLaneReadiness,
+  expectedEntries: number,
 ): Promise<IrOnlyLaneObservation> {
   const observations: IrOnlyEntryObservation[] = [];
   for (const entry of entries) {
@@ -132,7 +164,21 @@ export async function observeSingleHostLane(
       failures,
     });
   }
-  return { name: "single-host", expectedEntries: SINGLE_HOST_ENTRIES.length, entries: observations };
+  return { name, expectedEntries, entries: observations, readiness };
+}
+
+export async function observeSingleHostLane(
+  entries: readonly string[] = SINGLE_HOST_ENTRIES,
+  compileEntry: CompileSeedEntry = defaultCompileSeedEntry,
+): Promise<IrOnlyLaneObservation> {
+  return observeLane("single-host", entries, compileEntry, "ir-only", SINGLE_HOST_ENTRIES.length);
+}
+
+export async function observeStandaloneLane(
+  entries: readonly string[] = STANDALONE_ENTRIES,
+  compileEntry: CompileSeedEntry = standaloneCompileSeedEntry,
+): Promise<IrOnlyLaneObservation> {
+  return observeLane("standalone", entries, compileEntry, "baseline", STANDALONE_ENTRIES.length);
 }
 
 function bump(target: Record<string, number>, key: string): void {
@@ -168,6 +214,7 @@ function summarizeLane(lane: IrOnlyLaneObservation): IrOnlyLaneSummary {
   }
   return {
     name: lane.name,
+    readiness: lane.readiness ?? "ir-only",
     entries: lane.entries.length,
     expectedEntries: lane.expectedEntries,
     terminalUnits: allOutcomes.length,
@@ -314,7 +361,11 @@ export function evaluateIrOnlyReport(
       }
     }
 
-    if (policy === "ir-only") {
+    // A `"baseline"` lane is measured and ratcheted but never asserted to be
+    // compile-once. Withholding only these three assertions keeps every
+    // anti-vacuity/telemetry/baseline check above live for the lane, so an
+    // honestly-red lane cannot become a blind spot (#3518 rule 5).
+    if (policy === "ir-only" && summary.readiness === "ir-only") {
       if (summary.unsupported > 0) failures.push(`${lane.name}: ${summary.unsupported} unsupported unit(s)`);
       if (summary.legacyBodyEmitted > 0) {
         failures.push(`${lane.name}: ${summary.legacyBodyEmitted} unit(s) still emitted a legacy body`);
@@ -363,7 +414,7 @@ function loadBaseline(): IrOnlyBaseline {
 
 function printHuman(verdict: IrOnlyGateVerdict): void {
   for (const lane of verdict.lanes) {
-    process.stdout.write(`\nIR-only readiness lane: ${lane.name}\n`);
+    process.stdout.write(`\nIR-only readiness lane: ${lane.name} (${lane.readiness})\n`);
     process.stdout.write(`  entries             ${lane.entries}/${lane.expectedEntries}\n`);
     process.stdout.write(`  terminal units      ${lane.terminalUnits}\n`);
     process.stdout.write(`  emitted             ${lane.emitted}\n`);
@@ -392,7 +443,7 @@ async function main(): Promise<void> {
   const update = args.includes("--update");
   if (update && policy !== "hybrid") throw new Error("--update requires --policy=hybrid");
 
-  const lanes = [await observeSingleHostLane()];
+  const lanes = [await observeSingleHostLane(), await observeStandaloneLane()];
   const activeBaseline = update ? baselineFrom(lanes) : loadBaseline();
   const verdict = evaluateIrOnlyReport(lanes, activeBaseline, policy);
   if (update && verdict.ready) {

@@ -271,6 +271,7 @@ import {
 import { verifyIrFunction } from "./verify.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
+import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
 import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
@@ -2514,7 +2515,21 @@ export function compileIrPathFunctions(
   if (healthyForLower.length === 0) return finishReport();
   if (
     !runGlobalPreparation(() => {
-      if (healthyForLower.some((entry) => entry.fn.funcKind === "generator")) addGeneratorImports(ctx);
+      if (!healthyForLower.some((entry) => entry.fn.funcKind === "generator")) return;
+      addGeneratorImports(ctx);
+      // #2951 — bind the `gen.*` runtime callables symbolically now that the
+      // imports exist, then OBSERVE them: prepared-component sealing runs
+      // before lowering, so an unobserved provider reads as an unplanned ABI
+      // binding and peels the generator back to the compile-twice route.
+      healthyForLower = healthyForLower.map((entry) => {
+        const fn = attachIrGeneratorSupport(entry.fn);
+        return fn === entry.fn ? entry : { ...entry, fn };
+      });
+      if (ctx.programAbiCallableProviders) {
+        for (const ref of collectAttachedGeneratorProviders(healthyForLower.map((entry) => entry.fn))) {
+          resolveAndObserveCallableProvider(ctx, ref);
+        }
+      }
     })
   ) {
     return finishReport();

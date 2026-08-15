@@ -366,3 +366,60 @@ Recommend keeping this parked until after R2 (#3521), when
 prepare-before-emit makes per-reason unreachability provable. Note for
 auditors: bare `#3341` in merge subjects matches an unrelated GitHub PR
 number — use branch names / `fix(#3341):` scopes.
+
+## Slice C re-spec — strict POST-CLAIM stages, not selector reasons (fable, 2026-08-15)
+
+Slice A is dead as specced (see the dev-h note above: no non-vacuous peel
+exists at the `select.ts` sites). The safe promotion vector is one layer
+down, and it is already structured and already corpus-zero:
+
+**Mechanism (verified on main @ 7add6938):** a claimed unit that fails
+AFTER claim goes through `recordIrOverlayPreparationFailure` /
+`irPostClaimErrors` with a structured `stage` (`resolve` | `build` |
+`verify` | `lower` | `backend-legality`) and `code` (e.g.
+`type-resolution-unsupported` at `src/codegen/index.ts` ~2685). The
+fallback gate baselines these per-stage in
+`scripts/ir-fallback-baseline.json` `postClaim` — **all buckets empty
+today and gated must-not-increase**. So "claim is a commitment" is
+already measured; what's missing is turning a regression from a
+warning-demote into a hard error.
+
+**What must stay demotable (the legitimacy allowlist):**
+
+1. The **four #3565-documented demote-to-legacy contracts** (element-store,
+   element-access slice-12, verify #1798 return gate, compound-assign
+   non-f64 RHS) — deliberately restored design decisions, never strict.
+2. **`resolve`-stage `type-resolution-unsupported`** — the #1921 contract:
+   a class-typed cross-function return the IR can't yet represent is a
+   legitimate capability gap, and hard-failing it regresses real programs
+   (the code comment at the catch site documents this).
+
+**The promotable set:** per-CODE (not per-stage) strictness for
+`build`/`verify`/`lower`/`backend-legality` codes that are (a) zero on
+the corpus baseline, (b) zero on a test262-scale stride sweep (production
+`compile()` with telemetry, stride ≤ 40 — reuse the #2949 slice-2
+`.tmp/claim-sweep.mts` pattern), and (c) documented in
+`plan/log/ir-adoption.md` as "IR must always handle" rather than
+"capability gap". Introduce `STRICT_IR_POSTCLAIM_CODES` alongside the
+(still-empty, still-correctly-empty) `STRICT_IR_REASONS`; a matching
+post-claim failure calls `reportErrorNoNode(..., "error")` instead of the
+warning demote.
+
+**Why this satisfies the issue:** it is the first promotion where
+zero-on-corpus genuinely means should-never-happen — the demote channel's
+own comments distinguish invariant regressions from capability gaps, and
+the #2138 IR-first skip contract ALREADY hard-errors the same class when
+the skip set is live, so strictness here aligns the default path with the
+flip-target semantics instead of inventing a new policy.
+
+**Acceptance (Slice C):** `STRICT_IR_POSTCLAIM_CODES` non-empty; the
+sweep evidence (per-code counts, corpus + test262 stride) recorded in
+this issue; #3565's four contracts + `type-resolution-unsupported`
+explicitly excluded with citations; full CI green; a synthetic
+regression test proving a strict code hard-fails (inject a failure via a
+test-only hook or a crafted shape, not by weakening production code).
+
+**Blocked until:** the 2026-08-15 four-stream wave (#2951 generators,
+#2952 slice 6, #3583 adoptions, #3518 standalone lane) merges — each
+widens the claim surface and could add legitimate post-claim codes; run
+the sweep AFTER they land. Queue position: first backfill after the wave.
