@@ -20,6 +20,19 @@ lane: ir-retirement
 model: gpt-5.6-sol
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
+loc-budget-allow:
+  # +2: one import plus one call, wiring the new
+  # `src/codegen/ir-legacy-caller-abi.ts` predicate into the existing
+  # `legacyCallerAbiIsProjected` callback. All logic lives in that new module;
+  # this is the irreducible remainder, since the callback is constructed inside
+  # `planIrOverlay` and handed to the selector from there.
+  - src/codegen/index.ts
+func-budget-allow:
+  # +1: the single `hasFullyAnnotatedScalarAbi(declaration)` early-return added
+  # to the `legacyCallerAbiIsProjected` closure. That closure is built inside
+  # `planIrOverlay` because it captures `ctx`/`resolveImplicitParamType`; there
+  # is no seam that reaches the selector without passing through this function.
+  - src/codegen/index.ts::planIrOverlay
 ---
 # #3518 — IR-only default and direct front-end retirement
 
@@ -259,3 +272,219 @@ Verify-first re-audit on main @ `7652f0337` (full document:
   #1131, 12 by done issues, 3 untracked) — now tracked by new issue #3583.
 - R1 groundwork is confirmed landing on main (`4922ed58b`, `1a17b4458`);
   the R2–R8 `depends_on` frontmatter matches this epic's spine exactly.
+
+## Slice: standalone readiness lane + top blockers (fable, 2026-08-15)
+
+Live measurement on main @ `7add6938`: the `check:ir-only` gate has
+exactly ONE lane (single-host WasmGC over 5 playground entries, READY at
+37/37 IR bodies / 0 legacy). The SAME entries compiled with
+`target: "standalone"` collapse: `js/algorithms.ts` = **0 IR / 7 legacy
+bodies**, `js/classes.ts` = 10 IR / 1 legacy. The acceptance criteria
+require standalone/WASI/fast/multi-source matrices; none is measured
+today. This slice adds the standalone lane and attacks its top blockers.
+
+1. **Add a `standalone` lane to `scripts/check-ir-only.ts`**: same 5
+   entries, `target: "standalone"`, per-lane baseline in
+   `scripts/ir-only-baseline.json` per the existing #3519 schema. Baseline
+   HONESTLY at measured current truth (floors/ceilings) — the lane must
+   not be required to be READY to land; it must be required not to
+   regress.
+2. **Diagnose the algorithms.ts 0-IR collapse.** A file that is 100%
+   IR-owned on host emitting zero IR bodies standalone means a mode-gated
+   capability/seal/registration decision, not per-shape gaps — find the
+   single gate (selector capability rows, prepared-component sealing, or
+   resolver registration keyed on host mode) and record it here.
+3. **Fix the top blockers** to raise the standalone lane's IR-body floor;
+   ratchet the baseline with each fix. Known hazards: standalone number
+   boxing goes via `$AnyValue` not `__box_number` (#2955 notes),
+   standalone-floor CI guard (#1897/#2097) — net standalone test262 must
+   not go negative.
+4. **Fast-mode lane** (`fast: true`) same pattern, time permitting —
+   measure, baseline, do not block on READY.
+
+Acceptance: gate reports ≥ 2 lanes; single-host stays READY; standalone
+lane floors ≥ measured-at-landing values; `check:ir-fallbacks` no
+growth; equivalence suite + standalone probes green; `tsc --noEmit`
+clean.
+
+### Implementation Notes (fable, 2026-08-15)
+
+**Deliverable 1 — the lane landed.** `scripts/check-ir-only.ts` now observes
+two lanes. A generic `observeLane` helper backs both `observeSingleHostLane`
+(unchanged behaviour, unchanged name, still exported for the #3519 tests) and
+the new `observeStandaloneLane`, which compiles the SAME five entries with
+`target: "standalone"`.
+
+The lane carries a new `readiness: "ir-only" | "baseline"` field (absent ⇒
+`"ir-only"`, so every existing caller is untouched). Under `--policy=ir-only`
+a `"baseline"` lane withholds **exactly three** assertions — zero unsupported,
+zero legacy bodies, IR-body count equals terminal count. Everything else stays
+live for it: anti-vacuity (empty corpus / zero terminal units / zero emitted /
+duplicate keys / missing telemetry), the compile-result failures, the
+telemetry-consistency cross-checks against `irCompiledFuncs` /
+`irFirstSkipped` / `irPostClaimErrors`, the hard `invariants > 0` rule, and
+every baseline floor/ceiling. That is what keeps an honestly-red lane from
+becoming a blind spot (rule 5) rather than a lane that is merely "not checked".
+
+**Deliverable 2 — the diagnosis. It is NOT #4186.**
+
+The collapse is a **pre-claim selector rejection**, not the patch-time typeIdx
+parity demotion that #4186 owns. Every rejected `algorithms.ts` unit reports
+`stage: "select"`; there are **zero post-claim demotions** in the standalone
+lane (the `check:ir-fallbacks` post-claim bucket is empty, and the A/B below
+adds seven IR bodies with all seven landing at `stage: "patch"`). #4186's
+mechanism — lattice-typed implicit-any **object** params vs. legacy
+`lowerParamType` refusing `__anon_*` — cannot be it: `algorithms.ts` has no
+implicit-any object parameter at all; every parameter is explicitly annotated.
+Recording this explicitly because it is useful negative evidence for that lane.
+
+The single gate is the **caller-direction call-graph closure**, mode-keyed on
+host-ness in two mirrored places:
+
+- `src/ir/select.ts:950` — `const demoteOnLegacyCaller = options?.jsHostExterns !== true;`
+- `src/ir/select-identity.ts:971` — the same line on the production identity path.
+
+`jsHostExterns` is `irTargetProfile.allowHostImports`, so it is **false for
+standalone/WASI**. With it on, the Step-2 fixpoint deletes any claimed function
+that has an *unclaimed local caller*, not merely an unclaimed callee. In
+`algorithms.ts` the single unclaimed root is `main` — rejected
+`body-shape-rejected` because it drives `console.log` and string concat — and
+`main` calls **every other function in the file**. One root rejection therefore
+propagates to the whole file through the *caller* direction, which is precisely
+why a file that is 100% IR-owned on host emits zero IR bodies standalone. The
+same mechanism explains `calendar.ts` and `builtins.ts`; it is a whole-file
+amplifier, not a per-shape gap.
+
+The in-tree comment above that line (added by #2858) already predicted this and
+named `joinNums` in `algorithms.ts` under WASI as the motivating example. Its
+stated precondition for relaxing the demotion was that the offending callee
+bodies be "rejected up front by the body-shape work (#2856/#2857)" — which has
+since happened: `joinNums` is now cleanly rejected pre-claim with
+`primitive-method-unsupported`, and `fibMemo` with `body-shape-rejected`.
+
+**A/B sizing (probe, not a shipped change):** forcing
+`demoteOnLegacyCaller = false` in both files raises the standalone lane from
+**10 → 17** IR bodies (`algorithms.ts` 0 → 3) with 0 invariants, 0 post-claim
+demotions and `success: true` everywhere. That measures the blocker's full
+size. It was **not** shipped: the blanket flag also exempts families whose
+signature genuinely can diverge, which is the hazard the closure exists for.
+
+**Deliverable 3 — the fix shipped: prove the ABI instead of disabling the
+guard.** The closure already has a sanctioned escape hatch,
+`SelectionOptions.legacyCallerAbiIsProjected`, whose contract is "the direct
+callable and the IR overlay share one fully certified ABI, making a legacy
+caller's pre-emitted call safe". The pre-existing certifications only covered
+implicit/projected parameters plus one narrow reduce-fusion family. The new
+`src/codegen/ir-legacy-caller-abi.ts` adds `hasFullyAnnotatedScalarAbi`: a
+declaration qualifies when **every** parameter and the return type carry an
+explicit annotation from the fully-annotated scalar surface — `number`,
+`boolean`, one-level `number[]`/`boolean[]` params, and `number`/`boolean`/
+`void` returns.
+
+Why that is a proof and not optimism: the guard's stated hazard is *signature
+divergence* (IR replacing a legacy-allocated `typeIdx` after legacy already
+compiled the caller's body). For these annotations both front-ends read the
+same `ts.TypeNode` through the same mode-consistent mapping —
+`resolvePositionType` gives `number → f64`, `boolean → i32`, `void → no
+result`, and `T[] → irVec(...)`, which legacy `getOrRegisterVecType` interns as
+the identical `(ref_null $vec_<elem>)` struct. Body lowerability is a
+*separate* question and is still decided by the ordinary claim gates, which run
+first.
+
+Deliberately excluded, and each exclusion is load-bearing:
+
+- unannotated/implicit positions — that is the #4186 split-brain surface, and
+  this predicate must not pre-empt that lane's fix;
+- optional / rest / defaulted params — arity is part of the ABI;
+- generators and generics;
+- **string and object positions**, and non-scalar or nested array elements —
+  their carrier depends on `nativeStrings` / vec-element decisions this
+  predicate does not reproduce. This is why the shipped fix reaches 16 rather
+  than the A/B's 17: `calendar.ts::mname(m: number): string` returns a string
+  and is left uncertified on purpose.
+
+The predicate lives in its own module rather than in `src/codegen/index.ts`
+because the LOC-budget gate explicitly asks for that; the remaining +2 LOC /
++1 func-line in `index.ts` (one import, one early return) is irreducible —
+`legacyCallerAbiIsProjected` is a closure built inside `planIrOverlay` — and is
+granted in this file's `loc-budget-allow` / `func-budget-allow` frontmatter.
+
+**Standalone lane, before → after: 10 → 16 IR bodies** (`algorithms.ts` 0 → 3:
+`fibIter`, `binarySearch`, `quicksort`; `calendar.ts` 0 → 3: `dimOf`, `fdow`,
+`priceOf`). `select/call-graph-closure` fell 10 → 4. The baseline is ratcheted
+to the post-fix numbers. The single-host lane is unaffected (still 37/37,
+READY) — `jsHostExterns` is true there, so `demoteOnLegacyCaller` is false and
+the new predicate is never consulted.
+
+**Descoped, with reasons:**
+
+- **Fast-mode lane (plan item 4)** — not added. Adding a third lane is
+  mechanical now that `observeLane` is generic, but it needs its own honest
+  measurement pass and its own blocker triage, and the budget went to the
+  standalone blocker instead. Deliberately left rather than added unmeasured.
+- **The remaining 21 standalone unsupported units** are genuine per-shape gaps,
+  not this gate: 11 `body-shape-rejected` (`main`/`renderCal`/`el`/`fibMemo` —
+  console/DOM/`Map` bodies), 4 `async-function`, 4 residual
+  `call-graph-closure`, 1 `date-constructor-unsupported`, 1
+  `primitive-method-unsupported` (`joinNums`, f64 `.toString()`). Each needs
+  real standalone lowering; none is a mode-gating bug.
+- **String-return certification** (`mname`) — the one A/B-proven remaining unit
+  reachable via this gate. It needs a `nativeStrings`-aware carrier proof that
+  belongs with the string-ABI work, not here.
+- **The `legacyBodyEmitted` ceiling stays at 27.** The six newly-IR units are
+  IR-**emitted** (the overlay patches a legacy-created slot), not
+  **compile-once** — they still emit a legacy body first. Per this epic's own
+  Terms that is a real but lesser tier, and the baseline records it honestly
+  rather than implying compile-once ownership the lane does not have.
+
+### Test Results (fable, 2026-08-15)
+
+Measured in worktree `agent-a560da37ac458f0fa` on main @ `7add6938`.
+
+| Gate                                                | Result                                                                                                                                                                                                          |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run typecheck` (ts7, the CI gate)              | **clean**                                                                                                                                                                                                       |
+| `npx tsc --noEmit` (legacy tsc)                     | environmental failure only — `@types/node` is unresolvable through this worktree's symlinked `node_modules`; every error is `Cannot find name 'process'/'require'/'__filename'` in files this change never touches |
+| `pnpm run check:ir-only`                            | **2 lanes reported**; single-host 37/37 IR, 0 legacy, **READY**; standalone 16 IR / 27 legacy / 21 unsupported / 0 invariants, ratcheted; verdict **READY**                                                    |
+| `pnpm run check:ir-fallbacks`                       | **OK** — unintended (none), post-claim demotions (none), module-level (none)                                                                                                                                    |
+| `npm run check:loc-budget`                          | OK — +2 in `src/codegen/index.ts`, granted by this file                                                                                                                                                         |
+| `npm run check:func-budget`                         | OK — +1 in `planIrOverlay`, granted by this file                                                                                                                                                                |
+| `npm run check:oracle-ratchet`                      | OK — `getTypeAtLocation +0`, `ctx.checker +0` (the new module makes no checker call)                                                                                                                            |
+| `biome lint` (changed files)                        | clean                                                                                                                                                                                                           |
+| `tests/issue-3519-ir-only-gate.test.ts`             | **14/14 pass**, including 5 new per-lane-readiness tests                                                                                                                                                        |
+| `scripts/equivalence-gate.mjs`, shards **1–8 of 8** | **no new equivalence regressions** in any shard                                                                                                                                                                 |
+
+Standalone runtime probes (`.tmp/`, gitignored):
+
+- `algorithms.ts` compiles standalone, and the binary **instantiates and
+  `main()` runs without trapping**.
+- A dedicated fixture exercising the three certified shapes (`fibIter`,
+  `binarySearch`, `quicksort`, plus a `boolean`-returning `isEven`) reached
+  from an intentionally **unclaimed** caller returns `55414`, matching the
+  hand-computed JS expectation — and returns the **identical** value on
+  unmodified main. The change moves work from the direct path to IR without
+  changing observable behaviour.
+
+**Every test failure encountered was A/B'd against unmodified `main` and is
+pre-existing.** Nothing in this change set regressed any of them:
+
+- `tests/es5-standalone*` (26 files): 5 failures — harness self-tests ×3,
+  descriptor bags, array-semantics dynamic HOF lane. Identical on baseline.
+- `issue-1712-standalone` (the acorn case #4186 documents as red on main),
+  `issue-3436-standalone-prelude-leak`, `issue-3673-standalone-gaps`,
+  `issue-4034-standalone-prelude-size`: 4 failures. Identical on baseline.
+- `issue-3520-ir-unit-identity`, `issue-3522-ir-class-compile-once` (×2,
+  including its standalone-lane case),
+  `issue-3522-ir-cross-owner-free-function`: 4 failures. Identical on baseline.
+- `issue-1654-wasi-dataview-arraybuffer`: 3 failures. Identical on baseline.
+
+The equivalence shards additionally reported **7 baseline failures that now
+PASS** (`coercion-arithmetic-add` ×3, `math-pow-test262-pattern`,
+`issue-1197`, `symbol-basic` ×2). These are **not** attributable to this
+change: `math-pow-test262-pattern`, `coercion-arithmetic-add` and `issue-1197`
+were each re-run on unmodified `main` and pass there too. The equivalence
+baseline is simply stale; ratcheting it is out of scope here.
+
+Full test262 was **not** run (per instruction). The standalone-floor / net
+guards (#1897/#2097) run in the `merge_group` and remain the authoritative
+check on this change's standalone conformance effect.
