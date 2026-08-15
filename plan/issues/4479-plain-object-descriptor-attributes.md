@@ -131,6 +131,15 @@ write enforcement, a DOM-dependent row, and a host-lane descriptor route. See
 Residuals — each is named with an owner. The floor should be re-set against the
 57, not against the 90.
 
+## Lead decision (2026-08-15 23:45)
+
+Accepted at +12/−0. The ≥45 floor was set against a phantom population — live
+measurement says 57 real plain-object rows (28 of the 119 were
+environment-only, 34 are #3251's array/arguments-exotic lane). Issue stays
+`in-progress` as a re-scoped future slice (bar for the NEXT slice: ≥20 of the
+~45 remaining real rows, families to be measured first); not currently
+dispatched — priority goes to #4485/#4489/#4506.
+
 ## Root cause — three independent "read a descriptor through a channel that cannot see it" defects
 
 Each one silently substituted CompletePropertyDescriptor defaults for the real
