@@ -211,7 +211,43 @@ only surfaced on the sweep — the read spelling matters.)
 rather than a wrong answer — split out as **#4498** (allocation policy, blast
 radius over every array grow path).
 
-### Step 5 — where the D-a store is lost (localisation for the fix)
+### Step 6 — CORRECTION: the store is NOT lost. Step 5 below was wrong.
+
+Step 5 (kept underneath, struck through in effect) concluded the numeric
+non-index define never lands. **Measured, that is false** — the store works and
+only READS are blind. On `var a = []; Object.defineProperty(a, "4294967295",
+{value:7,w/e/c:true})`:
+
+| query | answer | |
+| ----- | ------ | - |
+| `Object.getOwnPropertyDescriptor(a, K)` | `{value: 7, …}` | ✅ stored |
+| `Object.getOwnPropertyNames(a)` | includes `"4294967295"` | ✅ |
+| `"4294967295" in a` | `true` | ✅ |
+| `Object.hasOwn(a, K)` | `true` | ✅ |
+| `a.hasOwnProperty(K)` | **`false`** | ❌ |
+| `Object.prototype.hasOwnProperty.call(a, K)` | **`false`** | ❌ |
+| `a[4294967295]` / `a["4294967295"]` | **miss** | ❌ |
+| same key on a PLAIN OBJECT | both correct | ✅ control |
+| `a.hasOwnProperty("foo")` (ordinary name, array) | `true` | ✅ control |
+
+So the defect is **entirely read-side, and specific to a NUMERIC-LIKE key on a
+vec receiver**: ordinary names on the same receiver are fine, the same key on a
+plain object is fine, and `Object.hasOwn` — a different native — already answers
+correctly on the very receiver `__hasOwnProperty` gets wrong.
+
+**Single target.** A numeric-like key on a vec routes into the INDEXED lane
+(that is what `markNumericLikeNamedKey`, #4434, arms it for). For a key that is
+canonical-numeric but NOT an array index the parsed index is `-1`, the indexed
+lane has nothing, and `__hasOwnProperty` + the element read answer "absent"
+instead of falling through to the companion/bag. `Object.hasOwn`, `gOPD` and
+`getOwnPropertyNames` already have that fall-through; `__hasOwnProperty` and the
+element read do not. Fix = give those two the same fall-through, which is a
+strictly narrower change than the store-side one Step 5 proposed.
+
+Corollary for the slice's original framing: component **(2) "the ≥2^32-1 store
+path" does not exist as a defect**. The whole D-a slice is component (1).
+
+### Step 5 — where the D-a store is lost (SUPERSEDED by Step 6 above)
 
 The substrate is NOT missing: #3251 built a full standalone array-descriptor
 OVERLAY (`vec-overlay.ts`) — each vec receiver targeted by a descriptor op gets
