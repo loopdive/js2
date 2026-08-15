@@ -5657,7 +5657,8 @@
           },
           "standalone": {}
         }
-      }
+      },
+      "recordedIn": "e3f8973ef080fe26abd40463a88d9443353fe2d1"
     },
     {
       "generatedAt": "2026-08-14T16:56:07.998Z",
@@ -5732,6 +5733,85 @@
         "lit": {
           "jsHost": {
             "dynamic": 0.009562108283502293
+          },
+          "standalone": {}
+        }
+      },
+      "recordedIn": "6786c1cf617c7d5b7d84991cc0d3f8b5d98e0c0c"
+    },
+    {
+      "generatedAt": "2026-08-14T19:11:28.344Z",
+      "sourceRevision": "e3f8973ef080fe26abd40463a88d9443353fe2d1",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0029050868033358877
+          },
+          "standalone": {
+            "static": 106351.10323946488,
+            "dynamic": 0.12151779835255432
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.002146711613803332
+          },
+          "standalone": {
+            "static": 659.5603498515073,
+            "dynamic": 0.2552977253049632
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.0874130381734726
+          },
+          "standalone": {
+            "static": 17.613477225767642,
+            "dynamic": 0.17582564050151434
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.009501949810655623
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-08-14T20:18:00.411Z",
+      "sourceRevision": "6786c1cf617c7d5b7d84991cc0d3f8b5d98e0c0c",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.003394609255256979
+          },
+          "standalone": {
+            "static": 79180.0508351549,
+            "dynamic": 0.14678997541281374
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0018196464562046427
+          },
+          "standalone": {
+            "static": 542.9312175607829,
+            "dynamic": 0.2647743674865384
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.08713354242575885
+          },
+          "standalone": {
+            "static": 15.489341988335836,
+            "dynamic": 0.1748895461887422
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.01067595698302657
           },
           "standalone": {}
         }
