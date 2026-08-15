@@ -1118,6 +1118,17 @@ export function selectR2PreparedOwnerComponents(input: {
       const crossesOwnership =
         callEdges.calleesFromUnownedCallers.has(unitId) ||
         [...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => !candidates.has(calleeUnitId)) ||
+        // (#4494) claim ⇔ PREPARABILITY parity. `new C()` makes this owner
+        // execute `C`'s explicit constructor chain, and sealing records that as
+        // an exact unit-bound dependency. Withdrawing the constructing owner
+        // here — before it can claim — is a clean per-unit demotion; leaving it
+        // in produces a component that always fails closed on
+        // `foreign-source-unit` and degrades the whole prepared owner after the
+        // claim. Only this direction is checked: a constructor does not need its
+        // constructing callers co-prepared.
+        [...(callEdges.constructionCallees.get(unitId) ?? [])].some(
+          (constructedUnitId) => !candidates.has(constructedUnitId),
+        ) ||
         [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId));
       if (!crossesOwnership) continue;
       candidates.delete(unitId);
