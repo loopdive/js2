@@ -4900,9 +4900,14 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * value list is reordered to match.
  */
 function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
-  if (expr.properties.length === 0) {
-    throw new Error(`ir/from-ast: empty object literal not in slice 2 (${cx.funcName})`);
-  }
+  // #4471 — an empty literal is admitted only when the selector proved it
+  // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
+  // `object.new`. The property loop below is already a no-op at zero
+  // properties, so the empty case needs no arm of its own: it falls through to
+  // `emitObjectNew({ fields: [] }, [])`, which the WasmGC/linear resolvers both
+  // register as an ordinary (fieldless) struct. `lowerOrdinaryToPrimitive-
+  // ObjectLiteral` returns null for a zero-property literal, so the
+  // valueOf/toString path is not entered.
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
   const built: { name: string; type: IrType; value: IrValueId }[] = [];
