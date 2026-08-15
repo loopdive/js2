@@ -1,0 +1,153 @@
+name: Arm merge-when-ready on eligible PRs
+
+# WHY (the #4520 livelock, 2026-08-15): auto-enqueue.yml enqueues a PR only when
+# its checks are all-green AT SWEEP TIME. On a busy evening every merge to main
+# knocked open PRs BEHIND, auto-refresh-prs restarted their ~10-min PR CI, and
+# main merged faster than a CI cycle — so #4520's checks were never all-green at
+# any sweep and it cycled 70+ minutes without ever being enqueueable. GitHub's
+# native merge-when-ready (auto-merge) closes that race CATEGORICALLY: armed
+# once at PR-open time, GitHub itself adds the PR to the merge queue the instant
+# its requirements pass — continuous evaluation, no sweep to race, and the armed
+# state survives refresh pushes and check restarts. (The companion 2026-08-15
+# change to auto-refresh-prs.yml stops restarting in-flight CI, so checks
+# actually get to finish.)
+#
+# RELATIONSHIP TO auto-enqueue.yml: additive belt-and-suspenders, NOT a
+# replacement. The sweep still covers PRs that predate this workflow, PRs whose
+# arming GitHub dropped (it auto-disables auto-merge when a merge group fails —
+# which also means a parked PR canNOT re-enter the queue in a loop; the #2547
+# auto-park flow is unchanged), and the #3889 allowlist gap. This workflow
+# mirrors the sweep's author-trust and hold-label gates because native
+# auto-merge knows nothing about either.
+#
+# WHY ARMING AT OPEN TIME AVOIDS THE KNOWN --auto TRAP: `gh pr merge --auto`
+# no-ops on an already-green PR (documented in auto-enqueue.yml's header) — but
+# at PR-open/ready time the checks are still ahead, so there is always a
+# transition left to fire on. The already-clean race is handled below by
+# treating "clean status" errors as success: a green PR is the sweep's to take.
+#
+# SECURITY: pull_request_target grants secrets, so this job NEVER checks out or
+# executes PR code — it only reads event metadata and calls the merge API.
+# The author-trust gate (#2549 parity) arms only OWNER/MEMBER/COLLABORATOR PRs;
+# external-contributor PRs still require a deliberate maintainer act.
+#
+# HOLD LABELS: native auto-merge is label-blind, so `labeled` with a hold label
+# DISARMS (covers a manual hold set while CI is pending — auto-park's hold
+# arrives after GitHub already dequeued+disarmed, so no conflict there), and
+# `unlabeled` re-arms once no hold label remains. That makes the auto-park bot's
+# standing instruction — "fix the failure and remove the `hold` label to
+# re-enqueue" — literally true again with no manual enqueue step.
+#
+# TOKEN: the same GitHub App as auto-enqueue/auto-refresh. A distinct actor, so
+# the eventual queue entry fires merge_group events normally (GITHUB_TOKEN's
+# would not — the reason auto-refresh was once disabled).
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Per-PR single-flight; never cancel — a disarm must not be lost to a
+  # just-started arm run.
+  group: auto-arm-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ENQUEUE_APP_ID }}
+          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
+
+      - name: Arm or disarm merge-when-ready
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_NODE: ${{ github.event.pull_request.node_id }}
+          EVENT_ACTION: ${{ github.event.action }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+          # Label CURRENTLY on the PR (post-event snapshot), comma-joined.
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          # The label this event added/removed (empty for non-label events).
+          EVENT_LABEL: ${{ github.event.label.name }}
+        run: |
+          set -uo pipefail
+
+          # Mirrors HOLD_LABELS in scripts/enqueue-green-prs.mjs — keep in sync.
+          is_hold_label() {
+            case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+              hold|do-not-merge|"do not merge"|wip|blocked|stack-retarget-pending) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          has_hold() {
+            local IFS=',' l
+            for l in $LABELS; do is_hold_label "$l" && return 0; done
+            return 1
+          }
+
+          disarm() {
+            out=$(gh api graphql \
+              -f query='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' \
+              -f id="$PR_NODE" 2>&1) && { echo "disarmed #$PR"; return 0; }
+            # Not armed in the first place is a fine end state.
+            echo "disarm #$PR: $(printf '%s' "$out" | head -c 200)"
+            return 0
+          }
+
+          arm() {
+            out=$(gh api graphql \
+              -f query='mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE}) { clientMutationId } }' \
+              -f id="$PR_NODE" 2>&1) && { echo "armed merge-when-ready on #$PR"; return 0; }
+            if printf '%s' "$out" | grep -qi 'clean status'; then
+              # Already green: nothing left to arm on — auto-enqueue's sweep owns
+              # green PRs (its workflow_run trigger fires within ~a startup).
+              echo "#$PR already green — leaving to auto-enqueue sweep"
+              return 0
+            fi
+            if printf '%s' "$out" | grep -qi 'already enabled\|auto merge is enabled'; then
+              echo "#$PR already armed"
+              return 0
+            fi
+            echo "arm #$PR failed: $(printf '%s' "$out" | head -c 300)"
+            return 1
+          }
+
+          # --- event routing -------------------------------------------------
+          if [ "$EVENT_ACTION" = "labeled" ]; then
+            if [ -n "${EVENT_LABEL:-}" ] && is_hold_label "$EVENT_LABEL"; then
+              disarm; exit 0
+            fi
+            echo "non-hold label event — no-op"; exit 0
+          fi
+
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "draft — not arming (ready_for_review will re-fire)"; exit 0
+          fi
+          if has_hold; then
+            echo "hold label present — not arming"; exit 0
+          fi
+          case "$AUTHOR_ASSOC" in
+            OWNER|MEMBER|COLLABORATOR) ;;
+            *) echo "author association $AUTHOR_ASSOC — not arming (trust gate, #2549 parity)"; exit 0 ;;
+          esac
+
+          if [ "$EVENT_ACTION" = "unlabeled" ]; then
+            if [ -n "${EVENT_LABEL:-}" ] && is_hold_label "$EVENT_LABEL"; then
+              arm; exit $?
+            fi
+            echo "non-hold unlabel event — no-op"; exit 0
+          fi
+
+          # opened / reopened / ready_for_review
+          arm
