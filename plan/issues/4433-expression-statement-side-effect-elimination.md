@@ -162,12 +162,19 @@ taken arm, an un-invoked `(function () { … });` still runs no body, and
 propagates out of a bare statement (`f() instanceof 42;` → caught, was silently
 nothing).
 
-### test262 — exhaustive over the affected population
+### test262 — the affected population, in full
 
-`.tmp/find-affected.mts` enumerates every non-negative file in
-`test/language` + `test/built-ins` (47,533) holding a statement whose collection
-this change flips: **79 files**. All 79 were run before and after
-(`.tmp/run-batch.mts`, standalone lane):
+`.tmp/find-affected.mts` walks all 47,533 files of `test/language` +
+`test/built-ins` for statements whose collection this change flips. Under the
+final predicate that is **83 files: 25 with an ordinary frontmatter, 58 with a
+`negative:` one.** Both groups were run before and after (`.tmp/run-batch.mts`,
+standalone lane).
+
+**Group 1 — the 25.** Measured as part of a **79-file superset**: that list was
+built with the predicate's first cut, before `TaggedTemplateExpression` and bare
+`await` were removed, so it strictly contains the final 25 plus every file the
+narrowing dropped. Running the superset is what produced the evidence for the
+narrowing itself, so it is reported as run:
 
 | | pass | fail | compile_error | skip |
 | --- | --- | --- | --- | --- |
@@ -181,10 +188,39 @@ this change flips: **79 files**. All 79 were run before and after
 - `language/module-code/top-level-await/await-expr-regexp.js` pass → **fail**
   — see the residual below; its previous pass was vacuous.
 
+The single `skip` is `language/import/import-defer/…`, which `shouldSkip` skips
+**unconditionally** — verified in `tests/test262-runner.ts`, not assumed from a
+local run (see the correction below for why that distinction is load-bearing).
+
+**Group 2 — the 58 `negative:` files.** `pass 50 / fail 7 / compile_error 1`
+before, **identical** after: **no status change on any of the 58.** That is the
+expected direction — the change can only add evaluation, and a negative test is
+scored on whether an error is raised — but it is now measured rather than
+assumed.
+
 The `typeof` site is measured separately because it also fires inside function
 bodies, which the top-level scan cannot see: `.tmp/find-typeof-affected.mts`
 finds **3** affected files in the same corpus, and all three are byte-identical
 in status before and after (`pass`, `compile_error`, `pass`).
+
+#### Correction — this section originally claimed an exhaustiveness it did not have
+
+The first version of `find-affected.mts` carried `if (/negative:/.test(src))
+continue;`, and this section read "every non-negative file … **79 files** …
+exhaustive over the affected population". The filter was never justified: it was
+added to keep the 18k bare-`Identifier` / `PrivateIdentifier` atoms of the
+negative corpus out of the population, but those are excluded by
+`expressionRunsUserCode` anyway, so the filter did nothing except hide **58
+genuinely affected files** — 70% of the real population — behind a sentence that
+said "exhaustive".
+
+Caught by the #2916 lane's third instrument trap on that issue (a local `skip`
+read as evidence that CI skips the file), which prompted this audit rather than
+reporting it. The shared shape across all four incidents — two of theirs, my
+`top-level-await` one, this one — is a **claim about what the harness does,
+believed instead of measured**. A population filter is exactly such a claim, and
+the word "exhaustive" is what makes it dangerous: it tells the next reader not to
+re-check. The conclusion did not move; the warrant for it did.
 
 ### Suites
 
