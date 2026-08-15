@@ -3,9 +3,11 @@
 // (a real `$Promise`) observable via `.then` at all.
 //
 // Three coupled fixes, ALL gated on the native-`$Promise` carrier
-// (`isStandalonePromiseActive`, wasi-only today → widens to standalone in lockstep
-// at #2895 slice 1d), so the gc/host lane and the still-host-backed standalone
-// lane are byte-unchanged:
+// (`isStandalonePromiseActive`), so the gc/host lane is byte-unchanged.
+// (#2867 S2 correction, 2026-08-15: this said "wasi-only today → widens to
+// standalone in lockstep at #2895 slice 1d" and called standalone
+// "still-host-backed" — STALE. The widen landed with the #2980 flip on
+// 2026-07-10; standalone is on the carrier, and only gc/host is unchanged.)
 //
 //  1. async-frame.ts — a `throw` in an async body, OR a rejected await, settles the
 //     frame's result `$Promise` REJECTED (was: uncaught Wasm throw → trap / promise
