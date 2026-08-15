@@ -114,6 +114,7 @@ import {
   pushProgramAbiNestedFunctionDeclaration,
   pushProgramAbiTopLevelCallable,
 } from "./program-abi-source-callable-planning.js";
+import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-widening.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
@@ -2000,7 +2001,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // (externref-widened globals round-trip through __extern_get_idx,
     // which can't see typed vecs and returns null).
     // (#4204) `var x = 2; x = this` cannot live in the `(mut f64)` slot.
+    // (#4428) A binding rebound to arrays of disagreeing element domains keeps
+    // its vec slot but widens the ELEMENT type — a boxed carrier would preserve
+    // `x[0]`'s identity and lose `x.length`.
     return (
+      rebindWidenedArrayVecType(ctx, sourceFile, decl) ??
       heterogeneousWidenedModuleGlobalType(ctx, sourceFile, decl) ??
       inferStandaloneRegExpMatchGlobalType(ctx, decl) ??
       resolveWasmType(ctx, varType)
