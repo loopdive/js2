@@ -21,11 +21,15 @@ loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/expressions/calls.ts
   - src/codegen/expressions/extern.ts
   - src/codegen/index.ts
   - src/codegen/literals.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/property-access.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/declarations.ts::compileDeclarations
