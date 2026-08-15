@@ -144,6 +144,14 @@ measured, not inferred) · `check:oracle-ratchet` OK · `lint` OK ·
 `@types/node` noise under symlinked `node_modules`, zero in the changed files
 (base measured at 491 too).
 
+`equivalence-gate` — **all 8 shards run locally, all "no new equivalence
+regressions"**: 1,661 passing, 24 failing and every one already in
+`scripts/equivalence-baseline.json`. Shards 2 and 4 additionally report
+baseline entries that now PASS (coercion `+` under standalone-O, a
+`Math.pow` test262 pattern); those are from main advancing underneath the
+branch, not from this change, so the baseline is deliberately NOT ratcheted
+here.
+
 Pre-existing on `origin/main`, NOT caused by this change — verified by running
 the same suites against base copies of `select.ts` / `from-ast.ts`:
 `ir-scaffold` ×2, `issue-3529-selector-preclaim` ×4, `ir-nullish-coalesce` ×3.
