@@ -71,6 +71,7 @@ import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-ada
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
+import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -4619,6 +4620,8 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
+  const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
+  if (nativeString !== _MISS) return (nativeString as any)[key as any];
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
   // Passing callbackState lets a key with a WasmGC-closure valueOf / toString /
   // @@toPrimitive be dispatched (ToPropertyKey §7.1.19 → ToPrimitive §7.1.1);
@@ -5499,6 +5502,11 @@ function _readOwnDescriptor(
   prop: string | symbol,
   exports: Record<string, Function> | undefined,
 ): PropertyDescriptor | undefined {
+  if (prop === "length" && exports) {
+    const nativeString = _nativeStringToHost(obj, exports);
+    if (nativeString !== _MISS)
+      return { value: nativeString.length, writable: false, enumerable: false, configurable: false };
+  }
   // (#3200 slice 2) Delete tombstone FIRST: `delete obj[k]` on a struct
   // receiver records the key in `_wasmStructDeletedKeys` (#1334) but the
   // struct FIELD still exists, so the field-name-registry step below would
@@ -5808,112 +5816,11 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
   return _wrapForHost(v, exports);
 }
 
-/**
- * (#3123) Cached host bridges for compiled class methods resolved on
- * registered fnctor-subclass instances — identity-stable per (instance, key).
- */
-const _classMethodHostBridges = new WeakMap<object, Map<string, Function>>();
-
-/**
- * (#3123/#4507) Resolve a compiled CLASS method/getter on an opaque WasmGC
- * instance. Fnctor-subclass instances still use the same path, but ordinary
- * compiled classes are now covered when a dynamic host call names a method.
- * via the module's dispatch exports:
- *   - `__member_kind_<key>(recv)` → 0 none / 1 method / 2 getter;
- *   - kind 1 → an identity-stable host function bridging to the 0-arg tag
- *     dispatcher `__call_<key>(recv)` (the iterator protocol: `next()` /
- *     `return()`);
- *   - kind 2 → the getter's RESULT per [[Get]], marshaled host-usably (the
- *     map/filter `get next()` exhaustion shape returns a FRESH closure per
- *     read — do NOT cache).
- * Returns `_MISS` when the exports are absent or the struct carries neither.
- * The method bridge dispatches on the CAPTURED instance (correct for
- * `Call(nextMethod, iterator)` where nextMethod was read from that instance;
- * an extracted re-bind `f.call(other)` is out of scope — documented #3123).
- */
-// (#3673) Per-exports memo of `__member_kind_<key>` lookups. The exports object
-// of a large module (acorn: thousands of exports) is a dictionary-mode object,
-// and this lookup runs for EVERY dynamic property read on an fnctor instance —
-// the template-string + dict-miss cost was a measurable slice of parse CPU.
-// The exports object is immutable after instantiation, so a null (absent) or
-// function verdict per key is stable.
-const _memberKindFnCache = new WeakMap<object, Map<string, Function | null>>();
-
-function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<string, Function> | undefined): any {
-  if (exports === undefined || typeof key !== "string") return _MISS;
-  if (obj == null || typeof obj !== "object" || !_canBeWeakKey(obj)) return _MISS;
-  let kindCache = _memberKindFnCache.get(exports);
-  if (!kindCache) {
-    kindCache = new Map();
-    _memberKindFnCache.set(exports, kindCache);
-  }
-  let kindFn: Function | null | undefined = kindCache.get(key);
-  if (kindFn === undefined) {
-    const found = exports[`__member_kind_${key}`];
-    kindFn = typeof found === "function" ? found : null;
-    kindCache.set(key, kindFn);
-  }
-  if (kindFn === null) return _MISS;
-  let kind = 0;
-  try {
-    kind = kindFn(obj);
-  } catch {
-    return _MISS;
-  }
-  const cbState = { getExports: () => exports };
-  if (kind === 2) {
-    const getFn = exports[`__call_get_${key}`] as unknown as ((v: any) => any) | undefined;
-    if (typeof getFn !== "function") return _MISS;
-    return _marshalBridgeResult(getFn(obj), cbState);
-  }
-  if (kind === 1) {
-    let declaredArity = 0;
-    let hasRest = false;
-    const arityFn = exports[`__member_arity_${key}`] as unknown as ((v: any) => number) | undefined;
-    if (typeof arityFn === "function") {
-      try {
-        const observed = arityFn(obj);
-        if (Number.isInteger(observed) && observed < 0) hasRest = true;
-        else if (Number.isInteger(observed) && observed >= 0) declaredArity = observed;
-      } catch {
-        return _MISS;
-      }
-    }
-    const callFn = (hasRest
-      ? exports[`__class_call_${key}_vararg`]
-      : declaredArity > 0
-        ? exports[`__class_call_${key}_${declaredArity}`]
-        : exports[`__call_${key}`]) as unknown as ((v: any, ...args: any[]) => any) | undefined;
-    if (typeof callFn !== "function") return _MISS;
-    let map = _classMethodHostBridges.get(obj);
-    if (!map) {
-      map = new Map();
-      _classMethodHostBridges.set(obj, map);
-    }
-    let fn = map.get(key);
-    if (!fn) {
-      fn = function classMethodHostBridge(this: any, ...args: any[]) {
-        if (hasRest) {
-          // Vararg class bridges take the host argument list as one ordinary
-          // JS array and pack it into the method's hidden Wasm vector slot.
-          return _marshalBridgeResult(callFn(obj, args), cbState);
-        }
-        // WebAssembly supplies `null` for an omitted externref argument, but
-        // JavaScript default parameters are triggered by `undefined`. Pad
-        // under-applied dynamic calls explicitly so methods such as Marked's
-        // `parseInline(tokens, renderer = this.renderer)` preserve their
-        // ordinary JS call semantics at the host bridge.
-        const callArgs =
-          args.length < declaredArity ? args.concat(new Array(declaredArity - args.length).fill(undefined)) : args;
-        return _marshalBridgeResult(callFn(obj, ...callArgs), cbState);
-      };
-      Object.defineProperty(fn, "name", { value: key, configurable: true });
-      map.set(key, fn);
-    }
-    return fn;
-  }
-  return _MISS;
-}
+const _resolveClassMemberOnInstance = createClassMemberResolver({
+  miss: _MISS,
+  canBeWeakKey: _canBeWeakKey,
+  marshalBridgeResult: _marshalBridgeResult,
+});
 
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
@@ -10228,14 +10135,6 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {
-          // Native-string mode keeps strings as `(ref $AnyString)` inside
-          // Wasm.  A dynamic property read widens that carrier to externref;
-          // expose the host primitive before ordinary property lookup so
-          // `value.length`, indexed reads, and String prototype members use
-          // JavaScript string semantics instead of the carrier's opaque
-          // struct fields (#4507).
-          const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
-          if (nativeString !== _MISS) return (nativeString as any)[key as any];
           // (#2743 a) A registered arguments object is an ordinary Object whose
           // `[[Prototype]]` is %Object.prototype%. The vec is opaque to the
           // host, so resolve the inherited members it would otherwise miss:
@@ -10444,8 +10343,6 @@ assert._isSameValue = isSameValue;
         };
         return (obj: any) => {
           if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
-          const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
-          if (nativeString !== _MISS) return nativeString.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
@@ -12360,71 +12257,6 @@ assert._isSameValue = isSameValue;
           if (vecMutation.handled) return vecMutation.value;
 
           const fn = wrappedObj[method];
-          if (process.env.DEBUG_MARKED_BRIDGE === "1" && true) {
-            let closure = -1;
-            try {
-              const isClosure = exports?.__is_closure as ((v: any) => number) | undefined;
-              closure = typeof isClosure === "function" && _isWasmStruct(fn) ? isClosure(fn) : -2;
-            } catch {
-              closure = -3;
-            }
-            let rawField: unknown = "<none>";
-            try {
-              const getter = exports?.[`__sget_${method}`] as ((v: any) => any) | undefined;
-              rawField = typeof getter === "function" ? getter(obj) : "<no-getter>";
-            } catch (error) {
-              rawField = `getter:${String(error)}`;
-            }
-            console.error(
-              "[marked-bridge]",
-              method,
-              typeof obj,
-              _isWasmStruct(obj),
-              typeof fn,
-              _isWasmStruct(fn),
-              closure,
-              "raw",
-              typeof rawField,
-              _isWasmStruct(rawField),
-              "resolved",
-              (() => {
-                try {
-                  return _resolveHostField(obj, method, exports);
-                } catch (error) {
-                  return `resolve:${String(error)}`;
-                }
-              })(),
-              "sidecar",
-              (() => {
-                const side = _sidecarGet(obj, method);
-                let arity = -1;
-                try {
-                  const arityFn = exports?.__closure_arity as ((v: any) => number) | undefined;
-                  if (typeof arityFn === "function" && side != null && _isWasmStruct(side)) arity = arityFn(side);
-                } catch {
-                  arity = -2;
-                }
-                return { present: side !== undefined, struct: _isWasmStruct(side), arity };
-              })(),
-              "staticMethods",
-              typeof obj === "object" && obj !== null ? _staticMethodNames.get(obj) : undefined,
-              "memberKind",
-              (() => {
-                const kindFn = exports?.[`__member_kind_${method}`] as ((v: any) => number) | undefined;
-                try {
-                  return typeof kindFn === "function" ? kindFn(obj) : -1;
-                } catch {
-                  return -2;
-                }
-              })(),
-              "fields",
-              _getStructFieldNames(obj, exports),
-              "exportKeys",
-              Object.keys(exports ?? {}).filter((key) => key.includes("fn") || key.includes("struct_field")),
-              "exportCount",
-              Object.keys(exports ?? {}).length,
-            );
-          }
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
           // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
           // iterables before the native Array.from performs GetMethod(items,
@@ -12717,17 +12549,6 @@ assert._isSameValue = isSameValue;
           // the dispatch so the mutation reaches the vec (silent no-op before).
           const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
           const ret = fn.apply(dispatchRecv, wrappedArgs);
-          if (process.env.DEBUG_MARKED_BRIDGE === "1" && true) {
-            const nativeRet = _nativeStringToHost(ret, exports);
-            console.error(
-              "[marked-bridge-result]",
-              method,
-              typeof ret,
-              ret === null,
-              _isWasmStruct(ret),
-              nativeRet === _MISS ? "not-native-string" : String(nativeRet).slice(0, 80),
-            );
-          }
           reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
