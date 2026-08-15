@@ -165,9 +165,11 @@ Stay in `src/codegen/` (direct) until the listed issues land:
 
 `scripts/ir-fallback-baseline.json` is the ratchet. When a kind is
 adopted, its bucket goes to zero and the demote-to-warning escape hatch
-in `src/codegen/index.ts:~1889/~2390` is removed for that kind — see #2855.
+in `src/codegen/index.ts` is removed for that kind — see #2855.
 (Bucket-zero is necessary but **not sufficient** to make a reason a hard
-error via `STRICT_IR_REASONS`; see #3341 and the escape-hatch section below.)
+error via `STRICT_IR_REASONS`; see #3341 and the escape-hatch section below.
+The baseline's `postClaim` section is the same ratchet for failures AFTER
+the claim, gated by `STRICT_IR_POSTCLAIM_CODES`.)
 
 ## Current hidden bias in `src/ir/` (and what to do about it)
 
@@ -191,15 +193,30 @@ the `BackendEmitter` trait becomes linear-capable by implementation
 rather than by a separate front-end. The remaining inline WasmGC emission
 in `lower.ts` is staged under #1713.
 
-## The fallback-to-warning escape hatch (`src/codegen/index.ts:~1889/~2390`)
+## The fallback-to-warning escape hatch (`src/codegen/index.ts`)
 
 Today, if the IR path throws while compiling a function the selector
 claimed, the failure is logged at severity `"warning"` and the legacy
 direct-codegen body is kept. This makes the IR safe to enable by default
-without breaking test262, but it also masks real IR bugs. (Two sites:
-`~1889` when a selector-claimed function's types can't be resolved, and
-`~2390` for an IR-build throw — both gated by `STRICT_IR_REASONS` /
-`STRICT_IR_BUILD_ERRORS` respectively, which are empty today.)
+without breaking test262, but it also masks real IR bugs. Two sites — cited
+by **anchor, not line number**, because absolute line citations in this file
+have gone stale twice (`889-896`, then `~1889/~2390`) while the code moved:
+
+- the `catch` around the per-claim override-map build in `planIrOverlay`,
+  which emits `IR path: could not resolve types for <name>` at `"warning"`
+  and records a `type-resolution-unsupported` / `resolve` preparation
+  failure (the #1921 contract);
+- `formatIrPathFallbackDiagnostic`, consumed by `consumeIrOverlayReport`
+  for every `IrIntegrationError` in the integration report — an IR
+  build/verify/lower throw.
+
+Three sets gate promotion out of that channel: `STRICT_IR_REASONS`
+(selector rejections — empty, and correctly so),
+`STRICT_IR_BUILD_ERRORS` (#3341 Slice B — the name-repoint invariants,
+non-empty), and `STRICT_IR_POSTCLAIM_CODES` (#3341 Slice C — typed
+`unsupported` codes whose post-claim arm restates a gate the selector
+already applied; non-empty, see `plan/log/ir-adoption.md`'s post-claim
+table for the per-code classification).
 
 **This is a transitional safety net, not the final design.** #2855 phases
 the warning channel out. The endgame: when a node kind is IR-owned, the

@@ -351,6 +351,25 @@ export function fnMetaSlot(
 ): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } | undefined {
   const meta = fnInstanceMetaOf(ctx, decl);
   if (meta === undefined) return undefined;
+  return fnMetaSlotOfMeta(ctx, meta);
+}
+
+/**
+ * (#4440) The same pair for a metadata value the caller resolved itself.
+ *
+ * `fnMetaSlot` reads §10.2.9 off the declaration, which is the right answer for
+ * a function declaration/expression/arrow but NOT for a method: a method's name
+ * carries the `get `/`set ` prefix and comes from a property KEY, and the walk
+ * that decides it lives in `function-instance-meta-methods.ts`. Exposing the
+ * materialization half separately lets that module reuse the interning global
+ * and the field definition verbatim instead of duplicating them — so a method's
+ * `{name, length}` lands in the SAME per-`<length>:<name>` module global as an
+ * identically-shaped function's, and the two can never disagree about layout.
+ */
+export function fnMetaSlotOfMeta(
+  ctx: CodegenContext,
+  meta: FnInstanceMeta,
+): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } {
   return {
     field: fnMetaField(ctx),
     init: pushFnInstanceMetaValueInstrs(ctx, meta),

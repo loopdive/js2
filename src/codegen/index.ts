@@ -60,6 +60,8 @@ import {
   IrUnsupportedError,
   type IrObservedOutcome,
   type IrPreparationFailure,
+  type IrPreparationStage,
+  type IrUnsupportedCode,
 } from "../ir/outcomes.js";
 import {
   effectiveIrParamTypeNode,
@@ -395,6 +397,7 @@ import {
   compileDeclarations,
   createUnifiedCollectorState,
   finalizeUnifiedCollector,
+  functionReturnsDynamicObjectCarrier,
   preallocateModuleInitCallable,
   unifiedVisitNode,
 } from "./declarations.js";
@@ -1953,6 +1956,96 @@ const STRICT_IR_REASONS: ReadonlySet<IrFallbackReason> = new Set<IrFallbackReaso
 //   "call-graph-closure",
 //   "body-shape-rejected",
 
+// ---------------------------------------------------------------------------
+// (#3341 Slice C) STRICT POST-CLAIM CODES — the promotion vector that works.
+//
+// `STRICT_IR_REASONS` above governs SELECTOR rejections and is correctly empty:
+// a selector reason names a construct the IR may legitimately decline before
+// claiming. This set governs the other side of the claim boundary: a unit the
+// selector ALREADY CLAIMED that then fails, carrying a typed `IrUnsupportedCode`
+// at a post-claim `stage`. There the demote is only legitimate when it is a
+// documented capability gap; when the failing arm restates a condition the
+// selector's OWN gate already decided, firing it post-claim is a
+// selector<->builder desync (a compiler bug), and the demote hides it.
+//
+// PROMOTION BAR — all four, per the Slice C re-spec. Corpus-zero alone is
+// explicitly NOT sufficient (that premise is what this issue was re-scoped to
+// correct, and what forced the #3565/#3784/#4035 narrowings of Slice B):
+//   1. every LIVE throw site for the code at a post-claim stage restates a
+//      predicate the selector already evaluated, using the SAME shared helper
+//      (not a parallel re-implementation) — so a valid program cannot reach it;
+//   2. zero in `scripts/ir-fallback-baseline.json`'s `postClaim` section;
+//   3. zero on a test262-scale stride sweep through production `compile()`;
+//   4. documented in plan/log/ir-adoption.md as "IR must always handle".
+//
+// STAGE SCOPE (`isStrictIrPostClaimStage`) is `build`/`verify`/`lower`/
+// `backend-legality` — exactly the four `postClaim` baseline buckets. `select`
+// is pre-claim and belongs to `STRICT_IR_REASONS`. `resolve` is deliberately
+// OUT: it is where the claim is withdrawn during preparation, and it carries
+// the #1921 contract (`type-resolution-unsupported`, ~2690 below) plus
+// `abi-signature-parity` / `late-preparation-unsupported` / `new-target-
+// threading` — all designed withdrawals that keep a working legacy body.
+//
+// NEVER PROMOTE (documented demote-to-legacy contracts; citations kept so a
+// future author does not re-run the #3565 mistake):
+//   - `element-store-unsupported`, `element-access-unsupported`,
+//     `return-type-legacy-coupling`, `compound-assign-unsupported` — the four
+//     #3565-restored contracts (see src/ir/outcomes.ts).
+//   - `type-resolution-unsupported` at `resolve` — the #1921 contract; a
+//     class-typed cross-function return the IR cannot represent is a
+//     capability gap, and hard-failing it regresses real programs.
+//   - `unboxed-number-local-unprovable` (#3784), `throw-value-unsupported` and
+//     `unknown-class-construction` (#4035) — same class, found later.
+//   - `body-shape-rejected` at build: one of its two post-claim arms
+//     (`dynamicForInPlan` absent, from-ast.ts) is a REAL capability gap on the
+//     linear backend, whose resolver does not supply that plan.
+//   - `array-representation-unsupported`: three of its four arms mirror the
+//     selector's holey-Array gate, but the fourth (widening/heterogeneous sink,
+//     from-ast.ts ~4229) is a deliberate demote to the safe boxed lowering.
+//   - `constructor-arity-unsupported` at build: `new Number()` / `new Boolean()`
+//     reach it with no selector arity gate for primitive wrappers.
+//
+// Measured 2026-08-15 on this branch (post-#2951/#2952/#3583/#3518 wave):
+// corpus `postClaim` = all buckets empty; test262 stride-40 sweep = 1340 files
+// compiled, THREE post-claim rows total, none of them a promoted code
+// (`module-init-legacy-coupling`@build 1, `abi-signature-parity`@resolve 1,
+// and one `unexpected-internal-throw` invariant that already hard-errors).
+// ---------------------------------------------------------------------------
+const STRICT_IR_POSTCLAIM_CODES: ReadonlySet<IrUnsupportedCode> = new Set<IrUnsupportedCode>([
+  // `class-member-unsupported` — its ONLY post-claim site (src/ir/integration.ts,
+  // the `isCtorMember` arm) demotes when `collectIrClassInstanceInitializers`
+  // returns undefined, i.e. the class has a dynamically computed instance-field
+  // name. The selector calls THAT EXACT helper first, in both the explicit-
+  // constructor gate and the implicit-constructor gate
+  // (`constructorFieldInitializersAreIrSafe`, src/ir/select.ts), and refuses
+  // the claim on the same undefined. One predicate, two call sites, same
+  // argument: a claimed constructor member cannot legitimately reach the build
+  // arm, so reaching it means the selector gate was bypassed or drifted.
+  // Sweep: 154 rejections at `select` (the contract working) and 0 at any
+  // post-claim stage.
+  "class-member-unsupported",
+]);
+
+/** The four `postClaim` baseline buckets; `select`/`resolve` are pre-commitment. */
+function isStrictIrPostClaimStage(stage: IrPreparationStage): boolean {
+  return stage === "build" || stage === "verify" || stage === "lower" || stage === "backend-legality";
+}
+
+/**
+ * (#3341 Slice C) True when a post-claim failure must be a HARD compile error
+ * rather than the usual demote-to-legacy warning. Scoped to typed `unsupported`
+ * outcomes: `invariant` outcomes are already hard-errored by
+ * `formatIrPathFallbackDiagnostic`, and widening this predicate to them would
+ * defeat the #680 target-omitted-host-import narrowing.
+ */
+export function isStrictIrPostClaimFailure(failure: IrPreparationFailure): boolean {
+  return (
+    failure.kind === "unsupported" &&
+    isStrictIrPostClaimStage(failure.stage) &&
+    STRICT_IR_POSTCLAIM_CODES.has(failure.code)
+  );
+}
+
 /**
  * (#3143) Escape-hatch check for default-ON env flags: only an explicit
  * `0`/`false` disables. Unset / empty / any other value means "default on".
@@ -2014,7 +2107,11 @@ export function formatIrPathFallbackDiagnostic(
   readonly severity: "error" | "warning";
 } {
   const body = `IR path failed for ${err.func}: ${err.message} [IR-FALLBACK]`;
-  const hard = err.outcome.kind === "invariant" && !isTargetOmittedHostImportInvariant(err, ctx);
+  const hard =
+    (err.outcome.kind === "invariant" && !isTargetOmittedHostImportInvariant(err, ctx)) ||
+    // (#3341 Slice C) A typed `unsupported` code whose post-claim arm restates a
+    // gate the selector already applied — see STRICT_IR_POSTCLAIM_CODES.
+    isStrictIrPostClaimFailure(err.outcome);
   return {
     message: hard ? `Codegen error: ${body}` : body,
     severity: hard ? "error" : "warning",
@@ -2450,7 +2547,14 @@ function planIrOverlay(
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
   };
   const legacyCallerAbiIsProjected = (declaration: ts.FunctionDeclaration): boolean => {
-    if (hasFullyAnnotatedScalarAbi(declaration)) return true;
+    // (#3518) The certified surface now includes `string` positions, whose
+    // carrier both front-ends derive from the SAME `ctx.nativeStrings` /
+    // `ctx.anyStrTypeIdx` pair. `functionReturnsDynamicObjectCarrier` is the one
+    // legacy return-carrier override that no annotation predicts, so it is
+    // handed in as evidence rather than re-derived.
+    if (hasFullyAnnotatedScalarAbi(declaration, { returnCarrierIsOverridden: functionReturnsDynamicObjectCarrier })) {
+      return true;
+    }
     const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
     const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
     if (
