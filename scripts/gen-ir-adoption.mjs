@@ -197,7 +197,7 @@ const SECTIONS = [
       [
         "`ObjectLiteralExpression`",
         "mixed",
-        "Non-empty `{ key: val, … }` and SHORTHAND `{ a }` lower (measured 2026-08-15, #3583). Empty `{}` rejects at `objectlit-empty` and computed keys at `objectlit-computed-key` — both still real. Re-owned from wont-fix #1131.",
+        "Non-empty `{ key: val, … }` and SHORTHAND `{ a }` lower (measured 2026-08-15, #3583). Empty `{}` claims only when INERT — an un-annotated local binding that is never referenced (#4471). A fieldless `object.new` lowers fine; what fails is any USE, since a zero-field shape serves no field access. The failing uses (property read/write, flow into a `dynamic` param, `typeof`, array element, `?:` test) fail identically for the non-empty claim, so they are the shared closed-object boundary, not an empty-specific one; the one empty-specific gap is a `{}` TypeNode, which `IrType.object` cannot express. Annotated `{}` bindings stay out — legacy gives those an open `$Object` or an expando-WIDENED struct. Computed keys still reject at `objectlit-computed-key`. Re-owned from wont-fix #1131.",
         "#3518",
       ],
       [

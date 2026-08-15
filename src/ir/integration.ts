@@ -1380,6 +1380,7 @@ export function compileIrPathFunctions(
         oracle: ctx.oracle,
         // #3765: share direct-codegen's grounded numeric-local oracle with IR.
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
+        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
       });
       const result = prepareSuspendingAsyncLowering(lowered, ownerUnitId, name, loweringPlans?.suspendingAsyncUnitIds);
       if (result.main.unitId !== ownerUnitId) {
@@ -1595,6 +1596,7 @@ export function compileIrPathFunctions(
           checker: ctx.checker,
           oracle: ctx.oracle,
           numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
+          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
         };
         let result: LoweredFunctionResult;
         if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
@@ -1795,6 +1797,7 @@ export function compileIrPathFunctions(
             checker: ctx.checker,
             oracle: ctx.oracle,
             numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
+            hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
           });
           if (result.main.unitId !== ownerUnitId) {
             throw new IrInvariantError(
@@ -1947,6 +1950,7 @@ export function compileIrPathFunctions(
         checker: ctx.checker,
         oracle: ctx.oracle,
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
+        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
       });
       if (result.main.unitId !== moduleInitUnitId) {
         throw new IrInvariantError(
