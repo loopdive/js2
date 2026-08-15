@@ -1384,9 +1384,40 @@ function compileNativeStringCompoundAssignment(
       }
     }
   } else if (rhsType.kind === "externref") {
-    // externref → ref $AnyString: convert + cast (e.g. host charAt result).
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    // externref → ref $AnyString. The value is usually already a native string
+    // (host charAt result), but a STRING-typed RHS can also be a String
+    // WRAPPER OBJECT — `x += new String("1")` types as String while the
+    // runtime value is the $Object wrapper, and the old unconditional
+    // `ref.cast` trapped with `illegal cast` (test262 S11.13.2_A4.4_T1.4).
+    // Test first; on a non-string, run the §7.1.17 walker `__extern_toString`
+    // (ToPrimitive → ToString — unwraps wrappers, stringifies objects).
+    const externToStrIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__extern_toString") : undefined;
+    if (externToStrIdx !== undefined) {
+      const extTmp = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: extTmp });
+      fctx.body.push({ op: "local.get", index: extTmp });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+        then: [
+          { op: "local.get", index: extTmp },
+          { op: "any.convert_extern" },
+          { op: "ref.cast_null", typeIdx: ctx.anyStrTypeIdx },
+        ],
+        else: [
+          { op: "local.get", index: extTmp },
+          { op: "call", funcIdx: externToStrIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast_null", typeIdx: ctx.anyStrTypeIdx },
+        ],
+      });
+      releaseTempLocal(fctx, extTmp);
+    } else {
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    }
   }
 
   // Call __str_concat — returns ref $AnyString
