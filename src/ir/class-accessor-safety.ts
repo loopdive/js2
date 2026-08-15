@@ -81,6 +81,15 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * the containing frame. Body capture/type safety remains the structural
  * selector's responsibility, and the identity selector admits the class only
  * when every body-bearing member claims atomically.
+ *
+ * #3522 — the constructor may be IMPLICIT. An absent constructor on a class
+ * with no heritage and no initialized fields has exactly the same inert
+ * definition evaluation as an explicit empty one, and the synthesized
+ * `_new`/`_init` support pair is already the sole allocation implementation
+ * for that shape at top level (2026-08-12 plain implicit-constructor
+ * checkpoint). Admitting zero here does NOT admit an implicit DERIVED
+ * constructor: `heritageClauses` is rejected above, so no forwarding chain and
+ * no shadow-identity inheritance surface is reachable from this predicate.
  */
 export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
@@ -118,7 +127,7 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
     }
     return false;
   }
-  return constructorCount === 1 && methodCount > 0;
+  return constructorCount <= 1 && methodCount > 0;
 }
 
 /**
