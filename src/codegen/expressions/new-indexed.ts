@@ -602,6 +602,34 @@ export function tryCompileIndexedBuiltinNew(
     }
 
     if (args.length === 1) {
+      // §23.1.1.1 step 5 (ES5 §15.4.2.2): a single argument is a LENGTH only
+      // when it is a Number. `new Array(null)` / `new Array("1")` / `new
+      // Array(new Number(0))` construct the one-element array `[arg]` with
+      // length 1 (test262 S15.4.2.2_A2.3_T1–T4). The length lowering below
+      // compiled the arg with an f64 hint (ToNumber), silently turning those
+      // into empty length-coerced arrays. Provably-non-number args (the tag is
+      // static and ≠ number) take the one-element path; `mixed` (any-typed)
+      // args keep the historical length behavior.
+      const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
+      if (argTag !== "number" && argTag !== "mixed") {
+        let oneVecIdx = vecTypeIdx;
+        let oneArrIdx = arrTypeIdx;
+        if (elemWasm.kind !== "externref") {
+          oneVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+          oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
+        }
+        compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+        fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
+        const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: oneArrIdx,
+        });
+        fctx.body.push({ op: "local.set", index: oneData });
+        fctx.body.push({ op: "i32.const", value: 1 });
+        fctx.body.push({ op: "local.get", index: oneData });
+        fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
+        return { kind: "ref_null", typeIdx: oneVecIdx };
+      }
       // new Array(n) → array with capacity n, length 0
       // For test262 patterns like `var a = new Array(16); a[0] = x;`
       // we create an array of size n with default values and set length to n
