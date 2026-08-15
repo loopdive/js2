@@ -190,10 +190,23 @@ function buildTrampolineThisSlot(
  * Reconcile the receiver produced by {@link buildTrampolineThisSlot} with the
  * actual first parameter of the method.  The trampoline's receiver is always
  * the nullable object-struct reference used by the closure ABI, but late type
- * resolution can leave a method's hidden `this` parameter as `externref` (or a
- * different reference carrier).  Passing the struct reference directly in
- * that case makes the generated `call` fail Wasm validation.  Keep this at the
- * ABI boundary instead of weakening validation or relying on stack fixups.
+ * resolution can leave a method's hidden `this` parameter on a DIFFERENT
+ * reference carrier (`externref`/`anyref`).  Passing the struct reference
+ * directly in that case makes the generated `call` fail Wasm validation.  Keep
+ * this at the ABI boundary instead of weakening validation or relying on stack
+ * fixups.
+ *
+ * (#4469) The reconciliation is deliberately limited to a CROSS-CARRIER
+ * mismatch.  `ref`/`ref_null` are the same carrier family and differ only in
+ * nullability, and {@link buildTrampolineThisSlot} emits a null receiver ON
+ * PURPOSE: the #2025 passthrough hands `ref.null` to the method whenever the
+ * resolved `this` is non-null but does not `ref.test` as this exact struct
+ * (a foreign receiver, e.g. `this.#m.call({})`).  Bridging `ref_null $S` to
+ * `ref $S` there means `ref.as_non_null`, which turns that designed
+ * passthrough into an UNCATCHABLE `null_deref` trap at the ABI boundary —
+ * before the method body (which may never touch `this` at all, as in
+ * `#m() { return super.method(); }`) gets to run.  Nullability is therefore
+ * settled by the callee's own signature, never by a cast here.
  */
 function coerceTrampolineThisSlot(
   ctx: CodegenContext,
@@ -209,14 +222,20 @@ function coerceTrampolineThisSlot(
   // provisional signature before the method body pass settles its ABI.
   if (!methodUsesThis) return;
   const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
-  if (source.kind === methodThisType.kind) {
-    // Same-kind references are already compatible when they name the same
-    // struct.  A distinct type index is handled by the existing method-arg
-    // reconciliation path; the receiver path should not add an unsafe cast
-    // for an unrelated object shape.
+  if (isStructRefCarrier(source) && isStructRefCarrier(methodThisType)) {
+    // Same carrier family.  Same struct ⇒ already compatible up to
+    // nullability, which must stay nullable (see the #4469 note above).  A
+    // distinct type index is handled by the existing method-arg reconciliation
+    // path; the receiver path should not add an unsafe cast for an unrelated
+    // object shape.
     return;
   }
   body.push(...coercionInstrs(ctx, source, methodThisType, fctx));
+}
+
+/** `ref` and `ref_null` are one carrier family — they differ only in nullability. */
+function isStructRefCarrier(type: ValType): boolean {
+  return type.kind === "ref" || type.kind === "ref_null";
 }
 
 /**
