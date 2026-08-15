@@ -2509,7 +2509,9 @@ export function lowerIrFunctionBody<S, Slot>(
           // `(externref, externref) → void`.
           importName = "__gen_push_ref";
         }
-        const fnIdx = resolver.resolveFunc(irRuntimeFuncRef(importName));
+        // #2951 — prefer the sealed provider so lowering consumes exactly the
+        // callable prepared-component dependency discovery proved.
+        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef(importName));
         // Stack: buffer, value → (void); call __gen_push_*.
         emitter.pushRaw(out, {
           op: "local.get",
@@ -2527,7 +2529,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.epilogue requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(irRuntimeFuncRef("__create_generator"));
+        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__create_generator"));
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2547,7 +2549,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.yieldStar requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(irRuntimeFuncRef("__gen_yield_star"));
+        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_yield_star"));
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2574,7 +2576,8 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.setReturn requires func.generatorBufferSlot (${func.name})`);
         }
-        const setReturnIdx = resolver.resolveFunc(irRuntimeFuncRef("__gen_set_return"));
+        const setReturnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_set_return"));
+        const boxRef = instr.boxProvider ?? irRuntimeFuncRef("__box_number");
         const valueT = asVal(typeOf(instr.value));
         // buffer (arg 0)
         emitter.pushRaw(out, {
@@ -2584,16 +2587,10 @@ export function lowerIrFunctionBody<S, Slot>(
         // value (arg 1), boxed to externref
         emitValue(instr.value, out);
         if (valueT?.kind === "f64") {
-          emitter.pushRaw(out, {
-            op: "call",
-            funcIdx: resolver.resolveFunc(irRuntimeFuncRef("__box_number")),
-          });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
         } else if (valueT?.kind === "i32") {
           emitter.pushRaw(out, { op: "f64.convert_i32_s" });
-          emitter.pushRaw(out, {
-            op: "call",
-            funcIdx: resolver.resolveFunc(irRuntimeFuncRef("__box_number")),
-          });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
         } else if (valueT?.kind === "ref" || valueT?.kind === "ref_null") {
           emitter.emitToExternref(out);
         }
