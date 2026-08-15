@@ -47,6 +47,36 @@
  *    a caller is judged too fat to inline on the strength of code that never
  *    runs.
  *
+ * 5. **A callee that CONTAINS a loop is not a loop-leaf.** Rule 1 estimates how
+ *    often a SITE runs; the loop-leaf rule then trades code growth for the call
+ *    sequence that site pays. That trade needs the callee's per-call cost to be
+ *    comparable to the call itself — true of a small straight-line leaf, false
+ *    the moment the callee carries a loop of its own, because then one call
+ *    covers the whole trip count and the overhead removed is a vanishing
+ *    fraction of it. What is NOT vanishing is the cost of moving that loop into
+ *    the caller: every value the CALLER holds live across a call of its own
+ *    lives in a stack slot (f64/v128 registers are caller-saved), and the
+ *    inlined loop then re-loads them on the back edge, per iteration, forever.
+ *    This is the same line Binaryen draws with "lightweight (no loops or
+ *    function calls)", reached from the cost side rather than the safety side.
+ *
+ *    Measured on the landing WASI host lane: its `fib` program is `export function
+ *    run(n)`, one `for` loop, ~30 instructions and a leaf — so it passed every
+ *    other loop-leaf test and was inlined into the benchmark's `warm` driver at
+ *    both of its sites. Cranelift then spilled `n`, `__best` and `__t0` (all
+ *    live across the driver's `performance.now()` calls) and reloaded three
+ *    xmm words inside the 20M-iteration inner loop: 12.44 ms -> 24.89 ms, a
+ *    lane that read 1.50x V8 turned into 0.76x. `array-sum` lost 34 % the same
+ *    way; `fib-recursive` (self-recursive, already declined) and `string-hash`
+ *    (not a leaf) were untouched, which is what identified the rule.
+ *
+ *    **Rule 5 gates `loop-leaf` only, NOT the `hot` rule** of entry (48), even
+ *    though `hot` is the same frequency-rule shape and would readmit exactly
+ *    this callee (the landing `fib` kernel clears `hotMax` comfortably). `hot`
+ *    is flag-gated OFF and still being measured; narrowing another lane's
+ *    in-flight experiment would invalidate its numbers. Whoever flips it on
+ *    owns deciding whether a loop-carrying callee belongs under it.
+ *
  * ## Correctness — what is proven and what is declined
  *
  * Inlining at the wasm level rewrites three things, and a wrong answer on any
@@ -157,7 +187,7 @@ export interface InlineOptions {
   adapters: boolean;
   /** Single-direct-caller user functions. */
   single: boolean;
-  /** Small leaf callees whose site sits inside a loop. */
+  /** Small loop-free leaf callees whose site sits inside a loop (rules 1 + 5). */
   loop: boolean;
   /**
    * (#4157 entry 48) Small HOT callees regardless of caller count or leaf-ness
@@ -431,6 +461,7 @@ export type DeclineReason =
   | "import"
   | "budget"
   | "growth-cap"
+  | "loop-in-callee"
   | "no-rule";
 
 function calleeIsSafe(fn: WasmFunction, results: ValType[]): DeclineReason | null {
@@ -723,6 +754,8 @@ interface CalleeFacts {
   rawSize: number;
   effSize: number;
   isLeaf: boolean;
+  /** Rule 5 — the callee's own body contains a `loop`. See `hasLoop`. */
+  loops: boolean;
 }
 
 /**
@@ -920,6 +953,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
             rawSize: countInstrs(calleeBody),
             effSize: effectiveSize(calleeBody),
             isLeaf: !hasCall(calleeBody),
+            loops: hasLoop(calleeBody),
           };
           calleeFacts.set(cp, facts);
         }
@@ -955,32 +989,40 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // A hotter site earns a larger body budget — one extra `loopMax` per
         // decade of estimated frequency.
         const loopBudget = opts.loopMax * Math.max(1, Math.log10(weight));
+        // Everything the loop-leaf rule asks EXCEPT rule 5, so the near-miss
+        // below can name the one callee the rule turned away on cost grounds.
+        const loopLeafFits = opts.loop && weight >= LOOP_WEIGHT && isLeaf && effSize <= loopBudget;
 
         let rule: string | null = null;
         if (opts.adapters && isAdapter(callee.name)) rule = "adapter";
         else if (opts.specialise && specSize <= siteCost) rule = "specialised";
         else if (opts.single && callerCount[cp] === 1 && !addressTaken[cp] && effSize <= opts.singleMax)
           rule = "single-caller";
-        else if (opts.loop && weight >= LOOP_WEIGHT && isLeaf && effSize <= loopBudget) rule = "loop-leaf";
+        else if (loopLeafFits && !facts.loops) rule = "loop-leaf";
         // (#4157 entry 48) `hot` — the no-rule hole. Same hotness bar and
         // weight-scaled budget as loop-leaf, but caller count and leaf-ness do
         // not gate: nested calls in the copy stay calls (no chaining in one
         // pass), and multi-caller only means the body is copied at more than
         // one site, which is exactly what the growth cap is for.
+        // Rule 5 deliberately does NOT gate this one — see the module header.
         else if (opts.hot && weight >= LOOP_WEIGHT && effSize <= opts.hotMax * Math.max(1, Math.log10(weight)))
           rule = "hot";
 
         if (!rule) {
+          // Rule 5's near-miss gets its own name: "no-rule" would hide the one
+          // decline whose CAUSE is a cost-model judgement rather than a missing
+          // rule, and this bucket is how a future retune prices it.
+          const reason = loopLeafFits && facts.loops ? "loop-in-callee" : "no-rule";
           // Verbose: carry the per-callee facts in the key — they are
           // per-callee constants, so identical strings aggregate and the
           // report shows WHY each hot candidate missed every rule.
           if (opts.verbose)
             bump(
               stats.declinedCallees,
-              `${callee.name} no-rule eff=${effSize} leaf=${isLeaf ? 1 : 0} callers=${callerCount[cp]}`,
+              `${callee.name} ${reason} eff=${effSize} leaf=${isLeaf ? 1 : 0} callers=${callerCount[cp]}`,
             );
-          bump(stats.declines, "no-rule");
-          bump(stats.declines, `${calleeFamily(callee.name)}:no-rule`);
+          bump(stats.declines, reason);
+          bump(stats.declines, `${calleeFamily(callee.name)}:${reason}`);
           continue;
         }
         if (growth + rawSize > opts.growth) {
@@ -1059,6 +1101,18 @@ function hasCall(body: Instr[]): boolean {
   let found = false;
   forEachInstr(body, (i) => {
     if (i.op === "call" || i.op === "call_ref" || i.op === "call_indirect") found = true;
+  });
+  return found;
+}
+
+/**
+ * Rule 5 — does the callee's own body contain a `loop`? See the module header
+ * for why a loop-carrying callee is excluded from the loop-leaf rule.
+ */
+function hasLoop(body: Instr[]): boolean {
+  let found = false;
+  forEachInstr(body, (i) => {
+    if (i.op === "loop") found = true;
   });
   return found;
 }

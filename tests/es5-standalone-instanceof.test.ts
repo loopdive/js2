@@ -75,27 +75,36 @@ describe("#2916 — host-free instanceof in standalone", () => {
     // `interface Function` with NO call signature, so a naive
     // "no signatures ⇒ not callable" test would emit an unconditional TypeError
     // for a real function value — a WRONG answer, not a missed conversion.
-    // The observable proof that the rule DECLINED is that the shape keeps the
-    // documented-not-covered host predicate (a runtime `.prototype` read off an
-    // arbitrary callable is not modelled yet), rather than becoming a throw.
-    const compiled = await compile(
-      `var f: Function = function(){};\nvar obj = {};\nexport function test(): number { return (obj instanceof (f as any)) ? 1 : 0; }\n`,
-      { allowJs: true, fileName: "fn-typed-rhs.ts", skipSemanticDiagnostics: true, target: "standalone" },
+    //
+    // The observable used to be the PRESENCE of `env::__instanceof_check`,
+    // i.e. exactly the leak #2916 Slice B retires. Same property, stated by the
+    // ANSWER instead: the operator evaluates to `false` (the documented residual
+    // for a closure RHS whose prototype object has no runtime edge) rather than
+    // throwing, and the binary is host-free.
+    const o = await run(
+      `var f: Function = function(){};\nvar obj = {};\n` +
+        `try { result = (obj instanceof (f as any)) ? 1 : 0; } catch (e) { result = 9; }`,
     );
-    expect(compiled.success).toBe(true);
-    const imports = (compiled.imports ?? []).map((i) => `${i.module}::${i.name}`);
-    expect(imports, "a Function-typed RHS must not be treated as non-callable").toContain("env::__instanceof_check");
+    expect(o.result, "a Function-typed RHS must not be treated as non-callable").toBe(0);
+    expect(o.imports).toEqual([]);
   });
 
   // The `S15.3.5.3_A1_T1…T8` RHS shape — a binding holding a `Function(…)`
   // value. Those tests run their RHS through the runtime-eval interpreter, so
-  // they cannot be executed here; the COMPILE-LEVEL property that keeps them
-  // correct is checkable instead. The §7.3.20-step-1 rule must DECLINE, leaving
-  // the host predicate in place — a `new Function(…)` initializer must never be
-  // mistaken for the "fresh ordinary object" it syntactically resembles. If the
-  // rule ever fired here it would emit an unconditional TypeError where the spec
-  // requires a plain `false`, and the failure would surface ONLY in a lane with
-  // the interpreter tier linked (`TEST262_FULL_RUNTIME_EVAL=1`).
+  // they cannot be executed here (a bare `WebAssembly.instantiate` has no
+  // `js2wasm:runtime-eval` module to link); the COMPILE-LEVEL property that
+  // keeps them correct is checkable instead. The §7.3.20-step-1 rule must
+  // DECLINE — a `new Function(…)` initializer must never be mistaken for the
+  // "fresh ordinary object" it syntactically resembles. If the rule ever fired
+  // here it would emit an unconditional TypeError where the spec requires a
+  // plain `false`, and the failure would surface ONLY in a lane with the
+  // interpreter tier linked (`TEST262_FULL_RUNTIME_EVAL=1`).
+  //
+  // The evidence is that the operator still routes to the §13.10.2 evaluator —
+  // `__instanceof_dynamic`, whose name survives into the WAT whether or not the
+  // inliner folds it into the caller. A fired rule emits an unconditional throw
+  // and never reaches that helper at all. (The pre-Slice-B spelling of this same
+  // evidence was "the host import is still there", which the substrate removed.)
   //
   // The LHS is an OBJECT on purpose: the upstream files spell it `1 instanceof
   // FACTORY`, which the #2998 statically-primitive-LHS fold answers `false`
@@ -109,13 +118,21 @@ describe("#2916 — host-free instanceof in standalone", () => {
     it(`declines the non-callable rule for an RHS ${name}`, async () => {
       const compiled = await compile(
         `${decl}\nvar obj = {};\nexport function test(): number { return (obj instanceof (FACTORY as any)) ? 1 : 0; }\n`,
-        { allowJs: true, fileName: "fnctor-rhs.ts", skipSemanticDiagnostics: true, target: "standalone" },
+        {
+          allowJs: true,
+          fileName: "fnctor-rhs.ts",
+          skipSemanticDiagnostics: true,
+          target: "standalone",
+          emitWat: true,
+        },
       );
       expect(compiled.success, compiled.errors.map((e) => e.message).join("; ")).toBe(true);
       const imports = (compiled.imports ?? []).map((i) => `${i.module}::${i.name}`);
-      expect(imports, "a Function(…)-valued RHS must not be treated as non-callable").toContain(
-        "env::__instanceof_check",
-      );
+      expect(imports, "the dynamic-RHS operator must stay host-free").toEqual([]);
+      expect(
+        (compiled as { wat?: string }).wat ?? "",
+        "a Function(…)-valued RHS must not be treated as non-callable",
+      ).toContain("instanceof_dynamic");
     });
   }
 
@@ -131,6 +148,130 @@ describe("#2916 — host-free instanceof in standalone", () => {
     // The alias rewrite must never capture a USER constructor (its `typeof F`
     // type is not an `XConstructor` interface) — #3962's native answer stands.
     const o = await run(`function F(){ this.x = 1; }\nvar f = new F();\nresult = (f instanceof F) ? 1 : 0;`);
+    expect(o.result).toBe(1);
+    expect(o.imports).toEqual([]);
+  });
+});
+
+/**
+ * (#2916 Slice B) The fully-dynamic RHS substrate — `native-dynamic-instanceof.ts`.
+ *
+ * Every case here reaches `emitDynamicInstanceOf` (no static rule can resolve
+ * the RHS), which used to be the sole remaining `env::__instanceof_check` site.
+ * Each asserts BOTH halves: the answer AND a zero-import binary.
+ *
+ * The `as any` on the RHS is load-bearing — it is what defeats every
+ * compile-time classification (the primitive-RHS throw, the builtin-alias
+ * rewrite, #3962's user-fnctor arm) and forces the dynamic path.
+ */
+describe("#2916 Slice B — fully-dynamic instanceof RHS, host-free", () => {
+  it("answers a runtime-null RHS `false` rather than throwing", async () => {
+    // Host dynamic-path parity (`runtime.ts:2353`). This backend still lowers
+    // some `Function(params, body)` forms to null, and `S15.3.5.3_A1_T1…T8`
+    // require `primitive instanceof FACTORY === false`, not a TypeError.
+    const o = await run(
+      `var C: any = null;\nvar obj: any = {};\n` +
+        `try { result = (obj instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result).toBe(0);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("does NOT throw for a RUNTIME-primitive RHS, even though §13.10.2 step 1 says TypeError", async () => {
+    // Pinned as a deliberate divergence, not an oversight. There is no sound
+    // runtime primitive test in this backend: an unmodelled builtin constructor
+    // is lowered to a boxed-primitive carrier, so the shared classifiers answer
+    // `typeof Int8Array === "boolean"` — see the sibling assertion below. A
+    // throw arm built on them mistakes real constructors for primitives, which
+    // is a WRONG answer observable in a `catch`; a conservative `false` is only
+    // a missed conversion.
+    //
+    // The provable cases are unaffected: a statically-primitive RHS still throws
+    // at codegen (asserted by the `S11.8.6_A6_*` family and #2702's tests).
+    const o = await run(
+      `var C: any = 42;\nvar obj: any = {};\n` +
+        `try { result = (obj instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result).toBe(0);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("does NOT throw for a builtin constructor reached dynamically", async () => {
+    // The measured wrong-throw that removed the arm above:
+    // `built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`
+    // answered "Right-hand side of 'instanceof' is not callable" where the host
+    // predicate answers `false`. `Int8Array`'s bare value classifies as
+    // `typeof "boolean"` standalone (a separate representation gap), so this
+    // shape is the direct regression pin for it.
+    const o = await run(
+      `var C: any = Int8Array;\nvar a: any = new Int8Array(2);\n` +
+        `try { result = (a instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result, "a dynamically-reached builtin constructor must not throw").not.toBe(9);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("answers a primitive LHS `false` before reading the RHS prototype (§7.3.20 step 3)", async () => {
+    // Step 3 precedes step 4, so a primitive V short-circuits WITHOUT the
+    // `prototype` read — the ordering #2702 documents. Both operands are `any`
+    // so neither static fold applies.
+    const o = await run(
+      `var C: any = function(){};\nvar v: any = 7;\n` +
+        `try { result = (v instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result).toBe(0);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("answers a callable RHS with an unmodelled prototype `false`, never a throw", async () => {
+    // THE DOCUMENTED RESIDUAL. A standalone closure has no runtime edge to its
+    // per-fnctor prototype global, so §7.3.20 step 4 is unanswerable. Both
+    // alternatives are worse than `false`: `1` asserts membership and `2`
+    // asserts "F.prototype really is a non-object" — neither is known.
+    const o = await run(
+      `function F(){ this.x = 1; }\nvar C: any = F;\nvar f: any = new F();\n` +
+        `try { result = (f instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result).toBe(0);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("does NOT throw for a non-callable GC struct of unknown callability", async () => {
+    // Class VALUES are `typeof "object"` in this backend, so a blanket
+    // "not callable ⇒ TypeError" would turn `x instanceof C` — a legitimate
+    // true/false — into a spurious catchable TypeError. Host parity
+    // (`runtime.ts:2400`). The provably-non-callable cases still throw, one
+    // dispatch step earlier, via `tryEmitNonCallableRhsThrow` (asserted above).
+    const o = await run(
+      `class K { m(): number { return 1; } }\nvar C: any = K;\nvar obj: any = new K();\n` +
+        `try { result = (obj instanceof C) ? 1 : 0; } catch (e) { result = 9; }`,
+    );
+    expect(o.result).not.toBe(9);
+    expect(o.imports).toEqual([]);
+  });
+
+  it("evaluates BOTH operands, in source order, before answering (§13.10.1)", async () => {
+    // The tri-state replaced a two-argument host call, so operand order is a
+    // property of the emitter, not of the helper. A RHS-first evaluation would
+    // read `order` as "RL".
+    //
+    // The result is BOUND on purpose. A bare `lhs() instanceof rhs();`
+    // expression statement AT TOP LEVEL is dropped whole — including both
+    // calls' side effects — by a statement-level elimination that predates this
+    // substrate (reproduced on a builtin RHS, which never reaches this code)
+    // and is fixed separately by #4433. Binding it isolates the property under
+    // test from that defect.
+    //
+    // Scope note, because the top-level result does NOT generalise: the same
+    // statement inside a `try`, or inside a function, evaluates both operands
+    // on this branch (measured 0 / 2 / 2 respectively). A top-level
+    // `TryStatement` is kept wholesale by `collectDeclarations`, so its body
+    // lowers through the ordinary in-function path.
+    const o = await run(
+      `var order = "";\nfunction lhs(): any { order = order + "L"; return {}; }\n` +
+        `function rhs(): any { order = order + "R"; return null; }\n` +
+        `var q: any = lhs() instanceof rhs();\nresult = order === "LR" ? 1 : 0;`,
+    );
     expect(o.result).toBe(1);
     expect(o.imports).toEqual([]);
   });

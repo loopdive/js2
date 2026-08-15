@@ -186,6 +186,81 @@ export function createsGlobalObjectBinding(
 }
 
 /**
+ * (#4433) Does evaluating this expression PROVABLY run user code or mutate
+ * state? — the predicate that turns the `unhandled` disposition from "recorded
+ * and dropped" into "collected into `__module_init`".
+ *
+ * The allow-list above names WHOLE-STATEMENT shapes, so a composition like
+ * `f() + g();`, `f() instanceof Object;`, `f(), g();` or `[f(), g()];` matched
+ * nothing and was dropped **whole** — neither operand evaluated. The identical
+ * statement inside a function body has always compiled its operands and
+ * `drop`ped the result, which is what makes this a collection gap rather than a
+ * lowering gap.
+ *
+ * The rule is deliberately one-directional: it only ever ADDS statements, and
+ * only when an effectful node is actually present in the tree. It answers false
+ * for the shapes whose observability is a *runtime* fact this compiler does not
+ * model — a bare `Identifier` (a ReferenceError for an undeclared binding, a TDZ
+ * error for a `let`/`const` read) and the `PrivateIdentifier` / `MetaProperty`
+ * atoms of negative *syntax* fixtures. Collecting those would convert ~18k
+ * currently-silent statements in test262's negative corpus into compile errors,
+ * which is a worse trade than an honest residual; they stay in
+ * `ctx.droppedModuleInitShapes`.
+ *
+ * Function and arrow BODIES are not descended into: creating a closure runs no
+ * body, so `(function () { f(); });` is genuinely inert. Everything reachable
+ * without invoking a closure is descended — including computed keys, spreads,
+ * template substitutions, `extends` clauses and class `static { … }` blocks.
+ *
+ * Two node kinds are deliberately NOT effectful here, both on measurement
+ * rather than principle — each is a residual recorded in the issue file:
+ *
+ *   • `AwaitExpression` / `YieldExpression`. A CALL inside one still counts, via
+ *     the CallExpression node; the bare `await x;` form does not.
+ *   • `TaggedTemplateExpression`, which really does invoke its tag. Over the
+ *     whole `test/language` + `test/built-ins` corpus, collecting it changed
+ *     the status of ZERO of the 77 top-level tagged-template statements — and
+ *     cost three files. The test262 runner compiles a `top-level-await` body
+ *     SYNCHRONOUSLY (#1612), so `await` parses as an ordinary identifier and
+ *     ``await `` ;`` becomes a TaggedTemplateExpression tagged `await`.
+ *     Collecting that compiles a call to a binding that does not exist.
+ *
+ * Both should be revisited — the second once TLA is compiled asynchronously, at
+ * which point the misparse disappears and the tag call becomes a real one.
+ */
+export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    // Creating a closure runs no body — do not descend. (A CALL to the closure
+    // is a CallExpression node OUTSIDE the body and is still seen.)
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isDeleteExpression(node) ||
+      // A property/element READ invokes an accessor and throws on a nullish
+      // base — the #3615 keep, applied to a nested position.
+      ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node) ||
+      ts.isSpreadElement(node) ||
+      ts.isSpreadAssignment(node) ||
+      // `++`/`--` perform a PutValue.
+      (ts.isPrefixUnaryExpression(node) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) ||
+      ts.isPostfixUnaryExpression(node) ||
+      (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(unwrapStatementExpression(rawExpr));
+  return found;
+}
+
+/**
  * TOTAL classification of a top-level ExpressionStatement's expression.
  *
  * The caller (`collectDeclarations`) keeps its existing, richer handling for
@@ -232,4 +307,41 @@ export function classifyTopLevelExpressionStatement(rawExpr: ts.Expression): Mod
     reason:
       "not provably inert and not collected into __module_init — its evaluation may run user code, throw, or mutate state",
   };
+}
+
+/** The subset of `CodegenContext` this module's collection decision touches. */
+export interface ModuleInitCollectionSink {
+  moduleInitStatements: ts.Statement[];
+  droppedModuleInitShapes?: Map<string, number>;
+}
+
+/**
+ * (#4433) The single exit for a top-level ExpressionStatement that
+ * `collectDeclarations`' allow-list did NOT name. Two call sites reach it: the
+ * non-assignment `BinaryExpression` early-`continue`, and the terminal
+ * fall-through.
+ *
+ * Before this, both merely RECORDED the drop (#3623 telemetry) and the statement
+ * was eliminated whole — `f() + g();`, `f() instanceof Object;`, `f(), g();`,
+ * `[f(), g()];` evaluated NEITHER operand, so the calls, the getters and the
+ * operator's own TypeError all vanished. The identical statement inside a
+ * function body has always compiled its operands and `drop`ped the result.
+ *
+ * Now a statement that PROVABLY runs user code is collected and lowered by that
+ * same ordinary compile-then-`drop` path. Statements that are not provably
+ * effectful keep the previous behaviour and stay recorded — see
+ * `expressionRunsUserCode` for why the bare-atom shapes are excluded.
+ */
+export function collectOrRecordUnnamedExpressionStatement(
+  sink: ModuleInitCollectionSink,
+  stmt: ts.ExpressionStatement,
+): void {
+  if (sink.moduleInitStatements.includes(stmt)) return;
+  const c = classifyTopLevelExpressionStatement(stmt.expression);
+  if (c.disposition !== "unhandled") return;
+  if (expressionRunsUserCode(stmt.expression)) {
+    sink.moduleInitStatements.push(stmt);
+    return;
+  }
+  (sink.droppedModuleInitShapes ??= new Map()).set(c.shape, (sink.droppedModuleInitShapes.get(c.shape) ?? 0) + 1);
 }

@@ -28,46 +28,64 @@ export function findInnermostNodeAtPosition(node: ts.Node, position: number): ts
  * sloppy-mode scripts, so we deliberately do not treat module = strict (see the
  * SourceFile branch below, which returns false).
  */
+// Strictness of a node is a pure function of its ancestor chain, and the
+// per-node walk was ~20% of detectEarlyErrors CPU (#4431) — four checks call
+// this on every Identifier/literal. Memoize per node: walk up only until a
+// cached ancestor or a terminal (SourceFile/class/strict function), then
+// backfill the whole visited chain, so repeated queries are O(1) amortized.
+const strictModeCache = new WeakMap<ts.Node, boolean>();
+
+/** Leading "use strict" directive scan (directives must be at the top). */
+function hasUseStrictDirective(stmts: readonly ts.Statement[]): boolean {
+  for (const stmt of stmts) {
+    if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
+      if (stmt.expression.text === "use strict") return true;
+    } else {
+      break; // Directives must be at the top
+    }
+  }
+  return false;
+}
+
 export function isStrictMode(node: ts.Node): boolean {
   // Check for "use strict" directives and class context
+  const chain: ts.Node[] = [];
+  let result: boolean | undefined;
   let current: ts.Node | undefined = node;
   while (current) {
+    const cached = strictModeCache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    chain.push(current);
     if (ts.isSourceFile(current)) {
-      // Check for "use strict" directive at file level
-      for (const stmt of current.statements) {
-        if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-          if (stmt.expression.text === "use strict") return true;
-        } else {
-          break; // Directives must be at the top
-        }
-      }
       // Don't assume module = strict. We add export {} synthetically for TS,
       // but the source may be a sloppy-mode script (test262 noStrict tests).
-      return false;
+      result = hasUseStrictDirective(current.statements);
+      break;
     }
     if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
-      return true;
+      result = true;
+      break;
     }
     if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current)
+      (ts.isFunctionDeclaration(current) ||
+        ts.isFunctionExpression(current) ||
+        ts.isArrowFunction(current) ||
+        ts.isMethodDeclaration(current)) &&
+      current.body &&
+      ts.isBlock(current.body) &&
+      hasUseStrictDirective(current.body.statements)
     ) {
-      // Check for "use strict" directive in function body
-      if (current.body && ts.isBlock(current.body)) {
-        for (const stmt of current.body.statements) {
-          if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-            if (stmt.expression.text === "use strict") return true;
-          } else {
-            break; // Directives must be at the top
-          }
-        }
-      }
+      result = true;
+      break;
     }
     current = current.parent;
   }
-  return false;
+  const final = result ?? false;
+  for (const n of chain) strictModeCache.set(n, final);
+  return final;
 }
 
 export function isArgumentsOrEval(node: ts.Node): string | null {
@@ -212,11 +230,34 @@ export function isUsingDeclarationStatement(node: ts.Node): node is ts.VariableS
   return (node.declarationList.flags & ts.NodeFlags.Using) !== 0;
 }
 
+// Each of the three predicates below is a pure function of a node's ancestor
+// chain and is queried per await/yield token (#4432, ~3.4% of in-block time).
+// They are memoized with the strictModeCache pattern from #4431, with one
+// difference: the walk starts at `node.parent`, so the cache is keyed by the
+// ANCESTOR the walk starts from and holds "the answer for a walk beginning at
+// this node (inclusive)". The terminal node is part of the backfilled chain —
+// its own answer is the terminal value — while the queried node itself is not
+// a key, since its answer is the value stored for its parent.
+const insideClassStaticBlockCache = new WeakMap<ts.Node, boolean>();
+const insideAsyncFunctionCache = new WeakMap<ts.Node, boolean>();
+const insideGeneratorFunctionCache = new WeakMap<ts.Node, boolean>();
+
 /** Check if a node is inside a class static initializer block. */
 export function isInsideClassStaticBlock(node: ts.Node): boolean {
+  const chain: ts.Node[] = [];
+  let result: boolean | undefined;
   let current: ts.Node | undefined = node.parent;
   while (current) {
-    if (ts.isClassStaticBlockDeclaration(current)) return true;
+    const cached = insideClassStaticBlockCache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    chain.push(current);
+    if (ts.isClassStaticBlockDeclaration(current)) {
+      result = true;
+      break;
+    }
     // ALL function boundaries stop the search, including arrow functions.
     // ES spec: ContainsAwait returns false for ArrowFunction, meaning
     // `await` as an identifier inside an arrow within a static block is valid.
@@ -229,11 +270,14 @@ export function isInsideClassStaticBlock(node: ts.Node): boolean {
       ts.isGetAccessorDeclaration(current) ||
       ts.isSetAccessorDeclaration(current)
     ) {
-      return false;
+      result = false;
+      break;
     }
     current = current.parent;
   }
-  return false;
+  const final = result ?? false;
+  for (const n of chain) insideClassStaticBlockCache.set(n, final);
+  return final;
 }
 
 /** Check if a node is inside any function (for return statement validation). */
@@ -673,41 +717,72 @@ export function isInsideAsyncParams(node: ts.Node): boolean {
 
 /** Check if a node is inside an async function (including async generators). */
 export function isInsideAsyncFunction(node: ts.Node): boolean {
+  const chain: ts.Node[] = [];
+  let result: boolean | undefined;
   let current: ts.Node | undefined = node.parent;
   while (current) {
+    const cached = insideAsyncFunctionCache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    chain.push(current);
     // Class static blocks create a new scope — stop searching
-    if (ts.isClassStaticBlockDeclaration(current)) return false;
+    if (ts.isClassStaticBlockDeclaration(current)) {
+      result = false;
+      break;
+    }
     if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isMethodDeclaration(current)) {
-      return current.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      result = current.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      break;
     }
     if (ts.isArrowFunction(current)) {
-      return current.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      result = current.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      break;
     }
     current = current.parent;
   }
-  return false;
+  const final = result ?? false;
+  for (const n of chain) insideAsyncFunctionCache.set(n, final);
+  return final;
 }
 
 /** Check if a node is inside a generator function (including async generators). */
 export function isInsideGeneratorFunction(node: ts.Node): boolean {
+  const chain: ts.Node[] = [];
+  let result: boolean | undefined;
   let current: ts.Node | undefined = node.parent;
   while (current) {
+    const cached = insideGeneratorFunctionCache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    chain.push(current);
     // Class static blocks create a new scope — stop searching
-    if (ts.isClassStaticBlockDeclaration(current)) return false;
+    if (ts.isClassStaticBlockDeclaration(current)) {
+      result = false;
+      break;
+    }
     if ((ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current)) && current.asteriskToken) {
-      return true;
+      result = true;
+      break;
     }
     if (ts.isMethodDeclaration(current) && current.asteriskToken) {
-      return true;
+      result = true;
+      break;
     }
     // Arrow functions are never generators, but they don't create a new yield scope
     // If we hit an arrow, keep going up — arrows inherit the generator context
     if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isMethodDeclaration(current)) {
-      return false; // Found a non-generator function boundary
+      result = false; // Found a non-generator function boundary
+      break;
     }
     current = current.parent;
   }
-  return false;
+  const final = result ?? false;
+  for (const n of chain) insideGeneratorFunctionCache.set(n, final);
+  return final;
 }
 
 /** Check if a function declaration is in a single-statement position (not a block). */
@@ -734,6 +809,27 @@ export function hasAsyncModifier(node: ts.FunctionDeclaration): boolean {
 }
 
 /** Check if a private identifier is inside a class that declares it. */
+// The per-reference member scan was the single hottest early-error cost
+// (~34% of in-block CPU, #4431): every PrivateIdentifier re-walked every
+// member of every enclosing class. The declared private names of a class are
+// immutable per AST, so compute them once per class and cache.
+const classPrivateNamesCache = new WeakMap<ts.ClassLikeDeclaration, ReadonlySet<string>>();
+
+function privateNamesOf(cls: ts.ClassLikeDeclaration): ReadonlySet<string> {
+  let names = classPrivateNamesCache.get(cls);
+  if (names === undefined) {
+    const set = new Set<string>();
+    for (const member of cls.members) {
+      if (member.name && ts.isPrivateIdentifier(member.name)) {
+        set.add(member.name.escapedText as string);
+      }
+    }
+    names = set;
+    classPrivateNamesCache.set(cls, names);
+  }
+  return names;
+}
+
 export function isInsideClassWithPrivateName(node: ts.Node, privateName: string): boolean {
   let current: ts.Node | undefined = node.parent;
   while (current) {
@@ -748,12 +844,8 @@ export function isInsideClassWithPrivateName(node: ts.Node, privateName: string)
       const inHeritage = current.heritageClauses?.some((hc) => isNodeWithin(node, hc)) ?? false;
       if (!inHeritage) {
         // Check if this class declares the private name
-        for (const member of current.members) {
-          if (member.name && ts.isPrivateIdentifier(member.name)) {
-            if ((member.name.escapedText as string) === privateName) {
-              return true;
-            }
-          }
+        if (privateNamesOf(current).has(privateName)) {
+          return true;
         }
       }
       // Also check parent classes (super), but we can't easily resolve inheritance
