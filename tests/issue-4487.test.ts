@@ -540,3 +540,134 @@ describe("#4487 — neighbouring rejects keep their own, more specific arms", ()
     expect((await compile(spreadOnly, { experimentalIR: true })).success).toBe(true);
   });
 });
+
+// The string-carrier pin above found ONE instance of a general defect: adopting
+// the spread makes the selector CLAIM units that then reach a bare `Error`
+// inside `lowerArrayLiteral`, and under IR-first a bare throw is an unexpected
+// internal error — the compile FAILS instead of demoting to the (correct)
+// legacy body. Measured on this branch with the A/B file-copy against its base
+// (`.tmp/probe-4487b.ts` / `-4487c.ts`, base `src/ir/{from-ast,select}.ts`
+// restored): two further shapes did exactly that, both compiling fine on base
+// because base rejected them at `expr-arraylit-spread` and never claimed them.
+// The class — not the individual shape — is what these pin.
+describe("#4487 — an adopted spread must never turn a compiling program into a compile ERROR", () => {
+  /** IR-first: the lane where a bare `Error` becomes a hard compile failure. */
+  async function compilesUnderIrFirst(src: string): Promise<true | string> {
+    const r = await compile(src, { experimentalIR: true });
+    return r.success ? true : (r.errors[0]?.message ?? "unknown error");
+  }
+
+  it("spread of an EMPTY source with no vec-typed hint demotes, not fails", async () => {
+    // `[...a]` over `const a: number[] = []` expands to ZERO elements, so
+    // neither an element nor an annotation supplies the vec element type.
+    // Base: `expr-arraylit-spread` → legacy → compiled. First cut of this
+    // branch: claimed → bare `Error` → "IR path failed for f".
+    const src = `export function f(x: number): number { const a: number[] = []; const b = [...a]; return b.length + x; }`;
+    expect(claims(src, "f")).toBe(true);
+    expect(await compilesUnderIrFirst(src)).toBe(true);
+    // …and it still computes the right answer on both backends.
+    const legacy = await instantiate(src, false);
+    const ir = await instantiate(src, true);
+    expect((legacy.f as (n: number) => number)(0)).toBe(0);
+    expect((ir.f as (n: number) => number)(0)).toBe(0);
+  });
+
+  it("an annotated empty-source spread still builds a real (claim-backed) vec", async () => {
+    // The hinted twin of the case above must stay ADOPTED — the demotion
+    // above is about a missing element type, not about empty sources.
+    await expectAdopted(
+      `export function f(x: number): number { const a: number[] = []; const b = [...a, 7]; return b.length + b[0] + x; }`,
+      "f",
+      [0],
+      () => {
+        const a: number[] = [];
+        const b = [...a, 7];
+        return b.length + b[0]!;
+      },
+      8,
+    );
+  });
+
+  it("a NESTED-VEC spread source demotes, not fails", async () => {
+    // `vec<vec<f64>>` elements are outside the #1804 fixed-literal scope. The
+    // throw for that is pre-existing (it fires for `const a = [[1], [2]]` with
+    // no spread at all — the literal-construction twin of #4486), but adopting
+    // the spread newly routes claimed units into it, so it has to be typed.
+    const src = `export function f(x: number): number { const a = [[1], [2]]; const b = [...a]; return b.length + b[0][0] + x; }`;
+    expect(claims(src, "f")).toBe(true);
+    expect(await compilesUnderIrFirst(src)).toBe(true);
+    const legacy = await instantiate(src, false);
+    const ir = await instantiate(src, true);
+    expect((legacy.f as (n: number) => number)(0)).toBe(3);
+    expect((ir.f as (n: number) => number)(0)).toBe(3);
+  });
+
+  it("an INLINE nested literal spread demotes, not fails", async () => {
+    // Same class reached without any binding: `[...[[1], [2]], [3]]`.
+    const src = `export function f(x: number): number { const b = [...[[1], [2]], [3]]; return b.length + x; }`;
+    expect(claims(src, "f")).toBe(true);
+    expect(await compilesUnderIrFirst(src)).toBe(true);
+    expect(((await instantiate(src, true)).f as (n: number) => number)(0)).toBe(3);
+  });
+});
+
+// Binding resolution is a name-text scan, so every shape where the name `a` at
+// the spread could resolve to a DIFFERENT declaration than the one the scan
+// finds is a potential miscompile (a wrong LENGTH, silently). These pin the
+// resolution itself rather than the reject arm.
+describe("#4487 — the spread binds to the RIGHT declaration", () => {
+  it("an inner-function-scope const shadowing a module const uses the INNER length", async () => {
+    // Module `a` has 4 elements, the function-local one has 2. Adoption must
+    // read 2. (The mirror — spread of the MODULE const while a block-local `a`
+    // exists — is the miscompile the block-scope check fixed; it is pinned as
+    // a unit boundary above.)
+    await expectAdopted(
+      `const a = [1, 2, 3, 4];\nexport function f(x: number): number { const a = [1, 2]; const b = [...a]; return b.length + x; }`,
+      "f",
+      [0],
+      () => 2,
+      2,
+    );
+  });
+
+  it("a const declared INSIDE a loop body is re-bound per iteration and still exact", async () => {
+    await expectAdopted(
+      `export function f(x: number): number { let s = 0; for (let i = 0; i < 3; i++) { const a = [1, 2]; const b = [...a, i]; s += b.length; } return s + x; }`,
+      "f",
+      [0],
+      () => {
+        let s = 0;
+        for (let i = 0; i < 3; i++) {
+          const a = [1, 2];
+          const b = [...a, i];
+          s += b.length;
+        }
+        return s;
+      },
+      9,
+    );
+  });
+
+  it("a source iterated by a for-of elsewhere still binds and claims", async () => {
+    await expectAdopted(
+      `export function f(x: number): number { let s = 0; const rows = [1, 2]; for (const r of rows) { s += r; } const b = [...rows]; return s + b.length + x; }`,
+      "f",
+      [0],
+      () => {
+        let s = 0;
+        const rows = [1, 2];
+        for (const r of rows) s += r;
+        return s + [...rows].length;
+      },
+      5,
+    );
+  });
+
+  it("a catch-clause parameter with the source's name refuses the claim", async () => {
+    // `catch (a)` is a competing binding of `a`; the name-text scan cannot tell
+    // the two apart, so the analysis must refuse rather than guess.
+    const src = `export function f(x: number): number { const a = [1, 2, 3]; try { if (a.length > 99) { throw 1; } } catch (a) { } const b = [...a]; return b.length + x; }`;
+    expect(rejectArm(src, "f")).toBe("expr-arraylit-spread-dynamic-source:ArrayLiteralExpression");
+    await expectRejectedButCorrect(src, "f", [0], 3);
+  });
+});

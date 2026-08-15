@@ -4380,7 +4380,11 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       const sourceType = cx.builder.typeOf(source);
       const sourceVec = resolveIrVecType(sourceType, cx);
       if (!sourceVec) {
-        throw new Error(
+        // Same reasoning as the non-scalar arm below: a shape this expansion
+        // cannot carry is a CAPABILITY gap, so it must demote, not hard-fail.
+        throw new IrUnsupportedError(
+          "array-representation-unsupported",
+          "build",
           `ir/from-ast: array literal spread source is not a recognisable vec ` +
             `(${describeIrType(sourceType)}) in ${cx.funcName}`,
         );
@@ -4411,13 +4415,22 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     elementIds.push(lowerExpr(el as ts.Expression, cx, elementHint));
   }
 
-  // A literal that is nothing but spreads of empty sources (`[...a]` with
-  // `const a = []`) expands to zero elements and therefore has no element to
-  // infer a type from. Without a hint there is nothing to build; demote.
-  if (elementIds.length === 0) {
-    if (!hintElemIr) {
-      throw new Error(`ir/from-ast: spread-only array literal expanded to zero elements (${cx.funcName})`);
-    }
+  // A literal that is nothing but spreads of EMPTY sources (`[...a]` with
+  // `const a: number[] = []`) expands to zero elements, so there is no element
+  // to infer the vec's element type from and no annotation supplying one.
+  // Measured (#4487 continuation, `.tmp/probe-4487b.ts`): the selector claims
+  // that unit, so a bare `Error` here surfaces under IR-first as
+  // `IR path failed` — a COMPILE FAILURE for a program the branch base
+  // compiled fine (base rejected it at `expr-arraylit-spread` and legacy
+  // handled it). It is a capability gap, not a producer-promise violation, so
+  // it demotes through the typed channel exactly like the string-carrier arm.
+  if (elementIds.length === 0 && !hintElemIr) {
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      `ir/from-ast: spread-only array literal expanded to zero elements and no vec-typed ` +
+        `hint supplies the element type (${cx.funcName})`,
+    );
   }
 
   // Determine the shared element IrType: the hint's element type if present,
@@ -4448,8 +4461,16 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 
   const elemVT = asVal(storedElementType);
   if (!elemVT) {
-    // Non-scalar (object/closure/...) element types are out of scope for this slice.
-    throw new Error(
+    // Non-scalar (nested vec / object / closure / …) element types are out of
+    // scope for this slice. Typed-unsupported rather than a bare `Error`: the
+    // #4487 spread adoption newly CLAIMS units that reach here — `[...[[1],
+    // [2]], [3]]`, or `[...a]` over a `number[][]` const — and under IR-first
+    // a bare throw fails the compile instead of demoting to the perfectly good
+    // legacy body (measured on the branch base: both compiled). This is the
+    // literal-construction twin of the #4486 nested-vec hard error.
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
       `ir/from-ast: array literal element type ${storedElementType.kind} not in #1804 scope (${cx.funcName})`,
     );
   }
