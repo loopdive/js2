@@ -3833,9 +3833,13 @@ function isPhase1ForStatementInScope(
   labels: ReadonlySet<string> = NO_LABELS,
   breaks: BreakScope = NO_BREAKS,
 ): boolean {
-  // Cond must be present (no infinite loops in slice 12).
-  if (!stmt.condition) return shapeNo("for-missing-cond", stmt);
-
+  // (#3583) An omitted `for` condition is exactly `for (; true; )` per the
+  // spec, and the constant-true form is ALREADY claimed — measured 2026-08-15:
+  // `for (; true; ) { … break; }` and `for (let i = 0; true; i++) { … break; }`
+  // both reach `emitted`. So the slice-12 "no infinite loops" reject was a
+  // lowering gap, not a semantic one; `lowerForStatement` now synthesizes the
+  // constant-true cond buffer directly (no synthetic AST node). The cond gate
+  // below is therefore guarded on presence rather than rejecting outright.
   const innerScope = new Set(scope);
 
   // Init: optional. Variable declaration adds bindings; expression init
@@ -3867,8 +3871,10 @@ function isPhase1ForStatementInScope(
     }
   }
 
-  // Cond: must be a Phase-1 expression in the inner scope.
-  if (!isPhase1ConditionExpr(stmt.condition, innerScope, localClasses)) return shapeNo("for-cond", stmt.condition);
+  // Cond: when present, must be a Phase-1 expression in the inner scope.
+  // Absent (#3583) = implicit `true`, which is trivially Phase-1.
+  if (stmt.condition && !isPhase1ConditionExpr(stmt.condition, innerScope, localClasses))
+    return shapeNo("for-cond", stmt.condition);
 
   // Update: optional. When present, must be a Phase-1 expression OR a
   // postfix `i++` / `i--` (which `isPhase1Expr` doesn't accept on its
@@ -7479,6 +7485,19 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
+  // (#3583) Type-erased assertion wrappers emit NOTHING at runtime, so the
+  // claimable shape is exactly the operand's; `lowerExpr` unwraps identically.
+  // The other `isAsExpression` sites here are helper-local unwrappers for one
+  // analysis each, NOT this shape gate — which is why these really did reject
+  // at `expr-unhandled` before this arm. Full measurement in #3583.
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    return isPhase1Expr(expr.expression, scope, localClasses);
+  }
   // (#1373b C-1) `await <e>` inside a C-1 async body mirrors legacy sync-model lowering:
   //   - `await Promise.resolve(x)` → static substitution; zero args settle to
   //     `undefined`, which from-ast cannot lower.
