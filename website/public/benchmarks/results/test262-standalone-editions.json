@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 8331,
-    "fail": 645,
+    "pass": 8328,
+    "fail": 648,
     "ce": 53,
     "skip": 0,
     "total": 9029,
@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 7653,
-    "fail": 3425,
-    "ce": 625,
+    "fail": 3427,
+    "ce": 623,
     "skip": 1,
     "total": 11704,
     "pct": 65,
@@ -94,8 +94,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 342,
-        "fail": 325,
-        "ce": 127,
+        "fail": 327,
+        "ce": 125,
         "skip": 1,
         "total": 795,
         "pct": 43
@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 274,
-    "fail": 125,
-    "ce": 73,
+    "fail": 128,
+    "ce": 70,
     "skip": 0,
     "total": 472,
     "pct": 58,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 15,
-        "fail": 45,
-        "ce": 32,
+        "fail": 48,
+        "ce": 29,
         "skip": 0,
         "total": 92,
         "pct": 16
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 6,
-        "fail": 18,
-        "ce": 16,
+        "fail": 21,
+        "ce": 13,
         "skip": 0,
         "total": 40,
         "pct": 15
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 4,
-        "fail": 23,
-        "ce": 12,
+        "fail": 26,
+        "ce": 9,
         "skip": 0,
         "total": 39,
         "pct": 10
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 1,
-        "fail": 23,
-        "ce": 6,
+        "fail": 26,
+        "ce": 3,
         "skip": 0,
         "total": 30,
         "pct": 3
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 3,
-        "fail": 21,
-        "ce": 3,
+        "fail": 24,
+        "ce": 0,
         "skip": 0,
         "total": 27,
         "pct": 11
@@ -4250,8 +4250,8 @@
   },
   {
     "edition": "Proposals",
-    "pass": 369,
-    "fail": 2506,
+    "pass": 375,
+    "fail": 2500,
     "ce": 2143,
     "skip": 96,
     "total": 5114,
@@ -4269,8 +4269,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 3966,
-    "fail": 1367,
-    "ce": 112,
+    "fail": 1372,
+    "ce": 107,
     "skip": 0,
     "total": 5445,
     "pct": 73

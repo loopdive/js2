@@ -3079,29 +3079,11 @@ export function coerceType(
                 typeIdx: closureTypeIdx,
               });
               const funcTmp = allocLocal(fctx, `__vo_fn_${fctx.locals.length}`, { kind: "funcref" } as ValType);
-              const thenInstrs: Instr[] = [
-                { op: "local.get", index: eqLocal },
-                { op: "ref.cast", typeIdx: closureTypeIdx },
-                { op: "local.tee", index: closureLocal },
-                { op: "local.get", index: closureLocal },
-                { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
-                // Guarded funcref cast to avoid illegal cast traps
-                { op: "local.tee", index: funcTmp },
-                { op: "ref.test", typeIdx: info.funcTypeIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "ref_null", typeIdx: info.funcTypeIdx } as ValType },
-                  then: [
-                    { op: "local.get", index: funcTmp },
-                    { op: "ref.cast_null", typeIdx: info.funcTypeIdx },
-                  ],
-                  else: [{ op: "ref.null", typeIdx: info.funcTypeIdx }],
-                },
-                { op: "ref.as_non_null" },
-                { op: "call_ref", typeIdx: info.funcTypeIdx },
-              ];
+              // Post-call result normalization (return-type dependent), built
+              // first so it can be spliced after the call inside the guarded if.
+              const postCallInstrs: Instr[] = [];
               if (info.returnType?.kind === "i32") {
-                thenInstrs.push({ op: "f64.convert_i32_s" });
+                postCallInstrs.push({ op: "f64.convert_i32_s" });
               } else if (info.returnType?.kind === "externref" || info.returnType?.kind === "ref_extern") {
                 // valueOf returned externref — could be a primitive (string,
                 // number, bool) OR an object. Per ECMA-262 §7.1.1.1, if the
@@ -3114,28 +3096,59 @@ export function coerceType(
                 // __to_primitive helper using the ORIGINAL struct, which
                 // re-runs valueOf, tries toString, and throws TypeError if
                 // appropriate.
-                thenInstrs.push({ op: "drop" });
-                thenInstrs.push({ op: "local.get", index: structLocal });
+                postCallInstrs.push({ op: "drop" });
+                postCallInstrs.push({ op: "local.get", index: structLocal });
                 const hintExtRet = toPrimitiveHint ?? "number";
                 for (const i of toPrimitiveHostCallInstrs(ctx, fctx, "f64", hintExtRet)) {
-                  thenInstrs.push(i);
+                  postCallInstrs.push(i);
                 }
               } else if (!info.returnType) {
                 // void return — call was for side effects; push NaN
-                thenInstrs.push({ op: "f64.const", value: NaN });
+                postCallInstrs.push({ op: "f64.const", value: NaN });
               } else if (info.returnType.kind !== "f64") {
                 // valueOf returned a non-primitive (object ref). Per ECMA-262
                 // §7.1.1.1 OrdinaryToPrimitive step 2.b.ii: continue to the
                 // next method (toString); step 3: throw TypeError if neither
                 // returns a primitive. Both behaviours live in the host
                 // __to_primitive helper. Pre-#1253 we silently pushed NaN.
-                thenInstrs.push({ op: "drop" });
-                thenInstrs.push({ op: "local.get", index: structLocal });
+                postCallInstrs.push({ op: "drop" });
+                postCallInstrs.push({ op: "local.get", index: structLocal });
                 const hint2 = toPrimitiveHint ?? "number";
                 for (const i of toPrimitiveHostCallInstrs(ctx, fctx, "f64", hint2)) {
-                  thenInstrs.push(i);
+                  postCallInstrs.push(i);
                 }
               }
+              // Zero-capture closure wrappers share one CANONICAL struct type
+              // (field 0 is plain `funcref`), so `ref.test closureTypeIdx`
+              // passing does NOT prove the stored function has THIS candidate's
+              // signature — two same-shape object literals assigned to one var
+              // land here with each other's canonical type. A funcref-signature
+              // miss therefore means "try the next candidate", not "manufacture
+              // null and trap" (the old guarded-cast + ref.as_non_null pair
+              // null-deref'd on the second literal's `Number(object)` —
+              // test262 S9.1_A1_T1).
+              const thenInstrs: Instr[] = [
+                { op: "local.get", index: eqLocal },
+                { op: "ref.cast", typeIdx: closureTypeIdx },
+                { op: "local.set", index: closureLocal },
+                { op: "local.get", index: closureLocal },
+                { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
+                { op: "local.set", index: funcTmp },
+                { op: "local.get", index: funcTmp },
+                { op: "ref.test", typeIdx: info.funcTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val" as const, type: { kind: "f64" as const } },
+                  then: [
+                    { op: "local.get", index: closureLocal },
+                    { op: "local.get", index: funcTmp },
+                    { op: "ref.cast", typeIdx: info.funcTypeIdx },
+                    { op: "call_ref", typeIdx: info.funcTypeIdx },
+                    ...postCallInstrs,
+                  ],
+                  else: buildDispatch(idx + 1),
+                },
+              ];
               return [
                 { op: "local.get", index: eqLocal },
                 { op: "ref.test", typeIdx: closureTypeIdx },

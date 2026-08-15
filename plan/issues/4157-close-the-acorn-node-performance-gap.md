@@ -4694,3 +4694,351 @@ Not accounted for: 1 `wasm_compile` + the 3 `assertion_fail` rows. The sweep
 compiles only the PRIMARY harness variant and never executes, so it cannot see a
 strict-rerun-only failure or a wrong-answer one; the merge-group re-run is the
 authoritative check on those.
+
+## 2026-08-14 (47) — WIP HANDOFF: the real phase order, and the premise that `ir-inline` runs BEFORE devirtualization is FALSE
+
+Task was "build a SECOND inlining pass that runs AFTER devirtualization".
+Establishing the phase order first — as the task asked — invalidated the
+premise it was built on. Recording that before anything is built, because it
+redirects the work.
+
+### (a) The REAL phase order (`src/codegen/index.ts`, the finalize block)
+
+Read off the source, not inferred. All line numbers at `d98ea58a8`:
+
+| # | line | pass | default |
+| --- | --- | --- | --- |
+| 1 | 5230-5279 | every `__call_m_*` / `__get_member_*` / `__set_member_*` body **fill** | — |
+| 2 | 5281-5283 | `inlineMemberGetCallSites` · `inlineIsTruthyCallSites` · `fuseBoxBooleanSinks` | ON · ON · OFF |
+| 3 | 5328-5329 | `inlineExternGetCallSites` · `inlineFlatStrCallSites` | ON |
+| 4 | 5336 | `inlineMemberSetCallSites` | OFF |
+| 5 | **5342** | **`inlineCallDispatchSites`** — the `__call_m_*` **devirtualization** | **OFF** |
+| 6 | 5575 | `eliminateDeadLayoutAndPlanProgramAbi` — authoritative funcIdx remap | — |
+| 7 | 5578/5581 | `repairStructTypeMismatches` · `peepholeOptimize` | — |
+| 8 | 5586-5587 | `installAllocCensus` · `installExecCensus` | OFF |
+| 9 | **5588** | **`inlineUserFunctions` (`ir-inline.ts`)** | **ON** |
+| 10 | 5596 | `finalizeFunctionPoisonPillCalls` | — |
+| 11 | 5601 | `ctx.indexSpaceFrozen = true` | — |
+| 12 | 5610-5611 | `repairCrossHierarchyOperands` · `stackBalance` | — |
+| 13 | 5619 | `fixupExternConvertAny` → **then** emit → **then** `src/optimize.ts` (`wasm-opt`) | — |
+
+**`ir-inline` is step 9. The devirtualization IC is step 5. `ir-inline`
+already runs AFTER devirtualization** — by 246 lines and, more importantly,
+across the dead-elim boundary, so every `call` it sees carries a final
+funcIdx. It is also not an "IR pass" in the `src/ir/` front-end sense: it is a
+wasm-level pass over `mod.functions`, four passes before `stackBalance`.
+
+So a "second inlining pass that runs after devirtualization" would occupy
+**the slot `ir-inline` already occupies**. The gap, if there is one, is in
+`ir-inline`'s ADMISSION RULES, not in the phase order. That is a different
+change with a different risk profile, and it should not be built as a second
+pass on the strength of an ordering claim that does not hold.
+
+### (c) `pp.fullCharCodeAt` is NOT declined on budget — it is ALREADY INLINED
+
+The stated hypothesis was that `this.input.charCodeAt(...)` lowers to
+string-runtime helper calls that inflate the body past the inliner's size
+budget. Measured on a baseline compile (`JS2WASM_IR_INLINE=on,verbose`,
+`JS2WASM_CLOSURE_NAME_MAP=1`, standalone, `optimize:3`, acorn 8.16.0,
+1,398,937 B):
+
+```
+[ir-inline]   single-caller: __closure_355__typed_this -> __closure_355
+```
+
+Exactly one line, and it is an ACCEPT. `__closure_355` ← `pp.fullCharCodeAt`
+(closure-name map). The `single-caller` rule requires `callerCount == 1 &&
+!addressTaken && effSize <= 400`, so at ir-inline time the typed twin had
+**exactly one direct caller in the whole module** — `__closure_355`, its own
+generic wrapper — and its effective size was **within** the 400-instruction
+budget. There is no size-budget decline to report.
+
+That looked like a contradiction with the profile's "called 100 % DIRECTLY
+from `__closure_686__typed_this`". **It is not — the profile is pointing at
+the WRONG TWIN.** Disassembling a name-preserving `optimize:0` build
+(`wasm-dis --all-features`) resolves it exactly:
+
+```
+$ grep -c '(call $__closure_355__typed_this' o0.wat   →  0
+$ grep -c '(call $__closure_685__typed_this' o0.wat   →  31
+```
+
+`pp.fullCharCodeAt` @5479 is lifted TWICE — `__closure_355` and
+`__closure_685` — as is `pp.fullCharCodeAtPos` @5486 (`__closure_356` /
+`__closure_686`). `__closure_355__typed_this` has **zero** call sites: its one
+caller was its own generic wrapper, `ir-inline` inlined it there, and the body
+survives to emission only because **`ir-inline` runs AFTER dead-elim (step 9
+vs step 6), so a function it strands is never reclaimed** — a small standing
+size cost worth its own look. The LIVE function is
+`__closure_685__typed_this`, and `__closure_686__typed_this` calls it, exactly
+as the profile says.
+
+**And the live twin lands squarely in the `no-rule` bucket.** It has 31 direct
+call sites (`single-caller` needs 1) and it is NOT a leaf — its body calls
+`__to_number` ×2, `__str_flatten` ×2, `__box_number` ×2, `__unbox_number`,
+`__get_member_pos__f64` and `__call_m_fullCharCodeAt_1` (`loop-leaf` needs a
+call-free body). Its folded-WAT body is ~721 lines, so a budget question is
+live too, but the rules never get that far: **multi-caller AND non-leaf is
+declined before any budget is consulted.**
+
+So the task's instinct was right and its stated reason was wrong. The lever is
+a rule admitting small hot multi-caller non-leaf callees — not a new pass, and
+not a size budget on `charCodeAt` lowering. The ~721-line body does mean such
+a rule needs the `effectiveSize` cold-subtraction to do real work on this
+callee; that is unmeasured.
+
+Baseline `ir-inline` apply stats, for reference:
+
+```
+mode=apply funcs=3549 sites=47540 inlined=8289 addedInstrs=141844
+by-rule  adapter=3820 loop-leaf=2643 specialised=1174 single-caller=652
+declines no-rule=34079 (helper 33071, user 817) cold-callee=4628
+         self-recursive=334 unsafe:return-call=203 unsafe:try=6
+```
+
+`no-rule` is 72 % of declines and is dominated by small hot HELPERS
+(`__str_equals` 2,679 sites, `__unbox_number` 1,807, `__is_truthy` 1,652,
+`__box_number` 1,556) that are **multi-caller and non-leaf** — the one shape
+no existing rule admits: `adapters` is name-gated, `single-caller` needs
+`callerCount == 1`, `loop-leaf` needs a call-free body, `specialise` needs
+constant args. That, not the phase order, is the real hole.
+
+### (b) Binaryen vs newly-direct calls — NOT YET MEASURED
+
+Deliberately unanswered. The `JS2WASM_CALL_DISPATCH_IC=1` × `-O4` A/B
+disassembly comparison had not run when this session was handed off. Do not
+read the absence as a null.
+
+### Handoff state
+
+Branch `impl-post-devirt-inline`. No compiler source changed — this entry is
+the whole deliverable. Scratch driver (gitignored) at `.tmp/compile-acorn.mjs`:
+compiles standalone acorn with `preserveDebugNames`, honours `ACORN_OPT`,
+prints bytes + sha256.
+
+**Nothing under `.tmp/` survives a container restart** — the `optimize:0`
+name-preserving binary and its `.wat` are gone with the box. To rebuild the
+evidence above from scratch (~110 s compile, ~60 s disassembly, ~28 MB of
+WAT):
+
+```bash
+ACORN_OPT=0 JS2WASM_CLOSURE_NAME_MAP=1 NODE_OPTIONS=--max-old-space-size=6144 \
+  node --import tsx .tmp/compile-acorn.mjs .tmp/o0.wasm 2> .tmp/o0.err
+node_modules/.bin/wasm-dis --all-features .tmp/o0.wasm -o .tmp/o0.wat
+grep -c '(call $__closure_685__typed_this' .tmp/o0.wat   # 31
+grep -c '(call $__closure_355__typed_this' .tmp/o0.wat   # 0
+```
+
+Note `__closure_*` numbering is not stable across compiler revisions — read
+the live pair off `[js2:closure-map]` in `.tmp/o0.err` rather than assuming
+355/685.
+
+Still NOT measured, in priority order: (1) whether `-O4` inlines the
+newly-direct calls under `JS2WASM_CALL_DISPATCH_IC=1`; (2) the
+`effectiveSize` of `__closure_685__typed_this` after cold-subtraction, which
+decides whether a multi-caller/non-leaf rule could actually admit it; (3) any
+wall A/B.
+
+## 2026-08-15 (48) — the `hot` rule: closing the no-rule hole (entry 47's lever), flag-gated
+
+Implemented the rule entry 47 identified. `JS2WASM_IR_INLINE=...,hot` (token
+`hot`, ceiling `hotmax=N`, default 60) admits a callee when
+`weight >= LOOP_WEIGHT && effSize <= hotMax * max(1, log10(weight))` — the
+same hotness bar and weight-scaled budget as `loop-leaf`, with the two gates
+that created the hole removed:
+
+- **caller count does not gate** (`single` needs `callerCount == 1`; the top
+  candidates have hundreds to thousands of callers),
+- **leaf-ness does not gate** (`loop` needs a call-free body; nested calls in
+  the copied body stay calls — ONE pass never chains — so non-leaf admission
+  adds no new hazard class, only size, which `hotMax` × the shared growth cap
+  bound).
+
+Deliberately NOT in the `on` preset — measure first (the #4455 pattern:
+flag-gated in, numbers to the lead, separate flip PR).
+
+Verbose no-rule declines now carry per-callee facts in the aggregation key
+(`<name> no-rule eff=<n> leaf=<0|1> callers=<n>`), so a single
+`report,verbose` compile answers entry 47's open measurement (2) for every
+candidate at once — including `__closure_685__typed_this`'s post-subtraction
+effectiveSize.
+
+Fresh baseline reproduction on current main (`1185f7af2`-era, opt=3):
+`sites=47411 inlined=8270` · `no-rule=33984` (helper 32976, user 817) · top
+candidates by site count: `__str_equals` 2672 · `__unbox_number` 1795 ·
+`__is_truthy` 1652 · `__objvec_push` 1601 · `__box_number` 1553 ·
+`__extern_get` 1435 (4.0 % of runtime per entry 46's profile) ·
+`__box_boolean` 1424 · `__to_number` 1063.
+
+Measurement protocol (next): (a) positive control — `JS2WASM_IR_INLINE=hot,poison`
+must move the acorn checksum off 422 (proves hot-inlined bodies execute);
+(b) correctness — `on,hot` checksum stays 422; (c) 4-leg order-reversed wall
+A/B on standalone-dynamic, `wasmOptimized: true` verified per leg; (d) binary
+size delta. Then a `hotmax` sweep if (c) is a win.
+
+### Gates run (same day)
+
+- **(a) PASSED**: `hot,poison` → `RuntimeError: unreachable` in the self-parse
+  — hot-inlined bodies are on the executed path; the mechanism is live.
+- **(b) PASSED**: `on,hot` → checksum **422**, suite **3,490 passed / 99.2 %**
+  — identical to baseline.
+- **Admissions** (`report,hot,verbose`): `hot=3577` (3,479 helper / 89 user /
+  9 other); inlined 8,272 → 11,849; addedInstrs 141,961 → 322,022 (cap 400k).
+  Per-callee: `__str_equals` 908 · `__unbox_number` 617 · `__str_flatten` 253
+  · `__to_number` 209 · `__nullish_to_null` 171 · `__extern_toString` 165 ·
+  `__to_bigint` 148 · `__extern_set_strict` 46. The leaf candidates
+  (`__is_truthy`/`__objvec_push`/`__box_number`) get 0 — their hot sites were
+  already loop-leaf-inlined; their remaining declines are cold sites, which is
+  correct. `__closure_685__typed_this` (entry 47's live twin) gets 0 as a
+  CALLEE (budget) but RECEIVES hot inlines (`__str_flatten`, `__to_number`).
+- **(c) IN FLIGHT**, after two instrument traps burned the first attempts:
+  1. **`JS2WASM_IR_INLINE=""` is an OFF-token** (`OFF_TOKENS` in
+     perf-flags.ts includes `""`). A base leg env-set to the empty string
+     measures the inliner fully OFF and credits the whole pass to the rule
+     under test. Base legs must pass explicit `on`.
+  2. **Self-contaminated box**: launching the A/B right after three stacked
+     compile jobs left load at 3.4 — the two BASE legs disagreed by 20 %
+     (48.3k vs 57.9k µs; the handoff's quality bar is ~6 % within-group), and
+     one leg's harness died silently after compile (banner-only stdout, clean
+     stderr, no JSON). Re-run is load-gated (< 1.5) with 6 alternating legs
+     and per-leg exit/size checks + empty-output retry.
+- **(d) MEASURED — the static picture, from the noisy round's artifacts**
+  (both legs `wasmOptimized=true, wasmOptimizeLevel=4`, verified in
+  `perfRows[0]`, base bytes deterministic across legs):
+
+  | | base (`on`) | hot (`on,hot`) | delta |
+  | --- | ---: | ---: | --- |
+  | -O4 binary | 2,013,600 B | 2,319,564 B | **+15.2 %** |
+  | pre-opt instrs | 902,125 | 1,092,517 | +21.1 % |
+  | p50 / p99 func | 64 / 2,864 | 73 / 3,268 | +14 % both |
+  | largest func | 43,040 | **75,702** | **+76 %** |
+
+  The 75.7k max is one mega-caller absorbing dozens of copies — evidence the
+  rule needs a **per-caller absorption cap**, not only a callee ceiling.
+
+- **Early wall read (noisy box, min-estimator)**: the contention noise is
+  ADDITIVE (per-leg samples are bimodal: a ~46k µs cluster + 60–80k
+  outliers), so the per-leg MINIMUM is the robust location estimate — and the
+  minimums are indistinguishable: hot 46k vs base 45k/47k. Provisional:
+  **wall-neutral at +15 % size ⇒ not flippable as-is.** The load-gated 6-leg
+  alternating re-run decides.
+- **If neutral confirms, the iteration order**: (1) `hotmax` sweep DOWN —
+  `__str_equals` alone is 908 sites × eff 95 ≈ half the added mass;
+  `hotmax=40` excludes exactly it while keeping the ≤37-instr family
+  (`__unbox_number`/`__to_number`/`__to_bigint`/`__extern_toString`/
+  `__nullish_to_null`/`__extern_set_strict`); (2) per-caller absorption cap;
+  (3) restrict to sites where the inlined body's box/unbox cancels against
+  the caller (the fold wasm-opt can prove).
+- **Not measured yet**: entry 47's open (1) — Binaryen ×
+  `JS2WASM_CALL_DISPATCH_IC=1`.
+
+### Follow-ups noted while here
+
+- `__extern_get` effSize **16,553** at 1,435 declined sites (4.0 % of runtime
+  per entry 46) — no inline budget can ever admit it; the dynamic-lookup
+  bucket needs lookup devirtualization/specialisation (#4405 lane), not the
+  inliner. The two levers are cleanly complementary.
+- Entry 47's stranded-body observation stands: ir-inline runs after dead-elim,
+  so a twin it fully inlines away survives to emission as dead mass.
+## 2026-08-15 (49) — the flip's first RUNTIME regression: the loop-leaf rule inlined a loop, and the landing WASI `fib` lane went 1.50x V8 → 0.76x
+
+Entry (37) flipped the tuned eleven ON and named the risk it could not cover:
+"this is the first time these eleven face the test262 merge-group
+re-validation". They passed it. What no gate covered is the landing benchmark
+lane, and that is where the flip's first real regression landed — visible only
+in a committed artifact three refreshes later.
+
+### The number, and how it was isolated from machine noise
+
+`benchmarks/results/wasm-host-wasmtime-hot-runtime.json` is refreshed by CI on
+two runner classes, which the JS lane identifies unambiguously: class A reads
+`js ≈ 16.8 ms` on `fib` warm, class B `js ≈ 18.68 ms`. Comparing only within
+class B, so the CPU is held fixed:
+
+| refresh (class B)  | fib warm | fib-recursive | array-sum | string-hash |
+| ------------------ | -------- | ------------- | --------- | ----------- |
+| 8695ae8 / d9cef66  | 12,442   | 7,565         | 926       | 238         |
+| f2c52ab .. 412cda7 | 24,888   | 7,565         | 1,243     | 238         |
+
+`fib` exactly 2.0x, `array-sum` 1.34x, the other two untouched — and the JS lane
+moved 18,683 → 18,682 µs across the same boundary. A machine change cannot
+produce that pattern; the two survivors are what named the rule. `fib-recursive`
+is self-recursive (already declined) and `string-hash` is not a leaf. Both
+regressing programs are a small **exported leaf that is one `for` loop**.
+
+The `fib` COLD lane did not move (18.8 → 18.8 ms), and its module is
+byte-identical across the boundary — the cold binary is 104 bytes on both
+sides. Only the WARM module, which appends the timing driver, changed.
+
+### Root cause
+
+Rule 1's `loop-leaf`: `weight ≥ 10` (the site is in the driver's measurement
+loop), `isLeaf` (fib's `run` calls nothing), `effSize ≈ 30 ≤ loopBudget 60`. So
+`run` was inlined into `warm` at both of its sites. `JS2WASM_IR_INLINE=on,verbose`
+prints it directly:
+
+```
+[ir-inline]   loop-leaf: run -> warm
+[ir-inline]   loop-leaf: run -> warm
+```
+
+Cranelift then had to keep `n`, `__best` and `__t0` in stack slots — every one
+of them is live across the driver's `performance.now()` calls, and xmm
+registers are caller-saved. The inner loop's back edge picked up three
+`movdqu` reloads it never had as its own function:
+
+```
+0x1ef: vxorpd %xmm0,%xmm0,%xmm0 ; vcvtsi2sdl %eax,%xmm0,%xmm0
+       movdqu (%rsp),%xmm1                 ; n, reloaded per iteration
+       vucomisd %xmm0,%xmm1 ; ja 0x2ed
+0x2ed: movdqu 0x10(%rsp),%xmm0             ; __best, not even read here
+       movdqu 0x20(%rsp),%xmm1             ; __t0,   not even read here
+       addl $1,%eax ; leal (%rcx,%r12),%edx ; movq %rcx,%r12 ; movq %rdx,%rcx
+       jmp 0x1ef
+```
+
+20,000,000 iterations of that is the whole 12.4 ms.
+
+### Fix — rule 5 in `src/codegen/ir-inline.ts`
+
+A callee that contains a `loop` is not a loop-leaf. The loop-leaf trade buys the
+call sequence at a hot site; it needs the callee's per-call cost to be
+comparable to the call, and a callee with its own loop covers its whole trip
+count per call, so the overhead removed is a vanishing fraction of it — while
+the register pressure it adds to the caller's inner loop is not. This is the
+same line Binaryen draws with "lightweight (no loops or function calls)",
+reached from the cost side rather than the safety side.
+
+The near-miss gets its own decline bucket, `loop-in-callee`, rather than
+disappearing into `no-rule`: it is the one decline whose cause is a cost-model
+judgement, and a future retune needs to see what rule 5 costs.
+
+### Verification
+
+- Both warm modules are now **byte-identical to the pre-flip build**
+  (`JS2WASM_IR_INLINE=0`) at the landing lane's own options
+  (`target: wasi, nativeStrings, optimize: 3`): fib 449 B, array-sum 475 B.
+  So the CI lane returns to 12,442 / 926 µs by construction, not by prediction.
+- Local wasmtime 46.0.1 (the pinned version, `benchmarks/wasmtime-cold-host`),
+  min of 5, pinned core: array-sum warm 1.79 → 1.49 ms.
+  **`fib` ranks the OTHER WAY on this container** (24.2 ms inlined vs 30.4 ms
+  not) — the spill cost is µarch-dependent, and this box is not the CI runner.
+  That is why the regression test pins the inline DECISION, not a wall clock.
+- Acorn standalone, `report` mode: 348 of 8,292 candidate sites become
+  `loop-in-callee` (4.2 %); `adapter=3820`, `loop-leaf=2297`,
+  `specialised=1174`, `single-caller=653` are all retained. The −12.0 % wall of
+  entry (34) rests on the adapter/helper mass, which rule 5 does not touch.
+- `tests/issue-4157-ir-inline.test.ts` 21/21; new
+  `tests/issue-4157-ir-inline-loop-callee.test.ts` pins both directions —
+  the fib shape unchanged by the loop rule, a loop-FREE two-site leaf still
+  inlined by it (isolated against `adapters,single,specialise`, so the other
+  three rules cannot mask the result).
+- LOC budget, function budget, stack-balance fixup gate: OK.
+
+### The gap this leaves
+
+Nothing in CI would have caught this, and nothing does now: the landing
+benchmark artifact is refreshed on merge to `main` and read by humans. A
+per-program regression gate on `wasm-host-wasmtime-hot-runtime.json` — comparing
+within a runner class, keyed on the JS lane as the machine fingerprint — is the
+missing check. Filed as a follow-up rather than bundled here.

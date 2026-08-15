@@ -281,23 +281,26 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
           instr.index += delta;
         }
       }
-      if ("body" in instr && Array.isArray((instr as any).body)) {
-        shiftGlobalIndices((instr as any).body);
+      // (#4415) Direct property reads, not `in`. This walk visits ~89,000
+      // instructions per compile (32 calls x ~2,790 each — every string
+      // constant added after code exists rewalks the whole module), and `in`
+      // is a prototype-chain lookup where a plain load suffices. `Array.isArray`
+      // already rejects both absent and non-array values, so the `in` guard was
+      // never load-bearing.
+      const nested = instr as unknown as {
+        body?: unknown;
+        then?: unknown;
+        else?: unknown;
+        catches?: { body?: unknown }[];
+        catchAll?: unknown;
+      };
+      if (Array.isArray(nested.body)) shiftGlobalIndices(nested.body as Instr[]);
+      if (Array.isArray(nested.then)) shiftGlobalIndices(nested.then as Instr[]);
+      if (Array.isArray(nested.else)) shiftGlobalIndices(nested.else as Instr[]);
+      if (Array.isArray(nested.catches)) {
+        for (const c of nested.catches) if (Array.isArray(c.body)) shiftGlobalIndices(c.body as Instr[]);
       }
-      if ("then" in instr && Array.isArray((instr as any).then)) {
-        shiftGlobalIndices((instr as any).then);
-      }
-      if ("else" in instr && Array.isArray((instr as any).else)) {
-        shiftGlobalIndices((instr as any).else);
-      }
-      if ("catches" in instr && Array.isArray((instr as any).catches)) {
-        for (const c of (instr as any).catches) {
-          if (Array.isArray(c.body)) shiftGlobalIndices(c.body);
-        }
-      }
-      if ("catchAll" in instr && Array.isArray((instr as any).catchAll)) {
-        shiftGlobalIndices((instr as any).catchAll);
-      }
+      if (Array.isArray(nested.catchAll)) shiftGlobalIndices(nested.catchAll as Instr[]);
     }
   }
 

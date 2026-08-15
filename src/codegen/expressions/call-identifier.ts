@@ -787,9 +787,9 @@ export function compileIdentifierCall(
       }
 
       if (argType?.kind === "i32") {
-        // Check if it's a boolean type → "true"/"false"
+        // (#4414) `|| .boolean` — a devirtualized call is `any` statically but returns a BRANDED boolean i32
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
-        if (isBooleanType(argTsType)) {
+        if (isBooleanType(argTsType) || argType.boolean === true) {
           return emitBoolToString(ctx, fctx);
         }
         // number (i32) → string via f64 conversion
@@ -2234,13 +2234,49 @@ export function compileIdentifierCall(
           // sound cross-frame case is a name explicitly recorded as THIS
           // lifted function's leading capture parameter.)
           const capSourceIdx = captureSourceSlot(fctx, cap);
-          fctx.body.push({ op: "local.get", index: capSourceIdx });
-          // Coerce capture value to expected param type if they differ
+          const actualType = getLocalType(fctx, capSourceIdx);
+          const boxed = fctx.boxedCaptures?.get(cap.name);
           const expectedCapType = captureParamTypes?.[capIdx];
+          const liveBoxLocalIdx = fctx.localMap.get(cap.name);
+          const liveBoxType = liveBoxLocalIdx !== undefined ? getLocalType(fctx, liveBoxLocalIdx) : undefined;
+          const liveBoxIsCanonical =
+            !cap.mutable &&
+            boxed !== undefined &&
+            liveBoxLocalIdx !== undefined &&
+            liveBoxType !== undefined &&
+            (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
+            liveBoxType.typeIdx === boxed.refCellTypeIdx &&
+            expectedCapType !== undefined &&
+            expectedCapType.kind !== "ref" &&
+            expectedCapType.kind !== "ref_null";
+          // A read-only nested function can still cross a frame whose copy of
+          // the binding is boxed because a sibling/earlier function required a
+          // shared cell.  `captureSourceSlot` quite correctly selects that
+          // live leading capture, but the callee's ABI is still the raw value
+          // (`externref`, f64, ...).  Passing the cell itself is especially
+          // harmful for constructors: `new C()` receives a Wasm struct instead
+          // of the host constructor.  Unwrap exactly the current canonical
+          // cell before forwarding the immutable capture.
+          const sourceIsCanonicalBox =
+            !cap.mutable &&
+            boxed !== undefined &&
+            actualType !== undefined &&
+            (actualType.kind === "ref" || actualType.kind === "ref_null") &&
+            actualType.typeIdx === boxed.refCellTypeIdx &&
+            expectedCapType !== undefined &&
+            expectedCapType.kind !== "ref" &&
+            expectedCapType.kind !== "ref_null";
+          const sourceIdx = liveBoxIsCanonical ? liveBoxLocalIdx! : capSourceIdx;
+          const sourceIsBox = liveBoxIsCanonical || sourceIsCanonicalBox;
+          fctx.body.push({ op: "local.get", index: sourceIdx });
+          if (sourceIsBox) {
+            fctx.body.push({ op: "struct.get", typeIdx: boxed!.refCellTypeIdx, fieldIdx: 0 });
+          }
+          // Coerce capture value to expected param type if they differ
           if (expectedCapType) {
-            const actualType = getLocalType(fctx, capSourceIdx);
-            if (actualType && !valTypesMatch(actualType, expectedCapType)) {
-              coerceType(ctx, fctx, actualType, expectedCapType);
+            const forwardedType = sourceIsBox ? boxed!.valType : actualType;
+            if (forwardedType && !valTypesMatch(forwardedType, expectedCapType)) {
+              coerceType(ctx, fctx, forwardedType, expectedCapType);
             }
           }
         }
