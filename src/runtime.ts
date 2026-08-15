@@ -4620,8 +4620,6 @@ function _safeGet(
   rawCallable = false,
 ): any {
   if (obj == null) return undefined;
-  const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
-  if (nativeString !== _MISS) return (nativeString as any)[key as any];
   // Coerce WasmGC struct keys to primitives via ToPrimitive (#1090, #1716).
   // Passing callbackState lets a key with a WasmGC-closure valueOf / toString /
   // @@toPrimitive be dispatched (ToPropertyKey §7.1.19 → ToPrimitive §7.1.1);
@@ -4688,6 +4686,8 @@ function _safeGet(
   // the `typeof key === "symbol"` arm below; only standalone mode (object-runtime.ts,
   // never this file) uses i32 symbol ids.
   if (_isWasmStruct(obj)) {
+    const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
+    if (nativeString !== _MISS) return (nativeString as any)[key as any];
     // (#2130) A deleted property reads as `undefined` even when the static
     // struct shape still carries the field (the `__sget_<key>` getter would
     // otherwise return the stale field value). The tombstone is cleared by
