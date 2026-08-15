@@ -200,6 +200,49 @@ describe("#4459 — discarded statements inside body buffers", () => {
       6,
     );
   });
+
+  // The remaining buffer kinds, because "placement inside loop/try bodies"
+  // is where a statement lowered through the wrong buffer would corrupt the
+  // structured frame rather than merely fail to claim.
+  it("inside a `switch` case body (the case is a break-scoped buffer)", async () => {
+    await expectIrLegacyParity(
+      `export function test(): number { let s = 0; const k = 1; switch (k) { case 0: s = 10; break; case 1: s + 99; s = 20; break; default: s = 30; } return s; }`,
+      [],
+      20,
+    );
+  });
+
+  it("inside a `do`/`while` body (post-test loop)", async () => {
+    await expectIrLegacyParity(
+      `export function test(): number { let s = 0; let i = 0; do { i * 7; s += i; i++; } while (i < 3); return s; }`,
+      [],
+      3,
+    );
+  });
+
+  it("inside a LABELED loop that breaks out (br.label depth still resolves)", async () => {
+    await expectIrLegacyParity(
+      `export function test(): number { let s = 0; outer: for (let i = 0; i < 3; i++) { i + 5; if (i === 2) break outer; s += i; } return s; }`,
+      [],
+      1,
+    );
+  });
+
+  it("preceding an early `return` inside a loop", async () => {
+    await expectIrLegacyParity(
+      `export function test(): number { let s = 0; for (let i = 0; i < 5; i++) { i * 3; if (i === 3) return i; s += i; } return s; }`,
+      [],
+      3,
+    );
+  });
+
+  it("inside a nested loop (two levels of buffer)", async () => {
+    await expectIrLegacyParity(
+      `export function test(): number { let s = 0; for (let i = 0; i < 3; i++) { for (let j = 0; j < 2; j++) { i + j; s += 1; } } return s; }`,
+      [],
+      6,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
