@@ -1,10 +1,10 @@
 {
   "id": "3522",
-  "assignee": "ttraenkler/opus-3522",
-  "requested_by": "ttraenkler/opus-3522",
+  "assignee": "ttraenkler/opus-3522b",
+  "requested_by": "ttraenkler/opus-3522b",
   "status": "in-progress",
-  "branch": "claude/ir-3522-class-family",
-  "claimed_at": "2026-08-15T14:36:22Z",
-  "updated_at": "2026-08-15T14:36:22Z",
-  "write_id": "30908-vtlab8kk"
+  "branch": "claude/ir-3522-family-2",
+  "claimed_at": "2026-08-15T19:45:51Z",
+  "updated_at": "2026-08-15T19:45:51Z",
+  "write_id": "31602-ji4wlrkl"
 }
