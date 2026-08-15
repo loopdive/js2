@@ -203,13 +203,13 @@ const SECTIONS = [
       [
         "`ArrayLiteralExpression`",
         "mixed",
-        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`; the EMPTY literal `[]` also claims (measured 2026-08-15, #3583). Spread/sparse/mixed-type partial. Re-owned from #1804 (`done`).",
+        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`; the EMPTY literal `[]` also claims (measured 2026-08-15, #3583). Spread claims for statically-provable source lengths (#4487, see the `SpreadElement` row); sparse (`expr-arraylit-sparse`) and mixed-type (`expr-arraylit-mixed-primitive-family`) still reject. Re-owned from #1804 (`done`).",
         "#3518",
       ],
       [
         "`SpreadElement`",
         "mixed",
-        "Spread rejects in both measured positions (2026-08-15, #3583): in an array literal at `expr-arraylit-spread`, and in a call at the surrounding argument/receiver gate. Re-owned from wont-fix #1131.",
+        "ARRAY-LITERAL spread now claims when every operand's element count is provable at compile time (#4487): an inline dense literal (`[...[1, 2], x]`) or a function-local `const` bound to a dense literal whose length is provably invariant. Those expand element-wise into #1804's `vec.new_fixed`, which is also what makes the result a COPY. Residual, under its own arm `expr-arraylit-spread-dynamic-source`: any RUNTIME-length source (parameter, call result, `let`, string/iterator protocol, an escaping or resized `const`) — `vec.new_fixed` takes a compile-time count and the IR has no dynamically-sized allocation node. Spread in a CALL still rejects at the surrounding argument/receiver gate (measured 2026-08-15, #3583). Re-owned from wont-fix #1131.",
         "#3518",
       ],
       [
