@@ -2777,7 +2777,16 @@ export function compileObjectLiteralForStruct(
       // actually be compiled for THIS literal, not a sibling literal's body.
       const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx !== undefined) {
-        const closureType = emitObjectMethodAsClosure(ctx, fctx, methodFullName, methodFuncIdx, structTypeIdx);
+        // (#4440) `methodProp` is the object-literal member itself — pass it so
+        // the closure carries §15.1.5 `length` / §10.2.9 `name` metadata.
+        const closureType = emitObjectMethodAsClosure(
+          ctx,
+          fctx,
+          methodFullName,
+          methodFuncIdx,
+          structTypeIdx,
+          methodProp,
+        );
         if (closureType) {
           // (#1989) Method-shorthand `valueOf`/`toString` now store a
           // per-instance closure in the eqref field (each literal owns a
