@@ -100,6 +100,32 @@ Two independent layers refuse a nested vec:
    (its inner `string[]` resolves to a `ref_null $vec_externref`, a `val`), then
    dies here as an `invariant`, which is a **hard error**, not a demote.
 
+### Layer 2 is a LIVE bug on `main`, not just a #4470 blocker
+
+Measured on `main` @ `3faec1ae` with **no change applied** and a plain
+**identifier** head:
+
+```ts
+function f(rows: string[][]): number {
+  let n = 0;
+  for (const r of rows) { n = n + 1; }
+  return n;
+}
+```
+
+→ `success: false`, `invariant@resolve`, `unexpected-internal-throw`,
+`prepared vec element vec<externref> is not supported`. **A plain `for-of` over
+a `string[][]` parameter does not compile today.** The claim is taken (layer 1
+passes), the prepared-vector registry then refuses the logical
+`vec<vec<externref>>`, and because that is an `invariant` rather than an
+`unsupported`, it hard-fails instead of demoting to the perfectly good legacy
+body. Pinned in `tests/issue-4470.test.ts` section C as a KNOWN DEFECT so the
+fix is noticed. Worth its own issue — the lead should allocate an id; it is
+user-visible and independent of any IR adoption work.
+
+The flat control cases are healthy: `number[]` for-of and `const [a, b] = xs`
+over a `number[]` both claim and emit IR bodies.
+
 ### The regression this would have shipped
 
 Five `string[][]` programs, base vs prototype, same source, `compile()` +
@@ -137,13 +163,20 @@ In order — the head change is last, not first:
    carries a `val` ValType, not `IrType.object`, so `lowerObjectPattern` has
    nothing to bind against).
 
-## Adjacent pre-existing defect (NOT caused by this issue)
+## Adjacent pre-existing defects (NOT caused by this issue)
 
-`.length` on an externref-carried string leaf is an `invariant@build` HARD error
-today on `main`, reached by the plain identifier head (`for (const r of rows)`
-over `string[]`) and by the already-claimed var-decl destructuring row
-(`const [a] = row`). Confirmed against base with no prototype applied. Worth its
-own issue; it is orthogonal to the for-of head.
+Both confirmed against base with no prototype applied. Each deserves its own
+issue; both are orthogonal to the for-of head.
+
+1. **`string[][]` for-of is a hard CE** — see "Layer 2 is a LIVE bug" above.
+2. **`.length` on an externref-carried string leaf** is an `invariant@build`
+   HARD error, reached by the plain identifier head (`for (const r of rows)`
+   over `string[]`) and by the already-claimed var-decl destructuring row
+   (`const [a] = row`).
+
+Both share one shape: a claimed unit hits an `invariant` where an `unsupported`
+demote would have kept a working legacy body. That classification choice, not
+the missing capability, is what turns a gap into a compile error.
 
 ## Test Results
 
@@ -156,3 +189,17 @@ evidence rather than from the matrix row:
 - the carrier boundary itself: an array-of-arrays iterable does not resolve to
   an IR vec with an indexable element. When someone fixes the carrier these
   assertions flip and point here.
+
+22 tests, all green (`npx vitest run tests/issue-4470.test.ts`, 2026-08-15).
+Section B runs each program against Node with the annotations stripped, so the
+semantics anchor is a differential check rather than a hand-computed constant.
+
+Gates (no `src/` change in this PR, so the IR budgets are expected to be flat,
+and were):
+
+| gate                                | result                        |
+| ----------------------------------- | ----------------------------- |
+| `tests/issue-4470.test.ts`          | 22/22 pass                    |
+| `pnpm run check:ir-fallbacks`       | no growth                     |
+| `node scripts/gen-ir-adoption.mjs --check` | clean                  |
+| `pnpm run check:ir-only`            | host 37/37, floors unchanged  |
