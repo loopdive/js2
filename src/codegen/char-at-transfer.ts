@@ -39,7 +39,17 @@ export function unboxProtoArgToI32(ctx: CodegenContext, fctx: FunctionContext, p
   const local = allocLocal(fctx, `__pm_arg_${fctx.locals.length}`, { kind: "i32" });
   const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
   flushLateImportShifts(ctx, fctx);
+  // (#4465) §7.1.4 ToNumber of an OBJECT is ToPrimitive(number) first — that is
+  // what runs a user `valueOf`/`toString` (and propagates a throw from one).
+  // `__unbox_number` alone re-discriminates the shape it was handed and answers
+  // NaN/0 for any object, so `"abc".substring(new Array(), new Boolean(1))` and
+  // the `charAt(<object>)` position family never called the user's methods. This
+  // is the canonical `__to_primitive` + `__unbox_number` pair (see
+  // tonumber-fast-paths.ts); ToPrimitive early-outs on values that are ALREADY
+  // primitive, so a number/string/boolean argument is unchanged in behaviour.
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "number");
   fctx.body.push({ op: "local.get", index: paramIdx });
+  if (toPrimitive !== null) fctx.body.push(...toPrimitive);
   if (unboxIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: unboxIdx });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
