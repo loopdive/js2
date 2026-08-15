@@ -7847,25 +7847,34 @@ function obviousSelectorValueFamily(
 }
 
 /**
- * (#4467) Which template-substitution families does the lowerer produce a
- * string for? Exactly two: `string` (passes straight into the concat chain)
- * and `number` (through the `IR_NUMBER_TO_STRING_FN` provider). `undefined`
- * means the selector must reject — keeping claim and lowering on one set.
+ * (#4467, #4503) Which template-substitution families does the lowerer produce
+ * a string for? Three: `string` (passes straight into the concat chain),
+ * `number` (through the `IR_NUMBER_TO_STRING_FN` provider) and `boolean` (two
+ * `string.const`s selected by the value). `undefined` means the selector must
+ * reject — keeping claim and lowering on one set.
  *
- * `boolean` is deliberately NOT admitted even though the legacy path handles
- * it: booleans share IR's `i32` carrier with a native-annotated number, so
- * once the checker family is gone the lowerer could not tell `${true}` →
- * `"true"` from `${1}` → `"1"`. Everything else (objects, `any`, primitive
- * unions, …) needs a ToPrimitive walk the IR does not own.
+ * `boolean` was NOT admitted before #4503, and the reason is worth keeping:
+ * booleans share IR's `i32` carrier with a native-annotated number, so with the
+ * checker family gone the lowerer could not tell `${true}` → `"true"` from
+ * `${1}` → `"1"` — the one failure mode that is WRONG OUTPUT rather than a
+ * demote. #4503 gives the IR type layer that distinction (the `irBool()` brand
+ * on the `i32` carrier), and the lowerer dispatches on it; a boolean that
+ * arrives unbranded demotes at THIS code rather than being printed as a number.
+ * Everything else (objects, `any`, primitive unions, …) still needs a
+ * ToPrimitive walk the IR does not own.
  *
- * The capability read is fail-CLOSED: bare selector callers and the linear
- * driver pass no `supportsBackendCapability`, and they have no number→string
- * provider bound, so they must keep rejecting.
+ * `boolean` needs no `supportsBackendCapability` read: unlike the numeric arm
+ * it binds no provider — `"true"`/`"false"` are string constants every lane
+ * already emits.
+ *
+ * The numeric capability read is fail-CLOSED: bare selector callers and the
+ * linear driver pass no `supportsBackendCapability`, and they have no
+ * number→string provider bound, so they must keep rejecting.
  */
 function templateSubstitutionFamily(
   expression: ts.Expression,
   scope: ReadonlySet<string>,
-): "string" | "number" | undefined {
+): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
   if (
     declaredExpressionHasExactFamily(expression, "number", scope) &&
@@ -7873,6 +7882,7 @@ function templateSubstitutionFamily(
   ) {
     return "number";
   }
+  if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
 }
 
