@@ -1974,6 +1974,18 @@ export function deriveFnctorFields(
   ): void {
     for (const stmt of stmts) {
       collectStatement(stmt, conditional);
+      // (#4464) Statements after an unconditional `return`/`throw` in the same
+      // statement list are UNREACHABLE, so their `this.<field> = …` writes
+      // never execute and the instance never gets those own properties. Deriving
+      // a slot from one made `__obj.bar` on
+      //
+      //     function __func(arg){ this.foo = arg; return true; this.bar = …; }
+      //
+      // read the field's null default instead of `undefined` (`S13.2.2_A6_T2`).
+      // The cut is per-list and only for a terminator at THIS level — a `return`
+      // nested inside an `if` leaves the list's tail reachable and is left
+      // alone, which is also what `guaranteedAssignmentsInStatements` assumes.
+      if (ts.isReturnStatement(stmt) || ts.isThrowStatement(stmt)) break;
     }
   }
   collectThisAssignments(body.statements);

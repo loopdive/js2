@@ -101,6 +101,83 @@ export function isBoundFunctionValue(ctx: CodegenContext, expression: ts.Express
   return isBoundFunctionValue(ctx, initializer, depth + 1);
 }
 
+/**
+ * (#4464) True when `source` — the BODY argument handed to the `Function`
+ * constructor — carries a `"use strict"` Directive Prologue.
+ *
+ * §14.1.1 restricts the prologue to the leading run of ExpressionStatements
+ * that are string literals, so only the FIRST such statement can be
+ * `use strict` for our purposes: a directive after any other statement is an
+ * ordinary expression and does not switch the code to strict mode. Recognition
+ * is therefore deliberately anchored at the start of the source, after leading
+ * whitespace and comments; anything else DECLINES, because the caller turns a
+ * `true` here into an unconditional TypeError throw and a false positive would
+ * poison a sloppy function.
+ */
+function functionConstructorBodyIsStrict(source: string): boolean {
+  let i = 0;
+  // Skip leading whitespace and comments (a prologue may be preceded by both).
+  for (;;) {
+    while (i < source.length && /\s/.test(source[i]!)) i++;
+    if (source.startsWith("//", i)) {
+      const end = source.indexOf("\n", i);
+      if (end < 0) return false;
+      i = end + 1;
+      continue;
+    }
+    if (source.startsWith("/*", i)) {
+      const end = source.indexOf("*/", i + 2);
+      if (end < 0) return false;
+      i = end + 2;
+      continue;
+    }
+    break;
+  }
+  return source.startsWith("'use strict'", i) || source.startsWith('"use strict"', i);
+}
+
+/**
+ * (#4464) True when the expression statically denotes a STRICT function minted
+ * by the `Function` constructor — `Function("'use strict';")` /
+ * `new Function("'use strict';")`, directly or through a variable binding
+ * (`var foo = Function("'use strict';"); foo.caller`).
+ *
+ * ES5 §13.2 step 19-20 installs the `[[ThrowTypeError]]` poison accessors on a
+ * strict function's `caller`/`arguments` no matter HOW that function was
+ * created, but {@link sourceFunctionForValue} can only see functions that have
+ * a source declaration in this program. A `Function(…)` result has none — its
+ * body is a runtime string — so the poison lowering declined and
+ * `foo.caller` answered `undefined` (`language/statements/function/13.2-{5,6,
+ * 9,10,13,14,17,18}-s`).
+ *
+ * The strictness question is nevertheless decidable HERE whenever the body
+ * argument is a literal: the directive prologue is a syntactic property of that
+ * string. Recognition is purely syntactic (`Function` must resolve to the
+ * ambient global — a user `function Function(){}` shadow declines) and the
+ * literal requirement is absolute: a computed body means we cannot know, and
+ * an unknown strictness must DECLINE rather than throw.
+ */
+export function isStrictFunctionConstructorValue(ctx: CodegenContext, expression: ts.Expression, depth = 0): boolean {
+  if (depth > 4) return false;
+  const expr = stripTransparent(expression);
+  if (ts.isCallExpression(expr) || ts.isNewExpression(expr)) {
+    const callee = stripTransparent(expr.expression);
+    if (!ts.isIdentifier(callee) || callee.text !== "Function") return false;
+    // A user-declared `Function` shadows the global — decline.
+    const declaration = ctx.oracle.valueDeclarationOf(callee);
+    if (declaration !== undefined && !declaration.getSourceFile().isDeclarationFile) return false;
+    const args = expr.arguments;
+    if (args === undefined || args.length === 0) return false;
+    const body = stripTransparent(args[args.length - 1]!);
+    if (!ts.isStringLiteral(body) && !ts.isNoSubstitutionTemplateLiteral(body)) return false;
+    return functionConstructorBodyIsStrict(body.text);
+  }
+  if (!ts.isIdentifier(expr)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(expr);
+  if (initializer === undefined) return false;
+  return isStrictFunctionConstructorValue(ctx, initializer, depth + 1);
+}
+
 /** True when a function-valued expression denotes the currently executing source function. */
 export function isCurrentSourceFunctionValue(
   ctx: CodegenContext,

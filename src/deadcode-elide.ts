@@ -50,6 +50,7 @@
  */
 import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
+import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
 
 export interface DeadBindingElisionResult {
   source: string;
@@ -165,6 +166,16 @@ export function elideDeadTopLevelBindings(
       names.push(decl.name.text);
     }
     if (!ok || names.length === 0) continue;
+    // (#4464) The `EARLY_ERROR_BINDING_NAMES` guard above covers early errors
+    // carried by the binding NAME; this covers the ones carried by the
+    // INITIALIZER. A dead `var f = function (param, param) { }` under
+    // `"use strict"` is still a SyntaxError, and blanking the statement
+    // deleted the only evidence of it before the pipeline ever parsed the
+    // program — three `negative: phase: parse` tests compiled clean
+    // (`13.1-4gs`, `13.1-8gs`, `enable-strict-via-outer-script`). The walk is
+    // bounded to candidate statements, i.e. exactly the code about to be
+    // deleted, and a false positive costs one un-elided dead binding.
+    if (subtreeHasEarlyError(sf, stmt)) continue;
     candidates.push({ stmt, names, start: stmt.getStart(sf), end: stmt.end, dropped: true });
   }
   if (candidates.length === 0) return identityResult(source);

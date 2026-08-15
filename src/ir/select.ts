@@ -87,6 +87,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -229,6 +230,27 @@ function shapeNo(arm: string, node: ts.Node): false {
 function capabilityNo(reason: IrFallbackReason, arm: string, node: ts.Node): false {
   if (typedShapeRejectReason === null) typedShapeRejectReason = reason;
   return shapeNo(arm, node);
+}
+
+/**
+ * (#4459) Run a speculative shape probe without letting its diagnostics
+ * escape when it declines.
+ *
+ * The value-discard arm re-tests an ExpressionStatement through the
+ * expression walker. `shapeNo` is first-wins and `capabilityNo` latches a
+ * typed `IrFallbackReason` — so a failed probe would otherwise overwrite the
+ * statement's own arm label AND move the function into a different
+ * `check:ir-fallbacks` bucket. Restoring both on failure keeps a
+ * non-lowerable statement bucketed exactly as it was before this arm
+ * existed; only the ACCEPT path is new behaviour.
+ */
+function probeShape(check: () => boolean): boolean {
+  const savedDetail = shapeRejectDetail;
+  const savedReason = typedShapeRejectReason;
+  if (check()) return true;
+  shapeRejectDetail = savedDetail;
+  typedShapeRejectReason = savedReason;
+  return false;
 }
 
 /** Read and clear the recorded reject detail (used by `planIrCompilation`). */
@@ -3075,6 +3097,105 @@ function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boo
   );
 }
 
+/**
+ * (#4459) Does this ExpressionStatement's expression MUTATE a binding the
+ * dedicated statement arms own?
+ *
+ * The value-discard arm is deliberately additive: it must never swallow a
+ * shape that already has a purpose-built arm (identifier / property /
+ * element assignment, compound assignment, `++`/`--`), because those arms
+ * carry binding bookkeeping the generic expression walker does not do —
+ * `clearProjectionBinding`, class-binding propagation, module-slot writes.
+ * A statement whose TOP-LEVEL operator is an assignment or update therefore
+ * keeps its existing arm and its existing rejection label; the discard arm
+ * only ever sees value-producing expressions.
+ */
+export function expressionStatementMutatesAtTopLevel(expr: ts.Expression): boolean {
+  let candidate = expr;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  if (ts.isBinaryExpression(candidate)) {
+    // `=` plus every compound form (`+=`, `**=`, `>>>=`, `&&=`, `??=`, …).
+    // The contiguous `FirstAssignment..LastAssignment` SyntaxKind range is
+    // the enum's own definition of that set — `ts.isAssignmentOperator` is
+    // TypeScript-internal and not on the public `typescript.d.ts` surface.
+    const kind = candidate.operatorToken.kind;
+    return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+  }
+  if (ts.isPrefixUnaryExpression(candidate) || ts.isPostfixUnaryExpression(candidate)) {
+    return candidate.operator === ts.SyntaxKind.PlusPlusToken || candidate.operator === ts.SyntaxKind.MinusMinusToken;
+  }
+  if (ts.isDeleteExpression(candidate)) return true;
+  return false;
+}
+
+/**
+ * (#4459) Is this expression claimable in VALUE-DISCARDING position?
+ *
+ * Structurally mirrors `lowerDiscardedExpression` in `from-ast.ts` arm for
+ * arm, so claim ⇔ lowering parity is exact:
+ *
+ *   - parenthesized / `void e`  → the operand, discarded (both are erased);
+ *   - `c ? a : b`               → condition through the ordinary condition
+ *     walker, then EACH ARM discarded independently. The lowerer emits an
+ *     `if.stmt` with one collected buffer per arm, so exactly the taken arm
+ *     evaluates — the arms are never merged into a value, which is why this
+ *     recurses into the DISCARD predicate rather than `isPhase1Expr`;
+ *   - comma (`a, b` and the parser's flattened CommaListExpression) → every
+ *     element discarded, left to right;
+ *   - everything else           → an ordinary Phase-1 value expression whose
+ *     SSA result the lowerer simply never consumes.
+ *
+ * Nothing here widens what the expression layer admits: a sub-expression the
+ * Phase-1 walker cannot lower still rejects, so this slice removes only the
+ * STATEMENT-POSITION gate.
+ */
+function isPhase1DiscardedExpr(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (ts.isParenthesizedExpression(expr)) return isPhase1DiscardedExpr(expr.expression, scope, localClasses);
+  if (ts.isVoidExpression(expr)) return isPhase1DiscardedExpr(expr.expression, scope, localClasses);
+  if (ts.isConditionalExpression(expr)) {
+    if (!isPhase1ConditionExpr(expr.condition, scope, localClasses)) {
+      return shapeNo("discard-ternary-cond", expr.condition);
+    }
+    if (!isPhase1DiscardedExpr(expr.whenTrue, scope, localClasses)) return false;
+    return isPhase1DiscardedExpr(expr.whenFalse, scope, localClasses);
+  }
+  if (ts.isCommaListExpression(expr)) {
+    for (const element of expr.elements) {
+      if (!isPhase1DiscardedExpr(element, scope, localClasses)) return false;
+    }
+    return true;
+  }
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    if (!isPhase1DiscardedExpr(expr.left, scope, localClasses)) return false;
+    return isPhase1DiscardedExpr(expr.right, scope, localClasses);
+  }
+  if (expressionStatementMutatesAtTopLevel(expr)) return shapeNo("discard-mutating-operand", expr);
+  return isPhase1Expr(expr, scope, localClasses);
+}
+
+/**
+ * (#4459) The shared statement-position gate for a value-discarding
+ * ExpressionStatement (`x + 1;`, `x;`, `1;`, `cond ? a : b;`). Used by BOTH
+ * the top-level statement-list walker and the body-buffer walker, since
+ * `lowerStatementList` and `lowerStmt` both route these through the one
+ * `lowerDiscardedExpression`.
+ *
+ * The probe wrapper keeps a declined expression's diagnostics from leaking
+ * into the statement's own rejection label / fallback bucket.
+ */
+function expressionStatementIsPhase1Discardable(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (expressionStatementMutatesAtTopLevel(expr)) return false;
+  return probeShape(() => isPhase1DiscardedExpr(expr, scope, localClasses));
+}
+
 function isPhase1StatementList(
   stmts: ReadonlyArray<ts.Statement>,
   scope: Set<string>,
@@ -3283,6 +3404,13 @@ function isPhase1StatementListInScope(
       // assignment `+=`, etc. Label by the offending expression kind + operator
       // so the histogram distinguishes assignment from inc-dec.
       const es = s.expression;
+      // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
+      // `cond ? a : b;`. Lowered by `lowerDiscardedExpression`: the
+      // expression evaluates for its effects and its SSA result is never
+      // consumed. Placed AFTER every mutating arm above so those keep their
+      // binding bookkeeping; the two labels below survive for expressions
+      // the Phase-1 walker still cannot admit.
+      if (expressionStatementIsPhase1Discardable(es, scope, localClasses)) continue;
       let arm = "nontail-exprstmt-other";
       if (ts.isBinaryExpression(es)) {
         arm =
@@ -4512,6 +4640,12 @@ function isPhase1BodyStatement(
         return true;
       }
     }
+    // (#4459) Value-discarding statement inside a body buffer. `lowerStmt`
+    // routes it through the same `lowerDiscardedExpression` the top-level
+    // walker uses; a discarded ternary becomes an `if.stmt` with one
+    // collected buffer per arm (#2952 slice 2 machinery), which nests
+    // correctly inside loop / try / switch bodies.
+    if (expressionStatementIsPhase1Discardable(stmt.expression, scope, localClasses)) return true;
     return shapeNo("body-exprstmt-other", stmt.expression);
   }
   if (ts.isForOfStatement(stmt)) {
@@ -5562,10 +5696,16 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
   );
 }
 
-/** Resolve an exact module identifier whose shared legacy slot is externref-shaped. */
+/**
+ * Resolve an exact module identifier whose shared legacy slot is
+ * reference-shaped — the host externref handle, or (#4461) the host-free
+ * native `$Map` struct. Both carriers take the same consumer discipline: the
+ * value is opaque to this shape-only selector, so only positions with a proven
+ * lowering may own an expression that touches one.
+ */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding?.valueKind.kind === "extern" ? binding : undefined;
+  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -5899,7 +6039,7 @@ function exactModuleMapMethod(expr: ts.CallExpression): string | undefined {
   const callee = unwrapPhase1Parens(expr.expression);
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) return undefined;
   const receiver = moduleExternBinding(callee.expression);
-  return receiver?.valueKind.kind === "extern" && receiver.valueKind.className === "Map" ? callee.name.text : undefined;
+  return receiver !== undefined && isIrModuleMapValueKind(receiver.valueKind) ? callee.name.text : undefined;
 }
 
 /**
@@ -5925,7 +6065,7 @@ function isExactModuleMapGenericInitializer(expr: ts.NewExpression): boolean {
   if (!ts.isVariableStatement(statement) || !ts.isSourceFile(statement.parent)) return false;
 
   const storage = resolver(declaration.name);
-  return storage?.valueKind.kind === "extern" && storage.valueKind.className === "Map";
+  return storage !== undefined && isIrModuleMapValueKind(storage.valueKind);
 }
 
 /**

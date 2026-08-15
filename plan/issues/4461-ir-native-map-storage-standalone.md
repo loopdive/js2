@@ -1,9 +1,12 @@
 ---
 id: 4461
 title: "IR: model the native $Map struct as module-binding storage so Map claims in standalone"
-status: ready
+status: done
 sprint: current
 created: 2026-08-15
+updated: 2026-08-15
+completed: 2026-08-15
+assignee: ttraenkler/opus-4461
 priority: medium
 horizon: l
 feasibility: medium
@@ -12,6 +15,20 @@ task_type: refactor
 area: ir
 goal: ir-full-coverage
 related: [4457, 3518, 2856, 1103]
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
+  # +7/+4 below are merge-resolution artifacts of the queue-bot's main-merge
+  # (985b8f0d interleaving #4575/#4581 god-file edits with this branch's
+  # #4457-based edits), not new feature code in the barrels.
+  - src/ir/select.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/codegen/index.ts::planIrOverlay
 ---
 
 # #4461 — IR has no storage model for the native `$Map`, so `Map` never claims in standalone
@@ -111,3 +128,116 @@ backend.
    `assertNotDeferred` guard and the selector consult one table.
 5. **Ratchet** `scripts/ir-only-baseline.json` standalone-lane-only, per the
    #4555 pattern.
+
+## What was built
+
+The plan's step 1 held: `native-map` is a **distinct** `IrModuleBindingValueKind`
+selected by a new `allowNativeMapStorage` option (`= ctx.nativeStrings`),
+complementary to `allowBuiltinMapExtern` and never both true. `select.ts` then
+treats the two carriers uniformly through two shared predicates
+(`isIrModuleReferenceValueKind` for the extern-consumer discipline,
+`isIrModuleMapValueKind` for the `Map`-specific arms), so the existing
+`exactModuleMapMethod` / `isExactModuleMapGenericInitializer` /
+`moduleExternConsumerIsProven` machinery — including the deliberate carry of
+`Map.get`'s result until a strict `undefined` check — applies unchanged.
+
+Steps 3 and 4 landed differently from the sketch, and the difference is the
+substantive design decision:
+
+- **Lowering goes through three externref-ABI adapters** (`src/codegen/ir-native-map.ts`)
+  rather than direct `__map_*` calls from the IR. The `$Map` helper ABI is
+  `(ref $Map, anyref, …)`; the IR has neither a native-collection reference
+  type nor a boxing primitive, so a direct call would have required teaching
+  the middle end both. The adapters call the SAME `__map_new` / `__map_get` /
+  `__map_set` helpers legacy calls — one hash table, not two.
+- **The adapter ABI is f64-keyed on purpose.** That is the capability
+  statement, not a shortcut: the selector claims a native-map `.get`/`.set`
+  only where the checker proves every key and value is a number, so the
+  adapter surface and the claim surface are the same set. Widening to string
+  keys means adding an adapter AND widening the proof, in one change.
+- **No capability row was needed** (step 4). The single predicate
+  `nativeMapStorageType()` on the lower resolver decides every arm, so there
+  is no second table for a capability row to keep in sync.
+
+Two providers had to learn they are not host-only, because a native `$Map`
+read reaches sites nothing else in a host-free lane reached before:
+`__extern_is_undefined` (load-bearing under the #2106 non-null `undefined`
+singleton) and `__unbox_number`. Both exist as real Wasm functions on host-free
+lanes under the same name and signature, so the arms now ask the resolver which
+provider this lane owns instead of emitting an `env` import into a standalone
+module. Reserve-time provider **observation** was also needed: prepared-component
+discovery runs before lowering and rejects a component whose external callables
+have no planned Program ABI identity, so a runtime symbol the reserve pass mints
+must be observed in that same pass.
+
+## Test Results
+
+Measured on this branch (base `4b64d25e`, the #4457 tip).
+
+| gate | before | after |
+|------|--------|-------|
+| `check:ir-only` standalone `emitted` | 17 | **19** |
+| `check:ir-only` standalone `unsupported` | 20 | **18** |
+| `select/body-shape-rejected` (standalone) | 5 | **3** |
+| `check:ir-only` single-host | 37/37 READY | 37/37 READY (unmoved) |
+| `check:ir-fallbacks` | OK | OK, no unintended/post-claim/module-level growth |
+| `gen-ir-adoption.mjs --check` | up to date | up to date |
+| `tests/issue-4461.test.ts` | — | 5/5 |
+| `tests/issue-4457.test.ts` | 4/4 | 4/4 (two counts updated: `body-shape-rejected` 5→3, split 17/20→19/18) |
+| `pnpm run typecheck` | clean | clean |
+| `tests/equivalence/{map-set-basic,ir-slice10-map-set,weakmap-weakset,ir-slice10-date}` | pass | pass (33/33) |
+| `tests/equivalence/tdz-reference-error` | 6 failed / 3 passed | 6 failed / 3 passed (A/B'd on base — pre-existing, unrelated) |
+
+`scripts/ir-only-baseline.json` ratcheted **standalone-lane-only**
+(`emittedFloor`/`irBodyEmittedFloor` 17→19, `unsupportedCeiling` 20→18,
+`select/body-shape-rejected` 5→3). The host lane's floors are untouched.
+
+Acceptance criteria 1–4 are met. Criterion 3's runtime half is a real run, not
+an inspection: `tests/issue-4461.test.ts` compiles the memo source standalone,
+instantiates it against a `Proxy` import object that records every `env.*`
+lookup, runs `test()`, and compares to the same algorithm evaluated in JS.
+It passes and the recorded host-import list is **empty**.
+
+## Known residual (NOT introduced here, measured)
+
+A caller that pulls a module-binding reader into its own prepared component
+fails preparation for **every** module-binding kind, not just native `$Map`:
+
+```
+source-global-outside-component: source global …module-tdz:0 belongs to
+  non-candidate storage terminal …module-init:0
+unplanned-abi-binding: external callable runtime|20:__new_ReferenceError
+  has no Program ABI identity
+```
+
+Measured by A/B on this branch's merge base with an **f64 control** — a plain
+`let total = 0` binding under the identical call graph reproduces the failure
+byte-for-byte on base (`bump unsupported late-preparation-unsupported`,
+`test invariant unpatched-slot`, `success: false`). So it is a pre-existing
+prepared-component limitation for TDZ-guarded module globals. #4461 does not
+cause it; it only makes a `Map`-using function reach it, because claiming
+`fibMemo` opens the call-graph closure that previously rejected its caller.
+
+One #4461-owned item is currently **masked** by that residual and should be
+closed when it is lifted: the native-map binding's IrType is
+`{ kind: "val", val: { kind: "ref_null", typeIdx: $Map } }`, a module-relative
+type index, which prepared-component discovery rejects with
+`implicit-support-reference-unavailable: raw IR reference type ref_null:N has
+no symbolic Program ABI type ref`. Closing it means giving the carrier a
+symbolic `IrTypeRef` (the `prepareDynamicCarrier` / `prepareVectorLayout`
+idiom in `program-abi-type-planning.ts`) and, with it, a new `IrType` arm —
+deliberately deferred here because it is unreachable while the pre-existing
+blocker fails first, and because a new IR type leaf touches every exhaustive
+switch over `IrType`.
+
+`tests/issue-4461.test.ts` pins this **differentially**, not as a fixed
+expectation: the native-`$Map` shape must do whatever the f64 control does.
+That assertion stays true if the residual is fixed, and fails loudly if
+native `$Map` ever becomes the worse of the two.
+
+Also observed and out of scope: a module whose ONLY union-import consumer is
+the IR path fails on the **JS-host** lane with
+`unknown exact function import env.__box_number` (`addUnionImports` registers
+the import after the imported-callable catalog is built). Reproduced on base
+with the same source; the `algorithms.ts` corpus does not hit it because
+`console.log` forces the registration earlier.

@@ -12,6 +12,7 @@ import {
   ensureCallerStrictSnapshot,
   isBoundFunctionValue,
   isCurrentSourceFunctionValue,
+  isStrictFunctionConstructorValue,
   sourceFunctionForValue,
 } from "./function-poison-pill.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
@@ -55,7 +56,10 @@ export function tryCompileFunctionPoisonRead(
   // (§15.3.4.5 steps 20-21) — the same terminal throw as the strict case.
   const strictFunction =
     (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
-    isBoundFunctionValue(ctx, member.receiver);
+    isBoundFunctionValue(ctx, member.receiver) ||
+    // (#4464) `var foo = Function("'use strict';")` — a strict function with no
+    // source declaration for `sourceFunctionForValue` to find.
+    isStrictFunctionConstructorValue(ctx, member.receiver);
   const currentSloppyCallerRead =
     member.name === "caller" && !strictFunction && isCurrentSourceFunctionValue(ctx, fctx, member.receiver);
   if (!strictFunction && !currentSloppyCallerRead) return undefined;
@@ -104,7 +108,9 @@ export function tryCompileStrictFunctionPoisonAssignment(
   const poisoned =
     (sourceFunction !== undefined && isStrictFunction(sourceFunction, ctx.inferModuleStrictArguments)) ||
     // (#4221) `boundFn.arguments = 12` hits the same [[ThrowTypeError]] setter.
-    isBoundFunctionValue(ctx, member.receiver);
+    isBoundFunctionValue(ctx, member.receiver) ||
+    // (#4464) …and so does the `Function("'use strict';")` product.
+    isStrictFunctionConstructorValue(ctx, member.receiver);
   if (!poisoned) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, member.receiver);

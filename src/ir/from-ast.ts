@@ -50,6 +50,7 @@ import {
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
+import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
 import { boundedPreparedNestedOrdinaryClassBindingName } from "./class-accessor-safety.js";
@@ -174,6 +175,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
+  expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
@@ -523,6 +525,60 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * selector↔capability drift, not a fallback.
    */
   jsHostExterns?(): boolean;
+  /**
+   * (#4461) The host-free `Map` carrier. Returns the lane's native `$Map`
+   * module-binding storage type (`(ref null $Map)` as an IR `val`) when this
+   * compile lowers `Map` to the WasmGC struct (#1103a), and `undefined` on the
+   * JS-host lane, where `Map` is an externref extern class instead.
+   *
+   * This is the SINGLE predicate that decides the native-map lowering arms, so
+   * it is also what the selector's `allowNativeMapStorage` option must agree
+   * with — one fact, two readers, no independent mode reads.
+   *
+   * PURE — it never materializes anything. It answers `undefined` until the
+   * `$Map` struct actually exists in this module, which is what makes it safe
+   * to call from a hot path. Use {@link ensureNativeMapStorageType} at the one
+   * site that is genuinely constructing a Map; see that method for why.
+   */
+  nativeMapStorageType?(): IrType | undefined;
+  /**
+   * The MATERIALIZING twin of {@link nativeMapStorageType}: registers the
+   * `$Map` struct + its runtime helpers if absent, then reports the storage
+   * type.
+   *
+   * The split is load-bearing, not stylistic. #4461 shipped ONE method that
+   * always materialized, and both from-ast call sites asked it BEFORE they knew
+   * they were looking at a Map — `lowerNewExpression` asked on every `new`, and
+   * the module-binding probe on every method receiver. In a native-string or
+   * standalone lane that emitted the entire twelve-function `$Map` runtime
+   * (`__map_new`, `__map_get`, `__map_set`, `__map_has`, `__map_delete`,
+   * `__map_clear`, `__map_size`, the two iterator helpers, `__map_lookup_idx`,
+   * `__hash_anyref`, `__same_value_zero`) plus its struct types into every
+   * module containing a `new` expression. Measured on a two-class module with
+   * no `Map` anywhere: +1,374 bytes, 59 → 71 functions. That is what changed
+   * the wasm hash of 508 test262 files, regressed 297 in
+   * `language/expressions/class/elements`, and failed the standalone
+   * high-water floor.
+   *
+   * So: a QUERY must not emit. Only call this once the construct is PROVEN to
+   * be a `Map`.
+   */
+  ensureNativeMapStorageType?(): IrType | undefined;
+  /**
+   * (#4461) True when `undefined`-ness of an externref-shaped value is tested
+   * by a NATIVE `__extern_is_undefined` function rather than the `env` host
+   * import. Host-free lanes register the predicate as a real Wasm function
+   * (`ensureObjectRuntime`); asking for the import there would put a host
+   * import into a standalone module.
+   */
+  externIsUndefinedIsNative?(): boolean;
+  /**
+   * (#4461) True when `__unbox_number` exists as a NATIVE function on this
+   * lane. Complementary to `hasHostNumberBox`: standalone registers the same
+   * name/signature through `addUnionImports`'s native-provider arm, so an
+   * externref carrying a boxed number can be unboxed without a host import.
+   */
+  hasNativeNumberUnbox?(): boolean;
   /**
    * (#2856) Console-argument variant selection for `console.<m>(arg)` —
    * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
@@ -1569,6 +1625,19 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         ts.isIdentifier(s.expression.left)
       ) {
         lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
+        continue;
+      }
+      // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
+      // `cond ? a : b;`. The expression evaluates for its effects and its
+      // SSA result is simply never consumed (a discarded ternary becomes an
+      // `if.stmt`, so only the taken arm evaluates). The selector's
+      // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
+      // shape has a dedicated arm above and is refused by that selector arm,
+      // so one reaching here is a real selector↔builder divergence and must
+      // still surface as an unsupported shape rather than being lowered as
+      // an ordinary value.
+      if (!expressionStatementMutatesAtTopLevel(s.expression)) {
+        lowerDiscardedExpression(s.expression, cx);
         continue;
       }
       throw new Error(`ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
@@ -5968,6 +6037,14 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   if (promiseDelay !== undefined) return promiseDelay;
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
   if (primitiveWrapper !== null) return primitiveWrapper.value;
+  // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`
+  // struct. Intercepted before the extern-class registry, which has no `Map`
+  // entry at all in host-free mode — the pre-#4461 behaviour was the
+  // `unknown-class-construction` demote at the bottom of this function.
+  // The storage type is obtained INSIDE, after the `new Map()` shape is proven
+  // — asking first materialized the whole `$Map` runtime on every `new`.
+  const nativeMap = tryLowerNativeMapConstruction(expr, cx);
+  if (nativeMap !== null) return nativeMap;
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
   }
@@ -6376,6 +6453,112 @@ function lowerReceiverFirstDynamicMethod(
   return result;
 }
 
+/**
+ * (#4461) Resolve `receiver` to a module binding whose storage is the lane's
+ * native `$Map` struct, or `null`.
+ *
+ * The proof is storage identity, not spelling: the binding must resolve
+ * through the same `resolveModuleBinding` the selector consulted AND carry the
+ * exact IrType the lane reports for native-map storage. A host-lane
+ * `extern<Map>` binding therefore never reaches these arms, and neither does a
+ * user variable that merely happens to hold a Map.
+ */
+function nativeMapModuleBinding(
+  receiver: ts.Identifier | undefined,
+  cx: LowerCtx,
+): { readonly binding: ModuleBindingGlobal; readonly name: string } | null {
+  if (receiver === undefined) return null;
+  // Resolve the binding FIRST: it is the cheap discriminator, and resolving a
+  // genuinely native-map binding is itself what registers the `$Map` struct
+  // (`resolveModuleBindingGlobal`'s `native-map` arm). So by the time the PURE
+  // storage-type query below runs, the struct exists exactly when it should —
+  // and for every other receiver we have emitted nothing at all.
+  const binding = cx.resolver?.resolveModuleBinding?.(receiver);
+  if (!binding) return null;
+  const storageType = cx.resolver?.nativeMapStorageType?.();
+  if (!storageType || !irTypeEquals(binding.type, storageType)) return null;
+  return { binding, name: receiver.text };
+}
+
+/**
+ * (#4461) Lower `<nativeMap>.get(k)` / `<nativeMap>.set(k, v)` through the
+ * externref-ABI adapters over the shared `$Map` helpers.
+ *
+ * Both arms are deliberately number-keyed: the adapter ABI and the selector's
+ * accepted surface are the same set, so a claim can never outrun a lowering.
+ * An argument whose lowered carrier is not f64 throws the ordinary clean
+ * "not in slice" demote rather than silently coercing — a string key lowered
+ * as a number would corrupt SameValueZero hashing.
+ */
+function tryLowerNativeMapMethodCall(
+  expr: ts.CallExpression,
+  methodName: string,
+  receiverIdentifier: ts.Identifier | undefined,
+  cx: LowerCtx,
+): IrValueId | null {
+  if (methodName !== "get" && methodName !== "set") return null;
+  const resolved = nativeMapModuleBinding(receiverIdentifier, cx);
+  if (resolved === null) return null;
+  const arity = methodName === "get" ? 1 : 2;
+  const callee = expr.expression as ts.PropertyAccessExpression;
+  if (
+    expr.questionDotToken !== undefined ||
+    callee.questionDotToken !== undefined ||
+    expr.arguments.length !== arity ||
+    expr.arguments.some(ts.isSpreadElement)
+  ) {
+    throw new IrUnsupportedError(
+      "method-call-unsupported",
+      "build",
+      `ir/from-ast: native Map .${methodName} call shape is not in this slice (${cx.funcName})`,
+    );
+  }
+
+  const receiver = lowerResolvedModuleBindingRead(resolved.name, resolved.binding, cx);
+  const args: IrValueId[] = [receiver];
+  for (const argument of expr.arguments) {
+    const value = lowerExpr(argument, cx, IR_F64);
+    if (asVal(cx.builder.typeOf(value))?.kind !== "f64") {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: native Map .${methodName} needs a number key/value (${cx.funcName})`,
+      );
+    }
+    args.push(value);
+  }
+  const result = cx.builder.emitCall(
+    irRuntimeFuncRef(methodName === "get" ? IR_NATIVE_MAP_GET_NUM_FN : IR_NATIVE_MAP_SET_NUM_FN),
+    args,
+    irVal({ kind: "externref" }),
+  );
+  if (result === null) {
+    throw new Error(`ir/from-ast: native Map .${methodName} adapter returned void (${cx.funcName})`);
+  }
+  return result;
+}
+
+/**
+ * (#4461) Lower the one native-`$Map` producer: `new Map()` / `new Map<K, V>()`
+ * initializing a module binding whose storage is the native struct. The
+ * selector admits exactly this shape (`isExactModuleMapGenericInitializer` +
+ * the native-map `writeValueMatches` arm), so anything else that reaches here
+ * is drift rather than an unsupported source.
+ */
+function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
+  // Every cheap, PURE rejection first. Only a proven ambient `new Map()` may
+  // reach the materializing resolver call below — see
+  // `ensureNativeMapStorageType` for what asking too early cost.
+  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Map") return null;
+  if ((expr.arguments?.length ?? 0) !== 0) return null;
+  if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) return null;
+  const storageType = cx.resolver?.ensureNativeMapStorageType?.();
+  if (!storageType) return null;
+  const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
+  if (result === null) throw new Error(`ir/from-ast: native Map allocator returned void (${cx.funcName})`);
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -6434,6 +6617,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
     return result;
   }
+
+  // (#4461) `<moduleMap>.get(k)` / `.set(k, v)` where the binding's storage is
+  // the native `$Map` struct. Intercepted BEFORE the receiver is lowered so
+  // the map value stays in its own `(ref null $Map)` carrier all the way to
+  // the adapter, instead of being coerced through an externref the host lane
+  // would use. Returns null when this is not that shape.
+  const nativeMapCall = tryLowerNativeMapMethodCall(expr, methodName, receiverIdentifier, cx);
+  if (nativeMapCall !== null) return nativeMapCall;
 
   const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
   if (preparedDateNow !== null) return preparedDateNow;
@@ -7862,12 +8053,25 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (declared && declared.kind === "val" && declared.val.kind === "f64") {
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
-    if (actualV && actualV.kind === "externref" && cx.resolver?.hasHostNumberBox?.() === true) {
-      const unboxed = cx.builder.emitCall(irImportFuncRef("env", "__unbox_number"), [value], irVal({ kind: "f64" }));
-      if (unboxed === null) {
-        throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
+    if (actualV && actualV.kind === "externref") {
+      // (#4461) Both lanes own a `__unbox_number` with the same
+      // `(externref) -> f64` signature; only the PROVIDER differs (host import
+      // vs the native function `addUnionImports` registers under
+      // `semanticProviders: "native-first"`). A host-free `Map.get` result
+      // reaches this site with a boxed number inside an externref, so the
+      // native arm is what makes `return hit;` lower instead of demoting.
+      const provider = cx.resolver?.hasHostNumberBox?.()
+        ? irImportFuncRef("env", "__unbox_number")
+        : cx.resolver?.hasNativeNumberUnbox?.()
+          ? irRuntimeFuncRef("__unbox_number")
+          : null;
+      if (provider !== null) {
+        const unboxed = cx.builder.emitCall(provider, [value], irVal({ kind: "f64" }));
+        if (unboxed === null) {
+          throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
+        }
+        return unboxed;
       }
-      return unboxed;
     }
     return value;
   }
@@ -9034,6 +9238,14 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
         lowerIncrementDecrement(stmt.expression.operand, op, cx);
         return;
       }
+    }
+    // (#4459) Value-discarding statement inside a body buffer — the same
+    // `lowerDiscardedExpression` the top-level walker uses. A discarded
+    // ternary collects one buffer per arm and emits `if.stmt` (#2952
+    // slice 2), which nests correctly inside loop / try / switch bodies.
+    if (!expressionStatementMutatesAtTopLevel(stmt.expression)) {
+      lowerDiscardedExpression(stmt.expression, cx);
+      return;
     }
     throw new Error(`ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }
@@ -11160,7 +11372,17 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "callable" ||
     (t.kind === "string" && cx.resolver?.stringIsExternref?.() === true);
   if (externrefShaped) {
-    const flag = cx.builder.emitCall(irImportFuncRef("env", "__extern_is_undefined"), [v], irVal({ kind: "i32" }));
+    // (#4461) Host-free lanes register `__extern_is_undefined` as a real Wasm
+    // function, and `undefined` there is the #2106 non-null singleton, so the
+    // predicate is load-bearing rather than an alias for `ref.is_null`. Asking
+    // for the `env` import instead would put a host import into a standalone
+    // module — the exact failure this arm previously had no way to avoid,
+    // because no claimable standalone shape reached it before native `$Map`
+    // reads did.
+    const provider = cx.resolver?.externIsUndefinedIsNative?.()
+      ? irRuntimeFuncRef("__extern_is_undefined")
+      : irImportFuncRef("env", "__extern_is_undefined");
+    const flag = cx.builder.emitCall(provider, [v], irVal({ kind: "i32" }));
     if (flag === null) {
       throw new Error(`ir/from-ast: __extern_is_undefined produced no result in ${cx.funcName}`);
     }

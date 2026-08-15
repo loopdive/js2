@@ -45,8 +45,8 @@ const SECTIONS = [
       [
         "`ExpressionStatement`",
         "mixed",
-        "Calls, assignments, compound assigns (`y += x`) and pre/post `++ --` claim. VALUE-DISCARDING statements still reject: `x + 1;` at `nontail-compound-or-binary-stmt`, `x;` / `1;` / `cond ? a : b;` at `nontail-exprstmt-other` (measured 2026-08-15, #3583).",
-        "#3518",
+        "Calls, assignments, compound assigns (`y += x`) and pre/post `++ --` claim. VALUE-DISCARDING statements ADOPTED (#4459): `x + 1;`, `x;`, `1;`, `cond ? a : b;`, `-x;`, `a, b;` and `void e;` all claim and lower, at top level and inside loop / try body buffers — `lowerDiscardedExpression` already handled every one of those shapes for `return voidCall()`, so the gap was the STATEMENT-position gate alone. A discarded ternary emits `if.stmt` with one buffer per arm, so only the TAKEN arm evaluates. Residual, all mutating shapes with no dedicated arm (measured 2026-08-15): `o.x += 1;` / `a[i] += 1;` at `nontail-compound-or-binary-stmt`, chained `a = b = 1;` at `nontail-assign-nonprop-lhs`, `o.x++;` at `nontail-incdec-stmt`, and `new.target;` / a parenthesized arrow at `nontail-exprstmt-other`.",
+        "#4459",
       ],
       [
         "`IfStatement`",
@@ -69,8 +69,8 @@ const SECTIONS = [
       [
         "`ForOfStatement`",
         "mixed",
-        'Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof` (measured 2026-08-15, #3583 — the old "slice 6 sentinel" note named the wrong arm).',
-        "#3518",
+        "Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof`. #4470 measured what happens if that arm is lifted: the head itself lowers fine (element slot + one `vec.get` per leaf, reusing `lowerArrayPattern`), but the ELEMENT CARRIER is the real blocker — a vec whose element is itself a vec is unrepresentable, so `number[][]` dies at `resolve` (`array element TypeNode ArrayType could not be lowered to a primitive ValType`) and `string[][]`/`any[][]` die as a HARD `invariant` in `prepared-vector-support.ts` (elements must be `f64`/`i32`/`externref`). Lifting `nontail-forof` alone turns working legacy programs into compile errors — fix the nested-vec carrier FIRST.",
+        "#3518, #4470",
       ],
       ["`WhileStatement`", "ir-owned", "—", "—"],
       [
