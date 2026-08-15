@@ -200,6 +200,32 @@ function denseConstArrayDeclaration(scope: ts.Node, name: string): ts.VariableDe
   return found;
 }
 
+/** Innermost node that delimits `const`/`let` scope for a declaration. */
+function blockScopeOf(declaration: ts.Node): ts.Node | undefined {
+  for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
+    if (
+      ts.isBlock(current) ||
+      ts.isSourceFile(current) ||
+      ts.isCaseBlock(current) ||
+      ts.isModuleBlock(current) ||
+      ts.isForStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isForInStatement(current) ||
+      isFunctionScopeBoundary(current)
+    ) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
 /**
  * Classify one array-literal spread operand. Returns `null` when the operand's
  * element count is not provable at compile time (the legacy-owned residual).
@@ -220,6 +246,16 @@ export function staticSpreadSourceShape(operand: ts.Expression): SpreadSourceSha
   // The declaration must live in the SAME function scope as the spread, so the
   // subtree we scan below genuinely covers every use of this binding.
   if (enclosingFunctionScope(declaration) !== scope) return null;
+  // …and the spread must actually be INSIDE the declaration's block scope, in
+  // source order. Without this, `const a = [1, 2, 3];` at module level plus a
+  // block-local `const a = [1, 2]` inside the function would let the
+  // function-wide search bind the spread to the WRONG declaration and compile a
+  // length of 2 for a source of length 3 — a miscompile, not a missed
+  // optimisation. The position check likewise excludes a use before the
+  // declaration (temporal dead zone).
+  const declarationScope = blockScopeOf(declaration);
+  if (!declarationScope || !isDescendantOf(operand, declarationScope)) return null;
+  if (declaration.end > operand.pos) return null;
   if (hasCompetingBinding(scope, operand.text, declaration)) return null;
 
   const initializer = densePlainLiteral(declaration.initializer!);

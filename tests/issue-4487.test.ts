@@ -488,6 +488,28 @@ describe("#4487 — `staticSpreadSourceShape` unit boundaries", () => {
     expect(shapeOf(src)).toBeNull();
   });
 
+  // The sharpest failure mode this analysis can have: binding the spread to a
+  // declaration that is NOT the one in scope there. A function-wide search for
+  // the name finds the block-local `a` (length 2), while the spread actually
+  // refers to the module-level `a` (length 3) — adopting that would compile a
+  // wrong length, i.e. a miscompile rather than a missed optimisation.
+  it("refuses a declaration whose BLOCK SCOPE does not contain the spread", () => {
+    const src =
+      `const a = [1, 2, 3];\n` +
+      `function f(): number { { const a = [1, 2]; g(a); } const b = [...a]; return b.length; }`;
+    expect(shapeOf(src)).toBeNull();
+  });
+
+  it("accepts a declaration in an inner block when the spread is inside it too", () => {
+    const src = `function f(): number { { const a = [1, 2]; const b = [...a]; return b.length; } }`;
+    expect(shapeOf(src)).toEqual({ kind: "fixed-const-vec", length: 2, elements: expect.anything() });
+  });
+
+  it("refuses a use that precedes its declaration (temporal dead zone)", () => {
+    const src = `function f(): number { const b = [...a]; const a = [1, 2]; return b.length; }`;
+    expect(shapeOf(src)).toBeNull();
+  });
+
   it("accepts read-only uses: index read, `.length`, for-of, and a second spread", () => {
     const body = `const a = [1, 2]; const n = a.length; const first = a[0]; for (const v of a) { g([v]); } const c = [...a]; const b = [...a, n, first]; return b.length + c.length;`;
     expect(shapeOf(inFn(body))?.kind).toBe("fixed-const-vec");
