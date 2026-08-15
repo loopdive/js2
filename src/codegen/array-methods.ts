@@ -75,7 +75,9 @@ import {
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
-import { compileArrayMethodExtern } from "./array-method-host.js";
+import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
+// (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
+import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
@@ -3909,6 +3911,14 @@ function compileArrayConcatNativeDynamic(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
+  // (#4446) The spec loop subsumes this all-array-operands shortcut and is
+  // strictly more correct on it: the shortcut spreads EVERY operand
+  // unconditionally, which is wrong for an array carrying a falsy
+  // `@@isConcatSpreadable` (is-concat-spreadable-val-falsey/-val-undefined).
+  // Keep the original unconditional walk as the substrate-unavailable fallback.
+  const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
+  if (spec !== undefined) return spec;
+
   const builders = ensureObjVecBuilders(ctx);
   const externLenIdx = ctx.funcMap.get("__extern_length");
   const externGetIdx = ctx.funcMap.get("__extern_get_idx");
@@ -4115,10 +4125,12 @@ function compileArrayConcat(
  * Fallback for arr.concat(arg...) when any arg is not a known WasmGC array type
  * (e.g. `any`, array-like with Symbol.isConcatSpreadable, or plain objects).
  *
- * Uses __array_concat_any(receiver_ext, args_js_array) host import, which:
- * 1. Converts the WasmGC receiver to a real JS array via __vec_len/__vec_get exports
- * 2. Calls Array.prototype.concat with all arguments (supports isConcatSpreadable)
- * 3. Returns the result as externref (a new JS Array)
+ * (#4446) Per-target switch. `native-first` (`--target standalone` /
+ * `--target wasi`) takes the Wasm-native §23.1.3.1 loop
+ * ({@link compileArrayConcatNativeSpec}); everything else keeps the unchanged
+ * `env::__array_concat_any` host bridge (`compileArrayConcatExternHost` in
+ * array-method-host.ts), whose `env::*` imports the #2961 leak guard rejects
+ * host-free.
  */
 function compileArrayConcatExtern(
   ctx: CodegenContext,
@@ -4126,51 +4138,11 @@ function compileArrayConcatExtern(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  // __array_concat_any(receiver: externref, args: externref) -> externref
-  // Converts WasmGC receiver to JS array, then calls .concat(...args)
-  const concatAnyIdx = ensureLateImport(
-    ctx,
-    "__array_concat_any",
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-
-  if (arrNewIdx === undefined || arrPushIdx === undefined || concatAnyIdx === undefined) {
-    return null;
+  if (ctx.targetProfile.semanticProviders === "native-first") {
+    const native = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
+    if (native !== undefined) return native;
   }
-
-  // Compile receiver as externref (WasmGC vec struct → extern ref), save to local
-  const recvLocal = allocLocal(fctx, `__cat_ext_recv_${fctx.locals.length}`, { kind: "externref" });
-  const recvType = compileExpression(ctx, fctx, propAccess.expression);
-  if (recvType && recvType.kind !== "externref") {
-    fctx.body.push({ op: "extern.convert_any" });
-  }
-  fctx.body.push({ op: "local.set", index: recvLocal });
-
-  // Build JS args array from all concat arguments
-  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-  const argsLocal = allocLocal(fctx, `__cat_ext_args_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: argsLocal });
-
-  for (const arg of callExpr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-    if (argType === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    } else if (argType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-  }
-
-  // Call __array_concat_any(receiver_ext, args_array) -> externref JS array
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: concatAnyIdx });
-  return { kind: "externref" };
+  return compileArrayConcatExternHost(ctx, fctx, propAccess, callExpr);
 }
 
 /**

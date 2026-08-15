@@ -21,6 +21,25 @@ export interface IrRuntimeEvalSite {
   readonly kind: IrRuntimeEvalSiteKind;
   readonly providerDisposition: "required" | "may-fallback" | "provided";
   readonly literalSource?: string;
+  /**
+   * (#4442) For an `intrinsic-value` site, WHICH intrinsic escaped as a value.
+   *
+   * `intrinsic-value` conflates two escapes with different consequences: a bare
+   * `eval` read needs the provider to EXECUTE, while a bare `Function` read
+   * needs it to have an IDENTITY that the rest of the module agrees with. The
+   * `%Function%` emitter (codegen/function-intrinsic-carrier.ts) only has to
+   * take the provider route for the second, and serving the self-contained
+   * carrier in the first case is the difference between a module that links
+   * `js2wasm:runtime-eval` and one that does not — measured: a module with a
+   * foldable `eval("1")` plus a `<fn>.constructor` read went from `[]` imports
+   * to `[js2wasm:runtime-eval]` before this field existed.
+   *
+   * Recorded here rather than re-derived by a second scanner precisely because
+   * the classification has non-obvious carve-outs (`isDirectCalleeIntrinsicValue`,
+   * `isFunctionPrototypeMethodChain`) whose cost is measured in the comments
+   * below; a copy of them would drift.
+   */
+  readonly intrinsicName?: "eval" | "Function";
 }
 
 export interface IrRuntimeEvalBoundaryPlan {
@@ -149,6 +168,7 @@ export function buildIrRuntimeEvalBoundaryPlan(
     kind: IrRuntimeEvalSiteKind,
     providerDisposition: IrRuntimeEvalSite["providerDisposition"],
     literalSource?: string,
+    intrinsicName?: "eval" | "Function",
   ): void => {
     sites.push(
       Object.freeze({
@@ -158,6 +178,7 @@ export function buildIrRuntimeEvalBoundaryPlan(
         kind,
         providerDisposition,
         ...(literalSource === undefined ? {} : { literalSource }),
+        ...(intrinsicName === undefined ? {} : { intrinsicName }),
       }),
     );
   };
@@ -217,7 +238,7 @@ export function buildIrRuntimeEvalBoundaryPlan(
         // held this arm: that version also excused the `.constructor` chain.
         const isSafePrototypeMethodReceiver = node.text === "Function" && isFunctionPrototypeMethodChain(node);
         if (!isMemberName && !isSafePrototypeMethodReceiver) {
-          addSite(sourceFile, id, node, "intrinsic-value", "required");
+          addSite(sourceFile, id, node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
           unknownDynamicSource = true;
         }
       }

@@ -39,7 +39,8 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
+import { classMemberFuncKey } from "./class-member-keys.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { COLLECTION_KIND, ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
@@ -58,6 +59,7 @@ import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) clos
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
+import { defaultValueInstrs } from "./type-coercion.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -419,7 +421,13 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
 }
 
 /** One candidate closed struct that carries `<Struct>_<methodName>`. */
-type MethodEntry = { typeIdx: number; funcIdx: number; paramTypes: ValType[]; resultType: ValType };
+type MethodEntry = {
+  typeIdx: number;
+  funcIdx: number;
+  paramTypes: ValType[];
+  resultType: ValType;
+  optionalParams: OptionalParamInfo[];
+};
 
 /**
  * Collect every closed object-literal struct with a `<Struct>_<methodName>`
@@ -442,16 +450,33 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     )
       continue;
 
-    const funcIdx = ctx.funcMap.get(`${structName}_${methodName}`);
+    // Class bodies use the collision-aware key helper when a class member
+    // shares a name with a top-level function (or with a static member of the
+    // same class).  The closed dispatcher must resolve the exact same key;
+    // looking up the legacy spelling silently drops the class arm and sends
+    // the call to the host fallback (`inline is not a function` in marked).
+    const fullName = `${structName}_${methodName}`;
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
     if (funcIdx === undefined) continue;
     const funcDef = definedFuncAt(ctx, funcIdx);
     const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
     if (!funcType || funcType.kind !== "func") continue;
-    // Must be `this` + (exactArity) declared params, unless vararg (any arity).
-    if (exactArity !== null && funcType.params.length !== 1 + exactArity) continue;
+    const paramTypes = funcType.params.slice(1);
+    const optionalParams = ctx.funcOptionalParams.get(fullName) ?? [];
+    // A fixed-arity call may under-apply a method only when every omitted
+    // formal has a default/optional marker.  The callee's normal parameter
+    // prologue recognizes the same sentinels as identifier calls; rejecting
+    // this case sends valid calls (e.g. marked's `inline(text)` where the
+    // second parameter defaults to `[]`) to the host fallback instead.
+    if (exactArity !== null) {
+      if (paramTypes.length < exactArity) continue;
+      if (paramTypes.slice(exactArity).some((_type, i) => !optionalParams.some((o) => o.index === exactArity + i))) {
+        continue;
+      }
+    }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
-    entries.push({ typeIdx, funcIdx, paramTypes: funcType.params.slice(1), resultType });
+    entries.push({ typeIdx, funcIdx, paramTypes, resultType, optionalParams });
   }
   return entries;
 }
@@ -485,7 +510,8 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
       structName.startsWith("$")
     )
       continue;
-    if (ctx.funcMap.has(`${structName}_${methodName}`)) continue; // method wins
+    const methodKey = classMemberFuncKey(ctx, `${structName}_${methodName}`, "instance");
+    if (ctx.funcMap.has(methodKey)) continue; // method wins
     const fieldIdx = fields.findIndex((f) => f.name === methodName && f.type.kind === "externref");
     if (fieldIdx < 0) continue;
     entries.push({ typeIdx, fieldIdx });
@@ -508,6 +534,7 @@ function buildEntryArm(
   anyLocalIdx: number,
   entry: MethodEntry,
   pushArg: (a: number) => Instr[],
+  providedArity: number | null = null,
 ): Instr[] {
   const { boxNumIdx, unboxNumIdx, unboxBoolIdx } = ci;
   const arm: Instr[] = [
@@ -516,6 +543,23 @@ function buildEntryArm(
   ];
   for (let a = 0; a < entry.paramTypes.length; a++) {
     const want = entry.paramTypes[a] ?? { kind: "externref" };
+    const missing = providedArity !== null && a >= providedArity;
+    if (missing) {
+      const opt = entry.optionalParams.find((candidate) => candidate.index === a);
+      if (!opt) return [{ op: "ref.null.extern" }];
+      if (opt.constantDefault) {
+        arm.push(
+          opt.constantDefault.kind === "f64"
+            ? { op: "f64.const", value: opt.constantDefault.value }
+            : { op: "i32.const", value: opt.constantDefault.value },
+        );
+      } else if (want.kind === "f64" && opt.hasExpressionDefault) {
+        arm.push({ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" });
+      } else {
+        arm.push(...defaultValueInstrs(want));
+      }
+      continue;
+    }
     arm.push(...pushArg(a)); // the arg, as externref, onto the stack
     if (want.kind === "f64") {
       if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx });
@@ -631,7 +675,17 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       const callFnMethodIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
       const nullishIdx = ctx.funcMap.get("__nullish_to_null");
       const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
-      if (lookupIdx !== undefined && callFnMethodIdx !== undefined && rootIdx !== undefined) {
+      // These mixed-arity carriers do not share a single cache ABI: a cached
+      // prototype closure can be selected for the wrong receiver shape and
+      // recursively re-enter the dispatcher. Keep br/del on nominal arms until
+      // the cache records receiver signature as well as method name.
+      if (
+        lookupIdx !== undefined &&
+        callFnMethodIdx !== undefined &&
+        rootIdx !== undefined &&
+        methodName !== "br" &&
+        methodName !== "del"
+      ) {
         const mLocal = (op: "local.get" | "local.set" | "local.tee"): Instr => {
           const instr: Instr = { op, index: -1 };
           mcPatchInstrs.push(instr);
@@ -1430,7 +1484,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     }
 
     for (const entry of entries) {
-      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }]);
+      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }], arity);
       current = [
         { op: "local.get", index: anyLocalIdx },
         { op: "ref.test", typeIdx: entry.typeIdx },

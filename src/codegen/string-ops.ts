@@ -31,6 +31,7 @@ import {
   tryCompileNativeVecConcatOperand,
 } from "./native-strings.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
+import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) shared with the reflective body
 import { emitFlattenWithInlineFlatFastPath } from "./string-materialize.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { collectConcatOperands, ensureNativeBatchedConcat } from "./native-batched-concat.js";
@@ -231,31 +232,6 @@ export function emitHostExternrefToNativeString(ctx: CodegenContext, fctx: Funct
   fctx.body.push({ op: "call", funcIdx: fromExternIdx });
   return nativeStringType(ctx);
 }
-
-/**
- * (#3069) Annex B §B.2.2 legacy HTML string-wrapper method → HTML tag +
- * optional attribute name (ECMA-262 §B.2.2.2..§B.2.2.14). `String.prototype`
- * `bold`→`<b>`, `italics`→`<i>`, `anchor(name)`→`<a name="…">`,
- * `link(url)`→`<a href="…">`, `fontcolor(c)`/`fontsize(s)`→`<font color/size="…">`,
- * etc. Methods with an `attribute` take one argument (the attribute VALUE,
- * `"`→`&quot;` escaped); the rest take none. Consumed by
- * `compileNativeStringMethodCall`'s standalone/WASI native arm.
- */
-const HTML_WRAPPER_TAGS: Readonly<Record<string, { tag: string; attribute?: string }>> = {
-  anchor: { tag: "a", attribute: "name" },
-  big: { tag: "big" },
-  blink: { tag: "blink" },
-  bold: { tag: "b" },
-  fixed: { tag: "tt" },
-  fontcolor: { tag: "font", attribute: "color" },
-  fontsize: { tag: "font", attribute: "size" },
-  italics: { tag: "i" },
-  link: { tag: "a", attribute: "href" },
-  small: { tag: "small" },
-  strike: { tag: "strike" },
-  sub: { tag: "sub" },
-  sup: { tag: "sup" },
-};
 
 /**
  * #1470 — Compile a `+`-concat operand and coerce its result to a native
@@ -2852,7 +2828,7 @@ export function compileNativeStringMethodCall(
   // step-4.b `"`→`&quot;` escaping). Do NOT add these to STRING_METHODS — that
   // would register a host `string_<m>` import and regress host-mode boxing.
   {
-    const htmlWrapper = HTML_WRAPPER_TAGS[method];
+    const htmlWrapper = htmlWrapperFor(method);
     if (htmlWrapper) {
       const concatIdx = ctx.nativeStrHelpers.get("__str_concat")!;
       const { tag, attribute } = htmlWrapper;

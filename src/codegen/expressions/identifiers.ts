@@ -69,7 +69,8 @@ import {
   runtimeEvalSharedValueUnwrapInstrs,
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
-import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
+import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
+import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
 import {
@@ -913,11 +914,13 @@ function compileIdentifierCore(
   // Direct `Function(...)` / `new Function(...)` syntax is intercepted before
   // identifier lowering; this branch preserves first-class aliases and the
   // constructor identity inherited by provider-owned interpreted functions.
+  // (#4442) Through the SHARED emitter, so this read and the `<fn>.constructor`
+  // arm cannot disagree — behaviour here is unchanged (function-intrinsic-carrier.ts).
   if (ctx.standalone && name === "Function") {
     const declaration = ctx.oracle.valueDeclarationOf(id);
     const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
     if (isGlobalIntrinsic) {
-      const valueType = emitStandaloneIntrinsicFunctionValue(ctx, fctx);
+      const valueType = emitStandaloneFunctionIntrinsicValue(ctx, fctx);
       if (valueType !== undefined) return valueType;
     }
   }

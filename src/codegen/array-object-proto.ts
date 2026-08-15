@@ -66,6 +66,8 @@ import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
+import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §B.2.3 tag table
+import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
 import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
@@ -187,20 +189,30 @@ const DATE_PROTO_METHODS = [
  * `String.prototype`'s own method names (ES2024 §22.1.3). `@@iterator` is a
  * well-known-symbol member resolved via the computed-access path, so only the
  * string members go in the CSV (same convention as `ARRAY_PROTO_METHODS`).
- * Annex-B (`substr`, `anchor`, `big`, …) is included so a bare
- * `String.prototype.substr` value read resolves host-free.
+ * Annex-B (`substr`, and since #4445 the 13 §B.2.3 HTML wrappers) is included so
+ * a bare `String.prototype.substr` / `String.prototype.anchor` value read
+ * resolves host-free.
  */
 const STRING_PROTO_METHODS = [
+  "anchor",
   "at",
+  "big",
+  "blink",
+  "bold",
   "charAt",
   "charCodeAt",
   "codePointAt",
   "concat",
   "endsWith",
+  "fixed",
+  "fontcolor",
+  "fontsize",
   "includes",
   "indexOf",
   "isWellFormed",
+  "italics",
   "lastIndexOf",
+  "link",
   "localeCompare",
   "match",
   "matchAll",
@@ -212,10 +224,14 @@ const STRING_PROTO_METHODS = [
   "replaceAll",
   "search",
   "slice",
+  "small",
   "split",
   "startsWith",
+  "strike",
+  "sub",
   "substr",
   "substring",
+  "sup",
   "toLocaleLowerCase",
   "toLocaleUpperCase",
   "toLowerCase",
@@ -503,6 +519,20 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     trimStart: 0,
     isWellFormed: 0,
     toWellFormed: 0,
+    // (#4445) Annex B §B.2.3 HTML wrappers. `fn.length` is 1 for the four that
+    // take an attribute value (anchor/link/fontcolor/fontsize — the shared
+    // default already), 0 for the nine tag-only ones; the 0s are load-bearing,
+    // since the arity also sizes the closure's param slots and a spurious slot
+    // would make the body read an arg that was never declared.
+    big: 0,
+    blink: 0,
+    bold: 0,
+    fixed: 0,
+    italics: 0,
+    small: 0,
+    strike: 0,
+    sub: 0,
+    sup: 0,
     // Date.prototype set* arities (ES2024 §21.4.4) that differ from the default 1.
     setFullYear: 3,
     setUTCFullYear: 3,
@@ -939,6 +969,18 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // shape, so it shares this body rather than getting a fourth per-member
   // clone — see NO_ARG_STRING_MEMBER_HELPER in string-proto-tostring.ts.
   if (NO_ARG_STRING_MEMBER_HELPER[member] !== undefined) return emitStringTrimMemberBody(ctx, fctx, member);
+  // (#4445) The 13 Annex B §B.2.3 HTML wrappers. Their DIRECT call sites were
+  // already native since #3069; this is the value-erased shape
+  // (`String.prototype.anchor.call(x, v)`) that reached the refusal instead.
+  // Routed after the trim family because the nine tag-only members share its
+  // arity-0 closure shape but not its single-helper body.
+  if (htmlWrapperFor(member) !== undefined) {
+    ensureStringRocUndefinedNative(ctx, fctx); // register the undefined-sentinel predicate first
+    return (
+      emitStringHtmlWrapperMemberBody(ctx, fctx, member, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
+  }
   if (member === "charAt") {
     return emitTransferredCharAtProtoMemberBody(
       ctx,
