@@ -18,6 +18,25 @@ umbrella: 2860
 architect_spec: candidate
 loc-budget-allow:
   - src/codegen/generators-native.ts
+  # (#2864 wave-2 S1) Three god-files grow, and the growth is overwhelmingly
+  # the root-cause notes rather than logic — the executable change is ~30 lines
+  # total across all three. Each note is load-bearing because each site had
+  # ALREADY been reasoned about in writing and reached the wrong conclusion:
+  #   * type-coercion.ts — the new brand-aware arm sits directly beside #3315's
+  #     note explaining why the GENERIC f64 box must NOT resurrect the
+  #     sentinel. Both are true; without the adjacency the next reader deletes
+  #     one of them. The arm itself is 5 lines + a 16-line helper.
+  #   * any-helpers.ts — `canonicalUndefinedExternInstrs` exists precisely
+  #     because `undefinedExternInstrs` two functions above LOOKS like the
+  #     right helper and silently is not (it is flag-gated on a default-OFF
+  #     regime). Splitting it into another module would hide that.
+  #   * property-access-dispatch.ts — the Phase-3 narrowing needed the #2979
+  #     generator-sentinel exception that four sibling consumers already carry;
+  #     the note records that closing it alone fixed zero real tests, so the
+  #     next person does not re-derive that dead end.
+  - src/codegen/type-coercion.ts
+  - src/codegen/any-helpers.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   # D4 (+10 LOC): buildNativeGeneratorPlan must now compute the REAL fallthrough
   # state instead of assuming states.length-1. That assumption only holds for a
@@ -28,6 +47,20 @@ func-budget-allow:
   # extracting it would split the state-reservation invariant across two units.
   # Same rationale as the D2 loc-budget-allow grant (#2662 precedent).
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  # (#2864 wave-2 S1) All three grow by their root-cause notes, and all three
+  # notes have to live INSIDE the function because each corrects a decision
+  # made a few lines away:
+  #   * coerceType — the brand arm must be read together with the #3315 note
+  #     immediately below it (generic f64 boxing must NOT canonicalize).
+  #   * finalizeStructAndDynamicMemberGet — the Phase-3 vote's new
+  #     generator-sentinel exception belongs beside the vote it modifies.
+  #   * fillMemberGetDispatch — +4 lines, the canonical-undefined producer
+  #     swap plus why "standalone keeps the null externref" was wrong.
+  # Extracting any of them would separate the exception from the rule it
+  # excepts, which is exactly how this defect survived four sibling fixes.
+  - src/codegen/type-coercion.ts::coerceType
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
 ---
 
 # Standalone: Wasm-native generator carrier (sync)
@@ -710,3 +743,351 @@ Validation: `TEST262_TARGET=standalone TEST262_PATH_FILTER="language/expressions
 + gc control; equivalence guard; per-slice unit tests. Do NOT regress the
 js-host eager-buffer lane (#3032 contract: js-host bytes identical unless
 deliberately widening W6).
+
+### Step 1 — mandatory re-triage (measured 2026-08-15, generators lane)
+
+**Artifact**: a full scoped standalone run of the plan's own filter, executed by
+this lane on worktree `agent-abc7a54c612648f57` (base = `9e17d34f3`, whose
+compiler tree is identical to `a89bc2ff`'s — the latter is docs-only). Not
+inherited from `.tmp/es6-standalone-clusters.ts`; the numbers below differ from
+the plan's framing above and **supersede it**.
+
+`benchmarks/results/test262-standalone-results-20260815-174617.jsonl`,
+610 rows: **404 pass · 103 fail · 102 CE · 1 compile-timeout (66.2 %)**.
+
+| directory                        | pass | non-pass |
+| -------------------------------- | ---: | -------: |
+| `language/expressions/generators` |  205 |       84 |
+| `language/statements/generators`  |  195 |       61 |
+| `language/expressions/yield`      |    4 |       59 |
+| `annexB/language/expressions`     |    0 |        2 |
+
+Family classification of the 206 non-passes (a/b/c/d per the plan's step 1):
+
+| # | family                                                       | class | count |
+| - | ------------------------------------------------------------ | ----- | ----: |
+| 1 | `#680` CE refusal — plan bail ("only sequential numeric yields") | (a)   |    57 |
+| 2 | other semantic fail (heterogeneous tail)                        | (b)   |    35 |
+| 3 | **terminal `{value: undefined}` value-rep**                     | (b)   |    34 |
+| 4 | host-import leak (candidate-gate refusal, `__gen_*`)            | (a)   |    31 |
+| 5 | reflection / prototype / brand                                  | (d)   |    21 |
+| 6 | iterator + destructuring drive (`Cannot destructure 'null'`)    | (c)   |    13 |
+| 7 | parser: `yield` as identifier in sloppy mode                    | (a)   |    11 |
+| 8 | other CE                                                        | (a)   |     3 |
+| 9 | compile timeout (`yield-weak-binding.js`)                       | (a)   |     1 |
+
+Two corrections to the plan's framing, both load-bearing for routing:
+
+- The ~313 "runtime/leak failures mentioning `__gen_*`" is **31** here, not 313:
+  most of that leak family already routes natively. The plan's counts were taken
+  over the whole ES2015 bucket, this table over the plan's own validation filter.
+- The largest **semantics** family is not a gate-widening problem at all —
+  family 3, the terminal `{value: undefined, done: true}` read, is a
+  value-REPRESENTATION defect in code the carrier already handles. It is
+  invisible to the gate-widening plan because those generators compile
+  host-free and *look* supported. Slice S1 below fixes it.
+
+`language/expressions/yield` is the concentration (4/63 passing) and is
+dominated by families 1 and 3.
+
+## S1 — terminal `{value: undefined, done: true}` reads as NaN / null (landed here)
+
+**Scope:** an exhausted or `done`-completing native generator now delivers an
+observable `undefined` in `.value`, in both carriers, at every consuming
+context. Before: `assert.sameValue(result.value, undefined)` — the single most
+common assertion in the generator suites — reported `SameValue(«NaN»,
+«undefined»)` (f64 carrier) or `SameValue(«null», «undefined»)` (boxed-any
+carrier). Host-free and silent; the generator machinery itself was correct.
+
+Verify-first, `--target standalone`, zero host imports, six-file probe over
+`language/expressions/yield`: **0/6 → 4/6** (`captured-free-vars`, `from-catch`,
+`formal-parameters`, `formal-parameters-after-reassignment-strict`). The two
+that remain are different bugs (family 2: an `arguments`-object read, and
+parameter reassignment not observed across a suspend).
+
+**Scoped run, diffed per FILE** (raw totals are not comparable — the runner
+registers 589–612 rows run-to-run under load): on the 578 files present in both
+runs, **374 → 389 pass, net +15**, 17 fixed:
+`expressions/yield/{from-catch, from-try, captured-free-vars, formal-parameters,
+formal-parameters-after-reassignment-strict, rhs-iter, star-array}`,
+`expressions/generators/{return, no-yield, yield-as-statement, yield-newline,
+yield-as-property-name, yield-star-before-newline}`,
+`statements/generators/{return, yield-as-statement, yield-newline,
+yield-as-property-name}`.
+
+Two files show `compile_timeout` in the after-run
+(`statements/generators/{yield-star-after-newline, yield-weak-binding}.js`) and
+are **not** regressions: run in-process against the BASE tree they fail
+identically, and `yield-weak-binding` was itself a timeout in the BASE run.
+They are slow negative-parse tests (BASE `compile_ms` 17,584) that flip on
+machine load.
+
+**js-host / #3032 contract, proven not asserted.** 9-program × 3-lane sha256
+matrix, BASE vs NEW by file-copy A/B: the **gc lane is 9/9 byte-identical**.
+Only standalone + wasi move, and only for the 2 programs that actually produce
+or read a generator absent value (boxed-any carrier; dynamic `.value` read).
+Numeric / string / delegating / spilling / try-catch generators, a plain
+function, and a NON-generator `o.value` read are byte-identical in all three
+lanes — so the Phase-3 narrowing change does not touch ordinary property reads.
+
+**Equivalence guard.** Scoped subset (31 files: generators / iterators / yield /
+destructuring / spread / for-of / optional / nullish) — 3 failed / 200 passed,
+all three **pre-existing**, each confirmed by re-running on the BASE tree. (The
+full `tests/equivalence` suite OOMed twice on this shared 4-core box, so the
+scoped subset is what was actually run.)
+
+Two assertions in `tests/equivalence/yield-as-expression.test.ts` were changed
+and the reason belongs here rather than in a commit message: "yield without
+value used as IIFE argument" and "bare yield as function argument" asserted
+`typeof result.value === "number"` on a DONE result, which pinned the
+SENTINEL'S RENDERING rather than behaviour. Node returns `43` / `5` there; we
+have never delivered the `.next(v)` sent value into an ARGUMENT-position yield,
+so that value was always the undefined sentinel — it merely used to read back
+as the number NaN and satisfy the check by accident. The assertions now pin
+`result.done`, true in every model, and the real gap is named in the test. This
+is the residual R1 above already says not to pin.
+
+### Why these decisions (root cause, not symptom)
+
+Two independent producers of "absent value", each undone by a different
+consumer:
+
+- **f64 carrier — the brand, not the box.** `UNDEF_F64_BITS` already meant
+  `undefined` in the `value` slot (#2979), and the dynamic member-get dispatcher
+  already resurrected it. But `tryCompileNativeGeneratorResultProperty`'s
+  `valueStaticNumeric` fast path returns a bare `f64`, on the reasoning "an
+  exhausted read yields NaN, which is the spec ToNumber(undefined)" — true in a
+  NUMERIC context, and the harness's context is `any`. The generic
+  f64→externref box then applied `__box_number`, and #3315's note says it MUST:
+  an arbitrary sentinel-patterned f64 is a computed NaN (`Math.abs` preserves
+  the payload) and boxing it to `undefined` regressed the JS-host `log2`
+  assertions. That note also names the correct seam — "dedicated
+  identity-carrying-slot boxing sites". So the fix is a structural **BRAND** on
+  the carrier, `{kind:"f64", undefSentinel:true}`, exactly like #1788's
+  `boolean` / #2785's `symbol` on `i32`: every `.kind === "f64"` check still
+  matches (numeric codegen byte-identical), and only `coerceType(f64 →
+  externref)` consults it. Generic f64 boxing is untouched.
+- **boxed-any carrier — `ref.null.extern` is `null`, not `undefined`.** F1's
+  note called the null externref "already the canonical undefined"; that was
+  inherited from the pre-#2106 model and is no longer true. The tag-1
+  `$undefined` singleton is reserved in EVERY standalone/native-strings module
+  (`ensureAnyValueType`'s S1.0 reservation), independently of the default-OFF
+  `undefinedSingleton` flag, and the value model already separates the two —
+  measured host-free: `undefined === null` is **false**, `typeof null` is
+  `"object"`, and an unpassed argument is `SameValue`-equal to `undefined`. So
+  `defaultElemValueInstrs` was minting JS **null**. Confirmed directly on
+  `formal-parameters.js`'s shape: `result.value === null` true, `typeof`
+  `"object"`.
+- **One canonical producer.** `canonicalUndefinedExternInstrs(ctx)`
+  (any-helpers.ts) is the lane-correct `undefined` and is deliberately NOT gated
+  on the `undefinedSingleton` flag — `undefinedExternInstrs` is, which is why
+  every caller silently fell back to `ref.null.extern`. Host lane keeps
+  `__get_undefined` (a null externref surfaces as JS `null` there); the lookup
+  is `funcMap.get` only, so no late import is registered mid-body.
+
+### Not the fix (checked and rejected, recorded so it is not re-tried)
+
+The Phase-3 (#1269) consumer-side narrowing in `property-access-dispatch.ts`
+lacked the #2979 generator-sentinel exception that `fillMemberGetDispatch`,
+`planGeneric`, `planTypedF64` and `member-set-f64` all carry, so it unboxed the
+dispatcher's canonicalized `undefined` back through `__unbox_number`. That IS a
+real hole and is closed here too — but closing it alone changed nothing on the
+real tests, because the harness shape never reaches that path (`objType` is the
+narrowed `IteratorResult`, so the read goes through
+`tryCompileNativeGeneratorResultProperty`). Fixing the visible-in-a-probe path
+and declaring victory would have been the failure mode; the probe had to be
+built from the ACTUAL assembled harness before the real producer showed up.
+
+### Files (S1)
+
+- `src/ir/types.ts` — `undefSentinel?: true` brand on the `f64` ValType.
+- `src/codegen/any-helpers.ts` — `canonicalUndefinedExternInstrs`.
+- `src/codegen/type-coercion.ts` — brand-aware f64→externref box.
+- `src/codegen/generators-native.ts` — `defaultElemValueInstrs` /
+  `emptyResult` / `emptyResultForType` take `ctx`; externref carrier default is
+  the canonical `undefined`.
+- `src/codegen/generators-native-consumer.ts` — brand the
+  `valueStaticNumeric` read result.
+- `src/codegen/property-access-dispatch.ts` — Phase-3 narrowing skips
+  generator-sentinel candidates.
+- `src/codegen/member-get-dispatch.ts` — the dynamic dispatcher's sentinel arm
+  uses the canonical producer (this is the site that served the read in a
+  module without full `$AnyValue` wiring).
+- `tests/issue-2864-s1-terminal-undefined.test.ts` — 5 standalone cases
+  (zero-host-import asserted), including the NEGATIVE case: a generator that
+  yields a genuine `0/0` must still read as a NUMBER, so the brand cannot
+  swallow #3315's computed-NaN.
+
+### Tracked residual — `.next(v)` sent value not bound in ARGUMENT position
+
+Surfaced by S1 and kept here deliberately so de-pinning the two
+`yield-as-expression` assertions does not lose it. `function* gen(){ return
+identity(yield) }` + `it.next(); it.next(5)` returns **`undefined`** where Node
+returns `5`: an argument-position `yield` gets no resume binding, so the slot
+keeps the undefined sentinel. Before S1 this read back as the number NaN, which
+is why a `typeof … === "number"` assertion passed over it for so long — that
+check could not distinguish Node's `5` from our sentinel, since both are
+numbers. S1 did not change the behaviour, only stopped it from being disguised.
+
+Same root as slice 3 below (a yield in a nested expression position is not a
+suspend point the planner binds), and the same class as the R1 `.next()`-with-
+no-arg residual. Fixing it is part of the nested-yield slice, not of the carrier.
+
+## S2 — generator × `arguments`: a green compile that the ENGINE REJECTS (landed here)
+
+**The headline is not a conformance delta — it is a JS-HOST correctness fix that
+the standalone numbers cannot show.** On the gc lane,
+`function* g(a,b){ const n = arguments.length; yield n }` compiled *successfully*
+and produced a module WebAssembly refuses to load:
+`global.set[0] expected type externref, found i32.const of type i32`. Isolated:
+a NON-generator reading `arguments` is valid, and a generator NOT reading it is
+valid — it is specifically generator × `arguments`. In standalone the same shape
+was a raw wasm trap at the FIRST `arguments` read, i.e. before any suspend, so
+it was never a suspend-crossing problem.
+
+### Root cause
+
+The native state struct has slots for `this`, own params and spilled locals. The
+RESUME function compiles the body with a FRESH `FunctionContext`, and the
+§10.2.11 arguments-vec setup in `function-body.ts` runs against the FACTORY's
+context only — so `arguments` resolves to nothing in the resume body.
+
+**The bail already existed for the two other generator forms** — generator
+EXPRESSIONS (`isNativeGeneratorExpressionShape`) and generator METHODS (whose
+arm names this exact reason) — and was simply never applied to free function
+DECLARATIONS. #3032 W6 then routed those natively on the JS-host lane too,
+which is how a standalone-only trap became an invalid module on the default lane.
+One check, moved to the shared part of `isNativeGeneratorCandidate`, so all three
+forms agree.
+
+### Re-triage correction — this family is 2 tests, not ~7
+
+The routed list below originally estimated ~7 tests from the family label. Built
+NON-generator twins for each and measured; five are not generator defects:
+
+| test(s)                                   | verdict                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------- |
+| `arguments-object-attributes`, `formal-parameters-after-reassignment-non-strict` | **generator-specific** — this slice |
+| `params-dflt-ref-arguments`               | `arguments[i]` in a param DEFAULT is broken for plain functions too — general, out of lane |
+| `arguments-with-arguments-{fn,lex}` ×2 dirs | fails on `typeof <captured arguments>`; the non-generator twin also fails (differently). Reflection/`typeof` class → #2175 |
+
+`arguments` in a param default DOES work for generators (verified against Node),
+so that half of the family was never broken here.
+
+### Measured
+
+- JS-host: invalid module → **valid module, correct value (2)**, both before and
+  after a yield. A generator NOT reading `arguments` still routes natively (no
+  `__gen_*` imports) — the bail's blast radius is pinned by a test.
+- standalone: the 2 in-lane tests go `fail` (trap) → `compile_error` (clean #680
+  refusal). **Conformance-neutral by design**; a refusal is the correct answer
+  until the frame carries `arguments`, and it replaces a trap.
+- `tests/issue-2864-s2-generator-arguments.test.ts`: 5/5.
+
+**#3032 contract exception, stated rather than glossed:** host bytes DO change
+for these programs. The contract cannot apply — the bytes being replaced are an
+invalid module, so there is no valid baseline to preserve.
+
+### The real fix, banked
+
+Making `arguments` work in the frame: the factory builds the vec at CALL time
+(§10.2.11, where the spec puts it), spills it as a synthetic `arguments` spill
+(the F1b typed-spill machinery already carries vec refs); the resume function
+reloads it into an `arguments` local; and MAPPED aliasing
+(`arguments[0] = 32` writing back to param `a`, which
+`formal-parameters-after-reassignment-non-strict` needs) requires
+`fctx.mappedArgsInfo` rebuilt against the frame rather than the factory locals.
+Three sites in the most byte-stability-sensitive file for a 2-test payoff — worth
+doing after the higher-count slices, not before.
+
+### Next slices (routed on the measured triage, not started)
+
+1. ~~**`arguments` inside a native generator** (~7)~~ — **S2 above**. The
+   admission bail is fixed (green-compile-invalid-module on the JS-host lane);
+   the frame-carrying implementation is banked, and the family re-scoped to 2.
+2. **Self-name reference in a named generator EXPRESSION** (~9:
+   `named-*-reassign-fn-name-in-body*`, `scope-name-var-*`). One gate check —
+   `isNativeGeneratorExpressionShape`'s self-name bail — blocks all of them.
+3. **Nested-yield expression positions** — measured design note below.
+
+## S3 design note — yield POSITION admission (measured, not implemented)
+
+The coordinator's instruction for this slice was to scope the convergence
+honestly rather than force a point fix, so this is a measured trigger list plus
+a design, with no code change.
+
+### What the planner actually admits
+
+`lowerStatements` recognises a suspend at exactly **two** syntactic positions —
+`yield e;` as an ExpressionStatement, and `let x = yield e;` as a
+single-declarator VariableStatement. Every other statement containing a yield
+falls through to `fail()`. Probed on current main (untyped JS, standalone,
+which is the test262 shape):
+
+| shape                                | result | why |
+| ------------------------------------ | ------ | ---- |
+| `yield;` bare statement              | works  | the ExpressionStatement arm |
+| `(yield);` parenthesised             | **CE** | the arm tests `isYieldExpression(stmt.expression)`; a `ParenthesizedExpression` is not one. A one-line unwrap. |
+| `const t = yield; return t;`         | **CE** | the declaration arm is reached, but an operand-LESS yield has no resolvable carrier (`isNumericExpression(undefined)`) |
+| `t = yield;` (assignment)            | **CE** | no assignment arm at all |
+| `return identity(yield);`            | **CE** | yield in argument position AND `yieldValueOk` rejects a call as the return expression |
+
+So admission is restricted on **two independent axes** — the yield's syntactic
+POSITION and the accepted RETURN-expression shape — and the CE message
+("only sequential numeric yields") names neither.
+
+### Measured trigger list
+
+Of the 57 `#680` CE refusals in the triage, **38 are `star-rhs-iter-*` /
+`yield*`** and belong to #2173 slice-2b. Of the remaining 19:
+
+- **~7 are true nested-yield**: `rhs-primitive`, `rhs-omitted`,
+  `rhs-template-middle`, `rhs-regexp`, `in-rltn-expr`,
+  `iter-value-{specified,unspecified}`, `yield-as-literal-property-name`.
+- **8 are `dstr/*-fn-name-{gen,class}`** — a destructuring default whose
+  initializer is a nested class/generator expression; a different bail.
+- `from-with` (`with`), `scope-param-rest-elem-var-*` (rest params — an
+  explicit gate bail).
+
+So this slice is ~7 tests, not ~10 — and the `dstr` group should be re-triaged
+separately rather than counted here.
+
+### Two candidate designs
+
+**(a) ANF normalisation before planning** — rewrite a statement containing a
+nested yield into the shapes the planner already admits
+(`return identity(yield)` → `const t = yield; return identity(t)`), then plan as
+today. Attractive because it needs no new machinery, and it would also close the
+tracked `.next(v)`-in-argument-position residual above.
+
+**The constraint that makes it non-trivial, and that a naive hoist gets wrong:
+evaluation ORDER.** Operands to the LEFT of the yield must be evaluated BEFORE
+the suspend and operands to the right after it, so hoisting the yield requires
+hoisting every earlier sub-expression into temps in source order. Verified
+against Node: for `two((log += "L", 1), yield)`, `log` is already `"L"` when the
+generator suspends. A rewrite that evaluates the left operand after the resume
+is silently wrong in exactly the way this issue's history keeps warning about, so
+this design is only safe with a real effect-ordering pass — not a pattern match
+on the common cases.
+
+**(b) Route these shapes to the #2906 CFG planner**, which models suspension as
+a terminator on a control-flow graph and therefore does not care about syntactic
+position. This is the convergence trigger the "Alignment decision" section above
+already anticipates ("new control-flow capability → CFG planner; carrier /
+value-rep capability → generators-native").
+
+**Recommendation: (b), and this is the trigger.** Yield-position admission is a
+control-flow capability, not a carrier one — it is precisely the case the
+alignment rule reserves for the CFG planner. (a) would work for the simplest
+files and would then need the same effect-ordering machinery the CFG path
+already has to build, so it buys a handful of tests and a second place to get
+ordering wrong.
+
+**One exception worth taking independently of (a)/(b):** the
+`ParenthesizedExpression` unwrap in the ExpressionStatement arm. It is a
+one-line, order-neutral admission fix (`(yield)` is exactly `yield`), and it is
+measured above as a real CE today. It does not commit the lane to either design.
+
+Out of this lane on the measured evidence: `star-rhs-iter-*` (~35) → #2173
+slice-2b; `prototype-*` / brand (~21) → #2175; `unscopables-with*` (4) → `with`;
+sloppy-mode `yield`-as-identifier (11) → parser.

@@ -3992,7 +3992,37 @@ export function finalizeStructAndDynamicMemberGet(
             // BOTH finders, which de-narrows exactly like the cold fix above.
             for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
             for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
-            if (fieldKinds.size === 1) {
+            // (#2864 wave-2 S1) The #2979 generator-sentinel exception, which
+            // every OTHER consumer of this candidate set already carries
+            // (`fillMemberGetDispatch`'s sentinel-aware box, `planGeneric`'s
+            // `generator-sentinel` decline, `planTypedF64` /
+            // `fillTypedMemberGetF64Dispatch` / `member-set-f64`'s
+            // `!isNativeGeneratorResultStruct`), was MISSING here — and this is
+            // the site that actually decides what the read site sees.
+            //
+            // A native generator's IteratorResult `value` is an f64 slot whose
+            // UNDEF_F64 bit pattern MEANS `undefined`. The finalize-filled
+            // `__get_member_value` dispatcher honours that: its arm answers a
+            // null externref (standalone canonical `undefined`) for the
+            // sentinel. The Phase-3 vote then saw a lone `f64` kind, narrowed
+            // `resultWasm` to f64, and coerced the dispatcher's externref back
+            // down through `__unbox_number` — turning the canonical `undefined`
+            // into NaN, which the caller re-boxes as a NUMBER. Measured on the
+            // exact test262 harness shape (`var result; result = iter.next();
+            // assert.sameValue(result.value, undefined)`): `typeof` answered
+            // "number", so every terminal `{value: undefined, done: true}`
+            // assertion failed across language/expressions/yield and the
+            // generators suites, host-free and silently.
+            //
+            // The narrowing is a PERFORMANCE specialization; the sentinel is a
+            // REPRESENTATION fact. Keep the honest externref for these reads —
+            // a numeric consumer re-narrows through its own coercion, paying one
+            // box/unbox only in modules that both register a native generator
+            // and read `.value` off a dynamically-typed receiver.
+            const anyGeneratorSentinelCandidate = structCandidates.some(
+              (c) => c.fieldType.kind === "f64" && isNativeGeneratorResultStruct(ctx, c.structTypeIdx),
+            );
+            if (fieldKinds.size === 1 && !anyGeneratorSentinelCandidate) {
               const k = [...fieldKinds][0];
               if (k === "f64" || k === "i32") {
                 // (#2938) Preserve the #2030/#2785 boolean BRAND through the
