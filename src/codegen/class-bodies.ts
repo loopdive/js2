@@ -19,6 +19,7 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
@@ -1250,6 +1251,9 @@ export function collectClassDeclaration(
       // display name) does not collide with a user `function ClassName_m()`.
       const methodKey = classMemberFuncKey(ctx, fullName);
       ctx.funcMap.set(methodKey, methodFuncIdx);
+      // (#4440) The method mint sites key everything by `fullName`; record the
+      // node under the same key so they can read §15.1.5 / §10.2.9 from it.
+      recordFnMetaMemberDeclaration(ctx, fullName, member);
 
       pushProgramAbiClassCallable(ctx, member, "unit", methodFuncIdx, {
         name: methodKey,
@@ -1305,6 +1309,7 @@ export function collectClassDeclaration(
       const getterFuncIdx = mintDefinedFunc(ctx);
       const getterKey = classMemberFuncKey(ctx, getterName); // (#1983) key + display name
       ctx.funcMap.set(getterKey, getterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, getterName, member); // (#4440) `get p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", getterFuncIdx, {
         name: getterKey,
@@ -1338,6 +1343,7 @@ export function collectClassDeclaration(
       const setterFuncIdx = mintDefinedFunc(ctx);
       const setterKey = classMemberFuncKey(ctx, setterName); // (#1983) key + display name
       ctx.funcMap.set(setterKey, setterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, setterName, member); // (#4440) `set p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", setterFuncIdx, {
         name: setterKey,

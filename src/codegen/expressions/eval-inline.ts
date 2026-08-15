@@ -72,6 +72,55 @@ export function resolveConstantString(expr: ts.Expression, checker?: ts.TypeChec
   return resolveConstantStringDepth(expr, checker, 0);
 }
 
+/**
+ * (#4440) §20.2.1.1.1 step 8/11: CreateDynamicFunction `ToString`s EVERY
+ * argument, so a non-string one is not a "dynamic body" — it is a *constant*
+ * body the fold declined to see. `new Function("a,b,c", null)` is
+ * `function anonymous(a,b,c) { null }`, not an opaque runtime construction.
+ *
+ * ## Why this belongs to a descriptor-attributes slice
+ * Declining sent those calls to the runtime-eval (QuickJS) tier, whose function
+ * object is NOT a Wasm closure — so it carries no `$bag`, no `$fnmeta`, and
+ * none of the #4436/#4437/#4440 reflective arms apply to it. Measured on this
+ * branch's base, `--target standalone`, with a fully opaque receiver (passed
+ * through a function parameter so no static fold can answer):
+ *
+ * | on `f` from …                    | `new Function("a,b,c", null)` | `…, "return 1;")` |
+ * | -------------------------------- | ----------------------------- | ----------------- |
+ * | `x[k]`, `hasOwnProperty("length")`| 3, true (via the eval tier)  | 3, true           |
+ * | `getOwnPropertyNames(x).length`   | **0**                        | 2                 |
+ * | `delete x.length` then hasOwn     | **still true**               | false             |
+ * | `x.length = 99` then read         | **99**                       | 3 (refused)       |
+ *
+ * That is exactly the `built-ins/Function/length/S15.3.5.1_A2_T*` (DontDelete)
+ * and `_A3_T*` (ReadOnly) signature — six files whose ONLY unusual ingredient
+ * is a `null` body argument. Routing them back onto the AOT closure path is
+ * what makes the attribute enforcement reach them; no new enforcement code is
+ * needed, because the closure path already has it.
+ *
+ * ## Scope — the three keyword literals only, and standalone only
+ * `null` / `true` / `false` are KEYWORD tokens: their `ToString` is fixed by
+ * the grammar, unshadowable, and needs no numeric formatting. `undefined` is
+ * deliberately excluded — it is an ordinary identifier that sloppy code may
+ * shadow — and so are numeric literals, whose `ToString` is Number::toString
+ * (`1e21` → `"1e+21"`, `0x10` → `"16"`); getting that subtly wrong would
+ * publish a wrong function BODY, which is far worse than declining.
+ *
+ * Standalone-gated because the JS-host lane has no gap to close here: a
+ * non-constant `Function(…)` there already routes to the working
+ * `__extern_eval` shim, and widening the fold would change host output for no
+ * behavioural gain.
+ */
+function keywordLiteralToString(ctx: CodegenContext, expr: ts.Expression): string | null {
+  if (!ctx.standalone) return null;
+  let e: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+  if (e.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (e.kind === ts.SyntaxKind.TrueKeyword) return "true";
+  if (e.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  return null;
+}
+
 /** Defensive recursion cap for pathological const-reference chains. */
 const CONST_STRING_MAX_DEPTH = 16;
 
@@ -1548,6 +1597,7 @@ function synthesizeStaticNewFunction(
     let s = resolveConstantString(a);
     if (s === null) {
       s = resolveConstantString(a, ctx.checker);
+      if (s === null) s = keywordLiteralToString(ctx, a);
       if (s === null) return undefined;
       widened = true;
     }

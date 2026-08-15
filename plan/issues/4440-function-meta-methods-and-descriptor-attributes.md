@@ -17,6 +17,39 @@ language_feature: function-properties
 goal: standalone-gap
 related: [4437, 4436, 2896]
 origin: "2026-08-15 ES5-standalone campaign wave 8 — #4437's R1 residual (class/object METHODS decline the meta) plus the descriptor-attribute family ('Expected obj[length] NOT to be writable' x4, Function/length 6 ES<=5 non-pass)."
+loc-budget-allow:
+  # All new LOGIC is in the new module `function-instance-meta-methods.ts`
+  # (157 lines). What lands in these four is wiring and its rationale:
+  #  - eval-inline.ts       +50: ONE 6-line predicate plus the measurement table
+  #                              that justifies why a `null` body argument is a
+  #                              constant, not a dynamic body (the whole reason
+  #                              the six Function/length files were unreachable).
+  #  - context/types.ts     +11: one optional Map field + its field doc. A
+  #                              per-compile side table has to live on the
+  #                              context; there is no other home.
+  #  - literals.ts           +9: one extra argument threaded to
+  #                              `emitObjectMethodAsClosure`, reformatted by
+  #                              prettier onto its own lines.
+  #  - class-bodies.ts       +6: three `recordFnMetaMemberDeclaration` calls at
+  #                              the three registration sites (method / getter /
+  #                              setter) plus the import. The declaration is only
+  #                              in scope here.
+  - src/codegen/expressions/eval-inline.ts
+  - src/codegen/context/types.ts
+  - src/codegen/literals.ts
+  - src/codegen/class-bodies.ts
+func-budget-allow:
+  # The same three wiring edits, seen per-function. Each is a call/argument at
+  # the ONE site where the needed value is in scope; none adds a branch.
+  #  - compileObjectLiteralForStruct +9: the extra `emitObjectMethodAsClosure`
+  #    argument, wrapped by prettier.
+  #  - fillMemberGetDispatch        +7: the `$fnmeta` operand + derived type in
+  #    the dynamic-read lazy init, so it cannot disagree with the typed read.
+  #  - collectClassDeclaration      +5: three one-line registry writes next to
+  #    the three existing `ctx.funcMap.set` calls.
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  - src/codegen/class-bodies.ts::collectClassDeclaration
 ---
 
 # #4440 — function meta for METHODS + own-property descriptor attributes
