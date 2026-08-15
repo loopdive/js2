@@ -203,21 +203,39 @@ crash (`.tmp/mixed-hardfail-probe.ts`). The one hard-failure path that WAS
 reachable — a string-carrier source — is fixed via `IrUnsupportedError` and
 pinned by a regression test.
 
-**Gates** (all run locally on this branch):
+**Gates** — all re-run on this branch AFTER merging `origin/main` at `6f59633a`
+(#4589 value-discard selector, #4592 native-map both touch `src/ir` and merged
+cleanly):
 
+- `tests/issue-4487.test.ts` — 54/54.
 - `check:ir-fallbacks` — OK, no unintended/post-claim/module-level increases.
-- `gen:ir-adoption --check` — up to date.
-- `check:ir-only` — host lane 37 terminal units / 37 emitted / 37 IR bodies,
-  0 unsupported; standalone lane 17 emitted / 20 unsupported with the
-  per-code breakdown identical to `scripts/ir-only-baseline.json`. Verdict
-  READY, floors unchanged.
-- `check:func-budget`, `check:loc-budget`, `check:oracle-ratchet` (+0/+0),
-  `check:pushraw` (+0), `check:issue-ids --against-main`,
+- `gen-ir-adoption.mjs --check` — up to date.
+- `check:ir-only` — verdict READY. Host (single-host) lane 37 terminal units /
+  37 emitted / 37 IR bodies / 0 unsupported. Standalone lane 19 emitted / 18
+  unsupported, per-code breakdown **identical** to
+  `scripts/ir-only-baseline.json`, floors unchanged. (The 17/20 recorded in the
+  first cut was against the older base; `main` moving to `6f59633a` shifted the
+  standalone lane *and* its committed baseline together.)
+- `check:func-budget`, `check:loc-budget`, `check:oracle-ratchet`,
+  `check:pushraw`, `check:test-vacuity-shapes`, `check:ir-adoption`,
   `check:issue-spec-coverage`, `check:done-status-integrity`,
-  `check:test-vacuity-shapes`, `update-issues --check`, prettier, biome — all OK.
-- Adjacent suites (`array-capacity`, `fast-arrays`, `issue-3583`,
-  `ir-algorithms-cluster`, `array-methods`): the 7 failures present are
-  **identical on the branch base** (verified by the file-copy A/B: base
-  `793b5c0e` sources restored, same 7 test names fail), so they are
-  pre-existing and untouched by this change.
-- `equivalence-gate.mjs` — full single-fork run.
+  `check:issue-ids:against-main`, `check:issues`, biome (`lint`), prettier
+  (`format:check`) — all exit 0.
+- `equivalence-gate.mjs` — exit 0, **no new equivalence regressions**; 24
+  failing / 1,661 passing against 36 known-failures in the baseline, and 12
+  baseline failures now pass (from work landed on `main`, not from this branch
+  — deliberately NOT ratcheted here). Note the run must not overlap an A/B
+  source swap; the first attempt was discarded and re-run on stable sources.
+- Adjacent suites (`array-capacity`, `array-methods`, `fast-arrays`,
+  `ir-algorithms-cluster`, `issue-3583`): 7 failures, and the **same 7 test
+  names fail on the branch base** (file-copy A/B, base
+  `src/ir/{from-ast,select}.ts` restored) — pre-existing, untouched.
+- `tsc --noEmit` — 486 errors, every one the documented symlinked-`node_modules`
+  `@types/node` artifact (`TS2591`/`TS2304` on `process`/`require`/`__filename`);
+  **zero** in any file this branch changes.
+
+**Not attributable to this branch** (measured, both backends identical, unit
+not claimed either way): `const a = [1,2,3,4]` at module level plus a *shadowed*
+block-local `a` inside the function traps at runtime with "dereferencing a null
+pointer" on legacy AND IR, on the branch base too (`.tmp/probe-4487e.ts`). A
+legacy-side module-const defect, unrelated to spread.
