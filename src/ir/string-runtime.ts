@@ -29,6 +29,14 @@ export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
 export const IR_STRING_ITERATOR_CHAR_AT_FN = "__ir_string_iterator_char_at";
 /** Prefix for per-literal backend materializers used beyond `array.new_fixed` limits. */
 export const IR_STRING_LITERAL_MATERIALIZE_FN = "__ir_string_literal_materialize";
+/**
+ * (#4467) §7.1.17 `Number::toString(value, 10)` as a backend-neutral callable
+ * intent: `(f64) -> string`, where `string` is whatever the lane's string
+ * carrier is. Both wasmgc lanes bind a provider (host import / native #3912
+ * formatter behind a carrier thunk), so from-ast asks no mode question — it
+ * emits this call and the resolver picks the provider.
+ */
+export const IR_NUMBER_TO_STRING_FN = "__ir_number_to_string";
 
 export function irStringConcatManySymbol(arity: number): string {
   if (!Number.isInteger(arity) || arity < 3) {

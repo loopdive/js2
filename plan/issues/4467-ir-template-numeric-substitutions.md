@@ -14,6 +14,22 @@ language_feature: template-literals
 goal: ir-full-coverage
 related: [3518, 3583, 3912, 2955, 2856]
 origin: "2026-08-15 #3583 adoption-matrix measurement — the `TemplateExpression` row's promotion criterion is 'Template substitutions support the remaining typed coercion families'; STRING claims, NUMERIC rejects."
+# The seam itself (the per-lane provider) went into a NEW subsystem module,
+# `src/ir/number-to-string-provider.ts`. What is left in the three god-files is
+# irreducible: the claim predicate has to live in the selector's template arm,
+# the conversion has to live in the lowerer's template arm, and the resolver's
+# intrinsic dispatcher is one `else if` per symbol. integration.ts grows by the
+# import + those two dispatcher lines only.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+# The family predicate itself is extracted to a module-level
+# `templateSubstitutionFamily`. What remains inside the dispatcher is one net
+# line: the arm has to bind the family (the module-scalar guard below it
+# compares against it) where it previously only had to test one boolean.
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #4467 — IR: numeric template-literal substitutions

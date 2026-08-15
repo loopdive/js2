@@ -541,7 +541,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
       | "primitive-wrapper-loose-equality"
-      | "legacy-numeric-array-global",
+      | "legacy-numeric-array-global"
+      | "number-to-string",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -7617,9 +7618,39 @@ function obviousSelectorValueFamily(
   return undefined;
 }
 
+/**
+ * (#4467) Which template-substitution families does the lowerer produce a
+ * string for? Exactly two: `string` (passes straight into the concat chain)
+ * and `number` (through the `IR_NUMBER_TO_STRING_FN` provider). `undefined`
+ * means the selector must reject — keeping claim and lowering on one set.
+ *
+ * `boolean` is deliberately NOT admitted even though the legacy path handles
+ * it: booleans share IR's `i32` carrier with a native-annotated number, so
+ * once the checker family is gone the lowerer could not tell `${true}` →
+ * `"true"` from `${1}` → `"1"`. Everything else (objects, `any`, primitive
+ * unions, …) needs a ToPrimitive walk the IR does not own.
+ *
+ * The capability read is fail-CLOSED: bare selector callers and the linear
+ * driver pass no `supportsBackendCapability`, and they have no number→string
+ * provider bound, so they must keep rejecting.
+ */
+function templateSubstitutionFamily(
+  expression: ts.Expression,
+  scope: ReadonlySet<string>,
+): "string" | "number" | undefined {
+  if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
+  if (
+    declaredExpressionHasExactFamily(expression, "number", scope) &&
+    currentSelectionOptions?.supportsBackendCapability?.("number-to-string") === true
+  ) {
+    return "number";
+  }
+  return undefined;
+}
+
 function declaredExpressionHasExactFamily(
   expression: ts.Expression,
-  expected: "boolean" | "string",
+  expected: "boolean" | "string" | "number",
   scope: ReadonlySet<string>,
 ): boolean {
   const candidate = unwrapProjectionExpression(expression);
@@ -8596,7 +8627,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // coercion stays legacy-owned instead of relying on a builder throw.
   if (ts.isTemplateExpression(expr)) {
     for (const span of expr.templateSpans) {
-      if (!declaredExpressionHasExactFamily(span.expression, "string", scope)) {
+      const substitutionFamily = templateSubstitutionFamily(span.expression, scope);
+      if (substitutionFamily === undefined) {
         return capabilityNo("template-substitution-unsupported", "expr-template-substitution-family", span.expression);
       }
       if (expressionIsModuleExternAccessChain(span.expression)) {
@@ -8604,7 +8636,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       if (
         expressionTouchesScalarModuleBinding(span.expression) &&
-        obviousModuleValueFamily(span.expression) !== "string"
+        obviousModuleValueFamily(span.expression) !== substitutionFamily
       ) {
         return shapeNo("expr-module-scalar-template", span.expression);
       }
