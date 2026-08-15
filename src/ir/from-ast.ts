@@ -534,8 +534,36 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * This is the SINGLE predicate that decides the native-map lowering arms, so
    * it is also what the selector's `allowNativeMapStorage` option must agree
    * with — one fact, two readers, no independent mode reads.
+   *
+   * PURE — it never materializes anything. It answers `undefined` until the
+   * `$Map` struct actually exists in this module, which is what makes it safe
+   * to call from a hot path. Use {@link ensureNativeMapStorageType} at the one
+   * site that is genuinely constructing a Map; see that method for why.
    */
   nativeMapStorageType?(): IrType | undefined;
+  /**
+   * The MATERIALIZING twin of {@link nativeMapStorageType}: registers the
+   * `$Map` struct + its runtime helpers if absent, then reports the storage
+   * type.
+   *
+   * The split is load-bearing, not stylistic. #4461 shipped ONE method that
+   * always materialized, and both from-ast call sites asked it BEFORE they knew
+   * they were looking at a Map — `lowerNewExpression` asked on every `new`, and
+   * the module-binding probe on every method receiver. In a native-string or
+   * standalone lane that emitted the entire twelve-function `$Map` runtime
+   * (`__map_new`, `__map_get`, `__map_set`, `__map_has`, `__map_delete`,
+   * `__map_clear`, `__map_size`, the two iterator helpers, `__map_lookup_idx`,
+   * `__hash_anyref`, `__same_value_zero`) plus its struct types into every
+   * module containing a `new` expression. Measured on a two-class module with
+   * no `Map` anywhere: +1,374 bytes, 59 → 71 functions. That is what changed
+   * the wasm hash of 508 test262 files, regressed 297 in
+   * `language/expressions/class/elements`, and failed the standalone
+   * high-water floor.
+   *
+   * So: a QUERY must not emit. Only call this once the construct is PROVEN to
+   * be a `Map`.
+   */
+  ensureNativeMapStorageType?(): IrType | undefined;
   /**
    * (#4461) True when `undefined`-ness of an externref-shaped value is tested
    * by a NATIVE `__extern_is_undefined` function rather than the `env` host
@@ -6013,11 +6041,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
   // `unknown-class-construction` demote at the bottom of this function.
-  const nativeMapStorage = cx.resolver?.nativeMapStorageType?.();
-  if (nativeMapStorage) {
-    const nativeMap = tryLowerNativeMapConstruction(expr, nativeMapStorage, cx);
-    if (nativeMap !== null) return nativeMap;
-  }
+  // The storage type is obtained INSIDE, after the `new Map()` shape is proven
+  // — asking first materialized the whole `$Map` runtime on every `new`.
+  const nativeMap = tryLowerNativeMapConstruction(expr, cx);
+  if (nativeMap !== null) return nativeMap;
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
   }
@@ -6441,10 +6468,15 @@ function nativeMapModuleBinding(
   cx: LowerCtx,
 ): { readonly binding: ModuleBindingGlobal; readonly name: string } | null {
   if (receiver === undefined) return null;
-  const storageType = cx.resolver?.nativeMapStorageType?.();
-  if (!storageType) return null;
+  // Resolve the binding FIRST: it is the cheap discriminator, and resolving a
+  // genuinely native-map binding is itself what registers the `$Map` struct
+  // (`resolveModuleBindingGlobal`'s `native-map` arm). So by the time the PURE
+  // storage-type query below runs, the struct exists exactly when it should —
+  // and for every other receiver we have emitted nothing at all.
   const binding = cx.resolver?.resolveModuleBinding?.(receiver);
-  if (!binding || !irTypeEquals(binding.type, storageType)) return null;
+  if (!binding) return null;
+  const storageType = cx.resolver?.nativeMapStorageType?.();
+  if (!storageType || !irTypeEquals(binding.type, storageType)) return null;
   return { binding, name: receiver.text };
 }
 
@@ -6513,10 +6545,15 @@ function tryLowerNativeMapMethodCall(
  * the native-map `writeValueMatches` arm), so anything else that reaches here
  * is drift rather than an unsupported source.
  */
-function tryLowerNativeMapConstruction(expr: ts.NewExpression, storageType: IrType, cx: LowerCtx): IrValueId | null {
+function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
+  // Every cheap, PURE rejection first. Only a proven ambient `new Map()` may
+  // reach the materializing resolver call below — see
+  // `ensureNativeMapStorageType` for what asking too early cost.
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Map") return null;
   if ((expr.arguments?.length ?? 0) !== 0) return null;
   if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) return null;
+  const storageType = cx.resolver?.ensureNativeMapStorageType?.();
+  if (!storageType) return null;
   const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
   if (result === null) throw new Error(`ir/from-ast: native Map allocator returned void (${cx.funcName})`);
   return result;
