@@ -790,7 +790,9 @@ Corpus sweeps on this branch:
 - `language/expressions/instanceof` — **43 files, 0 leaking** (was 11 leaking).
 - The **59 files that name `env::__instanceof_check` as their SOLE host import**
   on the 2026-08-15 standalone baseline — **0 leaking, 0 compile-refused,
-  0 invalid Wasm** (each binary was `WebAssembly.compile`d).
+  0 invalid Wasm** (each binary was `WebAssembly.compile`d). Of those 59, **20
+  actually still leak on this branch's base**; the other 39 are stale baseline
+  entries already clean before this change (see SECONDARY acceptance).
 - gc/host **byte-identical**: sha256 of the compiled binary matched base on all
   10 probe shapes (file-copy A/B on `identifiers.ts`). That is a SAMPLE, and it
   is stated as one; what makes it a general claim is structural — the call site
@@ -864,20 +866,35 @@ walked by the ordinary late-import body shifter. **Nothing is minted at finalize
 
 ### SECONDARY acceptance — rows
 
-**The 59 sole-leak files** (the directly addressable population, from the
-2026-08-15 standalone baseline where all 59 are `compile_error`
-`host_import_leak`), re-run on this branch **with `TEST262_INCLUDE_PROPOSALS=1`**
-— see the scope note below, which is load-bearing:
+**+3 conversions, 0 regressions.** The live population is **20 files, not 59** —
+that correction is the last one on this issue and it came from applying the
+provenance habit to my own headline number.
 
-| after    | rows |
-| -------- | ---: |
-| **pass** |    4 |
-| fail     |   55 |
+The 59 came from the 2026-08-15 baseline, which records them as `compile_error`
+`host_import_leak`. Compiled on THIS BRANCH'S BASE, only **20 still emit
+`env::__instanceof_check`**; the other 39 are already import-free (stale entries,
+resolved by earlier slices). So 39 of the 59 were never mine to convert.
 
-59 × `compile_error` → **4 pass**, 0 regressions (a `compile_error` cannot
-regress). The four: `built-ins/Array/fromAsync/this-constructor`,
-`built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`,
-`language/expressions/instanceof/S11.8.6_A2.4_T3`.
+| the 20 that genuinely leak on base | after |
+| ---------------------------------- | ----: |
+| **pass**                           | **3** |
+| fail                               |    17 |
+
+The three: `built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`
+and `language/expressions/instanceof/S11.8.6_A2.4_T3`. All three leak on base ⇒
+CI scores them `compile_error` ⇒ pass-after is a genuine conversion.
+
+**`built-ins/Array/fromAsync/this-constructor` is NOT a conversion** and was
+counted as one in the first cut. It does not leak on base, and A/B measurement
+shows it PASSES on base and on branch. It is a stale baseline entry that my
+change cannot touch — the code only fires where the import would have been
+emitted.
+
+Why the first cut got it wrong: I measured the 59 only AFTER, then attributed
+every pass to the change because the baseline said they were all `compile_error`.
+The baseline was the artifact; "all 59 leak" was the figure inherited from it.
+The fix is one extra run — the same corpus on base — and it is the run that turns
+"4 files pass now" into "3 of them pass BECAUSE of this".
 
 **Scope note — the first cut of this table reported 24 `skip` and was NOT
 CI-comparable.** The local runner's DEFAULT scope excludes proposals, so 21

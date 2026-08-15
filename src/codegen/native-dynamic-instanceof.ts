@@ -15,17 +15,18 @@
  * `env::__instanceof_check`. A host-free binary cannot satisfy that import, so
  * the module does not instantiate and the #2961 leak guard refuses the test.
  *
- * Measured on the 2026-08-15 standalone baseline: **59 files name
- * `env::__instanceof_check` as their SOLE host import**. It is the single import
- * standing between ordinary `instanceof` code and a genuinely host-free module —
- * which is the deliverable here. Conformance rows are the secondary metric (see
- * the issue's tiering).
+ * **Scale, measured on the branch base rather than quoted from the baseline.**
+ * The 2026-08-15 standalone baseline lists 59 files naming
+ * `env::__instanceof_check` as their SOLE host import, and ~1,500 more naming it
+ * alongside others. Both figures are STALE and neither should be quoted. Compiled
+ * on current main: **20** of the 59 still emit it, and of a 150-file
+ * deterministic sample of the ~1,500, **zero** do — earlier slices (#2998,
+ * #3962, Slice A, #4276) resolve those sites statically now.
  *
- * The baseline ALSO lists ~1,500 files naming it alongside other imports, but do
- * not quote that as scale: it is stale. A 150-file deterministic sample of that
- * population, compiled on current main, has **zero** files still emitting
- * `__instanceof_check` — earlier slices (#2998, #3962, Slice A, #4276) resolve
- * those sites statically now. Only the 59 are live.
+ * So the live population is **20 files**, and this closes all of them. It is the
+ * single import standing between ordinary `instanceof` code and a genuinely
+ * host-free module — which is the deliverable. Conformance rows are the secondary
+ * metric (see the issue's tiering); the measured yield is +3.
  *
  * ## What the runtime can actually decide, and what it cannot
  *
