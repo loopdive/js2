@@ -64,7 +64,7 @@
     {
       "name": "Comma operator",
       "testCategories": ["language/expressions/comma"],
-      "passCount": 5,
+      "passCount": 6,
       "totalCount": 6
     },
     {
