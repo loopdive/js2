@@ -134,7 +134,7 @@ Measured shapes, before → after (`.tmp/spread-probe.ts`, `JS2WASM_IR_SHAPE_DIA
 | `[...a, "r"]` (mixed family) | `expr-arraylit-spread` | `expr-arraylit-mixed-primitive-family` |
 | `[1, 2, 3]` (control) | CLAIMED | CLAIMED |
 
-`tests/issue-4487.test.ts` — 46 cases, all green. Positives are claim-backed
+`tests/issue-4487.test.ts` — 54 cases, all green. Positives are claim-backed
 (selector claims AND `irOutcomes` reports `irBodyEmitted`) and each is checked
 against Node running a JS twin as well as legacy codegen.
 
@@ -158,6 +158,41 @@ to the block-local `a` (length 2) while the spread refers to the module-level
 (within the function there is exactly one `a`). Fixed by requiring the spread
 to be a descendant of the declaration's own block scope and to follow it in
 source order; both are pinned as unit tests.
+
+**The string-carrier hard-fail was ONE instance of a general defect, and the
+other two instances were live on the branch.** Adopting the spread makes the
+selector CLAIM units that then reach a bare `Error` inside `lowerArrayLiteral`;
+under IR-first a bare throw is an *unexpected internal error*, so the compile
+FAILS rather than demoting to the (correct) legacy body. Found by A/B against
+the branch base with the file-copy pattern (base `src/ir/{from-ast,select}.ts`
+restored, `.tmp/probe-4487b.ts` / `-4487c.ts`); both shapes compiled fine on
+base, because base rejected them at `expr-arraylit-spread` and never claimed
+them:
+
+| shape | base | branch (first cut) | now |
+| --- | --- | --- | --- |
+| `[...a]`, `const a: number[] = []`, no hint | reject → legacy, compiles | CLAIMED → `IR path failed` **CE** | demotes, compiles |
+| `[...a]` over a `number[][]` const | reject → legacy, compiles | CLAIMED → `IR path failed` **CE** | demotes, compiles |
+| `[...[[1], [2]], [3]]` (binding-free) | reject → legacy, compiles | CLAIMED → `IR path failed` **CE** | demotes, compiles |
+| `[...a]` over a string-carrier const | reject → legacy, compiles | fixed in the first cut | demotes, compiles |
+
+The zero-element throw is this branch's own; the non-scalar element-type throw
+is **pre-existing** (it fires for `const a = [[1], [2]]` with *no spread at
+all* — the literal-construction twin of #4486), and adoption newly routes
+claimed units into it. All three now raise `IrUnsupportedError`
+("array-representation-unsupported"), like the string-carrier arm. The general
+rule this leaves behind: **any throw inside `lowerArrayLiteral` reachable from
+a newly-claimed shape must be typed-unsupported, never a bare `Error`.**
+
+**Binding resolution is pinned end-to-end.** Because the source binding is
+resolved by a name-text scan, any shape where `a` at the spread could resolve
+to a *different* declaration than the scan finds is a potential silent
+wrong-LENGTH miscompile. Pinned as behaviour (not just as reject arms): an
+inner function-scope `const` shadowing a module `const` reads the INNER length;
+a `const` declared inside a loop body is re-bound per iteration and stays
+exact; a source also iterated by a `for…of` still binds; and a
+**catch-clause parameter** sharing the source's name is a competing binding
+that must refuse the claim (it does).
 
 **Measured non-issue.** A mixed-type spread cannot reach the pre-existing bare
 `Error` mixed-type throw: `[...a, t]` (f64 vec + bool) and `[...a, x]` (bool
