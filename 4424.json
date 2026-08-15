@@ -1,10 +1,11 @@
 {
   "id": "4424",
   "assignee": "ttraenkler/fable-lead",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4424-structure-gvn",
   "claimed_at": "2026-08-15T00:45:01Z",
-  "updated_at": "2026-08-15T00:45:01Z",
-  "write_id": "84692-9j1diyl9"
+  "updated_at": "2026-08-15T01:52:29Z",
+  "write_id": "68964-u3axg0py",
+  "released_at": "2026-08-15T01:52:29Z"
 }
