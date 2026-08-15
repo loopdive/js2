@@ -30,10 +30,12 @@ bucket work #2856–#2859.
 - **mixed** — `from-ast.ts` handles a _subset_ of the kind. Whole-function
   rejection by the selector or per-node throws inside `from-ast.ts` causes
   the function to fall back to direct codegen via the demote-to-warning
-  path (`src/codegen/index.ts:~1889` for a selector-claimed function whose
-  types can't be resolved, and `~2390` for an IR-build throw; both emit a
-  severity-`warning`). Ratchet target: drive the rejection bucket to zero,
-  then promote to `ir-owned`.
+  path in `src/codegen/index.ts` — the `catch` around `planIrOverlay`'s
+  override-map build (a selector-claimed function whose types can't be
+  resolved) and `formatIrPathFallbackDiagnostic` (an IR build/verify/lower
+  throw); both emit a severity-`warning`. Cited by ANCHOR: the absolute
+  line numbers that used to appear here went stale twice. Ratchet target:
+  drive the rejection bucket to zero, then promote to `ir-owned`.
 - **direct-only** — IR has no handler; direct codegen is the only path. A
   function touching one of these kinds is rejected by the selector and
   compiles entirely via legacy.
@@ -167,6 +169,51 @@ and Algorithms' top-level generic Map initializer are both IR-owned.
 | `type-parameters`                        | deferred   | Generics specialisation (future)                                                                                                                      |
 | `non-export-modifier`                    | deferred   | `async` / declare-only — narrow                                                                                                                       |
 | `unnamed`                                | deferred   | Anonymous default exports                                                                                                                             |
+
+## Post-claim codes (#3341 Slice C — after the claim, not before)
+
+The buckets above are decided BEFORE the IR claims a unit. A unit the
+selector already claimed can still fail, carrying a typed
+`IrUnsupportedCode` at a post-claim `stage`; those are baselined per
+stage in the `postClaim` section of `scripts/ir-fallback-baseline.json`
+(gated must-not-increase, all buckets empty today).
+
+A post-claim demote is legitimate only when the failing arm is a
+**capability gap**. When it instead restates a predicate the selector's own
+gate already evaluated, firing it post-claim is a selector⇄builder desync —
+"IR must always handle" — and the silent demote hides a compiler bug. Those
+codes are listed in `STRICT_IR_POSTCLAIM_CODES`
+(`src/codegen/index.ts`) and hard-error instead.
+
+Corpus-zero is **necessary but not sufficient** for promotion (the premise
+this issue was re-scoped to correct; Slice B's over-promotion had to be
+narrowed by #3565, #3784 and #4035). The full bar is in the code comment at
+`STRICT_IR_POSTCLAIM_CODES`. Stage scope is `build`/`verify`/`lower`/
+`backend-legality`; `resolve` is deliberately excluded — it is where a
+claim is legitimately withdrawn, and it carries the #1921
+`type-resolution-unsupported` contract.
+
+| Post-claim code                      | Classification | Why                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `array-representation-unsupported`   | capability gap | Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering.                                                                                                                                                                            |
+| `body-shape-rejected`                | capability gap | One post-claim arm fires when `dynamicForInPlan` is absent — real on the LINEAR backend, whose resolver does not supply it.                                                                                                                                                                                                   |
+| `class-member-unsupported`           | strict         | Its only post-claim arm (integration.ts, `isCtorMember`) restates `collectIrClassInstanceInitializers === undefined` — the exact helper the selector's `constructorFieldInitializersAreIrSafe` already ran, on both the explicit- and implicit-constructor paths. Reaching it on a CLAIMED ctor is a selector⇄builder desync. |
+| `compound-assign-unsupported`        | capability gap | #3565 restored demote-to-legacy contract.                                                                                                                                                                                                                                                                                     |
+| `constructor-arity-unsupported`      | capability gap | `new Number()` / `new Boolean()` reach it; there is no selector arity gate for primitive wrappers.                                                                                                                                                                                                                            |
+| `element-access-unsupported`         | capability gap | #3565 restored demote-to-legacy contract.                                                                                                                                                                                                                                                                                     |
+| `element-store-unsupported`          | capability gap | #3565 restored demote-to-legacy contract.                                                                                                                                                                                                                                                                                     |
+| `imported-call-planning-unsupported` | capability gap | Host-free targets legitimately lower generators via the legacy native state machine.                                                                                                                                                                                                                                          |
+| `method-call-unsupported`            | capability gap | A receiver/method the IR method-call lowering does not yet handle.                                                                                                                                                                                                                                                            |
+| `module-init-legacy-coupling`        | capability gap | Designed withdrawals where legacy owns the initializer. MEASURED NON-ZERO on the Slice C sweep (1/1340).                                                                                                                                                                                                                      |
+| `nullish-value-unsupported`          | capability gap | Bare `null` in an f64 context; #2949 owns the representation.                                                                                                                                                                                                                                                                 |
+| `operand-coercion-unsupported`       | capability gap | Operand coercions not yet in the typed IR engine (#4208).                                                                                                                                                                                                                                                                     |
+| `property-write-unsupported`         | capability gap | Property assignment on a receiver shape outside slice 4.                                                                                                                                                                                                                                                                      |
+| `return-type-legacy-coupling`        | capability gap | #3565 restored contract — the verify.ts #1798 return gate.                                                                                                                                                                                                                                                                    |
+| `string-evidence-unsupported`        | capability gap | The typed `+=` proof gate lacks checker/producer evidence.                                                                                                                                                                                                                                                                    |
+| `throw-value-unsupported`            | capability gap | #4035 — `throw 42` / bare `throw` defer to legacy.                                                                                                                                                                                                                                                                            |
+| `unboxed-number-local-unprovable`    | capability gap | #3784 — the no-box NUMBER-local proof gate.                                                                                                                                                                                                                                                                                   |
+| `unknown-class-construction`         | capability gap | #4035 — a selector-claimed class with no resolver metadata.                                                                                                                                                                                                                                                                   |
+| `void-call-expression`               | capability gap | A void call in value position is legal source, not a desync.                                                                                                                                                                                                                                                                  |
 
 ## How to update this table
 
