@@ -1,15 +1,15 @@
 ---
 id: 4308
 title: "EvalDeclarationInstantiation + Annex B B.3.3 for the QuickJS eval engine — the bucket that dominates the remaining 256 eval-code failures"
-# Slices A–D are all implemented and measured (see the four implementation
-# records below); the branch is handed off for PR + merge, so this is the
-# HANDOFF case of the status lifecycle — whoever observes the merge flips it to
-# `done`.
-status: in-review
+# Slices A–D all merged: A #4340, B #4343 (2026-08-10), C+D via #4366
+# (2026-08-11, superseding fork-head #4348 whose commits it carried verbatim).
+# This flip is the deferred HANDOFF-case observation of those merges.
+status: done
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-08-09
-updated: 2026-08-10
+updated: 2026-08-15
+completed: 2026-08-11
 priority: high
 horizon: xl
 feasibility: hard

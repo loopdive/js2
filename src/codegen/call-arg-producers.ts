@@ -170,27 +170,42 @@ export function instrPopsPushes(instr: Instr, mod: WasmModule): { pops: number; 
 }
 
 /** Resolve the {@link FuncTypeDef} a `call`/`return_call` instruction targets. */
+/**
+ * (#4423) Func-import type indices, cached per module.
+ *
+ * `callTargetFuncType` runs per call instruction and did TWO O(imports) passes
+ * every time: a `.filter()` that allocated a whole array merely to count the
+ * func imports, then a second linear scan to find the n-th one. A CPU profile
+ * of a 512-function compile put it at 2.4% of total compile time.
+ *
+ * Keyed on `mod.imports.length` because imports are **append-only** —
+ * `addImport` pushes, and the index fixups renumber `global.get`/`global.set`
+ * operands without adding or removing entries. So an unchanged length means an
+ * unchanged import list, and the cache cannot go stale while remaining valid
+ * for the common case of many calls between two import additions.
+ */
+const funcImportTypeIdxCache = new WeakMap<WasmModule, { len: number; typeIdxs: (number | undefined)[] }>();
+
+function funcImportTypeIdxs(mod: WasmModule): (number | undefined)[] {
+  const hit = funcImportTypeIdxCache.get(mod);
+  if (hit && hit.len === mod.imports.length) return hit.typeIdxs;
+  const typeIdxs: (number | undefined)[] = [];
+  for (const imp of mod.imports) {
+    const desc = (imp as { desc?: { kind?: string; typeIdx?: number } }).desc;
+    if (desc?.kind === "func") typeIdxs.push(desc.typeIdx);
+  }
+  funcImportTypeIdxCache.set(mod, { len: mod.imports.length, typeIdxs });
+  return typeIdxs;
+}
+
 export function callTargetFuncType(instr: Instr, mod: WasmModule): FuncTypeDef | null {
   const rawFuncIdx = (instr as { funcIdx?: number }).funcIdx;
   if (rawFuncIdx === undefined) return null;
-  const numImports = mod.imports.filter((imp: any) => imp.desc?.kind === "func").length;
+  const importTypeIdxs = funcImportTypeIdxs(mod);
+  const numImports = importTypeIdxs.length;
   // (#1916 S3) normalize a possibly-stable handle to the absolute index.
   const funcIdx = absoluteFuncIndexCached(mod, numImports, rawFuncIdx);
-  let typeIdx: number | undefined;
-  if (funcIdx < numImports) {
-    let seen = 0;
-    for (const imp of mod.imports) {
-      if ((imp as any).desc?.kind === "func") {
-        if (seen === funcIdx) {
-          typeIdx = (imp as any).desc.typeIdx;
-          break;
-        }
-        seen++;
-      }
-    }
-  } else {
-    typeIdx = mod.functions[funcIdx - numImports]?.typeIdx;
-  }
+  const typeIdx = funcIdx < numImports ? importTypeIdxs[funcIdx] : mod.functions[funcIdx - numImports]?.typeIdx;
   if (typeIdx === undefined) return null;
   const ft = mod.types[typeIdx];
   return ft && ft.kind === "func" ? (ft as FuncTypeDef) : null;
