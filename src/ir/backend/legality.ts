@@ -24,7 +24,8 @@ export type IrBackendTargetCapability =
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
   | "primitive-wrapper-loose-equality"
-  | "legacy-numeric-array-global";
+  | "legacy-numeric-array-global"
+  | "number-to-string";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -104,6 +105,15 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "number-to-string":
+      // (#4467) §7.1.17 Number::toString as a callable provider. Both wasmgc
+      // lanes own one: host binds `env.number_toString`, whose externref IS
+      // the host string carrier; native/standalone bind the #3912 native
+      // formatter behind a thunk that restores the `(ref $AnyString)` carrier.
+      // The other backends have no number formatter bound yet, so a numeric
+      // template substitution must stay unclaimed there rather than reach a
+      // resolver with no provider.
+      return profile.backend === "wasmgc";
   }
 }
 

@@ -83,7 +83,10 @@ const PRECLAIM_CASES: ReadonlyArray<{
   {
     name: "template coercion",
     code: "template-substitution-unsupported",
-    source: "export function test(value: number): string { return `value=${value}`; }",
+    // #4467 adopted NUMERIC substitutions, so this case now uses a BOOLEAN
+    // one — deliberately still rejecting (boolean shares the i32 carrier
+    // with native-annotated numbers; needs an IR boolean brand first).
+    source: "export function test(flag: boolean): string { return `flag=${flag}`; }",
   },
   {
     name: "ambient Error constructor",

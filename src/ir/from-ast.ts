@@ -83,6 +83,7 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "./callable-bindings.js";
+import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
@@ -4361,10 +4362,12 @@ function parseRegExpLiteralText(text: string): { pattern: string; flags: string 
 }
 
 /**
- * Lower a template literal with substitutions. Slice 1 (#1169a) restricts
- * substitutions to expressions that lower to `IrType.string`. Mixed-type
- * substitutions (number/boolean coerced to string) require `number_toString`
- * plumbing through `IrInstrCall` and are deferred.
+ * Lower a template literal with substitutions. Slice 1 (#1169a) admitted only
+ * substitutions that lower to `IrType.string`; #4467 adds the NUMERIC family,
+ * routed through the `IR_NUMBER_TO_STRING_FN` provider (§7.1.17
+ * `Number::toString(value, 10)`) before it joins the same concat chain. The
+ * remaining families still reject in the selector — see the
+ * `ts.isTemplateExpression` arm of `isPhase1Expr`.
  *
  * Even when the head text is empty (`${x}rest`) we emit a `string.const ""`
  * to give the chain a consistent left operand for the first concat — same
@@ -4374,20 +4377,58 @@ function parseRegExpLiteralText(text: string): { pattern: string; flags: string 
 function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrValueId {
   let acc = cx.builder.emitStringConst(expr.head.text);
   for (const span of expr.templateSpans) {
+    // The expected type stays `string`: a string-family substitution lowers
+    // directly into the carrier, and a numeric one ignores the hint and hands
+    // back its scalar, which the conversion below picks up.
     const sub = lowerExpr(span.expression, cx, { kind: "string" });
     const subType = cx.builder.typeOf(sub);
-    if (subType.kind !== "string") {
-      throw new Error(
-        `ir/from-ast: template substitution must be string in slice 1 (got ${describeIrType(subType)} in ${cx.funcName})`,
-      );
-    }
-    acc = cx.builder.emitStringConcat(acc, sub);
+    const asString = subType.kind === "string" ? sub : lowerNumericSubstitutionToString(sub, subType, cx);
+    acc = cx.builder.emitStringConcat(acc, asString);
     if (span.literal.text) {
       const lit = cx.builder.emitStringConst(span.literal.text);
       acc = cx.builder.emitStringConcat(acc, lit);
     }
   }
   return acc;
+}
+
+/**
+ * (#4467) Convert a lowered NUMERIC substitution to the lane's string carrier.
+ *
+ * The selector proved the checker family is `number`, but the IR carrier it
+ * lands in is the lowerer's choice: a plain `number` is `f64`, while the
+ * native `type i32 = number` / `type i64 = number` annotations keep their
+ * integer carrier. All three widen to `f64` first — signed, matching the
+ * legacy native template arm (`src/codegen/string-ops.ts`) — and then go
+ * through the single `(f64) -> string` provider, so this site asks no mode
+ * question and both string carriers work.
+ *
+ * A carrier the selector's family proof did not anticipate (a boxed/dynamic
+ * value, say) demotes with the SAME reason the selector uses, keeping the
+ * claim⇔lowering boundary reported under one bucket.
+ */
+function lowerNumericSubstitutionToString(value: IrValueId, type: IrType, cx: LowerCtx): IrValueId {
+  const scalar = type.kind === "val" ? type.val.kind : undefined;
+  const asF64 =
+    scalar === "f64"
+      ? value
+      : scalar === "i32"
+        ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64)
+        : scalar === "i64"
+          ? cx.builder.emitUnary("f64.convert_i64_s", value, IR_F64)
+          : null;
+  if (asF64 === null) {
+    throw new IrUnsupportedError(
+      "template-substitution-unsupported",
+      "build",
+      `ir/from-ast: template substitution lowered to ${describeIrType(type)}, which has no number→string provider (${cx.funcName})`,
+    );
+  }
+  const result = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
+  if (result === null) {
+    throw new Error(`ir/from-ast: ${IR_NUMBER_TO_STRING_FN} produced no result in ${cx.funcName}`);
+  }
+  return result;
 }
 
 /**
