@@ -334,8 +334,17 @@ function bodyProjection(
   );
 }
 
-function r2StableSignatureType(type: IrType | null): boolean {
+function r2StableSignatureType(
+  type: IrType | null,
+  options?: { readonly allowOpaqueExternrefValue?: boolean },
+): boolean {
   if (type === null || type.kind === "string") return true;
+  // #2951 generator owners — the source return contract of a `function*` is the
+  // opaque generator object, which both front-ends project to the same physical
+  // `externref`. Only the generator admission path opts in; every other owner
+  // keeps the narrower vocabulary so an unproven reference contract cannot
+  // silently enter preparation.
+  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") return true;
   // #3522 returned-closure ownership — an exact callable source boundary is
   // the same canonical externref contract in both backends. Admit the owner to
   // prepare-before-emit so its inventoried lifted literal is allocated inside
@@ -626,8 +635,15 @@ function sameValType(left: ValType, right: ValType): boolean {
   return true;
 }
 
-function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined {
+function r2StableValType(
+  ctx: CodegenContext,
+  type: IrType,
+  options?: { readonly allowOpaqueExternrefValue?: boolean },
+): ValType | undefined {
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") {
+    return { kind: "externref" };
+  }
   if (type.kind === "string") {
     if (!ctx.nativeStrings) return { kind: "externref" };
     return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
@@ -643,6 +659,17 @@ function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined
 }
 
 /**
+ * #2951 — IR-claimed generators compile once only in the JS-host lane. The
+ * standalone / WASI / no-host-import lanes lower generators through the
+ * disjoint #680 sequential-numeric-yield native carrier, whose self-sufficiency
+ * without the legacy body is unproven; keep them on the compile-twice route.
+ * Mirrors the `generatorsSkippable` condition of the inherited allowlist.
+ */
+function generatorsPreparable(ctx: CodegenContext): boolean {
+  return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+}
+
+/**
  * Preparation may replace an empty declaration slot before direct emission,
  * but it must not change that slot's already allocated callable ABI. The
  * Program ABI registry observes the allocation contract, and later direct
@@ -652,12 +679,13 @@ function r2SignatureMatchesAllocatedSlot(
   ctx: CodegenContext,
   unitId: IrUnitId,
   override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+  options?: { readonly allowOpaqueExternrefValue?: boolean },
 ): boolean {
   const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
   if (!signature || signature.kind !== "func") return false;
-  const params = override.params.map((type) => r2StableValType(ctx, type));
-  const result = override.returnType === null ? null : r2StableValType(ctx, override.returnType);
+  const params = override.params.map((type) => r2StableValType(ctx, type, options));
+  const result = override.returnType === null ? null : r2StableValType(ctx, override.returnType, options);
   if (
     params.some((type) => type === undefined) ||
     result === undefined ||
@@ -1046,17 +1074,23 @@ export function selectR2PreparedOwnerComponents(input: {
       continue;
     }
     const isAsync = claim.declaration.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+    const isGenerator = claim.declaration.asteriskToken !== undefined;
+    // #2951 — a JS-host generator owner returns the opaque generator object.
+    // Admit that one reference contract for generators only; the standalone /
+    // WASI / no-host-import lanes keep the compile-twice route because their
+    // legacy lowering is the disjoint #680 native carrier.
+    const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
     if (
       input.ctx.fast ||
       isAsync ||
-      claim.declaration.asteriskToken ||
+      (isGenerator && !generatorsPreparable(input.ctx)) ||
       containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
       containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
       directCallerActivationTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-      !override.params.every(r2StableSignatureType) ||
-      !r2StableSignatureType(override.returnType) ||
-      !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+      !override.params.every((type) => r2StableSignatureType(type, signatureOptions)) ||
+      !r2StableSignatureType(override.returnType, signatureOptions) ||
+      !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override, signatureOptions)
     ) {
       continue;
     }

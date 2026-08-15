@@ -485,6 +485,16 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * carrier, or an unproven receiver.
    */
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
+  /**
+   * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
+   * `IrType.string` head VALUE, i.e. the active string carrier is the host
+   * externref (`resolver.resolveString()` → `externref`). The #2964 key
+   * helpers hand back an externref; a native-strings lane carries strings as
+   * `(ref $AnyString)`, so the same slot could not be read as a string there.
+   * Omitted ⇒ unproven ⇒ head-value uses stay on the direct path, exactly as
+   * fail-closed as the slice-5 receiver certificate.
+   */
+  readonly forInHeadValueIsHostString?: boolean;
   /** (#3214 A+B1) Checker-backed imports; omitted by host-free and bare selector callers. */
   readonly importedFunctions?: IrImportedFunctionResolver;
   /** (#3657) Checker-certified class-member calls to same-file primitive host stubs. */
@@ -2919,6 +2929,14 @@ function dynamicUsesAreMoveOnly(
         scanStmt(s.statement)
       );
     }
+    // #2952 slice 6c — a LABEL wraps a statement without changing its value
+    // flow. Without this arm the labelled statement fell into the
+    // conservative `!subtreeTouchesDynamic` tail below, so `lbl: for (var k
+    // in dyn)` reported `param-type-not-resolvable` — a gate BEFORE the
+    // for-in shape check ever ran (measured on main).
+    if (ts.isLabeledStatement(s)) {
+      return scanStmt(s.statement);
+    }
     // For-of / switch / try / throw / nested functions /
     // anything else: conservative — claimable exactly when the statement
     // doesn't touch a dynamic value at all.
@@ -3684,6 +3702,66 @@ const NO_BREAKS: BreakScope = { inSwitch: false, names: NO_LABELS };
  * from-ast's `numericLiteralValue` (selector↔builder parity). `null`
  * for any other expression shape.
  */
+function stringCaseTestValue(expr: ts.Expression): string | null {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+  return null;
+}
+
+/**
+ * #2952 slice 6b — is there an indexed read anywhere in this value's own
+ * producer subtree? (Nested closures are skipped: their bodies produce a
+ * different value.)
+ *
+ * A string-typed ELEMENT read (`keys[i]` where `keys: string[]`) is the one
+ * measured expression shape whose checker type is exactly `string` while its
+ * IR carrier is the externref string-vec element (`IrType.val`), not
+ * `IrType.string` — see `switchDiscHasIrStringCarrier`.
+ */
+function subtreeReadsAnElement(node: ts.Node): boolean {
+  let found = false;
+  const visit = (child: ts.Node): void => {
+    if (found) return;
+    if (ts.isElementAccessExpression(child)) {
+      found = true;
+      return;
+    }
+    if (child !== node && isFunctionLike(child)) return;
+    forEachChild(child, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * #2952 slice 6b — will the discriminant lower to `IrType.string`, the
+ * carrier the dispatch ladder's `string.eq` needs?
+ *
+ * The checker family (`declaredExpressionHasExactFamily(..., "string")`) is
+ * necessary but NOT sufficient: an element read off a string array is
+ * checker-`string` yet lowers to the externref vec-element carrier. Under
+ * IR-first (#2138) a post-claim build throw is an `unexpected-internal-throw`
+ * INVARIANT (a hard compile error), not a demote — measured — so the shape
+ * must be excluded before the claim.
+ *
+ * Note this is a genuine pre-existing carrier gap, not one this slice
+ * introduces: `const s = keys[i]; return s === "a";` fails identically on
+ * main today (`mixed string/non-string operand for '==='`). This predicate
+ * keeps the switch ladder OUT of it rather than widening it.
+ */
+function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.VariableDeclaration>()): boolean {
+  if (subtreeReadsAnElement(expr)) return false;
+  const candidate = unwrapPhase1Parens(expr);
+  if (!ts.isIdentifier(candidate)) return true;
+  // Follow a same-function local alias to its initializer: `const s = keys[i]`
+  // carries the vec-element carrier just as `keys[i]` does. Params and
+  // unresolvable bindings have no initializer to inspect — the checker family
+  // gate governs those (a `string`-annotated param IS `IrType.string`).
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
+  if (!declaration || seen.has(declaration) || !declaration.initializer) return true;
+  seen.add(declaration);
+  return switchDiscHasIrStringCarrier(declaration.initializer, seen);
+}
+
 function numericCaseTestValue(expr: ts.Expression): number | null {
   if (ts.isNumericLiteral(expr)) return Number(expr.text.replace(/_/g, ""));
   if (
@@ -3722,14 +3800,40 @@ function isPhase1SwitchStatement(
   return withProjectionEvidenceScope(() => {
     if (!isPhase1Expr(stmt.expression, scope, localClasses)) return shapeNo("switch-disc", stmt.expression);
     let defaults = 0;
+    // #2952 slice 6b — a clause test is a numeric OR a string literal. The two
+    // families are mutually exclusive within one switch: §14.12.9 dispatch is
+    // strict equality, so a numeric test can never match a string disc (and
+    // vice versa), and a mixed set would need both dispatch mechanisms in one
+    // ladder for zero real-world benefit. Reject the mixed shape outright.
+    let numericTests = 0;
+    let stringTests = 0;
     for (const clause of stmt.caseBlock.clauses) {
       if (ts.isCaseClause(clause)) {
-        if (numericCaseTestValue(clause.expression) === null) {
+        if (numericCaseTestValue(clause.expression) !== null) {
+          numericTests++;
+        } else if (stringCaseTestValue(clause.expression) !== null) {
+          stringTests++;
+        } else {
           return shapeNo("switch-case-test-nonliteral", clause.expression);
         }
       } else {
         defaults++;
         if (defaults > 1) return shapeNo("switch-multiple-defaults", clause);
+      }
+    }
+    if (numericTests > 0 && stringTests > 0) return shapeNo("switch-case-test-mixed", stmt.expression);
+    if (stringTests > 0) {
+      // The string ladder lowers `disc === "lit"` through the IR's abstract
+      // `string.eq` (mode-resolved at lower time: host `string_equals` /
+      // native `__str_equals`), which requires the disc to be an
+      // `IrType.string`. Prove that BEFORE claiming — the same
+      // checker-backed exact-family predicate the other string-carrier
+      // consumers use — so the disc family is never a post-claim demote.
+      if (!declaredExpressionHasExactFamily(stmt.expression, "string", scope)) {
+        return shapeNo("switch-disc-not-string", stmt.expression);
+      }
+      if (!switchDiscHasIrStringCarrier(stmt.expression)) {
+        return shapeNo("switch-disc-not-string-carrier", stmt.expression);
       }
     }
     const clauseBreaks: BreakScope = { inSwitch: true, names: new Set([...breaks.names, ...boundNames]) };
@@ -3784,6 +3888,11 @@ function isPhase1LabeledStatement(
   if (ts.isDoStatement(inner)) return isPhase1DoStatement(inner, scope, localClasses, bound, breaks);
   if (ts.isForStatement(inner)) return isPhase1ForStatement(inner, scope, localClasses, bound, breaks);
   if (ts.isForOfStatement(inner)) return isPhase1ForOf(inner, scope, localClasses, bound, breaks);
+  // #2952 slice 6c — labeled for-in. `for.loop` reuse means the label
+  // machinery (`pendingLoopLabel` → the loop's own `loopLabel`) already
+  // applies unchanged; there is no iterator to close, so the slice-3
+  // `iterCloseSlot` obligation is N/A for this loop kind.
+  if (ts.isForInStatement(inner)) return isPhase1ForInStatement(inner, scope, localClasses, bound, breaks);
   // (slice 4) Labeled SWITCH: the labels alias the switch's break frame.
   if (ts.isSwitchStatement(inner)) {
     return isPhase1SwitchStatement(inner, scope, localClasses, inLoop, labels, breaks, boundNames);
@@ -3833,9 +3942,13 @@ function isPhase1ForStatementInScope(
   labels: ReadonlySet<string> = NO_LABELS,
   breaks: BreakScope = NO_BREAKS,
 ): boolean {
-  // Cond must be present (no infinite loops in slice 12).
-  if (!stmt.condition) return shapeNo("for-missing-cond", stmt);
-
+  // (#3583) An omitted `for` condition is exactly `for (; true; )` per the
+  // spec, and the constant-true form is ALREADY claimed — measured 2026-08-15:
+  // `for (; true; ) { … break; }` and `for (let i = 0; true; i++) { … break; }`
+  // both reach `emitted`. So the slice-12 "no infinite loops" reject was a
+  // lowering gap, not a semantic one; `lowerForStatement` now synthesizes the
+  // constant-true cond buffer directly (no synthetic AST node). The cond gate
+  // below is therefore guarded on presence rather than rejecting outright.
   const innerScope = new Set(scope);
 
   // Init: optional. Variable declaration adds bindings; expression init
@@ -3867,8 +3980,10 @@ function isPhase1ForStatementInScope(
     }
   }
 
-  // Cond: must be a Phase-1 expression in the inner scope.
-  if (!isPhase1ConditionExpr(stmt.condition, innerScope, localClasses)) return shapeNo("for-cond", stmt.condition);
+  // Cond: when present, must be a Phase-1 expression in the inner scope.
+  // Absent (#3583) = implicit `true`, which is trivially Phase-1.
+  if (stmt.condition && !isPhase1ConditionExpr(stmt.condition, innerScope, localClasses))
+    return shapeNo("for-cond", stmt.condition);
 
   // Update: optional. When present, must be a Phase-1 expression OR a
   // postfix `i++` / `i--` (which `isPhase1Expr` doesn't accept on its
@@ -3975,6 +4090,80 @@ function isPhase1ForUpdateExpr(
  * use after the loop is rejected by the ordinary scope walk rather than
  * incorrectly approximating JavaScript `var` hoisting.
  */
+/**
+ * #2952 slice 6c — how does a for-in body use its head binding?
+ *
+ * `used` covers every occurrence; the three disqualifiers are reported
+ * separately so the rejection reason names the actual blocker:
+ *   - `written`    — assignment target (`k = …`, `k += …`) or `++k`/`k--`.
+ *     The lowering re-writes the head slot from the enumerated key at the
+ *     top of every visit, so a body write would be discarded rather than
+ *     carried, which is not `var` semantics.
+ *   - `captured`   — referenced from inside a nested function/arrow, which
+ *     would need the ref-cell capture path rather than a plain loop slot.
+ *   - `redeclared` — the body re-declares the name (`var k` / `let k` /
+ *     a parameter), so an occurrence may not refer to the head at all.
+ */
+function classifyForInHeadUse(
+  body: ts.Statement,
+  headName: string,
+): { used: boolean; written: boolean; captured: boolean; redeclared: boolean } {
+  let used = false;
+  let written = false;
+  let captured = false;
+  let redeclared = false;
+  const subtreeMentionsHead = (node: ts.Node): boolean => {
+    if (ts.isIdentifier(node)) return node.text === headName;
+    let found = false;
+    forEachChild(node, (child) => {
+      if (!found && subtreeMentionsHead(child)) found = true;
+    });
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    if (node !== body && isFunctionLike(node)) {
+      if (subtreeMentionsHead(node)) {
+        used = true;
+        captured = true;
+      }
+      return;
+    }
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === headName
+    ) {
+      used = true;
+      redeclared = true;
+      return;
+    }
+    // A property NAME (`o.k`) is not a reference to the binding.
+    if (ts.isPropertyAccessExpression(node)) {
+      visit(node.expression);
+      return;
+    }
+    if (ts.isIdentifier(node) && node.text === headName) {
+      used = true;
+      const parent = node.parent as ts.Node | undefined;
+      if (
+        parent &&
+        ((ts.isBinaryExpression(parent) &&
+          parent.left === node &&
+          parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+          ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+            (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)))
+      ) {
+        written = true;
+      }
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return { used, written, captured, redeclared };
+}
+
 function isPhase1ForInStatement(
   stmt: ts.ForInStatement,
   scope: ReadonlySet<string>,
@@ -3997,17 +4186,23 @@ function isPhase1ForInStatement(
   }
   const headName = declaration.name.text;
   if (scope.has(headName)) return shapeNo("forin-head-shadow", declaration.name);
-  let headUsed = false;
-  const findHeadUse = (node: ts.Node): void => {
-    if (headUsed) return;
-    if (ts.isIdentifier(node) && node.text === headName) {
-      headUsed = true;
-      return;
+  // #2952 slice 6c — the head value is now READABLE in the body. The #2964
+  // ABI already materialises the key into the head slot on every iteration
+  // (slice 5 wrote it and simply had no reader), so the widening is
+  // selector-side. Writes stay out: the slot is re-written from the key at
+  // the top of each visit, so a body write would be silently discarded — the
+  // legacy `var` semantics (the write survives to the next iteration and past
+  // the loop) are NOT what this structural model provides. Captures stay out
+  // too: a closure over the head would need the ref-cell capture path.
+  const headUse = classifyForInHeadUse(stmt.statement, headName);
+  if (headUse.used) {
+    if (currentSelectionOptions?.forInHeadValueIsHostString !== true) {
+      return shapeNo("forin-head-value-used", stmt.statement);
     }
-    forEachChild(node, findHeadUse);
-  };
-  findHeadUse(stmt.statement);
-  if (headUsed) return shapeNo("forin-head-value-used", stmt.statement);
+    if (headUse.written) return shapeNo("forin-head-value-written", stmt.statement);
+    if (headUse.captured) return shapeNo("forin-head-value-captured", stmt.statement);
+    if (headUse.redeclared) return shapeNo("forin-head-value-redeclared", stmt.statement);
+  }
 
   const bodyScope = new Set(scope);
   bodyScope.add(headName);
@@ -4474,7 +4669,58 @@ function isPhase1Tail(
     }
     return isPhase1Expr(expr, scope, localClasses);
   }
+  // #2952 slice 6a — a function ENDING in a `switch`. Slice 4 claimed the
+  // non-tail form only (switch + trailing return), so `switch (n) { case 0:
+  // return 1; default: return 2; }` fell out here as `tail-unhandled`. The
+  // lowering is the SAME `IrInstrSwitch` ladder — clause `return`s already
+  // unwind the case blocks natively (slice-4 evidence) — so the only new
+  // obligation is proving control never falls out of the switch into the
+  // (absent) implicit return.
+  if (ts.isSwitchStatement(stmt)) {
+    if (!isPhase1SwitchStatement(stmt, scope, localClasses)) return shapeNo("tail-switch-shape", stmt);
+    // A void function may fall out of the switch into its implicit empty
+    // return, exactly like the `tail-if-noelse` arm above — no coverage or
+    // termination analysis is needed there.
+    if (isVoidReturn) return true;
+    if (!switchAllPathsTerminate(stmt)) return shapeNo("tail-switch-falls-through", stmt);
+    return true;
+  }
   return shapeNo("tail-unhandled", stmt);
+}
+
+/**
+ * #2952 slice 6a — does EVERY path through `stmt` leave the function
+ * (return / throw), so that nothing falls out of the switch into the
+ * function's (absent) implicit return?
+ *
+ * Two obligations, both of which the §14.12 fallthrough semantics make
+ * necessary:
+ *   1. **Coverage** — a `default` clause must exist; without one the
+ *      no-match path branches past the whole ladder.
+ *   2. **Per-clause termination** — a clause body either terminates (its
+ *      last statement is a `return`/`throw`, or an if/else whose arms both
+ *      do — reused verbatim from `thenArmTerminates`, the same helper the
+ *      early-return rewrite uses) or is EMPTY, in which case it falls
+ *      through to the next clause and that clause carries the obligation.
+ *      The LAST clause therefore may not be empty, and a clause ending in
+ *      `break` is (correctly) not terminating: `break` exits the switch,
+ *      which is exactly the fall-out this analysis rejects.
+ */
+function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
+  const clauses = stmt.caseBlock.clauses;
+  if (clauses.length === 0) return false; // `switch (x) {}` — pure fall-out
+  if (!clauses.some((clause) => ts.isDefaultClause(clause))) return false;
+  for (let i = 0; i < clauses.length; i++) {
+    const body = clauses[i]!.statements;
+    if (body.length === 0) {
+      // Empty clause: falls through to clause i+1. The last clause has no
+      // successor, so an empty one falls out of the switch.
+      if (i === clauses.length - 1) return false;
+      continue;
+    }
+    if (!thenArmTerminates(body[body.length - 1]!)) return false;
+  }
+  return true;
 }
 
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
@@ -7479,6 +7725,19 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
+  // (#3583) Type-erased assertion wrappers emit NOTHING at runtime, so the
+  // claimable shape is exactly the operand's; `lowerExpr` unwraps identically.
+  // The other `isAsExpression` sites here are helper-local unwrappers for one
+  // analysis each, NOT this shape gate — which is why these really did reject
+  // at `expr-unhandled` before this arm. Full measurement in #3583.
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    return isPhase1Expr(expr.expression, scope, localClasses);
+  }
   // (#1373b C-1) `await <e>` inside a C-1 async body mirrors legacy sync-model lowering:
   //   - `await Promise.resolve(x)` → static substitution; zero args settle to
   //     `undefined`, which from-ast cannot lower.
