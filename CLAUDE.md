@@ -193,7 +193,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - `language/import/import-defer/` (proposal, no harness)
   - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
   - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
-  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+  - one **feature** skip only: `IsHTMLDDA`. (`top-level-await` was listed here
+    until 2026-08-15 but is NOT skipped — `shouldSkip` has no such branch;
+    `tests/test262-runner.ts` ~L3269 explicitly HANDLES those files via the
+    #1612 synchronous TLA wrapper, so they run and count. The stale line
+    nearly caused 4 real regressions to be dismissed as "CI skips these"
+    during #4433.)
 
   **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
   **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures

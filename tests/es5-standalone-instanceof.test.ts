@@ -256,10 +256,17 @@ describe("#2916 Slice B — fully-dynamic instanceof RHS, host-free", () => {
     // read `order` as "RL".
     //
     // The result is BOUND on purpose. A bare `lhs() instanceof rhs();`
-    // expression statement is dropped whole — including both calls' side
-    // effects — by a statement-level elimination that predates this substrate
-    // (reproduced on a builtin RHS, which never reaches this code). Binding it
-    // isolates the property under test from that separate defect.
+    // expression statement AT TOP LEVEL is dropped whole — including both
+    // calls' side effects — by a statement-level elimination that predates this
+    // substrate (reproduced on a builtin RHS, which never reaches this code)
+    // and is fixed separately by #4433. Binding it isolates the property under
+    // test from that defect.
+    //
+    // Scope note, because the top-level result does NOT generalise: the same
+    // statement inside a `try`, or inside a function, evaluates both operands
+    // on this branch (measured 0 / 2 / 2 respectively). A top-level
+    // `TryStatement` is kept wholesale by `collectDeclarations`, so its body
+    // lowers through the ordinary in-function path.
     const o = await run(
       `var order = "";\nfunction lhs(): any { order = order + "L"; return {}; }\n` +
         `function rhs(): any { order = order + "R"; return null; }\n` +
