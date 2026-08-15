@@ -30,6 +30,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
 import { compileWithStatement } from "./with-scope.js";
+import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
 
 // Sub-module imports — statement-family functions
 import {
@@ -87,6 +88,58 @@ function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.S
   if (pos && fctx.body.length > bodyLenBefore) {
     attachSourcePos(fctx.body[bodyLenBefore]!, pos);
   }
+}
+
+/**
+ * (#4433) For a bare `typeof <expr>;` statement, the operand that must still be
+ * evaluated — or `undefined` when the statement should keep its ordinary
+ * lowering.
+ *
+ * `undefined` is returned for a bare-identifier operand (`typeof x;`), whose
+ * whole point is that §13.5.3 does NOT evaluate an unresolvable Reference, and
+ * for any operand with nothing observable to evaluate, so those statements
+ * compile exactly as before.
+ */
+function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefined {
+  let outer: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(outer)) outer = outer.expression;
+  if (!ts.isTypeOfExpression(outer)) return undefined;
+  let operand: ts.Expression = outer.expression;
+  while (
+    ts.isParenthesizedExpression(operand) ||
+    ts.isAsExpression(operand) ||
+    ts.isNonNullExpression(operand) ||
+    ts.isTypeAssertionExpression(operand)
+  ) {
+    operand = operand.expression;
+  }
+  if (ts.isIdentifier(operand)) return undefined;
+  if (!expressionRunsUserCode(operand)) return undefined;
+  return outer.expression;
+}
+
+/**
+ * An expression statement: evaluate the expression for its effects and discard
+ * whatever it left on the stack.
+ *
+ * (#4433) The `typeof` special case. `compileTypeofExpression` const-folds on
+ * the operand's STATIC TS type and emits only the folded string literal — the
+ * operand is never compiled, so `typeof f();` ran no call, in a function body
+ * just as much as at module top level. In statement position the `typeof`
+ * result is discarded anyway, so §13.5.3 reduces to "evaluate the operand, drop
+ * it".
+ *
+ * A BARE IDENTIFIER operand is excluded: `typeof undeclared` must NOT throw
+ * (§13.5.3 short-circuits an unresolvable Reference before GetValue), which is
+ * exactly what the const-fold path already gets right. Everything else is gated
+ * on `expressionRunsUserCode`, so a statement with nothing to evaluate keeps its
+ * previous lowering byte-for-byte.
+ */
+function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
+  const typeofOperand = bareTypeofStatementOperand(stmt.expression);
+  const evaluated = typeofOperand ?? stmt.expression;
+  const resultType = compileExpression(ctx, fctx, evaluated);
+  if (resultType !== null) fctx.body.push({ op: "drop" });
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {
@@ -334,13 +387,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   }
 
   if (ts.isExpressionStatement(stmt)) {
-    markStatementPos(ctx, fctx, stmt, () => {
-      const resultType = compileExpression(ctx, fctx, stmt.expression);
-      // Drop the result if the expression left something on the stack
-      if (resultType !== null) {
-        fctx.body.push({ op: "drop" });
-      }
-    });
+    markStatementPos(ctx, fctx, stmt, () => compileExpressionStatement(ctx, fctx, stmt));
     return;
   }
 

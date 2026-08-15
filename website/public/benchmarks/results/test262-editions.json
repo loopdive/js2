@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7599,
-    "fail": 1413,
+    "pass": 7607,
+    "fail": 1405,
     "ce": 17,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8994,
-    "fail": 2604,
+    "pass": 8996,
+    "fail": 2602,
     "ce": 105,
     "skip": 1,
     "total": 11704,
@@ -111,17 +111,17 @@
       },
       {
         "name": "arrow-function",
-        "pass": 389,
-        "fail": 51,
+        "pass": 390,
+        "fail": 50,
         "ce": 0,
         "skip": 0,
         "total": 440,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "Proxy",
-        "pass": 193,
-        "fail": 238,
+        "pass": 194,
+        "fail": 237,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3468,
-    "fail": 1318,
-    "ce": 37,
+    "fail": 1317,
+    "ce": 38,
     "skip": 0,
     "total": 4823,
     "pct": 72,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2542,
-        "fail": 1236,
-        "ce": 32,
+        "fail": 1235,
+        "ce": 33,
         "skip": 0,
         "total": 3810,
         "pct": 67

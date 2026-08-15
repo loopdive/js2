@@ -52,7 +52,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 37,
+      "passCount": 38,
       "totalCount": 59
     },
     {
@@ -64,7 +64,7 @@
     {
       "name": "Comma operator",
       "testCategories": ["language/expressions/comma"],
-      "passCount": 5,
+      "passCount": 6,
       "totalCount": 6
     },
     {
@@ -126,7 +126,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 613,
+      "passCount": 615,
       "totalCount": 699
     },
     {
@@ -150,13 +150,13 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1002,
+      "passCount": 1005,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 610,
+      "passCount": 612,
       "totalCount": 667
     },
     {
@@ -179,13 +179,13 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1776,
+      "passCount": 1787,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1593,
+      "passCount": 1594,
       "totalCount": 1896
     },
     {
@@ -203,7 +203,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 350,
+      "passCount": 351,
       "totalCount": 440
     },
     {
@@ -528,7 +528,7 @@
     {
       "name": "Array.fromAsync",
       "testCategories": [],
-      "passCount": 11,
+      "passCount": 12,
       "totalCount": 95
     },
     {

@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 8328,
-    "fail": 648,
-    "ce": 53,
+    "pass": 8350,
+    "fail": 635,
+    "ce": 44,
     "skip": 0,
     "total": 9029,
     "pct": 92,
@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 7653,
-    "fail": 3427,
-    "ce": 623,
+    "pass": 7654,
+    "fail": 3442,
+    "ce": 607,
     "skip": 1,
     "total": 11704,
     "pct": 65,
@@ -67,8 +67,8 @@
       {
         "name": "generators",
         "pass": 1749,
-        "fail": 430,
-        "ce": 307,
+        "fail": 433,
+        "ce": 304,
         "skip": 0,
         "total": 2486,
         "pct": 70
@@ -85,8 +85,8 @@
       {
         "name": "TypedArray",
         "pass": 343,
-        "fail": 663,
-        "ce": 44,
+        "fail": 666,
+        "ce": 41,
         "skip": 0,
         "total": 1050,
         "pct": 33
@@ -94,8 +94,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 342,
-        "fail": 327,
-        "ce": 125,
+        "fail": 329,
+        "ce": 123,
         "skip": 1,
         "total": 795,
         "pct": 43
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 350,
-        "fail": 82,
+        "pass": 351,
+        "fail": 81,
         "ce": 8,
         "skip": 0,
         "total": 440,
@@ -139,8 +139,8 @@
       {
         "name": "class",
         "pass": 293,
-        "fail": 90,
-        "ce": 27,
+        "fail": 93,
+        "ce": 24,
         "skip": 0,
         "total": 410,
         "pct": 71
@@ -148,8 +148,8 @@
       {
         "name": "Reflect",
         "pass": 129,
-        "fail": 140,
-        "ce": 61,
+        "fail": 142,
+        "ce": 59,
         "skip": 0,
         "total": 330,
         "pct": 39
@@ -157,8 +157,8 @@
       {
         "name": "Symbol.species",
         "pass": 35,
-        "fail": 136,
-        "ce": 14,
+        "fail": 137,
+        "ce": 13,
         "skip": 0,
         "total": 185,
         "pct": 19
@@ -184,8 +184,8 @@
       {
         "name": "cross-realm",
         "pass": 8,
-        "fail": 99,
-        "ce": 21,
+        "fail": 102,
+        "ce": 18,
         "skip": 0,
         "total": 128,
         "pct": 6
@@ -1062,9 +1062,9 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3455,
-    "fail": 778,
-    "ce": 590,
+    "pass": 3457,
+    "fail": 780,
+    "ce": 586,
     "skip": 0,
     "total": 4823,
     "pct": 72,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2593,
-        "fail": 640,
-        "ce": 577,
+        "fail": 642,
+        "ce": 575,
         "skip": 0,
         "total": 3810,
         "pct": 68
@@ -1197,12 +1197,12 @@
       },
       {
         "name": "Promise.prototype.finally",
-        "pass": 10,
+        "pass": 12,
         "fail": 15,
-        "ce": 4,
+        "ce": 2,
         "skip": 0,
         "total": 29,
-        "pct": 34
+        "pct": 41
       },
       {
         "name": "rest-parameters",
@@ -1261,8 +1261,8 @@
       {
         "name": "cross-realm",
         "pass": 0,
-        "fail": 4,
-        "ce": 1,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 5,
         "pct": 0
@@ -1279,8 +1279,8 @@
       {
         "name": "Reflect",
         "pass": 0,
-        "fail": 1,
-        "ce": 1,
+        "fail": 2,
+        "ce": 0,
         "skip": 0,
         "total": 2,
         "pct": 0
@@ -1508,8 +1508,8 @@
   {
     "edition": "ES2020",
     "pass": 653,
-    "fail": 772,
-    "ce": 592,
+    "fail": 774,
+    "ce": 590,
     "skip": 18,
     "total": 2035,
     "pct": 32,
@@ -1517,8 +1517,8 @@
       {
         "name": "BigInt",
         "pass": 286,
-        "fail": 603,
-        "ce": 159,
+        "fail": 605,
+        "ce": 157,
         "skip": 0,
         "total": 1048,
         "pct": 27
@@ -1526,8 +1526,8 @@
       {
         "name": "TypedArray",
         "pass": 123,
-        "fail": 484,
-        "ce": 101,
+        "fail": 486,
+        "ce": 99,
         "skip": 0,
         "total": 708,
         "pct": 17
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 3892,
-    "fail": 1159,
-    "ce": 741,
+    "fail": 1160,
+    "ce": 740,
     "skip": 0,
     "total": 5792,
     "pct": 67,
@@ -2277,8 +2277,8 @@
       {
         "name": "resizable-arraybuffer",
         "pass": 50,
-        "fail": 150,
-        "ce": 232,
+        "fail": 151,
+        "ce": 231,
         "skip": 0,
         "total": 432,
         "pct": 12
@@ -2857,8 +2857,8 @@
   {
     "edition": "ES2024",
     "pass": 314,
-    "fail": 133,
-    "ce": 109,
+    "fail": 134,
+    "ce": 108,
     "skip": 0,
     "total": 556,
     "pct": 56,
@@ -3055,8 +3055,8 @@
       {
         "name": "promise-with-resolvers",
         "pass": 2,
-        "fail": 0,
-        "ce": 7,
+        "fail": 1,
+        "ce": 6,
         "skip": 0,
         "total": 9,
         "pct": 22
@@ -3199,8 +3199,8 @@
       {
         "name": "class",
         "pass": 0,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 1,
         "pct": 0
@@ -3264,8 +3264,8 @@
   {
     "edition": "ES2025",
     "pass": 560,
-    "fail": 321,
-    "ce": 120,
+    "fail": 322,
+    "ce": 119,
     "skip": 0,
     "total": 1001,
     "pct": 56,
@@ -3372,8 +3372,8 @@
       {
         "name": "promise-try",
         "pass": 4,
-        "fail": 3,
-        "ce": 5,
+        "fail": 4,
+        "ce": 4,
         "skip": 0,
         "total": 12,
         "pct": 33
@@ -3534,8 +3534,8 @@
       {
         "name": "class",
         "pass": 0,
-        "fail": 0,
-        "ce": 1,
+        "fail": 1,
+        "ce": 0,
         "skip": 0,
         "total": 1,
         "pct": 0
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 92,
+    "pass": 93,
     "fail": 105,
-    "ce": 113,
+    "ce": 112,
     "skip": 0,
     "total": 310,
     "pct": 30,
     "features": [
       {
         "name": "Array.fromAsync",
-        "pass": 11,
+        "pass": 12,
         "fail": 3,
-        "ce": 81,
+        "ce": 80,
         "skip": 0,
         "total": 95,
-        "pct": 12
+        "pct": 13
       },
       {
         "name": "upsert",
@@ -4251,8 +4251,8 @@
   {
     "edition": "Proposals",
     "pass": 375,
-    "fail": 2500,
-    "ce": 2143,
+    "fail": 2524,
+    "ce": 2119,
     "skip": 96,
     "total": 5114,
     "pct": 7
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 3966,
-    "fail": 1372,
+    "pass": 3968,
+    "fail": 1370,
     "ce": 107,
     "skip": 0,
     "total": 5445,

@@ -193,7 +193,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - `language/import/import-defer/` (proposal, no harness)
   - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
   - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
-  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+  - one **feature** skip only: `IsHTMLDDA`. (`top-level-await` was listed here
+    until 2026-08-15 but is NOT skipped — `shouldSkip` has no such branch;
+    `tests/test262-runner.ts` ~L3269 explicitly HANDLES those files via the
+    #1612 synchronous TLA wrapper, so they run and count. The stale line
+    nearly caused 4 real regressions to be dismissed as "CI skips these"
+    during #4433.)
 
   **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
   **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures
@@ -330,6 +335,12 @@ rejection breakdown.
 - `--nativeStrings` — use WasmGC i16 arrays instead of wasm:js-string (auto for WASI)
 
 ## Team & Workflow
+
+**Plan/implement split (project-lead order, 2026-08-15): every issue gets an
+`## Implementation Plan` written by the Fable lane before implementation, and
+the implementation itself is done by an Opus subagent working from that plan.**
+Fable writes plans (measurements, exact functions/files, order-preservation
+constraints, acceptance criteria); Opus implements and validates against them.
 
 See [plan/method/team-setup.md](plan/method/team-setup.md) for full team config, roles, memory budget, communication protocol, and merge lessons. Agent preferences and rules are in `.claude/memory/` (MEMORY.md index).
 
@@ -659,7 +670,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,369 / 43,621 (74.2 %)
+**test262 conformance**: 32,379 / 43,621 (74.2 %)
 
 <!-- AUTO:conformance-end -->
 
