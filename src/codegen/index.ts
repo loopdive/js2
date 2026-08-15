@@ -436,6 +436,7 @@ import {
 import {
   reserveVecMethodHelper,
   emitVecAccessExports,
+  finalizeVecHostBridgeExports,
   emitVecSetByteExport,
   emitNewVecF64Export,
   emitDataViewByteExports,
@@ -5601,6 +5602,7 @@ export function generateModule(
     // (stackBalance, fixupExternConvertAny, emit) do NOT add imports. Any
     // addImport/ensureLateImport after here is a producer bug and throws at
     // its own call site (see imports.ts / late-imports.ts).
+    finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
@@ -7984,6 +7986,7 @@ export function generateMultiModule(
     // single-module generateModule: all legitimate late import mutations have
     // run; stackBalance / fixupExternConvertAny / emit add no imports. Any
     // addImport/ensureLateImport after here throws at the producer site.
+    finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 

@@ -223,6 +223,43 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
   }
 }
 
+/**
+ * Rebase the public vec bridge exports after dead-layout elimination and the
+ * final import batch. The bridge functions are allocated early with live
+ * indices, while later compatibility imports can move the defined-function
+ * suffix. Most emitters are repaired by the late-import shifter, but exports
+ * published before the last batch have no function-body traversal to repair
+ * them. Resolve by the allocator-owned function object at the freeze point.
+ */
+export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
+  const allocations = vecHostBridgeAllocations.get(ctx);
+  if (!allocations) return;
+  // Dead-import elimination can remove speculative imports without updating
+  // the context's cached `numImportFuncs`. Public export descriptors are raw
+  // Wasm indices at this point, so derive the live prefix from the module.
+  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
+  const occupied = new Map<string, VecHostBridgeDefinition>();
+  for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
+    occupied.set(definition.name, definition);
+    const physicalBase = vecHostBridgePhysicalExportBase(definition.kind);
+    for (const entry of ctx.mod.exports) {
+      if (entry.name.startsWith(physicalBase) && /^\$*$/.test(entry.name.slice(physicalBase.length))) {
+        occupied.set(entry.name, definition);
+      }
+    }
+  }
+  for (const entry of ctx.mod.exports) {
+    if (entry.desc.kind !== "func") continue;
+    const definition = occupied.get(entry.name);
+    if (!definition) continue;
+    const allocation = allocations.get(definition.kind);
+    if (!allocation) continue;
+    const position = ctx.mod.functions.indexOf(allocation.func);
+    if (position < 0) continue;
+    entry.desc.index = numImportFuncs + position;
+  }
+}
+
 /** Resolve a core vec bridge from its exact allocator object. */
 export function resolveVecHostBridgeHelper(ctx: CodegenContext, kind: VecHostBridgeKind): FuncHandle | undefined {
   const definition = vecHostBridgeDefinition(kind);

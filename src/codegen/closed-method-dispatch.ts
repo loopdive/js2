@@ -675,7 +675,17 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       const callFnMethodIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
       const nullishIdx = ctx.funcMap.get("__nullish_to_null");
       const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
-      if (lookupIdx !== undefined && callFnMethodIdx !== undefined && rootIdx !== undefined) {
+      // These mixed-arity carriers do not share a single cache ABI: a cached
+      // prototype closure can be selected for the wrong receiver shape and
+      // recursively re-enter the dispatcher. Keep br/del on nominal arms until
+      // the cache records receiver signature as well as method name.
+      if (
+        lookupIdx !== undefined &&
+        callFnMethodIdx !== undefined &&
+        rootIdx !== undefined &&
+        methodName !== "br" &&
+        methodName !== "del"
+      ) {
         const mLocal = (op: "local.get" | "local.set" | "local.tee"): Instr => {
           const instr: Instr = { op, index: -1 };
           mcPatchInstrs.push(instr);

@@ -22,6 +22,11 @@ async function main() {
       skipSemanticDiagnostics: true,
       target: "gc",
       platform: "node",
+      // The upstream compatibility lane only needs the binary. WAT is a
+      // diagnostic artifact and can become quadratic for large generated
+      // closed-dispatch functions, turning a valid compile into a watchdog
+      // timeout without affecting validation or execution.
+      emitWat: false,
       // Original suites frequently initialize object graphs at module load.
       // In the JS-host lane, WasmGC field/callable reflection only becomes
       // available after the instance is handed to the runtime. Run the same
