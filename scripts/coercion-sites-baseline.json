@@ -84,10 +84,11 @@
   "codegen/typed-lane-overlay-route.ts": 1,
   "codegen/typed-this.ts": 3,
   "codegen/vec-access-exports.ts": 1,
+  "codegen/vec-index-domain.ts": 2,
   "codegen/vec-length-set.ts": 2,
   "codegen/vec-overlay-keys.ts": 3,
   "codegen/vec-overlay-presence.ts": 2,
-  "codegen/vec-overlay.ts": 5,
+  "codegen/vec-overlay.ts": 6,
   "codegen/vec-props.ts": 1,
   "codegen/wasi.ts": 1,
   "codegen/with-rmw.ts": 1
