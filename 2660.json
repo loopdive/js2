@@ -1,11 +1,10 @@
 {
   "id": "2660",
-  "assignee": "ttraenkler/senior-dev-s3b",
-  "requested_by": "ttraenkler@users.noreply.github.com",
-  "status": "released",
-  "branch": "claude/issue-2660-s3b-typed-bindings",
-  "claimed_at": "2026-08-06T09:20:05Z",
-  "updated_at": "2026-08-06T10:58:01Z",
-  "write_id": "24966-grrx62rf",
-  "released_at": "2026-08-06T10:58:01Z"
+  "assignee": "ttraenkler/claude-es5-standalone",
+  "requested_by": "ttraenkler/claude-es5-standalone",
+  "status": "in-progress",
+  "branch": "issue-2660-m3-closure-prototype-edge",
+  "claimed_at": "2026-08-15T06:33:39Z",
+  "updated_at": "2026-08-15T06:33:39Z",
+  "write_id": "26913-1hw16yr4"
 }
