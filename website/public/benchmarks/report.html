@@ -188,6 +188,8 @@
         gap: 1.1rem 0.6rem;
         margin-top: 1rem;
       }
+      /* A card is a <button>: clicking it selects that edition, the same
+         selection the slider makes. Hence the button reset. */
       .edition-legend-item {
         display: flex;
         flex-direction: column;
@@ -195,18 +197,35 @@
         gap: 0.5rem;
         min-width: 0;
         padding: 0.6rem 0.4rem 0.7rem;
+        border: 0;
         border-radius: 12px;
+        background: transparent;
+        font: inherit;
+        color: inherit;
         text-align: center;
-        transition: background 0.14s ease;
+        cursor: pointer;
+        transition:
+          background 0.14s ease,
+          opacity 0.14s ease;
       }
       .edition-legend-item:hover {
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .edition-legend-item:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.6);
+        outline-offset: 2px;
       }
       .edition-legend-item.active {
         background: rgba(255, 255, 255, 0.06);
       }
       .edition-legend-item.dimmed {
         opacity: 0.4;
+      }
+      /* Dimmed cards are still selectable — lift them on hover/focus so the
+         affordance survives the 0.4 opacity. */
+      .edition-legend-item.dimmed:hover,
+      .edition-legend-item.dimmed:focus-visible {
+        opacity: 0.75;
       }
       .edition-legend-text {
         display: grid;
@@ -860,12 +879,16 @@
       // (runs/editions-index.json and its standalone twin) is no longer fetched
       // by this page; the overall trend still comes from
       // <t262-conformance-trend>.
+      // `onSelect(row)` makes each card a button that selects its edition, the
+      // same selection dragging the slider makes — the cards read as the
+      // page's edition picker, so clicking one had to do something.
       function renderEditionLegend(
         rows,
         legendHost,
         activeEdition = null,
         dimAfterRank = null,
         proposalEditionLabels = new Set(),
+        onSelect = null,
       ) {
         legendHost.textContent = "";
         if (!rows || rows.length === 0) return;
@@ -885,8 +908,13 @@
           donut.appendChild(el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`));
 
           const item = el(
-            "div",
-            { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
+            "button",
+            {
+              type: "button",
+              className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : ""),
+              "aria-pressed": isActive ? "true" : "false",
+              title: label === PROPOSAL_LABEL ? "Include proposals" : `Show cumulative conformance through ${label}`,
+            },
             donut,
             el(
               "div",
@@ -899,6 +927,7 @@
               ),
             ),
           );
+          if (onSelect) item.addEventListener("click", () => onSelect(row));
 
           legendHost.appendChild(item);
         });
@@ -1423,6 +1452,23 @@
           return standalone ? "standalone conformance" : "conformance";
         }
 
+        // The scope value the slider would land on for a given legend row.
+        // Slider stops carry `value` (the raw edition label, e.g. "ES2018", or
+        // the collapsed legacy row's own raw label), so match on `rawEdition`
+        // rather than the display label — "ES3 / Core" is normalized and would
+        // never match a stop by name. Rows past the latest published edition
+        // are the proposal tail, whose only stop is the shared
+        // "overall+proposal".
+        function editionScopeForRow(row) {
+          if (!row) return null;
+          if (editionDetail?.proposalEditionLabels?.has(row.edition)) {
+            return editionDetail.proposalStop ? "overall+proposal" : null;
+          }
+          const stops = editionDetail?.editionSliderStops || [];
+          const stop = stops.find((candidate) => candidate.rawEdition === row.rawEdition);
+          return stop?.value ?? row.rawEdition ?? null;
+        }
+
         function renderEditionSection() {
           if (!editionDetail?.rows?.length) {
             editionLegendHost.style.display = "none";
@@ -1436,6 +1482,13 @@
             editionDetail.activeEdition,
             editionDetail.limitRank,
             editionDetail.proposalEditionLabels,
+            (row) => {
+              const scope = editionScopeForRow(row);
+              // Setting `value` drives the timeline exactly as a drag does: it
+              // moves the thumb, then emits edition-change, which re-renders
+              // the donut, category table, error patterns and ?edition=.
+              if (scope && scope !== editionDetail?.scope) editionTimeline.value = scope;
+            },
           );
         }
 
