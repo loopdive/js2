@@ -50,17 +50,22 @@
  * -casing of `>>>` as a result op, e.g. `binary-ops.ts`'s `bitwiseI32`
  * excludes `>>>` as the outer result op for the same reason).
  *
- * Deliberately excludes call expressions (e.g. `String.prototype.
- * charCodeAt`) as leaves for now — closing that gap needs a "provably
- * in-bounds" hoisting proof (legacy's #2682 `matchHoistedCharRead`,
- * `src/codegen/statements/loops.ts`'s `detectCanonicalCharReadLoop`), which
- * is a loop-preheader hoisting mechanism IR has no equivalent of yet. That
- * is tracked separately; porting it hastily into this same change is
- * exactly the kind of shortcut that caused the #3745 revert.
+ * Call expressions are excluded as leaves — with ONE proven exception
+ * (#3931): a `recv.charCodeAt(i)` read inside a recognised canonical
+ * char-read loop. That gap was left open here deliberately, because closing
+ * it needs the "provably in-bounds" proof of legacy's #2682
+ * (`matchHoistedCharRead` / `detectCanonicalCharReadLoop`) rather than a
+ * guess, and porting it hastily into #3758 is exactly the kind of shortcut
+ * that caused the #3745 revert. `ir/char-read-loop.ts` now carries that
+ * proof: inside such a loop `0 <= i < recv.length` holds at every read, so
+ * the §22.1.3.3 NaN result is unreachable and the read is a u16 — ALWAYS
+ * int32-range, hence a genuine bounded leaf in exactly the sense the header
+ * above requires. Every OTHER call expression still returns false.
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { collectI32CoercedLocals } from "../codegen/function-body.js";
 import { detectI32LoopVar } from "../codegen/statements/loop-analysis.js";
+import { matchProvenCharRead, type ProvenCharReads } from "./char-read-loop.js";
 
 /** Names (function-wide) proven to always hold a clean int32 value when read. */
 export type I32PureNames = ReadonlySet<string>;
@@ -143,13 +148,18 @@ function isSignedBoundedBitwiseOpKind(k: ts.SyntaxKind): boolean {
  * hand to `emitI32PureExpr` (in `ir/from-ast.ts`). See this module's header
  * comment for the wrap-vs-saturate soundness argument.
  */
-export function isI32PureExprIR(e: ts.Expression, names: I32PureNames): boolean {
+export function isI32PureExprIR(e: ts.Expression, names: I32PureNames, charReads?: ProvenCharReads): boolean {
   const inner = peel(e);
   if (ts.isIdentifier(inner)) return names.has(inner.text);
   if (ts.isNumericLiteral(inner)) {
     const n = Number(inner.text.replace(/_/g, ""));
     return Number.isInteger(n) && n >= -2147483648 && n <= 2147483647;
   }
+  // (#3931) The ONE admitted call leaf: a proven-in-bounds `recv.charCodeAt(i)`
+  // inside a canonical char-read loop. Its value is a u16 code unit — bounded
+  // independently of anything else in the expression — and the proof makes the
+  // NaN arm unreachable, so it is a leaf in the strict sense this module means.
+  if (ts.isCallExpression(inner)) return matchProvenCharRead(inner, charReads) !== null;
   if (!ts.isBinaryExpression(inner)) return false;
   const k = inner.operatorToken.kind;
   // A nested bitwise/shift (non-`>>>`) sub-expression's OWN result is
@@ -159,11 +169,13 @@ export function isI32PureExprIR(e: ts.Expression, names: I32PureNames): boolean 
   // here to establish that ITS result is a safe leaf.
   if (isSignedBoundedBitwiseOpKind(k)) return true;
   if (k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.MinusToken) {
-    return isI32PureExprIR(inner.left, names) && isI32PureExprIR(inner.right, names);
+    return isI32PureExprIR(inner.left, names, charReads) && isI32PureExprIR(inner.right, names, charReads);
   }
   if (k === ts.SyntaxKind.AsteriskToken) {
     return (
-      isI32PureExprIR(inner.left, names) && isI32PureExprIR(inner.right, names) && isI32MulSafe(inner.left, inner.right)
+      isI32PureExprIR(inner.left, names, charReads) &&
+      isI32PureExprIR(inner.right, names, charReads) &&
+      isI32MulSafe(inner.left, inner.right)
     );
   }
   return false;

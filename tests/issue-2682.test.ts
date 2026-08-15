@@ -94,39 +94,24 @@ describe("#2682 canonical string read-loop fast path", () => {
     });
   }
 
-  // ⚠️ (#3907) KNOWN CAPABILITY GAP — the hoist below no longer fires anywhere.
-  //
-  // `detectCanonicalCharReadLoop` lives ONLY in the legacy AST front-end
-  // (`src/codegen/statements/loops.ts`). The IR front-end has no equivalent, so
-  // the optimisation is lost for every function the IR overlay owns.
-  //
-  // Measured on the #3907 base branch, BEFORE any of that work: the hoist
-  // already failed to fire for `nativeStrings` alone, `target: "standalone"`
-  // and `target: "wasi"` — IR had already taken those over. It survived in
-  // exactly ONE configuration, `fast + nativeStrings`, and only because fast
-  // mode's unsound `number → i32` grounding created an ABI drift that kept the
-  // IR selector out of those bodies. #3907 removes that grounding, so the last
-  // pocket closes too.
-  //
-  // This is therefore NOT a capability #3907 deleted — it is a pre-existing IR
-  // adoption gap whose final hiding place was propped up by the bug. Recording
-  // it loudly rather than quietly weakening the assertions: the fix is to port
-  // the recogniser into the IR front-end, where the other three configurations
-  // have needed it since before this change. Ask the tech lead to file it (this
-  // agent may not allocate an issue id).
-  //
-  // What is asserted meanwhile: the BEHAVIOUR is unchanged and byte-faithful
-  // (every result assertion in this file still holds — see the `hash result is
-  // byte-faithful` cases above), and the current OWNER is pinned, so whoever
-  // ports the hoist will see this test flip and must update it deliberately.
-  it("KNOWN GAP (#3907): the read loop is IR-owned, so the legacy hoist no longer fires", async () => {
+  // (#3931) The #3907-era KNOWN CAPABILITY GAP block that used to sit here is
+  // gone: the recogniser now lives in the IR front-end too
+  // (`src/ir/char-read-loop.ts`), so the hoist fires wherever the IR owns the
+  // body — which is these two configurations plus standalone/wasi/host. The
+  // shape assertions below therefore pin the IR-EMITTED form, not legacy's.
+  // Full per-configuration coverage is in `tests/issue-3931.test.ts`; what is
+  // kept here is the pin that this file's own HASH_SRC is optimised.
+  it("(#3931) the read loop is IR-owned AND hoisted", async () => {
     for (const opts of [{ fast: true }, {}]) {
       const wat = await watOf(HASH_SRC, "hashStr", opts);
-      // IR owns the body (its locals are `$$irN`), which is why the legacy
-      // recogniser never runs. Flip these three lines when the hoist is ported.
+      // IR owns the body (its locals are `$$irN`) …
       expect(wat).toMatch(/\$\$ir\d/);
-      expect(wat).not.toContain("$__cca_data");
-      expect(wat).not.toContain("$__cca_off");
+      // … and the flatten is hoisted into a preheader slot, so the loop body
+      // reads code units straight out of the flat descriptor.
+      expect(wat).toContain("$$slot___cca_flat");
+      expect(wat).toContain("array.get_u");
+      // The §22.1.3.3 NaN arm is proven dead — no f64 NaN sentinel survives.
+      expect(wat).not.toContain("f64.const nan");
     }
   });
 
@@ -146,10 +131,9 @@ describe("#2682 canonical string read-loop fast path", () => {
       return h;
     };
     for (const s of ["abcdefgh", "x", "", "abcdefghijklmnop"]) expect(hashStep(toNative(s))).toBe(ref(s));
-    // (#3907) Shape pin follows the KNOWN GAP above: IR owns the body, so the
-    // legacy hoist does not fire. The RESULT assertions on the line above are
-    // the soundness guarantee and are unchanged.
-    expect(await watOf(src, "hashStep", { fast: true })).not.toContain("$__cca_data");
+    // (#3931) Shape pin re-pointed to the IR hoist. The RESULT assertions on
+    // the line above are the soundness guarantee and are unchanged.
+    expect(await watOf(src, "hashStep", { fast: true })).toContain("$$slot___cca_flat");
   });
 
   it("multiple charCodeAt(i) reads share a single hoist", async () => {
@@ -168,10 +152,11 @@ describe("#2682 canonical string read-loop fast path", () => {
       return h;
     };
     for (const s of ["abcd", "", "hello"]) expect(h2(toNative(s))).toBe(ref(s));
-    // (#3907) Shape pin follows the KNOWN GAP above — IR owns the body, so
-    // there is no hoisted flatten local to share. Results stay byte-faithful.
+    // (#3931) Two reads, ONE hoist: the slot is declared once, so the flatten
+    // runs once per loop entry no matter how many reads the body carries.
     const wat = await watOf(src, "h2", { fast: true });
-    expect((wat.match(/\$__cca_flat/g) ?? []).length).toBe(0);
+    expect((wat.match(/\(local \$\$slot___cca_flat /g) ?? []).length).toBe(1);
+    expect((wat.match(/array\.get_u/g) ?? []).length).toBe(2);
   });
 });
 
@@ -183,7 +168,7 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
     const { exports } = await compileNative(src); // non-fast: exact spec f64 semantics
     expect((exports.oob as () => number)()).toBe(0);
     // and it is NOT optimised (no hoist locals).
-    expect(await watOf(src, "oob")).not.toContain("$__cca_data");
+    expect(await watOf(src, "oob")).not.toContain("__cca_");
   });
 
   it("a non-induction index `charCodeAt(i + 1)` is NOT optimised and stays correct", async () => {
@@ -202,7 +187,7 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
       return h;
     };
     for (const s of ["abc", "abcde", "a"]) expect(nh(toNative(s))).toBe(ref(s));
-    expect(await watOf(src, "nh")).not.toContain("$__cca_data");
+    expect(await watOf(src, "nh")).not.toContain("__cca_");
   });
 
   it("a reassigned receiver inside the loop is NOT optimised and stays correct", async () => {
@@ -225,7 +210,7 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
       return h;
     };
     expect((exports.rr as () => number)()).toBe(ref());
-    expect(await watOf(src, "rr")).not.toContain("$__cca_data");
+    expect(await watOf(src, "rr")).not.toContain("__cca_");
   });
 
   it("a body that SHADOWS the receiver name is NOT optimised (text-keyed match stays sound)", async () => {
@@ -250,7 +235,7 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
       return h;
     };
     expect((exports.sh as () => number)()).toBe(ref());
-    expect(await watOf(src, "sh")).not.toContain("$__cca_data");
+    expect(await watOf(src, "sh")).not.toContain("__cca_");
   });
 
   it("a ConsString receiver flattens correctly once-hoisted", async () => {
@@ -279,10 +264,11 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
     ] as const) {
       expect(hc(toNative(a), toNative(b))).toBe(ref(a, b));
     }
-    // (#3907) Shape pin follows the KNOWN GAP above. The rope must still
-    // flatten to the correct code units — that is the assertion loop above,
-    // and it is unchanged.
-    expect(await watOf(src, "hc", { fast: true })).not.toContain("$__cca_data");
+    // (#3931) This IS a matching shape, so the hoist fires — and the point of
+    // the case is that hoisting the flatten is what makes it correct: the rope
+    // is flattened ONCE, before the loop, and every read then indexes the flat
+    // code units. The result assertions above are the soundness guarantee.
+    expect(await watOf(src, "hc", { fast: true })).toContain("$$slot___cca_flat");
   });
 
   it("a `.length` bound on a DIFFERENT string than the charCodeAt receiver is not mis-optimised", async () => {
@@ -310,7 +296,7 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
       expect(bm(toNative(a), toNative(b))).toBe(ref(a, b));
     }
     // `b` is not the bound receiver, so `b.charCodeAt(i)` stays unoptimised.
-    expect(await watOf(src, "bm")).not.toContain("$__cca_data");
+    expect(await watOf(src, "bm")).not.toContain("__cca_");
   });
 
   it("a body that mutates the induction var is NOT optimised and stays correct", async () => {
@@ -333,6 +319,6 @@ describe("#2682 soundness — non-matching shapes are left unoptimised and uncha
       return h;
     };
     expect((exports.mi as () => number)()).toBe(ref());
-    expect(await watOf(src, "mi")).not.toContain("$__cca_data");
+    expect(await watOf(src, "mi")).not.toContain("__cca_");
   });
 });
