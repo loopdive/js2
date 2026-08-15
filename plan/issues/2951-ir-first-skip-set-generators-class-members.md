@@ -1,7 +1,8 @@
 ---
 id: 2951
 title: "IR-first skip set: include generators and class members (retire the two #2138 standing exclusions)"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-07-02
 updated: 2026-08-15

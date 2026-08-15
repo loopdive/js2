@@ -1,10 +1,11 @@
 ---
 id: 2952
 title: "IR multi-exit control flow: labeled break/continue, switch (br_table), do-while, for-in adoption"
-status: ready
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-07-02
-updated: 2026-07-29
+updated: 2026-08-15
 priority: medium
 horizon: l
 feasibility: hard
@@ -38,6 +39,10 @@ loc-budget-allow:
 # (they share its emitter/resolver/slot state): +31 / +6 lines.
 func-budget-allow:
   - src/ir/lower.ts::lowerIrFunctionBody
+  # Slice 6a/6b: the tail-switch admission (all-clauses-terminate + default)
+  # and string-literal case tests are new arms of the phase-1 expression /
+  # tail walker itself (+13 lines) — they cannot live outside it.
+  - src/ir/select.ts::isPhase1Expr
   - src/ir/lower.ts::emitInstrTree
   # Slice 4: renameInstrOperands legitimately grows with every new
   # buffer-bearing IR kind (+30 for the switch/labeled.block deep-rename
