@@ -380,7 +380,22 @@ inverted) flips native+standalone `string-forof` hashes — the read is live.
 
 Live grep on main @ `7add6938`: `src/ir/from-ast.ts` has **zero
 functional `nativeStrings` reads** — every remaining match is a comment
-documenting the relocation, so the acceptance's grep gate is effectively
-met. Not dispatched in the 2026-08-15 IR-path-only session. Remaining to
-close: add the grep gate to CI (`quality`), re-verify the two-mode
-structural-identity acceptance on current main, then flip `status: done`.
+documenting the relocation (verified down to the one non-comment mention,
+which is a thrown-message string in the slice-13c pad path, gated on the
+plan value, not a mode read). Mode decisions route through resolver
+capability queries and `resolveFunc` sentinels (the #3156/#3167 pattern).
+
+**Grep gate now ENFORCED** (this session):
+`tests/issue-2955-depolymorph-gate.test.ts` strips comments/strings from
+`from-ast.ts` and fails on any `nativeStrings` token — criterion 1 of the
+acceptance is met and ratcheted.
+
+**Remaining to flip `done` (narrowed):** criterion 2 — "same source
+produces identical IR (structural compare) in both string modes" — is NOT
+yet proven: from-ast still branches on renamed capability queries (e.g.
+`stringIsExternref`), which may make the built IR differ per mode even
+though the raw discriminator is gone. Closing needs a small IR structural
+dump/compare harness over a string-heavy sample in both modes; if the IR
+differs only in resolver-deferred types, document that as the accepted
+endpoint and flip done; if instruction shapes differ, the residual is the
+capability-query sites.
