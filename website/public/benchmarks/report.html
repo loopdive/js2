@@ -178,18 +178,25 @@
         --t262-edition-text: var(--text);
         --t262-edition-text-muted: var(--text-muted);
       }
+      /* Edition cards: one large donut per card with the edition name below it
+         (#4362 follow-up). `auto-fit` + a 132px floor keeps two cards per row on
+         a phone (≈358px of content width at the 1rem mobile body padding) and
+         fills wider viewports without a breakpoint. */
       .edition-legend-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 0.7rem 1rem;
-        margin-top: 0.8rem;
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 1.1rem 0.6rem;
+        margin-top: 1rem;
       }
       .edition-legend-item {
-        display: grid;
-        gap: 0.3rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
         min-width: 0;
-        padding: 0.5rem;
-        border-radius: 8px;
+        padding: 0.6rem 0.4rem 0.7rem;
+        border-radius: 12px;
+        text-align: center;
         transition: background 0.14s ease;
       }
       .edition-legend-item:hover {
@@ -201,12 +208,11 @@
       .edition-legend-item.dimmed {
         opacity: 0.4;
       }
-      .edition-legend-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
+      .edition-legend-text {
+        display: grid;
+        gap: 0.15rem;
         min-width: 0;
+        width: 100%;
       }
       .edition-legend-name {
         font-size: 0.92rem;
@@ -225,33 +231,26 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .edition-legend-trend-slot {
-        min-width: 0;
-        height: 30px;
-        margin: 0.1rem 0;
-      }
-      .edition-legend-trend {
-        display: block;
-        width: 100%;
-        height: 30px;
-      }
       .edition-legend-donut {
         --deg: 0deg;
+        /* Ring thickness scales with the donut so the stroke stays proportional
+           across the clamp() range. */
+        --ring: 7px;
         position: relative;
-        width: 34px;
-        height: 34px;
+        width: clamp(78px, 24vw, 104px);
+        aspect-ratio: 1;
         flex-shrink: 0;
       }
       .edition-legend-donut-glow {
         position: absolute;
-        inset: -3px;
+        inset: -4px;
         border-radius: 50%;
         background: conic-gradient(
           rgba(255, 255, 255, 0) 0deg,
           rgba(255, 255, 255, 0.4) var(--deg),
           rgba(255, 255, 255, 0) calc(var(--deg) + 2deg) 360deg
         );
-        filter: blur(3px);
+        filter: blur(5px);
         pointer-events: none;
       }
       .edition-legend-donut-ring {
@@ -259,8 +258,12 @@
         inset: 0;
         border-radius: 50%;
         background: conic-gradient(#fff 0deg, #fff var(--deg), rgba(255, 255, 255, 0.14) var(--deg) 360deg);
-        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
-        mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+        -webkit-mask: radial-gradient(
+          farthest-side,
+          transparent calc(100% - var(--ring)),
+          #000 calc(100% - var(--ring))
+        );
+        mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring)), #000 calc(100% - var(--ring)));
       }
       .edition-legend-donut-value {
         position: absolute;
@@ -269,7 +272,7 @@
         align-items: center;
         justify-content: center;
         font-family: var(--mono);
-        font-size: 0.56rem;
+        font-size: 1rem;
         font-weight: 700;
         color: #fff;
       }
@@ -850,47 +853,19 @@
         return cat;
       }
 
-      // Matches t262NormalizeEditionLabel in components/t262-charts.js — kept
-      // as a local copy since that file is loaded as a module and doesn't
-      // expose it globally.
-      function normalizeEditionLabelForTrend(edition) {
-        return edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition;
-      }
-
-      // Per-ES-edition pass-rate trend history for the mini sparklines in the
-      // edition legend, sourced from benchmarks/results/runs/editions-index.json
-      // and its host-free twin standalone-editions-index.json (see
-      // scripts/append-run-history.mjs). The caller picks the file matching the
-      // active view: the standalone view used to pass `null` here, so its
-      // edition cards showed a donut with no sparkline at all — and feeding it
-      // the HOST series instead would have put a js-host curve under a
-      // standalone number, which is worse than showing nothing.
-      function buildEditionTrendSeries(editionRuns) {
-        const seriesByEdition = new Map();
-        if (!Array.isArray(editionRuns)) return seriesByEdition;
-        for (const run of editionRuns) {
-          if (!Array.isArray(run?.editions)) continue;
-          for (const e of run.editions) {
-            const label = normalizeEditionLabelForTrend(String(e?.edition || ""));
-            if (!label) continue;
-            const total = Number(e?.total || 0);
-            if (total <= 0) continue;
-            const pct = (Number(e?.pass || 0) / total) * 100;
-            if (!Number.isFinite(pct)) continue;
-            if (!seriesByEdition.has(label)) seriesByEdition.set(label, []);
-            seriesByEdition.get(label).push({ pct });
-          }
-        }
-        return seriesByEdition;
-      }
-
+      // Edition card: a large gauge with the edition name and pass ratio beneath
+      // it. The per-edition sparkline that used to sit between them is gone —
+      // at card size it read as noise next to the donut, which already carries
+      // the number the card exists to show. The per-edition run history
+      // (runs/editions-index.json and its standalone twin) is no longer fetched
+      // by this page; the overall trend still comes from
+      // <t262-conformance-trend>.
       function renderEditionLegend(
         rows,
         legendHost,
         activeEdition = null,
         dimAfterRank = null,
         proposalEditionLabels = new Set(),
-        editionTrendSeries = null,
       ) {
         legendHost.textContent = "";
         if (!rows || rows.length === 0) return;
@@ -900,17 +875,8 @@
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
           const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
 
-          const trendSlot = el("div", { className: "edition-legend-trend-slot" });
-          const points = editionTrendSeries instanceof Map ? editionTrendSeries.get(row.edition) : null;
-          if (points && points.length >= 2) {
-            const chart = el("trend-chart", { className: "edition-legend-trend", mode: "sparkline" });
-            chart.setAttribute("series", JSON.stringify([{ key: "pct", fill: true }]));
-            chart.data = points;
-            trendSlot.appendChild(chart);
-          }
-
-          // Mini gauge — same conic-gradient ring + glow technique as the big
-          // <t262-donut>, just the ring and percentage, no count labels.
+          // Same conic-gradient ring + glow technique as the big <t262-donut>,
+          // just the ring and percentage, no count labels.
           const donut = document.createElement("div");
           donut.className = "edition-legend-donut";
           donut.style.setProperty("--deg", `${Math.max(0, Math.min(100, row.rate)) * 3.6}deg`);
@@ -921,17 +887,16 @@
           const item = el(
             "div",
             { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
+            donut,
             el(
               "div",
-              { className: "edition-legend-top" },
+              { className: "edition-legend-text" },
               el("div", { className: "edition-legend-name" }, label),
-              donut,
-            ),
-            trendSlot,
-            el(
-              "div",
-              { className: "edition-legend-ratio" },
-              `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
+              el(
+                "div",
+                { className: "edition-legend-ratio" },
+                `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
+              ),
             ),
           );
 
@@ -1362,8 +1327,7 @@
         });
       }
 
-      function renderConformance(view, container, editionRunsByLane) {
-        const editionTrendSeries = buildEditionTrendSeries(editionRunsByLane?.[view.mode]);
+      function renderConformance(view, container) {
         const data = view.report;
         // Point per-file detail/error-pattern lookups at this view's source.
         activeFileResultsSrc = view.fileResultsSrc;
@@ -1472,7 +1436,6 @@
             editionDetail.activeEdition,
             editionDetail.limitRank,
             editionDetail.proposalEditionLabels,
-            editionTrendSeries,
           );
         }
 
@@ -2409,19 +2372,15 @@
 
       async function main() {
         // The overall pass-rate history is fetched by the shared
-        // <t262-conformance-trend> component itself; what main() still needs is
-        // the PER-EDITION history for the edition-legend sparklines — one file
-        // per lane, so the standalone view gets standalone sparklines instead
-        // of none (#4362).
-        const [conformance, standaloneReport, categoryEditions, hostEditionRuns, standaloneEditionRuns] =
-          await Promise.all([
-            loadReportWithFallback(),
-            loadJSON(STANDALONE_REPORT_JSON),
-            loadJSON(CATEGORY_EDITIONS_JSON),
-            loadJSON(assetPath("benchmarks/results/runs/editions-index.json")),
-            loadJSON(assetPath("benchmarks/results/runs/standalone-editions-index.json")),
-          ]);
-        const editionRunsByLane = { host: hostEditionRuns, standalone: standaloneEditionRuns };
+        // <t262-conformance-trend> component itself. The per-lane per-edition
+        // history (runs/editions-index.json + its standalone twin, #4362) is no
+        // longer fetched here: it only fed the edition-card sparklines, which
+        // the donut-first card layout dropped.
+        const [conformance, standaloneReport, categoryEditions] = await Promise.all([
+          loadReportWithFallback(),
+          loadJSON(STANDALONE_REPORT_JSON),
+          loadJSON(CATEGORY_EDITIONS_JSON),
+        ]);
         const app = document.getElementById("app");
         app.textContent = "";
 
@@ -2485,7 +2444,7 @@
           const renderActive = () => {
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
-            renderConformance(view, conformanceHost, editionRunsByLane);
+            renderConformance(view, conformanceHost);
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });
