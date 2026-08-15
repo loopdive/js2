@@ -45,6 +45,7 @@ import {
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
+import { emitRuntimeEvalFunctionPrototypeSeed } from "../runtime-eval-construct.js"; // (#4438) §20.2.1.1
 import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
@@ -2020,7 +2021,17 @@ export function emitStandaloneDynamicFunctionRuntime(
   const liveIdx = ctx.funcMap.get("__runtime_new_function") ?? newFnIdx;
   fctx.body.push({ op: "call", funcIdx: liveIdx });
   emitRuntimeEvalResultUnwrap(ctx, fctx);
-  return emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
+  const carrierType = emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
+  // (#4438) §20.2.1.1 always creates an ordinary CONSTRUCTABLE function with a
+  // fresh `prototype` object whose `constructor` is the function. QuickJS's own
+  // `.prototype` does not cross the seam (the marker's `target` is an empty,
+  // deliberately unmirrored box), so `F.prototype` read `undefined` and
+  // `new F()` had no prototype to build an instance from. This is the ONE site
+  // that knows from the SOURCE that the value is constructable — see
+  // runtime-eval-construct.ts for why the shared carrier trampoline is the
+  // wrong place for it.
+  emitRuntimeEvalFunctionPrototypeSeed(ctx, fctx);
+  return carrierType;
 }
 
 /**
