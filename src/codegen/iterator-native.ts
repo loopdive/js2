@@ -292,6 +292,14 @@ interface UserCarrierDeps {
   sgetValueIdx?: number;
   /** `__sget_done(externref) -> externref` (emitStructFieldGetters). Optional — see sgetValueIdx. */
   sgetDoneIdx?: number;
+  /**
+   * (#4447) True when `__sget_done` really has the extern signature
+   * `(externref) -> externref`. A getter's RESULT type follows the FIELD type,
+   * so a module whose `done` field is numeric emits `(externref) -> f64`,
+   * which cannot feed `__is_truthy`. Only a `true` here licenses reading
+   * `done` WITHOUT `__sget_value` (the `{ done: … }`-only IteratorResult arm).
+   */
+  sgetDoneIsExtern?: boolean;
   /** `__is_truthy(externref) -> i32` (ToBoolean on the boxed `done` flag). */
   isTruthyIdx: number;
   /**
@@ -330,6 +338,9 @@ interface ObjCarrierDeps {
   sgetValueIdx?: number;
   /** `__sget_done(externref) -> externref` — see `sgetValueIdx`. */
   sgetDoneIdx?: number;
+  /** (#4447) `__sget_done` really is `(externref) -> externref` — see the twin
+   *  field on `UserCarrierDeps`. */
+  sgetDoneIsExtern?: boolean;
   /** `__sget_next(externref) -> externref` — the ITERATOR OBJECT itself often
    *  pre-shapes into a closed struct (`{ next: function () {…} }` literal with
    *  a field-stored closure, #3117), so the `next` read needs the field getter
@@ -1141,6 +1152,37 @@ export function ensureNativeExternSlice(ctx: CodegenContext): number | undefined
 }
 
 /**
+ * (#4447) Resolve a `__sget_<field>` getter ONLY when it actually has the
+ * extern signature `(externref) -> externref`.
+ *
+ * A field getter's RESULT type follows the FIELD's type, so a module whose
+ * `done` field is numeric emits `__sget_done : (externref) -> f64`. The
+ * iterator-result arms feed that value straight into `__is_truthy`
+ * (`(externref) -> i32`), which is invalid Wasm. Before #4447 the mismatch was
+ * masked: the arm was emitted only when `__sget_value` ALSO existed, and those
+ * modules happened to have an externref `done`. Making the two getters
+ * independent (so a conformant `{ done: … }`-only IteratorResult reports its
+ * real `done`) exposed it — `Iterator.from([1,2,3])` produced
+ * "call[0] expected type externref, found block of type f64" in
+ * `__iterator_next`. A non-extern getter answers `undefined` here, which keeps
+ * the new done-only arm off and leaves the existing degrade in place.
+ *
+ * This gate is ADDITIVE: the pre-existing both-getters-present path is not
+ * routed through it, so modules that compiled before are byte-identical.
+ */
+function externSgetIdx(ctx: CodegenContext, name: string): number | undefined {
+  const idx = ctx.funcMap.get(name);
+  if (idx === undefined) return undefined;
+  const fn = definedFuncAt(ctx, idx);
+  if (!fn) return undefined;
+  const t = ctx.mod.types[fn.typeIdx];
+  if (!t || t.kind !== "func") return undefined;
+  if (t.params.length !== 1 || t.params[0]?.kind !== "externref") return undefined;
+  if (t.results.length !== 1 || t.results[0]?.kind !== "externref") return undefined;
+  return idx;
+}
+
+/**
  * (#2038 / #3100, reserve-then-fill #1719) Rebuild the `__iterator` (and, with
  * USER deps, `__iterator_next`) bodies with the LATE ladder arms at finalize:
  *
@@ -1173,6 +1215,9 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   const callNextIdx = ctx.funcMap.get("__call_next");
   const sgetValueIdx = ctx.funcMap.get("__sget_value");
   const sgetDoneIdx = ctx.funcMap.get("__sget_done");
+  // (#4447) Only gates the NEW `{ done }`-only arm; the pre-existing
+  // both-getters-present path is untouched (byte-identical).
+  const sgetDoneIsExtern = externSgetIdx(ctx, "__sget_done") !== undefined;
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
   const deps: UserCarrierDeps | undefined =
     callNextIdx === undefined || isTruthyIdx === undefined
@@ -1189,6 +1234,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
           callNextIdx,
           sgetValueIdx,
           sgetDoneIdx,
+          sgetDoneIsExtern,
           isTruthyIdx,
           // (#3100 S5) optional — only when some struct has a `return` method.
           callReturnIdx: ctx.funcMap.get("__call_return"),
@@ -1224,6 +1270,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         applyClosureIdx: reserveApplyClosure(ctx),
         sgetValueIdx: ctx.funcMap.get("__sget_value"),
         sgetDoneIdx: ctx.funcMap.get("__sget_done"),
+        sgetDoneIsExtern,
         sgetNextIdx: ctx.funcMap.get("__sget_next"),
         sgetReturnIdx: ctx.funcMap.get("__sget_return"),
         keyInstrs: (name: string) => [...nativeStringLiteralInstrs(ctx, name), { op: "extern.convert_any" }],
@@ -2414,10 +2461,21 @@ function buildIteratorNextBody(
           { op: "local.set", index: 5 },
         ];
         // res is a closed struct (`{value, done}` literal pre-shape) → the
-        // #2038 field getters. Without them a non-`$Object` res is unreadable:
-        // report done (terminate) rather than spin.
+        // #2038 field getters. Without `__sget_done` a non-`$Object` res is
+        // unreadable: report done (terminate) rather than spin.
+        //
+        // (#4447) `__sget_value` is read INDEPENDENTLY of `__sget_done`. A
+        // conformant iterator may return `{ done: … }` with no `value` property
+        // at all (§7.4.4 IteratorValue then answers `undefined`) — test262's
+        // `for-of/dstr/array-elem-trlg-iter-*` iterators do exactly that. No
+        // struct in such a module carries a `value` field, so `__sget_value`
+        // is never emitted; the old conjunction then fell to the
+        // `done := 1` degrade and reported the iterator EXHAUSTED on its first
+        // step. That silently skipped IteratorClose (the drain breaks on the
+        // done-branch, §7.4.9 closes only on a non-done stop) and made
+        // `nextCount`/`returnCount` observably wrong.
         const readStructArm: Instr[] =
-          od.sgetDoneIdx !== undefined && od.sgetValueIdx !== undefined
+          od.sgetDoneIdx !== undefined && (od.sgetValueIdx !== undefined || od.sgetDoneIsExtern === true)
             ? [
                 { op: "local.get", index: 6 },
                 { op: "call", funcIdx: od.sgetDoneIdx },
@@ -2428,10 +2486,13 @@ function buildIteratorNextBody(
                   op: "if",
                   blockType: { kind: "val", type: { kind: "externref" } },
                   then: od.missInstrs(),
-                  else: [
-                    { op: "local.get", index: 6 },
-                    { op: "call", funcIdx: od.sgetValueIdx },
-                  ],
+                  else:
+                    od.sgetValueIdx !== undefined
+                      ? [
+                          { op: "local.get", index: 6 },
+                          { op: "call", funcIdx: od.sgetValueIdx },
+                        ]
+                      : od.missInstrs(),
                 },
                 { op: "local.set", index: 5 },
               ]
@@ -2744,8 +2805,13 @@ function buildIteratorNextBody(
   // NO `{value, done}`-shaped closed struct at all, `__sget_value`/`__sget_done`
   // were never emitted (now optional in the deps) — a closed result then
   // reports done=1 rather than spinning, mirroring the OBJ arm's fallback.
+  // (#4447) `__sget_value` is read INDEPENDENTLY of `__sget_done` — see the
+  // twin note on the OBJ arm's `readStructArm`. A `{ done: … }`-only result
+  // (no `value` property anywhere in the module ⇒ no `__sget_value`) must
+  // report the REAL `done`, not the done=1 degrade, or the drain terminates
+  // on step 1 and skips IteratorClose.
   const userReadStructArm: Instr[] =
-    deps.sgetDoneIdx !== undefined && deps.sgetValueIdx !== undefined
+    deps.sgetDoneIdx !== undefined && (deps.sgetValueIdx !== undefined || deps.sgetDoneIsExtern === true)
       ? [
           { op: "local.get", index: 6 },
           { op: "call", funcIdx: deps.sgetDoneIdx },
@@ -2756,10 +2822,13 @@ function buildIteratorNextBody(
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
             then: [{ op: "ref.null.extern" }],
-            else: [
-              { op: "local.get", index: 6 },
-              { op: "call", funcIdx: deps.sgetValueIdx },
-            ],
+            else:
+              deps.sgetValueIdx !== undefined
+                ? [
+                    { op: "local.get", index: 6 },
+                    { op: "call", funcIdx: deps.sgetValueIdx },
+                  ]
+                : [{ op: "ref.null.extern" }],
           },
           { op: "local.set", index: 5 },
         ]

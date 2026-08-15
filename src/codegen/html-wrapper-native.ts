@@ -26,6 +26,47 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 const i32: ValType = { kind: "i32" };
 
 /**
+ * (#3069) Annex B §B.2.3 legacy HTML string-wrapper method → HTML tag +
+ * optional attribute name (ECMA-262 §B.2.3.2..§B.2.3.14). `String.prototype`
+ * `bold`→`<b>`, `italics`→`<i>`, `anchor(name)`→`<a name="…">`,
+ * `link(url)`→`<a href="…">`, `fontcolor(c)`/`fontsize(s)`→`<font color/size="…">`,
+ * etc. Methods with an `attribute` take one argument (the attribute VALUE,
+ * `"`→`&quot;` escaped); the rest take none — which is also their spec
+ * `fn.length` (§B.2.3.2.1 CreateHTML's `attribute` operand).
+ *
+ * Two consumers, one table (#4445): the DIRECT call-site arm in
+ * `compileNativeStringMethodCall` (string-ops.ts) and the REFLECTIVE closure
+ * body in `string-proto-html.ts`.
+ */
+const HTML_WRAPPER_TAGS: Readonly<Record<string, { tag: string; attribute?: string }>> = {
+  anchor: { tag: "a", attribute: "name" },
+  big: { tag: "big" },
+  blink: { tag: "blink" },
+  bold: { tag: "b" },
+  fixed: { tag: "tt" },
+  fontcolor: { tag: "font", attribute: "color" },
+  fontsize: { tag: "font", attribute: "size" },
+  italics: { tag: "i" },
+  link: { tag: "a", attribute: "href" },
+  small: { tag: "small" },
+  strike: { tag: "strike" },
+  sub: { tag: "sub" },
+  sup: { tag: "sup" },
+};
+
+/**
+ * The §B.2.3 descriptor for `method`, or `undefined` when it is not one of the
+ * 13. The OWN-property check is load-bearing, not defensive style: both callers
+ * dispatch on arbitrary `String.prototype` member names, and a bare
+ * `HTML_WRAPPER_TAGS[member]` answers `Object.prototype.toString` (a truthy
+ * function) for `member === "toString"` — which would destructure to
+ * `tag === undefined` and emit a silently wrong `<undefined>x</undefined>`.
+ */
+export function htmlWrapperFor(method: string): { tag: string; attribute?: string } | undefined {
+  return Object.prototype.hasOwnProperty.call(HTML_WRAPPER_TAGS, method) ? HTML_WRAPPER_TAGS[method] : undefined;
+}
+
+/**
  * Ensure `__str_html_escape_quot(s: ref $AnyString) -> ref $NativeString` is
  * emitted (idempotent). It returns a copy of `s` with every `"` (U+0022) code
  * unit replaced by the six code units `&quot;` — the exact CreateHTML step-4.b
