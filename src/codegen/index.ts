@@ -3158,6 +3158,18 @@ function consumeIrOverlayReport(
     process.stderr.write(
       `[ir-fallback] file=${sourceFile.fileName || "<source>"} total=${total} claimed=${selection.funcs.size} fallback=${selection.fallbacks.length} reasons=${reasonStr}\n`,
     );
+    // (#4457) Per-unit attribution. The histogram above names the bucket but
+    // not WHICH unit hit WHICH reject arm, so a lane sitting on N
+    // `body-shape-rejected` units cannot be grouped into coherent fixes. The
+    // `detail` field is populated by select.ts only under
+    // JS2WASM_IR_SHAPE_DIAG=1, so this line is silent on the normal path.
+    if (process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+      for (const fb of selection.fallbacks) {
+        process.stderr.write(
+          `[ir-fallback-unit] file=${sourceFile.fileName || "<source>"} name=${fb.name} reason=${fb.reason} arm=${fb.detail ?? "<none>"}\n`,
+        );
+      }
+    }
   }
 }
 

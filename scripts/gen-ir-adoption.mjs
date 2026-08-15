@@ -383,6 +383,10 @@ const BUCKETS = {
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
   ],
+  "host-surface-unavailable": [
+    "deferred",
+    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+  ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],
   "deferred-feature": ["deferred", "`eval` / `Proxy` / `with` — wont-fix"],
