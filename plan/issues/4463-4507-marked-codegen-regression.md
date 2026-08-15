@@ -84,3 +84,20 @@ the #4444 wave's four scoped suites; equivalence gate clean.
   so it does not gate this PR, but the two bases differ by the wrapper's
   strict-rerun rows (same class as the #4445 92-vs-108 correction) — worth a
   measurement-tooling note next time the number is load-bearing.
+
+## Cross-lane outcome (2026-08-15, post-merge reconcile)
+
+The /workspace lane diagnosed and fixed the same regression in parallel:
+**#4466** (PR #4579, `bda75c6a7`) repaired the dispatch-arity and literals-gate
+defects and **#4469** (PR #4581, `87cf253a2`) the trampoline nullability — both
+landed on main while this lane's PR #4582 was in flight. Reconciliation: main's
+versions adopted for `closed-method-dispatch.ts`/`literals.ts` (semantically
+equivalent policies); `method-trampolines.ts` keeps both guards (this lane's
+externref-only early return + #4469's same-carrier-family check — compatible,
+defensive). This PR's surviving unique contribution: the 11 regression guard
+tests (`tests/issue-4447-mg-regressions.test.ts`, all green on the merged
+tree), this bisect/root-cause record pinning `044b8d09` specifically, and the
+marked-revert consequence note. Duplicate-diagnosis cost note for the retro:
+both lanes independently ran the same bisect within hours — the auto-park
+comment's "same signature on another PR ⇒ drift" hint was the missed
+cross-check that would have linked the two efforts earlier.
