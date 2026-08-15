@@ -1067,3 +1067,18 @@ supplying the import, while CI records it as `compile_error`. A local pass/fail 
 a leaking file is an upper bound on the host answer, **not** the verdict CI
 scores. This is what makes the identical before/after answer runs above meaningful
 rather than vacuous — and it is a trap for any "these tests pass locally" claim.
+
+**Every A/B above reverted through `.tmp/identifiers.base.ts`, and that artifact
+was verified byte-identical to base commit `88ff8c4` (`diff` against
+`git show 88ff8c4:…`), not assumed.** One diff validates the whole chain — the
+WASI 199-file run, the 59-file base sweep, the 150-file sample, the gc/host
+shas, and the `%TypedArray%` wrong-throw diagnosis all rest on that one file
+being what it claims to be.
+
+**Operational rule, better than "always measure the before-state": make the
+before-state CHEAP before you start.** Capture the revert copy at the FIRST
+edit, when it costs one `cp` (CLAUDE.md's file-copy A/B pattern). Whether the
+before-run happens turns out to depend less on discipline than on its price at
+the moment you face it: the 11-file directory A/B got run because it was cheap,
+the 59-file one got skipped because it was a corpus compile and the baseline was
+sitting right there claiming to already know the answer.
