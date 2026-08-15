@@ -861,19 +861,35 @@ walked by the ordinary late-import body shifter. **Nothing is minted at finalize
 
 **The 59 sole-leak files** (the directly addressable population, from the
 2026-08-15 standalone baseline where all 59 are `compile_error`
-`host_import_leak`), re-run on this branch:
+`host_import_leak`), re-run on this branch **with `TEST262_INCLUDE_PROPOSALS=1`**
+— see the scope note below, which is load-bearing:
 
-| after       | rows |
-| ----------- | ---: |
-| **pass**    |    4 |
-| fail        |   31 |
-| skip        |   24 |
+| after    | rows |
+| -------- | ---: |
+| **pass** |    4 |
+| fail     |   55 |
 
 59 × `compile_error` → **4 pass**, 0 regressions (a `compile_error` cannot
 regress). The four: `built-ins/Array/fromAsync/this-constructor`,
 `built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`,
-`language/expressions/instanceof/S11.8.6_A2.4_T3`. The 24 skips are Temporal
-proposal files.
+`language/expressions/instanceof/S11.8.6_A2.4_T3`.
+
+**Scope note — the first cut of this table reported 24 `skip` and was NOT
+CI-comparable.** The local runner's DEFAULT scope excludes proposals, so 21
+Temporal files and 3 source-phase-import files came back `skip`. **CI does not
+skip them**: the standalone baseline records all 24 as `compile_error` with the
+`env::__instanceof_check` leak, which is only possible if they ran. Re-measured
+under `TEST262_INCLUDE_PROPOSALS=1` they all `fail` (Temporal is not implemented
+at all — `ReferenceError: Temporal is not defined`), so the conclusion is
+unchanged, but the tally now matches the lane that scores it.
+
+Worth generalising, because it is the same shape as the two other instrument
+traps recorded on this issue: **a `skip` in a local run is a statement about the
+LOCAL scope filter, never evidence that CI skips the file.** Read the baseline's
+recorded status for that file before treating a skip as "not counted". (Same
+trap, different guise: `CLAUDE.md`'s skip list names `top-level-await` as a
+feature skip and `shouldSkip` has no such branch — flagged by the #4433 lane,
+which nearly dismissed four real regressions on it.)
 
 **`language/expressions/instanceof` (43 files).** The before/after *answer* runs
 are **byte-identical** — every one of the 11 previously-refused files produces
