@@ -33,6 +33,7 @@ func-budget-allow:
   - src/codegen/literals.ts::compileObjectLiteralForStruct
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   - src/codegen/index.ts::generateModule
