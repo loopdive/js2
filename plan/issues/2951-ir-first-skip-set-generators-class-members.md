@@ -337,3 +337,48 @@ this issue.
   class+method corpus; the Hazard-2 escalation test above.
 - Full `merge_group` net-zero with the flag on via the `ir_first`
   measurement lane (same as the generator half).
+
+## Re-scope + Implementation Plan (fable, 2026-08-15 — IR-path-only migration session)
+
+Live measurement on main @ `7add6938` invalidates half this issue and
+confirms the other half:
+
+- **Class-member half: superseded by #3522** on the bounded corpus. The
+  `check:ir-only` single-host lane reports `class-member: 10` units, **0
+  legacy bodies** (37/37 IR overall) — prepared/compile-once class
+  transactions landed. First deliverable: a claim-dense class probe
+  confirming no member family still double-compiles; record the evidence
+  here and mark the class half done. Residual scope only if the probe finds
+  a double-compiled family.
+- **Generator half: LIVE.** Probe (2026-08-15): `export function*
+  counter(n: number) { for (let i = 0; i < n; i++) yield i; return n; }`
+  compiles with `trackIrOutcomes` showing the generator unit at
+  `legacy: true, ir: true` — the generator body still compiles twice and
+  the legacy body is only later overwritten. `irFirstSkipped` is empty.
+
+### Plan (generator compile-once, host mode)
+
+1. **Measure the side-effect delta.** Compile a claimed generator with
+   legacy body emission forcibly skipped (patch or env probe in `.tmp/`);
+   diff module sections (imports, globals, funcs, elems) vs the normal
+   build. Enumerate exactly which auxiliary machinery legacy generator
+   compilation contributes that the IR path (`addGeneratorImports` and
+   friends) does not.
+2. **Route generators through the prepared/compile-once mechanism free
+   functions already use** (`src/codegen/ir-prepared-free-functions.ts`,
+   `computePreparedInheritedIrFirstSkipUnitIds`) once the IR path
+   registers everything the diff found missing. Prefer making the IR claim
+   register the missing pieces over keeping the double-compile.
+3. **Standalone generators stay out of scope** (gate-2 notes above stand:
+   #680 native lowering is a disjoint lane).
+
+### Acceptance
+
+- The probe generator's unit outcome flips to `legacy: false, ir: true`;
+  a for-of driver over it still runs correctly (issue-2035 + generator
+  suites green).
+- `check:ir-only` single-host lane stays READY (async.ts entry contains
+  generator-adjacent shapes — do not regress it).
+- `check:ir-fallbacks` no unintended/post-claim growth; `tsc --noEmit`
+  clean; scoped generator test262 sample (built-ins/GeneratorPrototype +
+  language/generators strides) net-zero vs main.

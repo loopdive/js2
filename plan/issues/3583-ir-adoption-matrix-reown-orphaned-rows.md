@@ -83,3 +83,41 @@ these shapes).
 - Cross-reference: the 2026-07-24 review also recommends #3518's R9 row gain
   an explicit "coverage closure" dependency so this class of gap cannot go
   unscheduled again.
+
+## Implementation Plan (fable, 2026-08-15 — IR-path-only migration session)
+
+The matrix notes have drifted BEHIND the code — several "orphaned" rows
+describe residuals that no longer exist. Live spot-checks on main @
+`7add6938`: `AsExpression`/`NonNullExpression`/`TypeAssertion` have
+transparent pass-through arms in BOTH `from-ast.ts` (:7390) and
+`select.ts` (:5744, :6125); `%` (PercentToken) has lowering arms
+(`from-ast.ts` :10395, :11159); the 13 rows still citing wont-fix #1131
+are stale in `scripts/gen-ir-adoption.mjs`. So this issue is
+measure-first, then triage, then cheap adoptions:
+
+1. **Live-measure every non-ir-owned, non-deferred row.** For each, a
+   minimal probe program through production `compile()` with
+   `trackFallbacks`/`trackIrOutcomes`: does the shape claim? Which
+   rejection reason if not? Bank the probe set in `.tmp/` and the results
+   table in this issue.
+2. **Correct the curated data** in `scripts/gen-ir-adoption.mjs`: fix
+   stale Notes (measured, not assumed), promote rows measured fully
+   claimed (e.g. As/NonNull likely `ir-owned` via transparency),
+   regenerate (`pnpm run gen:ir-adoption`), keep `--check` green.
+3. **Re-own tracking refs without new id allocation** (assignment-book
+   writes are out of scope for this session): point rows at the live
+   owning issue whose scope genuinely covers the residual — #2952
+   (control flow), #2949 (dynamic-value/operand shapes), #3522 (class
+   family), #1373b (await), #3518 (epic) — or re-tag `deferred` with a
+   one-line rationale in the Notes cell. Rows needing a NEW issue get a
+   `TODO(#3518)` marker listed in this file for the next allocation
+   window.
+4. **Implement the genuinely-cheap residuals found by step 1** — expected
+   candidates (verify first): bare `for(;;)`, `~` prefix operator,
+   `typeof` residual arms, named function expressions, empty object
+   literal. Each: selector arm + from-ast lowering + claim-backed test +
+   negative boundary, same-PR matrix row update. Skip anything that
+   turns out non-trivial — file it in the step-3 TODO list instead.
+
+Acceptance unchanged (see above), plus: the measured-results table is in
+this issue, and `pnpm run check:ir-fallbacks` shows no growth.

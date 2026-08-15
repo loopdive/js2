@@ -259,3 +259,37 @@ Verify-first re-audit on main @ `7652f0337` (full document:
   #1131, 12 by done issues, 3 untracked) — now tracked by new issue #3583.
 - R1 groundwork is confirmed landing on main (`4922ed58b`, `1a17b4458`);
   the R2–R8 `depends_on` frontmatter matches this epic's spine exactly.
+
+## Slice: standalone readiness lane + top blockers (fable, 2026-08-15)
+
+Live measurement on main @ `7add6938`: the `check:ir-only` gate has
+exactly ONE lane (single-host WasmGC over 5 playground entries, READY at
+37/37 IR bodies / 0 legacy). The SAME entries compiled with
+`target: "standalone"` collapse: `js/algorithms.ts` = **0 IR / 7 legacy
+bodies**, `js/classes.ts` = 10 IR / 1 legacy. The acceptance criteria
+require standalone/WASI/fast/multi-source matrices; none is measured
+today. This slice adds the standalone lane and attacks its top blockers.
+
+1. **Add a `standalone` lane to `scripts/check-ir-only.ts`**: same 5
+   entries, `target: "standalone"`, per-lane baseline in
+   `scripts/ir-only-baseline.json` per the existing #3519 schema. Baseline
+   HONESTLY at measured current truth (floors/ceilings) — the lane must
+   not be required to be READY to land; it must be required not to
+   regress.
+2. **Diagnose the algorithms.ts 0-IR collapse.** A file that is 100%
+   IR-owned on host emitting zero IR bodies standalone means a mode-gated
+   capability/seal/registration decision, not per-shape gaps — find the
+   single gate (selector capability rows, prepared-component sealing, or
+   resolver registration keyed on host mode) and record it here.
+3. **Fix the top blockers** to raise the standalone lane's IR-body floor;
+   ratchet the baseline with each fix. Known hazards: standalone number
+   boxing goes via `$AnyValue` not `__box_number` (#2955 notes),
+   standalone-floor CI guard (#1897/#2097) — net standalone test262 must
+   not go negative.
+4. **Fast-mode lane** (`fast: true`) same pattern, time permitting —
+   measure, baseline, do not block on READY.
+
+Acceptance: gate reports ≥ 2 lanes; single-host stays READY; standalone
+lane floors ≥ measured-at-landing values; `check:ir-fallbacks` no
+growth; equivalence suite + standalone probes green; `tsc --noEmit`
+clean.

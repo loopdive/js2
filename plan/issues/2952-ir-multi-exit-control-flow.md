@@ -694,3 +694,62 @@ slices 1–2 have partially landed (unlabeled break/continue + do-while are
 `mixed` in the adoption matrix); the remaining scope is labeled forms
 (slice 3), `SwitchStatement`, and `ForInStatement`. Suggested first step:
 the architect-spec slice picking Design A vs B, then dispatch.
+
+## Slice 6 — Implementation Plan (fable, 2026-08-15 — IR-path-only migration session)
+
+Slices 1–5 are merged. Live-verified residuals on main @ `7add6938`
+(`src/ir/select.ts`): `shapeNo("nontail-switch")` (:3326) — a function
+ENDING in a switch is still rejected; string-literal case tests still
+reject (numeric-literal tests only, slice-4 note); for-in remains the
+narrow slice-5 carve-out — `forin-head-value-used` (:4010),
+`forin-receiver-not-dynamic-externref` (:3986), single `var` head only,
+labeled for-in direct. Three sub-slices, each independently landable:
+
+### 6a. Tail-position switch
+
+`isPhase1StatementList` tails admit return/block/if only. Add an
+all-paths-terminate analysis over switch clauses (mirror
+`thenArmTerminates`): a tail switch is claimable iff every clause body
+terminates (return/throw/break-to-switch-exit followed by nothing live)
+and a `default` exists, OR treat no-match fallthrough as function-tail
+(needs the trailing-return shape). Lower via the existing
+`IrInstrSwitch` ladder — no new IR kind; the clause `return`s already
+unwind natively (slice-4 evidence).
+
+### 6b. String-literal case dispatch
+
+`IrInstrSwitch.tests` today are numeric literals. Extend tests to carry
+`{kind:"num", v} | {kind:"str", v}` (or a parallel `strTests` field —
+pick whichever keeps `verifyInstrStructure` rules simplest); selector
+claims a switch whose disc is string-typed and every non-default test is
+a string literal. Lowering: disc into `discSlot` once, then an eq-chain
+`br_if` ladder calling the existing abstract string-equality op (the
+same string.eq the IR already lowers per mode — host `string_equals` /
+native `__str_equals`); `br_table` never applies. Mixed numeric/string
+tests reject (JS strict-equality dispatch cannot match across types
+except never — actually just reject the mixed shape for now).
+
+### 6c. For-in widening — head value used
+
+The #2964 runtime ABI already materializes the key
+(`__for_in_keys/get_idx`): the restriction is selector-side. Allow the
+body to READ the head `var` (the key string, externref/host-string rep):
+drop the `forin-head-value-used` rejection for read-only uses (writes to
+the head stay rejected), bind the head as a loop local assigned from the
+per-iteration key. Then labeled for-in: thread `pendingLoopLabel`
+exactly as slice 3 did for the other loop kinds (the `for.loop` reuse
+means the label machinery already exists — verify IteratorClose is N/A
+for for-in, no iterator to close). Typed-receiver widening stays OUT
+(fast `$AnyValue` carrier is #2949-adjacent).
+
+### Discipline (all sub-slices)
+
+- Selector claim ⇔ lowering capability parity (no new demote usage);
+  each sub-slice flips/annotates its `ir-adoption.md` row via
+  `scripts/gen-ir-adoption.mjs` + `pnpm run gen:ir-adoption`.
+- Tests per sub-slice in `tests/issue-2952-slice6.test.ts`: claim +
+  runtime semantics + negative boundaries + dual-run legacy↔IR equality
+  (the slice-4 pattern).
+- Gates: `check:ir-fallbacks` no growth; `tsc --noEmit`; scoped test262
+  sweep over `language/statements/switch` + `language/statements/for-in`
+  main↔branch outcome diff = zero lines.
