@@ -2388,3 +2388,81 @@ for deeper nested owners; mutable callable ref-cell support; then
 receiver-sensitive/accessor/open-object methods. Each slice must keep the same
 runtime, import, optimized-size, IR-only shadow, and direct-optimization parity
 requirements before retiring its obsolete direct consumer.
+
+### Class-family measurement (2026-08-15)
+
+Measured on `origin/main` `92f78620` before any code change, through the
+production `compile` seam with `experimentalIR: true, trackIrOutcomes: true`
+(target `gc`). `legacy`/`ir` count terminal outcomes with `legacyBodyEmitted` /
+`irBodyEmitted`. The bare-selector seam (`planIrFallbackGateEntry`, the
+fallback ratchet's planner) is **not** usable for this family: it is not
+handed `projectedClassShapesById`, so every nested class reads as
+`body-shape-rejected [nontail-class-unprepared]` there, including shapes that
+demonstrably claim in production. Only terminal outcomes are evidence here.
+
+| #   | Shape                                                | legacy | ir  | Terminal verdict                                                        |
+| --- | ---------------------------------------------------- | -----: | --: | ----------------------------------------------------------------------- |
+| N1  | nested class decl, explicit ctor + 1 method          |      0 |   3 | claims (control)                                                        |
+| N2  | nested class decl, **implicit ctor**, 1 method       |      1 |   0 | `body-shape-rejected@select` on the owner; members never inventoried    |
+| N3  | nested class decl, explicit ctor, **no method**      |      1 |   0 | `body-shape-rejected@select`                                            |
+| N4  | nested class decl, implicit ctor, no method          |      1 |   0 | `body-shape-rejected@select`                                            |
+| N5  | **two** nested classes, ctor + method each           |      0 |   5 | claims                                                                  |
+| N6  | **three** nested classes, ctor + method each         |      0 |   7 | claims                                                                  |
+| N7  | two nested classes, one with implicit ctor           |      3 |   0 | whole owner withdraws atomically                                        |
+| N8  | nested class **expression**, explicit ctor + method  |      0 |   3 | claims (control)                                                        |
+| N9  | nested class **expression**, **implicit ctor**       |      1 |   0 | `body-shape-rejected@select`                                            |
+| N10 | nested class decl, ctor + two methods                |      0 |   4 | claims                                                                  |
+| N11 | nested classes in two different functions            |      0 |   6 | claims                                                                  |
+| N12 | nested class with a static method                    |      1 |   0 | `body-shape-rejected@select`                                            |
+| N13 | nested class with an initialized field               |      1 |   0 | `body-shape-rejected@select`                                            |
+| N14 | nested class with heritage (both nested)             |      3 |   0 | `body-shape-rejected@select`                                            |
+| N15 | **top-level** class, implicit ctor, 1 method         |      0 |   2 | claims (capability control)                                             |
+| N16 | top-level two classes, ctor + method each            |      0 |   5 | claims                                                                  |
+
+Adjacent class-family shapes measured in the same run, for completeness:
+
+| Shape                                            | Terminal verdict                                                                                                                          |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| top-level class expression `const C = class {…}` | `body-shape-rejected` on owner **and** `<module-init>`; members `class-member-unsupported`. Bare-selector arm `expr-new-module-binding-callee:Identifier` |
+| named top-level `const C = class Inner {…}`      | same                                                                                                                                      |
+| computed method name `["get"]()`                 | `class-method@select`                                                                                                                     |
+| generator method `*gen()`                        | `class-member-unsupported@select`                                                                                                         |
+| static `super.make()`                            | `class-method@select` on the caller; owner then `late-preparation-unsupported@resolve`                                                     |
+| subclass of builtin (`extends Error`)            | `class-projection-unsupported@select`                                                                                                     |
+| class with a static field                        | `static-class-initialization@select` on `<module-init>`                                                                                   |
+| top-level `this`-free helper                     | claims (no residual — the `unattributed-arm:helper-internal` row in the matrix is stale)                                                   |
+
+**Cardinality is not a limit.** N5/N6/N11 disprove the "one nested class per
+function" hypothesis outright; the bounded nested-class transaction already
+admits any finite number of them. The real gate is per-class member shape.
+
+**Chosen family: nested classes with an IMPLICIT constructor** (N2 and N9 —
+both the declaration and the exact `const C = class {…}` expression form).
+Rationale:
+
+- It is the single most common ordinary class shape — a class with only
+  methods — and it costs the **whole enclosing function** plus every member,
+  not just the constructor: N2/N9 withdraw `run` entirely and never inventory
+  the members at all. N7 shows one implicit-ctor sibling withdraws an
+  otherwise complete two-class component.
+- The capability already exists and is proven: N15 is the same class shape at
+  top level and compiles once today through the 2026-08-12 plain
+  implicit-constructor checkpoint. Nothing about the `_new`/`_init` support
+  pair, the AST-free allocation wrapper, or the layout ABI is missing.
+- Both barriers are narrow structural gates, not absent lowering:
+  1. `src/ir/class-accessor-safety.ts::isBoundedPreparedNestedOrdinaryClass`
+     ends in `constructorCount === 1 && methodCount > 0`, so an implicit
+     constructor fails the bounded-class predicate outright.
+  2. `src/codegen/ir-plain-implicit-constructors.ts` restricts its support
+     population to `declaration.parent === input.sourceFile` (in both the
+     `new`-scan and the ancestor walk) and to `ts.isClassDeclaration`, so a
+     nested declaration or a class expression can never be staged.
+- It does **not** widen shadow-identity inheritance. The bounded predicate
+  keeps `heritageClauses` rejected (N14 stays direct), so the #4448 shadow-shape
+  surface is untouched by construction. Negative tests pin that explicitly.
+
+Rejected alternative: top-level class expressions. The apparent gain is
+similar, but the barrier is module-global binding ABI plus `<module-init>`
+ownership (`expr-new-module-binding-callee`), which the cross-owner checkpoint
+already deferred ("Module globals also remain deferred"). That is a different
+and materially larger surface than a per-class member-shape gate.
