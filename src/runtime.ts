@@ -71,6 +71,7 @@ import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-ada
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
+import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -4685,6 +4686,8 @@ function _safeGet(
   // the `typeof key === "symbol"` arm below; only standalone mode (object-runtime.ts,
   // never this file) uses i32 symbol ids.
   if (_isWasmStruct(obj)) {
+    const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
+    if (nativeString !== _MISS) return (nativeString as any)[key as any];
     // (#2130) A deleted property reads as `undefined` even when the static
     // struct shape still carries the field (the `__sget_<key>` getter would
     // otherwise return the stale field value). The tombstone is cleared by
@@ -4710,6 +4713,22 @@ function _safeGet(
     // retained while the receiver's static shape was widened.
     const sc = _sidecarGet(obj, key);
     if (sc !== undefined) return sc;
+    // A declared own field shadows a prototype method with the same spelling
+    // (§9.4.2 [[Get]]). This matters when an untyped host call reaches a
+    // compiled class whose field stores a callable closure (Marked's
+    // `parse`/`parseInline` fields) while another class in the module exports
+    // a method of the same name. Resolve the concrete field before the
+    // module-wide method discriminator; otherwise the unrelated method arm
+    // masks the live field or returns a null closure.
+    // Registered class prototypes and class objects intentionally hide their
+    // physical instance fields, so keep their existing allowlist semantics.
+    if (typeof key === "string" && !_prototypeMethodNames.has(obj) && !_staticMethodNames.has(obj)) {
+      const fieldExports = callbackState?.getExports();
+      if (_structHasOwnFieldName(obj, key, fieldExports)) {
+        const getter = fieldExports?.[`__sget_${key}`];
+        if (typeof getter === "function") return getter(obj);
+      }
+    }
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
     if (typeof key === "symbol") {
       const accessor = _wasmStructAccessors.get(obj)?.get(key);
@@ -5483,6 +5502,11 @@ function _readOwnDescriptor(
   prop: string | symbol,
   exports: Record<string, Function> | undefined,
 ): PropertyDescriptor | undefined {
+  if (prop === "length" && exports) {
+    const nativeString = _nativeStringToHost(obj, exports);
+    if (nativeString !== _MISS)
+      return { value: nativeString.length, writable: false, enumerable: false, configurable: false };
+  }
   // (#3200 slice 2) Delete tombstone FIRST: `delete obj[k]` on a struct
   // receiver records the key in `_wasmStructDeletedKeys` (#1334) but the
   // struct FIELD still exists, so the field-name-registry step below would
@@ -5792,84 +5816,12 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
   return _wrapForHost(v, exports);
 }
 
-/**
- * (#3123) Cached host bridges for compiled class methods resolved on
- * registered fnctor-subclass instances — identity-stable per (instance, key).
- */
-const _classMethodHostBridges = new WeakMap<object, Map<string, Function>>();
-
-/**
- * (#3123) Resolve a compiled CLASS method/getter on a registered
- * fnctor-subclass instance (`class C extends F`, F a top-level plain function)
- * via the module's dispatch exports:
- *   - `__member_kind_<key>(recv)` → 0 none / 1 method / 2 getter;
- *   - kind 1 → an identity-stable host function bridging to the 0-arg tag
- *     dispatcher `__call_<key>(recv)` (the iterator protocol: `next()` /
- *     `return()`);
- *   - kind 2 → the getter's RESULT per [[Get]], marshaled host-usably (the
- *     map/filter `get next()` exhaustion shape returns a FRESH closure per
- *     read — do NOT cache).
- * Returns `_MISS` when the exports are absent or the struct carries neither.
- * The method bridge dispatches on the CAPTURED instance (correct for
- * `Call(nextMethod, iterator)` where nextMethod was read from that instance;
- * an extracted re-bind `f.call(other)` is out of scope — documented #3123).
- */
-// (#3673) Per-exports memo of `__member_kind_<key>` lookups. The exports object
-// of a large module (acorn: thousands of exports) is a dictionary-mode object,
-// and this lookup runs for EVERY dynamic property read on an fnctor instance —
-// the template-string + dict-miss cost was a measurable slice of parse CPU.
-// The exports object is immutable after instantiation, so a null (absent) or
-// function verdict per key is stable.
-const _memberKindFnCache = new WeakMap<object, Map<string, Function | null>>();
-
-function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<string, Function> | undefined): any {
-  if (exports === undefined || typeof key !== "string") return _MISS;
-  if (obj == null || typeof obj !== "object" || !_canBeWeakKey(obj)) return _MISS;
-  if (!_fnctorInstanceCtor.has(obj)) return _MISS;
-  let kindCache = _memberKindFnCache.get(exports);
-  if (!kindCache) {
-    kindCache = new Map();
-    _memberKindFnCache.set(exports, kindCache);
-  }
-  let kindFn: Function | null | undefined = kindCache.get(key);
-  if (kindFn === undefined) {
-    const found = exports[`__member_kind_${key}`];
-    kindFn = typeof found === "function" ? found : null;
-    kindCache.set(key, kindFn);
-  }
-  if (kindFn === null) return _MISS;
-  let kind = 0;
-  try {
-    kind = kindFn(obj);
-  } catch {
-    return _MISS;
-  }
-  const cbState = { getExports: () => exports };
-  if (kind === 2) {
-    const getFn = exports[`__call_get_${key}`] as unknown as ((v: any) => any) | undefined;
-    if (typeof getFn !== "function") return _MISS;
-    return _marshalBridgeResult(getFn(obj), cbState);
-  }
-  if (kind === 1) {
-    const callFn = exports[`__call_${key}`] as unknown as ((v: any) => any) | undefined;
-    if (typeof callFn !== "function") return _MISS;
-    let map = _classMethodHostBridges.get(obj);
-    if (!map) {
-      map = new Map();
-      _classMethodHostBridges.set(obj, map);
-    }
-    let fn = map.get(key);
-    if (!fn) {
-      fn = function classMethodHostBridge(this: any) {
-        return _marshalBridgeResult(callFn(obj), cbState);
-      };
-      Object.defineProperty(fn, "name", { value: key, configurable: true });
-      map.set(key, fn);
-    }
-    return fn;
-  }
-  return _MISS;
-}
+const _resolveClassMemberOnInstance = createClassMemberResolver({
+  miss: _MISS,
+  canBeWeakKey: _canBeWeakKey,
+  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object),
+  marshalBridgeResult: _marshalBridgeResult,
+});
 
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).

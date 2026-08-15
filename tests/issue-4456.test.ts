@@ -62,6 +62,21 @@ async function expectCompiles(js: string): Promise<void> {
   expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
 }
 
+/**
+ * Compile and run `js` on the HOST lane and return `test()`.
+ *
+ * The standalone runner above cannot host `eval`, and the eval-lane shapes are
+ * the ones that force half this predicate, so they need their own runner.
+ */
+async function runHost(js: string): Promise<number> {
+  const result = await compile(js, { allowJs: true, fileName: "issue-4456-host.ts", skipSemanticDiagnostics: true });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  const { buildImports } = await import("../src/runtime.js");
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  return (instance.exports as { test(): number }).test();
+}
+
 /** Wrap `body` as the whole of an exported `test()`. */
 const inTest = (body: string): string => `export function test(): number { ${body} }`;
 
@@ -326,14 +341,76 @@ describe("#4456 — same-named nested function declarations in different scopes"
     });
   });
 
+  describe("the gate must SHADOW — a top-of-frame decl owns the name at hoist (B.3.3.3)", () => {
+    // ## What these are, and what they are NOT
+    //
+    // The regression that forced this branch of the predicate is the 24-file
+    // `annexB/…/eval-{func,global}-{block-decl,if-*,switch-*}-existing-fn-no-init`
+    // family: it PASSED on the shipped predicate and went 24× pass→fail (net −22)
+    // in the merge queue when the second cut declined for the whole same-frame
+    // case. Those 24 files are verified directly against the real runner — 24/24
+    // with this predicate, 0/24 with the second cut — and that lane, not this
+    // file, is their guard.
+    //
+    // The cases below are REDUCTIONS of that shape, and they are deliberately
+    // NOT described as the family, because measurement says they are not
+    // equivalent to it. Values returned (2 = correct, the top-of-frame `"outer
+    // declaration"`; 1 = the block-level `"inner declaration"`):
+    //
+    //   revision                      family      these reductions
+    //   pre-#4456 base                PASS        1  (wrong)
+    //   #4456 first cut (shipped)     PASS        1  (wrong)
+    //   #4456 second cut              FAIL        1  (wrong)
+    //   this predicate                PASS        2  (right)
+    //
+    // So a hand reduction of this shape is HARDER than the family: it was wrong
+    // on every previous revision, including the two where the family passed.
+    // Several structural knobs were tried and none closed the gap — module-level
+    // vs in-function placement, `deferTopLevelInit`, string vs numeric vs
+    // non-constant-foldable bodies. The remaining difference is the test262
+    // wrapper's harness prelude, which registers a large number of top-level
+    // functions before the test body and so changes the hoist environment the
+    // predicate sees. Reproducing that faithfully means depending on the
+    // test262 checkout and `wrapTest` from a unit test, which this file does
+    // not do.
+    //
+    // They are kept because they are still real, useful pins — each is a shape
+    // this predicate FIXES relative to every earlier revision — but read them as
+    // "neighbours of the family that this rule also gets right", not as the
+    // family's regression guard.
+    const corners: ReadonlyArray<readonly [string, string]> = [
+      ["direct eval, function scope", `(function() { eval('%%'); }());`],
+      ["direct eval, global scope", `eval('%%');`],
+      ["indirect eval, global scope", `(0,eval)('%%');`],
+    ];
+    const carriers: ReadonlyArray<readonly [string, string]> = [
+      ["block", `{ function f() { return "inner declaration"; } }`],
+      ["switch-case", `switch (1) { case 1: function f() { return "inner declaration"; } }`],
+      ["if-no-else", `if (true) { function f() { return "inner declaration"; } }`],
+    ];
+    const evalArg = (carrier: string) => `init = f;${carrier}function f() { return "outer declaration"; }`;
+
+    for (const [cornerLabel, wrapper] of corners) {
+      for (const [carrierLabel, carrier] of carriers) {
+        it(`${cornerLabel}, ${carrierLabel} carrier — the pre-existing binding is not modified`, async () => {
+          expect(
+            await runHost(`var init;
+${wrapper.replace("%%", evalArg(carrier))}
+export function test(): number { return init() === "outer declaration" ? 2 : 1; }`),
+          ).toBe(2);
+        });
+      }
+    }
+  });
+
   describe("the gate must DECLINE — merge-group regressions from the first cut", () => {
     // Each of these PASSED before #4456 and REGRESSED when the gate shipped, and
     // each is pinned against the state that actually reproduced: every `it` here
     // was re-run against `origin/main`'s un-narrowed predicate and observed to
-    // fail there. The two clauses of the narrowed predicate are independent —
-    // measured 2026-08-15, neither alone fixes both — so both get a pin.
+    // fail there. The clauses are independent — measured 2026-08-15, no one of
+    // them fixes all of these — so each gets a pin.
 
-    it("[scope clause] Annex-B-inapplicable inner block decl must not steal the var binding", async () => {
+    it("[block-vs-block] Annex-B-inapplicable inner block decl must not steal the var binding", async () => {
       // annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js.
       // `g`'s var-scoped `f` is the OUTER block's declaration; the inner block's
       // is deliberately NOT Annex-B applicable (replacing it with `var f` would
@@ -354,16 +431,22 @@ describe("#4456 — same-named nested function declarations in different scopes"
       ).toBe(1);
     });
 
-    it("[scope clause] several same-frame eval declarations keep a resolvable call target", async () => {
+    it("[both top-of-frame] several eval declarations keep a resolvable call target", async () => {
       // annexB/language/eval-code/direct/var-env-lower-lex-catch-non-strict.js,
-      // verbatim. The eval-inline path hoists each synthesized declaration into
-      // the CURRENT frame, so the shadows had no body boundary to be restored
-      // at and accumulated; a later call then resolved to an index that had been
-      // scoped away — `absoluteFuncIndex: unresolved call target
-      // (funcIdx=undefined) baked into a compiled function body`.
+      // verbatim. Each synthesized declaration is reified into the SAME catch
+      // frame, so the shadows had no body boundary to be restored at and
+      // accumulated; a later call then resolved to an index that had been scoped
+      // away — `absoluteFuncIndex: unresolved call target (funcIdx=undefined)
+      // baked into a compiled function body`.
       //
-      // Measured: the OWNER clause alone does NOT fix this one (each incumbent
-      // here does carry an owner record) — only the same-scope decline does.
+      // TWO parts of the predicate are load-bearing here, both measured:
+      //  - `sameFrame` must merge the four DISTINCT `<eval>.ts` SourceFiles the
+      //    four eval calls produce, or they read as cross-frame and the CE comes
+      //    straight back (it did, on the first attempt at the third cut);
+      //  - the same-frame rule must then decline, which it does because BOTH
+      //    sides are top-of-frame — the directional half of the rule.
+      // The OWNER clause alone does not fix this one: each incumbent here does
+      // carry an owner record.
       await expectCompiles(`
         try { throw null; } catch (err) {
           eval('function err() {}');

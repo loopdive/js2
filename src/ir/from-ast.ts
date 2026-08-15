@@ -175,6 +175,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
+  expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
@@ -533,8 +534,36 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * This is the SINGLE predicate that decides the native-map lowering arms, so
    * it is also what the selector's `allowNativeMapStorage` option must agree
    * with — one fact, two readers, no independent mode reads.
+   *
+   * PURE — it never materializes anything. It answers `undefined` until the
+   * `$Map` struct actually exists in this module, which is what makes it safe
+   * to call from a hot path. Use {@link ensureNativeMapStorageType} at the one
+   * site that is genuinely constructing a Map; see that method for why.
    */
   nativeMapStorageType?(): IrType | undefined;
+  /**
+   * The MATERIALIZING twin of {@link nativeMapStorageType}: registers the
+   * `$Map` struct + its runtime helpers if absent, then reports the storage
+   * type.
+   *
+   * The split is load-bearing, not stylistic. #4461 shipped ONE method that
+   * always materialized, and both from-ast call sites asked it BEFORE they knew
+   * they were looking at a Map — `lowerNewExpression` asked on every `new`, and
+   * the module-binding probe on every method receiver. In a native-string or
+   * standalone lane that emitted the entire twelve-function `$Map` runtime
+   * (`__map_new`, `__map_get`, `__map_set`, `__map_has`, `__map_delete`,
+   * `__map_clear`, `__map_size`, the two iterator helpers, `__map_lookup_idx`,
+   * `__hash_anyref`, `__same_value_zero`) plus its struct types into every
+   * module containing a `new` expression. Measured on a two-class module with
+   * no `Map` anywhere: +1,374 bytes, 59 → 71 functions. That is what changed
+   * the wasm hash of 508 test262 files, regressed 297 in
+   * `language/expressions/class/elements`, and failed the standalone
+   * high-water floor.
+   *
+   * So: a QUERY must not emit. Only call this once the construct is PROVEN to
+   * be a `Map`.
+   */
+  ensureNativeMapStorageType?(): IrType | undefined;
   /**
    * (#4461) True when `undefined`-ness of an externref-shaped value is tested
    * by a NATIVE `__extern_is_undefined` function rather than the `env` host
@@ -866,6 +895,12 @@ export interface AstToIrOptions {
    * unsupported storage still demotes.
    */
   readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
+  /**
+   * Host-lane dynamic method names observed while lowering IR. The legacy
+   * finalizer uses this shared set to expose ordinary class-member bridges for
+   * dynamic receivers; standalone/WASI callers may omit it.
+   */
+  readonly hostDynamicClassMethodNames?: Set<string>;
 }
 
 /**
@@ -1232,6 +1267,7 @@ export function lowerFunctionAstToIr(
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
+    hostDynamicClassMethodNames: options.hostDynamicClassMethodNames,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
@@ -1596,6 +1632,19 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         ts.isIdentifier(s.expression.left)
       ) {
         lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
+        continue;
+      }
+      // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
+      // `cond ? a : b;`. The expression evaluates for its effects and its
+      // SSA result is simply never consumed (a discarded ternary becomes an
+      // `if.stmt`, so only the taken arm evaluates). The selector's
+      // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
+      // shape has a dedicated arm above and is refused by that selector arm,
+      // so one reaching here is a real selector↔builder divergence and must
+      // still surface as an unsupported shape rather than being lowered as
+      // an ordinary value.
+      if (!expressionStatementMutatesAtTopLevel(s.expression)) {
+        lowerDiscardedExpression(s.expression, cx);
         continue;
       }
       throw new Error(`ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
@@ -2241,6 +2290,8 @@ interface LowerCtx {
   readonly latticeParamFacts?: LatticeParamFacts;
   /** See {@link AstToIrOptions.numericLocalScalarForDecl}. */
   readonly numericLocalScalarForDecl?: (decl: ts.VariableDeclaration) => "number" | undefined;
+  /** Host-lane dynamic method names observed while lowering IR. */
+  readonly hostDynamicClassMethodNames?: Set<string>;
   /**
    * #1586: module-global allocation-site registry, threaded so lifted-closure
    * builders mint stable ids on the same registry as the outer function.
@@ -4849,9 +4900,14 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * value list is reordered to match.
  */
 function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
-  if (expr.properties.length === 0) {
-    throw new Error(`ir/from-ast: empty object literal not in slice 2 (${cx.funcName})`);
-  }
+  // #4471 — an empty literal is admitted only when the selector proved it
+  // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
+  // `object.new`. The property loop below is already a no-op at zero
+  // properties, so the empty case needs no arm of its own: it falls through to
+  // `emitObjectNew({ fields: [] }, [])`, which the WasmGC/linear resolvers both
+  // register as an ordinary (fieldless) struct. `lowerOrdinaryToPrimitive-
+  // ObjectLiteral` returns null for a zero-property literal, so the
+  // valueOf/toString path is not entered.
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
   const built: { name: string; type: IrType; value: IrValueId }[] = [];
@@ -5999,11 +6055,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
   // `unknown-class-construction` demote at the bottom of this function.
-  const nativeMapStorage = cx.resolver?.nativeMapStorageType?.();
-  if (nativeMapStorage) {
-    const nativeMap = tryLowerNativeMapConstruction(expr, nativeMapStorage, cx);
-    if (nativeMap !== null) return nativeMap;
-  }
+  // The storage type is obtained INSIDE, after the `new Map()` shape is proven
+  // — asking first materialized the whole `$Map` runtime on every `new`.
+  const nativeMap = tryLowerNativeMapConstruction(expr, cx);
+  if (nativeMap !== null) return nativeMap;
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
   }
@@ -6427,10 +6482,15 @@ function nativeMapModuleBinding(
   cx: LowerCtx,
 ): { readonly binding: ModuleBindingGlobal; readonly name: string } | null {
   if (receiver === undefined) return null;
-  const storageType = cx.resolver?.nativeMapStorageType?.();
-  if (!storageType) return null;
+  // Resolve the binding FIRST: it is the cheap discriminator, and resolving a
+  // genuinely native-map binding is itself what registers the `$Map` struct
+  // (`resolveModuleBindingGlobal`'s `native-map` arm). So by the time the PURE
+  // storage-type query below runs, the struct exists exactly when it should —
+  // and for every other receiver we have emitted nothing at all.
   const binding = cx.resolver?.resolveModuleBinding?.(receiver);
-  if (!binding || !irTypeEquals(binding.type, storageType)) return null;
+  if (!binding) return null;
+  const storageType = cx.resolver?.nativeMapStorageType?.();
+  if (!storageType || !irTypeEquals(binding.type, storageType)) return null;
   return { binding, name: receiver.text };
 }
 
@@ -6499,10 +6559,15 @@ function tryLowerNativeMapMethodCall(
  * the native-map `writeValueMatches` arm), so anything else that reaches here
  * is drift rather than an unsupported source.
  */
-function tryLowerNativeMapConstruction(expr: ts.NewExpression, storageType: IrType, cx: LowerCtx): IrValueId | null {
+function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
+  // Every cheap, PURE rejection first. Only a proven ambient `new Map()` may
+  // reach the materializing resolver call below — see
+  // `ensureNativeMapStorageType` for what asking too early cost.
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Map") return null;
   if ((expr.arguments?.length ?? 0) !== 0) return null;
   if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) return null;
+  const storageType = cx.resolver?.ensureNativeMapStorageType?.();
+  if (!storageType) return null;
   const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
   if (result === null) throw new Error(`ir/from-ast: native Map allocator returned void (${cx.funcName})`);
   return result;
@@ -6981,6 +7046,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   if (recvType.kind === "dynamic") {
+    // Preserve the static property name for the host-side ordinary-class
+    // bridge. IR's dynamic runtime helper intentionally accepts an arbitrary
+    // key at execution time, so the finalizer otherwise cannot know which
+    // compiled class methods need `__member_kind_*`/`__call_*` exports.
+    cx.hostDynamicClassMethodNames?.add(methodName);
     const firstArgumentText = expr.arguments[0]?.getText();
     const isNarrowStringReplace =
       methodName === "replace" &&
@@ -9187,6 +9257,14 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
         lowerIncrementDecrement(stmt.expression.operand, op, cx);
         return;
       }
+    }
+    // (#4459) Value-discarding statement inside a body buffer — the same
+    // `lowerDiscardedExpression` the top-level walker uses. A discarded
+    // ternary collects one buffer per arm and emits `if.stmt` (#2952
+    // slice 2), which nests correctly inside loop / try / switch bodies.
+    if (!expressionStatementMutatesAtTopLevel(stmt.expression)) {
+      lowerDiscardedExpression(stmt.expression, cx);
+      return;
     }
     throw new Error(`ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }

@@ -1843,6 +1843,9 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
   const multiAst = analyzeFiles(entryPath, {
     allowJs: options.allowJs,
     skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+    // #4452 — tsconfig discovery / opt-out. Omitted when unset so the
+    // default (search upward from the entry) stays the analyzer's own.
+    ...(options.tsconfig !== undefined ? { tsconfig: options.tsconfig } : {}),
   });
 
   for (const diag of multiAst.diagnostics) {

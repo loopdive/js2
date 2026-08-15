@@ -12,6 +12,7 @@ import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
+import { exactClassExpressionTypeName } from "../class-expression-identity.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { funcSignatureOf } from "../func-space.js";
@@ -377,7 +378,11 @@ export function resolveReceiverMethodClassName(
 ): string | undefined {
   const symbolClassName = receiverType.getSymbol()?.name;
   if (!ts.isPrivateIdentifier(propAccess.name)) {
-    return canonicalClassExpressionName(ctx, symbolClassName);
+    // TypeScript reuses the class-expression display name for unrelated
+    // declarations (Marked has both `class l` Lexer and `class l` Parser).
+    // Prefer declaration identity over that display name so an imported class
+    // alias cannot resolve to whichever same-named class was collected last.
+    return exactClassExpressionTypeName(ctx, receiverType) ?? canonicalClassExpressionName(ctx, symbolClassName);
   }
 
   const privateMember = classifyPrivateMember(ctx, propAccess.name);

@@ -61,6 +61,7 @@ import {
 } from "./expressions/helpers.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { definedFuncAt } from "./func-space.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
@@ -1956,6 +1957,35 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
   const staticReceiver = skipTransparentExpressions(expr.expression);
   if (ts.isIdentifier(staticReceiver)) {
     const objName = staticReceiver.text;
+    if (
+      process.env.DEBUG_MARKED_CODEGEN === "1" &&
+      (objName === "Lexer" ||
+        objName === "Parser" ||
+        propName === "lex" ||
+        propName === "lexInline" ||
+        propName === "parse" ||
+        propName === "parseInline")
+    ) {
+      const construct = objType.getConstructSignatures?.() ?? [];
+      console.error(
+        "[marked-static-read]",
+        objName,
+        "type",
+        objType.getSymbol()?.name,
+        "exact",
+        exactClassExpressionTypeName(ctx, objType),
+        "constructReturn",
+        construct[0]?.getReturnType?.().getSymbol?.()?.name,
+        "constructExact",
+        construct[0] ? exactClassExpressionTypeName(ctx, construct[0].getReturnType()) : undefined,
+        "mapped",
+        ctx.classExprNameMap.get(objName),
+        "classSet",
+        ctx.classSet.has(objName),
+        "moduleGlobal",
+        ctx.moduleGlobals.get(objName),
+      );
+    }
 
     // (#1639) `genFn.prototype` where `genFn` is a `function*` / `async function*`
     // declaration must return the intrinsic `%GeneratorPrototype%` /
@@ -1990,7 +2020,17 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     }
 
     // Resolve class expressions (var C = class {}) through the expr-name map
-    const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
+    // Imported/aliased class values are often represented by an externref
+    // module binding, so their bare identifier is not present in
+    // `classExprNameMap`. Recover the declaration-identity synthetic class
+    // from the constructor's instance return type before falling back to the
+    // display name; otherwise `Lexer.lex`/`Parser.parse` are lowered through
+    // the generic dynamic property path and their returned value is lost.
+    const constructReturnType = objType.getConstructSignatures?.()[0]?.getReturnType?.();
+    const resolvedClass =
+      ctx.classExprNameMap.get(objName) ??
+      (constructReturnType ? exactClassExpressionTypeName(ctx, constructReturnType) : undefined) ??
+      objName;
     if (ctx.classSet.has(resolvedClass)) {
       const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
       if (__r !== PA_FALLTHROUGH) return __r;

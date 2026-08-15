@@ -689,6 +689,16 @@ export interface CompileOptions {
   hardened?: boolean;
   /** Skip semantic diagnostics for faster compilation (checker still available for type queries) */
   skipSemanticDiagnostics?: boolean;
+  /**
+   * #4452 — how `compileFiles` picks the TypeScript `compilerOptions` it
+   * type-checks the project under. Unset (default) searches upward from the
+   * entry file for the nearest `tsconfig.json` and uses its options, so
+   * js2wasm agrees with `tsc` about the project it is compiling; a string
+   * names a specific config file; `false` forces the legacy hardcoded option
+   * set. Only the on-disk `compileFiles` path reads this — the in-memory
+   * `compileMulti`/`compile` paths have no project on disk.
+   */
+  tsconfig?: string | false;
   /** Generate a WIT (WebAssembly Interface Types) file from exported functions.
    *  When set, the result will include a `wit` field with the WIT interface definition.
    *  Value can be true (derive package name from fileName/moduleName) or an object with
