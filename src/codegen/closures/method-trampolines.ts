@@ -221,6 +221,23 @@ function coerceTrampolineThisSlot(
   // an absent receiver.  Keeping the nullable value also avoids narrowing a
   // provisional signature before the method body pass settles its ABI.
   if (!methodUsesThis) return;
+  // Reconcile ONLY an `externref` carrier — the late-type-resolution case this
+  // helper exists for. Every *reference* target is deliberately left alone.
+  //
+  // The nullable spelling produced by `buildTrampolineThisSlot` is LOAD-BEARING,
+  // not an approximation. For a receiver that is non-null but does not `ref.test`
+  // as this struct (`obj.m.call(otherShape)` — #2025's deliberate passthrough)
+  // the slot holds `ref.null <struct>`. Coercing that toward a NON-nullable
+  // target emits a null-eliminating cast, which traps at the ABI boundary
+  // ("dereferencing a null pointer") instead of letting the callee observe an
+  // absent receiver.
+  //
+  // The previous `source.kind === methodThisType.kind` guard did not catch this:
+  // the common case is `ref_null <S>` → `ref <S>` — the SAME struct, differing
+  // only in nullability — and `"ref_null" !== "ref"`, so the guard fell through
+  // and emitted the cast. That trap is what broke private-method extraction
+  // (`this.#m.call(o)`), turning two test262 failures into hard traps.
+  if (methodThisType.kind !== "externref") return;
   const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
   if (isStructRefCarrier(source) && isStructRefCarrier(methodThisType)) {
     // Same carrier family.  Same struct ⇒ already compatible up to

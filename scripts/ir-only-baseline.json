@@ -15,12 +15,12 @@
     "standalone": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 17,
-      "irBodyEmittedFloor": 17,
+      "emittedFloor": 19,
+      "irBodyEmittedFloor": 19,
       "legacyBodyEmittedCeiling": 27,
-      "unsupportedCeiling": 20,
+      "unsupportedCeiling": 18,
       "unsupportedByCode": {
-        "select/body-shape-rejected": 5,
+        "select/body-shape-rejected": 3,
         "select/host-surface-unavailable": 6,
         "select/call-graph-closure": 3,
         "select/date-constructor-unsupported": 1,

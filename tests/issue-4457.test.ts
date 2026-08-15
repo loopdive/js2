@@ -54,16 +54,23 @@ describe("#4457 standalone host-surface rejections are typed, not body-shape-rej
   it("leaves the residual body-shape-rejected bucket at the genuinely shape-owned units", async () => {
     const lane = await observeStandaloneLane();
     const counts = unsupportedByCode(lane.entries.flatMap((entry) => entry.outcomes));
-    // calendar renderCal/updFoot (HTMLElement module storage), algorithms
-    // fibMemo + <module-init> (native $Map — #4461), async delay (host async).
-    expect(counts["select/body-shape-rejected"]).toBe(5);
+    // calendar renderCal/updFoot (HTMLElement module storage) and async delay
+    // (host async). The algorithms pair (`fibMemo` + `<module-init>`) was the
+    // other two until #4461 gave the native `$Map` its own IR storage kind;
+    // this count is a residual, so it moves DOWN as those chains land.
+    expect(counts["select/body-shape-rejected"]).toBe(3);
   });
 
-  it("is a pure re-bucketing: standalone emitted and total-unsupported counts are unmoved", async () => {
+  it("is a pure re-bucketing: standalone emitted + unsupported still covers every terminal", async () => {
     const lane = await observeStandaloneLane();
     const outcomes = lane.entries.flatMap((entry) => entry.outcomes);
-    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(17);
-    expect(outcomes.filter((outcome) => outcome.kind === "unsupported")).toHaveLength(20);
+    // #4457 itself moved NOTHING between these two counts (17/20). #4461 then
+    // claimed the two native-`$Map` units, so the split is 19/18 — the SUM is
+    // what this test protects: a reclassification must never make a unit
+    // disappear from the lane's accounting.
+    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(19);
+    expect(outcomes.filter((outcome) => outcome.kind === "unsupported")).toHaveLength(18);
+    expect(outcomes).toHaveLength(37);
     // The typed reason must never be minted as an `invariant` outcome.
     expect(outcomes.filter((outcome) => outcome.kind === "invariant")).toHaveLength(0);
   });
