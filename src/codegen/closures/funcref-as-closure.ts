@@ -156,6 +156,16 @@ function emitMemoizedNestedFnClosure(
       (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
       liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
       !recordedSlotHasLiveBoxType;
+    const useLiveImmutableBoxValue =
+      !cap.mutable &&
+      liveBoxLocalIdx !== undefined &&
+      liveBox !== undefined &&
+      liveBoxType !== undefined &&
+      (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
+      liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
+      cap.valType !== undefined &&
+      cap.valType.kind !== "ref" &&
+      cap.valType.kind !== "ref_null";
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
@@ -190,6 +200,9 @@ function emitMemoizedNestedFnClosure(
         if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
         fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
       }
+    } else if (useLiveImmutableBoxValue) {
+      fctx.body.push({ op: "local.get", index: liveBoxLocalIdx! });
+      fctx.body.push({ op: "struct.get", typeIdx: liveBox!.refCellTypeIdx, fieldIdx: 0 });
     } else if (useLiveImmutableBox) {
       fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
     } else if (capUnresolvedHere && ctx.capturedGlobals.has(cap.name)) {
@@ -202,7 +215,27 @@ function emitMemoizedNestedFnClosure(
       }
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
+      const sourceType = getLocalType(fctx, capSourceIdx);
+      // The enclosing frame may expose an immutable capture through the
+      // canonical ref-cell created for a sibling/earlier nested function. The
+      // closure ABI for this capture remains its raw value type, so store the
+      // cell's value in the new closure rather than the cell object itself.
+      // Without this unwrap a later `new CapturedConstructor()` receives a
+      // Wasm struct and the host constructor bridge reports "not a
+      // constructor".
+      const sourceIsCanonicalBox =
+        !cap.mutable &&
+        liveBox !== undefined &&
+        sourceType !== undefined &&
+        (sourceType.kind === "ref" || sourceType.kind === "ref_null") &&
+        sourceType.typeIdx === liveBox.refCellTypeIdx &&
+        cap.valType !== undefined &&
+        cap.valType.kind !== "ref" &&
+        cap.valType.kind !== "ref_null";
       fctx.body.push({ op: "local.get", index: capSourceIdx });
+      if (sourceIsCanonicalBox) {
+        fctx.body.push({ op: "struct.get", typeIdx: liveBox!.refCellTypeIdx, fieldIdx: 0 });
+      }
     }
   }
   // #1205 Stage 3: after all value captures, push the boxed TDZ flag refs
