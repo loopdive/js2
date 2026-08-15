@@ -58,18 +58,21 @@
  * ## Scope of this slice — deliberately the narrowest site with the measured effect
  *
  * Only `C.prototype`, only `ctx.standalone`, and only when the class has at
- * least one installable instance METHOD and a class-object singleton to point
- * `constructor` at. In particular:
+ * least one installable instance METHOD or ACCESSOR (#4455) and a class-object
+ * singleton to point `constructor` at. In particular:
  *
  *  - The CLASS OBJECT (`__class_<C>`, the 179/816 static-receiver files) is NOT
  *    converted. `new-super.ts::emitDynamicNewFallback` `ref.test`s the
  *    class-object value against each `$ClassName` struct type BY DESIGN, so
  *    converting it would silently break value-bound `new K(...)`. Rolls to a
  *    later slice behind that blocker.
- *  - ACCESSORS are excluded: `ctx.classMethodSet` holds `ts.isMethodDeclaration`
- *    members only, so getters/setters never resolve here. They need real
- *    accessor descriptors (`$get`/`$set`), not a data property whose value is
- *    the getter function — installing the latter would be a silent wrong answer.
+ *  - ACCESSORS were excluded by this slice and are handled since #4455 by
+ *    `class-proto-accessors.ts` — as REAL accessor properties
+ *    (`__defineProperty_accessor` → `$PropEntry.$get/$set`), never as a data
+ *    property whose value is the getter function, which would be a silent wrong
+ *    answer. `ctx.classMethodSet` still holds `ts.isMethodDeclaration` members
+ *    only, so the method arm below is unchanged; the accessor arm keys off
+ *    `ctx.classAccessorSet`.
  *  - PRIVATE elements are excluded: `resolveClassMemberName` mangles `#m` to
  *    `__priv_m`, which is not a spec-visible key and must never appear in the
  *    own-key surface. Several tests assert the private name is absent.
@@ -88,6 +91,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
+import { emitClassProtoAccessorInstalls, installableClassAccessors } from "./class-proto-accessors.js";
 
 /**
  * §17 / §15.7.14 method descriptor attributes — `{writable: true,
@@ -137,7 +141,12 @@ export function standaloneClassProtoObjectApplies(ctx: CodegenContext, className
   // `tryEmitConstructorViaTag`'s `__tag` route would stop working. Keep the
   // legacy struct for those (builtin-parent subclasses, #1366a).
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
-  return installableMethodNames(ctx, className).length > 0;
+  // (#4455) An accessor-only class qualifies too. Before this, `class C { set
+  // m(x) {} }` kept the legacy defaulted struct, so `gOPD(C.prototype,"m")`
+  // answered `undefined` — the R1 residual of #4440. The accessor members are
+  // installed as REAL accessor properties (`class-proto-accessors.ts`), never
+  // as data properties holding the function.
+  return installableMethodNames(ctx, className).length > 0 || installableClassAccessors(ctx, className).length > 0;
 }
 
 /**
@@ -165,6 +174,11 @@ export function emitStandaloneClassProtoObject(
 
   const structTypeIdx = ctx.structMap.get(className)!;
   const methodNames = installableMethodNames(ctx, className);
+  const accessors = installableClassAccessors(ctx, className);
+  // (#4455) The accessor store is a separate native from the data-property one;
+  // a class that has accessors and cannot reach it must keep the legacy struct
+  // rather than publish a prototype missing those members.
+  if (accessors.length > 0 && ctx.funcMap.get("__defineProperty_accessor") === undefined) return false;
 
   const objLocal = allocLocal(fctx, `__class_proto_obj_${fctx.locals.length}`, { kind: "externref" });
   const initBody: Instr[] = [
@@ -198,6 +212,16 @@ export function emitStandaloneClassProtoObject(
       fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
       fctx.body.push({ op: "call", funcIdx: defineIdx });
       fctx.body.push({ op: "drop" }); // helper returns the target; discard
+    }
+
+    // (#4455) Accessors, after the methods so own-key order stays declaration
+    // order for a body that mixes both (`classMethodNames` is one ordered list;
+    // methods and accessors are two disjoint filters over it — a body that
+    // interleaves them enumerates methods-then-accessors, which no test in the
+    // measured population asserts and which the pre-#4455 tree could not
+    // express at all, having no accessor keys to order).
+    if (ok && !emitClassProtoAccessorInstalls(ctx, fctx, className, objLocal, structTypeIdx, accessors)) {
+      ok = false;
     }
 
     if (ok) {
