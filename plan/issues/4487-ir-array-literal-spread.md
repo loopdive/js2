@@ -1,7 +1,8 @@
 ---
 id: 4487
 title: "IR: adopt SPREAD in array literals (`[...a, x]`) for statically-provable source lengths"
-status: in-progress
+status: done
+completed: 2026-08-15
 assignee: ttraenkler/opus-4487
 sprint: current
 created: 2026-08-15
