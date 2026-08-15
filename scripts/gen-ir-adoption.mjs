@@ -69,8 +69,8 @@ const SECTIONS = [
       [
         "`ForOfStatement`",
         "mixed",
-        'Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof` (measured 2026-08-15, #3583 — the old "slice 6 sentinel" note named the wrong arm).',
-        "#3518",
+        "Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof`. #4470 measured what happens if that arm is lifted: the head itself lowers fine (element slot + one `vec.get` per leaf, reusing `lowerArrayPattern`), but the ELEMENT CARRIER is the real blocker — a vec whose element is itself a vec is unrepresentable, so `number[][]` dies at `resolve` (`array element TypeNode ArrayType could not be lowered to a primitive ValType`) and `string[][]`/`any[][]` die as a HARD `invariant` in `prepared-vector-support.ts` (elements must be `f64`/`i32`/`externref`). Lifting `nontail-forof` alone turns working legacy programs into compile errors — fix the nested-vec carrier FIRST.",
+        "#3518, #4470",
       ],
       ["`WhileStatement`", "ir-owned", "—", "—"],
       [
