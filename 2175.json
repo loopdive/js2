@@ -1,9 +1,10 @@
 {
   "id": "2175",
-  "assignee": "ttraenkler/se-2175",
-  "status": "released",
-  "branch": "issue-2175-standalone-builtin-prototype-readers",
-  "claimed_at": "2026-06-16T05:16:39Z",
-  "updated_at": "2026-07-23T15:55:37Z",
-  "released_at": "2026-07-23T15:55:37Z"
+  "assignee": "claude/es6-team-reflection",
+  "requested_by": "claude/es6-team-reflection",
+  "status": "in-progress",
+  "branch": "claude/es6-100-percent-pass-rate-wedr55",
+  "claimed_at": "2026-08-15T16:47:44Z",
+  "updated_at": "2026-08-15T16:47:44Z",
+  "write_id": "11762-3x0g5ujd"
 }
