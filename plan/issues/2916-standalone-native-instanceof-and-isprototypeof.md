@@ -912,6 +912,40 @@ Also green on this branch: all **8 equivalence shards**
 `tests/issue-3962-native-user-instanceof.test.ts`,
 `tests/issue-4276-instanceof-object-family.test.ts`, `tests/issue-2994.test.ts`.
 
+### Was the 59-file population itself a hiding filter? Checked — no, but it exposed a stale scale claim
+
+The conversion count came from the **59 sole-leak** files, which is a FILTER: the
+baseline also lists **1,501 files naming `env::__instanceof_check` alongside other
+imports**, excluded on the assumption "they keep leaking the others, so they can't
+convert". That assumption was never measured, and it is derived from the
+baseline's error STRINGS rather than from compiling on this branch's base — so if
+another lane eliminated a co-occurring import after the baseline was captured, the
+file is effectively sole-leak now and this change converts it. That would be a
+conversion the count MISSES.
+
+Measured: 150-file deterministic sample (seed 20260815) of the 1,501, compiled on
+branch and on base.
+
+| | branch | base |
+| --- | ---: | ---: |
+| zero-import | 131 | 131 |
+| still leaking | 19 | 19 |
+| **still emitting `__instanceof_check`** | **0** | **0** |
+
+Output byte-identical between the two trees. **Two findings:**
+
+1. **The filter hid nothing attributable to this change** — zero delta on the
+   sample, so 59 stands as the population this change converts.
+2. **The baseline's co-leak population is materially STALE, and the "1,560 files
+   name it" figure must not be quoted as scale.** Not one sampled file still
+   emits `__instanceof_check` on current main; earlier slices (#2998, #3962,
+   Slice A, #4276) resolve those sites statically now. Corrected in the module
+   header, which had quoted 1,560.
+
+The check was worth running for the second finding alone, and the reasoning that
+would have skipped it — "those files keep leaking anyway, it wouldn't move the
+number" — is exactly the reasoning that keeps an unexamined filter alive.
+
 ### The WASI half of the gate, measured rather than inferred
 
 `noJsHost` is `ctx.wasi || ctx.standalone` (`js-errors.ts:29`) — **two** targets,

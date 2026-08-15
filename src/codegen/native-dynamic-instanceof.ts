@@ -16,10 +16,16 @@
  * the module does not instantiate and the #2961 leak guard refuses the test.
  *
  * Measured on the 2026-08-15 standalone baseline: **59 files name
- * `env::__instanceof_check` as their SOLE host import** and **1,560 name it at
- * all**. It is the single import standing between ordinary `instanceof` code and
- * a genuinely host-free module — which is the deliverable here. Conformance rows
- * are the secondary metric (see the issue's tiering).
+ * `env::__instanceof_check` as their SOLE host import**. It is the single import
+ * standing between ordinary `instanceof` code and a genuinely host-free module —
+ * which is the deliverable here. Conformance rows are the secondary metric (see
+ * the issue's tiering).
+ *
+ * The baseline ALSO lists ~1,500 files naming it alongside other imports, but do
+ * not quote that as scale: it is stale. A 150-file deterministic sample of that
+ * population, compiled on current main, has **zero** files still emitting
+ * `__instanceof_check` — earlier slices (#2998, #3962, Slice A, #4276) resolve
+ * those sites statically now. Only the 59 are live.
  *
  * ## What the runtime can actually decide, and what it cannot
  *
