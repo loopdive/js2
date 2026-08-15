@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-15T00:19:32.807Z",
-  "baseline_generated_at": "2026-08-15T00:19:32.808Z",
-  "baseline_sha": "dde9f5f382fd695ba5dab249c04e35fbaa494db6",
+  "timestamp": "2026-08-15T00:48:03.547Z",
+  "baseline_generated_at": "2026-08-15T00:48:03.547Z",
+  "baseline_sha": "adfa21c32f025f029827082e49685cca8ce1c50e",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -12,8 +12,8 @@
     "total": 43621,
     "pass": 30331,
     "fail": 9625,
-    "compile_error": 3639,
-    "compile_timeout": 7,
+    "compile_error": 3638,
+    "compile_timeout": 8,
     "skip": 19,
     "compilable": 39956,
     "host_free_pass": 30331,
@@ -23,8 +23,8 @@
         "total": 42535,
         "pass": 29447,
         "fail": 9444,
-        "compile_error": 3618,
-        "compile_timeout": 7,
+        "compile_error": 3617,
+        "compile_timeout": 8,
         "skip": 19,
         "compilable": 38891,
         "host_free_pass": 29447,
@@ -59,8 +59,8 @@
         "total": 43621,
         "pass": 30331,
         "fail": 9625,
-        "compile_error": 3639,
-        "compile_timeout": 7,
+        "compile_error": 3638,
+        "compile_timeout": 8,
         "skip": 19,
         "compilable": 39956,
         "host_free_pass": 30331,
@@ -71,8 +71,8 @@
         "total": 48735,
         "pass": 30706,
         "fail": 12125,
-        "compile_error": 5782,
-        "compile_timeout": 7,
+        "compile_error": 5781,
+        "compile_timeout": 8,
         "skip": 115,
         "compilable": 42831,
         "host_free_pass": 30706,
@@ -85,8 +85,8 @@
     "total": 43621,
     "pass": 30331,
     "fail": 9625,
-    "compile_error": 3639,
-    "compile_timeout": 7,
+    "compile_error": 3638,
+    "compile_timeout": 8,
     "skip": 19,
     "compilable": 39956,
     "host_free_pass": 30331,
@@ -96,8 +96,8 @@
     "total": 48735,
     "pass": 30706,
     "fail": 12125,
-    "compile_error": 5782,
-    "compile_timeout": 7,
+    "compile_error": 5781,
+    "compile_timeout": 8,
     "skip": 115,
     "compilable": 42831,
     "host_free_pass": 30706,
@@ -107,8 +107,8 @@
     "total": 41110,
     "pass": 28299,
     "fail": 9271,
-    "compile_error": 3516,
-    "compile_timeout": 5,
+    "compile_error": 3515,
+    "compile_timeout": 6,
     "skip": 19,
     "compilable": 37570,
     "host_free_pass": 28299,
@@ -141,8 +141,8 @@
       "total": 42535,
       "pass": 29447,
       "fail": 9444,
-      "compile_error": 3618,
-      "compile_timeout": 7,
+      "compile_error": 3617,
+      "compile_timeout": 8,
       "skip": 19,
       "compilable": 38891,
       "host_free_pass": 29447,
@@ -804,8 +804,8 @@
       "path": "built-ins/TypedArray",
       "pass": 230,
       "fail": 1031,
-      "compile_error": 185,
-      "compile_timeout": 0,
+      "compile_error": 184,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 230
@@ -1203,7 +1203,7 @@
     "negative_test_fail": 14,
     "null_deref": 244,
     "oob": 24,
-    "other": 3310,
+    "other": 3309,
     "promise_error": 76,
     "range_error": 14,
     "runtime_error": 232,
@@ -1288,9 +1288,9 @@
           "Proposals": 4471
         },
         "sample_files": [
-          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/subtract/basic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/until/roundingmode-halfExpand.js",
+          "test/built-ins/Temporal/PlainDate/prototype/subtract/basic.js",
+          "test/built-ins/Temporal/Instant/prototype/since/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/subtract/argument-duration-max-plus-min-date.js",
           "test/built-ins/Temporal/Instant/prototype/until/argument-string-calendar-annotation.js"
         ],
@@ -1331,14 +1331,14 @@
           "test/built-ins/AsyncDisposableStack/proto-from-ctor-realm.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/gets-value-Symbol.dispose-property-after-trying-Symbol.asyncDispose.js",
           "test/built-ins/AsyncDisposableStack/prototype/disposeAsync/rejects-with-error-as-is-if-only-one-error-during-disposal.js",
-          "test/built-ins/DisposableStack/prototype/use/this-does-not-have-internal-disposablestate-throws.js"
+          "test/built-ins/DisposableStack/newtarget-prototype-is-not-object.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: true Expected a TypeError to be thrown but no exception was thrown at all",
           "other:L#:## Missing import for constructor: AsyncDisposableStack_new; L#:## Missing import for constructor: AsyncDisposableStack_new; L#:## Missing import for constructor: AsyncDisposableStack_new; L#:## Missing import for constructor: AsyncDispo",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_defer, env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new (##)",
-          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)"
+          "other:L#:## Codegen error: standalone Reflect.construct distinct NewTarget is not implemented for this target carrier (##)."
         ]
       },
       {
@@ -1453,8 +1453,8 @@
           "test/built-ins/JSON/stringify/replacer-array-abrupt.js",
           "test/built-ins/JSON/parse/reviver-get-name-err.js",
           "test/built-ins/JSON/parse/reviver-object-non-configurable-prop-delete.js",
-          "test/built-ins/JSON/stringify/replacer-array-proxy-revoked-realm.js",
-          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js"
+          "test/built-ins/JSON/parse/reviver-array-length-coerce-err.js",
+          "test/built-ins/JSON/stringify/value-tojson-not-function.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: JSON.stringify of this value is not yet supported by the native JSON provider (##). Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; numbers, objects, arrays, strings, and JSON.parse require the Phas",
@@ -1947,8 +1947,8 @@
         "statuses": {
           "pass": 0,
           "fail": 2756,
-          "compile_error": 509,
-          "compile_timeout": 3,
+          "compile_error": 508,
+          "compile_timeout": 4,
           "skip": 0,
           "total": 3268,
           "host_free_pass": 0
@@ -1959,7 +1959,7 @@
           "host_import_leak": 454,
           "null_deref": 69,
           "wasm_compile": 18,
-          "other": 45,
+          "other": 44,
           "oob": 17,
           "illegal_cast": 45,
           "range_error": 6
@@ -1983,15 +1983,15 @@
           "test/built-ins/TypedArray/prototype/filter/speciesctor-get-species-abrupt.js",
           "test/built-ins/TypedArray/prototype/at/returns-undefined-for-out-of-range-index.js",
           "test/built-ins/TypedArray/prototype/set/BigInt/array-arg-return-abrupt-from-toobject-offset.js",
-          "test/built-ins/TypedArray/prototype/toLocaleString/length.js",
-          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js"
+          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
+          "test/built-ins/TypedArray/prototype/toLocaleString/length.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a undefined to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: The value of `typeof TypedArray.prototype.at` is \"function\" Expected SameValue(«\"undefined\"», «\"function\"») to be true",
           "assertion_fail:Test262Error: undefined Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
-          "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)"
+          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
+          "type_error:TypeError: Cannot convert undefined or null to object"
         ]
       },
       {
@@ -2215,8 +2215,8 @@
         "sample_files": [
           "test/built-ins/Date/prototype/Symbol.toPrimitive/hint-number-first-invalid.js",
           "test/built-ins/Date/S15.9.3.1_A4_T2.js",
-          "test/built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js",
           "test/built-ins/Date/UTC/fp-evaluation-order.js",
+          "test/built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js",
           "test/built-ins/Date/parse/time-value-maximum-range.js"
         ],
         "sample_signatures": [
@@ -2716,7 +2716,7 @@
           "test/language/expressions/object/method-definition/async-gen-meth-params-trailing-comma-multiple.js",
           "test/language/statements/async-function/try-throw-finally-reject.js",
           "test/built-ins/Promise/allSettled/invoke-resolve.js",
-          "test/built-ins/Promise/race/invoke-resolve-get-error-reject.js"
+          "test/built-ins/Promise/race/iter-assigned-symbol-reject.js"
         ],
         "sample_signatures": [
           "wasm_compile:L#:## invalid Wasm binary (WebAssembly.Module(): Compiling function ##:\"__closure_45\" failed: extern.convert_any[#] expected type shared anyref, found array.get of type i32 @+#) [in __closure_45()] [@+#] [wat: (type $type20 (func (param f64",
@@ -3006,7 +3006,7 @@
           "test/built-ins/Atomics/sub/non-views.js",
           "test/built-ins/SharedArrayBuffer/allocation-limit.js",
           "test/built-ins/Atomics/compareExchange/descriptor.js",
-          "test/built-ins/Atomics/xor/validate-arraytype-before-value-coercion.js"
+          "test/built-ins/Atomics/notify/descriptor.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
