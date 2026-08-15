@@ -1499,7 +1499,15 @@ function compileExpressionInner(
     return compileArrayLiteral(ctx, fctx, expr);
   }
 
-  if (ts.isAsExpression(expr)) {
+  // (#4458) All three type-erased wrappers — the operand IS the value, so
+  // forward `expectedType` unchanged and let the operand compile into exactly
+  // the context the wrapper occupied. `<T>x` and `x satisfies T` used to have no
+  // arm here and fell through to the `Unsupported expression` reporter; the
+  // #1919 speculative rollback in `compileExpressionBody` then discarded that
+  // diagnostic along with the partial body and pushed a default instead, so both
+  // silently compiled to 0 rather than erroring. IR unwraps all three (#3583),
+  // so only bodies the IR selector rejects were affected.
+  if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isSatisfiesExpression(expr)) {
     return compileExpressionInner(ctx, fctx, expr.expression, expectedType);
   }
 

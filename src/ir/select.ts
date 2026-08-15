@@ -160,6 +160,28 @@ export type IrFallbackReason =
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
   | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
+  // (#4457) The unit references an ambient HOST surface (`document`, `console`,
+  // `window`, …) in a target whose capability policy has no ambient JS host:
+  // standalone / wasi / strictNoHostImports, i.e. `hostExternCapability` →
+  // "defer". The label names the MECHANISM (the IR's host-extern surface is
+  // capability-deferred for this target), which is why it is not
+  // `body-shape-rejected`: no amount of IR *shape* coverage claims these, and
+  // bucketing them as *unintended* overstated what shape work could fix by 6
+  // of 11 units on the #3518 standalone reference corpus.
+  //
+  // The bucket deliberately holds two kinds of member — do not read it as
+  // uniformly permanent:
+  //   - PERMANENT here: DOM (`document.*`). Legacy's own `--target standalone`
+  //     body for those units still leaks `env.Document_createElement`,
+  //     `env.Node_appendChild` & co. past the #2961 import-leak gate, so there
+  //     is genuinely nothing host-free to lower to.
+  //   - DEFERRED-BUT-FIXABLE: `console.*`. Standalone DOES have a host-free
+  //     sink (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that
+  //     legacy uses; the IR's console arm only knows the host-import form
+  //     (`irImportFuncRef("env", "console_log_<variant>")`). Retiring that is
+  //     tracked separately — see the standalone console + native
+  //     `number_toString` follow-up filed alongside #4457.
+  | "host-surface-unavailable"
   | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 
 export interface IrFallback {
@@ -603,10 +625,7 @@ export function planIrCompilation(
   // (#2856) Arm the host-extern identifier resolution for this run. Mode-gated
   // via the capability table: only a JS-host compile may claim host-global
   // shapes; standalone/wasi defer so legacy keeps its #1472/#2907 refusal.
-  currentHostGlobalResolver =
-    options?.resolveHostGlobal && hostExternCapability(options?.jsHostExterns === true) !== "defer"
-      ? options.resolveHostGlobal
-      : null;
+  armHostGlobalResolvers(options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   // (#1373b C-1) Arm the async claim gate for this run (consulted by
   // `whyNotIrClaimable`'s async-modifier arm via `isAsyncIrReady`), and
@@ -1321,6 +1340,52 @@ function prepareFunctionBodySelection(
 
 // Current-run checker resolvers. A null host resolver means host-free/deferred.
 let currentHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | null = null;
+/**
+ * (#4457) The host-global resolver that the CAPABILITY GATE disarmed — set
+ * only when a resolver was supplied but `hostExternCapability` returned
+ * `"defer"` for this target (standalone / wasi / strictNoHostImports).
+ *
+ * Without it, `currentHostGlobalResolver === null` conflates two very
+ * different facts: "this identifier names nothing" and "this identifier names
+ * an ambient host global that THIS TARGET cannot service". Both used to land
+ * in `body-shape-rejected`, an *unintended* bucket whose ratchet target is
+ * zero — so a `document.getElementById` in a standalone build read as a
+ * shape-coverage gap that better selector work would close. It is not: there
+ * is no host, and legacy's own standalone body for those functions still
+ * leaks `env.Document_createElement` & co. past the #2961 import-leak gate.
+ * Keeping the disarmed resolver lets the not-in-scope arm tell the two apart
+ * and report the honest, target-owned reason.
+ */
+let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | null = null;
+
+/**
+ * (#4457) Arm both host-global resolvers for a selector run: the live one when
+ * the target may claim host shapes, the disarmed one when the capability gate
+ * defers. Exactly one is non-null for a given run (both are null when no
+ * resolver was supplied at all).
+ */
+function armHostGlobalResolvers(options: IrSelectionOptions | undefined): void {
+  const deferred = hostExternCapability(options?.jsHostExterns === true) === "defer";
+  const resolver = options?.resolveHostGlobal ?? null;
+  currentHostGlobalResolver = resolver && !deferred ? resolver : null;
+  currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
+}
+
+/**
+ * (#4457) Does `expr` name an ambient host global that THIS TARGET cannot
+ * service? True only in a host-free lane (standalone / wasi /
+ * strictNoHostImports) for an identifier the checker-backed resolver
+ * recognises. `localClasses` is excluded for the same shadow-safety reason as
+ * the host-global ACCEPT arm in `isPhase1Expr`: a user class named `document`
+ * is the user's declaration, not the lib global.
+ */
+function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
+  return (
+    currentDeferredHostGlobalResolver !== null &&
+    !localClasses.has(expr.text) &&
+    currentDeferredHostGlobalResolver(expr) !== undefined
+  );
+}
 let currentModuleBindingResolver: IrModuleBindingResolver | IrLegacyModuleBindingResolver | null = null;
 // C3's Map.get result is deliberately carried as externref until a strict
 // undefined check proves the value branch. Keep the local names visible to
@@ -1361,10 +1426,7 @@ export function configureIrStructuralSelectorPredicates(
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
-  currentHostGlobalResolver =
-    options?.resolveHostGlobal && hostExternCapability(options.jsHostExterns === true) !== "defer"
-      ? options.resolveHostGlobal
-      : null;
+  armHostGlobalResolvers(options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
@@ -7816,6 +7878,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       currentHostGlobalResolver(expr) !== undefined
     ) {
       return true;
+    }
+    // (#4457) "Names a host global this target cannot service" is owned by the
+    // target's capability policy, not by IR shape coverage — see the reason's
+    // union comment.
+    if (namesDeferredHostSurface(expr, localClasses)) {
+      return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
     return shapeNo("expr-ident-not-in-scope", expr);
   }
