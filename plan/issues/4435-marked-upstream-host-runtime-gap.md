@@ -38,10 +38,18 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/integration.ts::compileIrPathFunctions
 oracle-ratchet-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/expressions/call-receiver-method.ts
