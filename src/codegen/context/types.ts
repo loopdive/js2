@@ -3415,6 +3415,17 @@ export interface CodegenContext {
    *  per-signature wrapper and its constructible variant); a capture subtype is
    *  already per-function and grows the slot in place. */
   fnInstanceMetaSubtypeByBase?: Map<number, number>;
+  /** (#4440) Physical function name (`ClassName_m`, `ClassName_get_p`,
+   *  `ClassName_set_p`, `LiteralType_field`) → the member DECLARATION behind it.
+   *  The method mint sites take a name + funcIdx, never a node, so this is how
+   *  `function-instance-meta-methods.ts` recovers the parameter list for §15.1.5
+   *  and the property key for §10.2.9. Keyed by NAME rather than funcIdx because
+   *  funcIdx is shift-sensitive and the name is what those sites already
+   *  re-resolve by. Written by `class-bodies.ts` at registration time. */
+  fnMetaMemberDecls?: Map<
+    string,
+    ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration | ts.PropertyAssignment
+  >;
   /** (#2193 PR-B) Struct-type indices of `$NativeProto` member closures whose
    *  FIRST user param is the receiver (`this`) — e.g. `Array.prototype.slice`'s
    *  `(self, this, start, end)` closure. Unlike a plain user function (which
