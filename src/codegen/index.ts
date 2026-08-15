@@ -17,6 +17,7 @@ import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
+import { fillRuntimeEvalConstructDriver } from "./runtime-eval-construct.js"; // (#4438)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
@@ -5179,6 +5180,7 @@ export function generateModule(
     fillNativeConstructDrivers(ctx);
 
     fillConstructBoundDriver(ctx); // (#4196) §10.4.1.2 [[Construct]] through $__bound_fn
+    fillRuntimeEvalConstructDriver(ctx); // (#4438) §10.2.2 [[Construct]] through an eval-lane callable
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -7876,6 +7878,7 @@ export function generateMultiModule(
     // multi-file module without such a site stays byte-identical.
     fillNativeConstructDrivers(ctx);
     fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
+    fillRuntimeEvalConstructDriver(ctx); // (#4438) same stub hazard; degrades to null
     // Native Proxy trap drivers use the same finalize-only closure bridge in
     // project compilation as in the single-source pipeline.
     fillProxyDispatch(ctx);
