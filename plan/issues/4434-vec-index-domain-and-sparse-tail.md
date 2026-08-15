@@ -12,6 +12,12 @@ horizon: m
 feasibility: hard
 reasoning_effort: max
 task_type: bug
+coercion-sites-allow:
+  # New CALL SITES of the existing engine helpers (number_toString /
+  # __str_to_number) for index-key canonicalization in the sparse-tail MOP
+  # arms — no fresh coercion matrix; both delegate to the #1917 engine.
+  - src/codegen/vec-index-domain.ts
+  - src/codegen/vec-overlay.ts
 area: codegen, standalone
 language_feature: arrays, array-length, property-descriptors
 es_edition: 5
