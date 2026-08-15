@@ -1,14 +1,19 @@
 // #2867 Gap 4 — native, host-free `Promise.all` / `Promise.race` combinators on
-// the native-`$Promise` carrier (`isStandalonePromiseActive`, wasi-only today →
-// widens to standalone at #2895 slice 1d). Currently `Promise.all`/`race` leak
-// the unsatisfiable `Promise_all`/`Promise_race` host imports even on the carrier
-// target; these lower to the existing `$Promise` + reaction + microtask substrate
-// instead — composing the same primitives the native `.then` machinery uses.
+// the native-`$Promise` carrier (`isStandalonePromiseActive`). These lower to the
+// existing `$Promise` + reaction + microtask substrate — composing the same
+// primitives the native `.then` machinery uses — instead of leaking the
+// unsatisfiable `Promise_all`/`Promise_race` host imports.
 //
 // Host-free: instantiate with no imports and drive settlement with the module's
 // own `__drain_microtasks` export — the test262 `asyncTest(fn)` shape.
 //
-// Inert on gc/host + still-host-backed standalone lanes (the gate is wasi-only).
+// (#2867 S2 correction, 2026-08-15) This header said the gate was "wasi-only
+// today → widens to standalone at #2895 slice 1d" and that standalone was
+// "still-host-backed". Both are STALE: the widen landed with the #2980 flip on
+// 2026-07-10, so this path is LIVE on `--target standalone` too, and the
+// combinators do NOT leak host imports there (measured across all 729
+// built-ins/Promise standalone files: zero host-import CEs). Only gc/host is
+// inert.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 

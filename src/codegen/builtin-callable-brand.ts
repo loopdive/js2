@@ -143,10 +143,17 @@ export function buildBuiltinBrandTestArm(
   mask: number,
   onMatch: Instr[],
 ): Instr[] {
-  if (!brandedContexts.has(ctx)) return [];
+  // (#2175 S3b-3 B/C) The `$__ta_ctor` arm is INDEPENDENT of `brandedContexts`
+  // and of the `$Object` runtime: a TypedArray view constructor value is its own
+  // struct, so it can neither carry `OBJ_FLAG_*` nor be reached by the `$Object`
+  // test below. It must therefore be emitted even when this module branded no
+  // `$Object` carrier at all (a program whose only reified builtin is
+  // `Int8Array`).
+  const taArm = buildTaCtorBrandTestArm(ctx, anyLocalIdx, onMatch);
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
-  if (objectTypeIdx === undefined) return [];
+  if (!brandedContexts.has(ctx) || objectTypeIdx === undefined) return taArm;
   return [
+    ...taArm,
     { op: "local.get", index: anyLocalIdx },
     { op: "ref.test", typeIdx: objectTypeIdx },
     {
@@ -161,6 +168,41 @@ export function buildBuiltinBrandTestArm(
         { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
       ],
     },
+  ];
+}
+
+/**
+ * (#2175 S3b-3, defect C) A `$__ta_ctor` value — the reified `Int8Array` /
+ * `Uint8Array` / … constructor (`registry/types.ts` `getOrRegisterTaCtorType`,
+ * one immutable `kind` field) — is a **function**: `typeof Int8Array` is
+ * `"function"` and `IsConstructor(Int8Array)` is true (§23.2.5).
+ *
+ * Measured on `origin/main` @ `9e17d34f3`, standalone, through an `any` binding
+ * so the constant fold is not what is probed: `typeof Int8Array === "function"`
+ * answered **false**. #4120 fixed exactly this class for `Set`/`Map`/`TypeError`
+ * /…, but those reify as `$Object` carriers that can hold `OBJ_FLAG_CALLABLE`.
+ * `$__ta_ctor` is a separate struct type, so the flag-bit mechanism cannot reach
+ * it and it fell through to `"object"` — the same SILENT wrong answer #4120's
+ * docstring describes, just for the eleven view constructors.
+ *
+ * Both `[[Call]]` and `[[Construct]]` arms get this (i.e. `mask` is ignored):
+ * every TypedArray constructor has both. Calling one without `new` throws a
+ * TypeError per §23.2.5.1, but that is a CALL-time refusal, not an absence of
+ * `[[Call]]` — `typeof` must still say `"function"`, which is what the
+ * `not-a-constructor.js` / `invoked-as-func.js` reflection files assert first.
+ *
+ * Type indices are rec-group / dead-elim stable, so a `ref.test` on the stashed
+ * `ctx.taCtorTypeIdx` is safe at finalize; this READS the idx and never
+ * registers, so a module without TypedArray ctors emits nothing here and stays
+ * byte-identical.
+ */
+function buildTaCtorBrandTestArm(ctx: CodegenContext, anyLocalIdx: number, onMatch: Instr[]): Instr[] {
+  const taCtorTypeIdx = ctx.taCtorTypeIdx;
+  if (taCtorTypeIdx === undefined || taCtorTypeIdx < 0) return [];
+  return [
+    { op: "local.get", index: anyLocalIdx },
+    { op: "ref.test", typeIdx: taCtorTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
   ];
 }
 

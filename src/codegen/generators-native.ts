@@ -51,6 +51,7 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
@@ -2044,6 +2045,38 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     if (!hostLaneGeneratorUsesAreSafe(ctx, decl)) return false;
   }
   if (!decl.body || !decl.asteriskToken) return false;
+  // (#2864 wave-2 S2) A body that READS the implicit `arguments` object has no
+  // native-frame support: the state struct has slots for `this`, own params and
+  // spilled locals, and the RESUME function compiles the body with a fresh
+  // `FunctionContext` in which nothing ever builds the arguments vec (the
+  // §10.2.11 setup in function-body.ts runs on the FACTORY's context only). So
+  // `arguments` resolves to nothing in the resume body.
+  //
+  // This bail already existed for the two OTHER generator forms — generator
+  // EXPRESSIONS (`isNativeGeneratorExpressionShape`) and METHODS (the
+  // `bodyNeedsArgumentsObject(decl.body)` arm below) — and was simply never
+  // applied to free function DECLARATIONS, which #3032 W6 subsequently routed
+  // natively on the JS-HOST lane as well. Measured consequences of the gap:
+  //   * JS-HOST (gc): `function* g(a,b){ const n = arguments.length; yield n }`
+  //     compiled "successfully" and produced a module the ENGINE REJECTS —
+  //     `global.set[0] expected type externref, found i32.const of type i32`.
+  //     A non-generator reading `arguments`, and a generator not reading it,
+  //     are both valid; it is specifically generator × `arguments`.
+  //   * standalone/wasi: a raw wasm trap at the first `arguments` read, before
+  //     any suspend — not a suspend-crossing problem.
+  // Both become the ordinary eager-buffer path (host: correct; standalone: a
+  // clean #680 refusal), which is what every other unsupported shape does here.
+  //
+  // NOTE for the #3032 "js-host bytes identical" contract: host bytes DO change
+  // for these programs, and that contract cannot apply — the bytes being
+  // replaced are an invalid module, so there is no valid baseline to preserve.
+  //
+  // Making `arguments` genuinely work in the native frame is a real slice, not
+  // a wider gate: the factory must build the vec at CALL time (§10.2.11) and
+  // spill it, the resume function must reload it into an `arguments` local, and
+  // MAPPED aliasing (`arguments[0] = v` writing back to param `a`) needs
+  // `fctx.mappedArgsInfo` rebuilt against the frame. Design banked in #2864.
+  if (bodyNeedsArgumentsObject(decl.body)) return false;
   // (#3164) A FunctionExpression may be anonymous — its native registration
   // rides a synthetic lifted-closure name supplied by the emit site
   // (closures.ts). Everything else still requires a name (funcMap key).
@@ -2696,27 +2729,35 @@ function ensureRegisteredNativeGenerator(ctx: CodegenContext, name: string): Nat
 //   - ref carrier (native string): null ref — `extern.convert_any(null)` is
 //     the null externref, canonical again.
 //   - i32 carrier: no sentinel space in i32; keep 0.
-function defaultElemValueInstrs(elemValType: ValType): Instr[] {
+function defaultElemValueInstrs(ctx: CodegenContext, elemValType: ValType): Instr[] {
   if (elemValType.kind === "f64") {
     return [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
   }
   if (elemValType.kind === "i32") return [{ op: "i32.const", value: 0 }];
-  // (#2864 F1) The boxed-any carrier's inert default is a null externref.
-  if (elemValType.kind === "externref") return [{ op: "ref.null.extern" }];
+  // (#2864 wave-2 S1) The boxed-any carrier's absent value is `undefined`, and
+  // the null externref is NOT that. The F1 note above ("already the canonical
+  // undefined") was inherited from the pre-#2106 model where standalone could
+  // not tell the two apart; that stopped being true once the tag-1 `$undefined`
+  // singleton was reserved in every standalone module. Measured host-free on
+  // `language/expressions/yield/formal-parameters.js`: the terminal
+  // `{value, done:true}` of an any-carrier generator read back as JS **null**
+  // (`result.value === null` true, `typeof` "object"), and the harness reported
+  // `SameValue(«null», «undefined»)`. Emit the lane's canonical `undefined`.
+  if (elemValType.kind === "externref") return canonicalUndefinedExternInstrs(ctx);
   return [{ op: "ref.null", typeIdx: (elemValType as { typeIdx: number }).typeIdx }];
 }
 
-function emptyResult(info: NativeGeneratorInfo): Instr[] {
+function emptyResult(ctx: CodegenContext, info: NativeGeneratorInfo): Instr[] {
   return [
-    ...defaultElemValueInstrs(info.elemValType),
+    ...defaultElemValueInstrs(ctx, info.elemValType),
     { op: "i32.const", value: 1 },
     { op: "struct.new", typeIdx: info.resultTypeIdx },
   ];
 }
 
-export function emptyResultForType(resultTypeIdx: number): Instr[] {
+export function emptyResultForType(ctx: CodegenContext, resultTypeIdx: number): Instr[] {
   return [
-    ...defaultElemValueInstrs({ kind: "f64" }),
+    ...defaultElemValueInstrs(ctx, { kind: "f64" }),
     { op: "i32.const", value: 1 },
     { op: "struct.new", typeIdx: resultTypeIdx },
   ];
@@ -2742,7 +2783,7 @@ export function emitExpressionAsF64(
     // numerically identical to the old quiet NaN (still a NaN), but
     // distinguishable by sentinel-aware readers so `gen.return().value` /
     // bare-`return` results canonicalize to `undefined` instead of NaN.
-    fctx.body.push(...defaultElemValueInstrs({ kind: "f64" }));
+    fctx.body.push(...defaultElemValueInstrs(ctx, { kind: "f64" }));
     fctx.body.push({ op: "local.set", index: tmp });
     return tmp;
   }
@@ -2838,13 +2879,13 @@ function emitYieldValueAsElem(
   const elem = info.elemValType;
   const tmp = allocLocal(fctx, `__gen_value_${fctx.locals.length}`, elem);
   if (!expr) {
-    fctx.body.push(...defaultElemValueInstrs(elem));
+    fctx.body.push(...defaultElemValueInstrs(ctx, elem));
     fctx.body.push({ op: "local.set", index: tmp });
     return tmp;
   }
   const t = compileExpression(ctx, fctx, expr, elem);
   if (t === null) {
-    fctx.body.push(...defaultElemValueInstrs(elem));
+    fctx.body.push(...defaultElemValueInstrs(ctx, elem));
   } else if (!valTypesMatch(t, elem)) {
     coerceType(ctx, fctx, t, elem);
   }
@@ -2915,7 +2956,7 @@ function emitTrampoline(
       // Past the last state: complete (defensive; should be the `done` state).
       return [
         ...setStateInstrs(info, selfLocal, info.doneState),
-        ...emptyResult(info),
+        ...emptyResult(ctx, info),
         { op: "local.set", index: resultLocal },
       ];
     }
@@ -3161,7 +3202,7 @@ function compileState(
       returnBody.push({ op: "local.get", index: selfLocal });
       returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
     } else {
-      returnBody.push(...defaultElemValueInstrs(info.elemValType));
+      returnBody.push(...defaultElemValueInstrs(ctx, info.elemValType));
     }
     returnBody.push({ op: "i32.const", value: 1 });
     returnBody.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
@@ -3287,7 +3328,7 @@ function compileState(
     case "done": {
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
-      body.push(...emptyResult(info));
+      body.push(...emptyResult(ctx, info));
       body.push({ op: "local.set", index: resultLocal });
       // No br: fall out of the trampoline loop (loop only repeats on explicit
       // br), then `block $exit` ends and the caller reads $__result.
@@ -3309,7 +3350,7 @@ function compileState(
           // Defensive: unresolved vec type — complete rather than emit invalid wasm.
           body.push(...storeSpills(info, fctx, selfLocal));
           body.push(...setStateInstrs(info, selfLocal, info.doneState));
-          body.push(...emptyResult(info));
+          body.push(...emptyResult(ctx, info));
           body.push({ op: "local.set", index: resultLocal });
           break;
         }
@@ -3431,7 +3472,7 @@ function compileState(
           // Defensive: unresolved slot — complete rather than emit invalid wasm.
           body.push(...storeSpills(info, fctx, selfLocal));
           body.push(...setStateInstrs(info, selfLocal, info.doneState));
-          body.push(...emptyResult(info));
+          body.push(...emptyResult(ctx, info));
           body.push({ op: "local.set", index: resultLocal });
           break;
         }
@@ -3441,7 +3482,7 @@ function compileState(
         if (iteratorIdx === undefined || iteratorNextIdx === undefined) {
           body.push(...storeSpills(info, fctx, selfLocal));
           body.push(...setStateInstrs(info, selfLocal, info.doneState));
-          body.push(...emptyResult(info));
+          body.push(...emptyResult(ctx, info));
           body.push({ op: "local.set", index: resultLocal });
           break;
         }
@@ -3565,7 +3606,7 @@ function compileState(
         // did not back. Complete the generator rather than emit invalid wasm.
         body.push(...storeSpills(info, fctx, selfLocal));
         body.push(...setStateInstrs(info, selfLocal, info.doneState));
-        body.push(...emptyResult(info));
+        body.push(...emptyResult(ctx, info));
         body.push({ op: "local.set", index: resultLocal });
         break;
       }
@@ -3828,7 +3869,7 @@ function emitUnwindWalk(
     returnBody.push({ op: "local.get", index: o.selfLocal });
     returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
   } else {
-    returnBody.push(...defaultElemValueInstrs(info.elemValType));
+    returnBody.push(...defaultElemValueInstrs(ctx, info.elemValType));
   }
   returnBody.push({ op: "i32.const", value: 1 });
   returnBody.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
@@ -4035,7 +4076,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
   const plan = buildNativeGeneratorPlan(ctx, info.decl);
   if (!plan) {
     reportError(ctx, info.decl, "Internal error: native generator plan disappeared during emission");
-    resumeFctx.body.push(...emptyResult(info));
+    resumeFctx.body.push(...emptyResult(ctx, info));
   } else {
     const savedFunc = ctx.currentFunc;
     ctx.currentFunc = resumeFctx;

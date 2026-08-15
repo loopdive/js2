@@ -63,12 +63,18 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
   // finalize alive on its own.
+  // (#2175 S3b-3 defect C) …and a reified TypedArray view constructor is a
+  // `$__ta_ctor` struct, which is neither a closure wrapper nor a brandable
+  // `$Object`. A module whose only reified builtin is `Int8Array` must still
+  // reach the fill, or `typeof Int8Array` silently answers `"object"`.
+  const taCtorTypeIdx = ctx.taCtorTypeIdx !== undefined && ctx.taCtorTypeIdx >= 0 ? ctx.taCtorTypeIdx : undefined;
   if (
     baseTypeIdxs.length === 0 &&
     runtimeEvalCallbackTypeIdx === undefined &&
     !hasBrandedBuiltinCarrier(ctx) &&
     proxyTypeIdx === undefined &&
-    boundaryCallableKindIdx === undefined
+    boundaryCallableKindIdx === undefined &&
+    taCtorTypeIdx === undefined
   )
     return;
 
