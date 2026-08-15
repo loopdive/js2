@@ -4,7 +4,7 @@ title: "`with` statement, ES5 standalone: 73-row residue reduced to 51; first IR
 status: ready
 sprint: current
 created: 2026-08-07
-updated: 2026-08-11
+updated: 2026-08-15
 priority: high
 horizon: xl
 feasibility: hard
@@ -459,17 +459,156 @@ This issue stays `ready`: the callable environment slice is complete and
 measured, while constructor capture and those independently named runtime
 mechanisms remain follow-up work.
 
-## ES5-wave adoption (fable, 2026-08-15, #4444 session)
+## Re-measurement + root-cause routing (claude/es5-team-with, 2026-08-15)
 
-Adopted for the ES5-and-earlier close-out wave (prior claim `ttraenkler/W26`
-stale since the 2026-08-07 handoff; re-claimed by `claude/es5-team-with` on
-origin/issue-assignments). Fresh-baseline measurement (2026-08-15,
-`.tmp/es5-standalone-clusters.ts`): the `language/statements/with` bucket is
-**49 non-pass** — consistent with this file's "Remaining 17 rows" + the
-downstream-cohort accounting. The adopting agent MUST start from the
-"Handoff — 2026-08-07", "Deferred, precisely located" and "Remaining 17 rows"
-sections above — this issue has two completed measurement/fix cycles; do not
-re-derive from scratch. Top current symptoms: 13× `__str_concat` null deref
-in `__module_init` (crash class, fix first), scope-chain property resolution
-(`p1 === "x1"` actual `1` — with-object property shadowing outer binding),
-and the #1387 closed-shape CE gate (~10 files, constructible-closure arm).
+Worked from the three sections the ES5-wave note marks as mandatory. **No source
+change in this slice** — the item it named as "fix first" turned out to be worth
+zero passes, and the root cause routes out of this issue entirely (to **#4495**).
+
+### Correction 1 — the residue is 68 non-pass, not 115. The first baseline was instrument noise.
+
+My first scan of `language/statements/with` at `--target standalone` reported
+**66 pass / 102 fail / 13 CE**. That was wrong: **56 of the 115 non-pass rows
+were `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built`**.
+
+The trap is one layer below the "Instrument note worth keeping" already in this
+file: `TEST262_FULL_RUNTIME_EVAL=1` selects the **interpreter** tier, but since
+**#4242 the default engine is quickjs**, and the selector deliberately never
+builds an engine. So the flag this issue's own maintained A/B command uses no
+longer implies a working provider.
+
+| 181 files, `--target standalone` | pass | fail | CE |
+|---|---:|---:|---:|
+| broken instrument (provider missing) | 66 | 102 | 13 |
+| **working instrument (authoritative)** | **113** | **55** | **13** |
+
+Fix — build both bundles first, then the provider (both bundles must be rebuilt
+**per A/B arm**; the pool worker imports `scripts/compiler-bundle.mjs`, not `src/`):
+
+```sh
+node_modules/.bin/esbuild src/index.ts   --bundle --platform=node --format=esm \
+  --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen
+node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+  --outfile=scripts/runtime-bundle.mjs  --external:typescript --external:binaryen
+NODE_OPTIONS=--max-old-space-size=3072 node scripts/build-quickjs-eval-provider.mjs
+```
+
+Both the **13** `__str_concat` rows and the **10** `#1387` CE rows reproduce at
+exactly the counts the ES5-wave note predicted, which cross-validates that note's
+baseline and localises the error to the harness rather than to the corpus.
+
+Current taxonomy (working instrument): 13 `__str_concat` · 10 `#1387` CE ·
+4 `p1 === "x1"` actual `1` · 4 `result === undefined` actual `null` ·
+3 missing-ReferenceError · 2 each `theirObj.p1` actual `true`,
+`[Symbol.unscopables]` call count, CE `Reflect.set` with explicit receiver,
+`$DONOTEVALUATE` reached · rest singletons.
+
+### Correction 2 — the 13-row crash class is a ZERO-YIELD item. Demoted.
+
+The ES5-wave note ranks the `__str_concat` crashes as "crash class, fix first".
+Fixing them produces **no passes**, and this is checkable from the test sources
+rather than a judgement call: **in all 13 files every string concatenation is
+inside a `throw new Test262Error(...)`** (3 throw-concats, 3 total concats per
+file), so a passing run never concatenates. The crash is reached only after the
+assertion has already decided the test failed.
+
+Verified directly: neutralising the message concatenation
+(`throw new Test262Error('MARKER')`) and re-running the assembled harness still
+**throws** — the assertion fails on its own merits.
+
+**Consequence:** fixing the null-deref converts a hard crash into a clean
+assertion failure. Worth doing for *diagnosability* (the crash hides the real
+value mismatch and pollutes this taxonomy), but it must not be scheduled as a
+13-row yield item. The passes come from Correction 3.
+
+### Correction 3 — root cause is NOT `with`. Routed to #4495.
+
+Bisected to a repro with no `with`, no globals, no try/catch:
+
+```js
+function id(x) { return x; }
+var result = 'r';
+result = id(1);
+var out = '' + result;   // dereferencing a null pointer in __str_concat
+```
+
+A string-literal-initialised JS local keeps a **native-string slot**; assigning a
+dynamic value stores **null** when the runtime value is not a string. The null is
+**deliberate** at `src/codegen/type-coercion.ts:2469`, with generic ToString
+explicitly rejected there on the record — so that site is not the bug and must
+not be "fixed" with a ToString. The real defect is slot typing one level up.
+
+Filed as **#4495** (`feasibility: hard`, `architect_spec: required`, Fable-lane
+implementation plan required before dispatch — blast radius is every string local
+in every `.js` file).
+
+**#4495 subsumes this file's 2026-08-07 "real head of this cluster" item.** That
+handoff named global-binding unification (`this.p1 = 1` vs bare `p1`, ≥19 files)
+as the unfiled head; `this.p1` globals are dynamic to the checker and therefore
+one **source** of #4495, but `id(1)` reproduces the identical crash with no
+globals at all. One head, not two — do not file global-binding separately.
+
+A/B'd against the (then-uncommitted, now merged as `5cde3f054`) #2867 S2/S2b
+changes: byte-identical on both arms, so pre-existing and unrelated.
+
+### Revised sequence for this cluster
+
+1. **#4495** (head) — everything below is downstream.
+2. Optionally fix the `__str_concat` null-deref for **diagnosability only**,
+   labelled 0-yield, so the 13 rows report their real mismatch.
+3. The 10 `#1387` CE rows stay where the 2026-08-11 slice left them
+   (constructible-closure ABI). The "Cohort A is downstream of cohort D" analysis
+   above still holds — nothing found to revise in it.
+4. Re-measure after (1): the 4 `p1 === "x1"` and 4 `result === undefined` actual
+   `null` rows are plausibly the same slot defect and may move for free.
+
+Also filed from this slice: **#4496** (`__drain_microtasks()` in an
+otherwise-empty module emits an invalid binary — `__str_ws_start` type mismatch;
+unrelated to `with`, found while correcting a stale #2895 test assertion).
+
+### Correction 4 (same day, supersedes part of Correction 3) — global-binding is a SEPARATE head
+
+Correction 3 said #4495 "subsumes this file's 2026-08-07 real-head item" and that
+global-binding should **not** be filed separately. **That was wrong**, and it is
+corrected here rather than left to mislead. The controlled experiment below holds
+the **type constant**, so #4495's slot-typing mechanism cannot explain the
+results — no `with` anywhere, `--target standalone`:
+
+| case (every value numeric) | result |
+|---|---|
+| `this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2` | **WRONG** |
+| `var p1 = 1; p1 = 2; this.p1 === 2` | **WRONG** |
+| `var p1 = 1; this.p1 = 2; p1 === 2` | **WRONG** |
+| `this.p1 = 'a'; f(){ p1 = 'b' }; f(); p1 === 'b'` (string throughout) | **WRONG** |
+| `var p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2` (var global) | ok |
+
+`this.p` and bare `p` are **two different storages that never reconcile in either
+direction**. The split only becomes observable across a **closure boundary** or a
+**`this.`/bare direction change** — straight-line `this.p1 = 1; p1 = 'x1'` and a
+plain bare read of a `this.`-assigned global both work, which is why it hides.
+
+The two defects **co-occur** in this corpus because `this.p1 = 1` both splits the
+storage and makes the value dynamic (feeding #4495's string-slot path). That
+co-occurrence is exactly what produced the incorrect merge in Correction 3. The
+clean separator is `function id(x){return x}`, which reproduces #4495 with no
+globals at all.
+
+**Global-binding unification still needs its own id** (the 2026-08-07 handoff was
+right to call it out); #4495 does not cover it. Two heads, not one.
+
+### Boundary answer for the remaining clusters — NEITHER is independently takeable
+
+Measured, so the next lane does not re-derive it:
+
+| cluster | rows | verdict |
+|---|---:|---|
+| `#1387` closed-shape CE gate | 10 (+1 `unscopables-inc-dec`) | **Not bounded.** All ten are the `S12.10_A{1,3}.8_T*` constructor rows, which this file's own 2026-08-11 slice already identified as needing a **constructible-closure ABI carrying the captured environment**. That is an ABI project, not a slice. |
+| `p1 === "x1"` actual `1` | 6 | Downstream of **global-binding** (own head, needs an id). `with` is not involved — see Correction 4. |
+| `result === undefined` actual `null` | 4 | Downstream of **#4495** — a native-string slot cannot represent `undefined` at function entry, so a hoisted `var` read before its declaration defaults to null. |
+| `theirObj.p1` actual `true` | 2 | Not diagnosed. |
+
+So the honest boundary is: **no further `with`-lane slice is takeable without
+first landing #4495 and a global-binding issue.** Both are heads with wide blast
+radius, both need a Fable-lane implementation plan, and neither should be started
+off this file alone. This issue stays `ready` but should be treated as **blocked
+on those two** rather than as a source of ready work.
