@@ -54,6 +54,8 @@ oracle-ratchet-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/literals.ts
+coercion-sites-allow:
+  - src/codegen/index.ts
 ---
 
 # #4435 — Marked upstream host-runtime compatibility
