@@ -291,6 +291,7 @@ export function createCodegenContext(
     irWithOpenObjectTargetKeys: new Set(),
     ordinaryToPrimitiveObjectDeclarations: new Set(),
     ordinaryToPrimitiveObjectLiterals: new Set(),
+    hostSpreadObjectGlobals: new Set(),
     externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),
     pendingMethodTrampolines: [],
