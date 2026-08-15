@@ -675,6 +675,53 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     const unresolvable = tryCompileUnresolvableIdentifierAssign(ctx, fctx, expr.left, expr.right);
     if (unresolvable !== NOT_UNRESOLVABLE) return unresolvable;
 
+    // (#4500 Slice B) A name the pre-scan classified as a property of the realm
+    // global object (`this.p1 = 1`, or a top-level implicit `p1 = 1`) has REAL
+    // storage — the global object — and `emitImplicitGlobalRead` reads it from
+    // there. It must be WRITTEN there too. This is the same rule the #4231 RC-F
+    // arm applies on the `with`-cascade write path
+    // (`emitIdentifierWriteFromLocal`), but this is the ORDINARY identifier
+    // write path, which had no such arm: `tryCompileUnresolvableIdentifierAssign`
+    // declines (the name IS resolvable to the checker — `this.p1 = 1` gave it a
+    // symbol), so the write fell into the auto-local fallback below.
+    //
+    // Diagnosed by instrumenting every write arm and compiling the #4500 row-1
+    // probe: none of the four arms the plan suspected fired — this final
+    // fallback did, in BOTH the failing and the "passing" case. The auto-local
+    // makes the write FUNCTION-LOCAL, so:
+    //
+    //   this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2   // f's local; outer reads the object ⇒ 1
+    //   this.p1 = 1; p1 = 2; this.p1 === 2                          // module_init's local; `this.p1` reads the object ⇒ 1
+    //
+    // The straight-line bare-read case only *looked* correct because the write
+    // and the read shared one function and therefore one local — the global
+    // object was never updated in either case.
+    if (ctx.sloppyImplicitGlobals?.has(name)) {
+      const resultType = compileExpression(ctx, fctx, expr.right);
+      if (!resultType) return null;
+      const rhsTmp = allocLocal(fctx, `__implicit_global_write_${fctx.locals.length}`, resultType);
+      fctx.body.push({ op: "local.set", index: rhsTmp });
+      if (emitGlobalEnvironmentObject(ctx, fctx)) {
+        const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+        if (setIdx !== undefined) {
+          emitGlobalEnvironmentKey(ctx, fctx, name);
+          fctx.body.push({ op: "local.get", index: rhsTmp });
+          if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: setIdx });
+          // The assignment expression evaluates to the RHS value.
+          fctx.body.push({ op: "local.get", index: rhsTmp });
+          return resultType;
+        }
+        // Setter unavailable — drop the receiver we just pushed and fall
+        // through to the auto-local so the write is not lost.
+        fctx.body.push({ op: "drop" });
+      }
+      // Global-environment object unavailable: preserve the pre-#4500 shape.
+      const fallbackIdx = allocLocal(fctx, name, resultType);
+      fctx.body.push({ op: "local.get", index: rhsTmp }, { op: "local.tee", index: fallbackIdx });
+      return resultType;
+    }
+
     // Graceful fallback for other unresolved identifiers: auto-allocate a
     // local so compilation can continue. This handles class/object method
     // bodies that reference outer-scope variables not yet captured (those
