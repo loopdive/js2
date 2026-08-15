@@ -8119,6 +8119,7 @@ export function emitFnctorSubclassDynamicMethodCall(
   // fnctor-subclass call sites keep their existing bytes.
   rawStructReceiver = false,
 ): InnerResult | undefined {
+  if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
   let arrNewIdx: number | undefined;
   let arrPushIdx: number | undefined;
   const arrNewName = ctx.standalone ? "__objvec_new" : "__js_array_new";
@@ -8340,6 +8341,25 @@ export function compileConditionalCallee(
 
   fctx.body = savedBody;
 
+  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("closure")) {
+    console.error(
+      "[marked-cond-callee]",
+      fctx.name,
+      "condition",
+      condExpr.condition.getText?.(),
+      "true",
+      condExpr.whenTrue.getText?.(),
+      "false",
+      condExpr.whenFalse.getText?.(),
+      "thenType",
+      thenType,
+      "elseType",
+      elseType,
+      "callRet",
+      callRetType,
+    );
+  }
+
   // Determine result type
   if (thenType === VOID_RESULT && elseType === VOID_RESULT) {
     fctx.body.push({
@@ -8470,6 +8490,26 @@ function compileExpressionCallee(
     });
     const matchedClosureInfo: ClosureInfo | undefined = sigMatched?.info;
     const matchedStructTypeIdx: number | undefined = sigMatched?.structTypeIdx;
+    if (
+      process.env.DEBUG_MARKED_CODEGEN === "1" &&
+      ts.isIdentifier(calleeExpr) &&
+      (calleeExpr.text === "lexer" || calleeExpr.text === "parser" || calleeExpr.text === "fn")
+    ) {
+      console.error(
+        "[marked-closure-call]",
+        fctx.name,
+        calleeExpr.text,
+        "params",
+        sigParamWasmTypes,
+        "ret",
+        sigRetWasm,
+        "matched",
+        matchedClosureInfo?.paramTypes,
+        matchedClosureInfo?.returnType,
+        "struct",
+        matchedStructTypeIdx,
+      );
+    }
 
     if (matchedClosureInfo && matchedStructTypeIdx !== undefined) {
       // Compile the callee expression to get the closure on the stack
