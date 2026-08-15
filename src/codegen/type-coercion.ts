@@ -1307,6 +1307,21 @@ function buildTupleFromIterableFallback(
 }
 
 /**
+ * (#4451) Is there no way for a tuple element of type `elem` to reach a tuple
+ * slot of type `slot`? True exactly when one side lives in a numeric
+ * representation and the other in a reference one: no instruction turns a raw
+ * `f64`/`i32` into a GC reference, or a GC reference into a number.
+ * (`externref` is excluded — box/unbox bridge it, and those rows are handled
+ * above.)
+ */
+function tupleSlotIsUnreachableFrom(elem: ValType, slot: ValType): boolean {
+  const isNumeric = (vt: ValType): boolean =>
+    vt.kind === "f64" || vt.kind === "f32" || vt.kind === "i32" || vt.kind === "i64";
+  const isGcRef = (vt: ValType): boolean => vt.kind === "ref" || vt.kind === "ref_null";
+  return (isNumeric(elem) && isGcRef(slot)) || (isGcRef(elem) && isNumeric(slot));
+}
+
+/**
  * Build instructions to construct a tuple struct from an externref value at runtime.
  * Tries each known vec type via ref.test; if one matches, extracts elements and
  * constructs the tuple. When no vec type matches, falls back to iterable
@@ -1441,6 +1456,25 @@ function buildTupleFromExternref(
         } else if (effElemType.kind === "externref" && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
           const toRefIdx = (fieldType as { typeIdx: number }).typeIdx;
           thenInstrs.push({ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: toRefIdx });
+        } else if (effElemType.kind === "i32" && fieldType.kind === "f64") {
+          thenInstrs.push({ op: "f64.convert_i32_s" });
+        } else if (effElemType.kind === "f64" && fieldType.kind === "i32") {
+          thenInstrs.push({ op: "i32.trunc_sat_f64_s" });
+        } else if (tupleSlotIsUnreachableFrom(effElemType, fieldType)) {
+          // (#4451) No conversion exists, so give the slot its own default.
+          //
+          // This chain speculatively `ref.test`s EVERY known vec type, so the
+          // numeric vecs (`__vec_f64`) get an arm even when the tuple's slot is
+          // a GC reference — as in `Object.entries(rec).sort(([l], [r]) => …)`,
+          // whose comparator parameter is a `[string, Sig]` tuple. A raw f64 can
+          // never inhabit that slot, and leaving it on the stack made
+          // `struct.new` ill-typed and the whole MODULE invalid
+          // ("struct.new[1] expected type (ref null N), found if of type f64")
+          // even though the arm is unreachable at run time. Falling through with
+          // no instruction at all was the defect; the slot's default keeps the
+          // arm well-typed, matching the out-of-bounds guard just above and the
+          // `ref.null` convention of `buildTupleFromIterableFallback`.
+          thenInstrs.push({ op: "drop" }, ...defaultValueInstrs(fieldType));
         }
       }
     }
