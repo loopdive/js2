@@ -375,3 +375,12 @@ inverted) flips native+standalone `string-forof` hashes — the read is live.
   sha256-proven over the corpus in host/native/standalone.
 - **Equivalence green both modes / string-heavy net-zero** — per-slice CI
   (slices 1–3 landed green; 4–5 stacked PRs follow the same gate).
+
+## Status note (fable, 2026-08-15)
+
+Live grep on main @ `7add6938`: `src/ir/from-ast.ts` has **zero
+functional `nativeStrings` reads** — every remaining match is a comment
+documenting the relocation, so the acceptance's grep gate is effectively
+met. Not dispatched in the 2026-08-15 IR-path-only session. Remaining to
+close: add the grep gate to CI (`quality`), re-verify the two-mode
+structural-identity acceptance on current main, then flip `status: done`.
