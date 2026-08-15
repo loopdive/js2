@@ -1939,7 +1939,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // (same as ClassName.method path at line 992) — avoids generic
       // fallthrough cast of undefined.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -2081,7 +2081,7 @@ function emitClassStaticMemberRead(
   // unblocking 273 test262 cases for class async-generator yield-star
   // tests that follow this exact extraction pattern.
   if (ctx.staticMethodSet.has(fullName)) {
-    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
     if (funcIdx !== undefined) {
       const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
       if (closureRef) {

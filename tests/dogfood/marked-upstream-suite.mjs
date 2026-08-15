@@ -58,7 +58,8 @@ export async function runHarness({ quiet = false } = {}) {
     const generatedPath = join(GENERATED_ROOT, file.replace(/\.js$/, ".ts"));
     const transformed = transformMarkedTest(readFileSync(filePath, "utf-8"), generatedPath, packageSetup.root);
     const source = `${UPSTREAM_TEST_SHIM}\n${MARKED_ASSERT_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 300_000 });
+    const timeoutMs = Number(process.env.DOGFOOD_MARKED_TIMEOUT_MS ?? 300_000);
+    const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs });
     runs.push({ file, result });
     log(
       `[dogfood] ${file}: ${result.native.statuses.filter(Boolean).length}/${result.native.count} native; ` +

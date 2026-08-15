@@ -279,6 +279,22 @@ The follow-up therefore stays draft until that runtime path is fixed; this
 checkpoint intentionally records the remaining failure instead of claiming a
 pass-rate improvement.
 
+## Project-module checkpoint (2026-08-15)
+
+Draft PR [#4507](https://github.com/loopdive/js2wasm/pull/4507) now compiles
+React, the shared client module, and the scheduler as separate project files
+in a killable worker. The adapter gives each published CommonJS export carrier
+a unique top-level name; this avoids the multi-file `exports`/`default` name
+collision that previously made imported React internals empty. It also installs
+the same jsdom globals in the worker and defers module initialization until the
+Wasm instance is wired.
+
+The client graph now validates and initializes as Wasm. The first unchanged
+upstream probe reaches the renderer and reports the next real runtime finding:
+`Cannot create property 'stateNode' on boolean 'false'`. This is recorded as a
+behavioral compiler/runtime gap, not a compile or Wasm-validation failure; the
+PR remains draft until that path is addressed.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the

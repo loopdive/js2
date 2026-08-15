@@ -443,6 +443,7 @@ import {
 import {
   reserveVecMethodHelper,
   emitVecAccessExports,
+  finalizeVecHostBridgeExports,
   emitVecSetByteExport,
   emitNewVecF64Export,
   emitDataViewByteExports,
@@ -5726,6 +5727,7 @@ export function generateModule(
     // (stackBalance, fixupExternConvertAny, emit) do NOT add imports. Any
     // addImport/ensureLateImport after here is a producer bug and throws at
     // its own call site (see imports.ts / late-imports.ts).
+    finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 
@@ -7186,6 +7188,18 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       targetName = "default";
     }
     if (!targetName || targetName === localName) return;
+    // Imported class bindings need the same canonical class identity as the
+    // exporting module.  `classExprNameMap` normally aliases a variable-bound
+    // class expression (for example `D = class {}`) to its synthetic class
+    // name, but the map was only keyed by the export-side spelling.  A named
+    // import such as `import { Marked } from "marked"` therefore fell through
+    // the identifier value path and materialized as null even though `new
+    // Marked()` could still be resolved statically.  Preserve the class
+    // singleton across that module-binding alias.
+    const targetClassName = ctx.classExprNameMap.get(targetName) ?? targetName;
+    if (ctx.classSet.has(targetClassName)) {
+      ctx.classExprNameMap.set(localName, targetClassName);
+    }
     // Copy each resolution entry keyed by the target name onto the local name.
     // Every write is guarded so a genuine same-named binding is never clobbered.
     const fnIdx = ctx.funcMap.get(targetName);
@@ -8101,6 +8115,7 @@ export function generateMultiModule(
     // single-module generateModule: all legitimate late import mutations have
     // run; stackBalance / fixupExternConvertAny / emit add no imports. Any
     // addImport/ensureLateImport after here throws at the producer site.
+    finalizeVecHostBridgeExports(ctx);
     ctx.indexSpaceFrozen = true;
     ctx.programAbiSession?.publish(mod);
 

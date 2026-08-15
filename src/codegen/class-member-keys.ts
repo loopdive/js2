@@ -41,15 +41,28 @@ import type { CodegenContext } from "./context/types.js";
  * affects only optional-arg backfill for that pathological name clash; the
  * funcIdx (the trap cause) is correctly separated.
  */
-export function classMemberFuncKey(ctx: CodegenContext, fullName: string): string {
+export type ClassMemberKind = "static" | "instance";
+
+export function classMemberFuncKey(ctx: CodegenContext, fullName: string, kind?: ClassMemberKind): string {
+  let key = fullName;
   // Only relocate when the legacy key would actually collide with a top-level
   // user function. Keeps output identical for every non-colliding program.
-  if (!ctx.topLevelFunctionNames.has(fullName)) return fullName;
-  // Relocate to a prefixed key. The `__cm$` prefix never appears in a
-  // `${className}_${member}` join, so it cannot collide with another class
-  // member's legacy key. Guard the pathological case where a user also wrote
-  // `function __cm$A_m() {}` by appending disambiguators until free.
-  let key = `__cm$${fullName}`;
+  if (ctx.topLevelFunctionNames.has(fullName)) {
+    // Relocate to a prefixed key. The `__cm$` prefix never appears in a
+    // `${className}_${member}` join, so it cannot collide with another class
+    // member's legacy key. Guard the pathological case where a user also wrote
+    // `function __cm$A_m() {}` by appending disambiguators until free.
+    key = `__cm$${fullName}`;
+  }
+  // A class may legally define both `static m()` and `m()`. They have
+  // different Wasm ABIs (the static form has no hidden receiver), so sharing
+  // the legacy key makes the second body overwrite or reuse the first
+  // function. The collection pass pre-populates `classMethodSet`, making this
+  // choice independent of source order. Instance members retain the legacy
+  // key; only the colliding static member is disambiguated.
+  if (kind === "static" && ctx.classMethodSet.has(fullName)) {
+    key = `__cm$static$${key}`;
+  }
   let n = 0;
   while (ctx.topLevelFunctionNames.has(key)) key = `__cm$${fullName}$${n++}`;
   return key;

@@ -187,6 +187,39 @@ function buildTrampolineThisSlot(
 }
 
 /**
+ * Reconcile the receiver produced by {@link buildTrampolineThisSlot} with the
+ * actual first parameter of the method.  The trampoline's receiver is always
+ * the nullable object-struct reference used by the closure ABI, but late type
+ * resolution can leave a method's hidden `this` parameter as `externref` (or a
+ * different reference carrier).  Passing the struct reference directly in
+ * that case makes the generated `call` fail Wasm validation.  Keep this at the
+ * ABI boundary instead of weakening validation or relying on stack fixups.
+ */
+function coerceTrampolineThisSlot(
+  ctx: CodegenContext,
+  body: Instr[],
+  objStructTypeIdx: number,
+  methodThisType: ValType | undefined,
+  methodUsesThis: boolean,
+  fctx?: FunctionContext,
+): void {
+  if (!methodThisType) return;
+  // A method which never reads `this` is valid when extracted and called with
+  // an absent receiver.  Keeping the nullable value also avoids narrowing a
+  // provisional signature before the method body pass settles its ABI.
+  if (!methodUsesThis) return;
+  const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
+  if (source.kind === methodThisType.kind) {
+    // Same-kind references are already compatible when they name the same
+    // struct.  A distinct type index is handled by the existing method-arg
+    // reconciliation path; the receiver path should not add an unsafe cast
+    // for an unrelated object shape.
+    return;
+  }
+  body.push(...coercionInstrs(ctx, source, methodThisType, fctx));
+}
+
+/**
  * #1118: Emit an object-literal method as a first-class closure value.
  *
  * Object-literal methods are compiled as Wasm functions with signature
@@ -262,6 +295,7 @@ export function emitObjectMethodAsClosure(
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
   if (ntShift > 0 && inLiveShiftRange(methodFuncIdx, importsBeforeNT)) methodFuncIdx += ntShift;
   const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
+  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -441,6 +475,8 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
+      tFctx.body = newBody;
+      coerceTrampolineThisSlot(ctx, newBody, t.objStructTypeIdx, sig.params[0], usesThis, tFctx);
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });
@@ -690,6 +726,7 @@ export function ensureMethodClosureSingleton(
       anyTempLocalIdx,
       methodUsesThisCached,
     );
+    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
