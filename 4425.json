@@ -1,10 +1,11 @@
 {
   "id": "4425",
   "assignee": "ttraenkler/fable-lead",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4425-node-checks-switch-dispatch",
   "claimed_at": "2026-08-15T00:47:41Z",
-  "updated_at": "2026-08-15T00:47:41Z",
-  "write_id": "33591-1tokd43n"
+  "updated_at": "2026-08-15T01:28:14Z",
+  "write_id": "82595-jfk4gf1h",
+  "released_at": "2026-08-15T01:28:14Z"
 }
