@@ -22,7 +22,7 @@ const REPORT_PATH = join(HERE, "report", "marked-upstream-suite.json");
 const MARKED_ASSERT_SHIM = String.raw`
 const assert = {
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value")); },
-  strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch")); },
+  strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch") + " actual=" + String(actual) + " expected=" + String(expected)); },
   deepStrictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (!__upstreamSame(actual, expected)) __upstreamFail("assertion " + n + ": " + (message || "deepStrictEqual mismatch")); },
 };
 function timeout() { return Promise.resolve(); }

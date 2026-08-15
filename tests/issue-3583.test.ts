@@ -144,25 +144,25 @@ describe("#3583 — type-erased assertion wrappers are IR-claimed and lowered", 
   // zero value instead of erroring. `as` / `!` are unaffected (legacy handles
   // those), which is exactly why only these two forms diverge.
   //
-  // These two cases therefore deliberately do NOT assert IR/legacy parity —
-  // asserting it would pin the WRONG answer. They assert the spec answer from
-  // the IR path and pin legacy's wrong answer, so that fixing legacy (tracked
-  // in the #3583 "TODO — next allocation window" list) fails this test loudly
-  // rather than passing silently.
-  it("`<T>x` — IR is spec-correct; legacy is a known-wrong pre-existing bug", async () => {
+  // UPDATE 2026-08-15 (#4458/#4578): the legacy bug was FIXED — the missing
+  // `TypeAssertionExpression`/`SatisfiesExpression` dispatcher arms were added,
+  // mirroring `AsExpression`. The tripwire below fired exactly as designed
+  // (the wrong-answer pins failed loudly when the fix landed), so both cases
+  // now assert full IR/legacy PARITY on the spec answer.
+  it("`<T>x` — IR and legacy agree on the spec answer (legacy fixed by #4458)", async () => {
     const src = `export function f(x: number): number { return (<number>x) + 1; }`;
     expect(claims(src, "f")).toBe(true);
     expect(await irEmitted(src, "f")).toBe(true);
     expect(((await instantiate(src, true)).f as (n: number) => number)(41)).toBe(42);
-    expect(((await instantiate(src, false)).f as (n: number) => number)(41)).toBe(1);
+    expect(((await instantiate(src, false)).f as (n: number) => number)(41)).toBe(42);
   });
 
-  it("`x satisfies T` — IR is spec-correct; legacy is a known-wrong pre-existing bug", async () => {
+  it("`x satisfies T` — IR and legacy agree on the spec answer (legacy fixed by #4458)", async () => {
     const src = `export function f(x: number): number { return (x satisfies number) + 1; }`;
     expect(claims(src, "f")).toBe(true);
     expect(await irEmitted(src, "f")).toBe(true);
     expect(((await instantiate(src, true)).f as (n: number) => number)(41)).toBe(42);
-    expect(((await instantiate(src, false)).f as (n: number) => number)(41)).toBe(1);
+    expect(((await instantiate(src, false)).f as (n: number) => number)(41)).toBe(42);
   });
 
   it("non-null assertion `x!`", async () => {
