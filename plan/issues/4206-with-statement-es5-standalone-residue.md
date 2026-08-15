@@ -458,3 +458,18 @@ status is 121 pass / 54 fail / 15 compile error.
 This issue stays `ready`: the callable environment slice is complete and
 measured, while constructor capture and those independently named runtime
 mechanisms remain follow-up work.
+
+## ES5-wave adoption (fable, 2026-08-15, #4444 session)
+
+Adopted for the ES5-and-earlier close-out wave (prior claim `ttraenkler/W26`
+stale since the 2026-08-07 handoff; re-claimed by `claude/es5-team-with` on
+origin/issue-assignments). Fresh-baseline measurement (2026-08-15,
+`.tmp/es5-standalone-clusters.ts`): the `language/statements/with` bucket is
+**49 non-pass** — consistent with this file's "Remaining 17 rows" + the
+downstream-cohort accounting. The adopting agent MUST start from the
+"Handoff — 2026-08-07", "Deferred, precisely located" and "Remaining 17 rows"
+sections above — this issue has two completed measurement/fix cycles; do not
+re-derive from scratch. Top current symptoms: 13× `__str_concat` null deref
+in `__module_init` (crash class, fix first), scope-chain property resolution
+(`p1 === "x1"` actual `1` — with-object property shadowing outer binding),
+and the #1387 closed-shape CE gate (~10 files, constructible-closure arm).
