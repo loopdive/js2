@@ -16,8 +16,10 @@ goal: standalone-mode
 related: [4444, 3031, 4490]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
+  - src/codegen/object-ops.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
 ---
 
 # #4491 — ES5 defineProperty/defineProperties/create MOP residual
@@ -310,6 +312,77 @@ The behavioural delta is confined to programs that actually install a
 descriptor, which is what gate (b) and the R4/R5 probes measure directly. That
 is the third time in this slice that a stated expectation was wrong in the
 SAFE direction; each was caught by measuring rather than asserting.
+
+### Step 11 — step-3 root cause: a COMPILE-TIME FOLD, not a runtime arm
+
+Diagnostic done by disassembling the emitted module — **no src instrumentation
+needed**, so nothing had to be reverted. Both candidates in Step 10 are WRONG,
+and so is the plan's assumed site.
+
+**The two natives are byte-identical.** `wasm-dis` of a module containing both
+calls shows `$__hasOwnProperty` and `$__object_hasOwn` with the SAME locals and
+the SAME `fillVecHasOwnHelpers` prologue (`ref.test $vecBase` → `call
+$__vec_gopd` → …). The splice worked on both. So it was never a splice-time
+resolution failure (candidate a) nor a competing earlier prologue (candidate b).
+
+**`a.hasOwnProperty(K)` never calls either native.** In `$test` the only
+predicate call emitted is `call $__object_hasOwn`; the `hasOwnProperty` site
+compiled to a literal **`(if (i32.const 0) …)`**. The answer was CONSTANT-FOLDED
+at compile time.
+
+**Where.** `compilePropertyIntrospection` (`object-ops.ts`) — its own docstring
+says "Static resolution (string literal arg): constant fold to i32.const 0/1".
+Its vec-receiver branch has exactly two arms: a dense-literal own index (fold to
+1) and, for reference-element vecs, a canonical-index bounds test OR-ed with
+`__hasOwnProperty`. A static key that is **not a canonical array index** —
+`"4294967295"` — matches neither, falls through to the generic FIELD-NAME logic,
+and a vec struct has no field of that name ⇒ folded `0`. `Object.hasOwn` has no
+such fold, which is the entire reason the two spellings disagree.
+
+**Fix (small, and NOT in a contended file).** In that vec branch, a static key
+that is not a canonical array index must NOT reach the field-name fold: delegate
+to `emitRuntimePropertyIntrospection` (same file, already present, already calls
+`__hasOwnProperty`). The runtime prologue is proven correct by `__object_hasOwn`
+answering `true` on the identical body — so this is a routing fix, not new
+semantics. `object-ops.ts` is untouched by the reflection lane (verified:
+they hold `object-runtime.ts` + `proto-index-store.ts`).
+
+### Step 11 result — LANDED, all gates green
+
+**Gate (b): 6 upward flips, 0 regressions** — the full D-a gate now stands at
+6/8, and the 2 that remain are the ones correctly re-bucketed to #4497:
+
+| test | before | after |
+| ---- | ------ | ----- |
+| `defineProperties/15.2.3.7-6-a-{180,181,182}` | fail | **pass** (D-a, unchanged by this step — no interaction) |
+| `defineProperty/15.2.3.6-4-{184,185,186}` | fail | **pass** (this step) |
+| `defineProperty/15.2.3.6-4-155`, `defineProperties/15.2.3.7-6-a-151` | fail | fail (#4497, expected) |
+
+**Probe quartet + fold positive controls: 12/12.** The quartet is green
+(`hasOwnProperty`, the `.call` spelling, `Object.hasOwn` still true, non-numeric
+key still true) and — the part that matters for a fold change — **the world is
+not un-folded**: plain-object own/absent, array canonical index in/out of
+bounds, array absent non-index key, array named expando, `length` own, and
+inherited `push` NOT own all keep their previous answers.
+
+**Blast radius, base = HEAD (already contains D-a):**
+
+| corpus check | result |
+| ------------ | ------ |
+| gc lane bytes | **identical** |
+| standalone bytes | **identical** |
+| functional outputs | **identical on all 23** |
+
+Standalone bytes being identical here — where D-a moved 11 programs — is the
+signature of the difference between the two fixes: D-a edited a runtime native
+(which every standalone module links), this one changes a CALL-SITE routing
+decision, so a program that never calls `hasOwnProperty` with such a key emits
+byte-for-byte what it did before.
+
+**Gate (a), seeded 200 (seed 20260815): 129/40/31 → 129/40/31, zero
+pass→non-pass.** The population that burned 684 passes does not move.
+
+`pnpm run typecheck`: clean. Files: `src/codegen/object-ops.ts` only.
 
 ### Step 10 — step-3 (`hasOwnProperty`) recon: the two predicates DIVERGE
 
