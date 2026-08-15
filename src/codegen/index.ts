@@ -2497,6 +2497,10 @@ function planIrOverlay(
             numberStorage: ctx.fast ? "i32" : "f64",
             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+            // (#4461) The complementary carrier: native strings ⇒ `Map` lives
+            // in the WasmGC `$Map` struct, so the binding is representable
+            // here even though the extern handle is not.
+            allowNativeMapStorage: ctx.nativeStrings,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
           },

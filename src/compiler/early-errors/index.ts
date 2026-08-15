@@ -47,3 +47,38 @@ export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal
 
   return ctx.errors;
 }
+
+/**
+ * (#4464) Whether the subtree rooted at `node` carries any per-node early
+ * error, evaluated in the context of its own source file (so strict-mode
+ * inheritance through the enclosing scopes is intact).
+ *
+ * This exists for the dead-binding elision pre-pass (`deadcode-elide.ts`),
+ * which runs BEFORE parsing for the real pipeline and therefore before
+ * {@link detectEarlyErrors} ever sees the program. Blanking a dead binding
+ * deleted its initializer's early errors with it, so
+ *
+ *     "use strict";
+ *     var f = function (param, param) { };   // never referenced
+ *
+ * compiled clean instead of raising the SyntaxError §15.2 requires
+ * (`language/statements/function/13.1-{4,8}gs`,
+ * `enable-strict-via-outer-script`). The elision already refuses to drop
+ * binding NAMES that carry early errors; this closes the same hole on the
+ * initializer side.
+ *
+ * Only the per-node walk runs. The source-file-level passes (module item
+ * position, duplicate exports, …) are about the file as a whole and would be
+ * meaningless — and possibly wrong — rooted at one statement. Over-reporting
+ * is harmless in the intended use: a false positive only means a dead binding
+ * is KEPT, never that an error reaches the user's diagnostics.
+ */
+export function subtreeHasEarlyError(
+  sourceFile: ts.SourceFile,
+  node: ts.Node,
+  opts?: { moduleGoal?: boolean },
+): boolean {
+  const ctx = createEarlyErrorContext(sourceFile, opts);
+  runNodeChecks(ctx, node);
+  return ctx.errors.some((error) => error.severity !== "warning");
+}

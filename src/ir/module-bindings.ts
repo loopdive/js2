@@ -566,7 +566,15 @@ export type IrModuleBindingValueKind =
   | { readonly kind: "f64" }
   | { readonly kind: "i32"; readonly semantic: "boolean" }
   | { readonly kind: "dynamic" }
-  | { readonly kind: "extern"; readonly className: string };
+  | { readonly kind: "extern"; readonly className: string }
+  // (#4461) Host-free lanes lower `Map` to the WasmGC-native `$Map` struct
+  // (#1103a), NOT to an externref host handle. That is a different physical
+  // carrier — `(ref null $Map)` vs `externref` — so it is a distinct storage
+  // kind rather than a widened `extern`. Keeping them separate is what makes
+  // selector claim ⇔ lowering parity checkable: a `native-map` binding may
+  // only be claimed where the native `$Map` lowering exists, and an `extern`
+  // binding only where the host handle does.
+  | { readonly kind: "native-map"; readonly className: "Map" };
 
 /** Name-compatible binding evidence used only by the pre-R1 planning seam. */
 export interface IrLegacyModuleBindingIdentity {
@@ -753,6 +761,14 @@ export interface IrModuleBindingResolverOptions {
    * lanes store it as `(ref null $Map)`, outside this capability's surface.
    */
   readonly allowBuiltinMapExtern: boolean;
+  /**
+   * (#4461) The complementary capability: native-string / standalone lanes
+   * store a builtin `Map` in the WasmGC `$Map` struct (#1103a). Exactly one of
+   * this and {@link allowBuiltinMapExtern} may be true — they are the two
+   * carriers of the same source binding, and admitting both would let the
+   * selector claim a representation the active backend cannot lower.
+   */
+  readonly allowNativeMapStorage?: boolean;
   /** Provisional selector-only access to the bounded top-level accessor family. */
   readonly allowBoundedTopLevelAccessorSelectionCandidates?: boolean;
   /** Whole-program fnctor gate proof for one-write intrinsic Array prototypes. */
@@ -938,6 +954,66 @@ function externClassNameForType(
     (nonNull.getSymbol()?.declarations ?? []).some((declaration) => declaration.getSourceFile().isDeclarationFile);
   if (MODULE_EXTERN_BUILTINS.has(className)) return builtinExtern ? className : undefined;
   return isExternalDeclaredClass(nonNull, checker) ? className : undefined;
+}
+
+/**
+ * (#4461) Prove a declared type is the ambient lib `Map`, the one builtin whose
+ * host-free carrier is the native `$Map` struct.
+ *
+ * The proof is deliberately the same shape as `externClassNameForType`'s
+ * builtin arm — ambient (declaration-file) declarations only — so a user class
+ * named `Map` keeps ordinary class dispatch instead of acquiring collection
+ * storage by spelling. A nullable annotation is rejected outright: the legacy
+ * slot is `(ref null $Map)` but the IR has no null-carrying native-map value,
+ * so a source that can hold `null` must stay on the direct path.
+ */
+function isNativeMapStorageType(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+): boolean {
+  if (options.allowNativeMapStorage !== true) return false;
+  if (type.isUnion()) return false;
+  const nonNull = checker.getNonNullableType(type);
+  if (nonNull !== type) return false;
+  const symbol = nonNull.getSymbol() ?? nonNull.aliasSymbol;
+  if (symbol?.name !== "Map") return false;
+  const declarations = symbol.getDeclarations() ?? [];
+  return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
+}
+
+/** True for either carrier of a builtin `Map` module binding (#4461). */
+export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "native-map" || (valueKind.kind === "extern" && valueKind.className === "Map");
+}
+
+/**
+ * (#4461) True when the binding's legacy slot is a REFERENCE the selector's
+ * extern-consumer discipline must police — the host externref handle or the
+ * native `$Map`. Both leak a non-scalar representation into every consumer, so
+ * both take the same conservative gates.
+ */
+export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "extern" || valueKind.kind === "native-map";
+}
+
+/**
+ * (#4461) The one initializer shape a native-`$Map` module binding admits:
+ * `new Map()` / `new Map<K, V>()` against the ambient constructor, zero
+ * runtime arguments. `new Map(iterable)` needs the `__map_new_from_arr`
+ * drive that this storage slice does not lower, so it is refused before claim.
+ */
+function isNativeMapConstruction(checker: ts.TypeChecker, value: ts.Expression): boolean {
+  const candidate = unwrapParens(value);
+  if (!ts.isNewExpression(candidate)) return false;
+  if (!ts.isIdentifier(candidate.expression) || candidate.expression.text !== "Map") return false;
+  if ((candidate.arguments?.length ?? 0) !== 0) return false;
+  try {
+    const declaration = checker.getResolvedSignature(candidate)?.getDeclaration();
+    return declaration?.getSourceFile().isDeclarationFile === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1223,7 +1299,10 @@ function callReceiverIsModuleExtern(
 ): boolean {
   const visit = (expr: ts.Expression): boolean => {
     const candidate = unwrapParens(expr);
-    if (ts.isIdentifier(candidate)) return resolve(candidate)?.valueKind.kind === "extern";
+    if (ts.isIdentifier(candidate)) {
+      const valueKind = resolve(candidate)?.valueKind;
+      return valueKind !== undefined && isIrModuleReferenceValueKind(valueKind);
+    }
     if (ts.isPropertyAccessExpression(candidate)) return visit(candidate.expression);
     if (ts.isCallExpression(candidate)) return visit(candidate.expression);
     return false;
@@ -1274,6 +1353,10 @@ function writeValueMatches(
     // compatibility slot but cause module-init selection to demote until IR
     // has an object-to-dynamic materializer.
     return classifyPrimitiveExpression(valueExpr) !== undefined;
+  }
+  if (targetKind.kind === "native-map") {
+    // The native `$Map` carrier has exactly one producer in this slice.
+    return isNativeMapConstruction(checker, valueExpr);
   }
   if (targetKind.kind === "extern") {
     if (moduleExternValueNeedsLegacy(valueExpr)) return false;
@@ -1925,6 +2008,12 @@ export function makeIrLegacyModuleBindingResolver(
         valueKind = { kind: "extern", className };
       }
     }
+    // (#4461) Host-free carrier for the same builtin. Deliberately NOT folded
+    // into the arm above: `allowHostExterns` is false on this lane, and the
+    // resulting storage is the native `$Map` struct rather than an externref.
+    if (!valueKind && !isModuleVar && isNativeMapStorageType(declaredType, checker, options)) {
+      valueKind = { kind: "native-map", className: "Map" } as const;
+    }
     if (!valueKind) return { kind: "unsupported", declaration };
     if (
       writeValue !== undefined &&
@@ -1974,9 +2063,12 @@ export function makeIrLegacyModuleBindingResolver(
           let found = false;
           const visit = (candidate: ts.Node): void => {
             if (found) return;
-            if (ts.isIdentifier(candidate) && resolve(candidate)?.valueKind.kind === "extern") {
-              found = true;
-              return;
+            if (ts.isIdentifier(candidate)) {
+              const candidateKind = resolve(candidate)?.valueKind;
+              if (candidateKind !== undefined && isIrModuleReferenceValueKind(candidateKind)) {
+                found = true;
+                return;
+              }
             }
             candidate.forEachChild(visit);
           };
@@ -1993,6 +2085,11 @@ export function makeIrLegacyModuleBindingResolver(
           if (moduleExternReceiver && !externValueIsPassable(checker, argument, options)) return false;
           if (!ts.isIdentifier(argument)) return !containsModuleExtern(argument);
           const binding = resolve(argument);
+          // (#4461) A native `$Map` binding has no cross-boundary parameter
+          // ABI at all — the struct reference cannot be branded against a
+          // declared parameter class the way an externref handle can — so it
+          // is refused as an argument outright rather than brand-matched.
+          if (binding?.valueKind.kind === "native-map") return false;
           if (binding?.valueKind.kind !== "extern") return true;
           const parameter = parameters[parameterIndex];
           const parameterDeclaration = parameter?.valueDeclaration ?? parameter?.declarations?.[0];

@@ -32,6 +32,7 @@ import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
 import { adjustRethrowDepth } from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
+import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -273,8 +274,37 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
   // separate path, so we leave derived returns to the existing logic (the
   // static derived-ctor return-primitive TypeError above still applies). This
   // matches the issue scope (#2018, "base-class constructor").
+  // (#4464) The same step-13 rule for the FunctionExpression construction
+  // lowering, whose receiver and result are an externref `$Object` rather than
+  // a nominal struct. The struct arm below decides "is the operand an Object?"
+  // statically (it can: the only representable override is its own struct);
+  // here the operand may be ANY runtime value, so the probe is a runtime one.
+  if (fctx.constructThisExternLocal !== undefined) {
+    const selfIdx = fctx.constructThisExternLocal;
+    if (!stmt.expression) {
+      fctx.body.push({ op: "local.get", index: selfIdx });
+    } else {
+      const exprType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
+      if (exprType === null || exprType === undefined) {
+        fctx.body.push({ op: "local.get", index: selfIdx });
+      } else {
+        if (exprType.kind !== "externref") coerceType(ctx, fctx, exprType, { kind: "externref" });
+        if (!emitConstructReturnSelect(ctx, fctx, selfIdx)) {
+          // No runtime Type(V) probe available — the spec-safe answer is the
+          // one that is right for every PRIMITIVE return and wrong only for an
+          // object one, so discard rather than hand back a value we cannot
+          // classify.
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "local.get", index: selfIdx });
+        }
+      }
+    }
+    emitReturnTail(ctx, fctx, hasPendingFinally);
+    return;
+  }
+
   if (
-    fctx.isConstructor &&
+    (fctx.isConstructor || fctx.isFnctorConstructor) &&
     !fctx.isDerivedConstructor &&
     fctx.returnType &&
     fctx.returnType.kind === "ref" &&
