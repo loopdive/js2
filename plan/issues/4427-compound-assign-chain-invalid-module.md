@@ -1,11 +1,21 @@
 ---
 id: 4427
 title: "Compound `+=` chain with boolean RHS emits a non-validating module (any.convert_extern fed a (ref null $AnyString) if)"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
 updated: 2026-08-15
+# The lane decision + operand bridging moved OUT to the new subsystem module
+# src/codegen/string-compound-lane.ts; what stays in the driver is the hoisted
+# left/right checker types (shared with the #2058 block below it, net zero raw
+# checker sites) and the three-line call into that module. +2 file lines /
+# +6 function lines is the irreducible residue of that call.
+loc-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts
+func-budget-allow:
+  - src/codegen/expressions/operator-assignment.ts::compileCompoundAssignment
 priority: high
 horizon: m
 feasibility: medium
@@ -95,3 +105,104 @@ test262 (ES5 standalone): S11.13.2_A4.4_T2.6–T2.9, plus the
   residual is filed with the exact failing lane documented.
 - No regression in the scoped standalone filter
   `language/expressions/compound-assignment|language/expressions/addition`.
+
+## Resolution (2026-08-15)
+
+Two INDEPENDENT defects, both in the standalone (nativeStrings) `+=` lowering.
+The plan's suspicion that the #3989 bridge-slot store-back or the #4426
+wrapper-miss arm produced the bad `if` was wrong on both counts — the culprit
+is older and simpler.
+
+### 1. Invalid module — `emitBoolToString` is DUAL-LANE, its callers were not
+
+Minimal repro is a SINGLE statement, not a chain: `var x = "1"; x += true;`.
+
+```wat
+i32.const 1
+(if (result (ref null 6))          ;; 6 = $AnyString — emitBoolToString, native lane
+  (then global.get 44) (else global.get 45))
+any.convert_extern                 ;; ← operand must be externref. INVALID.
+ref.cast (ref 6)
+```
+
+`emitBoolToString` (string-ops.ts:1618) returns an **externref** string-constant
+global in the JS-host lane but a native `$AnyString` when
+`ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0`. Both native-string coercion
+sites — `compileNativeStringCompoundAssignment`'s boolean-RHS arm and
+`compileAndCoerceToAnyStr` (the #1210 builder path) — appended the host lane's
+`any.convert_extern` + `ref.cast` **unconditionally**, ignoring the ValType
+`emitBoolToString` returns. The comment at the first site even asserted the
+wrong half ("emitBoolToString returns externref").
+
+Fixed by `emitBoolToAnyStr` (new module `src/codegen/string-compound-lane.ts`),
+which branches on the reported type: externref keeps the host tail; the native
+lane emits `ref.as_non_null`, correct for both shapes that lane can produce
+(`ref.as_non_null` accepts a non-null operand). The `p12`/`p24` chains were
+never a separate bug — they simply contained this statement.
+
+### 2. Wrong lane — the concat gate only ever looked at the LHS
+
+The sibling wrong-value bugs turned out to be ONE bug, and it did fall out of
+the same dispatch. §13.15.3 defers to §13.5.3, whose step 3 concatenates as
+soon as **either** operand's ToPrimitive is a String. The gate in
+`compileCompoundAssignment` tested `isStringType(leftTsType)` and then, only
+for an `any` LHS, `hasStringAssignment`. With the checker narrowing `x` to
+`number` immediately after `x = 1`, `x += "1"` failed both tests and fell
+through to the f64 lane, which ToNumber-coerced the string: `2`, not `"11"`.
+Same mechanism for the `undefined` / `null` LHS rows.
+
+`rhsStringForcesConcatLane` adds the missing half: a statically String-typed
+RHS (string primitive, string literal, or a `String` WRAPPER object — all
+ToPrimitive to a string) settles the lane on its own.
+
+**Deliberately restricted to the case the concat lane can SERVE**, via
+`slotNeedsExternrefBridge` (no JS host + externref slot):
+
+- Its inbound half `emitExternrefSlotToAnyStr` (#3472) runs the §7.1.17
+  ToString walker on the loaded value, which is what makes a number / boolean /
+  `undefined` / `null` / wrapper in the slot stringify instead of trap.
+- An f64/i32 slot cannot hold the concat result at all, so it keeps the
+  numeric lane.
+- The JS-host lane's `compileStringCompoundAssignment` loads the slot RAW into
+  js-string concat — no ToString on the LHS — so it keeps the numeric lane too.
+  Widening this rule to the host lane is a separate change and would need its
+  own LHS ToString.
+
+### Residual (out of scope, not fixed)
+
+- **JS-host lane**: `x = 1; x += "1"` with a JS host still takes the numeric
+  lane, per the gate above. Only the standalone/WASI native-string lane is
+  fixed here. Not observable in the ES5-standalone conformance target.
+- `tests/issue-1999.test.ts` "captured string += inside an async function
+  appends" times out at 35 s. **Pre-existing** — verified failing identically
+  with both source files reverted to the merge-base. Untouched by this issue.
+
+## Test Results (2026-08-15)
+
+Scoped standalone run,
+`language/expressions/compound-assignment` + `language/expressions/addition`
+(502 files, `.tmp/run-dir.mts`, before/after on the same tree):
+
+| | pass | fail | compile_error |
+| --- | --- | --- | --- |
+| before | 463 | 28 | 11 |
+| after | **467** | 24 | 11 |
+
+Per-file delta: **+4, zero regressions.**
+
+```
+FAIL -> PASS  S11.13.2_A4.4_T2.6.js
+FAIL -> PASS  S11.13.2_A4.4_T2.7.js
+FAIL -> PASS  S11.13.2_A4.4_T2.8.js
+FAIL -> PASS  S11.13.2_A4.4_T2.9.js
+```
+
+Probes (`.tmp/p4427.mts`) — `p1`/`p2`/`p12`/`p24` all `validate true`; before,
+`p2` (the single statement), `p12` and `p24` each failed with
+`any.convert_extern[0] expected type externref, found if of type (ref null 6)`.
+
+Suites: `tests/issue-4427-compound-assign-chain.test.ts` 8/8 new · the eight
+string/compound `tests/equivalence/*` suites 55/55 · `tests/issue-3989-*`,
+`tests/issue-3472-*`, `tests/issue-2058-*`, `tests/compound-assignment-*` green
+· `npm run typecheck`, `biome lint` on the changed files, `check:oracle-ratchet`
+(net −1 `getTypeAtLocation`, −1 `ctx.checker`) all clean.
