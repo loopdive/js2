@@ -87,6 +87,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
+import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
   IrLegacyLocalClassExpressionResolver,
@@ -5562,10 +5563,16 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
   );
 }
 
-/** Resolve an exact module identifier whose shared legacy slot is externref-shaped. */
+/**
+ * Resolve an exact module identifier whose shared legacy slot is
+ * reference-shaped — the host externref handle, or (#4461) the host-free
+ * native `$Map` struct. Both carriers take the same consumer discipline: the
+ * value is opaque to this shape-only selector, so only positions with a proven
+ * lowering may own an expression that touches one.
+ */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding?.valueKind.kind === "extern" ? binding : undefined;
+  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -5899,7 +5906,7 @@ function exactModuleMapMethod(expr: ts.CallExpression): string | undefined {
   const callee = unwrapPhase1Parens(expr.expression);
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.name)) return undefined;
   const receiver = moduleExternBinding(callee.expression);
-  return receiver?.valueKind.kind === "extern" && receiver.valueKind.className === "Map" ? callee.name.text : undefined;
+  return receiver !== undefined && isIrModuleMapValueKind(receiver.valueKind) ? callee.name.text : undefined;
 }
 
 /**
@@ -5925,7 +5932,7 @@ function isExactModuleMapGenericInitializer(expr: ts.NewExpression): boolean {
   if (!ts.isVariableStatement(statement) || !ts.isSourceFile(statement.parent)) return false;
 
   const storage = resolver(declaration.name);
-  return storage?.valueKind.kind === "extern" && storage.valueKind.className === "Map";
+  return storage !== undefined && isIrModuleMapValueKind(storage.valueKind);
 }
 
 /**
