@@ -40,10 +40,35 @@ export function sourceDefinesFunctionMember(sourceFile: ts.SourceFile, name: str
   return names.has(name);
 }
 
+/**
+ * Does this file assign `<receiver>.<name> = <alias>` somewhere?
+ *
+ * `alias` is an identifier by default. `includeMemberAliases` additionally
+ * admits a PROPERTY-ACCESS right-hand side — `o.match = String.prototype.match`
+ * (#4439), the dominant ES5-sputnik spelling of borrowing a builtin method.
+ *
+ * Why that spelling had to be admitted, and why it is opt-in:
+ *
+ * - **The miss is not cosmetic.** With the property-access RHS unrecognized,
+ *   `o.match(v)` fell through to the extern-class first-match loop, which binds
+ *   the FIRST registered extern class declaring `match` — the DOM `Cache`
+ *   interface — and emitted `env::Cache_match`. That is a host import the
+ *   standalone runtime cannot satisfy (measured on
+ *   `built-ins/String/prototype/match/this-val-obj.js` and `this-val-bool.js`,
+ *   which the compiler's own host-import-leak diagnostic named).
+ * - **It stays RECEIVER-SCOPED.** The answer is `members[name] ∋ receiver.text`,
+ *   so only the very identifier this file assigned the member to declines the
+ *   extern binding; every other receiver keeps it.
+ * - **It is opt-in because the JS-HOST lane must stay byte-identical.** There
+ *   the `Cache_match` import is satisfiable, so widening the refusal would
+ *   change host-lane output for no host-lane benefit. The caller gates on
+ *   `noJsHost`.
+ */
 export function sourceAssignsAliasedFunctionMember(
   sourceFile: ts.SourceFile,
   receiver: ts.Expression,
   name: string,
+  includeMemberAliases = false,
 ): boolean {
   if (!ts.isIdentifier(receiver)) return false;
   let members = aliasedFunctionMembers.get(sourceFile);
@@ -55,16 +80,20 @@ export function sourceAssignsAliasedFunctionMember(
         node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         ts.isPropertyAccessExpression(node.left) &&
         ts.isIdentifier(node.left.expression) &&
-        ts.isIdentifier(node.right)
+        (ts.isIdentifier(node.right) || ts.isPropertyAccessExpression(node.right))
       ) {
-        const receivers = members!.get(node.left.name.text) ?? new Set<string>();
+        // Key by RHS shape so the identifier-only answer stays exactly what it
+        // was; the widened answer is a superset the caller opts into.
+        const key = ts.isIdentifier(node.right) ? node.left.name.text : `member:${node.left.name.text}`;
+        const receivers = members!.get(key) ?? new Set<string>();
         receivers.add(node.left.expression.text);
-        members!.set(node.left.name.text, receivers);
+        members!.set(key, receivers);
       }
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
     aliasedFunctionMembers.set(sourceFile, members);
   }
-  return members.get(name)?.has(receiver.text) === true;
+  if (members.get(name)?.has(receiver.text) === true) return true;
+  return includeMemberAliases && members.get(`member:${name}`)?.has(receiver.text) === true;
 }

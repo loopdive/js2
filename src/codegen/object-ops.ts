@@ -47,6 +47,7 @@ import {
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
+import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
@@ -4756,6 +4757,16 @@ export function compilePropertyIntrospection(
     // (#3920/#4225) Replace an unsound folded constant — see closed-struct-presence.ts.
     if (emitHasOwnPresence(ctx, fctx, receiverWasm, structFieldNames, staticKey, propAccess, arg, result)) {
       return { kind: "i32", boolean: true };
+    }
+
+    // (#4062) A named expando on an ARRAY receiver lives in the #3537 bag, which
+    // no part of the fold above can see — the vec's field list is
+    // `["length","data"]`. Only a folded `0` is routed, so every affirmative
+    // answer stays byte-identical. See vec-named-key-presence.ts.
+    if (vecNamedKeyNeedsRuntime(ctx, receiverWasm, staticKey, result)) {
+      if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, arg, isPropertyIsEnumerable)) {
+        return { kind: "i32", boolean: true };
+      }
     }
 
     // Compile receiver and argument for side effects, then drop
