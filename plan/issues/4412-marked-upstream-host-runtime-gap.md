@@ -17,6 +17,7 @@ loc-budget-allow:
   - src/codegen/context/create-context.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/expressions/call-tail-dispatch.ts

@@ -15,7 +15,7 @@ import { ensureHoleType } from "./array-holes.js";
 import type { CodegenContext } from "./context/types.js";
 import { exportFunc } from "./emit-helpers.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
-import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -152,7 +152,14 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
   }[] = [];
   for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
     const typeIdx = addFuncType(ctx, [...definition.params], [...definition.results], `$${definition.name}_type`);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    // Keep the bridge target layout-independent from the moment it is
+    // allocated. These helpers are reserved while function bodies are still
+    // compiling, and later imports can change the absolute function prefix.
+    // A live `numImportFuncs + functions.length` index can therefore land on
+    // the preceding dispatcher (for example `__set_member_createContext`)
+    // after the final import set is known. Stable handles resolve against the
+    // allocator-owned function object at emit time instead.
+    const funcIdx = mintDefinedFunc(ctx);
     const func = {
       name: definition.name,
       typeIdx,
@@ -160,7 +167,7 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
       body: [...definition.placeholder],
       exported: false,
     } as WasmFunction;
-    ctx.mod.functions.push(func);
+    pushDefinedFunc(ctx, funcIdx, func);
     if (!ctx.funcMap.has(definition.name)) ctx.funcMap.set(definition.name, funcIdx);
     allocations.set(definition.kind, Object.freeze({ definition, func }));
     observations.push({

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { dirname, extname } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
@@ -226,12 +226,12 @@ async function runNative(generatedPath, source) {
  * gives the suite a real hard deadline and prevents one package from wedging
  * the npm-compat workflow.
  */
-function runIsolatedCompile(generatedPath, timeoutMs) {
+function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEnv = {}) {
   return new Promise((resolve) => {
     const workerPath = new URL("./upstream-suite-compile-worker.mjs", import.meta.url);
-    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(workerPath), generatedPath], {
+    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(workerPath), generatedPath, mode], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, ...workerEnv },
     });
     let stdout = "";
     let stderr = "";
@@ -318,6 +318,35 @@ export async function compileAndRunUpstreamModule({
 
   const isolated = await runIsolatedCompile(generatedPath, timeoutMs);
   return { native, ...isolated };
+}
+
+/**
+ * Compile a generated source file in an isolated worker without executing its
+ * exports. Large package implementations (notably ReactDOM) must pass this
+ * gate before per-test batches are attempted; the child gives the caller a
+ * real deadline even while synchronous code generation is running.
+ */
+export async function compileSourceInWorker({ generatedPath, source, timeoutMs = 300_000, workerEnv }) {
+  mkdirSync(dirname(generatedPath), { recursive: true });
+  writeFileSync(generatedPath, source);
+  return runIsolatedCompile(generatedPath, timeoutMs, "source", workerEnv);
+}
+
+/**
+ * Compile a generated multi-file upstream project in an isolated worker.
+ * Keeping the package implementation in imported files means a test entry
+ * does not have to concatenate/recompile the same large CJS body once per
+ * batch, while the worker still supplies a hard deadline for pathological
+ * code generation.
+ */
+export async function compileProjectInWorker({ generatedRoot, entryFile = "entry.ts", files, timeoutMs = 300_000, workerEnv }) {
+  mkdirSync(generatedRoot, { recursive: true });
+  for (const [relativePath, source] of Object.entries(files)) {
+    const target = join(generatedRoot, relativePath);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, source);
+  }
+  return runIsolatedCompile(join(generatedRoot, entryFile), timeoutMs, "project", workerEnv);
 }
 
 export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, runs }) {
