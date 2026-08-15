@@ -72,3 +72,24 @@ iterator, class-method, and related closure tests pass locally (`17/17`), and
 typecheck plus formatting pass. Marked's upstream hooks remain `0/15` until
 mixed-arity receiver dispatch (`br`/`del`) is implemented; this checkpoint does
 not claim upstream runtime compatibility.
+
+## 2026-08-15 checkpoint
+
+PR [#4507](https://github.com/loopdive/js2wasm/pull/4507) remains deliberately
+draft. The branch is synchronized with current `main`; the earlier CI quality
+failure was the equivalence baseline ratchet, not a compile or validation
+failure in this change.
+
+The watchdog now compiles the selected Hooks module with WAT emission disabled
+(the binary is the artifact under test), then runs the unchanged upstream
+callbacks in a killable worker. The current local result is `1/1` module
+compiled, `1/1` validated, `4,549,831` bytes, and `0/15` admitted synchronous
+tests in Wasm (`br is not a function`). The vector bridge export table is now
+finalized from allocator-owned function objects after dead-import elimination,
+so the runner reports the real method failure instead of an empty marshaled
+status vector.
+
+The remaining runtime work is to make Marked's mixed-arity class-method and
+renderer initialization path callable without allowing the method-cache arm to
+select a closure with the wrong ABI. No passing upstream-runtime claim is made
+until that path is covered by the unchanged Hooks suite.
