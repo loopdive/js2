@@ -80,6 +80,7 @@ import {
   getOrRegisterBoundFnType,
   getOrRegisterVecBaseType,
   getOrRegisterVecType,
+  isVecBaseSubtype,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import { builtinCtorCallableArmInstrs } from "./builtin-ctor-callable.js"; // (#4394) wrapper-ctor [[Call]] arm
@@ -9176,6 +9177,19 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // their element reads go through the dedicated typed-array paths, and
   // widening their `.length` here would change established fall-through
   // behaviour).
+  //
+  // (#4443) The name list states the right rule the wrong way; `isVecBase-
+  // Subtype` (registry/types.ts) is its structural form — see there for the
+  // carriers the names miss. What one costs when it slips through: it declares
+  // `length` but no integer-named FIELDS, so `numericFields` is empty and its
+  // `__extern_get_idx` arm degenerates to "`ref.test` the carrier → answer the
+  // prototype-index consult, unconditionally". The arm is skipped while
+  // `protoGetMiss()` is undefined, so an ordinary module never shows it; ANY
+  // builtin-prototype write mints it, and since these arms splice at body
+  // index 3 AFTER `fillExternGetIdxVecArms` put the real element arms there,
+  // it lands AHEAD of the `vec.data[i]` read. Measured on
+  // `$__regexp_match_vec`: `Number.prototype.foo = 1; "1020".match(/0./)[0]`
+  // read `undefined` while `.length` / `.index` / `m["0"]` stayed correct.
   type ArrayLikeCand = {
     typeIdx: number;
     lengthFieldIdx: number;
@@ -9197,6 +9211,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       structName.startsWith("$")
     )
       continue;
+    // (#4443) …and the structural form of that same rule — see the note above.
+    if (isVecBaseSubtype(ctx, typeIdx)) continue;
     const lengthFieldIdx = fields.findIndex(
       (f) =>
         f.name === "length" &&
