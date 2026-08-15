@@ -84,3 +84,19 @@ export function tunedFlagEnabled(raw: string | undefined): boolean {
 export function tunedFlagExplicit(raw: string | undefined): boolean {
   return raw !== undefined && raw.trim() !== "";
 }
+
+/**
+ * (#4405) The OPT-IN member of the same family: unset ⇒ **OFF**.
+ *
+ * The tuned eleven above inverted their default because they were measured and
+ * flipped. A flag that has not been through that gate must not inherit the
+ * inverted default — a new mechanism shipping ON-when-unset is exactly the
+ * shape that makes "byte-identical when off" untestable, because there is no
+ * "off" until someone sets a variable they do not know exists.
+ *
+ * The OFF tokens are the family's, so a flag can be turned off the same way
+ * whichever default it carries; only the treatment of `undefined` differs.
+ */
+export function optInFlagEnabled(raw: string | undefined): boolean {
+  return tunedFlagExplicit(raw) && tunedFlagEnabled(raw);
+}
