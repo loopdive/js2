@@ -48,17 +48,17 @@
   },
   {
     "edition": "ES2015",
-    "pass": 7660,
-    "fail": 3436,
+    "pass": 7695,
+    "fail": 3401,
     "ce": 607,
     "skip": 1,
     "total": 11704,
-    "pct": 65,
+    "pct": 66,
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3482,
-        "fail": 518,
+        "pass": 3493,
+        "fail": 507,
         "ce": 153,
         "skip": 0,
         "total": 4153,
@@ -66,17 +66,17 @@
       },
       {
         "name": "generators",
-        "pass": 1752,
-        "fail": 430,
+        "pass": 1763,
+        "fail": 419,
         "ce": 304,
         "skip": 0,
         "total": 2486,
-        "pct": 70
+        "pct": 71
       },
       {
         "name": "default-parameters",
-        "pass": 1329,
-        "fail": 167,
+        "pass": 1334,
+        "fail": 162,
         "ce": 56,
         "skip": 0,
         "total": 1552,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 293,
-        "fail": 93,
+        "pass": 295,
+        "fail": 91,
         "ce": 24,
         "skip": 0,
         "total": 410,
-        "pct": 71
+        "pct": 72
       },
       {
         "name": "Reflect",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3457,
-    "fail": 780,
+    "pass": 3463,
+    "fail": 774,
     "ce": 586,
     "skip": 0,
     "total": 4823,
@@ -1071,8 +1071,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2593,
-        "fail": 642,
+        "pass": 2599,
+        "fail": 636,
         "ce": 575,
         "skip": 0,
         "total": 3810,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 896,
-        "fail": 279,
+        "pass": 902,
+        "fail": 273,
         "ce": 210,
         "skip": 0,
         "total": 1385,
@@ -1107,8 +1107,8 @@
       },
       {
         "name": "generators",
-        "pass": 304,
-        "fail": 36,
+        "pass": 306,
+        "fail": 34,
         "ce": 129,
         "skip": 0,
         "total": 469,
@@ -1179,12 +1179,12 @@
       },
       {
         "name": "class",
-        "pass": 23,
-        "fail": 11,
+        "pass": 25,
+        "fail": 9,
         "ce": 10,
         "skip": 0,
         "total": 44,
-        "pct": 52
+        "pct": 57
       },
       {
         "name": "Symbol",
@@ -3571,8 +3571,8 @@
   },
   {
     "edition": "ES2026",
-    "pass": 93,
-    "fail": 105,
+    "pass": 94,
+    "fail": 104,
     "ce": 112,
     "skip": 0,
     "total": 310,
@@ -3625,12 +3625,12 @@
       },
       {
         "name": "iterator-sequencing",
-        "pass": 10,
-        "fail": 21,
+        "pass": 11,
+        "fail": 20,
         "ce": 1,
         "skip": 0,
         "total": 32,
-        "pct": 31
+        "pct": 34
       },
       {
         "name": "Symbol",
@@ -3753,21 +3753,21 @@
   },
   {
     "edition": "ES2027",
-    "pass": 245,
-    "fail": 403,
+    "pass": 251,
+    "fail": 397,
     "ce": 249,
     "skip": 0,
     "total": 897,
-    "pct": 27,
+    "pct": 28,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 216,
-        "fail": 112,
+        "pass": 220,
+        "fail": 108,
         "ce": 102,
         "skip": 0,
         "total": 430,
-        "pct": 50
+        "pct": 51
       },
       {
         "name": "await-dictionary",
@@ -3780,12 +3780,12 @@
       },
       {
         "name": "joint-iteration",
-        "pass": 6,
-        "fail": 73,
+        "pass": 8,
+        "fail": 71,
         "ce": 3,
         "skip": 0,
         "total": 82,
-        "pct": 7
+        "pct": 10
       },
       {
         "name": "immutable-arraybuffer",
@@ -3978,12 +3978,12 @@
       },
       {
         "name": "generators",
-        "pass": 0,
-        "fail": 5,
+        "pass": 1,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 5,
-        "pct": 0
+        "pct": 20
       },
       {
         "name": "import-attributes",
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 3969,
-    "fail": 1369,
+    "pass": 3977,
+    "fail": 1361,
     "ce": 107,
     "skip": 0,
     "total": 5445,

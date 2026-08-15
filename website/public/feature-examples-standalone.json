@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 525,
+      "passCount": 537,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 915,
+      "passCount": 918,
       "totalCount": 1177
     },
     {
@@ -215,7 +215,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 3618,
+      "passCount": 3629,
       "totalCount": 4290
     },
     {
@@ -227,7 +227,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1329,
+      "passCount": 1334,
       "totalCount": 1552
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1752,
+      "passCount": 1763,
       "totalCount": 2486
     },
     {
@@ -263,7 +263,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 319,
+      "passCount": 321,
       "totalCount": 461
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2593,
+      "passCount": 2599,
       "totalCount": 3812
     },
     {
@@ -540,7 +540,7 @@
     {
       "name": "Iterator sequencing (Iterator.concat)",
       "testCategories": [],
-      "passCount": 10,
+      "passCount": 11,
       "totalCount": 32
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 157,
+      "passCount": 161,
       "totalCount": 178
     },
     {
