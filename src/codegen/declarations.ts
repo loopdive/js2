@@ -30,7 +30,7 @@ import { collectShapes } from "../shape-inference.js";
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
 import {
-  classifyTopLevelExpressionStatement,
+  collectOrRecordUnnamedExpressionStatement,
   createsGlobalObjectBinding,
   isAssignmentOperator,
 } from "./module-init-collection.js";
@@ -2271,14 +2271,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // end of the block, so non-assignment binary statements (`a, b`,
           // `x && f()`, `p || q()`, `c ?? d()`, comparisons) were dropped
           // UNCOUNTED — invisible even to the telemetry built to make drops
-          // loud. Record the drop before skipping. Behaviour is unchanged.
-          const c = classifyTopLevelExpressionStatement(stmt.expression);
-          if (c.disposition === "unhandled") {
-            (ctx.droppedModuleInitShapes ??= new Map()).set(
-              c.shape,
-              (ctx.droppedModuleInitShapes.get(c.shape) ?? 0) + 1,
-            );
-          }
+          // loud. Record the drop before skipping.
+          // (#4433) Recording is no longer all that happens: an operand that
+          // provably runs user code now KEEPS the statement, so `f() + g();`
+          // and `f() instanceof Object;` evaluate their operands instead of
+          // being eliminated whole.
+          collectOrRecordUnnamedExpressionStatement(ctx, stmt);
           continue;
         }
         // (#3366) A destructuring-assignment LHS has no single root identifier,
@@ -2506,14 +2504,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // Classify TOTALLY instead. `inert` is an explicit deny-list of shapes
       // that provably run no user code; anything else that was not collected
       // is recorded as `unhandled` so it is visible instead of vanishing.
-      // Behaviour is unchanged — nothing new is collected here — but the drop
-      // now leaves evidence.
-      if (!ctx.moduleInitStatements.includes(stmt)) {
-        const c = classifyTopLevelExpressionStatement(stmt.expression);
-        if (c.disposition === "unhandled") {
-          (ctx.droppedModuleInitShapes ??= new Map()).set(c.shape, (ctx.droppedModuleInitShapes.get(c.shape) ?? 0) + 1);
-        }
-      }
+      //
+      // (#4433) …and an `unhandled` statement that PROVABLY runs user code is
+      // now collected rather than recorded-and-dropped — the eighth instance of
+      // this defect family, and the first fixed by changing the DEFAULT instead
+      // of adding a ninth arm above. Shapes whose observability is a runtime
+      // fact this compiler does not model (bare identifier atoms) still record
+      // and drop.
+      collectOrRecordUnnamedExpressionStatement(ctx, stmt);
     }
   }
 
