@@ -2466,3 +2466,98 @@ similar, but the barrier is module-global binding ABI plus `<module-init>`
 ownership (`expr-new-module-binding-callee`), which the cross-owner checkpoint
 already deferred ("Module globals also remain deferred"). That is a different
 and materially larger surface than a per-class member-shape gate.
+
+### Nested implicit-constructor checkpoint (2026-08-15)
+
+The chosen family now compiles once. A bounded nested ordinary class whose
+constructor is IMPLICIT — in both the declaration and the exact
+`const C = class { … }` expression form — is prepared with the same
+`_new`/`_init` support pair that the 2026-08-12 plain implicit-constructor
+checkpoint established at top level. No new lowering, ABI, runtime
+representation, or import surface is introduced; the slice removes
+top-level-only assumptions from five exact gates.
+
+Measured terminal deltas (production `compile`, identical on `gc` and
+`standalone`):
+
+| Fixture                                            | Before        | After         |
+| -------------------------------------------------- | ------------- | ------------- |
+| nested decl, implicit ctor, one method (N2)        | legacy=1 ir=0 | legacy=0 ir=2 |
+| nested class expression, implicit ctor (N9)        | legacy=1 ir=0 | legacy=0 ir=2 |
+| two nested classes, one implicit-ctor sibling (N7) | legacy=3 ir=0 | legacy=0 ir=4 |
+
+N7 is the load-bearing one: a single implicit-constructor sibling previously
+withdrew an otherwise complete two-class component, so the gain is the whole
+enclosing owner plus every member, not one constructor.
+
+The five gates and what each now checks:
+
+1. `isBoundedPreparedNestedOrdinaryClass` accepted `constructorCount === 1`;
+   it now accepts `<= 1`. Heritage remains rejected, so an implicit DERIVED
+   constructor is unreachable from this admission.
+2. `prepareImplicitConstructorSupports` admitted only class DECLARATIONS whose
+   parent is the source file. It now also admits a bounded nested class,
+   resolving the expression form through its immutable `const` binding.
+3. The Program ABI registry, the session recorder, and the support-draft
+   predicate each asserted `terminalOwnerId === null`. The preparer proves the
+   containing terminal owner is in the same transaction and passes that
+   identity through the support contract, so each guard VERIFIES the exact
+   nesting claimed rather than assuming absence — and still fails closed
+   (`unplanned-abi-binding`) for a unit this transaction did not prepare.
+4. The direct-body skip audit asserted the same, and now cross-checks that a
+   nested skip belongs to the admitted bounded family.
+5. The dependency sealer routed a nested implicit `_init` to
+   `recordUnitReference`, which demands a post-pass IR function that an
+   AST-free support body never has.
+
+Gate 5 carried a real trap worth recording. The obvious relaxation — accepting
+any `class-implicit-constructor` — regressed four passing tests, because the
+correct discriminant is **non-terminality, not a null terminal owner**. Since
+the #4402 initialized-field checkpoint an implicit constructor with initialized
+instance fields is an ORDINARY TERMINAL class-member owner with a real source
+body, and it must keep flowing through `recordUnitReference`. The old
+`terminalOwnerId === null` test conflated the two cases: it excluded terminal
+initialized-field constructors and genuine nested support for the same
+incidental reason. The sealer now tests terminal membership directly. Found by
+A/B against the pre-change tree — the same four tests fail with the naive
+relaxation and pass without it.
+
+Every measured negative boundary is preserved, verified rather than assumed:
+a static member, an initialized instance field, heritage, a class with no
+method, a `let`-bound class expression, and a method capturing the enclosing
+frame all keep the complete owner direct with zero post-claim errors. The
+heritage case is the explicit #4448 guard — the bounded predicate rejects
+heritage, so no shadow-identity inheritance surface moves. A name-shadowing
+fixture additionally proves an inner `Box` and an outer `Box` keep distinct
+identities and runtime behaviour.
+
+Coverage is `tests/issue-3522-nested-implicit-constructor.test.ts`, **20/20**
+on `gc` and `standalone`: direct class/function body poison on every expected
+body, exact terminal outcomes, one shared prepared component, Wasm validation,
+runtime results, WAT proof that the prepared owner has no `call_ref`,
+`call_indirect`, `ref.test`, ambient `this`, boxing, or `__call_m_*`
+dispatcher, dual-run legacy↔IR equality, and optimized-size parity (IR never
+larger than the direct control). A positive control proves the poison seam is
+live, so the admitted-family assertions cannot pass vacuously.
+
+Gates: focused nested/class-expression/static/class-expression suites
+**34/34**; `check:ir-fallbacks` no unintended, post-claim, or module-level
+increases (only the two unchanged deferred string-builder candidates);
+`check:ir-only` single-host **37/37 IR-emitted, 0 legacy, 0 Unsupported, 0
+Invariant, READY** with the standalone floor gate green;
+`gen-ir-adoption --check` byte-clean after refreshing the `ClassDeclaration`
+row; typecheck and formatting green.
+
+Two pre-existing conditions were measured and are NOT caused by this slice.
+`tests/issue-3522-ir-class-compile-once.test.ts` has **2 failures on the
+unmodified base** ("keeps constructor receiver accessors on the direct dispatch
+path", gc and standalone); the file is 40/42 before and after. Separately, a
+class expression emits both `<binding>_*` and dead `__anonClass_N_*` functions
+— present identically for the already-claiming explicit-constructor control on
+base, so it is pre-existing duplication in the legacy naming path, not a
+regression here.
+
+Remaining nested class-family boundaries, in the order their surfaces grow:
+statics and initialized fields on nested classes (each needs its ordered
+definition-evaluation contract represented), nested heritage, and then
+top-level class expressions with their module-global binding ABI.

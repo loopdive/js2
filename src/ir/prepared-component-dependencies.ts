@@ -938,6 +938,14 @@ function recordUnitReference(
  * `missing-function-body`. Preparedness is not assumed here: `addAbiDependency`
  * resolves the support binding and fails closed with `unplanned-abi-binding`
  * when this transaction did not actually prepare the unit.
+ *
+ * The discriminant is NON-TERMINALITY, not a null terminal owner. Since the
+ * #4402 initialized-field checkpoint an implicit constructor with initialized
+ * instance fields is an ORDINARY TERMINAL class-member owner carrying a real
+ * source body, and it must keep flowing through `recordUnitReference` as a
+ * source callable. Testing `terminalOwnerId === null` conflated the two: it
+ * excluded terminal initialized-field constructors and genuine nested support
+ * for the same incidental reason.
  */
 function recordImplicitConstructorSupportReference(
   evidence: MutableFunctionEvidence,
@@ -946,7 +954,8 @@ function recordImplicitConstructorSupportReference(
   ownership: OwnershipIndex,
 ): boolean {
   const unit = input.inventory.allUnits.find(({ id }) => id === targetUnitId);
-  if (unit?.kind !== "class-implicit-constructor") return false;
+  const isTerminal = input.inventory.terminalUnits.some(({ id }) => id === targetUnitId);
+  if (unit?.kind !== "class-implicit-constructor" || isTerminal) return false;
   const bindingId = irUnitCallableBindingId(targetUnitId);
   addAbiDependency(evidence, input.abi, ownership, {
     bindingId,
