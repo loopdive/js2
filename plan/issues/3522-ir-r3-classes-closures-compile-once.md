@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-14
+updated: 2026-08-15
 priority: critical
 horizon: xl
 complexity: XL
@@ -2643,3 +2643,93 @@ comparable but the barrier is module-global binding ABI plus `<module-init>`
 ownership (`expr-new-module-binding-callee`), which the cross-owner checkpoint
 already deferred — a materially larger surface than a member-shape gate, and
 unchanged since the previous slice reached the same conclusion.
+
+### Slice record — nested class instance ACCESSORS (2026-08-15)
+
+Landed as three source edits, each isolated by bisection against the measured
+barrier above; no lowering, ABI, runtime representation, or import surface was
+added, because the capability was already proven at top level (controls A1 and
+TL-SET).
+
+1. `isBoundedPreparedNestedOrdinaryClass` (`src/ir/class-accessor-safety.ts`)
+   counts a `callableMemberCount` instead of a `methodCount`, admitting
+   `GetAccessorDeclaration`/`SetAccessorDeclaration` under exactly the member
+   shape methods already carry — non-static, undecorated, identifier-named,
+   body-bearing, non-abstract, fixed-arity (getter zero parameters, setter
+   exactly one plain parameter). `heritageClauses` stays rejected, so the
+   predicate cannot reach an implicit derived constructor and no
+   shadow-identity inheritance surface moves (#4448/#4575).
+2. `exactAccessorClass` (`src/ir/select-identity.ts`) narrows from
+   `nestedClass || boundedTopLevelAccessorClass` to
+   `(nestedClass && boundedAccessorClass) || boundedTopLevelAccessorClass`.
+   This is behaviour-preserving on the pre-slice tree — before accessors joined
+   the ordinary family, a nested class reaching that loop WITH an accessor was
+   necessarily accessor-only — and it routes an accessor on a bounded nested
+   ORDINARY class down the ordinary descriptor-by-name-and-kind path instead of
+   the accessor-only WRITEBACK ABI, whose
+   `boundedNestedAccessorAbiEvidence` admits string-returning getters and
+   `dynamic` setters ONLY and therefore had no evidence for a numeric getter.
+3. The atomicity count in the same file now counts exactly the body-bearing
+   callables the admitting predicate counted. Counting only ctor+methods left
+   every accessor claim pending, which withdrew the whole class on arrival —
+   this is why relaxing gate 1 alone moved every fixture from
+   `body-shape-rejected` to `class-member-unsupported` and claimed nothing.
+
+Coverage is `tests/issue-3522-nested-class-accessor.test.ts`, **26/26** on `gc`
+and `standalone`: a nested method+getter declaration, a getter/setter pair that
+reads and writes `this`, a nested class EXPRESSION with an accessor, an
+explicit-constructor class whose getter reads a field, and two sibling accessor
+classes as one shared prepared component — each with direct class/function body
+poison on every expected body, exact terminal outcomes, Wasm validation,
+runtime results cross-checked against node, WAT proof that the prepared owner
+carries no `call_ref`, `call_indirect`, `ref.test`, ambient `this`, boxing or
+`__call_m_*` dispatcher, dual-run legacy↔IR equality, setter evaluation ORDER
+pinned against the direct path, and optimized-size parity (IR never larger than
+the direct control). Nine negative boundaries are verified rather than assumed:
+heritage (the explicit #4448 guard), a static accessor, a computed accessor
+name, an initialized instance field, a `let`-bound class expression, an
+accessor capturing the enclosing frame, the pre-existing accessor-only
+WRITEBACK family still claiming unchanged, an inner accessor class keeping its
+OWN identity when it shadows an outer name, and a positive control proving the
+direct class-body emitter is still reached — so the admitted-family assertions
+cannot pass vacuously.
+
+Gates: `check:ir-fallbacks --verbose` OK, no unintended, post-claim or
+module-level increases (only the two unchanged deferred string-builder
+candidates); `check:ir-only --policy=hybrid` **READY**;
+`check:ir-only --policy=ir-only --json` single-host **37/37 terminal units,
+37 IR-emitted, 0 legacy bodies, 0 Unsupported, 0 Invariants**, standalone lane
+at its baseline readiness with `"failures": []` (every entry/terminal-unit/
+emitted/IR-body floor green); `gen-ir-adoption --check` byte-clean after
+refreshing the `ClassDeclaration`, `GetAccessorDeclaration` and
+`SetAccessorDeclaration` rows; `cross-backend-diff` **29/29**; typecheck, lint
+and `format:check` green.
+
+**Seven failures in the epic's required suite list are NOT caused by this
+slice, and they split into two groups — both attributed by A/B, not assumed.**
+Reverting only `src/ir/class-accessor-safety.ts` and `src/ir/select-identity.ts`
+to their `origin/main` contents reproduces all seven identically
+(`issue-3521-prepared-free-function-routing` binary-size bound 33807 > 33723;
+`issue-3522-ir-cross-owner-free-function` unsupported-console parity control
+and mutable-class-layout control; `issue-3522-ir-class-compile-once`
+constructor receiver ACCESSORS direct path ×2 and constructor receiver CALLS
+virtual-dispatch direct path ×2).
+
+- **Five are pre-existing at this branch's base `793b5c0e`** — the same
+  src-only checkout there fails the same five. The two accessor-direct-path
+  ones are the identical pair the previous slice recorded as base failures.
+- **Two are a NEW main-side regression**, bisected by src-only checkout of the
+  first-parent merges: `keeps constructor receiver calls on the
+  virtual-dispatch direct path` (gc and standalone) PASSES at `60d1db4f`
+  (#4583) and `f2058918` (#4582) and FAILS at `6df0fec6` (**#4589 / #4459
+  value-discard**). Symptom: the DIRECT control acquires an
+  `irPostClaimErrors` entry — "prepared owner …:top-level-function:0 has
+  incomplete dependencies: foreign-source-unit … belongs to non-candidate
+  terminal …; unplanned-abi-binding … has no resolvable Program ABI binding".
+  Reported to the lead; it is a `#4459` follow-up, not a `#3522` one.
+
+Remaining nested class-family boundaries are unchanged in order: statics and
+initialized fields on nested classes (each needs its ordered
+definition-evaluation contract represented), computed member names, nested
+heritage, and then top-level class expressions with their module-global binding
+ABI.
