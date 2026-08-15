@@ -97,24 +97,45 @@ All those failures are **pre-existing on `origin/main`**.
 
 ## Rejected: an early-out in `runNodeChecks`
 
-`runNodeChecks` is a sequential chain of ~55 `ts.isX(node)` predicates run for
-every AST node, at 4.4% **self** time. The obvious fix is to bail immediately
-for kinds no check can act on. I derived the kind set mechanically from the
-function body — every `ts.isX(node)` guard and every
-`node.kind === ts.SyntaxKind.X` test, 57 kinds, all resolving cleanly — and it
-was still **wrong**.
+`runNodeChecks` is a sequential chain of ~95 guarded checks run for every AST
+node, at 4.4% **self** time. The obvious fix is to bail immediately for kinds
+no check can act on. I derived the kind set mechanically from the function body
+— every `ts.isX(node)` guard and every `node.kind === ts.SyntaxKind.X` test,
+57 kinds, all resolving cleanly.
 
-A differential over 7,854 files (test262 `language` + `annexB` + `src`) showed
-diagnostics dropping **2,571 → 1,386**. Checks like "Function declarations are
-not allowed in statement position" key off `DoStatement` / `WhileStatement`,
-which never appear as a literal `ts.isX(node)` guard in the source, so no
-text-derived list can be complete.
+**First attempt lost 1,185 diagnostics** in a differential over 7,854 files
+(test262 `language` + `annexB` + `src`): **2,571 → 1,386**.
 
-Reverted; the revert reproduces 2,571 byte-identically. Recorded here because
-the *next* person to profile this will have the same idea. Doing it safely
-means restructuring the chain into a `switch (node.kind)` so the dispatch set
-is the code rather than a parallel list — a mechanical but large refactor of a
-1,900-line function, and worth its own issue.
+**My first diagnosis of that loss was wrong, and it is worth recording why.** I
+concluded that checks keying off `DoStatement`/`WhileStatement` never appear as
+a literal `ts.isX(node)` guard, so "no text-derived list can be complete". That
+is false — *"Function declarations are not allowed in statement position"* is
+guarded by `ts.isFunctionDeclaration(node)`, kind 263, which **was** in the
+derived set. The real bug was structural: the recursion
+`forEachChild(node, (child) => runNodeChecks(ctx, child))` is the **last
+statement of the function**, so an early `return` pruned entire subtrees rather
+than skipping one node's checks.
+
+Re-implemented correctly — `runNodeChecks` traverses unconditionally,
+`runNodeChecksSelf` holds the 95 guards and is called only for kinds in the
+set — the same differential loses **0 diagnostics**.
+
+**Reverted anyway, on measurement.** 512 units 1295 → 1285 ms; small inputs
+~424 → ~421 ms. Both inside noise. A 57-element parallel list that drifts
+silently and disables conformance checks when it does is not worth zero
+measured gain.
+
+**This also argues against the `switch (node.kind)` refactor**, which was the
+recommended follow-up in the first version of this note. The Set gate is a
+cheap proxy for *half* of what a switch buys — skipping nodes no check handles.
+That half measured zero. The other half (dispatching directly to the handful of
+checks for a handled kind, instead of running all 95 guards) is the remaining
+upside, but the structure is favourable for it: 95 guards, exactly one non-`if`
+top-level statement (the recursion), no shared state between guards, no union
+predicates, and every guard leads with a kind test (30 bare `ts.isX(node)`,
+65 that plus a further condition). So a switch is *mechanically feasible* — it
+just has a much smaller expected payoff than the profile line suggests, and
+should be measured on a prototype before anyone commits to the refactor.
 
 ## Reproduce
 
