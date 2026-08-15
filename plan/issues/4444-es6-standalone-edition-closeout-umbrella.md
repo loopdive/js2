@@ -13,7 +13,7 @@ task_type: conformance
 area: codegen, conformance
 es_edition: es6
 goal: standalone-mode
-related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445, 4446, 4447]
+related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445, 4446, 4447, 4449, 4450]
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
@@ -39,10 +39,10 @@ generator row).
 | 1 | **Native generator carrier** — standalone lowering only supports "sequential numeric yields"; everything else leaks `__create_generator`/`__gen_*` host imports (CE) or mis-executes. Spread across `language/{expressions,statements}/generators`, `yield`, `class` (gen methods), `object` (gen shorthand), for-of/dstr | ~500 | #2864 (in-progress), #2906 (in-progress), #3032, #680; umbrella #3178 | tracked — do NOT duplicate |
 | 2 | **Promise/microtask carrier** — `Promise.all/race` leak `Promise_all`/`Promise_race`/`__js_array_new` (CE); `Promise.resolve` "not yet implemented"; `illegal cast [__then_fulfill_N]` in the async drive layer | ~233 | #2867 (ready), #2906, umbrella #3178 | tracked |
 | 3 | **Built-in method reflection** — `length.js`/`name.js`/`prop-desc.js`/`not-a-constructor.js`/`invoked-as-func.js` across every built-in: methods are not reified function objects (`Object.getOwnPropertyDescriptor` → "Cannot convert undefined or null to object", `typeof m === "undefined"`) | ~324 | #2175 (ready, arch spec written), #2158, #2159; sibling lane PR #4553 (method name/length meta) is in flight | tracked — architectural |
-| 4 | **TypedArray.prototype semantics** — species-constructor protocol (`speciesctor-*`, 55), custom-ctor paths, detached-buffer TypeErrors (~42), coercion/validation order. Excludes row-3 reflection files | ~330 net | #2159 lane (reflection part); species/detached part **untracked** — file on pickup, depends on #2175 for reflective receivers | partially tracked |
+| 4 | **TypedArray.prototype semantics** — species-constructor protocol (`speciesctor-*`, 55), custom-ctor paths, detached-buffer TypeErrors (~41), coercion/validation order. Excludes row-3 reflection files | ~556 | **#4449** (filed this session, triage-first; reflection part stays #2159) | tracked |
 | 5 | **RegExp `@@replace`/`@@match`/`@@split`/`@@search`** — function replacer refusal (CE, "#1913 follow-up"), coercion order, `lastIndex` protocol | ~161 | #2161 (blocked on #2175), F7 dynamic-receiver arch spec pending | tracked/blocked |
 | 6 | **for-of destructuring residual** — iterator close/return/throw propagation, trailing-iterator state (`trlg-iter`, 23), nested patterns, fn-name inference, TDZ | ~200 (non-generator) | **#4447 (this session)** | dispatched |
-| 7 | **Class semantics residual** — missing TypeErrors, field-init `NaN vs undefined`, destructured params, `message should be an own property` | ~330 (non-generator) | partially #2158/#2175; residual untracked — needs triage slice after row 3 lands | partially tracked |
+| 7 | **Class semantics residual** — `class/dstr` method-param destructuring dominates (112, shares #4447's machinery), subclass (46), definition (36), NamedEvaluation `NaN vs undefined` | ~321 (non-generator) | **#4450** (filed this session; re-measure after #4447 lands; overlaps #2158/#2175) | tracked |
 | 8 | **annexB String HTML methods** — `anchor`/`big`/…/`sup` (13 methods) return `undefined`; CreateHTML not implemented | 79 (≈26 functional + 53 reflection→row 3) | **#4445 (this session)** | dispatched |
 | 9 | **Array.prototype extern fallback leak** — `compileArrayConcatExtern` emits `__array_concat_any`/`__js_array_new`/`__js_array_push` → standalone leak-guard CE | ~30 | **#4446 (this session)** | dispatched |
 | 10 | Long tail — `Object.prototype` (38), `Function.prototype` (35), `let`/TDZ (26), `arrow-function` (25), `switch` (23), DataView (45), Iterator.prototype (55) | ~250 | untracked — file per-cluster on pickup | open |
@@ -57,8 +57,9 @@ generator row).
 2. **This session dispatches the unowned, bounded clusters** — #4445, #4446,
    #4447 — to Opus implementation agents in parallel worktrees (plans in the
    issue files).
-3. **Remaining untracked residuals** (rows 4, 7, 10) get triage slices filed as
-   the dispatched wave lands, so counts stay attributable.
+3. **Next-wave triage issues filed**: #4449 (row 4, TypedArray) and #4450
+   (row 7, class residual). Row 10's long tail gets per-cluster issues as the
+   dispatched wave lands, so counts stay attributable.
 
 ## Acceptance
 
