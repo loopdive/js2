@@ -140,19 +140,19 @@ child issues; R9–R10 receive child issue IDs before dispatch. This epic owns
 their order and acceptance boundaries.
 
 | Slice                        | Outcome                                                                                               | Depends on                            | Exit evidence                                                                                                                                                   |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **R0a — #3529 (done)**       | Restore typed-producer equivalence parity without weakening unknown-throw-to-Invariant classification | #3143; exposed by #3519               | 154 new compile failures return to the committed baseline through preclaim/typed Unsupported or true invariant fixes; no baseline expansion                     |
 | **R0b — #3519 (done)**       | Typed `Prepared` / `Unsupported` / `Invariant` outcomes plus an honest `check:ir-only` readiness gate | #3143, #3529; informed by #2855/#3341 | No TypeMap or compile failures are skipped; `result.errors` and every unit outcome are accounted for; hybrid vs IR-only policy is tested                        |
 | **R1 — #3520 (in progress)** | Source-qualified `IrUnitId` and a whole-program `ProgramAbiMap`                                       | R0                                    | Same-named units across files/classes cannot collide; signatures, globals, imports, types, exports, and synthetic units are planned once                        |
 | **R2 — #3521 (in progress)** | `PreparedIrProgram` and prepare-before-emit compile-once pipeline                                     | #3520                                 | Prepared free functions never call legacy body compilation; the versioned validated program round-trips losslessly; unsupported units are decided before emission |
 | **R3 — #3522 (in progress)** | Classes and class members are Prepared/compile-once                                                   | #3521                                 | Constructors, instance/static methods, fields, inheritance, wrappers, and type indices no longer depend on legacy body compilation                              |
 | **R4 — #3523 (in progress)** | Module init is Prepared/compile-once                                                                  | #3521, #3522                          | One program-owned module-init unit replaces the compile-first/patch-later `__module_init` overlay, including top-level binding/TDZ/export effects               |
-| **R5 — #3525 (blocked)**     | Whole-program single- and multi-source Prepared ownership                                             | #3520–#3523                           | Cross-file calls/imports, fast mode, collisions, module init, and class members use one `PreparedIrProgram`; no per-source overlay loop remains                 |
+| **R5 — #3525 (blocked)**     | Whole-program single- and multi-source Prepared ownership                                             | #3520–#3523                          | Cross-file calls/imports, fast mode, collisions, module init, and class members use one `PreparedIrProgram`; no per-source overlay loop remains                 |
 | **R6 — #3526 (blocked)**     | Typed semantic intrinsic/runtime-feature/host-capability contract                                     | #3521                                 | The ~47K runtime/builtin emission lines are reached from a frozen semantic manifest, never AST dispatch; families land in measured sub-slices                   |
 | **R7 — #3527 (blocked)**     | AST-free async suspension plans and canonical Promise ABI                                             | #3522, #3525, #3526                   | Every supported async container uses one verified `IrAsyncPlan` and the existing frame engine; no AST callback/direct async route remains                       |
-| **R8 — #3528 (blocked)**     | Linear consumes the shared Prepared program                                                           | #3525–#3527                           | WasmGC and linear receive the exact same program/ABI/runtime/async plans; `src/codegen-linear/` has no source-AST lowering path                                 |
-| **R9**                       | Fail-closed IR-only default; remove escape hatches                                                    | R3–R8; #2949, #2952, #1373b, #3583    | Default policy is IR-only; hybrid demotion, `experimentalIR: false`, `JS2WASM_IR_FIRST`, `disableIrFirst`, skip allowlists, and compile-twice switches are gone |
-| **R10**                      | Reachability-proven direct-front-end deletion                                                         | R9                                    | Re-run #3090 audit; delete the ~59,676 frontend-only fn-lines and dispatch roots; zero direct AST→Wasm reachability remains                                     |
+| **R8 — #3528 (blocked)**     | Linear consumes the shared Prepared program                                                           | #3525–#3527                          | WasmGC and linear receive the exact same program/ABI/runtime/async plans; `src/codegen-linear/` has no source-AST lowering path                                 |
+| **R9**                       | Fail-closed IR-only default; remove escape hatches                                                    | R3–R8; #2949, #2952, #1373b, #3583   | Default policy is IR-only; hybrid demotion, `experimentalIR: false`, `JS2WASM_IR_FIRST`, `disableIrFirst`, skip allowlists, and compile-twice switches are gone |
+| **R10**                      | Reachability-proven direct-front-end deletion                                                         | R9                                    | Re-run #3090 audit; delete the ~59,676 frontend-only fn-lines and dispatch roots; zero direct AST→Wasm reachability remains                                    |
 
 R0a and R0b completed on 2026-07-21. R1 remains active while R2 production
 preparation and the first R3 static-method transaction are now in progress.
@@ -243,71 +243,7 @@ above.
   through legacy dispatch. R6 must first provide IR-owned semantic entry points.
 - Adding new language behavior to the direct front-end during migration.
 
-## Review (Fable, 2026-07-24)
-
-Verify-first re-audit on main @ `7652f0337` (full document:
-`plan/agent-context/fable-ir-review-2026-07-24.md`).
-
-- **The "Current truth" table still holds.** Re-ran `check:ir-fallbacks`
-  (all unintended buckets 0; module-level 0) and `check:ir-only` (5/5
-  entries, 37 units, 31 IR-emitted, 6 typed Unsupported, 0 Invariants,
-  37/37 legacy bodies, NOT READY) — identical to the 2026-07-21 audit.
-  Adoption matrix: 18 ir-owned confirmed; denominator is now 58 kind rows
-  (prose says 56). Compile-once ceiling and fn-line reachability were not
-  re-measured; no allowlist-widening landed since 2026-07-21, so ≈28.1%
-  plausibly holds.
-- **Ladder gap — R9 needs an explicit coverage-closure dependency.** R9
-  depends on R3–R8 only, but a fail-closed flip with `SwitchStatement` /
-  `LabeledStatement` / `ForInStatement` still direct-only (#2952 `ready`,
-  unstarted) and `%`/`**`/`in`/`instanceof` unlowered would hard-fail
-  ordinary core-JS programs. The acceptance gate only catches this if the
-  authoritative matrices contain such syntax — the playground corpus barely
-  does. Recommend: (a) add "#2952 + #2949 + #1373b + #3583 coverage closure"
-  to R9's Depends-on cell, and (b) grow the `check:ir-only` corpus beyond
-  the playground before R9 readiness is claimed.
-- **#2952 can and should start now** — its structural work (br_table +
-  labeled nested-buffer exits) depends on neither R1 nor R2 and is the
-  longest-lead item on the R9 critical path.
-- **28 adoption-matrix rows had no live owner** (13 tracked by wont-fix
-  #1131, 12 by done issues, 3 untracked) — now tracked by new issue #3583.
-- R1 groundwork is confirmed landing on main (`4922ed58b`, `1a17b4458`);
-  the R2–R8 `depends_on` frontmatter matches this epic's spine exactly.
-
-## Slice: standalone readiness lane + top blockers (fable, 2026-08-15)
-
-Live measurement on main @ `7add6938`: the `check:ir-only` gate has
-exactly ONE lane (single-host WasmGC over 5 playground entries, READY at
-37/37 IR bodies / 0 legacy). The SAME entries compiled with
-`target: "standalone"` collapse: `js/algorithms.ts` = **0 IR / 7 legacy
-bodies**, `js/classes.ts` = 10 IR / 1 legacy. The acceptance criteria
-require standalone/WASI/fast/multi-source matrices; none is measured
-today. This slice adds the standalone lane and attacks its top blockers.
-
-1. **Add a `standalone` lane to `scripts/check-ir-only.ts`**: same 5
-   entries, `target: "standalone"`, per-lane baseline in
-   `scripts/ir-only-baseline.json` per the existing #3519 schema. Baseline
-   HONESTLY at measured current truth (floors/ceilings) — the lane must
-   not be required to be READY to land; it must be required not to
-   regress.
-2. **Diagnose the algorithms.ts 0-IR collapse.** A file that is 100%
-   IR-owned on host emitting zero IR bodies standalone means a mode-gated
-   capability/seal/registration decision, not per-shape gaps — find the
-   single gate (selector capability rows, prepared-component sealing, or
-   resolver registration keyed on host mode) and record it here.
-3. **Fix the top blockers** to raise the standalone lane's IR-body floor;
-   ratchet the baseline with each fix. Known hazards: standalone number
-   boxing goes via `$AnyValue` not `__box_number` (#2955 notes),
-   standalone-floor CI guard (#1897/#2097) — net standalone test262 must
-   not go negative.
-4. **Fast-mode lane** (`fast: true`) same pattern, time permitting —
-   measure, baseline, do not block on READY.
-
-Acceptance: gate reports ≥ 2 lanes; single-host stays READY; standalone
-lane floors ≥ measured-at-landing values; `check:ir-fallbacks` no
-growth; equivalence suite + standalone probes green; `tsc --noEmit`
-clean.
-
-### Implementation Notes (fable, 2026-08-15)
+## Standalone-lane Implementation Notes (fable, 2026-08-15)
 
 **Deliverable 1 — the lane landed.** `scripts/check-ir-only.ts` now observes
 two lanes. A generic `observeLane` helper backs both `observeSingleHostLane`
@@ -437,12 +373,12 @@ the new predicate is never consulted.
   Terms that is a real but lesser tier, and the baseline records it honestly
   rather than implying compile-once ownership the lane does not have.
 
-### Test Results (fable, 2026-08-15)
+## Standalone-lane Test Results (fable, 2026-08-15)
 
 Measured in worktree `agent-a560da37ac458f0fa` on main @ `7add6938`.
 
 | Gate                                                | Result                                                                                                                                                                                                          |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run typecheck` (ts7, the CI gate)              | **clean**                                                                                                                                                                                                       |
 | `npx tsc --noEmit` (legacy tsc)                     | environmental failure only — `@types/node` is unresolvable through this worktree's symlinked `node_modules`; every error is `Cannot find name 'process'/'require'/'__filename'` in files this change never touches |
 | `pnpm run check:ir-only`                            | **2 lanes reported**; single-host 37/37 IR, 0 legacy, **READY**; standalone 16 IR / 27 legacy / 21 unsupported / 0 invariants, ratcheted; verdict **READY**                                                    |
@@ -488,3 +424,67 @@ baseline is simply stale; ratcheting it is out of scope here.
 Full test262 was **not** run (per instruction). The standalone-floor / net
 guards (#1897/#2097) run in the `merge_group` and remain the authoritative
 check on this change's standalone conformance effect.
+
+## Review (Fable, 2026-07-24)
+
+Verify-first re-audit on main @ `7652f0337` (full document:
+`plan/agent-context/fable-ir-review-2026-07-24.md`).
+
+- **The "Current truth" table still holds.** Re-ran `check:ir-fallbacks`
+  (all unintended buckets 0; module-level 0) and `check:ir-only` (5/5
+  entries, 37 units, 31 IR-emitted, 6 typed Unsupported, 0 Invariants,
+  37/37 legacy bodies, NOT READY) — identical to the 2026-07-21 audit.
+  Adoption matrix: 18 ir-owned confirmed; denominator is now 58 kind rows
+  (prose says 56). Compile-once ceiling and fn-line reachability were not
+  re-measured; no allowlist-widening landed since 2026-07-21, so ≈28.1%
+  plausibly holds.
+- **Ladder gap — R9 needs an explicit coverage-closure dependency.** R9
+  depends on R3–R8 only, but a fail-closed flip with `SwitchStatement` /
+  `LabeledStatement` / `ForInStatement` still direct-only (#2952 `ready`,
+  unstarted) and `%`/`**`/`in`/`instanceof` unlowered would hard-fail
+  ordinary core-JS programs. The acceptance gate only catches this if the
+  authoritative matrices contain such syntax — the playground corpus barely
+  does. Recommend: (a) add "#2952 + #2949 + #1373b + #3583 coverage closure"
+  to R9's Depends-on cell, and (b) grow the `check:ir-only` corpus beyond
+  the playground before R9 readiness is claimed.
+- **#2952 can and should start now** — its structural work (br_table +
+  labeled nested-buffer exits) depends on neither R1 nor R2 and is the
+  longest-lead item on the R9 critical path.
+- **28 adoption-matrix rows had no live owner** (13 tracked by wont-fix
+  #1131, 12 by done issues, 3 untracked) — now tracked by new issue #3583.
+- R1 groundwork is confirmed landing on main (`4922ed58b`, `1a17b4458`);
+  the R2–R8 `depends_on` frontmatter matches this epic's spine exactly.
+
+## Slice: standalone readiness lane + top blockers (fable, 2026-08-15)
+
+Live measurement on main @ `7add6938`: the `check:ir-only` gate has
+exactly ONE lane (single-host WasmGC over 5 playground entries, READY at
+37/37 IR bodies / 0 legacy). The SAME entries compiled with
+`target: "standalone"` collapse: `js/algorithms.ts` = **0 IR / 7 legacy
+bodies**, `js/classes.ts` = 10 IR / 1 legacy. The acceptance criteria
+require standalone/WASI/fast/multi-source matrices; none is measured
+today. This slice adds the standalone lane and attacks its top blockers.
+
+1. **Add a `standalone` lane to `scripts/check-ir-only.ts`**: same 5
+   entries, `target: "standalone"`, per-lane baseline in
+   `scripts/ir-only-baseline.json` per the existing #3519 schema. Baseline
+   HONESTLY at measured current truth (floors/ceilings) — the lane must
+   not be required to be READY to land; it must be required not to
+   regress.
+2. **Diagnose the algorithms.ts 0-IR collapse.** A file that is 100%
+   IR-owned on host emitting zero IR bodies standalone means a mode-gated
+   capability/seal/registration decision, not per-shape gaps — find the
+   single gate (selector capability rows, prepared-component sealing, or
+   resolver registration keyed on host mode) and record it here.
+3. **Fix the top blockers** to raise the standalone lane's IR-body floor;
+   ratchet the baseline with each fix. Known hazards: standalone number
+   boxing goes via `$AnyValue` not `__box_number` (#2955 notes),
+   standalone-floor CI guard (#1897/#2097) — net standalone test262 must
+   not go negative.
+4. **Fast-mode lane** (`fast: true`) same pattern, time permitting —
+   measure, baseline, do not block on READY.
+
+Acceptance: gate reports ≥ 2 lanes; single-host stays READY; standalone
+lane floors ≥ measured-at-landing values; `check:ir-fallbacks` no
+growth; equivalence suite + standalone probes green; `tsc --noEmit`
+clean.
