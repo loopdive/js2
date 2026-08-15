@@ -120,7 +120,7 @@ const SECTIONS = [
       [
         "`ClassDeclaration`",
         "mixed",
-        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Residual nested rejects are per-class member SHAPE, not cardinality: a static member, an initialized instance field, heritage, no method, a `let`-bound class expression, or a method capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Re-measured 2026-08-15 on 793b5c0e (#3522): instance GET/SET ACCESSORS are now ordinary members of that family, so a nested class with a method + getter, a getter/setter pair reading and writing `this`, or an explicit ctor + getter over a field all claim the whole owner; previously ONE accessor withdrew the enclosing function plus every member. Residual nested rejects are per-class member SHAPE, not cardinality: a static member or static accessor, a computed accessor name, an initialized instance field, heritage, no callable member, a `let`-bound class expression, or a member capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
         "#3522",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
@@ -268,13 +268,13 @@ const SECTIONS = [
       [
         "`GetAccessorDeclaration`",
         "mixed",
-        "#3000-B accessors; #3000-E subclass accessors (`Dog_get_breed`). A getter over a private slot claims (measured 2026-08-15, #3583). Re-owned from #3000 (`done`) to #3522.",
+        "#3000-B accessors; #3000-E subclass accessors (`Dog_get_breed`). A getter over a private slot claims (measured 2026-08-15, #3583). NESTED getters claim as of 2026-08-15 (#3522): admitted into the bounded nested ordinary class family and routed down the ordinary descriptor path, so a numeric getter and a getter reading `this` both compile once. The accessor-only WRITEBACK contract (string-returning getters, `dynamic` setters, `this`-free bodies) is unchanged and still owns accessor-ONLY classes. Static and computed-name getters stay direct. Re-owned from #3000 (`done`) to #3522.",
         "#3522",
       ],
       [
         "`SetAccessorDeclaration`",
         "mixed",
-        "#3000-B accessors over the private slot; measured claimed 2026-08-15 (#3583). Re-owned from #3000 (`done`) to #3522.",
+        "#3000-B accessors over the private slot; measured claimed 2026-08-15 (#3583). NESTED setters claim as of 2026-08-15 (#3522): a getter/setter pair that reads and writes `this` on a nested class compiles once, with setter evaluation ORDER pinned against the direct path. Static and computed-name setters stay direct. Re-owned from #3000 (`done`) to #3522.",
         "#3522",
       ],
       [
