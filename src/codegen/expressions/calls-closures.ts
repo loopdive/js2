@@ -505,6 +505,23 @@ export function compileClosureCall(
   const localIdx = fctx.localMap.get(varName);
   const moduleIdx = localIdx === undefined ? ctx.moduleGlobals.get(varName) : undefined;
   if (localIdx === undefined && moduleIdx === undefined) return null;
+  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("closure")) {
+    console.error(
+      "[marked-closure-call-direct]",
+      fctx.name,
+      varName,
+      "local",
+      localIdx,
+      "module",
+      moduleIdx,
+      "params",
+      info.paramTypes,
+      "return",
+      info.returnType,
+      "funcType",
+      info.funcTypeIdx,
+    );
+  }
 
   // The lifted function type is authoritative for its self carrier. Shared
   // `__fn_wrap_*` functions use the canonical wrapper root; private/named
@@ -973,6 +990,13 @@ export function compileCallablePropertyCall(
     ? "__priv_" + propAccess.name.text.slice(1)
     : propAccess.name.text;
 
+  if (
+    process.env.DEBUG_MARKED_CODEGEN === "1" &&
+    (fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral") || methodName === "preprocess")
+  ) {
+    console.error("[marked-callable-enter]", fctx.name, className, methodName);
+  }
+
   // (#1712) Function-style-constructor instances NEVER carry their prototype
   // methods as struct fields: compileFnctorNew synthesizes the runtime
   // instance struct from ctor `this.*` writes only, while the TS checker's
@@ -1022,6 +1046,14 @@ export function compileCallablePropertyCall(
   if (fieldIdx === -1) return undefined;
 
   const fieldType = fields[fieldIdx]!.type;
+  if (process.env.DEBUG_MARKED_CODEGEN === "1" && methodName === "parse") {
+    console.error(
+      "[marked-codegen-field]",
+      className,
+      fieldType,
+      ctx.checker.typeToString(ctx.checker.getTypeAtLocation(propAccess)),
+    );
+  }
 
   // (#1734) Compile the receiver and extract the callable field.
   //
@@ -1207,6 +1239,42 @@ export function compileCallablePropertyCall(
   if (fieldType.kind === "externref") {
     const resultTypes = sigRetWasm ? [sigRetWasm] : [];
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
+
+    if (
+      process.env.DEBUG_MARKED_CODEGEN === "1" &&
+      (fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral") || methodName === "preprocess")
+    ) {
+      console.error(
+        "[marked-callable-field]",
+        fctx.name,
+        className,
+        methodName,
+        "struct",
+        structTypeIdx,
+        "field",
+        fieldIdx,
+        "fieldType",
+        fieldType,
+        "sigParams",
+        sigParamWasmTypes,
+        "sigRet",
+        sigRetWasm,
+        "wrapper",
+        wrapperTypes && {
+          structTypeIdx: wrapperTypes.structTypeIdx,
+          funcTypeIdx: wrapperTypes.closureInfo.funcTypeIdx,
+          returnType: wrapperTypes.closureInfo.returnType,
+        },
+        "closures",
+        [...ctx.closureInfoByTypeIdx.values()]
+          .filter((candidate) => candidate.paramTypes.length === sigParamWasmTypes.length)
+          .map((candidate) => ({
+            structTypeIdx: candidate.structTypeIdx,
+            funcTypeIdx: candidate.funcTypeIdx,
+            returnType: candidate.returnType,
+          })),
+      );
+    }
 
     if (wrapperTypes) {
       const { structTypeIdx: wrapperStructIdx, closureInfo: matchedClosureInfo } = wrapperTypes;

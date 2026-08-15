@@ -88,7 +88,14 @@ import {
   typeErrorThrowInstrs,
 } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
-import { brandExternMethodResult, coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
+import {
+  brandExternMethodResult,
+  coerceType,
+  compileExpression,
+  skipTransparentExpressions,
+  valTypesMatch,
+  VOID_RESULT,
+} from "../shared.js";
 import { tryBuiltinPrototypeMethodBrandThrow } from "../builtin-prototype-brand.js";
 import {
   emitSetExtrasArgv,
@@ -495,6 +502,41 @@ function tryCompileDerivedHostSubstringCharCodeAt(
   return { kind: "f64" };
 }
 
+/**
+ * Materialize the hidden vector argument for a known user method with a
+ * JavaScript rest parameter. Method signatures carry the rest array as one
+ * Wasm parameter, but a source call supplies ordinary positional arguments;
+ * an omitted rest argument therefore needs `{ length: 0, data: [] }`, not a
+ * null ref. The latter used to make even `new Marked().use()` trap before the
+ * method body ran.
+ */
+function emitKnownRestMethodArguments(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  paramTypes: ValType[] | undefined,
+  restInfo: { restIndex: number; elemType: ValType; arrayTypeIdx: number; vecTypeIdx: number },
+  selfOffset: number,
+): boolean {
+  if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return false;
+  const fixedCount = restInfo.restIndex;
+  for (let i = 0; i < fixedCount; i++) {
+    if (i < expr.arguments.length) {
+      compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[selfOffset + i]);
+    } else {
+      pushDefaultValue(fctx, paramTypes?.[selfOffset + i] ?? { kind: "f64" }, ctx);
+    }
+  }
+  const restCount = Math.max(0, expr.arguments.length - fixedCount);
+  fctx.body.push({ op: "i32.const", value: restCount });
+  for (let i = fixedCount; i < expr.arguments.length; i++) {
+    compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, restInfo.elemType);
+  }
+  fctx.body.push({ op: "array.new_fixed", typeIdx: restInfo.arrayTypeIdx, length: restCount });
+  fctx.body.push({ op: "struct.new", typeIdx: restInfo.vecTypeIdx });
+  return true;
+}
+
 export function compileReceiverMethodCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -523,6 +565,50 @@ export function compileReceiverMethodCall(
 
   // Check if receiver is an externref object
   let receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")) {
+    console.error(
+      "[marked-receiver-debug]",
+      fctx.name,
+      propAccess.expression.getText?.(),
+      propAccess.name.text,
+      "sym",
+      receiverType.getSymbol?.()?.name,
+      "flags",
+      receiverType.flags,
+      "struct",
+      resolveStructName(ctx, receiverType),
+      "classSet",
+      [...ctx.classSet].filter((name) => name.includes("anon")),
+      "fields",
+      [...ctx.structFields.entries()]
+        .filter(([name]) => name.includes("anon"))
+        .map(([name, fields]) => ({ name, fields })),
+    );
+  }
+  if (
+    process.env.DEBUG_MARKED_CODEGEN === "1" &&
+    fctx.name.includes("closure") &&
+    (propAccess.name.text === "lex" ||
+      propAccess.name.text === "lexInline" ||
+      propAccess.name.text === "parse" ||
+      propAccess.name.text === "parseInline")
+  ) {
+    console.error(
+      "[marked-receiver-enter]",
+      fctx.name,
+      propAccess.name.text,
+      "receiverText",
+      propAccess.expression.getText?.(),
+      "type",
+      receiverType.getSymbol?.()?.name,
+      "construct",
+      receiverType.getConstructSignatures?.().length,
+      "external",
+      isExternalDeclaredClass(receiverType, ctx.checker),
+      "classMap",
+      ts.isIdentifier(propAccess.expression) ? ctx.classExprNameMap.get(propAccess.expression.text) : undefined,
+    );
+  }
   // (#2767) When the static type resolves NO nominal symbol and the receiver
   // is a bare identifier (the evolving-`any` `var d; d = new Date(0)` case),
   // recover the effective nominal type from the binding's assignments so the
@@ -1304,13 +1390,82 @@ export function compileReceiverMethodCall(
       }
     }
     let fullName = `${receiverClassName}_${methodName}`;
-    let funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)); // (#1983)
+    // A class may legally expose the same spelling on its constructor and
+    // prototype (`static parse()` alongside `parse()`).  The legacy lookup
+    // used the shared `${Class}_${method}` key and then decided whether the
+    // call was static from the *existence* of a static member.  That makes an
+    // instance call such as `new Parser().parse(tokens)` select the static
+    // method, which recursively re-enters the static wrapper (`Parser.parse`)
+    // instead of invoking the prototype method.  Conversely, a static-only
+    // method could be called with an instance receiver and receive a bogus
+    // hidden `this` argument.  Use the receiver's constructor signature to
+    // choose the namespace first, then resolve the collision-safe key for that
+    // namespace.  `typeof C` has construct signatures; `new C()` instances do
+    // not.  This keeps inherited/virtual dispatch on the instance side while
+    // preserving ordinary static calls through a class value.
+    // Bundled JavaScript compiled with `allowJs` can give a class-valued
+    // module binding the *instance* class type (the declaration has no
+    // `typeof` annotation), even though the property access is on the
+    // constructor object.  The declaration pass still records that binding
+    // in classExprNameMap, which is a stronger identity signal than the
+    // checker-side construct-signature result here.  Without this fallback a
+    // detached conditional such as `flag ? Lexer.lex : Lexer.lexInline`
+    // enters the instance dispatcher, drops the static method's return, and
+    // materializes null for the caller.
+    const staticReceiverExpr = skipTransparentExpressions(propAccess.expression);
+    const mappedStaticReceiver = ts.isIdentifier(staticReceiverExpr)
+      ? ctx.classExprNameMap.get(staticReceiverExpr.text)
+      : undefined;
+    const receiverIsClassObject =
+      (receiverType.getConstructSignatures?.().length ?? 0) > 0 || mappedStaticReceiver === receiverClassName;
+    const receiverMemberKind = receiverIsClassObject ? "static" : "instance";
+    const hasReceiverMember = receiverIsClassObject
+      ? ctx.staticMethodSet.has(fullName)
+      : ctx.classMethodSet.has(fullName);
+    let funcIdx = hasReceiverMember
+      ? ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind))
+      : undefined; // (#1983)
+    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexInline" || methodName === "lex")) {
+      console.error(
+        "[marked-call-receiver]",
+        fctx.name,
+        receiverClassName,
+        methodName,
+        "construct",
+        receiverIsClassObject,
+        "mappedStaticReceiver",
+        mappedStaticReceiver,
+        "receiverClassName",
+        receiverClassName,
+        "fullName",
+        fullName,
+        "hasStatic",
+        ctx.staticMethodSet.has(fullName),
+        "hasInstance",
+        ctx.classMethodSet.has(fullName),
+        "key",
+        classMemberFuncKey(ctx, fullName, receiverMemberKind),
+        "funcIdx",
+        funcIdx,
+        "base",
+        ctx.funcMap.get(fullName),
+        "staticKey",
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")),
+        "instanceKey",
+        ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
+      );
+    }
     // Walk inheritance chain to find the method in a parent class
     if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
       while (ancestor && funcIdx === undefined) {
         fullName = `${ancestor}_${methodName}`;
-        funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)); // (#1983)
+        const ancestorHasMember = receiverIsClassObject
+          ? ctx.staticMethodSet.has(fullName)
+          : ctx.classMethodSet.has(fullName);
+        funcIdx = ancestorHasMember
+          ? ctx.funcMap.get(classMemberFuncKey(ctx, fullName, receiverMemberKind))
+          : undefined; // (#1983)
         ancestor = ctx.classParentMap.get(ancestor);
       }
     }
@@ -1326,7 +1481,12 @@ export function compileReceiverMethodCall(
       for (const [childClass, parentClass] of ctx.classParentMap) {
         if (parentClass === receiverClassName || parentClass === baseClass) {
           const childFullName = `${childClass}_${methodName}`;
-          const childFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, childFullName)); // (#1983)
+          const childHasMember = receiverIsClassObject
+            ? ctx.staticMethodSet.has(childFullName)
+            : ctx.classMethodSet.has(childFullName);
+          const childFuncIdx = childHasMember
+            ? ctx.funcMap.get(classMemberFuncKey(ctx, childFullName, receiverMemberKind))
+            : undefined; // (#1983)
           const childTag = ctx.classTagMap.get(childClass);
           if (childFuncIdx !== undefined && childTag !== undefined) {
             candidates.push({ className: childClass, funcIdx: childFuncIdx, classTag: childTag });
@@ -1360,7 +1520,12 @@ export function compileReceiverMethodCall(
         }
         if (cur === receiverClassName && childClass !== receiverClassName) {
           const childFullName = `${childClass}_${methodName}`;
-          const childFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, childFullName)); // (#1983)
+          const childHasMember = receiverIsClassObject
+            ? ctx.staticMethodSet.has(childFullName)
+            : ctx.classMethodSet.has(childFullName);
+          const childFuncIdx = childHasMember
+            ? ctx.funcMap.get(classMemberFuncKey(ctx, childFullName, receiverMemberKind))
+            : undefined; // (#1983)
           const childTag = ctx.classTagMap.get(childClass);
           if (
             childFuncIdx !== undefined &&
@@ -1418,7 +1583,7 @@ export function compileReceiverMethodCall(
       if (dynResult !== undefined) return dynResult;
     }
     if (funcIdx !== undefined) {
-      const isStaticMethod = ctx.staticMethodSet.has(fullName);
+      const isStaticMethod = receiverIsClassObject;
       // Static methods: evaluate receiver for side effects, drop, call directly
       if (isStaticMethod) {
         const recvType = compileExpression(ctx, fctx, propAccess.expression);
@@ -1431,10 +1596,15 @@ export function compileReceiverMethodCall(
         const paramTypes = getFuncParamTypes(ctx, resolvedStaticIdx);
         const paramCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsStatic = ctx.funcUsesArguments.has(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+        const restInfoStatic = ctx.funcRestParams.get(fullName);
+        const handledRestStatic =
+          restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
+        if (!handledRestStatic) {
+          for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+          }
         }
-        if (expr.arguments.length > paramCount) {
+        if (!handledRestStatic && expr.arguments.length > paramCount) {
           if (calleeReadsArgsStatic) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], paramCount);
           } else {
@@ -1446,7 +1616,7 @@ export function compileReceiverMethodCall(
             }
           }
         }
-        if (paramTypes) {
+        if (paramTypes && !handledRestStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
@@ -1456,6 +1626,28 @@ export function compileReceiverMethodCall(
         const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? resolvedStaticIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const sig = ctx.checker.getResolvedSignature(expr);
+        if (
+          process.env.DEBUG_MARKED_CODEGEN === "1" &&
+          (methodName === "lex" || methodName === "lexInline" || methodName === "parse" || methodName === "parseInline")
+        ) {
+          console.error(
+            "[marked-static-return]",
+            methodName,
+            fullName,
+            "idx",
+            finalMethodIdx,
+            "sig",
+            !!sig,
+            "wasmVoid",
+            wasmFuncReturnsVoid(ctx, finalMethodIdx),
+            "wasmRet",
+            getWasmFuncReturnType(ctx, finalMethodIdx),
+            "expected",
+            expectedType,
+            "parent",
+            expr.parent?.kind,
+          );
+        }
         if (sig) {
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
           if (isEffectivelyVoidReturn(ctx, retType, fullName)) return VOID_RESULT;
@@ -1466,7 +1658,14 @@ export function compileReceiverMethodCall(
             getWasmFuncReturnType(ctx, finalMethodIdx) ?? resolveWasmType(ctx, retType),
           );
         }
-        return VOID_RESULT;
+        // Synthetic calls used by conditional-callee lowering are not always
+        // attached to a source node, so TypeScript can decline to resolve a
+        // signature even though the selected class method has already been
+        // emitted. Preserve that method's real Wasm result instead of
+        // reporting void (which makes the caller drop the value and replace it
+        // with null).
+        if (wasmFuncReturnsVoid(ctx, finalMethodIdx)) return VOID_RESULT;
+        return getWasmFuncReturnType(ctx, finalMethodIdx) ?? expectedType ?? { kind: "externref" };
       }
       // Push self (the receiver) as first argument, with type hint from method's first param
       const methodParamTypes0 = getFuncParamTypes(ctx, funcIdx);
@@ -1575,10 +1774,15 @@ export function compileReceiverMethodCall(
         // User-visible param count excludes self (param 0)
         const ngParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNg = ctx.funcUsesArguments.has(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, ngParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+        const restInfoNg = ctx.funcRestParams.get(fullName);
+        const handledRestNg =
+          restInfoNg !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNg, 1);
+        if (!handledRestNg) {
+          for (let i = 0; i < Math.min(expr.arguments.length, ngParamCount); i++) {
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+          }
         }
-        if (expr.arguments.length > ngParamCount) {
+        if (!handledRestNg && expr.arguments.length > ngParamCount) {
           if (calleeReadsArgsNg) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], ngParamCount);
           } else {
@@ -1590,7 +1794,7 @@ export function compileReceiverMethodCall(
             }
           }
         }
-        if (paramTypes) {
+        if (paramTypes && !handledRestNg) {
           for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
@@ -1637,10 +1841,15 @@ export function compileReceiverMethodCall(
       const paramTypes = getFuncParamTypes(ctx, funcIdx);
       const methodParamCount = paramTypes ? Math.max(0, paramTypes.length - 1) : expr.arguments.length;
       const calleeReadsArgsNn = ctx.funcUsesArguments.has(fullName);
-      for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
-        compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+      const restInfoNn = ctx.funcRestParams.get(fullName);
+      const handledRestNn =
+        restInfoNn !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNn, 1);
+      if (!handledRestNn) {
+        for (let i = 0; i < Math.min(expr.arguments.length, methodParamCount); i++) {
+          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+        }
       }
-      if (expr.arguments.length > methodParamCount) {
+      if (!handledRestNn && expr.arguments.length > methodParamCount) {
         if (calleeReadsArgsNn) {
           emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], methodParamCount);
         } else {
@@ -1653,7 +1862,7 @@ export function compileReceiverMethodCall(
         }
       }
       // Pad missing arguments with defaults (skip self param at index 0)
-      if (paramTypes) {
+      if (paramTypes && !handledRestNn) {
         for (let i = expr.arguments.length + 1; i < paramTypes.length; i++) {
           pushDefaultValue(fctx, paramTypes[i]!, ctx);
         }
@@ -1676,7 +1885,8 @@ export function compileReceiverMethodCall(
           getWasmFuncReturnType(ctx, finalMethodIdx) ?? resolveWasmType(ctx, retType),
         );
       }
-      return VOID_RESULT;
+      if (wasmFuncReturnsVoid(ctx, finalMethodIdx)) return VOID_RESULT;
+      return getWasmFuncReturnType(ctx, finalMethodIdx) ?? expectedType ?? { kind: "externref" };
     }
   }
 
@@ -1729,10 +1939,15 @@ export function compileReceiverMethodCall(
           }
           const smMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
           const calleeReadsArgsSm = ctx.funcUsesArguments.has(fullName);
-          for (let i = 0; i < Math.min(expr.arguments.length, smMethodParamCount); i++) {
-            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+          const restInfoSm = ctx.funcRestParams.get(fullName);
+          const handledRestSm =
+            restInfoSm !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoSm, 1);
+          if (!handledRestSm) {
+            for (let i = 0; i < Math.min(expr.arguments.length, smMethodParamCount); i++) {
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
+            }
           }
-          if (expr.arguments.length > smMethodParamCount) {
+          if (!handledRestSm && expr.arguments.length > smMethodParamCount) {
             if (calleeReadsArgsSm) {
               emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], smMethodParamCount);
             } else {
@@ -1744,7 +1959,7 @@ export function compileReceiverMethodCall(
               }
             }
           }
-          if (paramTypes) {
+          if (paramTypes && !handledRestSm) {
             for (let i = Math.min(expr.arguments.length, smMethodParamCount) + 1; i < paramTypes.length; i++) {
               pushDefaultValue(fctx, paramTypes[i]!, ctx);
             }
@@ -1787,10 +2002,15 @@ export function compileReceiverMethodCall(
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
         const nnMethodParamCount = paramTypes ? paramTypes.length - 1 : expr.arguments.length;
         const calleeReadsArgsNns = ctx.funcUsesArguments.has(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, nnMethodParamCount); i++) {
-          compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+        const restInfoNns = ctx.funcRestParams.get(fullName);
+        const handledRestNns =
+          restInfoNns !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNns, 1);
+        if (!handledRestNns) {
+          for (let i = 0; i < Math.min(expr.arguments.length, nnMethodParamCount); i++) {
+            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
+          }
         }
-        if (expr.arguments.length > nnMethodParamCount) {
+        if (!handledRestNns && expr.arguments.length > nnMethodParamCount) {
           if (calleeReadsArgsNns) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], nnMethodParamCount);
           } else {
@@ -1803,7 +2023,7 @@ export function compileReceiverMethodCall(
           }
         }
         // Pad missing arguments with defaults (skip self param at index 0)
-        if (paramTypes) {
+        if (paramTypes && !handledRestNns) {
           for (let i = Math.min(expr.arguments.length, nnMethodParamCount) + 1; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
@@ -1825,7 +2045,8 @@ export function compileReceiverMethodCall(
             getWasmFuncReturnType(ctx, finalStructMethodIdx) ?? resolveWasmType(ctx, retType),
           );
         }
-        return VOID_RESULT;
+        if (wasmFuncReturnsVoid(ctx, finalStructMethodIdx)) return VOID_RESULT;
+        return getWasmFuncReturnType(ctx, finalStructMethodIdx) ?? expectedType ?? { kind: "externref" };
       }
     }
   }
@@ -2987,6 +3208,29 @@ export function compileReceiverMethodCall(
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
   // A mixed mutable local's physical carrier outranks its stale checker type.
   const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
+  if (
+    process.env.DEBUG_MARKED_CODEGEN === "1" &&
+    fctx.name.includes("closure") &&
+    propAccess.name.text === "preprocess"
+  ) {
+    console.error(
+      "[marked-preprocess-fallback]",
+      fctx.name,
+      propAccess.expression.getText?.(),
+      "flags",
+      recvTsType.flags,
+      "symbol",
+      recvTsType.getSymbol?.()?.name,
+      "wasm",
+      recvWasm,
+      "fieldShadow",
+      [...ctx.structFields.entries()].some(
+        ([structName, fields]) =>
+          fields.some((field) => field.name === "preprocess" && field.type.kind === "externref") &&
+          ctx.funcMap.has(classMemberFuncKey(ctx, `${structName}_preprocess`, "instance")),
+      ),
+    );
+  }
   {
     const isAnyOrExternref = (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref";
 
@@ -3078,6 +3322,77 @@ export function compileReceiverMethodCall(
         }
       }
 
+      // An any/externref receiver can be a closed object literal whose own
+      // callable field shadows a same-spelled class method. The closed method
+      // dispatcher cannot know which instance field is populated and would
+      // claim the prototype arm first (Marked's hooks use this shape). Keep
+      // this host-only and narrow it to names for which both a callable field
+      // and a compiled instance method exist; the normal host object bridge
+      // performs the live JavaScript property lookup.
+      if (!ctx.standalone && !ctx.wasi) {
+        if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "space" || methodName === "preprocess")) {
+          console.error(
+            "[marked-dynamic-fallback]",
+            fctx.name,
+            methodName,
+            "receiver",
+            propAccess.expression.getText?.(),
+            "tsFlags",
+            recvTsType.flags,
+            "tsSymbol",
+            recvTsType.getSymbol?.()?.name,
+            "receiverPropSymbol",
+            ts.isPropertyAccessExpression(propAccess.expression)
+              ? ctx.checker.getSymbolAtLocation(propAccess.expression.name)?.valueDeclaration?.getText?.()
+              : undefined,
+            "wasm",
+            recvWasm,
+            "property",
+            ts.isPropertyAccessExpression(propAccess.expression) || ts.isElementAccessExpression(propAccess.expression),
+          );
+        }
+        // A closed object literal may store a callable in an externref field
+        // even when the checker reports `any` at this call site.  Prefer the
+        // host's live property lookup for those fields.  Do not use the
+        // syntactic fact that the receiver is a property access as a signal:
+        // Marked's `this.tokenizer.space()` has the same `any` checker type,
+        // but `space` is a compiled class method and must stay on the closed
+        // Wasm dispatcher.  The field table is the semantic distinction.
+        const hasCallableField = [...ctx.structFields.values()].some((fields) =>
+          fields.some((field) => field.name === methodName && field.type.kind === "externref"),
+        );
+        const receiverPropertySymbol = ts.isPropertyAccessExpression(propAccess.expression)
+          ? ctx.checker.getSymbolAtLocation(propAccess.expression.name)
+          : undefined;
+        // A declared class property (for example `this.tokenizer`) still has
+        // a concrete Wasm owner even when allowJs reports `any`; let the
+        // closed dispatcher resolve its methods.  An unknown owner (`i.hooks`)
+        // or a local object literal is genuinely late-bound and needs the
+        // host's live callable-field lookup.
+        const receiverOwnerIsUnknown =
+          !ts.isPropertyAccessExpression(propAccess.expression) || receiverPropertySymbol === undefined;
+        if (hasCallableField && receiverOwnerIsUnknown) {
+          if (process.env.DEBUG_MARKED_CODEGEN === "1") {
+            console.error(
+              "[marked-callable-field-fallback]",
+              fctx.name,
+              methodName,
+              propAccess.expression.getText?.(),
+              [...ctx.structFields.entries()]
+                .filter(([, fields]) =>
+                  fields.some((field) => field.name === methodName && field.type.kind === "externref"),
+                )
+                .map(([name]) => name),
+            );
+          }
+          const dynamicFieldCall = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+          if (process.env.DEBUG_MARKED_CODEGEN === "1") {
+            console.error("[marked-callable-field-result]", fctx.name, methodName, dynamicFieldCall);
+          }
+          if (dynamicFieldCall !== null) return dynamicFieldCall;
+        }
+      }
+
       // (#2151) Standalone/WASI closed-struct method dispatch. An object
       // literal `{ m(){…} }` is a CLOSED nominal WasmGC struct; the generic
       // __extern_method_call below only handles the OPEN $Object receiver
@@ -3103,7 +3418,15 @@ export function compileReceiverMethodCall(
       const dispatchArgs: ts.Expression[] | null = hasSpreadArg ? flattenCallArgs(expr.arguments) : [...expr.arguments];
       const hasKnownUserClassMethod = [...ctx.classSet].some((className) => {
         const fullName = `${className}_${methodName}`;
-        return ctx.funcMap.has(classMemberFuncKey(ctx, fullName)) || ctx.funcMap.has(fullName);
+        // The closed dispatcher carries an instance receiver as its first
+        // argument. Static class methods have no such slot and must stay on
+        // the class-object/host bridge (otherwise `anyClass.staticMethod()`
+        // passes the constructor as the first user argument). Only instance
+        // members can be safely represented by this dispatcher.
+        return (
+          ctx.classMethodSet.has(fullName) &&
+          (ctx.funcMap.has(classMemberFuncKey(ctx, fullName, "instance")) || ctx.funcMap.has(fullName))
+        );
       });
       const userMethodArities: number[] = [];
       const userMethodFuncsByCarrierShape = new Map<string, Set<number>>();
@@ -3114,7 +3437,10 @@ export function compileReceiverMethodCall(
         if (seenUserMethodCarriers.has(structName)) continue;
         seenUserMethodCarriers.add(structName);
         const fullName = `${structName}_${methodName}`;
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? ctx.funcMap.get(fullName);
+        // Static-only members share the class object's struct carrier but do
+        // not accept the instance receiver expected by this dispatcher.
+        if (!ctx.classMethodSet.has(fullName)) continue;
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? ctx.funcMap.get(fullName);
         if (funcIdx === undefined) continue;
         const params = getFuncParamTypes(ctx, funcIdx);
         if (params) userMethodArities.push(Math.max(0, params.length - 1));
@@ -3147,16 +3473,76 @@ export function compileReceiverMethodCall(
         !hasUserRestMethod &&
         userMethodArities.every((arity) => arity === userMethodArities[0]) &&
         [...userMethodFuncsByCarrierShape.values()].every((funcs) => funcs.size === 1);
+      // A callable class field shadows a prototype method of the same name.
+      // A closed method dispatcher cannot represent that per-instance choice:
+      // its method arm would win before the field closure is read. Leave this
+      // collision on the generic host path, whose normal property lookup sees
+      // the actual field value (Marked's `parse`/`parseInline` shape).
+      const hasUserClassField = [...ctx.classSet].some((className) =>
+        (ctx.structFields.get(className) ?? []).some(
+          (field) => field.name === methodName && field.type.kind === "externref",
+        ),
+      );
       const needsRuntimeUserMethodDispatch =
         dispatchArgs !== null &&
         hasUniformUserMethodAbi &&
-        (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod);
+        (sourceDefinesFunctionMember(expr.getSourceFile(), methodName) || hasKnownUserClassMethod) &&
+        !(hasUserClassField && hasKnownUserClassMethod);
+      if (
+        process.env.DEBUG_MARKED_CODEGEN === "1" &&
+        fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")
+      ) {
+        console.error(
+          "[marked-any-dispatch]",
+          fctx.name,
+          methodName,
+          "dispatchArgs",
+          dispatchArgs?.length,
+          "sourceMember",
+          sourceDefinesFunctionMember(expr.getSourceFile(), methodName),
+          "knownUser",
+          hasKnownUserClassMethod,
+          "uniform",
+          hasUniformUserMethodAbi,
+          "field",
+          hasUserClassField,
+          "matchingFields",
+          [...ctx.classSet]
+            .map((name) => ({
+              name,
+              fields: (ctx.structFields.get(name) ?? []).filter((field) => field.name === methodName),
+            }))
+            .filter((entry) => entry.fields.length > 0),
+          "needs",
+          needsRuntimeUserMethodDispatch,
+          "classes",
+          [...ctx.classSet],
+          "structNames",
+          [...ctx.structFields.keys()],
+          "arities",
+          userMethodArities,
+        );
+      }
+      // The closed dispatcher is also the JS-host implementation for an
+      // any-typed call into a compiled class.  Mark the name before reserving
+      // it so finalization can preserve JavaScript's ordinary under-application
+      // semantics (missing parameters are `undefined`, even when the checker
+      // did not recover an optional marker from an allowJs source).
+      if (needsRuntimeUserMethodDispatch && !ctx.standalone && !ctx.wasi) {
+        ctx.hostDynamicClassMethodNames.add(methodName);
+      }
       if (
         (ctx.standalone || ctx.wasi || needsRuntimeUserMethodDispatch) &&
         dispatchArgs !== null &&
         !recvIsBuiltinClass
       ) {
         const arity = dispatchArgs.length;
+        if (
+          process.env.DEBUG_MARKED_CODEGEN === "1" &&
+          fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")
+        ) {
+          console.error("[marked-any-reserve]", fctx.name, methodName, arity, "standalone", ctx.standalone);
+        }
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.
@@ -3615,6 +4001,11 @@ export function compileReceiverMethodCall(
       // (#799 WI3) Generic host-delegated method call for any/externref receivers.
       // #965: resolve known built-in receivers through __get_builtin rather than null.
       {
+        // A dynamic receiver can still be a compiled ordinary class instance.
+        // Record the property name so finalization can expose the matching
+        // WasmGC method bridge to the host runtime (fnctor subclasses already
+        // use the same bridge, but ordinary classes need the discriminator too).
+        if (!ctx.standalone && !ctx.wasi) ctx.hostDynamicClassMethodNames.add(methodName);
         observeHostDynamicMethodCallArity(ctx, expr.arguments);
         if (tryEmitFixedHostMethodCall(ctx, fctx, expr, propAccess, methodName)) return { kind: "externref" };
         // #1888: standalone builds a native $ObjVec; fixed JS-host calls were

@@ -4710,6 +4710,22 @@ function _safeGet(
     // retained while the receiver's static shape was widened.
     const sc = _sidecarGet(obj, key);
     if (sc !== undefined) return sc;
+    // A declared own field shadows a prototype method with the same spelling
+    // (§9.4.2 [[Get]]). This matters when an untyped host call reaches a
+    // compiled class whose field stores a callable closure (Marked's
+    // `parse`/`parseInline` fields) while another class in the module exports
+    // a method of the same name. Resolve the concrete field before the
+    // module-wide method discriminator; otherwise the unrelated method arm
+    // masks the live field or returns a null closure.
+    // Registered class prototypes and class objects intentionally hide their
+    // physical instance fields, so keep their existing allowlist semantics.
+    if (typeof key === "string" && !_prototypeMethodNames.has(obj) && !_staticMethodNames.has(obj)) {
+      const fieldExports = callbackState?.getExports();
+      if (_structHasOwnFieldName(obj, key, fieldExports)) {
+        const getter = fieldExports?.[`__sget_${key}`];
+        if (typeof getter === "function") return getter(obj);
+      }
+    }
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
     if (typeof key === "symbol") {
       const accessor = _wasmStructAccessors.get(obj)?.get(key);
@@ -5799,8 +5815,9 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
 const _classMethodHostBridges = new WeakMap<object, Map<string, Function>>();
 
 /**
- * (#3123) Resolve a compiled CLASS method/getter on a registered
- * fnctor-subclass instance (`class C extends F`, F a top-level plain function)
+ * (#3123/#4507) Resolve a compiled CLASS method/getter on an opaque WasmGC
+ * instance. Fnctor-subclass instances still use the same path, but ordinary
+ * compiled classes are now covered when a dynamic host call names a method.
  * via the module's dispatch exports:
  *   - `__member_kind_<key>(recv)` → 0 none / 1 method / 2 getter;
  *   - kind 1 → an identity-stable host function bridging to the 0-arg tag
@@ -5825,7 +5842,6 @@ const _memberKindFnCache = new WeakMap<object, Map<string, Function | null>>();
 function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<string, Function> | undefined): any {
   if (exports === undefined || typeof key !== "string") return _MISS;
   if (obj == null || typeof obj !== "object" || !_canBeWeakKey(obj)) return _MISS;
-  if (!_fnctorInstanceCtor.has(obj)) return _MISS;
   let kindCache = _memberKindFnCache.get(exports);
   if (!kindCache) {
     kindCache = new Map();
@@ -5851,7 +5867,23 @@ function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<strin
     return _marshalBridgeResult(getFn(obj), cbState);
   }
   if (kind === 1) {
-    const callFn = exports[`__call_${key}`] as unknown as ((v: any) => any) | undefined;
+    let declaredArity = 0;
+    let hasRest = false;
+    const arityFn = exports[`__member_arity_${key}`] as unknown as ((v: any) => number) | undefined;
+    if (typeof arityFn === "function") {
+      try {
+        const observed = arityFn(obj);
+        if (Number.isInteger(observed) && observed < 0) hasRest = true;
+        else if (Number.isInteger(observed) && observed >= 0) declaredArity = observed;
+      } catch {
+        return _MISS;
+      }
+    }
+    const callFn = (hasRest
+      ? exports[`__class_call_${key}_vararg`]
+      : declaredArity > 0
+        ? exports[`__class_call_${key}_${declaredArity}`]
+        : exports[`__call_${key}`]) as unknown as ((v: any, ...args: any[]) => any) | undefined;
     if (typeof callFn !== "function") return _MISS;
     let map = _classMethodHostBridges.get(obj);
     if (!map) {
@@ -5860,8 +5892,20 @@ function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<strin
     }
     let fn = map.get(key);
     if (!fn) {
-      fn = function classMethodHostBridge(this: any) {
-        return _marshalBridgeResult(callFn(obj), cbState);
+      fn = function classMethodHostBridge(this: any, ...args: any[]) {
+        if (hasRest) {
+          // Vararg class bridges take the host argument list as one ordinary
+          // JS array and pack it into the method's hidden Wasm vector slot.
+          return _marshalBridgeResult(callFn(obj, args), cbState);
+        }
+        // WebAssembly supplies `null` for an omitted externref argument, but
+        // JavaScript default parameters are triggered by `undefined`. Pad
+        // under-applied dynamic calls explicitly so methods such as Marked's
+        // `parseInline(tokens, renderer = this.renderer)` preserve their
+        // ordinary JS call semantics at the host bridge.
+        const callArgs =
+          args.length < declaredArity ? args.concat(new Array(declaredArity - args.length).fill(undefined)) : args;
+        return _marshalBridgeResult(callFn(obj, ...callArgs), cbState);
       };
       Object.defineProperty(fn, "name", { value: key, configurable: true });
       map.set(key, fn);
@@ -10184,6 +10228,14 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {
+          // Native-string mode keeps strings as `(ref $AnyString)` inside
+          // Wasm.  A dynamic property read widens that carrier to externref;
+          // expose the host primitive before ordinary property lookup so
+          // `value.length`, indexed reads, and String prototype members use
+          // JavaScript string semantics instead of the carrier's opaque
+          // struct fields (#4507).
+          const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
+          if (nativeString !== _MISS) return (nativeString as any)[key as any];
           // (#2743 a) A registered arguments object is an ordinary Object whose
           // `[[Prototype]]` is %Object.prototype%. The vec is opaque to the
           // host, so resolve the inherited members it would otherwise miss:
@@ -10392,6 +10444,8 @@ assert._isSameValue = isSameValue;
         };
         return (obj: any) => {
           if (obj == null || Array.isArray(obj)) return obj == null ? 0 : obj.length;
+          const nativeString = _nativeStringToHost(obj, callbackState?.getExports());
+          if (nativeString !== _MISS) return nativeString.length;
           // Reading .length on an opaque wasmGC struct throws — resolve through
           // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
           // + shape-gated struct field), then the inherited chain.
@@ -12306,6 +12360,71 @@ assert._isSameValue = isSameValue;
           if (vecMutation.handled) return vecMutation.value;
 
           const fn = wrappedObj[method];
+          if (process.env.DEBUG_MARKED_BRIDGE === "1" && true) {
+            let closure = -1;
+            try {
+              const isClosure = exports?.__is_closure as ((v: any) => number) | undefined;
+              closure = typeof isClosure === "function" && _isWasmStruct(fn) ? isClosure(fn) : -2;
+            } catch {
+              closure = -3;
+            }
+            let rawField: unknown = "<none>";
+            try {
+              const getter = exports?.[`__sget_${method}`] as ((v: any) => any) | undefined;
+              rawField = typeof getter === "function" ? getter(obj) : "<no-getter>";
+            } catch (error) {
+              rawField = `getter:${String(error)}`;
+            }
+            console.error(
+              "[marked-bridge]",
+              method,
+              typeof obj,
+              _isWasmStruct(obj),
+              typeof fn,
+              _isWasmStruct(fn),
+              closure,
+              "raw",
+              typeof rawField,
+              _isWasmStruct(rawField),
+              "resolved",
+              (() => {
+                try {
+                  return _resolveHostField(obj, method, exports);
+                } catch (error) {
+                  return `resolve:${String(error)}`;
+                }
+              })(),
+              "sidecar",
+              (() => {
+                const side = _sidecarGet(obj, method);
+                let arity = -1;
+                try {
+                  const arityFn = exports?.__closure_arity as ((v: any) => number) | undefined;
+                  if (typeof arityFn === "function" && side != null && _isWasmStruct(side)) arity = arityFn(side);
+                } catch {
+                  arity = -2;
+                }
+                return { present: side !== undefined, struct: _isWasmStruct(side), arity };
+              })(),
+              "staticMethods",
+              typeof obj === "object" && obj !== null ? _staticMethodNames.get(obj) : undefined,
+              "memberKind",
+              (() => {
+                const kindFn = exports?.[`__member_kind_${method}`] as ((v: any) => number) | undefined;
+                try {
+                  return typeof kindFn === "function" ? kindFn(obj) : -1;
+                } catch {
+                  return -2;
+                }
+              })(),
+              "fields",
+              _getStructFieldNames(obj, exports),
+              "exportKeys",
+              Object.keys(exports ?? {}).filter((key) => key.includes("fn") || key.includes("struct_field")),
+              "exportCount",
+              Object.keys(exports ?? {}).length,
+            );
+          }
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
           // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
           // iterables before the native Array.from performs GetMethod(items,
@@ -12598,6 +12717,17 @@ assert._isSameValue = isSameValue;
           // the dispatch so the mutation reaches the vec (silent no-op before).
           const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
           const ret = fn.apply(dispatchRecv, wrappedArgs);
+          if (process.env.DEBUG_MARKED_BRIDGE === "1" && true) {
+            const nativeRet = _nativeStringToHost(ret, exports);
+            console.error(
+              "[marked-bridge-result]",
+              method,
+              typeof ret,
+              ret === null,
+              _isWasmStruct(ret),
+              nativeRet === _MISS ? "not-native-string" : String(nativeRet).slice(0, 80),
+            );
+          }
           reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (

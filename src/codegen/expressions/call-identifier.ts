@@ -1228,6 +1228,24 @@ export function compileIdentifierCall(
         const sigParamCount = sig.parameters.length;
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
         const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+        if (
+          process.env.DEBUG_MARKED_CODEGEN === "1" &&
+          (fctx.name.includes("closure") || funcName === "lexer" || funcName === "parser" || funcName === "fn")
+        ) {
+          console.error(
+            "[marked-local-call]",
+            fctx.name,
+            funcName,
+            "retFlags",
+            sigRetType.flags,
+            "retText",
+            ctx.checker.typeToString(sigRetType),
+            "retWasm",
+            sigRetWasm,
+            "params",
+            sigParamCount,
+          );
+        }
         const sigParamWasmTypes: ValType[] = [];
         for (let i = 0; i < sigParamCount; i++) {
           // (#820d) Destructuring-pattern parameters (e.g. `method({ x = 5 } = {})`)

@@ -98,3 +98,21 @@ The remaining runtime work is to make Marked's mixed-arity class-method and
 renderer initialization path callable without allowing the method-cache arm to
 select a closure with the wrong ABI. No passing upstream-runtime claim is made
 until that path is covered by the unchanged Hooks suite.
+
+## 2026-08-15 handoff
+
+The follow-up implementation added a real host bridge for ordinary compiled
+class methods, including method-arity dispatch, JavaScript under-application
+padding, and a vector adapter for rest parameters. The generated module now
+validates and instantiates; a focused generic rest-method probe passes. The
+regression coverage is in `tests/issue-4507-class-method-dispatch.test.ts`.
+
+The remaining Marked-specific failure is narrower than the old validation
+failure: `new Marked()` succeeds, but the dynamic `any` call `marked.use()`
+still throws `TypeError: Cannot convert object to primitive value` inside the
+compiled `use(...extensions)` body. The unchanged upstream Hooks suite
+therefore remains `0/15` in Wasm. This is a semantic receiver/closure capture
+problem in the `use` callback path, not a compiler watchdog or Wasm validation
+problem. Continue from the current branch/PR with the existing probes removed;
+do not report the bridge as upstream-runtime complete until the Hooks suite
+passes.

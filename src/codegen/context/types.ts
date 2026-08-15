@@ -2184,6 +2184,13 @@ export interface CodegenContext {
   closureMap: Map<string, ClosureInfo>;
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
   maxHostDynamicMethodCallArity?: number;
+  /**
+   * Host-lane dynamic method names whose receiver may be a compiled class
+   * instance. Finalization emits a small ref.test dispatcher for these names
+   * so the JS host can resolve ordinary WasmGC class methods, not only the
+   * older fnctor-subclass surface.
+   */
+  hostDynamicClassMethodNames: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */

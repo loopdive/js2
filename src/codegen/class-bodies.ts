@@ -1195,6 +1195,30 @@ export function collectClassDeclaration(
       const methodParams: ValType[] = isStatic ? [] : [{ kind: "ref", typeIdx: structTypeIdx }];
       for (const param of member.parameters) {
         const paramType = ctx.checker.getTypeAtLocation(param);
+        if (param.dotDotDotToken) {
+          // A class method's rest parameter is represented by the same hidden
+          // WasmGC vector ABI as a free function's rest parameter.  Keep the
+          // call-site metadata in sync with that ABI so direct method calls
+          // materialize an empty vector for `m()` (and pack trailing args)
+          // instead of passing the nullable vector parameter as `null`.
+          const typeArgs = ctx.checker.getTypeArguments(paramType as ts.TypeReference);
+          const elemTsType = typeArgs[0];
+          const elemType: ValType = elemTsType ? resolveWasmType(ctx, elemTsType) : { kind: "f64" };
+          const elemKey =
+            elemType.kind === "ref" || elemType.kind === "ref_null"
+              ? `ref_${(elemType as { typeIdx: number }).typeIdx}`
+              : elemType.kind;
+          const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+          methodParams.push({ kind: "ref_null", typeIdx: vecTypeIdx });
+          ctx.funcRestParams.set(fullName, {
+            restIndex: isStatic ? member.parameters.indexOf(param) : member.parameters.indexOf(param),
+            elemType,
+            arrayTypeIdx: arrTypeIdx,
+            vecTypeIdx,
+          });
+          continue;
+        }
         // (#3673) explicit native annotation pins the parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
@@ -2424,7 +2448,20 @@ function compileClassBodiesInner(
           !param.type &&
           !param.dotDotDotToken &&
           (ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name));
-        let wasmType = bindingPatternNeedsWiden ? ({ kind: "externref" } as ValType) : resolveWasmType(ctx, paramType);
+        let wasmType: ValType;
+        if (param.dotDotDotToken) {
+          const typeArgs = ctx.checker.getTypeArguments(paramType as ts.TypeReference);
+          const elemTsType = typeArgs[0];
+          const elemType: ValType = elemTsType ? resolveWasmType(ctx, elemTsType) : { kind: "f64" };
+          const elemKey =
+            elemType.kind === "ref" || elemType.kind === "ref_null"
+              ? `ref_${(elemType as { typeIdx: number }).typeIdx}`
+              : elemType.kind;
+          const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          wasmType = { kind: "ref_null", typeIdx: vecTypeIdx };
+        } else {
+          wasmType = bindingPatternNeedsWiden ? ({ kind: "externref" } as ValType) : resolveWasmType(ctx, paramType);
+        }
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {

@@ -805,6 +805,12 @@ export interface AstToIrOptions {
    * unsupported storage still demotes.
    */
   readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
+  /**
+   * Host-lane dynamic method names observed while lowering IR. The legacy
+   * finalizer uses this shared set to expose ordinary class-member bridges for
+   * dynamic receivers; standalone/WASI callers may omit it.
+   */
+  readonly hostDynamicClassMethodNames?: Set<string>;
 }
 
 /**
@@ -1171,6 +1177,7 @@ export function lowerFunctionAstToIr(
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
+    hostDynamicClassMethodNames: options.hostDynamicClassMethodNames,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
@@ -2166,6 +2173,8 @@ interface LowerCtx {
   readonly latticeParamFacts?: LatticeParamFacts;
   /** See {@link AstToIrOptions.numericLocalScalarForDecl}. */
   readonly numericLocalScalarForDecl?: (decl: ts.VariableDeclaration) => "number" | undefined;
+  /** Host-lane dynamic method names observed while lowering IR. */
+  readonly hostDynamicClassMethodNames?: Set<string>;
   /**
    * #1586: module-global allocation-site registry, threaded so lifted-closure
    * builders mint stable ids on the same registry as the outer function.
@@ -6712,6 +6721,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   if (recvType.kind === "dynamic") {
+    // Preserve the static property name for the host-side ordinary-class
+    // bridge. IR's dynamic runtime helper intentionally accepts an arbitrary
+    // key at execution time, so the finalizer otherwise cannot know which
+    // compiled class methods need `__member_kind_*`/`__call_*` exports.
+    cx.hostDynamicClassMethodNames?.add(methodName);
     const firstArgumentText = expr.arguments[0]?.getText();
     const isNarrowStringReplace =
       methodName === "replace" &&
