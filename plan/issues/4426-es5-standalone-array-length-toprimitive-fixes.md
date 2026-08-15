@@ -12,6 +12,7 @@ es_edition: ES5
 task_type: bug
 loc-budget-allow:
   - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/operator-assignment.ts
   - src/codegen/literals.ts
   - src/codegen/type-coercion.ts
 func-budget-allow:
