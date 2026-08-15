@@ -173,12 +173,46 @@ export function main(s: string): number { return ~(s as any); }   → empty bina
 each with `Codegen error: IR path failed for main: ir/from-ast: unary '…'
 expects …`, while the legacy backend lowers all three fine.
 
-Absence of evidence is not evidence that a producer lied. The two helpers now
-return **`true`** (capability gap → demote) for `no-checker` / `unknown`, and
-the `invariant` is retained only for the **positive contradiction**: the
-checker says both operands ARE an already-supported primitive family, yet a
-carrier arrived that the fast path does not promise. The five `throw new
-Error(detail)` lines are unchanged and still reachable for that case.
+The fix splits two conditions the helpers had collapsed:
+
+| Family | Means | Verdict |
+| --- | --- | --- |
+| `no-checker` | the compiler is running without a TypeChecker at all — an **infrastructure** condition that says nothing about the source | unchanged: `false` → invariant backstop, which is #3529 P2's explicit contract |
+| `unknown` | a checker IS present and cannot classify the operand — the source really is type-erased (`x as any`), a statement **about the source** | now `true` → capability gap, demote |
+| a positive contradiction | the checker says both operands ARE the same already-supported family, yet a bad carrier arrived | unchanged: `false` → invariant |
+
+The first draft collapsed `no-checker` into the demote side too, and
+`tests/issue-3529-dataflow-outcomes.test.ts` caught it immediately — the P2
+suite drives `lowerFunctionAstToIr` directly with a synthetic carrier
+contradiction and no checker, exactly the case that must stay loud. The five
+`throw new Error(detail)` lines are unchanged and still reachable.
+
+## Two arms the sweep initially got wrong (both caught by existing tests)
+
+Recorded because the ordered-rule method's failure mode is worth knowing:
+
+1. **`lowerCompoundAssignment` — `checker-string RHS for "x +=" has
+   contradictory carrier`.** The blanket `lowerCompoundAssignment →
+   compound-assign-unsupported` rule demoted it. It is a POSITIVE contradiction
+   (`checkerOperandFamily(rhs) === "string" && rhsType.kind !== "string"`) — the
+   word "contradictory" in its own message is the tell. Reverted to `invariant`
+   with an explicit comment so a future sweep does not re-demote it.
+2. **The `no-checker` half of the proof-helper narrowing**, above.
+
+Both were caught by `tests/issue-3529-dataflow-outcomes.test.ts`, which is why
+that suite was run rather than only the new one.
+
+## Pre-existing reds on main (NOT caused by this change)
+
+Verified by re-running each suite with the touched files reverted to
+`fce375e5`; the failures and their values are identical there.
+
+| Test | Symptom | Status |
+| --- | --- | --- |
+| `issue-3529` "checker-string carrier contradiction … at the mixed-string gate" | expects `invariant/unexpected-internal-throw`; main already produces `unsupported/operand-coercion-unsupported` | **fixed here** — the gate's own comment says "Always a clean demote, never the invariant backstop", so the assertion was stale. Retargeted to the stated contract. |
+| `issue-3529` "does not treat inherited String.toString / .valueOf as a method-table signature" (×2) | expects `invariant/unexpected-internal-throw`; main already produces `unsupported/method-call-unsupported` | **fixed here** — `.m(...) on <type> not in slice 4` is the exact message shape `method-call-unsupported` was introduced for (#680). The load-bearing assertion (lowering must REJECT, not resolve the inherited signature) is untouched. |
+| `issue-1923` "the ratchet gate PASSES on the clean corpus" | vitest timeout at 35 s (it shells out to the full `check:ir-fallbacks` corpus run) | **left alone** — not an assertion failure, and `check:ir-fallbacks` passes when run directly. A loaded-box timeout, not a signal. |
+| `issue-3521` "preserves singleton identity … in standalone" | `expected 33807 to be less than or equal to 33723` (binary-size assertion) | **left alone** — identical values on base; unrelated to #4502. Worth a separate issue. |
 
 ## Test Results
 
@@ -231,6 +265,8 @@ Measured against the `fce375e5` baseline captured before any edit:
 | `check:ir-only` standalone lane | 19 emitted / 18 unsupported / 0 invariants / 27 legacy bodies, READY | identical |
 | `gen:ir-adoption --check` | clean | clean (POSTCLAIM rows added for the newly build-reachable codes) |
 | `tsc --noEmit` | 0 errors in the touched files | 0 errors in the touched files |
+| `tests/issue-3529-dataflow-outcomes` | 20/23 (3 stale assertions red) | **23/23** |
+| `issue-4027` / `issue-3784` / `issue-3529-selector-preclaim` / `issue-3565` / `issue-3519` | pass | pass |
 
 The post-claim bucket does not move because the 13-file playground corpus does
 not reach any converted arm — which is also why corpus-zero was never

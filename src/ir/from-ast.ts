@@ -10236,8 +10236,12 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (checkerOperandFamily(rhs, cx) === "string" && rhsType.kind !== "string") {
-      demoteToLegacy(
-        "compound-assign-unsupported",
+      // invariant (producer-promise): the checker POSITIVELY proves the RHS is a
+      // string, yet the lowered carrier is not — a producer contradiction, not a
+      // capability gap. #4502's sweep initially demoted this with the rest of
+      // `lowerCompoundAssignment` and #3529 P2 caught it; the "contradictory
+      // carrier" wording is the tell. Do not re-demote.
+      throw new Error(
         `ir/from-ast: checker-string RHS for "${id.text} +=" has contradictory carrier ${describeIrType(rhsType)} (${cx.funcName})`,
       );
     }
@@ -10785,29 +10789,31 @@ function isSupportedPrimitiveFamily(
  * already-supported primitive family, yet a carrier arrived that the fast path
  * does not promise. Only that contradiction is a producer-contract violation.
  *
- * (#4502) The missing/unknown-evidence case used to return `false`, routing an
- * *unproven* mismatch into a bare `Error` — an `invariant`, i.e. a HARD compile
- * failure. That fails OPEN in exactly the situation the checker is least able
- * to help: `any`-carried operands, where `checkerOperandFamily` answers
- * `unknown` for ordinary untyped JS. Measured on this branch before the change:
- * `export function main(s: string): number { return -(s as any); }` and the
- * `!`/`~` equivalents did not compile at all (empty binary, `Codegen error: IR
- * path failed`), while the legacy backend lowers all of them fine. Absence of
- * evidence is not evidence that a producer lied, so the unknown case now
- * demotes with the other capability gaps and only a POSITIVE contradiction
- * stays an invariant.
+ * (#4502) `no-checker` and `unknown` are NOT the same condition, and collapsing
+ * them was the defect:
+ *
+ *   - `no-checker` — the compiler is running without a TypeChecker at all.
+ *     That is an infrastructure condition, says nothing about the source, and
+ *     #3529 P2 deliberately keeps the invariant backstop for it (a synthetic
+ *     carrier contradiction must still be loud). Unchanged: returns `false`.
+ *   - `unknown` — a checker IS present and cannot classify the operand, i.e.
+ *     the source really is type-erased (`x as any`). That is a statement ABOUT
+ *     THE SOURCE, and it is exactly a capability gap. It used to return
+ *     `false` too, which failed OPEN into a hard compile error precisely where
+ *     the checker is least able to help. Measured on this branch before the
+ *     change, `--target standalone`: `return -(s as any)` and the `!` / `~`
+ *     equivalents produced an EMPTY binary (`Codegen error: IR path failed`)
+ *     while the legacy backend lowers all three. Now returns `true`.
+ *
+ * A POSITIVE contradiction — the checker says both operands ARE the same
+ * already-supported primitive family, yet a carrier arrived that the fast path
+ * does not promise — still returns `false` and stays an invariant.
  */
 function checkerProvesBinarySourceCapabilityGap(left: ts.Expression, right: ts.Expression, cx: LowerCtx): boolean {
   const leftFamily = checkerOperandFamily(left, cx);
   const rightFamily = checkerOperandFamily(right, cx);
-  if (
-    leftFamily === "no-checker" ||
-    rightFamily === "no-checker" ||
-    leftFamily === "unknown" ||
-    rightFamily === "unknown"
-  ) {
-    return true;
-  }
+  if (leftFamily === "no-checker" || rightFamily === "no-checker") return false;
+  if (leftFamily === "unknown" || rightFamily === "unknown") return true;
   if (isSupportedPrimitiveFamily(leftFamily) && leftFamily === rightFamily) return false;
   // Every other checker-proven family pair is valid source whose representation
   // is not promised by the primitive fast path. This includes strict and
@@ -10823,15 +10829,18 @@ function checkerProvesBinarySourceCapabilityGap(left: ts.Expression, right: ts.E
  * with an incompatible carrier, the producer contract is broken and the
  * caller must keep the failure as an Invariant.
  *
- * (#4502) Missing/unknown evidence now reports a capability gap, not a broken
- * promise — see the note on {@link checkerProvesBinarySourceCapabilityGap} for
- * the measured casualty (`-(s as any)`, `!(s as any)`, `~(s as any)` all
- * hard-failed to an empty binary). The Invariant is retained only for the
- * positive contradiction below.
+ * (#4502) A checker that IS present and answers `unknown` describes the SOURCE
+ * (`x as any`) and now reports a capability gap; having NO checker describes
+ * the pipeline and keeps the invariant backstop. See the note on
+ * {@link checkerProvesBinarySourceCapabilityGap} for the split and for the
+ * measured casualty (`-(s as any)`, `!(s as any)`, `~(s as any)` all hard-failed
+ * to an empty binary). The Invariant is retained for the positive contradiction
+ * below.
  */
 function checkerProvesUnaryCoercionGap(expr: ts.PrefixUnaryExpression, cx: LowerCtx): boolean {
   const family = checkerOperandFamily(expr.operand, cx);
-  if (family === "no-checker" || family === "unknown") return true;
+  if (family === "no-checker") return false;
+  if (family === "unknown") return true;
   if (expr.operator === ts.SyntaxKind.ExclamationToken) return family !== "boolean";
   return family !== "number" && family !== "boolean" && family !== "string";
 }
