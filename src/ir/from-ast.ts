@@ -3651,6 +3651,20 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isParenthesizedExpression(expr)) {
     return lowerExpr(expr.expression, cx, hint);
   }
+  // (#3583) Type-erased assertion wrappers emit nothing at runtime, so lowering
+  // is the operand's lowering under the SAME hint — the hint comes from the
+  // consuming context (declared type / param ABI / return ABI), which is what
+  // decides the value representation, so the asserted type cannot change the
+  // emitted bytes. Paired with the matching `isPhase1Expr` arm in select.ts:
+  // selector claim ⇔ lowering parity.
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    return lowerExpr(expr.expression, cx, hint);
+  }
   // (#1373b C-1) `await <e>` in a claimed async body — the legacy SYNC
   // pass-through model, mirrored exactly:
   //   1. `await Promise.resolve(x)` → lower `x` (#3227 static substitution;
@@ -8253,9 +8267,6 @@ function literalCounterEntry(stmt: ts.ForStatement, cx: LowerCtx): { value: numb
 }
 
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
-  if (!stmt.condition) {
-    throw new Error(`ir/from-ast: for without cond not in slice 12 (${cx.funcName})`);
-  }
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -8281,11 +8292,22 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // instruction result (fragile — see #1980).
   let condResult: IrValueId | null = null;
   const condInstrs = loopCx.builder.collectBodyInstrs(() => {
-    const raw = lowerExpr(stmt.condition!, loopCx, irVal({ kind: "i32" }));
+    // (#3583) An omitted condition is `true` per the spec. Emit the constant
+    // directly rather than synthesizing a `ts.factory.createTrue()` node: a
+    // parentless synthetic node has no checker identity, and every downstream
+    // helper here (`coerceLoopCondToBool`, string-encoding scoping) is
+    // AST-position-sensitive. This is byte-identical to the already-claimed
+    // `for (; true; )` form, whose `TrueKeyword` arm emits the same const.
+    const cond = stmt.condition;
+    if (!cond) {
+      condResult = loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+      return;
+    }
+    const raw = lowerExpr(cond, loopCx, irVal({ kind: "i32" }));
     // #2136 — coerce a numeric-truthiness `for` cond (e.g. `for (...; k; ...)`
     // with f64 `k`) to an i32 bool via ToBoolean inside the cond buffer,
     // instead of bailing to legacy (#1980). Mirrors the while-loop arm.
-    condResult = coerceLoopCondToBool(raw, stmt.condition!, loopCx, "for");
+    condResult = coerceLoopCondToBool(raw, cond, loopCx, "for");
   });
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: for cond produced no SSA value (${cx.funcName})`);

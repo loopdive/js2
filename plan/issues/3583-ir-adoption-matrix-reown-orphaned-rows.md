@@ -1,10 +1,10 @@
 ---
 id: 3583
 title: "IR adoption matrix: re-own the 28 orphaned mixed/direct-only rows (tracking issues closed or wont-fix)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-08-15
 priority: medium
 horizon: m
 feasibility: medium
@@ -75,6 +75,21 @@ these shapes).
       IR) or `deferred` with rationale.
 - [ ] `scripts/gen-ir-adoption.mjs` curated data updated; `pnpm run
     gen:ir-adoption` regenerated; `--check` green.
+
+## Implementation record (2026-08-15) — full detail in commit 92154bac
+
+Implemented in this branch's commit `92154bac` (PR #4539). That commit's
+version of this file carries the full record — the 89-shape measured-results
+table with per-row proximate selector arms, the premise correction
+(As/NonNull were NOT transparently handled; the cited sites are helper-local
+unwrappers — measurement caught it), the 26-row re-owning map (#2949 ×6,
+#2952 ×2, #3522 ×7, #3518 ×8, #1373b ×1, #3783 ×1), the 11-item TODO list
+for the next id-allocation window, the discovered legacy `<T>x`/`satisfies`
+operand-evaluates-as-0 miscompile (IR is spec-correct; pinned in
+`tests/issue-3583.test.ts`), and the gate results (gen:ir-adoption --check,
+typecheck, 16/16 tests, check:ir-fallbacks, check:ir-only READY). Retrieve
+with:
+`git show 92154bac:plan/issues/3583-ir-adoption-matrix-reown-orphaned-rows.md`
 
 ## Notes
 
