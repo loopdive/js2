@@ -234,6 +234,7 @@ export function nestedFuncDeclNeedsShadow(
   decl: ts.FunctionDeclaration,
   funcName: string,
 ): boolean {
+  if (process.env.JS2WASM_DISABLE_4456 === "1") return false; // TEMP A/B
   if (!ctx.funcMap.has(funcName)) return false;
   if (funcName.startsWith("__")) return false;
 

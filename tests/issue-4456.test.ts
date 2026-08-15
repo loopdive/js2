@@ -256,8 +256,10 @@ describe("#4456 — same-named nested function declarations in different scopes"
 
     it("same-frame duplicates: two blocks, and if/else (#3419 / Annex B paths)", async () => {
       // These were already right on the base revision — they go through the
-      // last-wins and Annex B block paths, not the cross-frame hoist gate. They
-      // are here because the shadow now fires inside those paths too.
+      // last-wins and Annex B block paths, not the cross-frame hoist gate, and
+      // the gate DECLINES on them (same enclosing function scope). They are
+      // here because the first cut of the gate did NOT decline, which is what
+      // shipped the two Annex B regressions pinned below.
       expect(
         await runStandalone(
           inTest(`
@@ -307,6 +309,46 @@ describe("#4456 — same-named nested function declarations in different scopes"
           `),
         ),
       ).toBe(12);
+    });
+  });
+
+  describe("same-frame declarations — the gate must DECLINE (regressions from the first cut)", () => {
+    // Both of these PASSED before #4456, REGRESSED when the gate shipped without
+    // a cross-frame requirement, and are the reason the predicate now compares
+    // enclosing function scopes. They are the exact test262 shapes, reduced.
+    it("Annex-B-inapplicable inner block declaration must not steal the var binding", async () => {
+      // annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js.
+      // `g`'s var-scoped `f` is the OUTER block's declaration; the inner block's
+      // is deliberately NOT Annex-B applicable. Shadowing gave `f() === 2`.
+      expect(
+        await runStandalone(`
+          function g(): number {
+            { function f() { return 1; } { function f() { return 2; } } }
+            return f();
+          }
+          export function test(): number { return g(); }
+        `),
+      ).toBe(1);
+    });
+
+    it("repeated same-named declarations in ONE frame keep a resolvable call target", async () => {
+      // annexB/language/eval-code/direct/var-env-lower-lex-catch-non-strict.js
+      // reduced: several same-named declarations hoisted into the SAME frame.
+      // Each shadow freed the name with nothing to restore it, and a later call
+      // resolved to an index that had been scoped away — a hard compile error,
+      // `absoluteFuncIndex: unresolved call target (funcIdx=undefined)`.
+      expect(
+        await runStandalone(`
+          export function test(): number {
+            try { throw null; } catch (err) {
+              { function err2() { return 1; } }
+              { function err2() { return 2; } }
+              { function err2() { return 3; } }
+              return err2();
+            }
+          }
+        `),
+      ).toBe(3);
     });
   });
 
