@@ -94,7 +94,7 @@
 // wins), not a crash and not an invalid module: the entries stay in `funcMap`
 // pointing at real, fully-compiled functions. That is the intended safety
 // property of a marker-based stack — partial adoption is sound.
-import type ts from "typescript";
+import { ts } from "../ts-api.js"; // value import: the scope walk needs the `is*` predicates
 import type { CodegenContext } from "./context/types.js";
 
 /**
@@ -155,31 +155,100 @@ function stackFor(ctx: CodegenContext): ShadowedFuncBinding[] {
 export type NestedFunctionNameScope = number;
 
 /**
+ * The nearest enclosing function-like scope of `node`, or `undefined` at module
+ * top level.
+ *
+ * A function declaration is hoisted to its enclosing FUNCTION, not its
+ * enclosing block (Annex B §B.3.3), so the block chain is deliberately walked
+ * through. Same walk as `call-identifier.ts`'s `isOutOfScopeNestedBinding` and
+ * `transitiveVisibleDeclarationCaptures`; kept in step with them on purpose.
+ */
+function enclosingFunctionScope(node: ts.Node): ts.Node | undefined {
+  for (let p: ts.Node | undefined = node.parent; p !== undefined; p = p.parent) {
+    if (
+      ts.isFunctionDeclaration(p) ||
+      ts.isFunctionExpression(p) ||
+      ts.isArrowFunction(p) ||
+      ts.isMethodDeclaration(p) ||
+      ts.isConstructorDeclaration(p) ||
+      ts.isGetAccessorDeclaration(p) ||
+      ts.isSetAccessorDeclaration(p)
+    ) {
+      return p;
+    }
+    if (ts.isSourceFile(p)) return undefined;
+  }
+  return undefined;
+}
+
+/**
  * Should compiling `decl` shadow the existing bare-name registration?
  *
- * True when the name is live in `funcMap` under a DIFFERENT owner. Three
- * distinct "owners" are folded into that:
+ * ## The narrowing, and why it is the whole point (#4456 followup)
  *
- *  - another nested declaration (the #4456 case proper, incl. a genuine
- *    lexical shadow one scope in);
- *  - a top-level declaration or import, which has no `funcMapOwnerDecl` record
- *    (#4133's convention) — a nested declaration shadows those too;
- *  - a bodyless reservation or re-hoist of THIS declaration, where the owner
- *    IS `decl` and nothing must move.
+ * #4456 is about **cross-FRAME** aliasing: two declarations in two different
+ * function activations collapsing onto one physical function. It is emphatically
+ * NOT about two declarations in the SAME function frame — that case belongs to
+ * Annex B §B.3.3 web-compat hoisting and the #3419 last-wins rule, which were
+ * already correct before #4456 (the two-sibling-blocks and if/else cases in
+ * `tests/issue-4456.test.ts` pass on the base revision).
  *
- * The compiler's own synthesized helpers all carry a `__` prefix and are
- * excluded, so a user declaration can never displace `__box_number` and
- * friends out from under an in-flight emission.
+ * The first cut of this predicate did not draw that line, and it shipped two
+ * real regressions, both measured by A/B on the merged tree:
+ *
+ *  - `annexB/…/block-decl-nested-blocks-with-fun-decl.js` — `g()` declares
+ *    `function f(){return 1}` in a block and `function f(){return 2}` in a
+ *    block nested inside it. The inner one is deliberately NOT Annex-B
+ *    applicable, so `g`'s var-scoped `f` must stay the outer one. Shadowing let
+ *    the inner declaration take the name: `f()` returned 2.
+ *  - `annexB/…/direct/var-env-lower-lex-catch-non-strict.js` — four
+ *    `eval('function err(){}')` calls in one catch block. The eval-inline path
+ *    hoists each synthesized declaration into the CURRENT frame with no scope
+ *    around it, so shadows accumulated and a later call resolved to an index
+ *    that had been scoped away: `absoluteFuncIndex: unresolved call target`.
+ *
+ * Both are same-frame. So the gate now requires the incumbent and the newcomer
+ * to live in genuinely different function-like scopes, and DECLINES otherwise —
+ * absent-not-wrong: declining restores the exact pre-#4456 lowering for those
+ * shapes, which is the behaviour the Annex B machinery expects.
+ *
+ * Two further conditions, both narrowing:
+ *
+ *  - The incumbent must have a `funcMapOwnerDecl` record, i.e. be a NESTED
+ *    declaration. Absent ⇒ the name belongs to a top-level declaration, an
+ *    import or a synthesized helper (#4133's convention), and this helper must
+ *    not displace it — that also keeps the second regression above from
+ *    recurring through a different door. (Consequence: a nested declaration
+ *    shadowing a same-named top-level one is left unfixed. It is a pinned
+ *    residual, and its real owner is the IR front-end's bare-name call
+ *    resolution, not this gate.)
+ *  - An UNDETERMINABLE scope on either side declines, rather than guessing.
+ *    Synthesized declarations from eval-inline can carry a detached parent
+ *    chain, and a guess there is exactly how the CE above was produced.
+ *
+ * `__`-prefixed names stay excluded so a user declaration can never displace
+ * `__box_number` and friends out from under an in-flight emission.
  */
 export function nestedFuncDeclNeedsShadow(
   ctx: CodegenContext,
   decl: ts.FunctionDeclaration,
   funcName: string,
 ): boolean {
+  if (process.env.JS2WASM_DISABLE_4456 === "1") return false; // TEMP A/B
   if (!ctx.funcMap.has(funcName)) return false;
-  if (ctx.funcMapOwnerDecl.get(funcName) === decl) return false;
   if (funcName.startsWith("__")) return false;
-  return true;
+
+  const incumbent = ctx.funcMapOwnerDecl.get(funcName);
+  if (incumbent === undefined || incumbent === decl) return false;
+
+  const incumbentScope = enclosingFunctionScope(incumbent);
+  const declScope = enclosingFunctionScope(decl);
+  // Module top level is a legitimate, determinable scope for BOTH sides, but
+  // two module-level nested declarations cannot exist (a module-level
+  // declaration is not nested), so `undefined === undefined` here means the
+  // pair is same-frame and must decline anyway.
+  if (incumbentScope === undefined || declScope === undefined) return false;
+  return incumbentScope !== declScope;
 }
 
 /**
