@@ -19,6 +19,9 @@ func-budget-allow:
   - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/type-coercion.ts::coerceType
+coercion-sites-allow:
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/vec-length-set.ts
 ---
 
 # #4426 — ES5 standalone: array-length write lane + ToPrimitive closure-dispatch conformance fixes
@@ -90,6 +93,14 @@ non-ES5 collateral:
   `tests/issue-2679-toprimitive-this.test.ts` /
   `tests/es5-array-new-filter-holes.test.ts` failures reproduced at the
   merge-base (pre-existing, one of them fixed by this change-set).
+
+## Coercion-sites note
+
+The two `coercion-sites-allow` entries are new CALL SITES of the existing
+engine helpers (`__to_primitive` in the vec length arm, `__extern_toString`
+in the compound-assign wrapper miss arm) — no fresh
+ToString/ToNumber/ToPrimitive matrix is introduced; both routes delegate to
+the #1917/#2108 engine's canonical implementations.
 
 ## LOC-budget note
 
