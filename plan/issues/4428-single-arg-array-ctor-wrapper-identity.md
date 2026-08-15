@@ -168,8 +168,19 @@ before AND after on this branch):
 The other 9 failures are unchanged and unrelated (length-overflow, `toString`
 tag, defineProperty coercion order, a missing quickjs provider).
 
+`language/statements/variable` is 55 pass / 26 fail on BOTH sides — the
+widening changes nothing there.
+
 `npm test -- tests/es5-standalone-wrapper-exotics-replace.test.ts
 tests/es5-standalone-ctor-identity.test.ts` — 19/19 green before and after.
+
+Equivalence: the 14 array/object-shaped files under `tests/equivalence/`
+(92 tests) are 91 pass / 1 fail, and that one failure —
+`array-inline-return.test.ts > find does not hijack return`, a checker
+diagnostic `Type 'number | undefined' is not assignable to type 'number'` —
+reproduces identically with both hooks reverted. Pre-existing, not chased.
+(The full 214-file `tests/equivalence` run OOMs in this container with other
+agents' suites running concurrently, per CLAUDE.md's note; CI runs it.)
 New pin: `tests/issue-4428.test.ts`, 12 tests, including a
 `homogeneous-array-is-NOT-widened` case that guards the predicate's narrowness
 and a `.length === 1` case that rules out the carrier widening.
