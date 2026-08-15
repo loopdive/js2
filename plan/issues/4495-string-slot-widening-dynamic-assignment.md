@@ -1,8 +1,9 @@
 ---
 id: 4495
 title: "Standalone: a string-initialised JS local keeps a native-string slot and stores NULL when assigned a dynamic value"
-status: ready
+status: blocked
 sprint: current
+blocked_on: "Fable-lane implementation plan (wide blast radius — do not claim; see body)"
 created: 2026-08-15
 updated: 2026-08-15
 priority: high
