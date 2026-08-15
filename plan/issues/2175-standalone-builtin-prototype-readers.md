@@ -19,6 +19,7 @@ related: [2161, 2158, 2159, 2101, 2100, 1907, 1888, 1914, 1539, 2861, 2885, 2949
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/context/create-context.ts::createCodegenContext
@@ -1586,14 +1587,143 @@ read true. That is consistent with the double-gOPD limitation the V2-S3a log
 already banked ("`gOPD(p,"exec").value === gOPD(p,"exec").value` throws from a
 SEPARATE gOPD engine body"). Not investigated further.
 
+---
+
+## S3b-3 triage (same lane, same session) — it is TWO defects, not one, and my
+## "~32 files, ctor carrier owns only `prototype`" framing was wrong
+
+I triaged before writing code, and the premise I reported for S3b-3 does not
+survive measurement. The ctor carriers are **not** simply missing own
+properties. Probes `.tmp/s17.ts`–`.tmp/s22.ts` (all `--target standalone`,
+host-free):
+
+**Defect A — `delete` and `gOPD` disagree on a builtin ctor's own props.**
+This is what the 18 `built-ins/TypedArrayConstructors/<View>/{length,name}.js`
+files actually fail on: `verifyProperty` proves configurability by DELETING the
+property and confirming it is gone (hence the error text "length descriptor
+should be configurable", which is not about the descriptor's shape at all — the
+shape is already correct). Measured on `Int8Array`:
+
+```
+gOPD(C,"length")  → {value: 3, writable: false, enumerable: false, configurable: true}   // correct
+gOPD(C,"name")    → {value: "Int8Array", …, configurable: true}                          // correct
+delete C.length   → true
+"length" in C     → false          // the delete IS observed here
+gOPD(C,"length")  → STILL a descriptor   // …but NOT here
+```
+
+The ctor's own props are answered by **synthetic meta arms**
+(`__builtinfn_get_meta` + the `$__ta_ctor` splice in `ta-ctor-meta.ts`, and
+`builtin-static-gopd.ts`), which have no notion of deletion, so no amount of
+"populating a table" fixes it while those arms still answer. Making delete/gOPD
+coherent means backing the ctor VALUE with a real own-property `$Object`
+instead of a `$__ta_ctor` struct + synthetic meta — which is exactly v2 **D7**,
+and v2 explicitly warns: *"Do NOT flip all names in one PR — each name changes
+the bare-identifier read path and needs its own regression sweep."*
+**I am treating this as the architectural boundary for this lane** rather than
+starting a carrier-representation change I cannot finish and validate in this
+window.
+
+**Defect B — the property-access `.length` read on a TypedArray ctor answers 0.**
+Independent, much narrower, and NOT a descriptor problem:
+
+```
+C.length      → 0      // property-access form            WRONG (§23.2.5.1 says 3)
+C["length"]   → 3      // element-access form             correct
+gOPD(C,"length").value → 3                                correct
+RegExp.length → 2  ·  Map.length → 0                      correct (not TA-specific carriers)
+```
+
+So it is specific to the **property-access `.length` lowering** reaching a
+different arm than the generic path, only for `$__ta_ctor` receivers. Reproduces
+both with and without vec types registered in the module, so it is NOT the
+`dyn-read.ts` vec/undefined-guard chain (that chain only exists when
+`vecEntries.length > 0`). This is ~9 of the 18 files.
+
+**Defect C (incidental, recorded).** `typeof Int8Array === "function"` is
+**false** in standalone — the #4120 branded-carrier `typeof` arm does not cover
+`$__ta_ctor`. Relevant to the `not-a-constructor.js` / `invoked-as-func.js`
+shapes, which start by asserting the value is a function.
+
+## S3b-3 B+C — LANDED, and they flip ZERO test262 files. Read the scope note.
+
+Implemented the two bounded defects. Both are real, both are pinned by unit
+tests, and **neither flips a single file in the #4444 row-3 bucket today** — I
+measured the target sets before and after and they are unchanged at 0 pass. They
+are PREREQUISITES for defect A's files, not the fix for them.
+
+**C — `typeof <TypedArray ctor>` was `"object"`.** #4120 fixed this class for
+`Set`/`Map`/`TypeError`/… by branding `OBJ_FLAG_CALLABLE` into `$Object.flags`,
+but a reified view constructor is its own `$__ta_ctor` struct
+(`registry/types.ts`), which cannot carry that flag and so fell through to
+`"object"` — the same silent wrong answer, for the eleven view ctors. Fixed by
+adding a `ref.test $__ta_ctor` arm inside `buildBuiltinBrandTestArm`
+(`builtin-callable-brand.ts`), the ONE predicate all three `typeof` natives and
+`__reflect_is_constructor` share, so they stay in lockstep. The arm is emitted
+independently of `brandedContexts`/the `$Object` runtime (a program whose only
+reified builtin is `Int8Array` brands no `$Object` at all), and
+`fillStandaloneTypeofClosureArms`' early-return gate was widened to match.
+
+**B — `Int8Array.length` read `0`.** `emitStandaloneAnyLength`
+(`property-access-dispatch.ts`) gated its `__builtinfn_get_meta` consult on the
+receiver passing `ref.test <closureRoot>`. `ta-ctor-meta.ts` already splices a
+`$__ta_ctor` arm into that native returning 3 (§23.2.5.1), but the gate made it
+unreachable, so the read fell to `__extern_length` → 0. Fixed by asking the meta
+native FIRST for any receiver, with the previous behaviour preserved exactly on
+the miss path (closure ⇒ 0, else `__extern_length`).
+
+Two things I got wrong mid-slice and corrected:
+- A `ref.test $__ta_ctor` arm here would have been unreliable: this runs during
+  BODY compilation and `$__ta_ctor` is registered lazily, so `ctx.taCtorTypeIdx`
+  can be unset even for a program that reifies one — the same ordering trap that
+  made the V2-S3b-1 seeder skip RegExp. Asking the meta native has no such
+  dependency.
+- The first cut only fired when the module had a closure root, so a closure-free
+  program still read 0. The import ensure now also fires when `$__ta_ctor` is
+  registered. There is a unit test for exactly this.
+
+### Evidence
+
+| | before (`9e17d34f3`) | after |
+|---|---|---|
+| `typeof Int8Array` (via `any`) | `"object"` | `"function"` |
+| `Int8Array.length` (property access) | `0` | `3` |
+| `Int8Array["length"]` / `gOPD(...).value` | `3` | `3` (unchanged) |
+| `RegExp.length` 2 · `Map.length` 0 · `[1,2,3].length` 3 | correct | correct |
+| 20 `TypedArrayConstructors/**` reflection files | 0 pass | **0 pass** |
+| 25 `built-ins/TypedArray/**` residuals | 0 pass | **0 pass** |
+| `prove-emit-identity` 60 (file,target) | — | IDENTICAL |
+
+The 20 `TypedArrayConstructors` files fail on `verifyProperty`'s configurability
+step (delete-then-recheck), i.e. **defect A**, and are unaffected by B or C. When
+A lands, `length.js` will still need B's value — that is the whole reason to keep
+these.
+
+Regression: `issue-4120`, `issue-2580-any-length`, `issue-2896`,
+`issue-2963-builtin-reification`, `issue-2861-ctor-length-name-value-read`,
+`issue-2580-m3-protochain`, `issue-2885`, `issue-2175-v2s3b-proto-companion-seed`
+— all green. New test `tests/issue-2175-s3b3-ta-ctor-value-meta.test.ts` (6/6).
+
+**A third comment-sourced claim that failed measurement** (logging the pattern):
+my anti-vacuity case asserted a plain closure's `.length` is 0, quoting the "flat
+0" wording in `emitStandaloneAnyLength`'s #2580 comment. It is **1** — correct
+per §20.2.4.1 — on base AND branch. The comment describes the fallback emitted
+when no metadata is available, not what an arrow function reads. Test now
+asserts the measured value.
+
 ### Revised slice plan (supersedes v2's V2-S3 for the GET path)
 
-- **S3b-1** — DONE (this entry).
-- **S3b-2** — consult tier: **no work required** (measured above). Accessor tier:
+- **S3b-1** — DONE.
+- **S3b-2** — consult tier: **no work required** (measured). Accessor tier:
   **blocked** on the inline-vs-materialized divergence, mechanism unidentified.
-- **S3b-3** — ctor-object population (v2 C1-ctor / S4). Now the highest-value
-  next slice: it owns **14 of the 25** TypedArray residuals plus the 18
-  `built-ins/TypedArrayConstructors/<View>/{length,name}.js` failures in the
-  138-file remainder, which are the same defect (a builtin ctor object owning
-  only `prototype`, so `length`/`name` are not own properties).
+- **S3b-3 B+C** — DONE (above), 0 files flipped, prerequisites for A.
+- **S3b-3 A** — split out to its own issue (D7 ctor-value-as-real-`$Object`).
+  Original split rationale:
+  - **B + C are the cheap half** (~9-11 files): route the property-access
+    `.length` read and the `typeof` arm to recognise `$__ta_ctor`. Bounded, and
+    `RegExp`/`Map` already prove the generic path is right.
+  - **A is the architectural half** (~9 files, plus the 14 `%TypedArray%`-ctor
+    statics): needs the D7 carrier change, which v2 says to do one ctor name at
+    a time with its own regression sweep. Should be its own issue, not a slice
+    of this one.
 - V2-S5 (symbols / instance chain), S6, S7 unchanged.

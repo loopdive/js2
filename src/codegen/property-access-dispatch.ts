@@ -2310,7 +2310,23 @@ export function tryPrototypeMethodAndArityReads(
 function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): ValType {
   const closureRootIdx = getFuncRefWrapperRootTypeIdx(ctx);
   ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-  if (closureRootIdx !== undefined) {
+  // (#2175 S3b-3, defect B) The metadata consult used to be ensured ONLY when
+  // the module had a closure root, because it was only ever asked for a closure
+  // receiver. It now answers for `$__ta_ctor` too (ta-ctor-meta.ts), and a
+  // program can reify `Int8Array` while compiling no closure at all — measured:
+  // with a closure present the consult fired and `Int8Array.length` read 3;
+  // without one it stayed 0. So the import is ensured whenever a `$__ta_ctor`
+  // type is registered as well.
+  //
+  // Reading `ctx.taCtorTypeIdx` here is a best-effort widening, not a
+  // correctness dependency: if the type is not registered yet (function
+  // compilation order is not source order) the module simply keeps its previous
+  // behaviour for this site. The consult itself is a call resolved at finalize,
+  // so wherever the import IS present the `$__ta_ctor` arm works regardless of
+  // when the type appeared.
+  const taCtorRegistered = ctx.taCtorTypeIdx !== undefined && ctx.taCtorTypeIdx >= 0;
+  const wantMeta = closureRootIdx !== undefined || taCtorRegistered;
+  if (wantMeta) {
     ensureLateImport(
       ctx,
       "__builtinfn_get_meta",
@@ -2319,8 +2335,7 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     );
     addStringConstantGlobal(ctx, "length");
   }
-  const metaLengthToI32 =
-    closureRootIdx === undefined ? undefined : coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx);
+  const metaLengthToI32 = wantMeta ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   flushLateImportShifts(ctx, fctx);
 
   const lenFn = ctx.funcMap.get("__extern_length");
@@ -2330,31 +2345,65 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
       ? [{ op: "local.get", index: recvExternLocal }, { op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" }]
       : [{ op: "i32.const", value: 0 }];
   const guardedLength = (recvExternLocal: number): Instr[] => {
-    if (closureRootIdx === undefined || bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
+    if (bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
       return genericLength(recvExternLocal);
     }
     const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
+    // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
+    // receiver, instead of only for a closure-root subtype.
+    //
+    // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
+    // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
+    // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
+    // <closureRoot>` made that arm unreachable from this path, so a reified
+    // TypedArray constructor fell through to `__extern_length`, which has no
+    // notion of a ctor and answered **0**. Measured on `origin/main` @
+    // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
+    // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
+    // property-access lowering was wrong, which is what the nine
+    // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
+    //
+    // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
+    // function runs during BODY compilation, and `$__ta_ctor` is registered
+    // lazily when a TA constructor is first reified. Function compilation order
+    // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
+    // for a program that does reify one — the same ordering trap that made the
+    // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
+    // dependency: it is a call, resolved at finalize.
+    //
+    // Legacy behaviour is preserved exactly on the miss path: a receiver with no
+    // metadata answers `0` if it is a closure (a plain user closure's arity is
+    // not statically tracked here — the #2580 Cluster-A value) and otherwise
+    // falls to `__extern_length`, which is what each did before.
     return [
       { op: "local.get", index: recvExternLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: closureRootIdx },
+      ...stringConstantExternrefInstrs(ctx, "length"),
+      { op: "call", funcIdx: bfnGetMetaFn },
+      { op: "local.tee", index: metaLocal },
+      { op: "ref.is_null" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: recvExternLocal },
-          ...stringConstantExternrefInstrs(ctx, "length"),
-          { op: "call", funcIdx: bfnGetMetaFn },
-          { op: "local.tee", index: metaLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: 0 }],
-            else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
-          },
-        ],
-        else: genericLength(recvExternLocal),
+        // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
+        // metadata answers 0 (a plain user closure's arity is not tracked here —
+        // the #2580 Cluster-A value); anything else falls to `__extern_length`.
+        // With no closure root in the module there is no closure to test, so the
+        // generic fallback stands alone.
+        then:
+          closureRootIdx === undefined
+            ? genericLength(recvExternLocal)
+            : [
+                { op: "local.get", index: recvExternLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: closureRootIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [{ op: "i32.const", value: 0 }],
+                  else: genericLength(recvExternLocal),
+                },
+              ],
+        else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
       },
     ];
   };
