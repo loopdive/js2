@@ -63,6 +63,7 @@ import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI
 // brands (a reflective member closure must degrade to a catchable TypeError, not
 // a hard compile error — #2193 PR-C).
 import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
+import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { emitStringSplitMemberBody } from "./string-proto-split.js"; // (#4220) reflective String.prototype.split
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
@@ -574,6 +575,11 @@ const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
   includes: 2, // (searchString, position) §22.1.3.7
   startsWith: 2, // (searchString, position) §22.1.3.23
   endsWith: 2, // (searchString, endPosition) §22.1.3.6
+  // (#4426 session) `concat(...args)` is variadic (spec `.length` 1). Four real
+  // slots cover every ES5-shaped borrow (test262 uses ≤3); the call path pads
+  // absent slots with null (skipped per §22.1.3.5 step 3) and truncates a
+  // longer tail — the 128-arg S15.5.4.6_A2 is a documented residual.
+  concat: 4,
 };
 
 // ── ArrayBuffer.prototype (ES2024 §25.1.5) ────────────────────────────────────
@@ -888,6 +894,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // the pre-#4220 behaviour via the shared refusal.
   if (member === "split")
     return emitStringSplitMemberBody(ctx, fctx) ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+  // (#4426 session) `concat` (§22.1.3.5) — variadic string-returning append
+  // over the padded arg slots; see string-proto-concat.ts for the pad-vs-
+  // undefined discipline. Same refusal fallback as its siblings.
+  if (member === "concat")
+    return emitStringConcatMemberBody(ctx, fctx) ?? emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   // (#4232) `replace` (§22.1.3.19) is `split`'s sibling in every structural
   // respect — reflective closure ABI, string-returning, ToString-everything —
   // and was the arm #4224 named as its leftover. Same refusal fallback.
