@@ -47,6 +47,13 @@ func-budget-allow:
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::makeFromAstResolver
+  # Slice 6c: the dynamic-move-only scan needs a LabeledStatement arm — a
+  # label wraps a statement without changing its value flow, and without the
+  # arm `lbl: for (var k in dyn)` fell into the conservative
+  # `!subtreeTouchesDynamic` tail and was rejected as
+  # `param-type-not-resolvable` BEFORE the for-in shape check ran. The arm
+  # belongs in this per-statement-kind dispatcher (+8 lines incl. comment).
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
 branch: codex/2952-acorn-for-in
 ---
 
@@ -753,3 +760,203 @@ for for-in, no iterator to close). Typed-receiver widening stays OUT
 - Gates: `check:ir-fallbacks` no growth; `tsc --noEmit`; scoped test262
   sweep over `language/statements/switch` + `language/statements/for-in`
   main↔branch outcome diff = zero lines.
+
+## Slice 6 Implementation Notes (2026-08-15, fable)
+
+All three sub-slices landed. Base `7add6938`. Residuals re-verified LIVE
+before implementing — one plan detail was wrong and is corrected here:
+
+- **6a's reject arm is `tail-unhandled`, not `nontail-switch`.** `select.ts`
+  `:3326` (`shapeNo("nontail-switch")`) fires only for a switch in a NON-tail
+  position whose own shape check fails — slice 4 already claims that form. A
+  function ENDING in a switch never reaches it: `isPhase1StatementList` hands
+  the last statement to `isPhase1Tail`, whose arms are return/block/if/throw
+  (+ the void ExpressionStatement arm), so a tail switch fell off the end as
+  `shapeNo("tail-unhandled", …)`. Measured with `JS2WASM_IR_SHAPE_DIAG=1`.
+- 6b (`switch-case-test-nonliteral` on a `StringLiteral`) and 6c
+  (`forin-head-value-used`) reproduced exactly as the plan described.
+
+### 6a — tail-position switch
+
+`isPhase1Tail` gained a `SwitchStatement` arm, and `lowerTail` the mirror.
+**No new IR kind and no new lowering machinery**: the switch lowers through
+the identical slice-4 `IrInstrSwitch` ladder; only the block TERMINATOR is
+new.
+
+Two claim paths, matching the existing `tail-if-noelse` precedent:
+
+- **void function** → claim unconditionally (subject to the switch's own shape
+  gate) and terminate `return []`. Control may legitimately fall out of the
+  ladder into the implicit empty return, so no analysis is needed.
+- **non-void** → `switchAllPathsTerminate` must hold, then terminate
+  `unreachable` (the same terminator the throw-tail arm uses; Wasm's
+  polymorphic `unreachable` satisfies the function result type).
+
+`switchAllPathsTerminate` has exactly two obligations, both forced by §14.12
+fallthrough: (1) **coverage** — a `default` must exist, else the no-match
+branch jumps past the whole ladder; (2) **per-clause termination** — a clause
+body either terminates (last statement return/throw, or an if/else whose arms
+both do — `thenArmTerminates` reused verbatim, the same helper the
+early-return rewrite uses) or is EMPTY, in which case it falls through and the
+NEXT clause carries the obligation. Consequences that fall out for free and
+are tested: the last clause may not be empty, and a clause ending in `break`
+is not terminating — `break` exits the switch, which IS the fall-out being
+rejected.
+
+### 6b — string-literal case dispatch
+
+**Deliberately NO new IR node, field or kind — and therefore no exhaustiveness
+sweep.** The plan offered `{kind:"num"|"str"}` tests or a parallel `strTests`
+field; the representation that keeps `verifyInstrStructure` simplest turned
+out to be *not changing the IR at all*.
+
+A string-tested switch computes a **dispatch INDEX** first and feeds it to the
+existing numeric ladder as an i32 discriminant. `lowerStringSwitchDispatch`
+emits, into the CURRENT buffer:
+
+```
+<disc>                                  ;; evaluated exactly ONCE (§14.12.9)
+match := -1
+if (string.eq(disc, lit[n-1])) match := n-1     ;; REVERSE source order
+…
+if (string.eq(disc, lit[0]))   match := 0
+→ slot.read(match)                              ;; i32 discriminant
+```
+
+`tests[k]` is then simply the clause index `k` (null for `default`), so the
+ladder, `br_table` fast path, fallthrough layout, `break` frame and every
+verifier rule are byte-for-byte the slice-4 code. Preparation also keeps
+working unchanged: the string consts and `string.eq` are ordinary IR
+instructions, so mode resolution (host `string_equals` / native
+`__str_equals`) and provider binding need no special case — verified running
+on all three carriers (host js-string, `nativeStrings`, standalone).
+
+**Why reverse order + unconditional writes instead of a short-circuiting
+chain.** A short-circuit chain must evaluate the next comparison inside a
+NESTED if-buffer, and nested buffers cannot reference the enclosing buffer's
+SSA values (the slice-1 invariant). It would therefore need a string-typed
+SLOT, whose ValType is mode-dependent (`(ref $AnyString)` vs externref) —
+exactly the complexity this design avoids. Emitting every comparison flat in
+one buffer and letting the FIRST source-order clause win by writing LAST is
+observationally identical: both operands are strings, so `string.eq` is total,
+pure and cannot throw, and evaluating a comparison JS would have skipped is
+unobservable. First-clause-wins on duplicate literals is preserved (tested).
+Cost: `n` comparisons instead of up to `n`. A short-circuiting variant is a
+pure optimisation, banked.
+
+The `-1` sentinel is outside `[0, n)`, so it reaches the no-match target
+through the SAME slice-4 code — including `br_table`, whose min-biased index
+goes out of range for `-1`.
+
+**The disc-carrier gate is the load-bearing part (and the one real hazard
+found).** `declaredExpressionHasExactFamily(disc, "string")` — the checker
+family — is necessary but NOT sufficient: an element read off a string array
+(`keys[i]`) is checker-`string` yet lowers to the externref VEC-ELEMENT
+carrier (`IrType.val`), which `string.eq` cannot consume. And under IR-first
+(#2138) a post-claim build throw is an `unexpected-internal-throw` INVARIANT —
+a **hard compile failure**, not the "clean legacy demote" the slice-4 notes
+assumed. Measured: claiming that shape turned `success=true` into
+`success=false`. So `switchDiscHasIrStringCarrier` rejects it PRE-claim
+(`switch-disc-not-string-carrier`), following a same-function local alias to
+its initializer so `const s = keys[i]` is caught too.
+
+That carrier gap is **pre-existing, not introduced here**: `const s = keys[i];
+return s === "a";` fails identically on pristine main
+(`mixed string/non-string operand for '==='`). This slice keeps the switch
+ladder OUT of it rather than widening it. The from-ast mirror was also
+upgraded from a bare `throw` to
+`IrUnsupportedError("operand-coercion-unsupported")`, so if the selector gate
+is ever out-drifted the result is a clean demote instead of a compile error.
+
+Mixed numeric/string test sets reject (`switch-case-test-mixed`): §14.12.9
+dispatch is strict equality, so a numeric test can never match a string disc,
+and a mixed set would need both mechanisms in one ladder for no real benefit.
+
+### 6c — for-in head value + labeled for-in
+
+The #2964 ABI already wrote the enumerated key into the head slot on every
+visit (slice 5 simply had no reader), so the widening is selector-side plus a
+one-line binding tag:
+
+- **Lowering**: the head binding gains `asType: { kind: "string" }` when
+  `resolver.resolveString()` is `externref` — the same `asType` idiom
+  `lowerForOfString` uses for its `(ref $AnyString)` element slot. Identifier
+  reads then compose with the ordinary string ops (`+`, `===`, `.length`).
+- **Capability**: a new `forInHeadValueIsHostString` selection option, wired
+  as `!ctx.nativeStrings`. On a native-strings lane the key externref is NOT
+  the string carrier, so head-value uses are refused BEFORE the claim
+  (fail-closed, exactly as strict as slice 5's receiver certificate) — never
+  claim-then-demote.
+- **`classifyForInHeadUse`** replaces the blanket `headUsed` reject and names
+  the actual blocker: `written` (assignment/`++`/`--` — the slot is re-written
+  from the key each visit, so a body write would be DISCARDED rather than
+  carried, which is not `var` semantics), `captured` (a closure over the head
+  needs the ref-cell capture path), `redeclared` (an occurrence may not refer
+  to the head at all). The `forin-head-value-used` reason string is retained
+  for the not-capable case so the existing bucket name is stable.
+
+**Labeled for-in** needed three edits, one of which the plan did not
+anticipate. `for.loop` reuse means `pendingLoopLabel` → the loop's own
+`loopLabel` already works, and there is no iterator, so the slice-3
+`iterCloseSlot` obligation is N/A. But `lbl: for (var k in dyn)` was rejected
+with **`param-type-not-resolvable`** — a gate that runs BEFORE the for-in
+shape check — because `dynamicUsesAreMoveOnly`'s `scanStmt` had no
+`LabeledStatement` arm and fell into the conservative `!subtreeTouchesDynamic`
+tail. A label wraps a statement without changing its value flow, so the arm
+just recurses.
+
+### Descoped (deliberate)
+
+- **Typed / fast-carrier for-in receivers** — out of scope per the plan
+  (`$AnyValue` is #2949-adjacent).
+- **Short-circuiting string dispatch** — see the WHY above; the flat form is
+  semantically exact, the chain is a pure optimisation.
+- **String discs that are indexed reads** (`switch (keys[i])`) — blocked by the
+  pre-existing `IrType.val` vec-element carrier gap, which is a
+  string-representation issue, not a control-flow one. Worth its own issue.
+- **A `switch` inside a clause as the termination proof** — `thenArmTerminates`
+  covers return/throw/block/if-else only; a nested all-terminating switch
+  rejects. Rare; no new machinery spent on it.
+
+## Test Results (slice 6)
+
+- **`tests/issue-2952-slice6.test.ts` — 44/44.** 6a: selector claims (tail
+  all-return + default, empty-clause fallthrough, terminating if/else clause,
+  void tail switch), negatives (no default, clause ending in `break`, empty
+  last clause, empty switch), runtime semantics (dispatch/fallthrough/default,
+  NaN and `-0` under f64.eq, void tail), dual-run ×4. 6b: claims (string tests,
+  tail string switch), negatives (MIXED numeric/string, non-literal test,
+  vec-element-carrier disc asserted against the REAL checker-backed compile),
+  runtime (per-clause dispatch, strict equality, duplicate literals
+  first-wins, mid-position default fallthrough, all three string carriers),
+  dual-run ×5 over 7 args. 6c: claims (head read, labeled for-in), negatives
+  (head written / captured / redeclared, native-strings lane, unproven
+  receiver), runtime (key concat over empty/own/inherited, `=== "a"`,
+  `.length`, labeled `break lbl` / `continue lbl`), dual-run ×6 over 4
+  receivers. Every dual-run asserts the IR claim FIRST so it can never compare
+  legacy to legacy.
+- **All #2952 suites + both linear control-flow suites re-run together:
+  180/180.** One slice-4 boundary test was deliberately FLIPPED
+  (`does NOT claim a switch with string case tests` → claims, per 6b) and
+  replaced with the boundary that actually remains (mixed numeric/string sets).
+- **Scoped test262 outcome diff, main↔branch: ZERO flips / 133 files** —
+  `language/statements/for-in` (86) + `language/statements/switch` (47), run
+  via `runTest262File`. Identical on both sides: 83 pass / 46 fail / 4
+  compile_error (all pre-existing on main).
+  - Harness note: a single long-lived sweep process starts throwing `EISDIR`
+    out of `test262-original-harness.ts`'s loader after a handful of files
+    (`harnessSource("assert.js")` — an environment artifact; every affected
+    file passes in isolation). Chunking the sweep to 4 files per process, then
+    re-running the last 3 stragglers one-per-process, resolved all 133 on both
+    sides. Not a compiler signal, but it silently ate 84/133 files on the first
+    attempt, so future scoped sweeps should chunk.
+- **Byte-inertness**: all 13 `website/playground/examples` compile to
+  sha256-identical binaries main↔branch (the corpus has no switch/for-in
+  shapes this slice touches).
+- `pnpm run check:ir-fallbacks` — OK (no unintended / **post-claim** /
+  module-level growth).
+- `pnpm run check:ir-only` — single-host lane **READY**, 37/37 emitted, 0
+  unsupported, 0 invariants.
+- `npm run typecheck` (the real gate, `tsconfig.ts7.json`) — clean. A bare
+  `npx tsc --noEmit` reports only pre-existing `Cannot find name 'process'`
+  @types/node noise, present on unmodified files too.
