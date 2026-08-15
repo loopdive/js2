@@ -4694,3 +4694,106 @@ Not accounted for: 1 `wasm_compile` + the 3 `assertion_fail` rows. The sweep
 compiles only the PRIMARY harness variant and never executes, so it cannot see a
 strict-rerun-only failure or a wrong-answer one; the merge-group re-run is the
 authoritative check on those.
+
+## 2026-08-15 (47) — the flip's first RUNTIME regression: the loop-leaf rule inlined a loop, and the landing WASI `fib` lane went 1.50x V8 → 0.76x
+
+Entry (37) flipped the tuned eleven ON and named the risk it could not cover:
+"this is the first time these eleven face the test262 merge-group
+re-validation". They passed it. What no gate covered is the landing benchmark
+lane, and that is where the flip's first real regression landed — visible only
+in a committed artifact three refreshes later.
+
+### The number, and how it was isolated from machine noise
+
+`benchmarks/results/wasm-host-wasmtime-hot-runtime.json` is refreshed by CI on
+two runner classes, which the JS lane identifies unambiguously: class A reads
+`js ≈ 16.8 ms` on `fib` warm, class B `js ≈ 18.68 ms`. Comparing only within
+class B, so the CPU is held fixed:
+
+| refresh (class B)  | fib warm | fib-recursive | array-sum | string-hash |
+| ------------------ | -------- | ------------- | --------- | ----------- |
+| 8695ae8 / d9cef66  | 12,442   | 7,565         | 926       | 238         |
+| f2c52ab .. 412cda7 | 24,888   | 7,565         | 1,243     | 238         |
+
+`fib` exactly 2.0x, `array-sum` 1.34x, the other two untouched — and the JS lane
+moved 18,683 → 18,682 µs across the same boundary. A machine change cannot
+produce that pattern; the two survivors are what named the rule. `fib-recursive`
+is self-recursive (already declined) and `string-hash` is not a leaf. Both
+regressing programs are a small **exported leaf that is one `for` loop**.
+
+The `fib` COLD lane did not move (18.8 → 18.8 ms), and its module is
+byte-identical across the boundary — the cold binary is 104 bytes on both
+sides. Only the WARM module, which appends the timing driver, changed.
+
+### Root cause
+
+Rule 1's `loop-leaf`: `weight ≥ 10` (the site is in the driver's measurement
+loop), `isLeaf` (fib's `run` calls nothing), `effSize ≈ 30 ≤ loopBudget 60`. So
+`run` was inlined into `warm` at both of its sites. `JS2WASM_IR_INLINE=on,verbose`
+prints it directly:
+
+```
+[ir-inline]   loop-leaf: run -> warm
+[ir-inline]   loop-leaf: run -> warm
+```
+
+Cranelift then had to keep `n`, `__best` and `__t0` in stack slots — every one
+of them is live across the driver's `performance.now()` calls, and xmm
+registers are caller-saved. The inner loop's back edge picked up three
+`movdqu` reloads it never had as its own function:
+
+```
+0x1ef: vxorpd %xmm0,%xmm0,%xmm0 ; vcvtsi2sdl %eax,%xmm0,%xmm0
+       movdqu (%rsp),%xmm1                 ; n, reloaded per iteration
+       vucomisd %xmm0,%xmm1 ; ja 0x2ed
+0x2ed: movdqu 0x10(%rsp),%xmm0             ; __best, not even read here
+       movdqu 0x20(%rsp),%xmm1             ; __t0,   not even read here
+       addl $1,%eax ; leal (%rcx,%r12),%edx ; movq %rcx,%r12 ; movq %rdx,%rcx
+       jmp 0x1ef
+```
+
+20,000,000 iterations of that is the whole 12.4 ms.
+
+### Fix — rule 5 in `src/codegen/ir-inline.ts`
+
+A callee that contains a `loop` is not a loop-leaf. The loop-leaf trade buys the
+call sequence at a hot site; it needs the callee's per-call cost to be
+comparable to the call, and a callee with its own loop covers its whole trip
+count per call, so the overhead removed is a vanishing fraction of it — while
+the register pressure it adds to the caller's inner loop is not. This is the
+same line Binaryen draws with "lightweight (no loops or function calls)",
+reached from the cost side rather than the safety side.
+
+The near-miss gets its own decline bucket, `loop-in-callee`, rather than
+disappearing into `no-rule`: it is the one decline whose cause is a cost-model
+judgement, and a future retune needs to see what rule 5 costs.
+
+### Verification
+
+- Both warm modules are now **byte-identical to the pre-flip build**
+  (`JS2WASM_IR_INLINE=0`) at the landing lane's own options
+  (`target: wasi, nativeStrings, optimize: 3`): fib 449 B, array-sum 475 B.
+  So the CI lane returns to 12,442 / 926 µs by construction, not by prediction.
+- Local wasmtime 46.0.1 (the pinned version, `benchmarks/wasmtime-cold-host`),
+  min of 5, pinned core: array-sum warm 1.79 → 1.49 ms.
+  **`fib` ranks the OTHER WAY on this container** (24.2 ms inlined vs 30.4 ms
+  not) — the spill cost is µarch-dependent, and this box is not the CI runner.
+  That is why the regression test pins the inline DECISION, not a wall clock.
+- Acorn standalone, `report` mode: 348 of 8,292 candidate sites become
+  `loop-in-callee` (4.2 %); `adapter=3820`, `loop-leaf=2297`,
+  `specialised=1174`, `single-caller=653` are all retained. The −12.0 % wall of
+  entry (34) rests on the adapter/helper mass, which rule 5 does not touch.
+- `tests/issue-4157-ir-inline.test.ts` 21/21; new
+  `tests/issue-4157-ir-inline-loop-callee.test.ts` pins both directions —
+  the fib shape unchanged by the loop rule, a loop-FREE two-site leaf still
+  inlined by it (isolated against `adapters,single,specialise`, so the other
+  three rules cannot mask the result).
+- LOC budget, function budget, stack-balance fixup gate: OK.
+
+### The gap this leaves
+
+Nothing in CI would have caught this, and nothing does now: the landing
+benchmark artifact is refreshed on merge to `main` and read by humans. A
+per-program regression gate on `wasm-host-wasmtime-hot-runtime.json` — comparing
+within a runner class, keyed on the JS lane as the machine fingerprint — is the
+missing check. Filed as a follow-up rather than bundled here.
