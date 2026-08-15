@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3939,
+      "passCount": 3943,
       "totalCount": 4581
     },
     {
@@ -197,7 +197,7 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1068,
+      "passCount": 1070,
       "totalCount": 1131
     },
     {
