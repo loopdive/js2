@@ -20,7 +20,8 @@
       "legacyBodyEmittedCeiling": 27,
       "unsupportedCeiling": 20,
       "unsupportedByCode": {
-        "select/body-shape-rejected": 11,
+        "select/body-shape-rejected": 5,
+        "select/host-surface-unavailable": 6,
         "select/call-graph-closure": 3,
         "select/date-constructor-unsupported": 1,
         "select/primitive-method-unsupported": 1,

@@ -339,7 +339,13 @@ export async function compileSourceInWorker({ generatedPath, source, timeoutMs =
  * batch, while the worker still supplies a hard deadline for pathological
  * code generation.
  */
-export async function compileProjectInWorker({ generatedRoot, entryFile = "entry.ts", files, timeoutMs = 300_000, workerEnv }) {
+export async function compileProjectInWorker({
+  generatedRoot,
+  entryFile = "entry.ts",
+  files,
+  timeoutMs = 300_000,
+  workerEnv,
+}) {
   mkdirSync(generatedRoot, { recursive: true });
   for (const [relativePath, source] of Object.entries(files)) {
     const target = join(generatedRoot, relativePath);
