@@ -6840,7 +6840,7 @@ function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): 
   // alone matched on TEXT, so `function test(Box: number)` / `const Box = 1`
   // inherited the outer `class Box`'s constructor identity and the shape was
   // claimed; JS throws `TypeError: Box is not a constructor` there, while the
-  // emitted module returned a constructed Box (probe: .tmp/probe-shadow-runtime.ts).
+  // emitted module returned a constructed Box. Measurements: #4448's issue file.
   const exactNestedClassBinding = scope.has(name) && currentPreparedClassBindingNames.has(name);
   return (
     (!scope.has(name) || exactNestedClassBinding) &&
