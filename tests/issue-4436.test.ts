@@ -198,22 +198,26 @@ describe("#4436 — `length` is an own property of a function instance", () => {
   });
 });
 
-describe("#4436 — measured residuals (pinned in their CURRENT shape)", () => {
-  it("`name` is NOT yet an own property of a user closure", async () => {
-    // Residual: `name` has no runtime carrier on a user closure. Adding one
-    // needs a per-function meta subtype (see the issue file). The static fold
-    // answers, the reflective surface does not — flip both together.
+// (#4437) These two `it`s were #4436's pinned RESIDUALS — asserted in their
+// then-current (wrong) shape precisely so a future fix would have to come here
+// and change them rather than silently alter behaviour. #4437 is that fix: it
+// gives a user closure a `$fnmeta` slot pointing at a per-declaration
+// `{name, length}` struct, so both now assert the SPEC answer. The full
+// assertions live in `issue-4437.test.ts`; what stays here is the exact pair
+// #4436 pinned, flipped, so the residual's closure is visible from the issue
+// that recorded it.
+describe("#4436 residuals — closed by #4437", () => {
+  it("`name` IS an own property of a user closure (was: absent)", async () => {
     expect(await runStandalone(`function f(){} return f.name === "f" ? 1 : 0;`)).toBe(1);
-    expect(await runStandalone(`function f(){} return f.hasOwnProperty("name") ? 1 : 0;`)).toBe(0);
+    expect(await runStandalone(`function f(){} return f.hasOwnProperty("name") ? 1 : 0;`)).toBe(1);
   });
 
-  it("the reflective `length` VALUE is the formal count for a defaulted parameter", async () => {
-    // Residual: the runtime value reads the `$arity` header slot (declared
-    // formal count), which diverges from §15.1.5 only when a parameter is
-    // defaulted/optional. `$arity` cannot be re-pointed at the spec value —
-    // closure-exports.ts dispatches under-applied calls at `max(n, $arity)`.
-    // The STATIC fold is already correct, which is the divergence.
-    expect(await runStandalone(`function f(x = 42){} return f.length;`)).toBe(0); // static: correct
-    expect(await runStandalone(`function f(x = 42){} var k="length"; return f[k];`)).toBe(1); // dynamic: residual
+  it("the reflective `length` VALUE is §15.1.5, not the formal count (was: `$arity`)", async () => {
+    // The static fold was already correct; the divergence was that the runtime
+    // read answered the `$arity` header slot. `$arity` still holds the DISPATCH
+    // arity — closure-exports.ts pads under-applied calls to `max(n, $arity)` —
+    // so the two values are carried separately rather than one re-pointed.
+    expect(await runStandalone(`function f(x = 42){} return f.length;`)).toBe(0); // static
+    expect(await runStandalone(`function f(x = 42){} var k="length"; return f[k];`)).toBe(0); // dynamic
   });
 });
