@@ -805,9 +805,27 @@ Verify-first, `--target standalone`, zero host imports, six-file probe over
 that remain are different bugs (family 2: an `arguments`-object read, and
 parameter reassignment not observed across a suspend).
 
-**Scoped run, diffed per FILE** (raw totals are not comparable — the runner
-registers 589–612 rows run-to-run under load): on the 578 files present in both
-runs, **374 → 389 pass, net +15**, 17 fixed:
+**Final S1+S2 scoped run** (re-run cleanly after a tree-drift incident, see
+below): on the 610 files present in both runs, **404 → 422 pass, net +18, ZERO
+regressions**. One of the 18 — `expressions/generators/yield-weak-binding.js` —
+was a `compile_timeout` in the base run and is the known load-flaky slow
+negative-parse file (it flipped the OTHER way in an intermediate run), so the
+**attributable figure is 17, with one flake in our favour**.
+
+> **Tree-drift incident, recorded because the lesson generalises.** An earlier
+> "S1+S2" run measured a tree in which S2 had been silently REVERTED: the
+> file-copy A/B helper's `new` snapshot was taken during S1, before S2 existed,
+> so restoring "new" after a base comparison wrote the S1-era file back over S2
+> and deleted the bail with no error. CLAUDE.md's A/B guidance warns about
+> capturing the BASE copy early; the mirror hazard is that the NEW copy goes
+> stale as work continues. Two things caught it and one did not: `git status`
+> caught it; the headline pass count did NOT, because S2 is conformance-neutral
+> in standalone and so cannot move that number. Once work is committed,
+> `git show HEAD:<path>` is the correct restore source and no snapshot should
+> exist at all.
+
+The S1-only measurement, for the record: on the 578 files common to that pair,
+**374 → 389 pass, net +15**, 17 fixed:
 `expressions/yield/{from-catch, from-try, captured-free-vars, formal-parameters,
 formal-parameters-after-reassignment-strict, rhs-iter, star-array}`,
 `expressions/generators/{return, no-yield, yield-as-statement, yield-newline,
@@ -836,8 +854,22 @@ all three **pre-existing**, each confirmed by re-running on the BASE tree. (The
 full `tests/equivalence` suite OOMed twice on this shared 4-core box, so the
 scoped subset is what was actually run.)
 
-Two assertions in `tests/equivalence/yield-as-expression.test.ts` were changed
-and the reason belongs here rather than in a commit message: "yield without
+**Cleanup candidate, deliberately NOT taken in this batch** —
+`tests/equivalence/yield-as-expression.test.ts` > "yield with value used as
+expression" fails to COMPILE its test program:
+`L3: Type 'undefined' is not assignable to type 'number'`. That is a correct TS
+diagnostic about the test's own annotation: `Generator<T, TReturn, TNext>` with
+`Generator<number, number, undefined>` types `yield 10` as `undefined`, so
+`const x: number = yield 10` cannot typecheck. Node never type-checks, which is
+why it "works" at runtime. Verified pre-existing by an exact pre-change-main
+repro (base src + base test file → identical failure, identical message), and it
+is a committed known failure in `scripts/equivalence-baseline.json`, so the
+equivalence gate is green on it. Fix is a one-line annotation
+(`Generator<number, number, number>`, or drop the `: number`) — out of scope
+here because it is pre-existing and baselined, not because it is hard.
+
+Two OTHER assertions in the same file were changed, and the reason belongs here
+rather than in a commit message: "yield without
 value used as IIFE argument" and "bare yield as function argument" asserted
 `typeof result.value === "number"` on a DONE result, which pinned the
 SENTINEL'S RENDERING rather than behaviour. Node returns `43` / `5` there; we
