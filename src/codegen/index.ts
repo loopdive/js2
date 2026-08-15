@@ -278,6 +278,7 @@ import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primiti
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
+import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
@@ -5408,6 +5409,13 @@ export function generateModule(
     // `hasOwnProperty` / `getOwnPropertyNames` reads over a builtin function
     // value resolve its spec `name`/`length` at runtime, host-free. No-op when
     // no builtin closure was materialized (standalone only).
+    // (#4436) The GENERIC user-closure `length` arm must be spliced FIRST: both
+    // fills splice at body index 0, so the builtin arms below land in front of
+    // it. That ordering is required — a #2896 meta struct is itself a
+    // funcref-wrapper-root descendant, and the builtin arms always `return`
+    // (including the deleted case), so this generic arm can never shadow a
+    // builtin's own metadata with a raw `$arity`.
+    fillFunctionInstanceProps(ctx);
     fillBuiltinFnMeta(ctx);
 
     // `$__ta_ctor` name/length arm for the same meta consult — a TypedArray
