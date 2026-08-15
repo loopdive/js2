@@ -35,6 +35,8 @@ import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
+// (#4440) the METHOD half of the same carrier — class/object-literal members
+import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -214,6 +216,12 @@ export function emitObjectMethodAsClosure(
   methodName: string,
   methodFuncIdx: number,
   objStructTypeIdx: number,
+  /**
+   * (#4440) The object-literal member this closure is the value of, when the
+   * caller has it. Unlike the class path there is no side table to consult —
+   * `literals.ts` holds the node right at the call — so it is passed directly.
+   */
+  memberDecl?: ts.Node,
 ): ValType | null {
   const sig = getFuncSignature(ctx, methodFuncIdx);
   if (!sig) return null;
@@ -292,10 +300,19 @@ export function emitObjectMethodAsClosure(
   });
 
   // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
+  //
+  // (#4440) …plus the `$fnmeta` operand when the member carries resolvable
+  // metadata. The base wrapper struct is SHARED across every function of this
+  // signature, so the slot lives on a per-base SUBTYPE — allocate the derived
+  // type and report the BASE (#4437's note 3: a `ref.cast` to a MORE derived
+  // type traps on a value stored as the base; widening is the safe direction).
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, memberDecl);
+  const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push(closureBagInitInstr());
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  if (metaSlot && allocTypeIdx !== undefined) for (const instr of metaSlot.init) fctx.body.push(instr);
+  fctx.body.push({ op: "struct.new", typeIdx: allocTypeIdx !== undefined && metaSlot ? allocTypeIdx : structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
 }
@@ -605,6 +622,8 @@ export function emitCachedMethodClosureAccess(
     trampolineFuncIdx,
     closureStructTypeIdx,
     ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+    /* constructible */ false,
+    fnMetaAllocOf(singleton), // (#4440)
   );
   return true;
 }
@@ -631,7 +650,7 @@ export function ensureMethodClosureSingleton(
   methodName: string,
   methodFuncIdx: number,
   objStructTypeIdx: number,
-): { cacheGlobalIdx: number; trampolineFuncIdx: number; closureStructTypeIdx: number } | null {
+): FuncClosureSingleton | null {
   // Resolve the user-visible signature so we know the wrapper struct's
   // funcref shape. Method signature is [(ref null objStruct), ...userParams]
   // → results; strip the leading `this` to derive the closure-callable
@@ -726,7 +745,20 @@ export function ensureMethodClosureSingleton(
     ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
   }
 
-  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+  // (#4440) A class / object-literal method is #4437's R1 residual: this site
+  // has only `methodName`, so the §15.1.5 walk had nothing to read and `length`
+  // fell back to `$arity` (the DECLARED FORMAL COUNT — 1 for `m(x = 42)`, spec
+  // 0). `class-bodies.ts` records the declaration under exactly this physical
+  // name; a member whose key is computed/private records nothing and keeps the
+  // pre-#4440 answers, which is the safe direction (see the methods module).
+  const metaSlot = fnMetaSlotForMemberName(ctx, methodName);
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  return {
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx: structTypeIdx,
+    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+  };
 }
 
 /**
