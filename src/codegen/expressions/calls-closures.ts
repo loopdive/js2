@@ -1046,15 +1046,6 @@ export function compileCallablePropertyCall(
   if (fieldIdx === -1) return undefined;
 
   const fieldType = fields[fieldIdx]!.type;
-  if (process.env.DEBUG_MARKED_CODEGEN === "1" && methodName === "parse") {
-    console.error(
-      "[marked-codegen-field]",
-      className,
-      fieldType,
-      ctx.checker.typeToString(ctx.checker.getTypeAtLocation(propAccess)),
-    );
-  }
-
   // (#1734) Compile the receiver and extract the callable field.
   //
   // The receiver expression's compiled wasm type can disagree with the resolved

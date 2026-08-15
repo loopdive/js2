@@ -565,26 +565,6 @@ export function compileReceiverMethodCall(
 
   // Check if receiver is an externref object
   let receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  if (process.env.DEBUG_MARKED_CODEGEN === "1" && fctx.name.includes("debugMarkedDynamicFunctionFieldObjectLiteral")) {
-    console.error(
-      "[marked-receiver-debug]",
-      fctx.name,
-      propAccess.expression.getText?.(),
-      propAccess.name.text,
-      "sym",
-      receiverType.getSymbol?.()?.name,
-      "flags",
-      receiverType.flags,
-      "struct",
-      resolveStructName(ctx, receiverType),
-      "classSet",
-      [...ctx.classSet].filter((name) => name.includes("anon")),
-      "fields",
-      [...ctx.structFields.entries()]
-        .filter(([name]) => name.includes("anon"))
-        .map(([name, fields]) => ({ name, fields })),
-    );
-  }
   if (
     process.env.DEBUG_MARKED_CODEGEN === "1" &&
     fctx.name.includes("closure") &&
@@ -3330,27 +3310,6 @@ export function compileReceiverMethodCall(
       // and a compiled instance method exist; the normal host object bridge
       // performs the live JavaScript property lookup.
       if (!ctx.standalone && !ctx.wasi) {
-        if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "space" || methodName === "preprocess")) {
-          console.error(
-            "[marked-dynamic-fallback]",
-            fctx.name,
-            methodName,
-            "receiver",
-            propAccess.expression.getText?.(),
-            "tsFlags",
-            recvTsType.flags,
-            "tsSymbol",
-            recvTsType.getSymbol?.()?.name,
-            "receiverPropSymbol",
-            ts.isPropertyAccessExpression(propAccess.expression)
-              ? ctx.checker.getSymbolAtLocation(propAccess.expression.name)?.valueDeclaration?.getText?.()
-              : undefined,
-            "wasm",
-            recvWasm,
-            "property",
-            ts.isPropertyAccessExpression(propAccess.expression) || ts.isElementAccessExpression(propAccess.expression),
-          );
-        }
         // A closed object literal may store a callable in an externref field
         // even when the checker reports `any` at this call site.  Prefer the
         // host's live property lookup for those fields.  Do not use the

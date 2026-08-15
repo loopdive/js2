@@ -39,6 +39,8 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 oracle-ratchet-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/literals.ts
 ---
 
