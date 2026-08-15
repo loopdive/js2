@@ -157,11 +157,6 @@ export function hasClosurePrototypeEdges(ctx: CodegenContext): boolean {
   return collectPrototypeEdges(ctx).length > 0;
 }
 
-/** The reserved helper's stable funcIdx, or `undefined` when never reserved. */
-export function closureProtoOfFuncIdx(ctx: CodegenContext): number | undefined {
-  return ctx.funcMap.get(CLOSURE_PROTO_OF);
-}
-
 /**
  * Reserve `__closure_proto_of` with a `ref.null.extern` body. Called from
  * `ensureObjectRuntime` under `ctx.standalone || ctx.wasi`, BEFORE any consumer
