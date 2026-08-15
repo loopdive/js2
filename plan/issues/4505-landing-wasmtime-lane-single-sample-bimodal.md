@@ -64,7 +64,7 @@ excluded. The discriminator is the next clean refresh sample: warm back at
 ~240 µs ⇒ episode; still ~1,275 µs ⇒ real, x64-specific, and #4557 needs a
 targeted x64 look. (A manual refresh was dispatched 2026-08-15 ~23:00; two
 refresh runs completed "success" WITHOUT promoting — the queue-gate deferral
-—- so the sample had not landed at filing time. Whoever picks this up: read
+— gate verdict read from the 22:46 run: `DEFER (queue=4 artifact-age=5.9h floor=6h)`, six minutes short of the force floor; the next cycle crosses 6h and pushes regardless of queue. Whoever picks this up: read
 the newest `wasm-host-wasmtime-hot-runtime.json` history first.)
 
 ## Fix shape
