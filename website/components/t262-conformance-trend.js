@@ -23,7 +23,7 @@
  * Requires <trend-chart> (components/trend-chart.js) to be loaded; the data is
  * applied via customElements.whenDefined so load order does not matter.
  */
-import { t262NormalizeEditionLabel } from "./t262-charts.js";
+import { T262_EDITION_SCOPE_RANK, t262IsEditionScope, t262NormalizeEditionLabel } from "./t262-charts.js";
 
 const CONFORMANCE_PROJECT_START = new Date("2026-02-27T00:00:00Z");
 
@@ -307,14 +307,27 @@ class T262ConformanceTrend extends HTMLElement {
     ]);
     if (token !== this._renderToken) return;
 
+    // An edition scope is CUMULATIVE (#3458): the selected edition plus every
+    // earlier one, matching the js-host <t262-edition-bars> accumulation and
+    // the landing page's standalone summary. Proposals / Unclassified buckets
+    // carry no rank and never contribute.
+    const selectedRank = T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(scope));
     const extract = isOverallScope
       ? (run) => ({ pass: run?.pass, total: run?.total, timestampRaw: run?.timestamp })
       : (run) => {
-          const label = t262NormalizeEditionLabel(scope);
-          if (!Array.isArray(run?.editions)) return null;
-          const entry = run.editions.find((e) => t262NormalizeEditionLabel(String(e?.edition || "")) === label);
-          if (!entry) return null;
-          return { pass: entry.pass, total: entry.total, timestampRaw: run.timestamp };
+          if (typeof selectedRank !== "number" || !Array.isArray(run?.editions)) return null;
+          let pass = 0;
+          let total = 0;
+          for (const entry of run.editions) {
+            const raw = String(entry?.edition || "");
+            if (!t262IsEditionScope(raw)) continue;
+            const rank = T262_EDITION_SCOPE_RANK.get(t262NormalizeEditionLabel(raw));
+            if (typeof rank !== "number" || rank > selectedRank) continue;
+            pass += Number(entry.pass || 0);
+            total += Number(entry.total || 0);
+          }
+          if (total <= 0) return null;
+          return { pass, total, timestampRaw: run.timestamp };
         };
 
     const hostPoints = t262BuildHistoryPoints(hostRuns, extract);
