@@ -8,12 +8,12 @@
 
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
-import { boxToAny } from "./value-tags.js";
+import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
-import { undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1)
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
@@ -1928,6 +1928,43 @@ function emitStructNarrowBody(
 }
 
 /**
+ * (#2864 wave-2 S1) Box an UNDEF-SENTINEL-branded f64 (top of stack) to
+ * externref: the `UNDEF_F64_BITS` pattern becomes the lane's canonical
+ * `undefined`, everything else goes through `__box_number`.
+ *
+ * Deliberately INLINED rather than importing `sentinelAwareF64BoxInstrs` from
+ * `generators-native.js` — that module reaches back into the coercion engine,
+ * and `iterator-native.ts` already set the precedent of inlining this same
+ * four-instruction recipe to keep the dependency edge one-way.
+ *
+ * The `undefined` producer is lane-dependent and READ-ONLY (`funcMap.get`, no
+ * late-import registration mid-body, which would shift funcidxs under the
+ * caller): under a JS host the null externref surfaces as JS `null` and is
+ * `!== undefined`, so the host lane needs the real `__get_undefined`; in
+ * standalone/native-strings the null externref IS the canonical `undefined`
+ * (`__extern_is_undefined` is `ref.is_null`), with the #2106 S1 singleton taking
+ * precedence when that regime is active.
+ */
+function undefSentinelAwareBoxInstrs(ctx: CodegenContext, f64ScratchIdx: number, boxNumberIdx: number): Instr[] {
+  const undefinedInstrs = canonicalUndefinedExternInstrs(ctx);
+  return [
+    { op: "local.tee", index: f64ScratchIdx },
+    { op: "i64.reinterpret_f64" },
+    { op: "i64.const", value: UNDEF_F64_BITS },
+    { op: "i64.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: undefinedInstrs,
+      else: [
+        { op: "local.get", index: f64ScratchIdx },
+        { op: "call", funcIdx: boxNumberIdx },
+      ],
+    },
+  ];
+}
+
+/**
  * Coerce a Wasm value on the stack from one type to another.
  *
  * @param toPrimitiveHint Optional ToPrimitive hint ("number", "string", or "default").
@@ -2532,6 +2569,30 @@ export function coerceType(
   if (from.kind === "f64" && to.kind === "externref") {
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__box_number");
+    // (#2864 wave-2 S1) UNDEF-SENTINEL-BRANDED f64 (`{kind:"f64",
+    // undefSentinel:true}`) — an f64 read out of a slot that genuinely holds
+    // `undefined`, today a native generator's IteratorResult `value`. This is
+    // the "dedicated identity-carrying-slot boxing site" the #3315 note below
+    // points at, hoisted to the ONE coercion engine so it applies at every
+    // consuming context rather than being re-derived per read site.
+    //
+    // Measured (from-catch.js, standalone, host-free): the terminal
+    // `{value: undefined, done: true}` read took the `valueStaticNumeric` f64
+    // fast path in `tryCompileNativeGeneratorResultProperty`, whose comment
+    // reasoned "an exhausted read yields NaN, which is the spec
+    // ToNumber(undefined)" — true in a NUMERIC context, false in the `any`
+    // context the test262 harness actually uses. `assert.sameValue(result.value,
+    // undefined)` boxed the sentinel as a NUMBER and reported
+    // `SameValue(«NaN», «undefined»)`, silently, on every terminal-result
+    // assertion across the generator suites.
+    //
+    // Numeric consumers are untouched: they read the brand as a plain `f64`
+    // and never reach this arm.
+    if (from.undefSentinel === true && funcIdx !== undefined) {
+      const scratch = allocLocal(fctx, `__undef_sentinel_f64_${fctx.locals.length}`, { kind: "f64" });
+      fctx.body.push(...undefSentinelAwareBoxInstrs(ctx, scratch, funcIdx));
+      return;
+    }
     if (funcIdx !== undefined) {
       // (#3315) The generic f64→externref box does NOT resurrect the
       // UNDEF_F64_BITS sentinel to `undefined`. An arbitrary f64 reaching this

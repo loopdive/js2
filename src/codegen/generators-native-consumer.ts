@@ -29,6 +29,7 @@ import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./con
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { coerceType, compileExpression, compileStatement } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { ensureGetUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -532,7 +533,7 @@ export function tryCompileNativeGeneratorMethodCall(
   } else if (!receiverType || (receiverType.kind !== "anyref" && receiverType.kind !== "eqref")) {
     if (receiverType !== null) fctx.body.push({ op: "drop" });
     compileIgnoredArgs(ctx, fctx, args);
-    fctx.body.push(...emptyResultForType(ensureNativeGeneratorResultType(ctx)));
+    fctx.body.push(...emptyResultForType(ctx, ensureNativeGeneratorResultType(ctx)));
     return { kind: "ref", typeIdx: ctx.nativeGeneratorResultTypeIdx };
   }
 
@@ -713,9 +714,18 @@ export function tryCompileNativeGeneratorResultProperty(
 
   if (valueStaticNumeric) {
     // Statically-numeric `.value`: the historical f64-singleton fast path.
-    const fieldType: ValType = { kind: "f64" };
+    // (#2864 wave-2 S1) The read itself is byte-identical — but the RESULT now
+    // carries the `undefSentinel` brand. The pre-existing rationale here ("an
+    // exhausted read yields NaN, which is the spec ToNumber(undefined)") holds
+    // only in a NUMERIC consuming context; this reader cannot see the context,
+    // and the dominant test262 consumer is `assert.sameValue(result.value,
+    // undefined)`, an `any` context, where the sentinel boxed as the NUMBER NaN
+    // and every terminal-result assertion failed. Numeric consumers still see a
+    // plain `f64` (the brand is inert to `.kind` checks); only the f64→externref
+    // BOX site consults it, resurrecting the sentinel to canonical `undefined`.
+    const fieldType: ValType = { kind: "f64", undefSentinel: true };
     const f64Entries = resultEntries.filter((e) => e.elemValType.kind === "f64");
-    fctx.body.push(buildOpenResultRead(anyLocal, f64Entries, RESULT_VALUE_FIELD, fieldType));
+    fctx.body.push(buildOpenResultRead(anyLocal, f64Entries, RESULT_VALUE_FIELD, { kind: "f64" }));
     return fieldType;
   }
 
@@ -808,10 +818,17 @@ function buildOpenResultValueReadExtern(
   // standalone/native-strings (ensureGetUndefined returns undefined there —
   // byte-identical to the pre-W6 lowering). In-body `call` instrs are repaired
   // by the late-import shifter body walks, same as `__box_number` above.
+  // (#2864 wave-2 S1) …and in standalone/native-strings that fallback is the
+  // tag-1 `$undefined` singleton, NOT `ref.null.extern`. The parenthetical above
+  // ("byte-identical to the pre-W6 lowering") was describing the null externref,
+  // which the current standalone value model reads back as JS **null** —
+  // `result.value === null` measured TRUE with `typeof` `"object"` on the
+  // boxed-any carrier. `canonicalUndefinedExternInstrs` is the one lane-correct
+  // producer for both lanes.
   const getUndefIdx = ensureGetUndefined(ctx);
   if (getUndefIdx !== undefined) flushLateImportShifts(ctx, fctx);
   const undefInstrs: Instr[] =
-    getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
+    getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : canonicalUndefinedExternInstrs(ctx);
 
   const armFor = (e: { typeIdx: number; elemValType: ValType }): Instr[] => {
     const read: Instr[] = [
@@ -835,6 +852,12 @@ function buildOpenResultValueReadExtern(
   };
 
   const wrap = (i: number): Instr[] => {
+    // No-match tail. Deliberately left as the null externref rather than
+    // routed through `undefInstrs` (#2864 wave-2 S1): this arm is reached only
+    // when the receiver is not ANY known result struct — a defensive path, not
+    // the absent-value path — and changing it would move JS-HOST bytes (where
+    // `undefInstrs` is a `__get_undefined` call) for no measured gain. The
+    // #3032 contract is host bytes identical unless deliberately widening W6.
     if (i >= entries.length) return [{ op: "ref.null.extern" }];
     const e = entries[i]!;
     return [

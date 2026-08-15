@@ -61,7 +61,7 @@ import {
 } from "./shared.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
-import { undefinedExternInstrs } from "./any-helpers.js";
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldReadArm, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import {
@@ -693,9 +693,13 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       // (#3032 W6) Sentinel arm canonicalizes to the REAL host `undefined`
       // under a JS host (registered at reserve for `value` dispatchers);
       // standalone keeps the null externref (funcMap miss → default).
-      const getUndefIdx = ctx.nativeStrings ? undefined : ctx.funcMap.get("__get_undefined");
-      const sentinelUndefInstrs: Instr[] | undefined =
-        getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : undefined;
+      // (#2864 wave-2 S1) …and standalone does NOT "keep the null externref":
+      // that value reads back as JS `null` (`typeof` `"object"`, `=== null`
+      // true), so an exhausted `.value` read through this dispatcher answered
+      // null instead of `undefined`. Route both lanes through the one canonical
+      // producer, which picks `__get_undefined` under a host and the tag-1
+      // `$undefined` singleton in standalone/native-strings.
+      const sentinelUndefInstrs: Instr[] | undefined = useSentinelBox ? canonicalUndefinedExternInstrs(ctx) : undefined;
       const box: Instr[] = useSentinelBox
         ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx, sentinelUndefInstrs)
         : boxBoolIdx !== undefined

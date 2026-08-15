@@ -884,9 +884,35 @@ export function compileReceiverMethodCall(
       method === "finally" &&
       isStandaloneThenChainNativeActive(ctx) &&
       (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
+    // (#2867 S2b) Zero-argument `.then()` — §27.2.5.4 with both handlers absent,
+    // i.e. the identity pass-through. It was excluded by the historical
+    // `arguments.length >= 1` gate below and fell through to the GENERIC
+    // member-call path, which emits a `__call_m_then_0` reflective trampoline
+    // over a native `$Promise`. That trampoline resolves `.then` to the wrong
+    // callable, so the microtask drive later ran a per-site `__then_fulfill_N`
+    // wrapper against caps whose `callback` field was not its closure and the
+    // wrapper's `ref.cast` to its own closure struct trapped —
+    // `illegal cast [__then_fulfill_N <- __drain_microtasks]`. Reproduced down
+    // to `Promise.resolve(x).then().then(fn)`, and confirmed by the function
+    // table: the failing module carries exactly one extra function,
+    // `__call_m_then_0`, versus the identical `.then(undefined, undefined)`
+    // spelling, which already worked.
+    //
+    // Admitted ONLY when the native lowering will actually consume it — the
+    // same shape and the same justification as the zero-arg `.finally()`
+    // admission (#2903) immediately above; every other lane keeps the
+    // historical >=1-argument gate, so their generic paths and bytes are
+    // untouched. `emitStandalonePromiseThen(…, null, null)` is the existing
+    // absent-handler identity chain (it is what `.finally` degrades to at
+    // async-scheduler.ts:4553), so this reuses machinery rather than adding any.
+    const nativeThenZeroArgActive =
+      method === "then" &&
+      expr.arguments.length === 0 &&
+      isStandaloneThenChainNativeActive(ctx) &&
+      (ctx.wasi === true || nativeFirstPromise || standaloneThenMissArmCanBeNative(ctx));
     if (
       (method === "then" || method === "catch" || method === "finally") &&
-      (expr.arguments.length >= 1 || nativeFinallyActive)
+      (expr.arguments.length >= 1 || nativeFinallyActive || nativeThenZeroArgActive)
     ) {
       const receiverTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
       const recvSym = receiverTsType.getSymbol()?.name;
