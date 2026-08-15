@@ -6592,12 +6592,15 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         arities.add(methodType.params.length - 1);
       }
     }
-    // Emit the class call bridges before the kind discriminators;
-    // `_resolveClassMemberOnInstance` consumes `__call_<key>` for kind 1.
-    // Avoid duplicating the iterator exports when those were already emitted.
+    // Emit the class call bridges before the kind discriminators.  Keep the
+    // zero-argument bridge in the class-specific namespace as well: the
+    // ToPrimitive finalizer owns `__call_toString`/`__call_valueOf`, and using
+    // those names here would create duplicate exports when a dynamically
+    // called class has either method.  The host resolver prefers this
+    // class-specific name and falls back to the historical iterator export.
     for (const key of [...keys].sort()) {
       for (const arity of [...(classMethodArities.get(key) ?? [])].sort((a, b) => a - b)) {
-        const exportName = arity === 0 ? `__call_${key}` : `__class_call_${key}_${arity}`;
+        const exportName = `__class_call_${key}_${arity}`;
         if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, arity);
       }
     }

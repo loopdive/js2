@@ -5819,6 +5819,7 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
 const _resolveClassMemberOnInstance = createClassMemberResolver({
   miss: _MISS,
   canBeWeakKey: _canBeWeakKey,
+  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object),
   marshalBridgeResult: _marshalBridgeResult,
 });
 

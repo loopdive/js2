@@ -4,6 +4,7 @@ type ClassMethodCallbackState = { getExports: () => ClassMethodExports | undefin
 export interface ClassMethodHostBridgeDeps {
   miss: unknown;
   canBeWeakKey(value: unknown): boolean;
+  isRegisteredInstance(value: unknown): boolean;
   marshalBridgeResult(value: any, callbackState: ClassMethodCallbackState): any;
 }
 
@@ -21,6 +22,7 @@ export function createClassMemberResolver(
   return function resolveClassMemberOnInstance(obj: any, key: any, exports: ClassMethodExports | undefined): any {
     if (exports === undefined || typeof key !== "string") return deps.miss;
     if (obj == null || typeof obj !== "object" || !deps.canBeWeakKey(obj)) return deps.miss;
+    if (!deps.isRegisteredInstance(obj)) return deps.miss;
     let kindCache = memberKindFnCache.get(exports);
     if (!kindCache) {
       kindCache = new Map();
@@ -61,9 +63,10 @@ export function createClassMemberResolver(
     }
     const callFn = (hasRest
       ? exports[`__class_call_${key}_vararg`]
-      : declaredArity > 0
-        ? exports[`__class_call_${key}_${declaredArity}`]
-        : exports[`__call_${key}`]) as unknown as ((value: any, ...args: any[]) => any) | undefined;
+      : (exports[`__class_call_${key}_${declaredArity}`] ??
+        // Older modules only published the iterator-shaped zero-argument
+        // bridge. Keep that fallback for compatibility with cached modules.
+        exports[`__call_${key}`])) as unknown as ((value: any, ...args: any[]) => any) | undefined;
     if (typeof callFn !== "function") return deps.miss;
     let bridges = classMethodHostBridges.get(obj);
     if (!bridges) {

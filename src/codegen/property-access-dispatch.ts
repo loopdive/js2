@@ -2030,7 +2030,6 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     const resolvedClass =
       ctx.classExprNameMap.get(objName) ??
       (constructReturnType ? exactClassExpressionTypeName(ctx, constructReturnType) : undefined) ??
-      exactClassExpressionTypeName(ctx, objType) ??
       objName;
     if (ctx.classSet.has(resolvedClass)) {
       const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
