@@ -48,6 +48,20 @@ async function runStandalone(source: string): Promise<number> {
   return (instance.exports as { test(): number }).test();
 }
 
+/**
+ * Assert that `js` COMPILES. Used for the two regressions that were hard
+ * COMPILE ERRORS rather than wrong answers, and that need JS-only syntax
+ * (`eval`, async generators) the standalone runner above cannot host.
+ */
+async function expectCompiles(js: string): Promise<void> {
+  const result = await compile(js, {
+    allowJs: true,
+    fileName: "issue-4456-ce.js",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+}
+
 /** Wrap `body` as the whole of an exported `test()`. */
 const inTest = (body: string): string => `export function test(): number { ${body} }`;
 
@@ -256,8 +270,10 @@ describe("#4456 — same-named nested function declarations in different scopes"
 
     it("same-frame duplicates: two blocks, and if/else (#3419 / Annex B paths)", async () => {
       // These were already right on the base revision — they go through the
-      // last-wins and Annex B block paths, not the cross-frame hoist gate. They
-      // are here because the shadow now fires inside those paths too.
+      // last-wins and Annex B block paths, not the cross-frame hoist gate, and
+      // the gate DECLINES on them (same enclosing function scope). They are
+      // here because the first cut of the gate did NOT decline, which is what
+      // shipped the two Annex B regressions pinned below.
       expect(
         await runStandalone(
           inTest(`
@@ -310,15 +326,112 @@ describe("#4456 — same-named nested function declarations in different scopes"
     });
   });
 
+  describe("the gate must DECLINE — merge-group regressions from the first cut", () => {
+    // Each of these PASSED before #4456 and REGRESSED when the gate shipped, and
+    // each is pinned against the state that actually reproduced: every `it` here
+    // was re-run against `origin/main`'s un-narrowed predicate and observed to
+    // fail there. The two clauses of the narrowed predicate are independent —
+    // measured 2026-08-15, neither alone fixes both — so both get a pin.
+
+    it("[scope clause] Annex-B-inapplicable inner block decl must not steal the var binding", async () => {
+      // annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js.
+      // `g`'s var-scoped `f` is the OUTER block's declaration; the inner block's
+      // is deliberately NOT Annex-B applicable (replacing it with `var f` would
+      // be an early error against the outer block's lexical `f`), so it never
+      // rebinds `g`'s `f`. Shadowing let it take the name: `f()` gave 2.
+      //
+      // NOTE this is the NON-applicable variant, not a counterexample to B.3.3's
+      // "rebind as each declaration is evaluated" rule — for APPLICABLE sibling
+      // blocks last-executed-wins is correct, and that shape is a control above.
+      expect(
+        await runStandalone(`
+          function g(): number {
+            { function f() { return 1; } { function f() { return 2; } } }
+            return f();
+          }
+          export function test(): number { return g(); }
+        `),
+      ).toBe(1);
+    });
+
+    it("[scope clause] several same-frame eval declarations keep a resolvable call target", async () => {
+      // annexB/language/eval-code/direct/var-env-lower-lex-catch-non-strict.js,
+      // verbatim. The eval-inline path hoists each synthesized declaration into
+      // the CURRENT frame, so the shadows had no body boundary to be restored
+      // at and accumulated; a later call then resolved to an index that had been
+      // scoped away — `absoluteFuncIndex: unresolved call target
+      // (funcIdx=undefined) baked into a compiled function body`.
+      //
+      // Measured: the OWNER clause alone does NOT fix this one (each incumbent
+      // here does carry an owner record) — only the same-scope decline does.
+      await expectCompiles(`
+        try { throw null; } catch (err) {
+          eval('function err() {}');
+          eval('function* err() {}');
+          eval('async function err() {}');
+          eval('async function* err() {}');
+        }
+      `);
+    });
+
+    it("[owner clause] an eval declaration must not displace a TOP-LEVEL registration", async () => {
+      // The second, distinct trigger for the same CE, and the smallest shape
+      // that reaches it: a top-level declaration owns the name, and an
+      // eval-synthesized async generator of the same name arrives. A top-level
+      // declaration has NO `funcMapOwnerDecl` record (#4133's convention), so
+      // the first cut read "no record ⇒ different owner ⇒ shadow" and deleted a
+      // registration nothing would restore.
+      //
+      // Measured: the SCOPE clause alone does NOT fix this one — the incumbent's
+      // scope cannot even be computed without an owner record — which is why
+      // both clauses are load-bearing rather than one being a superset.
+      await expectCompiles(`
+        function err() { return 1; }
+        eval('async function* err() {}');
+      `);
+    });
+
+    it("same-frame block duplicates still resolve to the last one executed", async () => {
+      // A control, not a pin: this shape compiles on the un-narrowed gate too.
+      // It is here because it is the Annex-B-APPLICABLE sibling of the first
+      // test — B.3.3 rebinds the var-scoped name as each declaration is
+      // evaluated, so last-executed-wins is the CORRECT answer and the gate
+      // must not "heal" it into per-block functions.
+      expect(
+        await runStandalone(`
+          export function test(): number {
+            { function err2() { return 1; } }
+            { function err2() { return 2; } }
+            { function err2() { return 3; } }
+            return err2();
+          }
+        `),
+      ).toBe(3);
+    });
+  });
+
   describe("residuals — known-failing shapes, pinned so a fix is noticed", () => {
-    it.fails("a nested declaration shadowing a same-named CONSTANT-FOLDABLE top-level one", async () => {
-      // Owner: the IR front-end's direct-call binding resolution
-      // (`src/ir/from-ast.ts`, `cx.scope.get(calleeName)` + the AST-site call
-      // plan), which is bare-name keyed and picks the top-level unit. The
-      // scope fix DOES emit B's own function — disassembly shows it — but the
-      // IR plan calls the top-level one and `passes/inline-small.ts` then
-      // inlines its constant body. Narrow: with a non-constant top-level
-      // `inner` the same source lowers to a correct `return_call`.
+    it.fails("a nested declaration shadowing a same-named TOP-LEVEL one", async () => {
+      // Deliberately not fixed, and the reason CHANGED with the narrowing —
+      // the observable result did not, which is why this stayed an `it.fails`
+      // through both cuts.
+      //
+      //   first cut  the gate shadowed the top-level registration, so B's own
+      //              function WAS emitted (two `inner`s in the module, counted
+      //              from the binary) and the wrong one was merely CALLED: the
+      //              IR front-end's bare-name direct-call plan
+      //              (`src/ir/from-ast.ts`) picked the top-level unit and
+      //              `passes/inline-small.ts` inlined its constant body.
+      //   narrowed   the gate DECLINES on an incumbent with no
+      //              `funcMapOwnerDecl` record, so B's declaration is not
+      //              compiled at all (one `inner` in the module) — exactly the
+      //              pre-#4456 lowering.
+      //
+      // That trade is deliberate: shadowing an owner-less registration is the
+      // very thing that produced the `funcIdx=undefined` compile error pinned
+      // above, and it bought nothing here — the answer was already wrong.
+      // Fixing this shape for real belongs to the IR call-binding resolution,
+      // not to this gate.
       expect(
         await runStandalone(`
           function inner() { return 5; }
