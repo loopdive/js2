@@ -90,7 +90,11 @@ import {
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
 import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import { ensureNativeStringHelpers } from "../codegen/native-strings.js";
+import {
+  ensureNativeStringHelpers,
+  standaloneConsoleSinkAvailable,
+  STANDALONE_STDOUT_APPEND_FN,
+} from "../codegen/native-strings.js";
 import {
   nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
@@ -133,6 +137,8 @@ import {
   type ClosureAllocationMode,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
+import { ensureIrNativeNumberToString, irNativeNumberToStringAvailable } from "../codegen/number-format-native.js"; // #4462 — host-free Number::toString for the IR string carrier
+import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import {
   ensureHostCharCodeAtGuarded,
   ensureHostCharCodeAtTrusted,
@@ -1052,6 +1058,11 @@ export function compileIrPathFunctions(
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
       supportsSymbolicMathHelpers: true,
+      // (#4462) Same two host-free capabilities the production planning site
+      // (codegen/index.ts) supplies — this compatibility path must not offer a
+      // narrower table, or a direct caller would demote where production claims.
+      supportsNumberToString: irNativeNumberToStringAvailable(ctx),
+      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
@@ -4449,6 +4460,19 @@ function makeFromAstResolver(
     hasHostNumberToString(): boolean {
       return !ctx.nativeStrings;
     },
+    // (#4462) The widening #2955 deferred — the disjoint twin of the predicate
+    // above: `hasHostNumberToString` is "owns the `env.number_toString` import"
+    // (`!nativeStrings`), this is "owns the host-free formatter"
+    // (`nativeStrings`), so the two can never claim one call twice.
+    nativeNumberToStringAvailable(): boolean {
+      return irNativeNumberToStringAvailable(ctx);
+    },
+    // (#4462) Standalone's host-free console sink (#3469). Minted in the
+    // pre-body window, which precedes both IR planning and body lowering, so
+    // `funcMap` presence is the same fact at claim time and at build time.
+    standaloneConsoleSinkAvailable(): boolean {
+      return standaloneConsoleSinkAvailable(ctx);
+    },
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
     // host strings feed the `__iterator` host protocol (already
@@ -4658,6 +4682,15 @@ function resolveAndObserveCallableProvider(
     index = ensureHoleyArrayNew(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_HOLEY_ARRAY_ELEM_SET) {
     index = ensureVecElemSet(ctx, getOrRegisterHoleyArrayType(ctx));
+  } else if (ref.binding.kind === "runtime" && symbol === IR_NUMBER_TO_STRING_NATIVE_FN) {
+    // (#4462) Host-free `Number::toString` in the `(ref $AnyString)` carrier.
+    index = ensureIrNativeNumberToString(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
+    // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
+    // owns it and runs in the pre-body window so the funcidx is final. Absence is
+    // a claim/capability disagreement, which the `null` turns into the standard
+    // "cannot materialize callable provider" invariant rather than a silent miss.
+    index = ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {

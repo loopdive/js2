@@ -86,6 +86,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
@@ -463,6 +464,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly supportsSymbolicMathHelpers?: boolean;
   /** Backend owns a no-radix f64 → abstract-string formatter. */
   readonly supportsNumberToString?: boolean;
+  /**
+   * (#4462) The active backend has the HOST-FREE console sink (#3469's
+   * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
+   * something to lower to without a JS host. Read together with
+   * {@link isHostFreeConsoleCallReceiver} — availability alone is not a claim
+   * licence; the call shape must also be one the builder lowers.
+   */
+  readonly supportsStandaloneConsoleSink?: boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -1385,6 +1394,30 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
     !localClasses.has(expr.text) &&
     currentDeferredHostGlobalResolver(expr) !== undefined
   );
+}
+
+/**
+ * (#4462) Does this identifier name the ambient `console` in a host-free lane
+ * that CAN service it, in a call shape the builder lowers?
+ *
+ * This is the narrowing of `host-surface-unavailable` the reason's own union
+ * comment flagged as fixable. The bucket stays correct for `document` & co.
+ * (nothing host-free to lower to) and stops catching `console`, which standalone
+ * has always been able to print through the #3469 sink — legacy does it today.
+ *
+ * Three conjuncts, each load-bearing:
+ *   1. the backend actually minted the sink (`supportsStandaloneConsoleSink`) —
+ *      a standalone module without native strings has no sink and must defer;
+ *   2. the identifier really is the ambient global, per the same checker-backed
+ *      resolver + `localClasses` shadow rule the ACCEPT arm above uses;
+ *   3. the call shape is the one the builder lowers, so the claim cannot become
+ *      a post-claim demote.
+ */
+function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
+  if (currentSelectionOptions?.supportsStandaloneConsoleSink !== true) return false;
+  if (expr.text !== "console" || localClasses.has("console")) return false;
+  if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
+  return isHostFreeConsoleCallReceiver(expr);
 }
 let currentModuleBindingResolver: IrModuleBindingResolver | IrLegacyModuleBindingResolver | null = null;
 // C3's Map.get result is deliberately carried as externref until a strict
@@ -7879,6 +7912,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return true;
     }
+    // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
+    // call shape the builder lowers. Checked before the reject arm below, which
+    // would otherwise bucket it as target-unserviceable.
+    if (namesHostFreeConsoleSurface(expr, localClasses)) return true;
     // (#4457) "Names a host global this target cannot service" is owned by the
     // target's capability policy, not by IR shape coverage — see the reason's
     // union comment.

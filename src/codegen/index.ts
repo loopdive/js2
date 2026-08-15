@@ -420,8 +420,10 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
+  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { irNativeNumberToStringAvailable } from "./number-format-native.js"; // #4462
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
@@ -2657,6 +2659,12 @@ function planIrOverlay(
       resolveLocalClassExpression,
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
+      // (#4462) Host-free capabilities. Both are the SAME predicates the
+      // from-ast resolver exposes, so claim and lowering cannot disagree; the
+      // selector ORs `supportsNumberToString` with the host-import capability,
+      // so this only adds the native-string lanes.
+      supportsNumberToString: irNativeNumberToStringAvailable(ctx),
+      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,

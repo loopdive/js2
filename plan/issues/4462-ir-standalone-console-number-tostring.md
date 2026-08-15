@@ -1,9 +1,10 @@
 ---
 id: 4462
 title: "IR: standalone console.log sink + native number_toString, so console-using units claim host-free"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-15
+assignee: ttraenkler/opus-4462
 priority: medium
 horizon: l
 feasibility: medium
@@ -12,6 +13,39 @@ task_type: refactor
 area: ir
 goal: ir-full-coverage
 related: [4457, 3518, 2856, 3469, 3912]
+loc-budget-allow:
+  # The console capability row + the host-free lowering arm and its argument
+  # renderer. Both sit in the existing console/method-call dispatch in
+  # from-ast; splitting the arm out would separate it from the host arm it is
+  # explicitly disjoint with (`jsHost` vs `!jsHost && sink`), which is the one
+  # invariant a reader needs to check.
+  - src/ir/from-ast.ts
+  # Two callable-provider arms + two resolver capabilities, in the file that
+  # already owns every other provider arm and every other resolver capability.
+  - src/ir/integration.ts
+  # `standaloneConsoleSinkAvailable` next to `ensureStandaloneStdoutSink`, the
+  # sink it reports on — the #2135 one-table rule (claim and lowering read one
+  # fact) requires the predicate to live with the thing it measures.
+  - src/codegen/native-strings.ts
+  # The two host-free capability signals threaded into the wasmgc lane's
+  # selection options, at the single site that builds them.
+  - src/codegen/index.ts
+  # `namesHostFreeConsoleSurface` — the selector half of the same one table.
+  - src/ir/select.ts
+func-budget-allow:
+  # +12: one host-free arm in the console dispatch and one in the toString
+  # dispatch, each three lines of condition delegating to a named helper. The
+  # arms must live beside the host arms they are disjoint with.
+  - src/ir/from-ast.ts::lowerMethodCall
+  # +13: two capability methods, in the object that holds every other one.
+  - src/ir/integration.ts::makeFromAstResolver
+  # +5: one callable-provider arm per new host-free symbol.
+  - src/ir/integration.ts::compileIrPathFunctions
+  # +6: the two capabilities threaded into the wasmgc selection options.
+  - src/codegen/index.ts::planIrOverlay
+  # +4: the console narrowing of the host-surface reject arm (#4457 already
+  # holds a grant here for the arm this one narrows).
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #4462 — IR knows only the host-import form of `console.*` and number `.toString()`
