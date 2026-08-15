@@ -15,6 +15,10 @@ loc-budget-allow:
   - src/codegen/expressions/operator-assignment.ts
   - src/codegen/literals.ts
   - src/codegen/type-coercion.ts
+  # concat reflective body: all logic lives in the NEW string-proto-concat.ts
+  # subsystem module; these +11 lines are dispatch wiring + the param-slots
+  # table entry, which are by definition dispatch-site edits.
+  - src/codegen/array-object-proto.ts
 func-budget-allow:
   - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
