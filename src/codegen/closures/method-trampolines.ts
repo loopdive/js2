@@ -475,8 +475,16 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
-      tFctx.body = newBody;
-      coerceTrampolineThisSlot(ctx, newBody, t.objStructTypeIdx, sig.params[0], usesThis, tFctx);
+      // (#4466) Do NOT re-coerce the receiver here, and do NOT alias
+      // `tFctx.body` to `newBody` to make that possible. The emit-time call
+      // sites (`emitObjectMethodAsClosure`, `ensureMethodClosureSingleton`)
+      // already reconcile the receiver; repeating it on the finalize REBUILD
+      // path corrupted the private-method trampoline
+      // (`class/elements/super-access-inside-a-private-method.js` →
+      // "dereferencing a null pointer" in `__obj_meth_tramp_*_cached`). The
+      // aliasing is independently against the rule in CLAUDE.md — a
+      // FunctionContext must own `body: []`, never a shared reference, or the
+      // savedBody/swap pattern writes through into someone else's buffer.
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });
