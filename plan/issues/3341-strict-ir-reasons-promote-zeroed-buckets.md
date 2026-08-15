@@ -1,9 +1,11 @@
 ---
 id: 3341
 title: "STRICT_IR_REASONS hardening — per-reason (NOT a corpus-zero flip); doc-correction shipped, real per-reason work remains"
-status: ready
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-07-17
+assignee: ttraenkler/opus-dev
 priority: medium
 feasibility: hard
 model: fable
@@ -17,6 +19,9 @@ origin: "carved out of #2855's umbrella scope per the 2026-07-17 IR audit (plan/
 loc-budget-allow:
   # (#3341) +15-line rationale comment at STRICT_IR_REASONS documenting the
   # necessary-but-not-sufficient corpus-zero condition (build-safety guardrail).
+  # Slice C adds STRICT_IR_POSTCLAIM_CODES + isStrictIrPostClaimFailure with the
+  # four-criterion promotion bar and the never-promote citations inline; the
+  # comment IS the guardrail that stopped three unsafe promotions here.
   - src/codegen/index.ts
 ---
 
@@ -423,3 +428,129 @@ test-only hook or a crafted shape, not by weakening production code).
 #2952 slice 6, #3583 adoptions, #3518 standalone lane) merges — each
 widens the claim surface and could add legitimate post-claim codes; run
 the sweep AFTER they land. Queue position: first backfill after the wave.
+
+## Slice C — DONE (2026-08-15, opus lane, branch `claude/ir-3341-strict-postclaim`)
+
+Implemented on top of the four-stream wave branch
+(`claude/ir-path-migration-kaqtxs` @ `61abc584`), i.e. the sweep below
+measures the POST-wave claim surface as the re-spec requires.
+
+### What shipped
+
+- **`STRICT_IR_POSTCLAIM_CODES`** (`src/codegen/index.ts`, next to the
+  still-empty and still-correctly-empty `STRICT_IR_REASONS`) plus
+  `isStrictIrPostClaimStage` / the exported `isStrictIrPostClaimFailure`
+  predicate. `formatIrPathFallbackDiagnostic` now hard-errors a matching
+  post-claim failure instead of demoting it to `severity: "warning"`.
+- **Stage scope** = `build` / `verify` / `lower` / `backend-legality` — exactly
+  the four `postClaim` baseline buckets. `select` is pre-claim (that is
+  `STRICT_IR_REASONS`' territory); **`resolve` is excluded structurally**, which
+  is how the #1921 `type-resolution-unsupported` contract is excluded — by
+  stage, not by an easily-lost per-code entry. `abi-signature-parity`,
+  `late-preparation-unsupported` and `new-target-threading` fall out with it.
+- **Promoted set (one code): `class-member-unsupported`.**
+  Its ONLY post-claim site (`src/ir/integration.ts`, the `isCtorMember` arm)
+  demotes when `collectIrClassInstanceInitializers(...)` returns `undefined`
+  (a dynamically computed instance-field name). The **selector calls that exact
+  helper first** — `constructorFieldInitializersAreIrSafe` in `src/ir/select.ts`,
+  reached from both the explicit-constructor gate and the implicit-constructor
+  gate — and refuses the claim on the same `undefined`. One predicate, two call
+  sites, same argument: a *claimed* constructor member cannot legitimately reach
+  the build arm, so reaching it means the selector gate drifted or was bypassed.
+  This is the first promotion where corpus-zero genuinely means
+  should-never-happen, rather than "we have no test for it".
+- **Documentation (criterion c)**: a new **Post-claim codes** table in
+  `plan/log/ir-adoption.md`, classifying every `IrUnsupportedCode` with a live
+  post-claim site as `strict` or `capability gap` with the reason. The generator
+  (`scripts/gen-ir-adoption.mjs`) now **cross-checks its `strict` rows against
+  `STRICT_IR_POSTCLAIM_CODES`** and fails the `quality` job if they diverge, so
+  the documentation cannot drift away from the set that actually hard-errors.
+- **Test**: `tests/issue-3341-strict-postclaim.test.ts` (7 cases) at the same
+  narrow typed seam as the Slice B test. The negative cases are the load-bearing
+  half — they pin the four #3565 contracts, the #1921 resolve contract, the
+  #3784/#4035 members of the same class, the two sweep-nonzero codes, and the
+  #680 target-omitted-host-import narrowing as still-demotable.
+
+### Sweep evidence (the (a)/(b) criteria)
+
+**Corpus** — `pnpm run check:ir-fallbacks` on this branch, before and after:
+`Post-claim demotions (gated; must not increase): (none)` — every `postClaim`
+bucket empty, unchanged by this PR.
+
+**test262 stride-40** — production `compile()` with `trackIrOutcomes: true`
+over `test262/test`, stride 40 (every 40th file), run as 8 shards:
+**1340 files swept, 1340 compiled, 0 harness throws, 20 IR units emitted.**
+
+Post-claim rows (stage ≠ `select`) across all 1340 files — **three, total**:
+
+| count | outcome | verdict |
+| ----- | ------- | ------- |
+| 1 | `unsupported` / `build` / `module-init-legacy-coupling` | NOT promoted — designed legacy-coupling withdrawal, and non-zero |
+| 1 | `unsupported` / `resolve` / `abi-signature-parity` | NOT promoted — `resolve` is out of scope by design |
+| 1 | `invariant` / `build` / `unexpected-internal-throw` | already a hard error pre-#3341-C; unchanged |
+
+`class-member-unsupported` measured **154 at `select`** (the claim gate working
+as designed) and **0 at any post-claim stage** — non-vacuous vocabulary, zero
+post-claim occurrences.
+
+### Codes deliberately NOT promoted, with citations
+
+- The four #3565 restored contracts: `element-store-unsupported`,
+  `element-access-unsupported`, `return-type-legacy-coupling`,
+  `compound-assign-unsupported`.
+- `type-resolution-unsupported` @ `resolve` — the #1921 contract (excluded by
+  stage scope).
+- `unboxed-number-local-unprovable` (#3784), `throw-value-unsupported` and
+  `unknown-class-construction` (#4035) — the same class, found later.
+- `body-shape-rejected` @ `build` — one of its two post-claim arms fires when
+  `dynamicForInPlan` is absent, which is REAL on the **linear** backend (its
+  resolver does not supply that plan). Sweep-zero would have hidden this;
+  reading the sites did not.
+- `array-representation-unsupported` — three arms mirror the selector's
+  holey-Array gate exactly, but the fourth (widening/heterogeneous sink) is a
+  deliberate demote to the safe boxed lowering.
+- `constructor-arity-unsupported` @ `build` — `new Number()` / `new Boolean()`
+  reach it and there is no selector arity gate for primitive wrappers.
+- Every remaining capability gap (`method-call-unsupported`,
+  `operand-coercion-unsupported`, `nullish-value-unsupported`,
+  `property-write-unsupported`, `string-evidence-unsupported`,
+  `void-call-expression`, `imported-call-planning-unsupported`) — see the new
+  table in `plan/log/ir-adoption.md` for the per-code reason.
+
+### Local validation
+
+`pnpm run typecheck` clean · `pnpm run lint` clean ·
+`pnpm run check:ir-fallbacks` OK (no increases) ·
+`pnpm run gen:ir-adoption -- --check` up to date ·
+`check:loc-budget` / `check:func-budget` OK (growth granted by this issue's
+`loc-budget-allow`) · `tests/issue-3341-strict-postclaim.test.ts` +
+`tests/issue-3341-slice-b.test.ts` 10/10.
+
+Two red spots exist on the wave branch and **neither is caused by this slice** —
+each was measured as a file-copy A/B (revert `src/codegen/index.ts` to `HEAD`,
+run, re-apply, run), not assumed:
+
+| suite | base | with Slice C |
+| ----- | ---- | ------------ |
+| `equivalence/{logical-conditional-identity,arguments-nested-and-loops}` | 4 failed \| 65 passed | 4 failed \| 65 passed |
+| `issue-3529-selector-preclaim` (the largest consumer of `class-member-unsupported`) | 4 failed \| 62 passed | 4 failed \| 62 passed |
+
+The equivalence failures are TS-diagnostic compile failures (`Argument of type
+'undefined' is not assignable to parameter of type 'number'`, the `void x` → NaN
+family), not IR-fallback promotions. The other four `class-member-unsupported`
+consumers (`issue-3520-selection-identity`, the three `issue-4259` accessor
+suites) are fully green with Slice C applied.
+
+Caveat, stated rather than papered over: the WHOLE `tests/equivalence`
+directory does not finish in this container — it dies with
+`ERR_IPC_CHANNEL_CLOSED` before printing a summary, on this branch, with and
+without the change. So the full-directory pass count is **not established
+locally**; CI's `equivalence-gate` is the authority for it.
+
+### Residual (NOT in this slice)
+
+Slice A stays dead as specced (see the dev-h note above). Widening the promoted
+set further needs the same site-by-site proof this slice applied — the honest
+finding is that most `unsupported` codes are designed demotes *by construction*,
+so growing this set means **typing the desync arms distinctly first** (the
+mirror image of #3565/#3784/#4035), not adding existing codes wholesale.

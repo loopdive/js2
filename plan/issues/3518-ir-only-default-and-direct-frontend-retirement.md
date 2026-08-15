@@ -488,3 +488,68 @@ Acceptance: gate reports ≥ 2 lanes; single-host stays READY; standalone
 lane floors ≥ measured-at-landing values; `check:ir-fallbacks` no
 growth; equivalence suite + standalone probes green; `tsc --noEmit`
 clean.
+
+### Result: caller-direction closure precision (2026-08-15)
+
+**Landed:** standalone lane **16 → 17** IR bodies emitted;
+`select/call-graph-closure` **4 → 3**; unsupported **21 → 20**. Single-host
+lane unchanged at **37/37**, READY. Newly claimed unit:
+`dom/calendar.ts::mname`.
+
+**Root cause.** `legacyCallerAbiIsProjected` — the escape hatch the
+standalone/WASI caller-direction closure consults — was backed by
+`hasFullyAnnotatedScalarAbi`, whose certified surface **excluded `string`
+positions** on the stated ground that "their carrier depends on
+`nativeStrings`". That ground does not hold: legacy `resolveWasmType` and IR
+`resolveString()` both pick the carrier from the SAME pair,
+`ctx.nativeStrings && ctx.anyStrTypeIdx >= 0` → `(ref $AnyStr)`, else
+externref. They agree **by construction**, including the `anyStrTypeIdx < 0`
+corner. So `mname(m: number): string` — a leaf whose only unclaimed edge is
+its legacy caller `renderCal` — was demoted for a signature divergence that
+cannot occur.
+
+**The other three `call-graph-closure` units are NOT caller-direction and are
+out of reach of any closure-precision change.** Measured directly by
+instrumenting the demotion (`caller=`/`callee=` per unit):
+
+| unit | direction | blocked by |
+| --- | --- | --- |
+| `calendar.ts::mname` | caller only | *(fixed here)* |
+| `calendar.ts::onDay` | callee only | callees `updFoot`, `renderCal` both `body-shape-rejected` |
+| `builtins.ts::crd` | caller **and** callee | callee `el` `body-shape-rejected` |
+| `builtins.ts::rw` | caller **and** callee | callee `el` `body-shape-rejected` |
+
+`onDay` already had `legacyCallerAbiIsProjected === true` before this change —
+its caller direction was never the blocker.
+
+**The callee direction is not relaxable today, and this was measured, not
+assumed.** Disabling the callee arm outright makes the standalone lane go
+NOT READY with a hard compile failure, not a silent demotion:
+
+```
+Codegen error: IR path failed for onDay:
+  ir/from-ast: direct call to "updFoot" has no exact AST-site plan in onDay
+```
+
+i.e. `from-ast` has no lowering for a direct call to an unclaimed (legacy)
+local function at all — the callee-direction closure is load-bearing for
+*lowerability*, not merely for signature safety. Those three units unblock
+only when `el` / `renderCal` / `updFoot` themselves become claimable
+(#2856/#2857 body-shape work on the standalone DOM/host surface), which is a
+different slice.
+
+**Host-lane invariance is structural, not empirical.**
+`legacyCallerAbiIsProjected` is read only under `demoteOnLegacyCaller`
+(`jsHostExterns !== true`, `select.ts` and `select-identity.ts` — the only two
+consult sites), so widening the certified surface cannot move a JS-host claim.
+The 37/37 re-measurement confirms it.
+
+**Tightenings shipped alongside** (each strictly narrows the certified surface,
+so none can regress a lane) — the predicate previously certified declarations
+whose legacy signature it could not actually predict: destructuring parameters
+(`bindingPatternParamNeedsWiden` widens them to externref), `async`
+(`prepareAsyncCallableAbi` rewrites the ABI), and a return carrier legacy
+overrides on body shape (`functionReturnsDynamicObjectCarrier`, now handed in
+as explicit evidence rather than re-derived). The last one was a live hole for
+the already-certified `number`/`boolean` returns, not something the `string`
+extension introduced.

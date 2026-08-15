@@ -152,6 +152,13 @@ import {
   type IrUnitId,
 } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
+// (#3931) the #2682 canonical char-read-loop recogniser, ported to the IR.
+import {
+  type CharReadProof,
+  detectCanonicalCharReadLoopShape,
+  matchProvenCharRead,
+  type ProvenCharReads,
+} from "./char-read-loop.js";
 import {
   computeI32PureNames,
   type I32PureNames,
@@ -562,6 +569,32 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   } | null;
   /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
+  /**
+   * (#3931) Backend half of the #2682 canonical char-read-loop hoist. Asked
+   * ONCE per recognised loop (`ir/char-read-loop.ts` has already discharged
+   * the `0 <= i < recv.length` proof); `null` refuses the optimisation and the
+   * loop lowers exactly as before.
+   *
+   * `hoist` is the native-strings answer: `flattenFuncName` is called ONCE in
+   * the loop preheader and its result parked in a string-carrier slot, after
+   * which each body read is `readFuncName(flat, i)` — no per-iteration
+   * flatten, no bounds/NaN branch. `trustedFuncName` is the host answer: host
+   * strings have no flattenable descriptor, so there the win is purely
+   * dropping the guard around the `wasm:js-string` builtin.
+   *
+   * Both names take/produce only STRING-carrier and i32 values — deliberately,
+   * so no IR value here is typed with a raw backend `ref` (a prepared
+   * component carrying one is refused, which would demote the whole function
+   * and silently undo the optimisation).
+   *
+   * Mode-free by construction on the from-ast side (the #2955 discipline): all
+   * the helper names come from here, so a backend with neither answer (linear,
+   * Porffor) simply omits the callback.
+   */
+  charReadPlan?(): {
+    hoist: { flattenFuncName: string; readFuncName: string } | null;
+    trustedFuncName: string | null;
+  } | null;
   /**
    * (#2856) Resolve an extern-class member through the legacy inheritance
    * chain (`ctx.externClasses` + `ctx.externClassParent` — e.g. `appendChild`
@@ -2196,6 +2229,17 @@ interface LowerCtx {
    */
   readonly safeIndexedArrays?: ReadonlySet<string>;
   /**
+   * (#3931) The #2682 canonical char-read-loop proof(s) active for the CURRENT
+   * loop body, keyed by receiver name — the IR twin of legacy's
+   * `fctx.hoistedCharReads`. Installed by `lowerForStatement` on a fresh body
+   * cx (so it scopes to the loop and nested loops accumulate outward) and
+   * consulted by `matchProvenCharRead` at `recv.charCodeAt(i)` sites, which
+   * may then skip the §22.1.3.3 bounds/NaN guard and read the hoisted
+   * descriptor directly. Never leaks into a nested function: the recogniser
+   * refuses any body containing one.
+   */
+  readonly provenCharReads?: ProvenCharReads;
+  /**
    * #2952 slice 2 — the innermost enclosing CLAIMED loop's label, threaded
    * onto the body cx by every loop lowerer. `lowerBreakContinueStatement`
    * emits `br.label` against it (unlabeled break/continue bind the
@@ -2731,7 +2775,7 @@ function lowerNarrowedI32Element(value: ts.Expression, cx: LowerCtx): IrValueId 
  * REGRESS an expression #3758 already handles.
  */
 function isFusedI32Lowerable(e: ts.Expression, cx: LowerCtx): boolean {
-  return isWrapI32Lowerable(e, promotedI32Probe(cx)) || isI32PureExprIR(e, cx.i32PureNames);
+  return isWrapI32Lowerable(e, promotedI32Probe(cx)) || isI32PureExprIR(e, cx.i32PureNames, cx.provenCharReads);
 }
 
 /**
@@ -2836,7 +2880,7 @@ function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): 
   // `i32.sub`/guarded-`i32.mul` and narrows genuine leaves with the cheap
   // `i32.trunc_sat_f64_s`. Checked BEFORE the generic lowering below so a
   // mixed promoted/pure subtree never degrades to the full ToInt32 dance.
-  if (isI32PureExprIR(inner, cx.i32PureNames)) return emitI32PureExpr(inner, cx);
+  if (isI32PureExprIR(inner, cx.i32PureNames, cx.provenCharReads)) return emitI32PureExpr(inner, cx);
 
   // Comparisons (and anything else the predicates admit) already lower to i32
   // through the ordinary path — take it and assert the representation.
@@ -6300,6 +6344,22 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
 
+  // (#3931) A proven-in-bounds `recv.charCodeAt(i)` inside a canonical
+  // char-read loop. Intercepted here, BEFORE the receiver is lowered, so the
+  // native arm reads the hoisted descriptor instead of re-deriving one. The
+  // result is an i32 code unit widened to the f64 every charCodeAt consumer
+  // expects; the i32-pure path (`emitI32PureExpr`) takes the i32 directly and
+  // is what removes the surrounding ToInt32 dance.
+  //
+  // `f64.convert_i32_s`, not `_u`: a UTF-16 code unit is `[0, 65535]` (the
+  // native read zero-extends an i16 array element, the host builtin returns
+  // the same range), so the two conversions are bit-identical here — and the
+  // signed one is already in `IrUnop`, so this adds no backend surface.
+  const provenCharRead = matchProvenCharRead(expr, cx.provenCharReads);
+  if (provenCharRead !== null) {
+    return cx.builder.emitUnary("f64.convert_i32_s", emitProvenCharReadI32(expr, provenCharRead, cx), IR_F64);
+  }
+
   // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
   // object. Evaluate arguments left-to-right for effects, discard them, then
   // call the symbolic zero-arg provider which returns the lane's real
@@ -8295,6 +8355,115 @@ function literalCounterEntry(stmt: ts.ForStatement, cx: LowerCtx): { value: numb
   return { value, slotIndex: binding.slotIndex };
 }
 
+/**
+ * (#3931) Lower a proven char-read loop's INDEX operand to a native i32.
+ *
+ * The index is the loop's own induction identifier (the match in
+ * `matchProvenCharRead` admits nothing else), so when #3741 gave it an i32
+ * SLOT the read is just that slot — no `f64.convert_i32_s` / `trunc_sat`
+ * round trip, which is a per-iteration saving on top of the dropped guard.
+ * Anything else takes the ordinary f64 lowering and the cheap narrowing the
+ * guarded helpers' i32 index arg already used.
+ */
+function lowerCharReadIndexI32(indexExpr: ts.Expression, cx: LowerCtx): IrValueId {
+  if (ts.isIdentifier(indexExpr)) {
+    const binding = cx.scope.get(indexExpr.text);
+    if (binding !== undefined && binding.kind === "slot" && binding.i32Storage === true) {
+      return cx.builder.emitSlotRead(binding.slotIndex);
+    }
+  }
+  const numeric = lowerExpr(indexExpr, cx, IR_F64);
+  return asVal(cx.builder.typeOf(numeric))?.kind === "i32"
+    ? numeric
+    : cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, IR_I32);
+}
+
+/**
+ * (#3931) Emit one proven `recv.charCodeAt(i)` as a native i32 code unit —
+ * the read site half of the #2682 port. The caller must have matched the
+ * expression against an ACTIVE proof (`matchProvenCharRead`), which is what
+ * makes dropping §22.1.3.3's bounds/NaN arm byte-faithful rather than a
+ * semantic change.
+ *
+ * Native strings: `readFunc(flat, i)` against the receiver flattened once in
+ * the preheader — legacy's `emitHoistedCharCodeAtRead`, one (inlinable) call
+ * deep. Host strings: the unguarded builtin wrapper, with the receiver
+ * lowered here (a plain identifier read — no observable evaluation-order
+ * effect, and the ONLY expression the recogniser admits).
+ */
+function emitProvenCharReadI32(call: ts.CallExpression, proof: CharReadProof, cx: LowerCtx): IrValueId {
+  const receiverExpr = (call.expression as ts.PropertyAccessExpression).expression;
+  const indexExpr = call.arguments[0]!;
+  if (proof.hoist) {
+    const flat = cx.builder.emitSlotReadAs(proof.hoist.flatSlot, { kind: "string" });
+    const index = lowerCharReadIndexI32(indexExpr, cx);
+    const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.hoist.readFuncName), [flat, index], IR_I32);
+    if (read === null) throw new Error(`ir/from-ast: hoisted char read produced void (${cx.funcName})`);
+    return read;
+  }
+  const recv = lowerExpr(receiverExpr, cx, { kind: "string" });
+  const index = lowerCharReadIndexI32(indexExpr, cx);
+  const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.trustedFuncName!), [recv, index], IR_I32);
+  if (read === null) throw new Error(`ir/from-ast: trusted char read produced void (${cx.funcName})`);
+  return read;
+}
+
+/**
+ * (#3931) The preheader half: recognise the canonical char-read loop and, if
+ * the backend offers a plan, emit the loop-invariant hoist ONCE before the
+ * loop and return the proof to install on the body cx.
+ *
+ * MUST be called while the builder's current buffer is the OUTER one (after
+ * the `for` init is lowered, before the cond/body buffers are collected), so
+ * the flatten + descriptor reads run exactly once per loop entry — the same
+ * placement contract legacy's `detectCanonicalCharReadLoop` documents.
+ *
+ * Returns `null` (having emitted nothing) on any deviation: an unrecognised
+ * shape, no oracle to prove the receiver is a string, or a backend with no
+ * plan. Refuse-loud, never miscompile.
+ */
+function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): CharReadProof | null {
+  const plan = cx.resolver?.charReadPlan?.() ?? null;
+  if (!plan) return null;
+  const oracle = cx.oracle;
+  if (!oracle) return null;
+  const shape = detectCanonicalCharReadLoopShape(stmt, (id) => oracle.typeFactOf(id).kind === "string");
+  if (!shape) return null;
+
+  if (!plan.hoist) {
+    if (!plan.trustedFuncName) return null;
+    return {
+      recvName: shape.recvName,
+      indexName: shape.indexName,
+      hoist: null,
+      trustedFuncName: plan.trustedFuncName,
+    };
+  }
+
+  const hoist = plan.hoist;
+  // The carrier ValType for the slot, exactly as `lowerForOfString` gets it.
+  const carrier = cx.resolver?.resolveString?.();
+  if (!carrier || carrier.kind !== "ref") return null;
+  const recv = lowerExpr(shape.recvIdent, cx, { kind: "string" });
+  if (cx.builder.typeOf(recv).kind !== "string") return null;
+  // Result typed `IrType.string`, NOT a raw `ref $NativeString`: a flat string
+  // IS a string carrier value, and a raw-ref-typed IR value would fail the
+  // prepared-component ABI gate and demote the whole function.
+  const flat = cx.builder.emitCall(irIntrinsicFuncRef(hoist.flattenFuncName), [recv], { kind: "string" });
+  if (flat === null) return null;
+  // A slot (not an SSA value) because it is read from INSIDE the loop body's
+  // own instruction buffer — the same reason `lowerForOfString` parks its
+  // receiver in one. Named after legacy's hoist locals.
+  const flatSlot = cx.builder.declareSlot("__cca_flat", carrier);
+  cx.builder.emitSlotWrite(flatSlot, flat);
+  return {
+    recvName: shape.recvName,
+    indexName: shape.indexName,
+    hoist: { flatSlot, readFuncName: hoist.readFuncName },
+    trustedFuncName: null,
+  };
+}
+
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
@@ -8315,6 +8484,14 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   }
 
   const loopCx: LowerCtx = { ...innerCx, scope: conservativeLoopStringEncodingScope(stmt, innerCx) };
+
+  // (#3931) 1b. The #2682 canonical char-read hoist. Emitted HERE — after the
+  // init, before any buffer is collected — so the loop-invariant flatten +
+  // `.data`/`.off` descriptor reads land in the preheader and run once. The
+  // proof is threaded onto the body cx below (never onto cond/update: the
+  // condition is where `i < recv.length` is ESTABLISHED, and the update runs
+  // after the body, where `i` may already be out of range).
+  const charReadProof = installCanonicalCharReadProof(stmt, loopCx);
 
   // 2. Cond — collect its IR into a buffer.
   // Capture the value id `lowerExpr` returns rather than the buffer's last
@@ -8363,15 +8540,23 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
           ...(denseFillPair ? [denseFillPair] : []),
         ])
       : null;
+  // (#3931) Nested loops accumulate outward, exactly like `safeIndexedArrays`:
+  // an inner loop over a DIFFERENT receiver keeps the outer receiver's proof
+  // live (the outer `i` is still in range inside the inner body), while a
+  // same-name receiver is shadowed by the inner (fresher) proof.
+  const provenCharReads: ProvenCharReads | undefined = charReadProof
+    ? new Map([...(loopCx.provenCharReads ?? new Map()), [charReadProof.recvName, charReadProof]])
+    : loopCx.provenCharReads;
   const bodyCx: LowerCtx = safePairs
     ? {
         ...loopCx,
         scope: bodyScope,
         safeIndexedArrays: safePairs,
+        provenCharReads,
         loopLabel,
         breakTargetLabel: loopLabel,
       }
-    : { ...loopCx, scope: bodyScope, loopLabel, breakTargetLabel: loopLabel };
+    : { ...loopCx, scope: bodyScope, provenCharReads, loopLabel, breakTargetLabel: loopLabel };
   const bodyInstrs = loopCx.builder.collectBodyInstrs(() => {
     if (bodyOverride) bodyOverride(bodyCx);
     else lowerStmt(stmt.statement, bodyCx);
@@ -10214,6 +10399,10 @@ function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
     // Nested bitwise/shift result — falls through to the leaf case below:
     // lower via the existing general path (unchanged), then narrow.
   }
+  // (#3931) The proven char-read leaf is ALREADY an i32 code unit — take it
+  // directly rather than widening to f64 and narrowing straight back.
+  const provenCharRead = matchProvenCharRead(inner, cx.provenCharReads);
+  if (provenCharRead !== null) return emitProvenCharReadI32(inner as ts.CallExpression, provenCharRead, cx);
   const f64Value = lowerExpr(e, cx, irVal({ kind: "f64" }));
   const valueType = asVal(typeOfValue(f64Value, cx));
   if (valueType?.kind === "i32") return f64Value; // already i32 — no redundant narrowing
@@ -10368,8 +10557,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // unsound; see #3745's revert history).
   const i32PureBitwiseOperands =
     isIrBitwiseOperatorToken(op) &&
-    isI32PureExprIR(expr.left, cx.i32PureNames) &&
-    isI32PureExprIR(expr.right, cx.i32PureNames);
+    isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
+    isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
   const lhs = i32PureBitwiseOperands
     ? emitI32PureExpr(expr.left, cx)
     : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));

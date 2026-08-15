@@ -135,11 +135,16 @@ import {
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import {
   ensureHostCharCodeAtGuarded,
+  ensureHostCharCodeAtTrusted,
   ensureHostSubstringGuarded,
   ensureNativeCharCodeAtHelper,
+  ensureNativeFlatCharCodeAtHelper,
   JSSTR_CHARCODEAT_FN,
+  JSSTR_CHARCODEAT_TRUSTED_FN,
   JSSTR_SUBSTRING_FN,
   NATIVE_CHARCODEAT_FN,
+  NATIVE_FLAT_CHARCODEAT_FN,
+  NATIVE_FLATTEN_FN,
 } from "../codegen/char-code-at-helpers.js";
 import {
   IR_STRING_COMPARE_FN,
@@ -4303,6 +4308,34 @@ function makeFromAstResolver(
         declaration.initializer.expression.name.text === "substring"
       );
     },
+    // (#3931) Backend half of the #2682 canonical char-read-loop hoist. The
+    // front-end has already proven `0 <= i < recv.length` for every read in
+    // the loop body; this decides what that proof BUYS in the current string
+    // mode.
+    //
+    // Native strings: everything legacy's hoist did — flatten the receiver
+    // once, park `.data`/`.off` in preheader slots, and read code units
+    // straight out of the array. The struct types are needed to name the slot
+    // ValTypes, so a mode where they are not registered (no string usage yet)
+    // declines rather than guessing.
+    //
+    // Host strings: there is no flattenable descriptor — a host string is an
+    // externref the engine owns — so the whole win is dropping the guard
+    // around the `wasm:js-string.charCodeAt` builtin (which traps out of
+    // range, #2003; the proof is what makes that unreachable). The builtin
+    // imports may not be registered until `prepareStrings` runs, so this is
+    // deliberately name-only and materialization stays in `resolveFunc`.
+    charReadPlan() {
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) return null;
+        return {
+          hoist: { flattenFuncName: NATIVE_FLATTEN_FN, readFuncName: NATIVE_FLAT_CHARCODEAT_FN },
+          trustedFuncName: null,
+        };
+      }
+      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
+      return { hoist: null, trustedFuncName: JSSTR_CHARCODEAT_TRUSTED_FN };
+    },
     stringFromCharCodePlan() {
       return ctx.nativeStrings
         ? { funcName: "__str_fromCharCode", argumentRep: "i32" as const }
@@ -4639,6 +4672,22 @@ function resolveAndObserveCallableProvider(
     index = ensureHostSubstringGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
     index = ensureNativeCharCodeAtHelper(ctx);
+  } else if (
+    ref.binding.kind === "intrinsic" &&
+    (symbol === NATIVE_FLATTEN_FN || symbol === NATIVE_FLAT_CHARCODEAT_FN)
+  ) {
+    // (#3931) canonical char-read-loop hoist: the preheader flatten, and the
+    // unguarded flat read the in-bounds proof licenses.
+    // `ensureNativeStringHelpers` first for the same reason the charAt arm
+    // does it — the struct types and `__str_flatten` must exist before either
+    // of these can be minted.
+    ensureNativeStringHelpers(ctx);
+    index =
+      symbol === NATIVE_FLATTEN_FN
+        ? nativeStrHelperHandle(ctx, NATIVE_FLATTEN_FN)
+        : ensureNativeFlatCharCodeAtHelper(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
+    index = ensureHostCharCodeAtTrusted(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -5290,7 +5339,11 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     if (
       instr.kind === "call" &&
       instr.target.binding.kind === "intrinsic" &&
-      instr.target.binding.symbol === JSSTR_CHARCODEAT_FN
+      (instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+        // (#3931) …and its unguarded twin, for the same reason: a proven
+        // char-read loop can be the ONLY string op in a claimed function, and
+        // its helper reads `ctx.jsStringImports` at materialization time.
+        instr.target.binding.symbol === JSSTR_CHARCODEAT_TRUSTED_FN)
     ) {
       usesStringOp = true;
     }

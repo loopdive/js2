@@ -15,6 +15,25 @@ related: [3745, 3758, 2682]
 
 # #3759 — port legacy's #2682 hoisted-in-bounds-charCodeAt proof to IR
 
+## ⚠️ Superseded in substance by #3931 (2026-08-15) — needs a triage decision
+
+**#3931 landed exactly this**: `src/ir/char-read-loop.ts` carries the
+in-bounds proof (steps 1–3 of "Suggested next step" below, in that order),
+`isI32PureExprIR`/`emitI32PureExpr` now accept a proven `recv.charCodeAt(i)`
+as an int32-range leaf, and the loop-preheader emission point turned out to
+already exist (`lowerForStatement` emits into the enclosing buffer before it
+collects the cond/body buffers — no builder API change was needed). Measured
+on a string-hash-shaped workload: 16–20x across nativeStrings, standalone,
+wasi and host.
+
+The two issues were filed three days apart by different lanes and neither
+cited the other; `pre-dispatch-gate.mjs` flagged the overlap by shared idiom.
+What is left here that #3931 did NOT do is step 4 — re-measuring the actual
+`benchmarks/string-hash.js` lane end-to-end (#3931 measured a synthetic
+hash workload in four string modes, not that benchmark). Close this as
+done-by-#3931 or re-scope it to that measurement; do NOT start a second
+implementation.
+
 ## Context
 
 #3758 added a sound native-i32 arithmetic fast path for bitwise-composed
