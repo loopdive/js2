@@ -1,0 +1,89 @@
+---
+id: 4447
+title: "standalone: for-of destructuring residual (~200 non-generator tests) — iterator close/abrupt-completion + trailing-iterator state + nested patterns"
+status: in-progress
+sprint: current
+created: 2026-08-15
+updated: 2026-08-15
+assignee: claude/es6-standalone-session
+priority: high
+horizon: m
+feasibility: medium
+task_type: conformance
+area: codegen
+es_edition: es6
+goal: standalone-mode
+related: [4444, 2566, 1219, 999]
+---
+
+# #4447 — for-of destructuring standalone residual
+
+## Problem
+
+201 non-passing ES2015 tests under `language/statements/for-of/dstr/*` in the
+standalone lane are NOT generator-carrier failures (those are #2864's; ~15 of
+the 216 total are and stay out of scope — skip any test whose failure mentions
+`__gen_`/`__create_generator`). Top sub-buckets by test-name pattern
+(measured 2026-08-15 from the fresh standalone baseline via
+`.tmp/es6-standalone-clusters.ts`):
+
+| ~Tests | Pattern | Symptom |
+|---|---|---|
+| 23 | `array-elem-trlg-iter-*` | trailing-element iterator state: elision/rest after a completed or abrupt iterator |
+| 14 | `obj-prop-elem-init-*` | object-pattern property element with initializer (incl. fn-name inference `NaN vs undefined`) |
+| 27 | `{const,var,let}-ary-ptrn-*` | array-pattern binding forms |
+| ~25 | `*-nested-obj-*` / `*-nested-array-*` | nested pattern recursion (null/undefined → "Expected a TypeError but none thrown") |
+| ~12 | `*-iter-{rtrn,thrw,close}*` | IteratorClose on abrupt completion; `return`/`throw` propagation |
+| rest | put-prop / put-unresolvable / init-fn-name / elision | assignment-target evaluation order, strict unresolvable ReferenceError, fn `name` |
+
+Error mix: "Expected a TypeError/Test262Error/ReferenceError but none thrown"
+(~62), SameValue mismatches (value semantics, ~35), "Cannot convert undefined
+or null to object" (~10).
+
+## Implementation Plan (fable, 2026-08-15) — triage-first
+
+This bucket is diverse; do NOT attempt one mega-fix. Work top-down by
+sub-bucket, each with its own commit:
+
+1. **Reproduce cheaply.** Compile single tests with the CLI
+   (`npx tsx src/cli.ts <file> --nativeStrings` per its `--help`) or run the
+   scoped suite (see Validation). Pick ONE representative per sub-bucket and
+   diff actual-vs-expected before touching code.
+2. **Locate the lowering.** Destructuring lowering lives in the codegen
+   statements/expressions path (grep `dstr`, `ArrayBindingPattern`,
+   `ObjectBindingPattern` under `src/codegen/` and `src/ir/`; #1219/#2566 name
+   the iterator-destructuring machinery — read their issue files first for
+   known constraints, esp. #2566's eager-buffer over-consumption note: the
+   standalone iterator protocol for array patterns may be eager-buffered,
+   which is likely the root of the `trlg-iter` bucket).
+3. **Expected order of attack** (largest bounded first):
+   a. `trlg-iter` (23): trailing elision/rest must NOT call `next()` after
+      `done:true`, and elision still advances the iterator — check where the
+      pattern consumes the iterator record and thread the `done` flag.
+   b. Nested-pattern TypeErrors (~25): destructuring `undefined`/`null` at a
+      nested level must throw TypeError (RequireObjectCoercible /
+      GetIterator on the nested value). Likely a missing coercible check in
+      the recursive pattern-lowering entry.
+   c. IteratorClose family (~12): abrupt completion inside the pattern body
+      must call `return()` on the iterator when `done` is false.
+   d. `obj-prop-elem-init` + fn-name (~14): default-initializer evaluation
+      (only when value is undefined) + NamedEvaluation for anonymous
+      fn/class/arrow initializers (`NaN vs undefined` on `.name` reads).
+   e. Binding-form residual (`const/let/var-ary-ptrn`): re-measure after
+      a-d — many are the same defects surfacing through different binding
+      forms; fix what remains.
+4. **Shared machinery caution**: destructuring lowering is shared with plain
+   assignment/declaration destructuring (`language/expressions/assignment/dstr`
+   has ~89 similar failures — same fixes likely flip those too; measure and
+   report the cross-bucket delta, don't scope-creep into new machinery for
+   them).
+
+## Validation
+
+- Scoped run: `TEST262_TARGET=standalone TEST262_PATH_FILTER="language/statements/for-of/dstr" pnpm run test:262`
+  Baseline: 201 non-pass (of ~700 total dstr files). Report per-sub-bucket
+  flips; also run `language/expressions/assignment/dstr` once at the end for
+  the cross-bucket delta.
+- gc lane must not regress: the same lowering runs in both lanes — run the
+  same filter with `TEST262_TARGET=gc` before finishing.
+- Equivalence guard: `npm test -- tests/equivalence.test.ts`.

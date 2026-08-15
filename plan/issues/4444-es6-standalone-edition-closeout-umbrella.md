@@ -1,0 +1,68 @@
+---
+id: 4444
+title: "UMBRELLA: ES6 (ES2015) standalone edition close-out — 7,695/11,704 (66%) → 100%"
+status: in-progress
+sprint: current
+created: 2026-08-15
+updated: 2026-08-15
+assignee: claude/es6-standalone-session
+priority: high
+horizon: xl
+feasibility: hard
+task_type: conformance
+area: codegen, conformance
+es_edition: es6
+goal: standalone-mode
+related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445, 4446, 4447]
+---
+
+# #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Measurement (2026-08-15, this session)
+
+Source: fresh `test262-standalone-current.jsonl` (baselines repo, fetched
+`--force`, 48,735 entries, baseline_sha `734fab88`), classified per-test with
+`scripts/generate-editions.ts` `classifyEdition` (host-free pass definition,
+`host_import_leak_class` excluded). Reproduction: `.tmp/es6-standalone-clusters.ts`.
+
+**ES2015 standalone: 7,695 pass / 11,704 total (66%) — 3,401 fail, 607
+compile_error, 1 skip = 4,009 non-passing.**
+
+## Cluster map → owning issues
+
+Counts are non-passing ES2015-classified tests in the standalone lane; clusters
+overlap paths (a generator test under `language/statements/class` counts in the
+generator row).
+
+| # | Cluster (root cause) | ~Tests | Owning issue(s) | State |
+|---|---|---|---|---|
+| 1 | **Native generator carrier** — standalone lowering only supports "sequential numeric yields"; everything else leaks `__create_generator`/`__gen_*` host imports (CE) or mis-executes. Spread across `language/{expressions,statements}/generators`, `yield`, `class` (gen methods), `object` (gen shorthand), for-of/dstr | ~500 | #2864 (in-progress), #2906 (in-progress), #3032, #680; umbrella #3178 | tracked — do NOT duplicate |
+| 2 | **Promise/microtask carrier** — `Promise.all/race` leak `Promise_all`/`Promise_race`/`__js_array_new` (CE); `Promise.resolve` "not yet implemented"; `illegal cast [__then_fulfill_N]` in the async drive layer | ~233 | #2867 (ready), #2906, umbrella #3178 | tracked |
+| 3 | **Built-in method reflection** — `length.js`/`name.js`/`prop-desc.js`/`not-a-constructor.js`/`invoked-as-func.js` across every built-in: methods are not reified function objects (`Object.getOwnPropertyDescriptor` → "Cannot convert undefined or null to object", `typeof m === "undefined"`) | ~324 | #2175 (ready, arch spec written), #2158, #2159; sibling lane PR #4553 (method name/length meta) is in flight | tracked — architectural |
+| 4 | **TypedArray.prototype semantics** — species-constructor protocol (`speciesctor-*`, 55), custom-ctor paths, detached-buffer TypeErrors (~42), coercion/validation order. Excludes row-3 reflection files | ~330 net | #2159 lane (reflection part); species/detached part **untracked** — file on pickup, depends on #2175 for reflective receivers | partially tracked |
+| 5 | **RegExp `@@replace`/`@@match`/`@@split`/`@@search`** — function replacer refusal (CE, "#1913 follow-up"), coercion order, `lastIndex` protocol | ~161 | #2161 (blocked on #2175), F7 dynamic-receiver arch spec pending | tracked/blocked |
+| 6 | **for-of destructuring residual** — iterator close/return/throw propagation, trailing-iterator state (`trlg-iter`, 23), nested patterns, fn-name inference, TDZ | ~200 (non-generator) | **#4447 (this session)** | dispatched |
+| 7 | **Class semantics residual** — missing TypeErrors, field-init `NaN vs undefined`, destructured params, `message should be an own property` | ~330 (non-generator) | partially #2158/#2175; residual untracked — needs triage slice after row 3 lands | partially tracked |
+| 8 | **annexB String HTML methods** — `anchor`/`big`/…/`sup` (13 methods) return `undefined`; CreateHTML not implemented | 79 (≈26 functional + 53 reflection→row 3) | **#4445 (this session)** | dispatched |
+| 9 | **Array.prototype extern fallback leak** — `compileArrayConcatExtern` emits `__array_concat_any`/`__js_array_new`/`__js_array_push` → standalone leak-guard CE | ~30 | **#4446 (this session)** | dispatched |
+| 10 | Long tail — `Object.prototype` (38), `Function.prototype` (35), `let`/TDZ (26), `arrow-function` (25), `switch` (23), DataView (45), Iterator.prototype (55) | ~250 | untracked — file per-cluster on pickup | open |
+
+## Strategy
+
+1. **The two umbrella dependencies dominate**: rows 1–2 (generator + promise
+   carriers, ~733 tests) are owned by the in-flight #3178 machinery retirement
+   lane; row 3 (#2175 reflection, ~324 direct + unlocks rows 4/5/7 residuals)
+   has an architect spec and sibling-lane momentum (PR #4553). This umbrella
+   does not re-dispatch them.
+2. **This session dispatches the unowned, bounded clusters** — #4445, #4446,
+   #4447 — to Opus implementation agents in parallel worktrees (plans in the
+   issue files).
+3. **Remaining untracked residuals** (rows 4, 7, 10) get triage slices filed as
+   the dispatched wave lands, so counts stay attributable.
+
+## Acceptance
+
+- ES2015 standalone (host-free) reaches 100% of its 11,704-test bucket.
+- Interim checkpoints: each cluster row either has an owning issue with a plan
+  or a landed fix; the edition table in this file is refreshed per measurement
+  (name the artifact + date per project measurement discipline).
