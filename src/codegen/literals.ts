@@ -5110,6 +5110,25 @@ export function compileArrayConstructorCall(
   }
 
   if (args.length === 1) {
+    // §23.1.1.1 step 5: a single NON-Number argument is an element, not a
+    // length — `Array(null)` / `Array("1")` / `Array(new Number(0))` build the
+    // one-element array `[arg]` (test262 S15.4.2.2_A2.3_T1–T4; the call and
+    // `new` forms behave identically). Provably-non-number args (static tag ≠
+    // number) take this path; `mixed` (any-typed) keeps length behavior.
+    const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
+    if (argTag !== "number" && argTag !== "mixed" && !ts.isSpreadElement(args[0]!)) {
+      const oneVecIdx =
+        elemWasm.kind === "externref" ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      const oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
+      compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
+      const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, { kind: "ref", typeIdx: oneArrIdx });
+      fctx.body.push({ op: "local.set", index: oneData });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "local.get", index: oneData });
+      fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
+      return { kind: "ref_null", typeIdx: oneVecIdx };
+    }
     // Array(n) → sparse array of length n with default values.
     // #2000 — §23.1.1.1 step 4.b: when the single argument is a Number it is a
     // length, and `len !== ToUint32(len)` must throw a RangeError ("Invalid
