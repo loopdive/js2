@@ -49,6 +49,7 @@ import {
   MATCH_VEC_FIELD_INPUT,
   MATCH_VEC_FIELD_GROUPS,
   REGEX_ANCHORED_LITERAL_ALTS_MARKER,
+  REGEX_UNSUPPORTED_DYNAMIC_PATTERN,
   REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
@@ -78,6 +79,7 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
+import { noJsHost } from "./js-errors.js"; // (#4439) pairs the poison with its guard
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
@@ -805,13 +807,16 @@ export function staticRegExpGroupMeta(
  * (#682's struct dodged this by having `flags:i32` at field[1]); putting the
  * i32 scalars first keeps the struct off that heuristic.
  */
-const RE_FIELD_FLAGS = 0;
+export const RE_FIELD_FLAGS = 0;
 export const RE_FIELD_NGROUPS = 1;
 export const RE_FIELD_PROG = 2;
 export const RE_FIELD_CLASS_TABLE = 3;
 const RE_FIELD_SOURCE = 4;
 export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guards
-const RE_FIELD_LASTINDEX = 6;
+// (#4439) Exported for the reflective `String.prototype.match` body, which must
+// resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
+// no regex EXPRESSION for `staticRegExpFlags` to read.
+export const RE_FIELD_LASTINDEX = 6;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -1035,13 +1040,16 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   const i32ArrIdx = regexI32ArrayType(ctx);
   const i32ArrRef: ValType = { kind: "ref", typeIdx: i32ArrIdx };
   const invalidMessage = "Invalid regular expression";
-  const unsupportedMessage = "Unsupported dynamic regular expression pattern";
   emitWasiErrorConstructor(ctx, "SyntaxError", 1);
+  // (#4439) The out-of-subset pattern no longer throws HERE — it returns a
+  // poisoned struct and `__regex_search` raises the TypeError on first use. The
+  // native TypeError ctor and the message constant are still registered from
+  // this site so the ordering contract is unchanged for callers that reach the
+  // dynamic compiler before any `__regex_search` is minted.
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   addStringConstantGlobal(ctx, invalidMessage);
-  addStringConstantGlobal(ctx, unsupportedMessage);
+  addStringConstantGlobal(ctx, REGEX_UNSUPPORTED_DYNAMIC_PATTERN);
   const syntaxCtorIdx = ctx.funcMap.get("__new_SyntaxError")!;
-  const typeCtorIdx = ctx.funcMap.get("__new_TypeError")!;
   const exnTagIdx = ensureExnTag(ctx);
   const typeIdx = addFuncType(ctx, [strRef, strRef], [{ kind: "ref", typeIdx: structTypeIdx }]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -1440,7 +1448,63 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
           op: "if",
           blockType: { kind: "empty" },
           then: throwConstructed(syntaxCtorIdx, invalidMessage),
-          else: throwConstructed(typeCtorIdx, unsupportedMessage),
+          // (#4439) OUT-OF-SUBSET PATTERN: build a POISONED regexp and return
+          // it, instead of throwing here.
+          //
+          // §22.2.3.1 RegExpInitialize does not fail for `[z-z]`, `[0-9]` or
+          // `abc{1}` — those are perfectly valid patterns this runtime grammar
+          // simply cannot compile. Throwing at CONSTRUCTION therefore failed
+          // tests that never match with the value at all: the whole
+          // S15.10.4.1_A8 family reads only `.ignoreCase`/`.multiline`/
+          // `.global`/`.lastIndex`/`.source` off the constructed RegExp
+          // (measured: A8_T4 `[z-z]`+"mig", A8_T5 `abc{1}`, A8_T7 `[0-9]`+"m").
+          // Deferring the refusal to first USE makes those observables correct
+          // while keeping the limitation loud for anything that actually
+          // matches.
+          //
+          // The poison is `nGroups = 0` (+ `nScratch = 0`), which is
+          // unrepresentable for a real program — every compiled pattern has at
+          // least group 0 — so `nSlots = 2*nGroups + nScratch` is 0 exactly for
+          // a poisoned value. `__regex_search` (the SINGLE VM entry: `test`,
+          // `exec`, `search`, `match`, `matchAll`, `split`, `replace` all reach
+          // the VM through it) rejects that with a catchable TypeError carrying
+          // this same message.
+          //
+          // This is NOT "manufacture an empty executable program" — the hazard
+          // the ~1030 note warns about. That failed because an empty program
+          // was RUN and the VM read past its bounds, an UNCATCHABLE Wasm trap.
+          // Here the zero-length program is never reached: the guard throws
+          // before the VM touches `prog` or `caps`.
+          //
+          // Paired with the `__regex_search` guard by the SAME `noJsHost`
+          // condition: the poison is only ever produced where the guard that
+          // catches it is emitted. Never let those two drift apart — an
+          // unguarded poison would run a zero-length program and trap
+          // uncatchably, the exact failure the deferral exists to avoid.
+          else: !noJsHost(ctx)
+            ? throwConstructed(ctx.funcMap.get("__new_TypeError")!, REGEX_UNSUPPORTED_DYNAMIC_PATTERN)
+            : [
+                { op: "local.get", index: FBITS },
+                { op: "i32.const", value: 0 }, // nGroups = 0 → POISON
+                { op: "i32.const", value: 0 },
+                { op: "array.new_default", typeIdx: i32ArrIdx }, // prog (never run)
+                { op: "i32.const", value: 0 },
+                { op: "array.new_default", typeIdx: i32ArrIdx }, // classTable
+                // `source` keeps the ordinary normalization so `.source` reads and
+                // `toString()` are unaffected by the poison.
+                { op: "local.get", index: PLEN },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: strRef },
+                  then: nativeStringLiteralInstrs(ctx, "(?:)"),
+                  else: [{ op: "local.get", index: PATTERN }],
+                },
+                { op: "i32.const", value: 0 }, // nScratch
+                { op: "f64.const", value: 0 }, // lastIndex
+                { op: "struct.new", typeIdx: structTypeIdx },
+                { op: "return" },
+              ],
         },
       ],
     },
@@ -2195,12 +2259,19 @@ export function recoverRegExpStructFromExternref(
  * match flag (1/0) is left on the stack and the populated caps array is
  * available via the returned `capsLocal`. Returns `null` after reporting a
  * narrowed refusal if the regex value was not backend-created.
+ *
+ * (#4439) Both expressions may be `null` — but ONLY when the corresponding
+ * override is supplied, which is the reflective-closure case: a borrowed
+ * `String.prototype.match`/`search` body has no operand AST at all (its
+ * receiver and argument are closure params). The two nodes are used for
+ * exactly three things — `loadStandaloneRegExpStruct`, `compileExpression`, and
+ * a `reportError` location — and the overrides replace the first two.
  */
 export function emitRegexSearchCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  regexpExpr: ts.Expression,
-  inputExpr: ts.Expression,
+  regexpExpr: ts.Expression | null,
+  inputExpr: ts.Expression | null,
   options?: {
     /**
      * §22.2.7.2 RegExpBuiltinExec [[LastIndex]] semantics for g/y regexps
@@ -2221,7 +2292,9 @@ export function emitRegexSearchCall(
   ensureNativeStringHelpers(ctx);
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   if (flattenIdx === undefined) {
-    reportError(ctx, regexpExpr, "Codegen error: standalone RegExp backend missing native string helpers (#682).");
+    if (regexpExpr !== null) {
+      reportError(ctx, regexpExpr, "Codegen error: standalone RegExp backend missing native string helpers (#682).");
+    }
     return null;
   }
   const searchIdx = ensureRegexSearch(ctx);
@@ -2229,7 +2302,10 @@ export function emitRegexSearchCall(
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
   // --- the compiled $NativeRegExp struct ---
-  const loaded = options?.regexpOverride ?? loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
+  // (#4439) A null `regexpExpr` is only reachable WITH `regexpOverride` (the
+  // reflective closure lane), so the `??` never falls through to a null node.
+  const loaded =
+    options?.regexpOverride ?? (regexpExpr === null ? null : loadStandaloneRegExpStruct(ctx, fctx, regexpExpr));
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
@@ -2243,6 +2319,8 @@ export function emitRegexSearchCall(
   let normalizedOrdinaryInput = false;
   if (options?.inputOverride) {
     inputType = options.inputOverride();
+  } else if (inputExpr === null) {
+    return null; // (#4439) unreachable: a null node always comes with an override
   } else {
     inputType = compileExpression(ctx, fctx, inputExpr, { kind: "externref" });
     if (inputType !== null && inputType.kind !== "externref") {
@@ -2821,8 +2899,10 @@ function buildIndexPairExternref(
 export function emitRegexExecArrayCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  regexpExpr: ts.Expression,
-  inputExpr: ts.Expression,
+  // (#4439) Both may be null in the reflective-closure lane — see
+  // `emitRegexSearchCall`, which this delegates to.
+  regexpExpr: ts.Expression | null,
+  inputExpr: ts.Expression | null,
   options?: {
     gyLastIndex?: boolean | "runtime";
     inputOverride?: () => ValType | null;
@@ -2858,7 +2938,7 @@ export function emitRegexExecArrayCall(
   let nGroups = 0;
   // (#4016) An overridden regex was built at RUNTIME, so `regexpExpr` is the
   // search-value argument, not a regex source — skip static recovery outright.
-  const meta = options?.regexpOverride ? null : staticRegExpGroupMeta(ctx, regexpExpr);
+  const meta = options?.regexpOverride || regexpExpr === null ? null : staticRegExpGroupMeta(ctx, regexpExpr);
   if (meta !== null) {
     groupNames = meta.groupNames;
     hasD = (meta.flags & RE_FLAG_D) !== 0;

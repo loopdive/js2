@@ -42,6 +42,38 @@ export const REGEX_ANCHORED_LITERAL_ALTS_MARKER = -0x40000000;
 const REGEX_CAP_MESSAGE = "RangeError: regular expression step limit exceeded";
 
 /**
+ * (#4439) The refusal a POISONED `$NativeRegExp` raises on first use.
+ *
+ * `__regex_compile_dynamic_simple` builds a poisoned value — `nGroups = 0`,
+ * `nScratch = 0`, zero-length `prog` — for a pattern outside its runtime
+ * grammar, instead of throwing at construction (§22.2.3.1 does not fail for
+ * `[z-z]` / `[0-9]` / `abc{1}`; only THIS compiler cannot run them). The
+ * message is shared with the constructor so the observable text is unchanged
+ * from the pre-#4439 construction-time throw.
+ */
+export const REGEX_UNSUPPORTED_DYNAMIC_PATTERN = "Unsupported dynamic regular expression pattern";
+
+/**
+ * (#4439) Build the throw sequence for a poisoned pattern — a catchable
+ * `TypeError` through the shared `$exc` tag, never a Wasm trap.
+ *
+ * Same ordering contract as {@link regexCapExhaustionThrow}: call it at the TOP
+ * of the helper that embeds it, BEFORE any funcIdx is captured, because
+ * `ensureLateImport("__new_TypeError")` can register a host import and shift
+ * every defined-function index.
+ */
+function regexUnsupportedPatternThrow(ctx: CodegenContext): Instr[] {
+  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "TypeError", 1);
+  addStringConstantGlobal(ctx, REGEX_UNSUPPORTED_DYNAMIC_PATTERN);
+  const ctorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
+  const tagIdx = ensureExnTag(ctx);
+  const instrs: Instr[] = [...stringConstantExternrefInstrs(ctx, REGEX_UNSUPPORTED_DYNAMIC_PATTERN)];
+  if (ctorIdx !== undefined) instrs.push({ op: "call", funcIdx: ctorIdx });
+  instrs.push({ op: "throw", tagIdx });
+  return instrs;
+}
+
+/**
  * (#2091) Build the instruction sequence for a regex VM step-cap-exhaustion
  * throw — a catchable `RangeError` instance (via the shared `$exc` tag), NOT a
  * silent `return 0` (which is indistinguishable from a genuine no-match).
@@ -1671,6 +1703,18 @@ export function ensureRegexRun(ctx: CodegenContext): number {
 export function ensureRegexSearch(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_search");
   if (existing !== undefined) return existing;
+  // (#4439) FIRST — before `ensureRegexRun` and before any funcIdx capture, per
+  // the `regexCapExhaustionThrow` ordering contract.
+  //
+  // HOST-LANE GATE, and it is load-bearing rather than an optimisation: a
+  // poisoned value can only be produced by `__regex_compile_dynamic_simple`,
+  // which is part of the STANDALONE regexp backend (host-side a dynamic RegExp
+  // goes to the host bridge). Building the throw unconditionally would call
+  // `ensureLateImport("__new_TypeError")`, which host-side registers a HOST
+  // IMPORT — adding one import to every gc/host module that uses a RegExp and
+  // shifting its function indices. That breaks the gc/host byte-identity this
+  // change is required to preserve, for a guard that can never fire there.
+  const poisonThrow = noJsHost(ctx) ? regexUnsupportedPatternThrow(ctx) : null;
   const runIdx = ensureRegexRun(ctx);
   const i32Arr = regexI32ArrayType(ctx);
   const strDataIdx = ctx.nativeStrDataTypeIdx;
@@ -1711,6 +1755,19 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
     ALT_BODY_LEN = 15;
   const indexedLiteralAlt = buildIndexedAnchoredLiteralAltSearch(i32Arr, strDataIdx);
   const body: Instr[] = [
+    // (#4439) POISON GUARD — must precede every read of `prog` / `caps`.
+    // `nSlots == 0` is unrepresentable for a compiled program (group 0 alone
+    // makes it ≥ 2), so it means `__regex_compile_dynamic_simple` deferred an
+    // out-of-subset pattern to here. Throw the catchable TypeError now, before
+    // the VM can index a zero-length program or capture array — that OOB trap
+    // is uncatchable and is exactly what the deferral must not resurrect.
+    ...(poisonThrow === null
+      ? []
+      : ([
+          { op: "local.get", index: NSLOTS },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: poisonThrow },
+        ] satisfies Instr[])),
     ...indexedLiteralAlt.body,
     // Runtime-compiled `^(?:literal|literal|...)$` with no flags. Acorn builds
     // its keyword/reserved-word predicates in this exact generic form. Compare
