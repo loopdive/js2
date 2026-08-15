@@ -482,7 +482,7 @@ function functionDeclarationEscapesAsValue(
  * keys. Its representation is the native open `$Object`, so an inferred closed
  * anonymous return type would cast the value to null at the return boundary.
  */
-function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration): boolean {
+export function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration): boolean {
   if (!stmt.body) return false;
   const cached = dynamicObjectReturnByFunction.get(stmt);
   if (cached !== undefined) return cached;
