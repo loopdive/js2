@@ -42,7 +42,7 @@
   "codegen/function-body.ts": 1,
   "codegen/hof-native.ts": 1,
   "codegen/host-import-allowlist.ts": 2,
-  "codegen/index.ts": 1,
+  "codegen/index.ts": 3,
   "codegen/is-truthy-inline-ic.ts": 4,
   "codegen/iter-hof-native.ts": 2,
   "codegen/iter-lazy-native.ts": 2,
