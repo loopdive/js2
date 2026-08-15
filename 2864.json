@@ -1,8 +1,10 @@
 {
   "id": "2864",
-  "assignee": "ttraenkler/dev-opus5-gen",
+  "assignee": "claude/es6-team-generators",
+  "requested_by": "claude/es6-team-generators",
   "status": "in-progress",
-  "branch": "issue-2864-d4-catch-across-yield",
-  "claimed_at": "2026-07-24T18:28:07Z",
-  "updated_at": "2026-07-24T18:28:07Z"
+  "branch": "claude/es6-100-percent-pass-rate-wedr55",
+  "claimed_at": "2026-08-15T16:47:49Z",
+  "updated_at": "2026-08-15T16:47:49Z",
+  "write_id": "11814-4gnbsubk"
 }
