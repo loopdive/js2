@@ -291,6 +291,8 @@ import {
   nativeStrHelperHandle,
   replaceDefinedFuncAt,
 } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
+// (#4467) per-lane §7.1.17 Number::toString provider (host import / native thunk)
+import { ensureIrNumberToStringProvider, IR_NUMBER_TO_STRING_FN } from "./number-to-string-provider.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -4726,6 +4728,8 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
+    index = ensureIrNumberToStringProvider(ctx);
   } else if (ref.binding.kind === "intrinsic" && parseIrDateSnapshotGetter(symbol) !== undefined) {
     index = ensureDateCivilHelper(ctx);
   } else {

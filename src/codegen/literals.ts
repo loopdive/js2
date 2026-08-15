@@ -819,17 +819,15 @@ function compileObjectLiteralWithAccessors(
         // materialize the struct into a real open `$Object` first (own-enumerable
         // fields only) so `__object_assign` enumerates and copies them correctly.
         //
-        // The `native-first` gate is LOAD-BEARING and must not be widened to the
-        // host/gc lane. Materializing takes an eager SNAPSHOT of the struct's
-        // fields at spread-source-evaluation time, whereas the host lane's
-        // `extern.convert_any` passes a live REFERENCE that `__object_assign`
-        // walks later. Spread evaluates every source into a local before merging,
-        // so snapshotting breaks the spec-mandated ordering when an earlier
-        // source's getter mutates a later one — `{...cthulhu, ...o}` where
-        // `cthulhu`'s getter deletes `o.a` then observed `o.a` as still present
-        // (test262 `spread-obj-manipulate-outter-obj-in-getter`, 3 files).
-        // Host reflection already reads closed structs, so the host lane needs
-        // no materialization at all.
+        // (#4466) The `native-first` gate is load-bearing, not a leftover. The
+        // host lane reads closed structs through host reflection already, so it
+        // needs no materialization — and materializing there CHANGES OBSERVABLE
+        // SPEC BEHAVIOUR: the eager field walk snapshots the source before
+        // `__object_assign` runs, so a getter that mutates the outer object
+        // mid-spread no longer sees the spec's CopyDataProperties ordering
+        // (`language/expressions/{array,new,super}/spread-obj-manipulate-outter-
+        // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
+        // dogfood case in the host lane is not a safe trade.
         const spreadStructIdx =
           ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&

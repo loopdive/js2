@@ -138,7 +138,7 @@ const SECTIONS = [
       [
         "`TemplateExpression`",
         "mixed",
-        "STRING substitutions claim (`` `a${s}b` `` with `s: string`). A NUMERIC substitution rejects at `template-substitution-unsupported` (measured 2026-08-15, #3583). Re-owned from #1374 (`done`).",
+        "STRING and NUMERIC substitutions claim in all three lanes — host, `nativeStrings`, standalone — and lower through the `IR_NUMBER_TO_STRING_FN` provider (#4467, measured 2026-08-15; special values `-0`/`NaN`/`±Infinity`/`1e21`/`1e-7` pinned against node). BOOLEAN substitutions still reject at `template-substitution-unsupported`: a boolean shares IR's `i32` carrier with a native-annotated number, so the lowerer cannot tell `${true}` from `${1}` once the checker family is gone — that needs an IR boolean brand, not a formatter. Re-owned from #1374 (`done`).",
         "#3518",
       ],
       ["`TrueKeyword` / `FalseKeyword`", "ir-owned", "—", "—"],
