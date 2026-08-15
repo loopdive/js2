@@ -71,12 +71,21 @@ describe("#4486 A — nested-vec refusal is a typed demote, not an invariant", (
   // `string[][]` row is the one that used to be an invariant; the others are
   // the controls that were already soft, and they must not move.
   const NESTINGS: Array<{ name: string; type: string }> = [
+    // Reached the registry arm and HARD-FAILED before this fix (measured: 6/15
+    // probe shapes). `Uint8Array[]` is the one that is not a nested plain
+    // array — its element is a `vec<f64>` carrier, so the defect was never
+    // specific to `vec<externref>`.
     { name: "string[][]", type: "string[][]" },
     { name: "Array<Array<string>>", type: "Array<Array<string>>" },
     { name: "string[][][]", type: "string[][][]" },
     { name: "any[][]", type: "any[][]" },
+    { name: "unknown[][]", type: "unknown[][]" },
+    { name: "Uint8Array[]", type: "Uint8Array[]" },
+    // Already soft before the fix — they are refused a layer earlier, in
+    // `resolvePositionType`. Pinned so the two paths cannot drift apart again.
     { name: "number[][]", type: "number[][]" },
     { name: "boolean[][]", type: "boolean[][]" },
+    { name: "{ v: number }[][]", type: "{ v: number }[][]" },
   ];
 
   for (const c of NESTINGS) {
