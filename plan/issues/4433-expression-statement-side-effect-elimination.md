@@ -239,6 +239,31 @@ believed instead of measured**. A population filter is exactly such a claim, and
 the word "exhaustive" is what makes it dangerous: it tells the next reader not to
 re-check. The conclusion did not move; the warrant for it did.
 
+**A third check, on the denominator itself — which lane makes these statements
+top-level.** `find-affected.mts` classifies the top-level statements of the
+**raw** `.js` file, but the runner's legacy wrapper lane emits a test body
+**inside `export function test() { try { … } }`**. If that were the lane doing
+the compiling, the raw-file scan would be measuring statements the collector
+never sees, and "83 affected files" would be a scan artifact rather than a
+population. Verified rather than argued, in two steps:
+
+1. Feeding `S11.14_A3.js` through `wrapTest` gives a module whose top-level
+   statement kinds are `{VariableStatement: 4, ClassDeclaration: 1,
+   FunctionDeclaration: 5}` — **zero** top-level ExpressionStatements. So the
+   wrapper lane alone cannot explain the conversion.
+2. Instrumenting the collect path and running that file through the runner
+   prints the collected statement as
+   `[…]/test262/test/language/expressions/comma/S11.14_A3.js "x = 1, y = 2, z = 3;"`
+   — the **raw** test path. The runner's original-harness lane compiles the file
+   as a real module, so its top-level statements genuinely are top-level.
+
+The scan is therefore the right proxy **for the lane that does the compiling**,
+and the conversions run through the collector rather than the `typeof` site —
+confirmed by reverting each half independently: with only the collector fix all
+three conversions hold; with only the `typeof` fix none do. Worth stating
+because the wrapper is the more visible of the two lanes, and reading it alone
+would say this fix cannot affect test262 at all.
+
 **A second, independent narrowing in the same section: the lane.** Every corpus
 run here passed `"standalone"` to `runTest262File`, chosen by habit because the
 issue arrived from a standalone-lane investigation — but neither changed site is
