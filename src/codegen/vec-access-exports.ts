@@ -15,7 +15,7 @@ import { ensureHoleType } from "./array-holes.js";
 import type { CodegenContext } from "./context/types.js";
 import { exportFunc } from "./emit-helpers.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
-import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -152,7 +152,14 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
   }[] = [];
   for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
     const typeIdx = addFuncType(ctx, [...definition.params], [...definition.results], `$${definition.name}_type`);
-    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    // Keep the bridge target layout-independent from the moment it is
+    // allocated. These helpers are reserved while function bodies are still
+    // compiling, and later imports can change the absolute function prefix.
+    // A live `numImportFuncs + functions.length` index can therefore land on
+    // the preceding dispatcher (for example `__set_member_createContext`)
+    // after the final import set is known. Stable handles resolve against the
+    // allocator-owned function object at emit time instead.
+    const funcIdx = mintDefinedFunc(ctx);
     const func = {
       name: definition.name,
       typeIdx,
@@ -160,7 +167,7 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
       body: [...definition.placeholder],
       exported: false,
     } as WasmFunction;
-    ctx.mod.functions.push(func);
+    pushDefinedFunc(ctx, funcIdx, func);
     if (!ctx.funcMap.has(definition.name)) ctx.funcMap.set(definition.name, funcIdx);
     allocations.set(definition.kind, Object.freeze({ definition, func }));
     observations.push({
@@ -220,6 +227,43 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
       }
     }
     allocation.func.exported = true;
+  }
+}
+
+/**
+ * Rebase the public vec bridge exports after dead-layout elimination and the
+ * final import batch. The bridge functions are allocated early with live
+ * indices, while later compatibility imports can move the defined-function
+ * suffix. Most emitters are repaired by the late-import shifter, but exports
+ * published before the last batch have no function-body traversal to repair
+ * them. Resolve by the allocator-owned function object at the freeze point.
+ */
+export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
+  const allocations = vecHostBridgeAllocations.get(ctx);
+  if (!allocations) return;
+  // Dead-import elimination can remove speculative imports without updating
+  // the context's cached `numImportFuncs`. Public export descriptors are raw
+  // Wasm indices at this point, so derive the live prefix from the module.
+  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
+  const occupied = new Map<string, VecHostBridgeDefinition>();
+  for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
+    occupied.set(definition.name, definition);
+    const physicalBase = vecHostBridgePhysicalExportBase(definition.kind);
+    for (const entry of ctx.mod.exports) {
+      if (entry.name.startsWith(physicalBase) && /^\$*$/.test(entry.name.slice(physicalBase.length))) {
+        occupied.set(entry.name, definition);
+      }
+    }
+  }
+  for (const entry of ctx.mod.exports) {
+    if (entry.desc.kind !== "func") continue;
+    const definition = occupied.get(entry.name);
+    if (!definition) continue;
+    const allocation = allocations.get(definition.kind);
+    if (!allocation) continue;
+    const position = ctx.mod.functions.indexOf(allocation.func);
+    if (position < 0) continue;
+    entry.desc.index = numImportFuncs + position;
   }
 }
 

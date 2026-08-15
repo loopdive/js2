@@ -1949,6 +1949,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         (spreadCtxType.flags & ts.TypeFlags.NonPrimitive) !== 0 ||
         spreadCtxType.getProperties().length === 0
       ) {
+        if (ts.isIdentifier(decl.name)) ctx.hostSpreadObjectGlobals.add(decl.name.text);
         return true;
       }
     }
@@ -2919,6 +2920,11 @@ export function compileDeclarations(
               if (synth !== undefined) ctx.deferredClassBodies.add(synth);
             } else {
               try {
+                // Variable-bound class expressions are registered under both
+                // the visible binding and a canonical synthetic identity. The
+                // binding pass still needs its own ABI bodies (notably static
+                // methods/getters on `C`); the recursive anonymous-class scan
+                // fills the synthetic identity separately.
                 compileClassBodies(ctx, decl.initializer, funcByName, decl.name.text, classBodyRouting);
               } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
