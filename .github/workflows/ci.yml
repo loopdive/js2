@@ -659,6 +659,77 @@ jobs:
             echo "Requested cancellation of ${REQUESTED} Test262 sibling run(s)."
           fi
 
+  # #4448 — Run the `tests/issue-*.test.ts` files a PR actually touches, plus a
+  # tiny pinned set. NO required check executes that suite (equivalence-gate =
+  # tests/equivalence/, quality = lint/ratchets/named files, test262 jobs =
+  # conformance, linear-tests = the linear subset), so a file can be BORN red
+  # (#4430's was) or go red later (`6203320a` silently reddened 3 tests for two
+  # days) with every gate green.
+  #
+  # Deliberately NOT a required check, NOT the whole suite, and split in two:
+  #
+  #   * PINNED files are verified green on main, so a failure is a genuine
+  #     regression -> that step is FATAL.
+  #   * CHANGED files have unknown health on main (the suite is NOT clean today:
+  #     a #4448 sample found 8 pre-existing failures across
+  #     issue-3522-ir-class-compile-once, issue-3529-dataflow-outcomes and
+  #     issue-3529-integration-preflight) -> that step is ADVISORY
+  #     (continue-on-error). A red NON-required check makes the PR UNSTABLE,
+  #     which `auto-enqueue` skips outright (#3878/#3904); stranding a PR behind
+  #     a test that was already red would be worse than the gap this closes.
+  #
+  # Grow the pinned list as files are verified green; promote the whole job to
+  # required once the suite is clean.
+  # Measured 2026-08-15 on the 4-core dev box: ~45 s of vitest for the pinned
+  # file, so a typical PR (pinned + 1-2 touched files) stays far under the cap.
+  issue-tests:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run pinned issue tests (fatal)
+        run: |
+          set -uo pipefail
+          node scripts/select-changed-issue-tests.mjs --pinned > /tmp/issue-tests-pinned.txt || {
+            echo "::error::could not select pinned issue tests"
+            exit 1
+          }
+          if [ ! -s /tmp/issue-tests-pinned.txt ]; then
+            echo "No pinned issue test files."
+            exit 0
+          fi
+          cat /tmp/issue-tests-pinned.txt
+          mapfile -t FILES < /tmp/issue-tests-pinned.txt
+          # Single-fork keeps peak RAM ~1 GB, matching the equivalence shards.
+          pnpm exec vitest run "${FILES[@]}" \
+            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+      - name: Run issue tests this PR touched (advisory)
+        continue-on-error: true
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -uo pipefail
+          node scripts/select-changed-issue-tests.mjs --changed > /tmp/issue-tests-changed.txt || {
+            echo "::warning::could not select changed issue tests"
+            exit 0
+          }
+          if [ ! -s /tmp/issue-tests-changed.txt ]; then
+            echo "This PR touches no tests/issue-*.test.ts file."
+            exit 0
+          fi
+          cat /tmp/issue-tests-changed.txt
+          mapfile -t FILES < /tmp/issue-tests-changed.txt
+          pnpm exec vitest run "${FILES[@]}" \
+            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+
   # #2139 — Execute the linear-backend (linear-memory lowering), C-ABI, and
   # SIMD test suites in CI. These 20 files (tests/linear-*.test.ts,
   # tests/c-abi.test.ts, tests/simd*.test.ts) sat at tests/ root with NO CI
