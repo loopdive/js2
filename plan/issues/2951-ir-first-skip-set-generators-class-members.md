@@ -565,5 +565,5 @@ confirms the other half:
 - `check:ir-only` single-host lane stays READY (async.ts entry contains
   generator-adjacent shapes — do not regress it).
 - `check:ir-fallbacks` no unintended/post-claim growth; `tsc --noEmit`
-  clean; scoped test262 generator sample (built-ins/GeneratorPrototype +
+  clean; scoped generator test262 sample (built-ins/GeneratorPrototype +
   language/generators strides) net-zero vs main.
