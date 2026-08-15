@@ -3041,9 +3041,12 @@ export function expressionStatementMutatesAtTopLevel(expr: ts.Expression): boole
   let candidate = expr;
   while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
   if (ts.isBinaryExpression(candidate)) {
-    // `ts.isAssignmentOperator` covers `=` and every compound form
-    // (`+=`, `**=`, `&&=`, `??=`, …) in one predicate.
-    return ts.isAssignmentOperator(candidate.operatorToken.kind);
+    // `=` plus every compound form (`+=`, `**=`, `>>>=`, `&&=`, `??=`, …).
+    // The contiguous `FirstAssignment..LastAssignment` SyntaxKind range is
+    // the enum's own definition of that set — `ts.isAssignmentOperator` is
+    // TypeScript-internal and not on the public `typescript.d.ts` surface.
+    const kind = candidate.operatorToken.kind;
+    return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
   }
   if (ts.isPrefixUnaryExpression(candidate) || ts.isPostfixUnaryExpression(candidate)) {
     return candidate.operator === ts.SyntaxKind.PlusPlusToken || candidate.operator === ts.SyntaxKind.MinusMinusToken;
