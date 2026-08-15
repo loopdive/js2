@@ -23,6 +23,7 @@ import { coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
+import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -1860,6 +1861,24 @@ function compileDateMethodCall(
     "toGMTString",
   ]);
   if (!DATE_METHODS.has(methodName)) return undefined;
+
+  // (#4482) §21.4.4 "is not generic": once the program installs its OWN
+  // `<methodName>` on this exact binding — `Object.defineProperty(d,
+  // "valueOf", {value: Number.prototype.valueOf})` or `d.valueOf = …` — the
+  // own slot shadows `Date.prototype`, so answering from the `$Date` struct
+  // reads the timestamp where the transferred intrinsic must run (and throw a
+  // real `TypeError`). Declining routes the call to the stored-member closure
+  // arm, whose brand preamble already throws for the expando-named half of
+  // these rows (`s.myValueOf = Number.prototype.valueOf` — measured passing
+  // before this change).
+  //
+  // Receiver-PRECISE on purpose (`sourceOverridesMethodOnReceiver`, not the
+  // whole-file `sourceHasMethodOverride`): the whole-file scan is safe for
+  // arms that only ADD a dynamic exit, but gating a static arm OFF on an
+  // unrelated `x.valueOf = …` elsewhere in the file would lose the native
+  // answer for a Date that never had an own slot. A module that does not
+  // override on this binding compiles byte-identically.
+  if (sourceOverridesMethodOnReceiver(propAccess.expression, methodName)) return undefined;
 
   const dateTypeIdx = ensureDateStruct(ctx);
   const dateRefType: ValType = { kind: "ref", typeIdx: dateTypeIdx };
