@@ -1,12 +1,12 @@
 [
   {
     "edition": "ES5",
-    "pass": 8358,
-    "fail": 627,
+    "pass": 8348,
+    "fail": 637,
     "ce": 44,
     "skip": 0,
     "total": 9029,
-    "pct": 93,
+    "pct": 92,
     "features": [
       {
         "name": "caller",
