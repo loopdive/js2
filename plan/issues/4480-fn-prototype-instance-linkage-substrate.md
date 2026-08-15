@@ -1,7 +1,8 @@
 ---
 id: 4480
 title: "standalone substrate: every function owns a real `.prototype` object linked to its instances — the recurring blocker behind F3/#4455-R3/R4/Array-A1 (~25+ rows)"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -95,7 +96,14 @@ it is the highest-leverage single substrate gap in the ES5 bucket
 
 ---
 
-## Status — NOT `done`, and deliberately so
+## Status — closed at +3 per lead decision (option a, 2026-08-15 23:20)
+
+Lead decision: accept and re-scope. S1+S2 are correct, verified (+3/−0 over
+1,332 files), inert on the 509-file control, and documented. The misattributed
+S13.2 rows belong to value-representation / [[Construct]]-return families. The
+representation slice that retires R1/R3/R4 together is filed as **#4506**.
+
+## Original status note (agent, pre-decision)
 
 S1 and S2 are landed and verified (two commits, 1,332 files swept, +3 / −0).
 S3 (`F.prototype = obj` re-points the slot per construction site) was **not
