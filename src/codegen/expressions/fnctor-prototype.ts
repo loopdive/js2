@@ -42,6 +42,47 @@ import { nextModuleGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { emitCachedFuncClosureExternref } from "../closures/method-trampolines.js";
+import { ensureObjectRuntime } from "../object-runtime.js";
+import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { addStringConstantGlobal } from "../registry/imports.js";
+
+/**
+ * (#4480 S1) Is `sym` an ORDINARY function — a plain, non-generator, non-async
+ * declaration or function expression?
+ *
+ * `resolveFnctorSymbol` deliberately accepts any body-bearing function, which is
+ * right for the RECONSTRUCT population (you cannot `new` a generator, so those
+ * names never reach the approved set anyway). The widened never-constructed arm
+ * below has no such implicit filter, so it needs an explicit one — for two
+ * independent reasons:
+ *
+ *  - `genFn.prototype` is NOT an auto-minted empty object; it is
+ *    `%GeneratorPrototype%`, and `property-access-dispatch.ts` already answers
+ *    it from `emitGeneratorPrototypeSingleton` / the async host import. This
+ *    module's arm sits EARLIER in the dispatch, so admitting a generator here
+ *    would shadow the right answer with a wrong one.
+ *  - the `constructor` back-ref materializes the closure singleton with
+ *    `constructible: true`; that flavor is meaningless for a generator/async
+ *    function and is the exact flag whose mismatch `arguments-callee.ts`
+ *    records as a runtime `illegal cast`.
+ */
+function isOrdinaryFunctionSymbol(ctx: CodegenContext, sym: ts.Symbol): boolean {
+  const decl = sym.valueDeclaration ?? sym.getDeclarations()?.[0];
+  if (decl === undefined) return false;
+  let fn: ts.Node = decl;
+  if (ts.isVariableDeclaration(decl)) {
+    let init = decl.initializer;
+    while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+    if (init === undefined || !ts.isFunctionExpression(init)) return false;
+    fn = init;
+  }
+  if (!ts.isFunctionDeclaration(fn) && !ts.isFunctionExpression(fn)) return false;
+  if (fn.asteriskToken !== undefined) return false;
+  if (fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true) return false;
+  // A `function*` whose declaration the generator lowering already claimed.
+  return !ctx.generatorFunctions.has(sym.name);
+}
 
 /**
  * Resolve a property-access/assignment receiver to a user-fnctor key (the
@@ -97,7 +138,34 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
     visit(expr.getSourceFile());
     return found;
   })();
-  if (!ctx.fnctorEscapeGate?.approvedNames.has(sym.name) && !hasRuntimeDescriptorInstall) return undefined;
+  // (#4480 S1) …WIDENED to the §13.2-steps-16-18 population: every user
+  // function owns a `.prototype` object, so a fnctor with NO `new F()` site
+  // anywhere in the module also gets one. That third arm is safe for exactly
+  // the reason the gate exists: the hazard the gate names is a SPLIT BRAIN
+  // between the object `F.prototype` reads and the object `new F()` links its
+  // instances to, and a constructor with no construction site has no instance
+  // to disagree with. It is also the arm that pays: `S13.2_A1`/`S13.2_A4` and
+  // the `.prototype`-only half of the isPrototypeOf family never construct.
+  //
+  // A fnctor that IS `new`'d but was NOT approved (`keep-typed` /
+  // `keep-static`) keeps declining — that is precisely the population where
+  // the instance link lives somewhere this global is not, and answering with
+  // the auto-object would be a WRONG answer, not a missing one. `Test262Error`
+  // is that case (`keep-typed`, `new Test262Error(...)` everywhere), so the
+  // harness regression the gate comment records stays structurally excluded
+  // rather than excluded by luck.
+  //
+  // The widened arm requires the gate to EXIST. A missing gate is "I don't
+  // know whether this fnctor is constructed", not "it isn't" (#4235 records
+  // that `generateMultiModule` shipped a null gate for a long time and that
+  // the null was indistinguishable from "no fnctors"), so it keeps today's
+  // decline.
+  const gate = ctx.fnctorEscapeGate;
+  const neverConstructed =
+    gate !== undefined && !gate.ctorDeclByName.has(sym.name) && isOrdinaryFunctionSymbol(ctx, sym);
+  if (!gate?.approvedNames.has(sym.name) && !hasRuntimeDescriptorInstall && !neverConstructed) {
+    return undefined;
+  }
   // Key by the stable symbol name so the WRITE site (`F.prototype = …`) and the
   // READ site (`Object.create(F.prototype)`) resolve to the SAME global.
   return sym.name;
@@ -155,6 +223,105 @@ function getOrMintFnctorProtoGlobal(ctx: CodegenContext, fnctorName: string): nu
 }
 
 /**
+ * (#4480 S1) §13.2 step 10 attributes for the `constructor` back-ref —
+ * `{writable: true, enumerable: false, configurable: true}` in the HOST flag
+ * encoding `__defineProperty_value` decodes (bits 0/1/2 are the
+ * writable/enumerable/configurable VALUES; bit 1 left clear ⇒ non-enumerable).
+ * The same constant `class-proto-object.ts` uses for §15.7.14, which the two
+ * specs deliberately share — and the non-enumerability is directly asserted:
+ * `S13.2_A4_T1` CHECK#3 `for (p in __func.prototype)` must not see it.
+ */
+const CONSTRUCTOR_FLAGS = 0x01 | 0x04;
+
+/**
+ * (#4480 S1) The instructions that install `F.prototype.constructor = F` onto
+ * the just-minted prototype `$Object` held in the prototype global `g`, or
+ * `undefined` when this module cannot resolve a STABLE function value for `F`.
+ *
+ * ## Why the value must be the cached singleton, and why we decline otherwise
+ * The observable §13.2_A4 assertion is an IDENTITY one
+ * (`__func.prototype.constructor === __func`), so the value installed here has
+ * to be the very object an ordinary `F` identifier read yields. That is
+ * `emitCachedFuncClosureExternref`'s `__fn_closure_<name>` singleton — the same
+ * global `expressions/identifiers.ts` reads and the same one
+ * `closure-prototype-edge.ts` keys its identity match on. A per-site
+ * `emitFuncRefAsClosure` closure would make the identity FALSE, i.e. a wrong
+ * answer where today there is merely a missing property, so every shape whose
+ * identifier read does NOT go through the singleton declines instead:
+ *
+ *  - a CAPTURING function (`ctx.nestedFuncCaptures`) — the module-init-time
+ *    singleton cannot carry per-activation captures, so the identifier read
+ *    takes the per-site path (the guard `arguments-callee.ts` documents);
+ *  - a class name (`ctx.classSet`) — class objects have their own carrier and
+ *    `class-proto-object.ts` already installs their `constructor`;
+ *  - an IMPORT (`funcIdx < numImportFuncs`) — no body to wrap.
+ *
+ * ## `externref`, not the struct view
+ * `emitCachedFuncClosureExternref` skips the `ref.cast` back to the closure
+ * struct. That is load-bearing, not an optimization: `ensureFuncClosureSingleton`
+ * memoizes the cache global by NAME but recomputes the struct type from the
+ * `constructible` flag, and casting a stored BASE wrapper to the CONSTRUCTIBLE
+ * type traps at runtime. The descriptor only ever needs the value.
+ */
+function fnctorConstructorInstallInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  fnctorName: string,
+  protoGlobalIdx: number,
+): Instr[] | undefined {
+  if (ctx.classSet.has(fnctorName)) return undefined;
+  const captures = ctx.nestedFuncCaptures.get(fnctorName);
+  if (captures && captures.length > 0) return undefined;
+  // A top-level function DECLARATION is the one shape whose ordinary identifier
+  // read is PROVABLY the `__fn_closure_<name>` singleton this helper installs;
+  // `var F = function(){}` reads a module global holding a separately-built
+  // closure. The whole value of the back-ref is an IDENTITY
+  // (`F.prototype.constructor === F`), so publishing a different-but-plausible
+  // function object would be a wrong answer where today there is a missing
+  // property — the one trade this campaign's methodology forbids.
+  //
+  // Honest scope note: on this branch the `var F = function(){}` shape declines
+  // one step EARLIER anyway (`emitCachedFuncClosureExternref` finds no
+  // singleton for it — measured: probe `d3` reports `hasOwn("constructor") ===
+  // false` with this check both enabled and disabled). So this check is a belt,
+  // not the brace; it is kept because the invariant it states is the one a
+  // future widening of the singleton path would silently break.
+  const ownerDecl: ts.Node | undefined =
+    ctx.funcMapOwnerDecl.get(fnctorName) ?? ctx.topLevelFunctionDeclarations.get(fnctorName);
+  if (ownerDecl === undefined || !ts.isFunctionDeclaration(ownerDecl)) return undefined;
+  const funcIdx = ctx.funcMap.get(fnctorName);
+  if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) return undefined;
+  ensureObjectRuntime(ctx);
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return undefined;
+
+  // Build into a DETACHED body: `emitCachedFuncClosureExternref` mints a
+  // trampoline and can add late imports, whose funcidx shift must reach this
+  // sequence. `liveBodies` is what makes the shifters walk a detached array
+  // (the `class-proto-object.ts` / `arguments-callee.ts` pattern).
+  const savedBody = fctx.body;
+  const scratch: Instr[] = [];
+  fctx.body = scratch;
+  ctx.liveBodies.add(savedBody);
+  let ok: boolean;
+  try {
+    fctx.body.push({ op: "global.get", index: protoGlobalIdx });
+    addStringConstantGlobal(ctx, "constructor");
+    for (const instr of stringConstantExternrefInstrs(ctx, "constructor")) fctx.body.push(instr);
+    ok = emitCachedFuncClosureExternref(ctx, fctx, fnctorName, funcIdx, /* constructible */ true);
+    if (ok) {
+      fctx.body.push({ op: "f64.const", value: CONSTRUCTOR_FLAGS });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" }); // the helper returns its target
+    }
+  } finally {
+    fctx.body = savedBody;
+    ctx.liveBodies.delete(savedBody);
+  }
+  return ok ? scratch : undefined;
+}
+
+/**
  * Emit the lazy-initialized prototype `$Object` get: `if (g == null) g =
  * __new_plain_object(); return g`. Leaves an externref (`$Object`) on the stack.
  * Returns false (emitting nothing) when `__new_plain_object` is unavailable, so
@@ -166,21 +333,31 @@ function getOrMintFnctorProtoGlobal(ctx: CodegenContext, fnctorName: string): nu
  * (`$Object.$proto`) and ONE object identity (`Object.getPrototypeOf(new F()) ===
  * F.prototype`). The lazy-init guarantees the proto is always a real `$Object`
  * even when `F.prototype` was never explicitly assigned.
+ *
+ * (#4480 S1) The vivify also installs the §13.2 step 10 `constructor` back-ref.
+ * It is done HERE — inside the one shared lazy-init — rather than at the
+ * `F.prototype` read site, because this function is the SINGLE mint point every
+ * consumer funnels through (`new F()` receiver seeding in `new-super.ts`, the
+ * `instanceof` chain walk in `native-user-instanceof.ts`, the static read
+ * below). Installing at any one call site would leave the object without a
+ * `constructor` whenever a different site happened to run first.
+ *
+ * The `global.set` happens BEFORE the install, so the guard is already closed
+ * while the install runs — a re-entrant read of `F.prototype` from anything the
+ * install touches sees the object, not a second mint.
  */
 export function emitFnctorProtoGet(ctx: CodegenContext, fctx: FunctionContext, fnctorName: string): boolean {
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (newObjIdx === undefined) return false;
   const g = getOrMintFnctorProtoGlobal(ctx, fnctorName);
+  const ctorInstall = fnctorConstructorInstallInstrs(ctx, fctx, fnctorName, g) ?? [];
   fctx.body.push({ op: "global.get", index: g });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [
-      { op: "call", funcIdx: newObjIdx },
-      { op: "global.set", index: g },
-    ],
+    then: [{ op: "call", funcIdx: newObjIdx }, { op: "global.set", index: g }, ...ctorInstall],
     else: [],
   });
   fctx.body.push({ op: "global.get", index: g });

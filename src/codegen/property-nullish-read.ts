@@ -4,6 +4,7 @@ import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { ensureExternIsUndefinedImport, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -30,6 +31,32 @@ export function compilePropertyAccessForNullishObservation(
   if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
   const externref: ValType = { kind: "externref" };
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+
+  // (#4480 S1) `F.prototype === undefined` must see the auto-minted prototype
+  // object. This route deliberately bypasses `property-access-dispatch.ts` and
+  // reads the boxed value through `__get_member_<p>` / `__extern_get`, which for
+  // a FUNCTION receiver means the closure's own-property bag — empty for a
+  // `.prototype` nobody assigned. So the ONE arm that materializes §13.2's
+  // automatic object never ran on this path, and `S13.2_A1_T1`'s
+  // `if (__func.prototype === undefined)` kept reading `undefined` while a
+  // `typeof __func.prototype` two lines away already answered `"object"`. That
+  // split is measurable on this branch's own S1: it is the difference between
+  // probe `e4` (only a `=== undefined` read ⇒ no `__fnctor_proto_*` global in
+  // the module at all) and probe `e5` (a second, ordinary read ⇒ correct).
+  //
+  // Consulting the interception FIRST rather than adding an arm downstream is
+  // what makes the two routes share one object: the interception is the mint
+  // site, so whichever read runs first vivifies the same global.
+  //
+  // Skipping this route's receiver null-check is sound here and only here: the
+  // arm answers only for a receiver `resolveFnctorSymbol` resolved to a user
+  // function DECLARATION/expression, which is never null or undefined, so the
+  // `TypeError` this path would otherwise guard is unreachable.
+  {
+    const fnctorProto = tryEmitFnctorPrototypeRead(ctx, fctx, expr, propName);
+    if (fnctorProto !== undefined) return fnctorProto;
+  }
+
   const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
   const getIdx =
     getMemberIdx === undefined ? ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]) : undefined;
