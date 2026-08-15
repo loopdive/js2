@@ -263,6 +263,7 @@ import { batchStringConcat } from "./passes/batch-string-concat.js";
 import { inlineSmall } from "./passes/inline-small.js";
 import { monomorphize } from "./passes/monomorphize.js";
 import { simplifyCFG } from "./passes/simplify-cfg.js";
+import { gvnFromEnv } from "./passes/gvn.js"; // #4424
 import { UnionStructRegistry } from "./passes/tagged-union-types.js";
 import { runTaggedUnions } from "./passes/tagged-unions.js";
 import {
@@ -3662,7 +3663,9 @@ function runHygienePasses(fn: IrFunction, registry?: AllocSiteRegistry): IrFunct
   let cur = fn;
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     const afterCF = constantFold(cur, registry);
-    const afterDCE = deadCode(afterCF, registry);
+    // #4424 — flag-gated structure-tree GVN (default OFF, gate lives in gvn.ts).
+    const afterGVN = gvnFromEnv(afterCF);
+    const afterDCE = deadCode(afterGVN, registry);
     const afterCFG = simplifyCFG(afterDCE);
     if (afterCFG === cur) return cur;
     cur = afterCFG;
