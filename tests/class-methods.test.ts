@@ -8,7 +8,16 @@ async function run(source: string, fn: string = "test", args: unknown[] = []): P
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, { env: {} });
+  // (#4507) Instantiate through the compiler's own import object (#1667).
+  // A bare `{ env: {} }` omits the `string_constants` namespace, so every test
+  // in this file died at INSTANTIATION with
+  //   Import #0 module="string_constants": module is not an object or function
+  // before any assertion ran.
+  const imports = result.importObject ?? { env: {} };
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  (imports as WebAssembly.Imports & { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(
+    instance,
+  );
   return (instance.exports as any)[fn](...args);
 }
 
