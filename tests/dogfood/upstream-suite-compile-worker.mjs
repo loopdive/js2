@@ -135,7 +135,7 @@ async function main() {
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
     let statuses;
     let errors;
-    if (typeof exports.upstreamTestNames === "function") {
+    if (process.env.DOGFOOD_NAMED_TEST_EXPORTS === "1" && typeof exports.upstreamTestNames === "function") {
       const names = Array.from(await exports.upstreamTestNames(), String);
       statuses = [];
       errors = [];

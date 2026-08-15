@@ -399,7 +399,7 @@ async function runProjectHarness({ report, log, implementation, reactSource, sha
     entryFile: "entry.ts",
     files,
     timeoutMs,
-    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1" },
+    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1", DOGFOOD_NAMED_TEST_EXPORTS: "1" },
   });
   const compile = isolated?.compile ?? {
     success: false,
