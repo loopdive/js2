@@ -136,6 +136,66 @@ function guardedRefCastInstrs(
 export type CompileStringLiteralFn = (ctx: CodegenContext, fctx: FunctionContext, value: string) => void;
 
 /**
+ * (#4429) Run an inline OrdinaryToPrimitive dispatch with `__current_this`
+ * bound to the RECEIVER (§7.1.1.1 step 4.b `Call(method, O)`), then restore the
+ * previous binding.
+ *
+ * Object-literal methods are stored as `__obj_meth_tramp_*` trampolines that
+ * read `this` from the `__current_this` module GLOBAL — param-0 is the closure
+ * self/env, not the receiver. The NUMBER-hint valueOf dispatch has installed it
+ * since #2679; the STRING-hint dispatches did not (their comment claimed they
+ * "static-dispatch the raw method with the receiver as param-0", which stopped
+ * being true once object-literal methods moved to trampolines). So `'' + a` /
+ * `String(a)` called `toString` with a stale receiver in JS-host mode, and in
+ * standalone mode `__current_this` was outright NULL, making the trampoline's
+ * `ref.cast` trap ("dereferencing a null pointer") for any `this`-reading
+ * `toString`.
+ *
+ * `emitDispatch` must leave exactly one value of `resultType` on the stack.
+ *
+ * INDEX DISCIPLINE (#2679 / `project_type_index_shift_and_deadelim`):
+ * `ctx.currentThisGlobalIdx` is read FRESH at every global op and never cached
+ * across `emitDispatch()`. Compiling the dispatch can flush a late string-
+ * constant IMPORT, which inserts an imported global and shifts the defined-
+ * global index space; the shift pass bumps both `ctx.currentThisGlobalIdx` and
+ * the already-emitted save/install ops in `fctx.body` in lockstep, but a
+ * captured local would go stale and make the RESTORE `global.set` target a
+ * different (differently typed) global — invalid Wasm, which is what park-held
+ * #2078 with a 30-test regression.
+ *
+ * A negative `ctx.currentThisGlobalIdx` (global never registered) degrades to
+ * the plain dispatch — no worse than the pre-#4429 behaviour.
+ */
+function emitWithCurrentThis(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverLocal: number,
+  resultType: ValType,
+  emitDispatch: () => void,
+): void {
+  if (ctx.currentThisGlobalIdx < 0) {
+    emitDispatch();
+    return;
+  }
+  const prevThisLocal = allocTempLocal(fctx, { kind: "externref" });
+  const resultLocal = allocTempLocal(fctx, resultType);
+  // save __current_this, install the receiver (struct ref → externref)
+  fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
+  fctx.body.push({ op: "local.set", index: prevThisLocal });
+  fctx.body.push({ op: "local.get", index: receiverLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "global.set", index: ctx.currentThisGlobalIdx });
+  emitDispatch();
+  // capture the result, restore __current_this (FRESH index), re-push
+  fctx.body.push({ op: "local.set", index: resultLocal });
+  fctx.body.push({ op: "local.get", index: prevThisLocal });
+  fctx.body.push({ op: "global.set", index: ctx.currentThisGlobalIdx });
+  fctx.body.push({ op: "local.get", index: resultLocal });
+  releaseTempLocal(fctx, prevThisLocal);
+  releaseTempLocal(fctx, resultLocal);
+}
+
+/**
  * (#2358) Does a nominal OBJECT-LITERAL struct carry a USER ToPrimitive method —
  * `valueOf` / `@@toPrimitive` / `toString` — as a struct FIELD (stored as an
  * eqref/ref closure)? Used to gate the ref-struct→externref materialization:
@@ -217,15 +277,18 @@ function tryStructPrimitiveToStringAsExternref(
     const structLocal = allocLocal(fctx, `__primitive_ts_struct_${fctx.locals.length}`, from);
     const closureLocal = allocLocal(fctx, `__primitive_ts_closure_${fctx.locals.length}`, field.type);
     fctx.body.push({ op: "local.set", index: structLocal });
-    fctx.body.push({ op: "local.get", index: structLocal });
-    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
-    fctx.body.push({ op: "local.tee", index: closureLocal });
-    fctx.body.push({ op: "local.get", index: closureLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 });
-    emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
-    fctx.body.push({ op: "ref.as_non_null" });
-    fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
-    if (isVoid(closureInfo)) pushStringHint(ctx, fctx, "undefined");
+    // (#4429) bind `this` = receiver across the trampoline call.
+    emitWithCurrentThis(ctx, fctx, structLocal, { kind: "externref" }, () => {
+      fctx.body.push({ op: "local.get", index: structLocal });
+      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
+      fctx.body.push({ op: "local.tee", index: closureLocal });
+      fctx.body.push({ op: "local.get", index: closureLocal });
+      fctx.body.push({ op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 });
+      emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
+      fctx.body.push({ op: "ref.as_non_null" });
+      fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+      if (isVoid(closureInfo)) pushStringHint(ctx, fctx, "undefined");
+    });
     return true;
   }
 
@@ -261,29 +324,38 @@ function tryStructPrimitiveToStringAsExternref(
         then: [
           { op: "local.get", index: eqLocal },
           { op: "ref.cast", typeIdx: closureTypeIdx },
-          { op: "local.tee", index: closureLocal },
+          { op: "local.set", index: closureLocal },
           { op: "local.get", index: closureLocal },
           { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
-          { op: "local.tee", index: funcLocal },
+          { op: "local.set", index: funcLocal },
+          { op: "local.get", index: funcLocal },
           { op: "ref.test", typeIdx: info.funcTypeIdx },
           {
             op: "if",
-            blockType: { kind: "val", type: { kind: "ref_null", typeIdx: info.funcTypeIdx } },
+            blockType: { kind: "val", type: { kind: "externref" } },
             then: [
+              { op: "local.get", index: closureLocal },
               { op: "local.get", index: funcLocal },
-              { op: "ref.cast_null", typeIdx: info.funcTypeIdx },
+              { op: "ref.cast", typeIdx: info.funcTypeIdx },
+              { op: "call_ref", typeIdx: info.funcTypeIdx },
+              ...(isVoid(info) ? undefinedString.map((instr) => ({ ...instr })) : []),
             ],
-            else: [{ op: "ref.null", typeIdx: info.funcTypeIdx }],
+            // (#4429) Zero-capture closure wrappers share one CANONICAL struct
+            // type, so a passing `ref.test closureTypeIdx` does NOT prove the
+            // stored funcref has THIS candidate's signature. Mirror the sibling
+            // chains (#4426 / the host-lane one below): a signature miss means
+            // "try the next candidate", not "manufacture null and trap".
+            else: buildDispatch(candidateIdx + 1),
           },
-          { op: "ref.as_non_null" },
-          { op: "call_ref", typeIdx: info.funcTypeIdx },
-          ...(isVoid(info) ? undefinedString.map((instr) => ({ ...instr })) : []),
         ],
         else: buildDispatch(candidateIdx + 1),
       },
     ];
   };
-  fctx.body.push(...buildDispatch(0));
+  // (#4429) bind `this` = receiver across the candidate chain.
+  emitWithCurrentThis(ctx, fctx, structLocal, { kind: "externref" }, () => {
+    fctx.body.push(...buildDispatch(0));
+  });
   return true;
 }
 
@@ -549,22 +621,29 @@ function tryStructStringHintExternrefDispatch(
   ];
 
   fctx.body.push({ op: "local.set", index: structLocal });
-  fctx.body.push(...primaryDispatch, { op: "local.set", index: primaryResult }, ...isObjectLike(primaryResult));
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: [
-      ...secondaryDispatch,
-      { op: "local.set", index: secondaryResult },
-      ...isObjectLike(secondaryResult),
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: throwTypeError,
-        else: stringify(secondaryResult),
-      },
-    ],
-    else: stringify(primaryResult),
+  // (#4429) `primaryDispatch` / `secondaryDispatch` `call_ref` the method's
+  // `__obj_meth_tramp_*` trampoline, which reads `this` from `__current_this`.
+  // Bind the receiver across BOTH attempts (§7.1.1.1 step 4.b). The stringify /
+  // TypeError arms sit inside the wrap only because they are part of the same
+  // stack-balanced expression; neither re-enters user code.
+  emitWithCurrentThis(ctx, fctx, structLocal, { kind: "externref" }, () => {
+    fctx.body.push(...primaryDispatch, { op: "local.set", index: primaryResult }, ...isObjectLike(primaryResult));
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        ...secondaryDispatch,
+        { op: "local.set", index: secondaryResult },
+        ...isObjectLike(secondaryResult),
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: throwTypeError,
+          else: stringify(secondaryResult),
+        },
+      ],
+      else: stringify(primaryResult),
+    });
   });
   return true;
 }
