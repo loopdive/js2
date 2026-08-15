@@ -141,7 +141,40 @@ this issue only restores it from uncatchable to catchable, which is what the
 ratchet measures.
 
 Pinned by `tests/issue-4469.test.ts` (both front-ends, module instantiated and
-run, direct and `.call(o)` invocations).
+run, direct and `.call(o)` invocations) — 4/4 green.
+
+Suite results, all run in this worktree on 2026-08-15:
+
+| Suite | With fix |
+| --- | --- |
+| `tests/issue-4469.test.ts` | 4/4 ✓ |
+| `tests/multi-file.test.ts` (the pin #4507 added) | 11/11 ✓ |
+| `tests/private-class-members.test.ts` | 5/5 ✓ |
+| `tests/class-static-private-this.test.ts` | 3/3 ✓ |
+| `tests/issue-4301-class-expression-private-receiver.test.ts` | 5/5 ✓ |
+
+Six further class/method files fail — **all of them fail identically on
+unmodified `main`**, so none is caused by this change. Measured by swapping
+`.tmp/mt-new.ts` (main's `method-trampolines.ts`) back in and re-running the
+same six files:
+
+| Suite | main | with fix |
+| --- | --- | --- |
+| `class-methods.test.ts` | 17 failed | 17 failed |
+| `class-method-calls.test.ts` | 3 failed | 3 failed |
+| `issue-1672-async-gen-method-trampoline.test.ts` | 5 failed | 5 failed |
+| `issue-4154-private-brand-check-typeerror.test.ts` | 2 failed | 2 failed |
+| `issue-3520-class-method-alias-abi.test.ts` | 1 failed | 1 failed |
+| `issue-4295-runtime-user-class-method-dispatch.test.ts` | 1 failed | 1 failed |
+| **total** | **29 failed** | **29 failed** |
+
+Two distinct pre-existing causes, neither related to the trampoline receiver:
+`class-methods` / `class-method-calls` instantiate with a bare
+`WebAssembly.instantiate(binary, { env: {} })` and fail on the missing
+`string_constants` module; the `... is not a function` failures in `4295`/`4154`
+point at #4507's static-vs-instance ABI-key split. **Zero** Wasm *validation*
+errors appear in either run, which is the specific risk of narrowing an ABI
+coercion.
 
 ## Non-goals
 
