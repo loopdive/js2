@@ -1,7 +1,8 @@
 ---
 id: 4425
 title: "runNodeChecks kind-indexed dispatch — mechanical restructure of the 95-block early-error guard chain"
-status: suspended
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -77,7 +78,35 @@ hand-written 95-entry catalog. Both derivations agreed on all 95 blocks.
 Hand-transcription was attempted first and immediately produced a corrupted
 `/[  ]/` regex — do not hand-edit this transformation.
 
-## Suspended Work
+## Resumed & validated (2026-08-15, remote session)
+
+Work resumed on branch `claude/compiler-speedup-xqgm1z` (PR #4522's head merged
+in; the old worktree's gitignored harnesses were lost and regenerated from the
+descriptions below). Every checklist item ran green:
+
+1. **Typecheck**: `pnpm run typecheck` (TS7, the CI `quality` lane) — clean.
+2. **Prettier**: already clean (lint-staged formatted on merge).
+3. **Differential**: regenerated `ee-diff.mts`; corpus test262
+   `language`+`annexB` + `src/**/*.ts` = 25,861 files (main drifted from the
+   25,863 recorded pre-suspend). Base (origin/main node-checks.ts) vs
+   refactored, file-copy A/B: **23,983 diagnostics each, 0 exceptions,
+   byte-identical JSONL** (`cmp` clean).
+4. **Guard-evaluation counter** (measured, load-independent): 5,328,845 nodes
+   visited; before = 95 guards/node = **506,240,275** evaluations; after =
+   **15,521,510** check invocations (56 registered kinds, avg 2.91
+   checks/node) — **32.6× fewer**.
+5. **Early-error suites**: issue-4417 / issue-1931 / issue-2929 / issue-3632 —
+   65/67 pass; the 2 failures (issue-3632 standalone `js2wasm:runtime-eval`
+   wasm import) reproduce identically on the pre-refactor baseline —
+   pre-existing, environmental, unrelated.
+6. **Detect CPU A/B on a quiet 4-core box** (1-in-3 sample, 8,621 files,
+   parse-once/time-detect-only, 3 iters × 2 interleaved rounds):
+   base ~11.8–12.0 s CPU steady-state, refactored ~4.7–5.2 s —
+   **~2.4× faster (−60% detect CPU)**, identical diagnostic totals. Better
+   than the predicted ~40% guard-machinery share; the hoisted per-file visit
+   closure accounts for the rest.
+
+## Suspended Work (historical — resumed above)
 
 - **Worktree**: `/workspace/.claude/worktrees/issue-4425-node-checks-switch-dispatch`
 - **Branch**: `issue-4425-node-checks-switch-dispatch` (based on upstream/main
