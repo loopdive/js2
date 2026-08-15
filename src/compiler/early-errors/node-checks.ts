@@ -221,9 +221,30 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
     // TypeScript's parser handles this but may still produce an ArrowFunction node.
     // Check by looking at the source text between end of params and the => token.
     if (node.equalsGreaterThanToken) {
-      const paramsEnd = node.parameters.end;
+      // (#4417) The restriction is between the END of ArrowParameters and `=>`
+      // — NOT between the last parameter and `=>`. `node.parameters.end` sits
+      // BEFORE the closing paren, so measuring from it flagged every
+      // parameter list wrapped across lines:
+      //
+      //     const f = (
+      //       a: number,
+      //       b: number,
+      //     ) => a + b;          // ← was a SyntaxError, is valid ES
+      //
+      // That is Prettier's own output, so the check rejected 71 sites across
+      // 43 of the compiler's own files. Two corrections: a return type
+      // annotation is part of the parameter section (`(a): number => x`), so
+      // start after it when present; and the closing paren, plus any trailing
+      // comma and newlines before it, are inside ArrowParameters, so only text
+      // AFTER the last `)` is subject to the rule.
+      //
+      // A single unparenthesized parameter (`a\n=> x`) has no paren, so the
+      // whole gap is tested — still correctly an error.
+      const paramsEnd = node.type ? node.type.end : node.parameters.end;
       const arrowStart = node.equalsGreaterThanToken.getStart(ctx.sourceFile);
-      const textBetween = ctx.sourceFile.text.substring(paramsEnd, arrowStart);
+      let textBetween = ctx.sourceFile.text.substring(paramsEnd, arrowStart);
+      const closeParen = textBetween.lastIndexOf(")");
+      if (closeParen !== -1) textBetween = textBetween.slice(closeParen + 1);
       if (/[\r\n\u2028\u2029]/.test(textBetween)) {
         ctx.addError(node, "Arrow function parameters and '=>' must be on the same line");
       }
