@@ -122,7 +122,76 @@ describe("#4480 S1 — the §13.2 step 10 `constructor` back-ref", () => {
   });
 });
 
+describe("#4480 S2 — a `new F()` instance reports the SAME object `F.prototype` reads", () => {
+  // Measured on this branch with S1 alone (probe `.tmp/probe3.mts`, runs
+  // executed for this issue): every row below answered `0`. The instance does
+  // not lower to an `$Object` — it lowers to the bespoke `$__fnctor_<F>` struct,
+  // which has no `$proto` field for the native `__getPrototypeOf` walk to read.
+  // So `F.prototype` answered the S1 global while `Object.getPrototypeOf(i)`
+  // answered something else and the module contradicted ITSELF. S2 is that
+  // repair, not a widening.
+  it("answers `Object.getPrototypeOf(i)` for a `this`-assigning constructor", async () => {
+    expect(
+      await runStandalone(
+        `function F(){ this.x = 1; } var i = new F(); return Object.getPrototypeOf(i) === F.prototype ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("answers it for a direct `new F()` argument, not just a binding", async () => {
+    expect(
+      await runStandalone(`function F(){ this.x = 1; } return Object.getPrototypeOf(new F()) === F.prototype ? 1 : 0;`),
+    ).toBe(1);
+  });
+
+  it("agrees with the `constructor` back-ref installed by S1", async () => {
+    // The two halves are asserted together so they cannot drift: the object
+    // reached through the instance must be the object carrying `constructor`.
+    expect(
+      await runStandalone(
+        `function F(){ this.x = 1; } var i = new F(); return Object.getPrototypeOf(i).constructor === F ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("leaves `Object.getPrototypeOf(F)` itself alone", async () => {
+    // The arm sits AFTER the top-level-function arm, so the FUNCTION still
+    // reports %Function.prototype%, not its own `.prototype` object.
+    expect(
+      await runStandalone(`function F(){ this.x = 1; } return Object.getPrototypeOf(F) === F.prototype ? 0 : 1;`),
+    ).toBe(1);
+  });
+});
+
 describe("#4480 — measured residuals (see the issue file's Residuals section)", () => {
+  it.fails("R5: S2 declines under a whole `F.prototype = p` reassignment (condition 2)", async () => {
+    // Condition 2 in fnctor-instance-prototype.ts: with a reassignment present
+    // the single mutable global no longer models "the value captured at
+    // construction", so the arm must not answer — and it does not. The result
+    // is therefore still the pre-S2 answer (absent), NOT the spec one. Pinned
+    // as an `it.fails` rather than dropped, because the guard is exactly what
+    // stops the arm from becoming wrong on `S13.2.2_A1_T1`-shaped modules, and
+    // a future slice that re-points the slot per construction site should flip
+    // this row rather than delete it.
+    expect(
+      await runStandalone(
+        `function F(){ this.x = 1; } var p = {}; F.prototype = p; var i = new F(); return Object.getPrototypeOf(i) === p ? 1 : 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it.fails("R4: `F.prototype.isPrototypeOf(i)` — blocked by the escape gate, not the walk", async () => {
+    // Instrumented compile (evidence in native-is-prototype-of.ts): writing the
+    // call is itself a dynamic method use on `F`'s prototype, so the #2660
+    // escape gate demotes `F` and `resolveUserFnctorName` declines — the same
+    // module reports `resolve=F` when the read point is `Object.getPrototypeOf`
+    // instead. A `ref.test (ref $__fnctor_F)` arm was written and measured to be
+    // unreachable, so it was removed rather than shipped as dead code.
+    expect(
+      await runStandalone(`function F(){ this.x = 1; } var i = new F(); return F.prototype.isPrototypeOf(i) ? 1 : 0;`),
+    ).toBe(1);
+  });
+
   it.fails("R1: a fnctor that IS constructed but is not escape-gate-approved", async () => {
     // `var H = function(){}; new H()` — the `new` site is classified
     // `keep-typed`/`keep-static`, so its instances live in a `__fnctor_H`
