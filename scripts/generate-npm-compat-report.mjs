@@ -1499,7 +1499,15 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
     // a synonym for "fine".
-    correctness: correctnessVerdict(tests, { compiles: report?.compile?.success !== false }),
+    // (#4420) "compiles" must mean the ENGINE accepted the module, not that
+    // `compile()` returned `success: true` — codegen can finish and still emit
+    // bytes `WebAssembly.compile` rejects, which would let a package read as
+    // compiling when nothing it produced can run. Every harness feeding this
+    // report already records `validation.validates` from the engine; consult it.
+    // `!== false` on both axes keeps "unknown" out of the failure bucket.
+    correctness: correctnessVerdict(tests, {
+      compiles: report?.compile?.success !== false && report?.validation?.validates !== false,
+    }),
     perf,
     knownBugs: knownBugsFor(name),
   };

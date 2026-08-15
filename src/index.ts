@@ -383,6 +383,27 @@ export interface CompileOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
   /**
+   * (#4420) Gate the result on the host WebAssembly engine.
+   *
+   * `success` alone means "codegen ran to completion", NOT "the bytes are a
+   * module". Self-compiling `src/emit/binary.ts` returned `success: true` with
+   * 268 KB of Wasm the engine then rejected — so any scoreboard built on the
+   * flag (self-hosting progress, npm-compat matrix, conformance counts) could
+   * report progress that does not exist.
+   *
+   * With `validate: true` the emitted binary is run through
+   * `validateEmittedBinary`; if the engine rejects it, `success` flips to
+   * `false` and an error-severity {@link CompileError} carrying the engine's
+   * detail string is pushed onto `errors`. The binary is still returned so the
+   * caller can dump/diff it.
+   *
+   * Opt-in: validation costs a full engine decode of the module, and existing
+   * callers that deliberately inspect invalid output (WAT dumps, minimizers)
+   * must keep getting it. The CLI runs its own post-optimize check (#3338) and
+   * therefore does NOT set this — it would double-report.
+   */
+  validate?: boolean;
+  /**
    * Debug-only: when set, WAT emission only formats functions whose Wasm
    * name is in this set (plus types/imports/globals for context), skipping
    * the rest. Full-module `emitWat` can throw "Invalid string length" on
@@ -1155,6 +1176,11 @@ export { preloadLibFiles } from "./checker/index.js";
 export { getEntryExportNames, treeshake } from "./treeshake.js";
 export { generateWit } from "./wit-generator.js";
 export type { WitGeneratorOptions } from "./wit-generator.js";
+// (#4420) The single engine-validation primitive. Exported so scoreboards
+// (dogfood harnesses, npm-compat, self-host probes) can ask "is this a module
+// the engine accepts?" without growing another private copy of the idiom.
+export { validateEmittedBinary } from "./optimize.js";
+export type { EmittedBinaryValidation } from "./optimize.js";
 
 // #2527 / #2514 — canonical runtime-type rec-group identity primitive for
 // core-wasm module linking (shared store). Pure analysis over a WasmModule's
