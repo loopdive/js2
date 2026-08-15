@@ -791,8 +791,13 @@ Corpus sweeps on this branch:
 - The **59 files that name `env::__instanceof_check` as their SOLE host import**
   on the 2026-08-15 standalone baseline — **0 leaking, 0 compile-refused,
   0 invalid Wasm** (each binary was `WebAssembly.compile`d).
-- gc/host **byte-identical**: sha256 of the compiled binary matched base for all
-  10 probe shapes (file-copy A/B on `identifiers.ts`).
+- gc/host **byte-identical**: sha256 of the compiled binary matched base on all
+  10 probe shapes (file-copy A/B on `identifiers.ts`). That is a SAMPLE, and it
+  is stated as one; what makes it a general claim is structural — the call site
+  is behind `noJsHost(ctx)`, which is exactly `ctx.wasi || ctx.standalone`
+  (`js-errors.ts:29`), so no gc/host compile can reach the new code at all. The
+  10 shapes are chosen to exercise every dispatch arm, i.e. they test the GATE,
+  not the population.
 
 ### The answer table, and why each arm is the least-wrong one available
 
@@ -906,6 +911,28 @@ Also green on this branch: all **8 equivalence shards**
 `tests/es5-standalone-instanceof.test.ts` (20),
 `tests/issue-3962-native-user-instanceof.test.ts`,
 `tests/issue-4276-instanceof-object-family.test.ts`, `tests/issue-2994.test.ts`.
+
+### The WASI half of the gate, measured rather than inferred
+
+`noJsHost` is `ctx.wasi || ctx.standalone` (`js-errors.ts:29`) — **two** targets,
+and the test262 lane measures only the first. The "cannot regress a passing test"
+argument was therefore verified for standalone (leak guard + baseline) and merely
+INFERRED for WASI ("an unsatisfiable `env::` import cannot instantiate under
+wasmtime"). That inference is sound but it is not a measurement, and a WASI unit
+test can assert compile-time properties without ever instantiating — so the
+inference does not even cover the shape most likely to notice.
+
+Measured instead. All **199 test files that compile with `target: "wasi"`**, run
+on this branch and on base (file-copy revert of `identifiers.ts`), comparing
+sorted failing-test NAMES rather than counts:
+
+| batch          | base | branch | name-set diff |
+| -------------- | ---: | -----: | ------------- |
+| files 1–67     |   49 |     49 | **identical** |
+| files 68–199   |   55 |     55 | **identical** |
+
+104 pre-existing failures (linear-IR families unrelated to this issue), **zero
+delta**. The WASI lane is inert to this change, as measured.
 
 ### Deliberately left, with reasons
 
