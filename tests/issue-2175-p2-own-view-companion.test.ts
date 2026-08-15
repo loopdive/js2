@@ -109,6 +109,47 @@ describe("#2175 P2 — own-property views consult the NativeProto companion", ()
     ).toBe(1);
   });
 
+  it("ACCESSOR descriptors compile to valid Wasm and are visible to the own-views", async () => {
+    // REGRESSION GUARD. The first cut of P2 baked `ctx.nativeProtoTypeIdx` into a
+    // `ref.test` at object-runtime REGISTRATION time; a later type registration
+    // shifted indices, so this exact program failed to instantiate:
+    //   CompileError: Compiling function "__hasOwnProperty" failed: Invalid types
+    //   for ref.test: any.convert_extern of type anyref has to be in the same
+    //   reference type hierarchy as (ref 59)
+    // Every P2 probe and test used VALUE descriptors, so the accessor arm was
+    // never exercised and the battery reported green. The helper now resolves
+    // that type index at FINALIZE (like every other proto-index arm).
+    //
+    // Both descriptor KINDS run on ONE binary here — descriptor kind is a
+    // mandatory gate axis for this substrate, alongside receiver form and brand.
+    expect(
+      await runStandalone(`
+        function opaque(x: any): any { return x; }
+        export function test(): number {
+          // accessor descriptor on a builtin prototype (the shape that broke)
+          Object.defineProperty(Array.prototype, "acc", {
+            get: function (): any { return 42; },
+            set: function (v: any): void { /* no-op */ },
+            configurable: true
+          });
+          // …and a value descriptor on the same binary
+          Object.defineProperty(Date.prototype, "val", { value: 7, configurable: true });
+
+          const ap: any = opaque(Array.prototype);
+          const dp: any = opaque(Date.prototype);
+          const accOwn: number = Object.prototype.hasOwnProperty.call(ap, "acc") ? 1 : 0;
+          const accDesc: any = Object.getOwnPropertyDescriptor(ap, "acc");
+          const accIsAccessor: number =
+            (accDesc !== undefined && typeof accDesc.get === "function") ? 1 : 0;
+          const valOwn: number = Object.prototype.hasOwnProperty.call(dp, "val") ? 1 : 0;
+          const valDesc: any = Object.getOwnPropertyDescriptor(dp, "val");
+          const valIsData: number = (valDesc !== undefined && valDesc.value === 7) ? 1 : 0;
+          return (accOwn && accIsAccessor && valOwn && valIsData) ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
   it("ANTI-VACUITY: absent keys, inherited keys and unwritten brands are unaffected", async () => {
     // Without these an arm that answered "own" for everything would pass above.
     expect(

@@ -2450,11 +2450,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     // (#2175 P2) Index of the companion scratch appended LAST to this native's
     // local vector. Fixed locals are any=2, o=3, e=4, fl=5, desc=6; the six
     // `strExotic` locals (7..12) are present only when that arm is active.
-    const gopdNpcLocal = 7 + (strExotic ? 6 : 0);
-    // Empty when the proto-index store is unreserved; the scratch local below is
-    // then omitted too, keeping the local vector byte-identical for modules that
-    // never write a builtin prototype.
-    const gopdNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0, gopdNpcLocal);
+    // Empty when the proto-index store is unreserved, keeping modules that never
+    // write a builtin prototype byte-identical. The substitution is a CALL to a
+    // finalize-filled helper and bakes no type index here — see its reserve site
+    // in proto-index-store.ts for why that matters.
+    const gopdNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0);
     const stringExoticArm: Instr[] = strExotic
       ? [
           // key must be a string property key (else no exotic own property).
@@ -2817,11 +2817,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { name: "kStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
               { name: "kIdx", type: { kind: "i32" } },
             ] as { name: string; type: ValType }[])
-          : []),
-        // (#2175 P2) companion scratch — appended LAST so no already-baked local
-        // index moves, and only when the arm above actually emits.
-        ...(gopdNpcArm.length > 0
-          ? ([{ name: "npc", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
       body,
