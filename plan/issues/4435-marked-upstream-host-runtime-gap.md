@@ -1,5 +1,5 @@
 ---
-id: 4412
+id: 4435
 title: "Marked upstream suite host-method and object-spread compatibility"
 status: in-review
 sprint: current
@@ -42,7 +42,7 @@ oracle-ratchet-allow:
   - src/codegen/literals.ts
 ---
 
-# #4412 — Marked upstream host-runtime compatibility
+# #4435 — Marked upstream host-runtime compatibility
 
 ## Problem
 
