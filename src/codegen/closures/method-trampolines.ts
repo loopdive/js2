@@ -196,9 +196,14 @@ function coerceTrampolineThisSlot(
   body: Instr[],
   objStructTypeIdx: number,
   methodThisType: ValType | undefined,
+  methodUsesThis: boolean,
   fctx?: FunctionContext,
 ): void {
   if (!methodThisType) return;
+  // A method which never reads `this` is valid when extracted and called with
+  // an absent receiver.  Keeping the nullable value also avoids narrowing a
+  // provisional signature before the method body pass settles its ABI.
+  if (!methodUsesThis) return;
   const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
   if (source.kind === methodThisType.kind) {
     // Same-kind references are already compatible when they name the same
@@ -280,7 +285,7 @@ export function emitObjectMethodAsClosure(
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
   if (ntShift > 0 && inLiveShiftRange(methodFuncIdx, importsBeforeNT)) methodFuncIdx += ntShift;
   const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
-  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], fctx);
+  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -452,7 +457,7 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
       tFctx.body = newBody;
-      coerceTrampolineThisSlot(ctx, newBody, t.objStructTypeIdx, sig.params[0], tFctx);
+      coerceTrampolineThisSlot(ctx, newBody, t.objStructTypeIdx, sig.params[0], usesThis, tFctx);
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });
@@ -690,7 +695,7 @@ export function ensureMethodClosureSingleton(
       anyTempLocalIdx,
       methodUsesThisCached,
     );
-    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], fctx);
+    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }

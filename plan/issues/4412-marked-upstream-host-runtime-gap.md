@@ -64,3 +64,11 @@ the compatibility workflow.
 10.3 seconds). The 15 admitted synchronous tests currently run `0/15` in Wasm
 with `br is not a function`; the remaining method-dispatch bridge is therefore
 explicitly left for follow-up rather than presented as a passing fix.
+
+The generic method-trampoline fix also removes a separate regression in the
+iterator-protocol equivalence test: methods that never read `this` now retain a
+nullable receiver instead of being narrowed with `ref.as_non_null`. The
+iterator, class-method, and related closure tests pass locally (`17/17`), and
+typecheck plus formatting pass. Marked's upstream hooks remain `0/15` until
+mixed-arity receiver dispatch (`br`/`del`) is implemented; this checkpoint does
+not claim upstream runtime compatibility.
