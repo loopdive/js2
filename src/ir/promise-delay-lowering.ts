@@ -11,6 +11,7 @@ import {
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "./planning-identity.js";
+import { demoteToLegacy } from "./outcomes.js";
 import type { IrPromiseDelayCertification, IrPromiseDelayResolver } from "./promise-delay.js";
 
 /** Exact node-identity plan produced only for the certified Promise delay. */
@@ -302,11 +303,13 @@ export function buildIrPromiseDelayLoweringPlans(
 
 function requireMatchingPromiseDelayOwner(plan: IrPromiseDelayLoweringPlan, host: IrPromiseDelayLoweringHost): void {
   if (host.ownerUnitId === undefined) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(
       `ir/from-ast: Promise delay plan cannot be consumed without an authoritative ownerUnitId (${host.funcName})`,
     );
   }
   if (plan.ownerUnitId !== host.ownerUnitId) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(
       `ir/from-ast: stale Promise delay plan owner ${plan.ownerUnitId} does not match ${host.ownerUnitId} (${host.funcName})`,
     );
@@ -326,21 +329,26 @@ function lowerResolveCall(
     !ts.isIdentifier(expr.expression) ||
     expr.arguments.length !== 1
   ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed Promise delay resolve plan (${host.funcName})`);
   }
   const resolve = host.lowerExpr(expr.expression, irVal({ kind: "externref" }));
   if (asVal(host.builder.typeOf(resolve))?.kind !== "externref") {
-    throw new Error(`ir/from-ast: Promise resolve binding is not raw externref (${host.funcName})`);
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: Promise resolve binding is not raw externref (${host.funcName})`,
+    );
   }
   const value = host.lowerExpr(expr.arguments[0]!, irVal({ kind: "f64" }));
   if (asVal(host.builder.typeOf(value))?.kind !== "f64") {
-    throw new Error(`ir/from-ast: Promise resolve value is not f64 (${host.funcName})`);
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: Promise resolve value is not f64 (${host.funcName})`);
   }
   const result = host.builder.emitCall(
     irImportFuncRef("env", "__call_1_f64"),
     [resolve, value],
     irVal({ kind: "f64" }),
   );
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: __call_1_f64 produced no value (${host.funcName})`);
   return result;
 }
@@ -360,6 +368,7 @@ function lowerTimerCall(
     plan.timerSignature.params.length !== 0 ||
     plan.timerSignature.returnType !== null
   ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed Promise delay timer plan (${host.funcName})`);
   }
   const timerClosure = host.lowerClosure(plan.timerCallback, plan.timerSignature, new Set(plan.timerCaptureNames), {
@@ -371,19 +380,21 @@ function lowerTimerCall(
   const packedTimer = host.builder.emitCallablePack(timerClosure, plan.timerSignature);
   const delay = host.lowerExpr(expr.arguments[1]!, irVal({ kind: "f64" }));
   if (asVal(host.builder.typeOf(delay))?.kind !== "f64") {
-    throw new Error(`ir/from-ast: Promise delay timeout is not f64 (${host.funcName})`);
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: Promise delay timeout is not f64 (${host.funcName})`);
   }
   const boxedDelay = host.builder.emitCall(
     irImportFuncRef("env", "__box_number"),
     [delay],
     irVal({ kind: "externref" }),
   );
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (boxedDelay === null) throw new Error(`ir/from-ast: __box_number produced no value (${host.funcName})`);
   const timerResult = host.builder.emitCall(
     irImportFuncRef("env", "__timer_set_timeout"),
     [packedTimer, boxedDelay],
     irVal({ kind: "externref" }),
   );
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (timerResult === null) throw new Error(`ir/from-ast: __timer_set_timeout produced no value (${host.funcName})`);
   return timerResult;
 }
@@ -417,6 +428,7 @@ export function tryLowerPromiseDelayConstruction(
     asVal(plan.executorSignature.params[0]!)?.kind !== "externref" ||
     plan.executorSignature.returnType !== null
   ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed Promise delay construction plan (${host.funcName})`);
   }
   const executor = host.lowerClosure(plan.executor, plan.executorSignature, new Set(plan.executorCaptureNames), {
@@ -429,6 +441,7 @@ export function tryLowerPromiseDelayConstruction(
     kind: "extern",
     className: "Promise",
   });
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (promise === null) throw new Error(`ir/from-ast: Promise_new produced no value (${host.funcName})`);
   return promise;
 }
@@ -445,11 +458,13 @@ export function validateExactCapturePlan(
     if (ownParams.has(name)) continue;
     const kind = lookup(name);
     if (kind !== undefined && (kind !== "local" || !ordered.has(name))) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
       throw new Error(`ir/from-ast: exact closure capture plan omitted binding "${name}" (${funcName})`);
     }
   }
   for (const name of orderedNames) {
     if (lookup(name) !== "local") {
+      // invariant (producer-promise): the prepared exact proof promised this shape — #4502.
       throw new Error(`ir/from-ast: exact closure capture "${name}" is not a local in scope (${funcName})`);
     }
   }
@@ -458,6 +473,7 @@ export function validateExactCapturePlan(
 export function exactClosureLiftedName(prefix: string, ordinal: number, expected: string | undefined): string {
   const actual = `${prefix}__closure_${ordinal}`;
   if (expected !== undefined && expected !== actual) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: exact closure lift name ${actual} != planned ${expected} (${prefix})`);
   }
   return actual;

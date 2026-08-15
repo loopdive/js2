@@ -955,6 +955,7 @@ function lowerConstructorBody(
   const parentShape = options.constructorInitClassShape?.parent;
   if (options.implicitConstructorParentShape) {
     if (options.implicitConstructorParentShape !== parentShape) {
+      // invariant (producer-promise): the prepared implicit-ctor plan promised the parent shape — #4502.
       throw new Error(`ir/from-ast: implicit constructor parent shape mismatch (${name})`);
     }
     builder.emitClassSuperInit(options.implicitConstructorParentShape, thisValue, parameterValues);
@@ -964,6 +965,7 @@ function lowerConstructorBody(
     // `super(...)`. Own fields run immediately after it and before the rest
     // of the source constructor body (ECMA-262 InitializeInstanceElements).
     const [first, ...rest] = statements;
+    // invariant (producer-promise): selection admits derived ctors only with one leading super(...) — #4502.
     if (!first) throw new Error(`ir/from-ast: derived constructor has no leading super (${name})`);
     lowerStmt(first, cx);
     lowerConstructorFieldInitializers(fieldInitializers, thisValue, cx);
@@ -996,10 +998,13 @@ export function lowerFunctionAstToIr(
   const astName = ts.isFunctionDeclaration(fn) ? fn.name?.text : undefined;
   const name = options.funcName ?? astName;
   if (!name) {
-    throw new Error("ir/from-ast: function declaration without a name (and no options.funcName supplied)");
+    demoteToLegacy(
+      "body-shape-rejected",
+      "ir/from-ast: function declaration without a name (and no options.funcName supplied)",
+    );
   }
   if (!fn.body) {
-    throw new Error(`ir/from-ast: function ${name} has no body`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: function ${name} has no body`);
   }
 
   // #1370 Phase B: ConstructorDeclaration has no `asteriskToken` field,
@@ -1010,6 +1015,7 @@ export function lowerFunctionAstToIr(
   // exact init shape and the caller-provided receiver is returned implicitly.
   const isCtor = ts.isConstructorDeclaration(fn);
   if (isCtor && (!options.constructorInitClassShape || options.selfParam)) {
+    // invariant (producer-promise): the integration walk supplies the exact init shape (comment at the site) — #4502.
     throw new Error(`ir/from-ast: constructor lowering requires the exact init shape (${name})`);
   }
 
@@ -1070,7 +1076,7 @@ export function lowerFunctionAstToIr(
       };
     }
     if (!ts.isIdentifier(p.name)) {
-      throw new Error(`ir/from-ast: unsupported param shape in Phase 1 (${name})`);
+      demoteToLegacy("param-shape-rejected", `ir/from-ast: unsupported param shape in Phase 1 (${name})`);
     }
     // #2713 — rest (`...args`), default (`x = 5`) and optional (`x?`) params
     // keep an Identifier name and so slip this gate, after which their
@@ -1081,7 +1087,10 @@ export function lowerFunctionAstToIr(
     // miscompiling. (No-op for top-level claimed functions — the selector has
     // already filtered these out.)
     if (p.questionToken || p.dotDotDotToken || p.initializer) {
-      throw new Error(`ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`);
+      demoteToLegacy(
+        "param-shape-rejected",
+        `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
+      );
     }
     return {
       name: p.name.text,
@@ -1156,7 +1165,10 @@ export function lowerFunctionAstToIr(
   for (const param of pendingMutableParams) {
     const representation = resolveIrSlotRepresentation(param.type, options.resolver, name);
     if (!representation) {
-      throw new Error(`ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`);
+      demoteToLegacy(
+        "param-shape-rejected",
+        `ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`,
+      );
     }
     const slotIndex = builder.declareSlot(param.name, representation.storageType);
     builder.emitSlotWrite(slotIndex, param.value);
@@ -1204,6 +1216,7 @@ export function lowerFunctionAstToIr(
     builder.setGeneratorBufferSlot(generatorBufferSlot);
     const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
     if (buf === null) {
+      // invariant (producer-promise): a compiler-support helper declared non-void must produce an SSA value — #4502.
       throw new Error(`ir/from-ast: __gen_create_buffer call must produce a value (${name})`);
     }
     builder.emitSlotWrite(generatorBufferSlot, buf);
@@ -1214,7 +1227,7 @@ export function lowerFunctionAstToIr(
   // allocates + returns `this`. Only non-ctor Phase-1 functions require ≥1
   // statement (their body must produce a return/tail).
   if (!isCtor && stmts.length < 1) {
-    throw new Error(`ir/from-ast: Phase 1 expects at least 1 statement in ${name}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: Phase 1 expects at least 1 statement in ${name}`);
   }
 
   const lifted: IrFunction[] = [];
@@ -1287,10 +1300,13 @@ export function lowerFunctionAstToIr(
   // globals receive the initialized values.
   if (options.moduleInitUnit) {
     if (returnType !== null) {
-      throw new Error(`ir/from-ast: module-init unit must be void (${name})`);
+      demoteToLegacy("module-init-legacy-coupling", `ir/from-ast: module-init unit must be void (${name})`);
     }
     if (moduleInitContainsNestedVar(stmts)) {
-      throw new Error(`ir/from-ast: module-init unit contains a nested var declaration (${name})`);
+      demoteToLegacy(
+        "module-init-legacy-coupling",
+        `ir/from-ast: module-init unit contains a nested var declaration (${name})`,
+      );
     }
     for (const s of stmts) {
       lowerStmt(s, cx);
@@ -1518,7 +1534,7 @@ function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayRedu
 
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
-    throw new Error(`ir/from-ast: empty statement list in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: empty statement list in ${cx.funcName}`);
   }
   const denseReduction = denseArrayReductionPlan(stmts);
   if (denseReduction) {
@@ -1526,7 +1542,10 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
     lowerForStatement(denseReduction.fillLoop, cx, (bodyCx) => {
       const accumulator = bodyCx.scope.get(denseReduction.accumulatorName);
       if (!accumulator || accumulator.kind !== "slot") {
-        throw new Error(`ir/from-ast: fused dense reduction accumulator must use slot storage (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: fused dense reduction accumulator must use slot storage (${cx.funcName})`,
+        );
       }
       const value = lowerAsI32(denseReduction.fillValue, bodyCx, "wrap");
       const accumulatorRead = bodyCx.builder.emitSlotRead(accumulator.slotIndex);
@@ -1647,7 +1666,7 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         lowerDiscardedExpression(s.expression, cx);
         continue;
       }
-      throw new Error(`ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
     }
     if (ts.isWithStatement(s)) {
       lowerWithStatement(s, cx);
@@ -1782,7 +1801,10 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
       lowerStatementList(rest, { ...cx, scope: new Map(cx.scope) });
       return;
     }
-    throw new Error(`ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: unexpected statement before tail (got ${ts.SyntaxKind[s.kind]} in ${cx.funcName})`,
+    );
   }
   lowerTail(stmts[stmts.length - 1]!, cx);
 }
@@ -1808,7 +1830,10 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     const condType = cx.builder.typeOf(rawCond);
     const cond = condType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawCond) : rawCond;
     if (condType.kind !== "dynamic" && asVal(condType)?.kind !== "i32") {
-      throw new Error(`ir/from-ast: discarded ternary condition must be bool in ${cx.funcName}`);
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: discarded ternary condition must be bool in ${cx.funcName}`,
+      );
     }
 
     const branchScope = new Map(cx.scope);
@@ -1914,7 +1939,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
       return;
     }
     if (!stmt.expression) {
-      throw new Error(`ir/from-ast: Phase 1 return must have an expression in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: Phase 1 return must have an expression in ${cx.funcName}`);
     }
     const v = lowerExpr(stmt.expression, cx, cx.returnType);
     const vCoerced = coerceReturnValue(v, cx, stmt.expression);
@@ -1988,7 +2013,10 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   if (ts.isIfStatement(stmt)) {
     if (!stmt.elseStatement) {
       if (cx.returnType !== null) {
-        throw new Error(`ir/from-ast: non-void Phase 1 if must have an else arm in ${cx.funcName}`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: non-void Phase 1 if must have an else arm in ${cx.funcName}`,
+        );
       }
       lowerIfBodyStatement(stmt, cx);
       cx.builder.terminate({ kind: "return", values: [] });
@@ -2006,7 +2034,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     const cond = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
     const condType = cx.builder.typeOf(cond);
     if (asVal(condType)?.kind !== "i32") {
-      throw new Error(`ir/from-ast: if condition must be bool in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: if condition must be bool in ${cx.funcName}`);
     }
     // Reserve block IDs for both arms BEFORE terminating the current block.
     // The else ID must be fixed when we emit br_if, even though it opens after
@@ -2041,7 +2069,10 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
     return;
   }
-  throw new Error(`ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`);
+  demoteToLegacy(
+    "body-shape-rejected",
+    `ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
+  );
 }
 
 /**
@@ -2434,9 +2465,11 @@ function sameScopeStorage(a: StringEncodingScopeBinding, b: ScopeBinding | undef
 function lowerTopLevelFunctionValue(plan: IrTopLevelFunctionValueLoweringPlan, cx: LowerCtx): IrValueId {
   requireMatchingLoweringPlanOwner("top-level function value", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   if (plan.target.binding.kind !== "unit") {
+    // invariant (producer-promise): identity resolution promised an exact unit — #4502.
     throw new Error(`ir/from-ast: top-level function value target ${plan.target.name} is not an exact unit`);
   }
   if (plan.trampoline.binding.kind !== "support") {
+    // invariant (producer-promise): the prepared trampoline plan promised a compiler-support binding — #4502.
     throw new Error(`ir/from-ast: function-value trampoline ${plan.trampoline.name} is not compiler support`);
   }
   const cache = plan.cacheGlobal;
@@ -2995,6 +3028,7 @@ function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   }
   const binop = jsBitwiseBinop(k);
   if (binop === null) {
+    // invariant (producer-promise): caller contract: reachable only for bitwise operators — #4502.
     throw new Error(`ir/from-ast: '${ts.tokenToString(k)}' is not a bitwise operator (${cx.funcName}) (#3741)`);
   }
   const lhs = lowerBitwiseOperand(expr.left, expr, cx);
@@ -3056,6 +3090,7 @@ function lowerPromotedI32CompoundAssignment(
     const rhsValue = lowerBitwiseOperand(rhs, null, cx);
     const binop = jsBitwiseBinop(bitwiseToken);
     if (binop === null) {
+      // invariant (producer-promise): caller contract: reachable only for bitwise operators — #4502.
       throw new Error(`ir/from-ast: unmapped bitwise compound op in ${cx.funcName} (#3741)`);
     }
     cx.builder.emitSlotWrite(slotIndex, cx.builder.emitBinary(binop, lhs, rhsValue, IR_I32));
@@ -3158,7 +3193,10 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // and binding each leaf as a `local` ScopeBinding.
     if (ts.isObjectBindingPattern(d.name) || ts.isArrayBindingPattern(d.name)) {
       if (!d.initializer) {
-        throw new Error(`ir/from-ast: binding pattern requires an initializer (${cx.funcName})`);
+        demoteToLegacy(
+          "module-init-legacy-coupling",
+          `ir/from-ast: binding pattern requires an initializer (${cx.funcName})`,
+        );
       }
       // (#3142 Slice 2) Top-level destructuring in the module-init unit:
       // the leaves are module globals on the legacy path, but the pattern
@@ -3177,7 +3215,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
           return false;
         };
         if (leafIsModuleBinding(d.name)) {
-          throw new Error(
+          demoteToLegacy(
+            "module-init-legacy-coupling",
             `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
           );
         }
@@ -3190,14 +3229,20 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       continue;
     }
     if (!ts.isIdentifier(d.name)) {
-      throw new Error(`ir/from-ast: destructuring declarations not supported in Phase 1 (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: destructuring declarations not supported in Phase 1 (${cx.funcName})`,
+      );
     }
     const name = d.name.text;
     if (cx.scope.has(name)) {
-      throw new Error(`ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
     }
     if (!d.initializer) {
-      throw new Error(`ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
+      );
     }
     if (
       ts.isClassExpression(d.initializer) &&
@@ -3218,7 +3263,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     const moduleBinding = cx.moduleBindings?.get(name);
     if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
     if (moduleBinding && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
-      throw new Error(
+      demoteToLegacy(
+        "module-init-legacy-coupling",
         `ir/from-ast: module-level closure binding '${name}' not in module-init Slice 2 scope (${cx.funcName})`,
       );
     }
@@ -3252,7 +3298,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       const elementValType = annotatedArrayElementValType(d, cx);
       const vec = cx.resolver?.resolveVecForElement?.(elementValType);
       if (!vec) {
-        throw new Error(
+        demoteToLegacy(
+          "body-shape-rejected",
           `ir/from-ast: resolver cannot register vec for number[] annotation on '${name}' (${cx.funcName})`,
         );
       }
@@ -3262,13 +3309,16 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     if (annotated === undefined && ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0) {
       const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
       if (inference?.kind === "rejected") {
-        throw new Error(emptyArrayInferenceDiagnostic(inference, cx.funcName));
+        demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
       }
       if (inference?.kind === "resolved") {
         const elementValType = emptyLiteralElementValType(d.initializer, cx);
         const vec = cx.resolver?.resolveVecForElement?.(elementValType);
         if (!vec) {
-          throw new Error(`ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`);
+          demoteToLegacy(
+            "body-shape-rejected",
+            `ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`,
+          );
         }
         inferredEmptyArrayHint = irVec(irVal(elementValType), true);
       }
@@ -3319,7 +3369,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       // rather than `asVal`-only kind comparison (which silently drops
       // the string case).
       if (!irTypeAssignable(inferred, annotated)) {
-        throw new Error(
+        demoteToLegacy(
+          "body-shape-rejected",
           `ir/from-ast: local '${name}' annotated as ${describeIrType(annotated)} but initializer is ${describeIrType(inferred)} in ${cx.funcName}`,
         );
       }
@@ -3372,7 +3423,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // write so cross-function TDZ checks observe initialization.
     if (moduleBinding) {
       if (!moduleStorageCompatible(inferred, moduleBinding.type)) {
-        throw new Error(
+        demoteToLegacy(
+          "module-init-legacy-coupling",
           `ir/from-ast: module binding '${name}' initializer is ${describeIrType(inferred)} but its global is ` +
             `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
         );
@@ -3480,7 +3532,8 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
   // the IR level to destructuring an object literal: each leaf reads one
   // named field. The only difference is the emit op (class.get vs object.get).
   if (sourceType.kind !== "object" && sourceType.kind !== "class") {
-    throw new Error(
+    demoteToLegacy(
+      "destructuring-param-complex",
       `ir/from-ast: object destructuring source must be IrType.object or IrType.class (got ${describeIrType(sourceType)}) in ${cx.funcName}`,
     );
   }
@@ -3489,13 +3542,22 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
     // defensive checks here surface selector regressions as clean throws
     // rather than silent miscompiles.
     if (elem.dotDotDotToken) {
-      throw new Error(`ir/from-ast: object rest pattern not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: object rest pattern not in slice 8a (${cx.funcName})`,
+      );
     }
     if (elem.initializer) {
-      throw new Error(`ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`,
+      );
     }
     if (!ts.isIdentifier(elem.name)) {
-      throw new Error(`ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`,
+      );
     }
     // The property name being read out of the source. `propertyName`
     // is set when the pattern uses renaming (`{ a: x }` — propName is
@@ -3508,15 +3570,22 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
           : null
       : elem.name.text;
     if (propName === null) {
-      throw new Error(`ir/from-ast: object pattern property name must be Identifier or StringLiteral (${cx.funcName})`);
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: object pattern property name must be Identifier or StringLiteral (${cx.funcName})`,
+      );
     }
     const localName = elem.name.text;
     if (cx.scope.has(localName)) {
-      throw new Error(`ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`);
+      demoteToLegacy(
+        "destructuring-param-complex",
+        `ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`,
+      );
     }
     const field = sourceType.shape.fields.find((f) => f.name === propName);
     if (!field) {
-      throw new Error(
+      demoteToLegacy(
+        "destructuring-param-complex",
         `ir/from-ast: object pattern reads unknown field "${propName}" (shape: ${describeIrType(sourceType)}) in ${cx.funcName}`,
       );
     }
@@ -3541,7 +3610,8 @@ function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, c
   const sourceType = cx.builder.typeOf(source);
   const resolved = resolveIrVecType(sourceType, cx);
   if (!resolved) {
-    throw new Error(
+    demoteToLegacy(
+      "array-representation-unsupported",
       `ir/from-ast: array destructuring source is not a recognisable vec (${describeIrType(sourceType)}) in ${cx.funcName}`,
     );
   }
@@ -3554,17 +3624,29 @@ function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, c
       continue;
     }
     if (elem.dotDotDotToken) {
-      throw new Error(`ir/from-ast: array rest pattern not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: array rest pattern not in slice 8a (${cx.funcName})`,
+      );
     }
     if (elem.initializer) {
-      throw new Error(`ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: pattern default values not in slice 8a (${cx.funcName})`,
+      );
     }
     if (!ts.isIdentifier(elem.name)) {
-      throw new Error(`ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: nested binding patterns not in slice 8a (${cx.funcName})`,
+      );
     }
     const localName = elem.name.text;
     if (cx.scope.has(localName)) {
-      throw new Error(`ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: redeclaration of '${localName}' in pattern in ${cx.funcName}`,
+      );
     }
     const idx = cx.builder.emitConst({ kind: "i32", value: i }, irVal({ kind: "i32" }));
     const v = cx.builder.emitVecGet(source, idx, elemIrType);
@@ -3579,7 +3661,7 @@ function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, c
 // the callee signature before the callee has built). Export is additive —
 // no behavior change.
 export function typeNodeToIr(node: ts.TypeNode | undefined, where: string): IrType {
-  if (!node) throw new Error(`ir/from-ast: missing type annotation (${where})`);
+  if (!node) demoteToLegacy("type-resolution-unsupported", `ir/from-ast: missing type annotation (${where})`);
   switch (node.kind) {
     case ts.SyntaxKind.NumberKeyword:
       return irVal({ kind: "f64" });
@@ -3588,7 +3670,7 @@ export function typeNodeToIr(node: ts.TypeNode | undefined, where: string): IrTy
     case ts.SyntaxKind.StringKeyword:
       return { kind: "string" };
     default:
-      throw new Error(`ir/from-ast: unsupported type in Phase 1 (${where})`);
+      demoteToLegacy("type-resolution-unsupported", `ir/from-ast: unsupported type in Phase 1 (${where})`);
   }
 }
 
@@ -3685,7 +3767,8 @@ function resolveIrType(node: ts.TypeNode | undefined, override: IrType | undefin
   if (node && isPrimitiveTypeNode(node)) {
     const fromNode = typeNodeToIr(node, where);
     if (override && !irTypeEquals(override, fromNode)) {
-      throw new Error(
+      demoteToLegacy(
+        "type-resolution-unsupported",
         `ir/from-ast: type override (${describeIrType(override)}) disagrees with annotation (${describeIrType(fromNode)}) at ${where}`,
       );
     }
@@ -3698,7 +3781,7 @@ function resolveIrType(node: ts.TypeNode | undefined, override: IrType | undefin
   // simply prefer the override here. If neither is present, the
   // selector and override builder are out of sync — that's a bug.
   if (override) return override;
-  throw new Error(`ir/from-ast: missing type annotation and no override (${where})`);
+  demoteToLegacy("type-resolution-unsupported", `ir/from-ast: missing type annotation and no override (${where})`);
 }
 
 /** True when two logical IR types use the same already-allocated global slot. */
@@ -3737,6 +3820,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
         irVal({ kind: "externref" }),
       );
       if (referenceError === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: ReferenceError constructor returned no value (${cx.funcName})`);
       }
       cx.builder.emitThrow(referenceError);
@@ -3756,6 +3840,7 @@ function lowerHostDateSnapshotExpression(expr: ts.NewExpression, cx: LowerCtx): 
   if (!plan) return undefined;
   requireMatchingLoweringPlanOwner("host Date snapshot", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   const snapshot = cx.builder.emitCall(irImportFuncRef("env", "__date_now"), [], irVal({ kind: "f64" }));
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (snapshot === null) throw new Error(`ir/from-ast: host Date snapshot produced no value (${cx.funcName})`);
   return snapshot;
 }
@@ -3769,10 +3854,12 @@ function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
     expr.expression.name.text !== plan.getter ||
     expr.arguments.length !== 0
   ) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: host Date getter plan changed shape (${cx.funcName})`);
   }
   const receiver = lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
   if (asVal(cx.builder.typeOf(receiver))?.kind !== "f64") {
+    // invariant (producer-promise): the carrier the producer promised was dropped — #4502.
     throw new Error(`ir/from-ast: host Date snapshot lost its f64 timestamp carrier (${cx.funcName})`);
   }
   const result = cx.builder.emitCall(
@@ -3780,6 +3867,7 @@ function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
     [receiver],
     irVal({ kind: "f64" }),
   );
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: host Date getter produced no value (${cx.funcName})`);
   return result;
 }
@@ -3813,11 +3901,14 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   //      (native-`$Promise` carrier: one-level unwrap; JS-host: identity).
   if (ts.isAwaitExpression(expr)) {
     if (cx.funcKind !== "async") {
-      throw new Error(`ir/from-ast: await outside an async function (${cx.funcName})`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: await outside an async function (${cx.funcName})`);
     }
     const settled = staticPromiseResolveSettledExpr(expr.expression);
     if (settled === "undefined") {
-      throw new Error(`ir/from-ast: await Promise.resolve() (undefined settle) not in C-1 scope (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: await Promise.resolve() (undefined settle) not in C-1 scope (${cx.funcName})`,
+      );
     }
     if (settled !== null) {
       return lowerExpr(settled, cx, hint);
@@ -3922,10 +4013,13 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
     const p = cx.scope.get("this");
     if (!p) {
-      throw new Error(`ir/from-ast: 'this' reference outside an instance method body (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: 'this' reference outside an instance method body (${cx.funcName})`,
+      );
     }
     if (p.kind !== "local") {
-      throw new Error(`ir/from-ast: unexpected 'this' binding kind ${p.kind} in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: unexpected 'this' binding kind ${p.kind} in ${cx.funcName}`);
     }
     return p.value;
   }
@@ -3958,12 +4052,14 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
           className: hg.className,
         });
         if (r === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: host global "${expr.text}" produced no result in ${cx.funcName}`);
         }
         return r;
       }
     }
-    if (!p) throw new Error(`ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
+    if (!p)
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
     // for-of iterations). Reads emit `slot.read`, which lowers to a
     // `local.get` on the Wasm-local slot. The slot's type is recorded
@@ -4000,7 +4096,10 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
       // Slice 3 (#1169c): nestedFunc bindings are name-only — they have
       // no SSA value. Bare reference (without a CallExpression) cannot
       // produce an IR value. The callable form is handled by `lowerCall`.
-      throw new Error(`ir/from-ast: bare reference to nested function "${expr.text}" not in slice 3 (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: bare reference to nested function "${expr.text}" not in slice 3 (${cx.funcName})`,
+      );
     }
     // Slice 3 (#1169c): refcell-typed bindings need a deref on read.
     // The SSA value IS the cell ref; expression-position reads expect
@@ -4082,7 +4181,10 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     lowerDiscardedExpression(expr.expression, cx);
     return cx.builder.emitConst({ kind: "f64", value: NaN }, irVal({ kind: "f64" }));
   }
-  throw new Error(`ir/from-ast: unsupported expression kind ${ts.SyntaxKind[expr.kind]} in ${cx.funcName}`);
+  demoteToLegacy(
+    "body-shape-rejected",
+    `ir/from-ast: unsupported expression kind ${ts.SyntaxKind[expr.kind]} in ${cx.funcName}`,
+  );
 }
 
 /**
@@ -4286,7 +4388,10 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   // Reject spread / sparse — out of scope, keep on legacy.
   for (const el of expr.elements) {
     if (ts.isSpreadElement(el) || ts.isOmittedExpression(el)) {
-      throw new Error(`ir/from-ast: array literal with spread/elision not in #1804 scope (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: array literal with spread/elision not in #1804 scope (${cx.funcName})`,
+      );
     }
   }
 
@@ -4297,12 +4402,18 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   if (expr.elements.length === 0) {
     // Empty literal — element type must come from the hint.
     if (!hintElemIr) {
-      throw new Error(`ir/from-ast: empty array literal needs a vec-typed hint to infer element type (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: empty array literal needs a vec-typed hint to infer element type (${cx.funcName})`,
+      );
     }
     const elemVT = asVal(hintElemIr)!;
     const vec = cx.resolver?.resolveVecForElement?.(elemVT);
     if (!vec) {
-      throw new Error(`ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
+      );
     }
     const vecValueType =
       cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
@@ -4322,6 +4433,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         vecResultType,
       );
       if (allocated === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: sized vec allocation produced no result (${cx.funcName})`);
       }
       return allocated;
@@ -4370,7 +4482,10 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   const elementType = hintElemIr ?? cx.builder.typeOf(elementIds[0]!);
   for (const id of elementIds) {
     if (!irTypeEquals(cx.builder.typeOf(id), elementType)) {
-      throw new Error(`ir/from-ast: mixed-type array literal not in #1804 scope (${cx.funcName})`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: mixed-type array literal not in #1804 scope (${cx.funcName})`,
+      );
     }
   }
 
@@ -4384,7 +4499,10 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     elementType.kind === "string"
       ? elementIds.map((id) => {
           if (cx.resolver?.stringIsExternref?.() !== true) {
-            throw new Error(`ir/from-ast: string array literal needs the host externref carrier (${cx.funcName})`);
+            demoteToLegacy(
+              "array-representation-unsupported",
+              `ir/from-ast: string array literal needs the host externref carrier (${cx.funcName})`,
+            );
           }
           return cx.builder.emitCoerceToExternref(id);
         })
@@ -4394,13 +4512,17 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   const elemVT = asVal(storedElementType);
   if (!elemVT) {
     // Non-scalar (object/closure/...) element types are out of scope for this slice.
-    throw new Error(
+    demoteToLegacy(
+      "array-representation-unsupported",
       `ir/from-ast: array literal element type ${storedElementType.kind} not in #1804 scope (${cx.funcName})`,
     );
   }
   const vec = cx.resolver?.resolveVecForElement?.(elemVT);
   if (!vec) {
-    throw new Error(`ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`);
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
+    );
   }
   const vecValueType =
     cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
@@ -4504,6 +4626,7 @@ function lowerNumericSubstitutionToString(value: IrValueId, type: IrType, cx: Lo
   }
   const result = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_STRING_FN), [asF64], { kind: "string" });
   if (result === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: ${IR_NUMBER_TO_STRING_FN} produced no result in ${cx.funcName}`);
   }
   return result;
@@ -4519,7 +4642,8 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
   if (tag === null) {
-    throw new Error(
+    demoteToLegacy(
+      "operand-coercion-unsupported",
       `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
     );
   }
@@ -4614,17 +4738,26 @@ function lowerOptionalExternPropertyAccess(
   cx: LowerCtx,
 ): IrValueId {
   if (recvType.kind !== "extern") {
-    throw new Error(`ir/from-ast: lowerOptionalExternPropertyAccess called with non-extern recv in ${cx.funcName}`);
+    demoteToLegacy(
+      "property-access-unsupported",
+      `ir/from-ast: lowerOptionalExternPropertyAccess called with non-extern recv in ${cx.funcName}`,
+    );
   }
   const className = recvType.className;
   const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property");
   const info = cx.resolver?.getExternClassInfo?.(className);
   if (!resolved?.property && !info) {
-    throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
+    demoteToLegacy(
+      "property-access-unsupported",
+      `ir/from-ast: extern class ${className} not registered in ${cx.funcName}`,
+    );
   }
   const prop = resolved?.property ?? info?.properties.get(propName);
   if (!prop) {
-    throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "property-access-unsupported",
+      `ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`,
+    );
   }
   const importPrefix = resolved?.importPrefix ?? info?.importPrefix ?? className;
   const propValType = prop.type;
@@ -4646,7 +4779,8 @@ function lowerOptionalExternPropertyAccess(
   // and `i32` to legacy until the prop registry tracks the actual
   // host-import return type alongside the declared TS type.
   if (propValType.kind !== "externref") {
-    throw new Error(
+    demoteToLegacy(
+      "property-access-unsupported",
       `ir/from-ast: optional ?.${propName} on extern ${className} with non-externref prop type (${describeIrType(resultType)}) deferred to legacy in ${cx.funcName}`,
     );
   }
@@ -4713,7 +4847,10 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // other receiver kind the mangled name won't be found and the function
   // demotes to legacy cleanly.
   if (!ts.isIdentifier(expr.name) && !ts.isPrivateIdentifier(expr.name)) {
-    throw new Error(`ir/from-ast: computed property access not in slice 2 (${cx.funcName})`);
+    demoteToLegacy(
+      "property-access-unsupported",
+      `ir/from-ast: computed property access not in slice 2 (${cx.funcName})`,
+    );
   }
   const propName = irPrivateFieldName(expr.name);
 
@@ -4750,14 +4887,20 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
       // Slice B — IR-native short-circuit on extern receivers.
       return lowerOptionalExternPropertyAccess(propName, recv, recvType, cx);
     } else {
-      throw new Error(`ir/from-ast: optional chaining (?.) on nullable receiver not in slice 11 (${cx.funcName})`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: optional chaining (?.) on nullable receiver not in slice 11 (${cx.funcName})`,
+      );
     }
   }
 
   if (recvType.kind === "string") {
     // Slice 1 — only `.length` is supported on string receivers.
     if (propName !== "length") {
-      throw new Error(`ir/from-ast: .${propName} on string is not in slice 2 (${cx.funcName})`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: .${propName} on string is not in slice 2 (${cx.funcName})`,
+      );
     }
     return cx.builder.emitStringLen(recv, inferStringEncoding(expr.expression, cx));
   }
@@ -4766,7 +4909,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     // Slice 2 — named field read on a known shape.
     const fieldIdx = recvType.shape.fields.findIndex((f) => f.name === propName);
     if (fieldIdx < 0) {
-      throw new Error(
+      demoteToLegacy(
+        "property-access-unsupported",
         `ir/from-ast: object has no field "${propName}" (shape: ${describeIrType(recvType)}) in ${cx.funcName}`,
       );
     }
@@ -4791,13 +4935,17 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
       if (getter && getter.returnType !== null) {
         const r = cx.builder.emitClassCall(recv, propName, "getter", [], getter.returnType, getter.target);
         if (r === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(
             `ir/from-ast: getter ${recvType.shape.className}.${propName} produced no value (${cx.funcName})`,
           );
         }
         return r;
       }
-      throw new Error(`ir/from-ast: class ${recvType.shape.className} has no field "${propName}" in ${cx.funcName}`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: class ${recvType.shape.className} has no field "${propName}" in ${cx.funcName}`,
+      );
     }
     return cx.builder.emitClassGet(recv, propName, field.type);
   }
@@ -4824,11 +4972,17 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     // chain walk — preserves the pre-#2856 slice-10 behaviour.
     const info = cx.resolver?.getExternClassInfo?.(className);
     if (!info) {
-      throw new Error(`ir/from-ast: extern class ${className} not registered in ${cx.funcName}`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: extern class ${className} not registered in ${cx.funcName}`,
+      );
     }
     const prop = info.properties.get(propName);
     if (!prop) {
-      throw new Error(`ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: extern class ${className} has no property "${propName}" in ${cx.funcName}`,
+      );
     }
     return cx.builder.emitExternProp(info.importPrefix, propName, recv, irVal(prop.type));
   }
@@ -4860,7 +5014,10 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         }
         return cx.builder.emitVecLen(recv);
       }
-      throw new Error(`ir/from-ast: .${propName} on vec not in slice 13 (${cx.funcName})`);
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: .${propName} on vec not in slice 13 (${cx.funcName})`,
+      );
     }
   }
 
@@ -4883,7 +5040,8 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     return cx.builder.emitDynMemberGet(recv, key);
   }
 
-  throw new Error(
+  demoteToLegacy(
+    "property-access-unsupported",
     `ir/from-ast: property access .${propName} on ${describeIrType(recvType)} is not in slice 2 (${cx.funcName})`,
   );
 }
@@ -4916,10 +5074,16 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
     if (ts.isPropertyAssignment(prop)) {
       const name = phase1PropertyName(prop.name);
       if (name === null) {
-        throw new Error(`ir/from-ast: object literal property name not in slice 2 (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: object literal property name not in slice 2 (${cx.funcName})`,
+        );
       }
       if (seen.has(name)) {
-        throw new Error(`ir/from-ast: duplicate object literal key "${name}" not in slice 2 (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: duplicate object literal key "${name}" not in slice 2 (${cx.funcName})`,
+        );
       }
       seen.add(name);
       const v = lowerExpr(prop.initializer, cx, irVal({ kind: "f64" }));
@@ -4930,18 +5094,24 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
     if (ts.isShorthandPropertyAssignment(prop)) {
       const name = prop.name.text;
       if (seen.has(name)) {
-        throw new Error(`ir/from-ast: duplicate object literal key "${name}" not in slice 2 (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: duplicate object literal key "${name}" not in slice 2 (${cx.funcName})`,
+        );
       }
       seen.add(name);
       const found = cx.scope.get(name);
       if (!found) {
-        throw new Error(`ir/from-ast: shorthand "${name}" not in scope in ${cx.funcName}`);
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: shorthand "${name}" not in scope in ${cx.funcName}`);
       }
       // Slice 3 (#1169c): only `local`-kind bindings are usable as
       // shorthand object property values. nestedFunc bindings have no
       // SSA value.
       if (found.kind !== "local") {
-        throw new Error(`ir/from-ast: shorthand "${name}" refers to a non-local binding (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: shorthand "${name}" refers to a non-local binding (${cx.funcName})`,
+        );
       }
       // If the local is refcell-typed, deref to expose the inner scalar
       // (the same logic the identifier-handler in lowerExpr applies).
@@ -4956,21 +5126,28 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
     if (ts.isMethodDeclaration(prop)) {
       const name = phase1PropertyName(prop.name);
       if (name === null) {
-        throw new Error(`ir/from-ast: object method name not in prepared scope (${cx.funcName})`);
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: object method name not in prepared scope (${cx.funcName})`);
       }
       if (seen.has(name)) {
-        throw new Error(`ir/from-ast: duplicate object method key "${name}" not in prepared scope (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: duplicate object method key "${name}" not in prepared scope (${cx.funcName})`,
+        );
       }
       seen.add(name);
       const value = lowerClosureExpression(prop, cx);
       const type = cx.builder.typeOf(value);
       if (type.kind !== "closure") {
+        // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
         throw new Error(`ir/from-ast: object method "${name}" did not lower to a closure (${cx.funcName})`);
       }
       built.push({ name, type, value });
       continue;
     }
-    throw new Error(`ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
+    );
   }
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const shape: IrObjectShape = {
@@ -5039,6 +5216,7 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
     const objectType: IrType = { kind: "extern", className: "Object" };
     const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
     if (object === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
     }
     for (const property of properties) {
@@ -5046,7 +5224,10 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
       const closure = lowerClosureExpression(property.initializer, cx);
       const closureType = cx.builder.typeOf(closure);
       if (closureType.kind !== "closure") {
-        throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`,
+        );
       }
       const callable = cx.builder.emitCallablePack(closure, closureType.signature);
       cx.builder.emitCall(irRuntimeFuncRef("__extern_set"), [object, key, callable], null);
@@ -5059,7 +5240,10 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
     const closure = lowerClosureExpression(property.initializer, cx);
     const closureType = cx.builder.typeOf(closure);
     if (closureType.kind !== "closure") {
-      throw new Error(`ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: OrdinaryToPrimitive property is not an IR closure in ${cx.funcName}`,
+      );
     }
     built.push({ name: property.name, type: closureType, value: closure });
   }
@@ -5107,7 +5291,10 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  */
 function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, cx: LowerCtx): void {
   if (lhs.questionDotToken) {
-    throw new Error(`ir/from-ast: optional element store (a?.[i] = v) not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "element-store-unsupported",
+      `ir/from-ast: optional element store (a?.[i] = v) not in IR scope (${cx.funcName})`,
+    );
   }
   // TypedArray views need the legacy per-view value conversions.
   if (cx.resolver?.isTypedArrayViewExpr?.(lhs.expression)) {
@@ -5170,11 +5357,17 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
     recvType.kind !== "vec" &&
     (!recvVal || (recvVal.kind !== "ref" && recvVal.kind !== "ref_null" && !scalarVecStoreReceiver))
   ) {
-    throw new Error(`ir/from-ast: element store on ${describeIrType(recvType)} not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "element-store-unsupported",
+      `ir/from-ast: element store on ${describeIrType(recvType)} not in IR scope (${cx.funcName})`,
+    );
   }
   const resolvedVec = resolveIrVecType(recvType, cx);
   if (!resolvedVec) {
-    throw new Error(`ir/from-ast: element-store receiver is not a recognisable vec in ${cx.funcName}`);
+    demoteToLegacy(
+      "element-store-unsupported",
+      `ir/from-ast: element-store receiver is not a recognisable vec in ${cx.funcName}`,
+    );
   }
   const vec = resolvedVec.lowering;
   const elem = vec.elementValType;
@@ -5185,7 +5378,10 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // Narrow slice: f64 vecs (number[]) and externref vecs (string[]/any[] in
   // host mode). Native-string / packed / exotic element vecs demote.
   if (!narrowedI32 && elem.kind !== "f64" && elem.kind !== "externref") {
-    throw new Error(`ir/from-ast: element store into '${elem.kind}' vec not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "element-store-unsupported",
+      `ir/from-ast: element store into '${elem.kind}' vec not in IR scope (${cx.funcName})`,
+    );
   }
   // Index — the same f64-lower + trunc_sat discipline as the read path.
   const idxRaw = lowerExpr(lhs.argumentExpression, cx, irVal({ kind: "f64" }));
@@ -5196,7 +5392,10 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   } else if (idxTy?.kind === "f64") {
     idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxRaw, irVal({ kind: "i32" }));
   } else {
-    throw new Error(`ir/from-ast: element-store index must be number or bool in ${cx.funcName}`);
+    demoteToLegacy(
+      "element-store-unsupported",
+      `ir/from-ast: element-store index must be number or bool in ${cx.funcName}`,
+    );
   }
   // Value — lower with the element-type hint, then coerce. Invariant W for a
   // narrowed vector: emit the exact i32 DIRECTLY, never by truncating an
@@ -5216,7 +5415,8 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   if (elem.kind === "f64") {
     const valTy = asVal(cx.builder.typeOf(valRaw));
     if (valTy?.kind !== "f64") {
-      throw new Error(
+      demoteToLegacy(
+        "element-store-unsupported",
         `ir/from-ast: element-store value ${describeIrType(cx.builder.typeOf(valRaw))} into f64 vec ` +
           `not in IR scope (${cx.funcName})`,
       );
@@ -5250,7 +5450,10 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
   // which has the runtime null-guard. (Same demote-to-legacy discipline the
   // property-access optional arm already follows.)
   if (expr.questionDotToken) {
-    throw new Error(`ir/from-ast: optional element access (a?.[i]) not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "element-access-unsupported",
+      `ir/from-ast: optional element access (a?.[i]) not in IR scope (${cx.funcName})`,
+    );
   }
   const arg = expr.argumentExpression;
   const isStringLitKey = ts.isStringLiteral(arg) || arg.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral;
@@ -5264,7 +5467,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
     const fieldIdx = recvType.shape.fields.findIndex((f) => f.name === propName);
     if (fieldIdx < 0) {
-      throw new Error(
+      demoteToLegacy(
+        "element-access-unsupported",
         `ir/from-ast: object has no field "${propName}" (shape: ${describeIrType(recvType)}) in ${cx.funcName}`,
       );
     }
@@ -5308,7 +5512,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       const idxF64Type = cx.builder.typeOf(idxF64);
       const idxValTy = asVal(idxF64Type);
       if (!idxValTy) {
-        throw new Error(
+        demoteToLegacy(
+          "element-access-unsupported",
           `ir/from-ast: element-access index has unexpected IrType ${describeIrType(idxF64Type)} in ${cx.funcName}`,
         );
       }
@@ -5320,7 +5525,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       } else if (idxValTy.kind === "f64") {
         idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxF64, irVal({ kind: "i32" }));
       } else {
-        throw new Error(
+        demoteToLegacy(
+          "element-access-unsupported",
           `ir/from-ast: element-access index must be number or bool (got ${idxValTy.kind}) in ${cx.funcName}`,
         );
       }
@@ -5333,10 +5539,14 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
         // undefined carrier, only lower reads covered by the existing counted-
         // loop bounds proof.
         if (!isProvenInBoundsIr(expr, cx)) {
-          throw new Error(`ir/from-ast: inferred linear vector read is not proven in bounds (${cx.funcName})`);
+          demoteToLegacy(
+            "element-access-unsupported",
+            `ir/from-ast: inferred linear vector read is not proven in bounds (${cx.funcName})`,
+          );
         }
         const value = cx.builder.emitCall(irIntrinsicFuncRef("__arr_get"), [recv, idxI32], elemIr);
         if (value === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: forwarding-aware vec read produced no value (${cx.funcName})`);
         }
         return value;
@@ -5382,6 +5592,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     if (litLen !== undefined && stringIndexProvenBelow(arg, litLen)) {
       const r = lowerStringMethodCall("charAt", recv, expr.expression, ts.factory.createNodeArray([arg]), cx);
       if (r !== null) return r;
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: internal — charAt delegation produced no value in ${cx.funcName}`);
     }
   }
@@ -5447,7 +5658,7 @@ function phase1PropertyName(name: ts.PropertyName): string | null {
 function requireThisValue(cx: LowerCtx): IrValueId {
   const p = cx.scope.get("this");
   if (!p || p.kind !== "local") {
-    throw new Error(`ir/from-ast: super used with no 'this' binding in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: super used with no 'this' binding in ${cx.funcName}`);
   }
   return p.value;
 }
@@ -5462,11 +5673,12 @@ function requireThisValue(cx: LowerCtx): IrValueId {
 function requireSuperParentShape(cx: LowerCtx): IrClassShape {
   const p = cx.scope.get("this");
   if (!p || p.kind !== "local" || p.type.kind !== "class") {
-    throw new Error(`ir/from-ast: super used with no class 'this' binding in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: super used with no class 'this' binding in ${cx.funcName}`);
   }
   const parent = p.type.shape.parent;
   if (!parent) {
-    throw new Error(
+    demoteToLegacy(
+      "body-shape-rejected",
       `ir/from-ast: super used in ${p.type.shape.className} which has no IR-projected parent shape (${cx.funcName})`,
     );
   }
@@ -5475,7 +5687,10 @@ function requireSuperParentShape(cx: LowerCtx): IrClassShape {
 
 function emitExpressionDefaultMissingF64(expected: IrType, cx: LowerCtx): IrValueId {
   if (asVal(expected)?.kind !== "f64") {
-    throw new Error(`ir/from-ast: expression-default sentinel requires an f64 parameter (${cx.funcName})`);
+    demoteToLegacy(
+      "param-shape-rejected",
+      `ir/from-ast: expression-default sentinel requires an f64 parameter (${cx.funcName})`,
+    );
   }
   const bits = cx.builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
   return cx.builder.emitUnary("f64.reinterpret_i64", bits, expected);
@@ -5518,11 +5733,13 @@ function importedMissingArgument(
   if (hostExternCarrier) {
     const undefinedValue = cx.builder.emitCall(irImportFuncRef("env", "__get_undefined"), [], expected);
     if (undefinedValue === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __get_undefined unexpectedly returned void (${cx.funcName})`);
     }
     return undefinedValue;
   }
-  throw new Error(
+  demoteToLegacy(
+    "imported-call-planning-unsupported",
     `ir/from-ast: missing imported-call argument of ${describeIrType(expected)} is outside A+B1 (${cx.funcName})`,
   );
 }
@@ -5536,6 +5753,7 @@ function lowerImportedCall(
   requireMatchingLoweringPlanOwner("imported call", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   requireValidImportedCallTarget(plan);
   if (expr.arguments.length > plan.params.length || expr.arguments.some(ts.isSpreadElement)) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: imported call shape diverged after certification (${cx.funcName})`);
   }
   const args: IrValueId[] = [];
@@ -5554,7 +5772,8 @@ function lowerImportedCall(
         actual = cx.builder.typeOf(value);
       }
       if (!irTypeAssignable(actual, expected)) {
-        throw new Error(
+        demoteToLegacy(
+          "imported-call-planning-unsupported",
           `ir/from-ast: arg ${i} of imported call to ${plan.target.name} is ${describeIrType(actual)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
       }
@@ -5569,11 +5788,13 @@ function lowerImportedCall(
   // after every argument value has been evaluated.
   if (plan.needsArgc) {
     if (!plan.argcGlobal || plan.argcGlobal.binding.kind !== "runtime") {
+      // invariant (producer-promise): the certified argc-sensitive plan promised the runtime global — #4502.
       throw new Error(`ir/from-ast: argc-sensitive call has no exact runtime global (${cx.funcName})`);
     }
     const argc = cx.builder.emitConst({ kind: "i32", value: expr.arguments.length }, irVal({ kind: "i32" }));
     cx.builder.emitGlobalSet(plan.argcGlobal, argc);
   } else if (plan.argcGlobal) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: argc-insensitive call unexpectedly carries runtime global state (${cx.funcName})`);
   }
 
@@ -5610,7 +5831,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // PROPERTY-ACCESS path (`obj?.prop`) gets the IR fast-path; full
   // optional-call IR support is a follow-up.
   if (expr.questionDotToken) {
-    throw new Error(`ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
   const indirectEval = exactIndirectEvalStatement(expr);
   if (indirectEval) {
@@ -5674,7 +5895,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     const parentShape = requireSuperParentShape(cx);
     const self = requireThisValue(cx);
     if (expr.arguments.length !== parentShape.constructorParams.length) {
-      throw new Error(
+      demoteToLegacy(
+        "call-arity-unsupported",
         `ir/from-ast: super(...) has ${expr.arguments.length} args, expected ${parentShape.constructorParams.length} in ${cx.funcName}`,
       );
     }
@@ -5684,7 +5906,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
       const argType = cx.builder.typeOf(argVal);
       if (!irTypeEquals(argType, expected)) {
-        throw new Error(
+        demoteToLegacy(
+          "call-resolution-unsupported",
           `ir/from-ast: super() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
       }
@@ -5710,7 +5933,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     return r;
   }
   if (!ts.isIdentifier(expr.expression)) {
-    throw new Error(`ir/from-ast: only direct calls supported in Phase 2 (${cx.funcName})`);
+    demoteToLegacy(
+      "call-resolution-unsupported",
+      `ir/from-ast: only direct calls supported in Phase 2 (${cx.funcName})`,
+    );
   }
   const calleeName = expr.expression.text;
 
@@ -5733,7 +5959,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
 
   const direct = cx.directCalls?.get(expr);
   if (!direct) {
-    throw new Error(`ir/from-ast: direct call to "${calleeName}" has no exact AST-site plan in ${cx.funcName}`);
+    demoteToLegacy(
+      "call-graph-closure",
+      `ir/from-ast: direct call to "${calleeName}" has no exact AST-site plan in ${cx.funcName}`,
+    );
   }
   requireMatchingLoweringPlanOwner("direct call", direct.ownerUnitId, cx.ownerUnitId, cx.funcName);
   const calleeSig = direct.signature;
@@ -5743,7 +5972,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
   if (expandedArgExprs.length !== calleeSig.params.length) {
-    throw new Error(
+    demoteToLegacy(
+      "call-arity-unsupported",
       `ir/from-ast: call to ${calleeName} has ${expandedArgExprs.length} args, expected ${calleeSig.params.length} in ${cx.funcName}`,
     );
   }
@@ -5796,7 +6026,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       (calleeName === "parseInt" || calleeName === "parseFloat") &&
       i === 0;
     if (!dynamicExternBoundary && !irTypeAssignable(argType, expected)) {
-      throw new Error(
+      demoteToLegacy(
+        "call-resolution-unsupported",
         `ir/from-ast: arg ${i} of call to ${calleeName} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
       );
     }
@@ -5879,13 +6110,15 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
   for (const a of args) {
     if (ts.isSpreadElement(a)) {
       if (!ts.isArrayLiteralExpression(a.expression)) {
-        throw new Error(
+        demoteToLegacy(
+          "call-resolution-unsupported",
           `ir/from-ast: dynamic-length spread args not in slice 8a (${ts.SyntaxKind[a.expression.kind]} in ${cx.funcName})`,
         );
       }
       for (const e of a.expression.elements) {
         if (ts.isSpreadElement(e) || ts.isOmittedExpression(e)) {
-          throw new Error(
+          demoteToLegacy(
+            "call-resolution-unsupported",
             `ir/from-ast: nested spread / sparse element inside spread arg not in slice 8a (${cx.funcName})`,
           );
         }
@@ -5929,7 +6162,7 @@ function lowerClosureCall(
   const expandedArgExprs = expandStaticSpreadArgs(argExprs, cx);
   const defaultParamStart = signature.defaultParamStart ?? signature.params.length;
   if (expandedArgExprs.length < defaultParamStart || expandedArgExprs.length > signature.params.length) {
-    throw new Error(`ir/from-ast: closure call arity mismatch in ${cx.funcName}`);
+    demoteToLegacy("call-arity-unsupported", `ir/from-ast: closure call arity mismatch in ${cx.funcName}`);
   }
   const args: IrValueId[] = [];
   for (let i = 0; i < signature.params.length; i++) {
@@ -5940,7 +6173,8 @@ function lowerClosureCall(
         ? emitExpressionDefaultMissingF64(expected, cx)
         : lowerExpr(argument!, cx, expected);
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
-      throw new Error(
+      demoteToLegacy(
+        "call-resolution-unsupported",
         `ir/from-ast: closure arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
       );
     }
@@ -5974,7 +6208,7 @@ function lowerNestedFuncCall(
     unsupportedVoidCallExpression(`ir/from-ast: void nested calls are not in value position scope (${cx.funcName})`);
   }
   if (argExprs.length !== binding.signature.params.length) {
-    throw new Error(`ir/from-ast: nested func call arity mismatch in ${cx.funcName}`);
+    demoteToLegacy("call-arity-unsupported", `ir/from-ast: nested func call arity mismatch in ${cx.funcName}`);
   }
   const args: IrValueId[] = [];
   for (const cap of binding.captures) {
@@ -5985,14 +6219,20 @@ function lowerNestedFuncCall(
       } else if (live?.kind === "local") {
         const innerVal = asVal(cap.type);
         if (!innerVal) {
-          throw new Error(`ir/from-ast: mutable nested capture "${cap.name}" must be a primitive (${cx.funcName})`);
+          demoteToLegacy(
+            "call-resolution-unsupported",
+            `ir/from-ast: mutable nested capture "${cap.name}" must be a primitive (${cx.funcName})`,
+          );
         }
         const cell = cx.builder.emitRefCellNew(live.value, innerVal);
         // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
         cx.scope.set(cap.name, { kind: "local", value: cell, type: { kind: "boxed", inner: irVal(innerVal) } });
         args.push(cell);
       } else {
-        throw new Error(`ir/from-ast: nested mutable capture "${cap.name}" not in scope (${cx.funcName})`);
+        demoteToLegacy(
+          "call-resolution-unsupported",
+          `ir/from-ast: nested mutable capture "${cap.name}" not in scope (${cx.funcName})`,
+        );
       }
     } else {
       // Read-only capture — read the CURRENT value from outer scope. If
@@ -6004,7 +6244,10 @@ function lowerNestedFuncCall(
       } else if (live?.kind === "local") {
         args.push(live.value);
       } else {
-        throw new Error(`ir/from-ast: nested capture "${cap.name}" not in scope (${cx.funcName})`);
+        demoteToLegacy(
+          "call-resolution-unsupported",
+          `ir/from-ast: nested capture "${cap.name}" not in scope (${cx.funcName})`,
+        );
       }
     }
   }
@@ -6012,13 +6255,15 @@ function lowerNestedFuncCall(
     const expected = binding.signature.params[i]!;
     const argVal = lowerExpr(argExprs[i]!, cx, expected);
     if (!irTypeEquals(cx.builder.typeOf(argVal), expected)) {
-      throw new Error(
+      demoteToLegacy(
+        "call-resolution-unsupported",
         `ir/from-ast: nested arg ${i} type mismatch (expected ${describeIrType(expected)}, got ${describeIrType(cx.builder.typeOf(argVal))}) in ${cx.funcName}`,
       );
     }
     args.push(argVal);
   }
   if (binding.target.binding.kind !== "unit") {
+    // invariant (producer-promise): identity resolution promised an exact unit — #4502.
     throw new Error(`ir/from-ast: nested function target ${binding.target.name} is not an exact lifted unit`);
   }
   const r = cx.builder.emitCall(binding.target, args, binding.signature.returnType);
@@ -6060,11 +6305,17 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
   if (!ts.isIdentifier(expr.expression)) {
-    throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
+    demoteToLegacy(
+      "unknown-class-construction",
+      `ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`,
+    );
   }
   const className = expr.expression.text;
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
-    throw new Error(`ir/from-ast: module binding "${className}" is not a direct constructor (${cx.funcName})`);
+    demoteToLegacy(
+      "unknown-class-construction",
+      `ir/from-ast: module binding "${className}" is not a direct constructor (${cx.funcName})`,
+    );
   }
 
   if (className === "Array" && cx.resolver?.isHoleyArrayConstructor?.(expr) === true) {
@@ -6102,6 +6353,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
       [lengthI32],
       irVec(irVal({ kind: "externref" }), true),
     );
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (result === null) throw new Error(`ir/from-ast: sparse Array allocator returned void (${cx.funcName})`);
     return result;
   }
@@ -6118,7 +6370,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const externInfo = cx.resolver?.getExternClassInfo?.(className);
   if (externInfo && !shape) {
     if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) {
-      throw new Error(`ir/from-ast: extern constructor "${className}" is shadowed (${cx.funcName})`);
+      demoteToLegacy(
+        "unknown-class-construction",
+        `ir/from-ast: extern constructor "${className}" is shadowed (${cx.funcName})`,
+      );
     }
     const argExprs = expr.arguments ?? [];
     // Constructor arity is permissive: the legacy host imports often
@@ -6130,7 +6385,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     // are both valid; for slice-10 step C (TypedArrays), `new
     // Uint8Array(N)` matches a single-param overload.
     if (argExprs.length > externInfo.constructorParams.length) {
-      throw new Error(
+      demoteToLegacy(
+        "constructor-arity-unsupported",
         `ir/from-ast: new ${className}(...) has ${argExprs.length} args, max ${externInfo.constructorParams.length} in ${cx.funcName}`,
       );
     }
@@ -6165,7 +6421,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   }
   const argExprs = expr.arguments ?? [];
   if (argExprs.length !== shape.constructorParams.length) {
-    throw new Error(
+    demoteToLegacy(
+      "constructor-arity-unsupported",
       `ir/from-ast: new ${className}(...) has ${argExprs.length} args, expected ${shape.constructorParams.length} in ${cx.funcName}`,
     );
   }
@@ -6175,7 +6432,8 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     const argVal = lowerExpr(argExprs[i]!, cx, expected);
     const argType = cx.builder.typeOf(argVal);
     if (!irTypeEquals(argType, expected)) {
-      throw new Error(
+      demoteToLegacy(
+        "unknown-class-construction",
         `ir/from-ast: arg ${i} of new ${className}(...) is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
       );
     }
@@ -6234,18 +6492,18 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
   if (kind === "Number") {
     argument = lowerExpr(args[0]!, cx, irVal({ kind: "f64" }));
     if (asVal(cx.builder.typeOf(argument))?.kind !== "f64") {
-      throw new Error(`ir/from-ast: new Number argument is not f64 in ${cx.funcName}`);
+      demoteToLegacy("unknown-class-construction", `ir/from-ast: new Number argument is not f64 in ${cx.funcName}`);
     }
   } else if (kind === "Boolean") {
     const boolean = lowerExpr(args[0]!, cx, irVal({ kind: "i32", boolean: true }));
     if (asVal(cx.builder.typeOf(boolean))?.kind !== "i32") {
-      throw new Error(`ir/from-ast: new Boolean argument is not i32 in ${cx.funcName}`);
+      demoteToLegacy("unknown-class-construction", `ir/from-ast: new Boolean argument is not i32 in ${cx.funcName}`);
     }
     argument = cx.builder.emitUnary("f64.convert_i32_s", boolean, irVal({ kind: "f64" }));
   } else {
     const string = lowerExpr(args[0]!, cx, { kind: "string" });
     if (cx.builder.typeOf(string).kind !== "string") {
-      throw new Error(`ir/from-ast: new String argument is not string in ${cx.funcName}`);
+      demoteToLegacy("unknown-class-construction", `ir/from-ast: new String argument is not string in ${cx.funcName}`);
     }
     argument = cx.builder.emitCoerceToExternref(string);
   }
@@ -6253,6 +6511,7 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
   const resultType: IrType = { kind: "extern", className: "Object" };
   const value = cx.builder.emitCall(irRuntimeFuncRef(`__new_${kind}`), [argument], resultType);
   if (value === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: __new_${kind} produced no value in ${cx.funcName}`);
   }
   return { kind, value };
@@ -6298,7 +6557,10 @@ function emitDefaultExternArg(cx: LowerCtx, expected: ValType): IrValueId {
     case "i64":
       return cx.builder.emitConst({ kind: "i64", value: 0n }, irVal(expected));
     default:
-      throw new Error(`ir/from-ast: cannot pad default arg of type ${expected.kind} (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: cannot pad default arg of type ${expected.kind} (${cx.funcName})`,
+      );
   }
 }
 
@@ -6341,6 +6603,7 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
   ) {
     const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_number"), [value], irVal({ kind: "externref" }));
     if (boxed === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __box_number produced no result in ${cx.funcName}`);
     }
     return boxed;
@@ -6358,6 +6621,7 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
   ) {
     const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_boolean"), [value], irVal({ kind: "externref" }));
     if (boxed === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __box_boolean produced no result in ${cx.funcName}`);
     }
     return boxed;
@@ -6425,9 +6689,11 @@ function lowerPreparedAsyncDateNow(
   const target = cx.resolver?.preparedAsyncDateNowTarget?.(expr) ?? null;
   if (target === null) return null;
   if (methodName !== "now" || receiverIdentifier?.text !== "Date" || expr.arguments.length !== 0) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: prepared Date.now proof diverged in ${cx.funcName}`);
   }
   const result = cx.builder.emitCall(target, [], irVal({ kind: "f64" }));
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: prepared Date.now returned void in ${cx.funcName}`);
   return result;
 }
@@ -6463,6 +6729,7 @@ function lowerReceiverFirstDynamicMethod(
     args.push(cx.builder.typeOf(carrier).kind === "dynamic" ? carrier : cx.builder.emitCoerceToExternref(carrier));
   }
   const result = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), args, irDynamic());
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: ${description} returned void (${cx.funcName})`);
   return result;
 }
@@ -6547,6 +6814,7 @@ function tryLowerNativeMapMethodCall(
     irVal({ kind: "externref" }),
   );
   if (result === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: native Map .${methodName} adapter returned void (${cx.funcName})`);
   }
   return result;
@@ -6569,13 +6837,14 @@ function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): Ir
   const storageType = cx.resolver?.ensureNativeMapStorageType?.();
   if (!storageType) return null;
   const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: native Map allocator returned void (${cx.funcName})`);
   return result;
 }
 
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
-    throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
+    demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
   }
   const methodName = expr.expression.name.text;
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
@@ -6628,6 +6897,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     }
     for (const argument of expr.arguments) lowerDiscardedExpression(argument, cx);
     const result = cx.builder.emitCall(target, [], irVal({ kind: "externref" }));
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (result === null) throw new Error(`ir/from-ast: Function.prototype helper returned void (${cx.funcName})`);
     return result;
   }
@@ -6671,6 +6941,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const plan = cx.resolver?.standaloneRegExpTestPlan?.(expr.expression.expression) ?? null;
     if (plan !== null) {
       if (plan.funcName !== STANDALONE_REGEXP_CARRIER_TEST_HELPER) {
+        // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
         throw new Error(`ir/from-ast: unexpected standalone RegExp test helper ${plan.funcName}`);
       }
       const receiver = cx.builder.emitGlobalGet(plan.receiverGlobal, irVal({ kind: "externref" }));
@@ -6689,6 +6960,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         irVal({ kind: "i32", boolean: true }),
       );
       if (result === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: standalone RegExp.test helper returned void (${cx.funcName})`);
       }
       return result;
@@ -6741,6 +7013,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     });
     const result = cx.builder.emitCall(target, args, irVal({ kind: "externref" }));
     if (result === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: Object.defineProperty helper produced no result (${cx.funcName})`);
     }
     return result;
@@ -6821,6 +7094,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
 
       const part = cx.builder.emitCall(irRuntimeFuncRef(plan.funcName), [code], { kind: "string" });
       if (part === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: String.fromCharCode helper produced no result (${cx.funcName})`);
       }
       result = result === null ? part : cx.builder.emitStringConcat(result, part);
@@ -6847,12 +7121,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const self = requireThisValue(cx);
     const method = findClassMember(parentShape, methodName, "method");
     if (!method) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: super.${methodName}() — parent class ${parentShape.className} has no method "${methodName}" in ${cx.funcName}`,
       );
     }
     if (expr.arguments.length !== method.params.length) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: super.${methodName}() has ${expr.arguments.length} args, expected ${method.params.length} in ${cx.funcName}`,
       );
     }
@@ -6862,7 +7138,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
       const argType = cx.builder.typeOf(argVal);
       if (!irTypeEquals(argType, expected)) {
-        throw new Error(
+        demoteToLegacy(
+          "method-call-unsupported",
           `ir/from-ast: super.${methodName}() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
       }
@@ -6900,13 +7177,20 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       cx.funcName,
     );
     if (!statementPosition) {
-      throw new Error(`ir/from-ast: console.${methodName} in expression position not supported (${cx.funcName})`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: console.${methodName} in expression position not supported (${cx.funcName})`,
+      );
     }
     if (!IR_CONSOLE_METHODS.has(methodName)) {
-      throw new Error(`ir/from-ast: console.${methodName} not in IR console slice (${cx.funcName})`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: console.${methodName} not in IR console slice (${cx.funcName})`,
+      );
     }
     if (expr.arguments.length !== 1) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: console.${methodName} with ${expr.arguments.length} args not in slice (${cx.funcName})`,
       );
     }
@@ -6940,7 +7224,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         const arg = lowerExpr(argExpr, cx, irVal({ kind: "f64" }));
         const argType = cx.builder.typeOf(arg);
         if (argType.kind !== "val" || argType.val.kind !== "f64") {
-          throw new Error(
+          demoteToLegacy(
+            "method-call-unsupported",
             `ir/from-ast: Math.${methodName} arg must be f64, got ${describeIrType(argType)} (${cx.funcName})`,
           );
         }
@@ -6953,7 +7238,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         column: position.character,
       });
     }
-    throw new Error(`ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
+    demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
 
   // (#3144) `C.m(args)` — static method call on a locally-declared class.
@@ -6975,10 +7260,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const shape = cx.classShapes.get(className)!;
     const method = findClassMember(shape, methodName, "static");
     if (!method) {
-      throw new Error(`ir/from-ast: class ${className} has no static method "${methodName}" in ${cx.funcName}`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: class ${className} has no static method "${methodName}" in ${cx.funcName}`,
+      );
     }
     if (expr.arguments.length !== method.params.length) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: static ${className}.${methodName} has ${expr.arguments.length} args, expected ${method.params.length} in ${cx.funcName}`,
       );
     }
@@ -6988,7 +7277,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
       const argType = cx.builder.typeOf(argVal);
       if (!irTypeEquals(argType, expected)) {
-        throw new Error(
+        demoteToLegacy(
+          "method-call-unsupported",
           `ir/from-ast: arg ${i} of static ${className}.${methodName} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
       }
@@ -7041,6 +7331,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       [cx.builder.emitCoerceToExternref(recv), callbackExtern, emitDefaultExternArg(cx, { kind: "externref" })],
       irVal({ kind: "externref" }),
     );
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (result === null) throw new Error(`ir/from-ast: sparse filter provider returned void (${cx.funcName})`);
     return result;
   }
@@ -7084,6 +7375,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         irDynamic(),
       );
       if (result === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: dynamic string replace produced no result in ${cx.funcName}`);
       }
       return result;
@@ -7113,6 +7405,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const target = expr.arguments.length === 0 ? IR_DYN_METHOD_CALL_0_FN : IR_DYN_METHOD_CALL_1_FN;
     const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
     if (result === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: dynamic method .${methodName}(...) produced no result in ${cx.funcName}`);
     }
     return result;
@@ -7160,6 +7453,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const target = cx.resolver.preparedAsyncNumberToStringTarget?.(expr) ?? irImportFuncRef("env", "number_toString");
     const r = cx.builder.emitCall(target, [recv], { kind: "string" });
     if (r === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
     return r;
@@ -7179,10 +7473,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   ) {
     const digits = Number(expr.arguments[0]!.text.replace(/_/g, ""));
     if (!Number.isInteger(digits) || digits < 0 || digits > 100) {
-      throw new Error(`ir/from-ast: number.toFixed digits not a bounded integer literal (${cx.funcName})`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: number.toFixed digits not a bounded integer literal (${cx.funcName})`,
+      );
     }
     const digitValue = cx.builder.emitConst({ kind: "f64", value: digits }, irVal({ kind: "f64" }));
     const r = cx.builder.emitCall(irImportFuncRef("env", "number_toFixed"), [recv, digitValue], { kind: "string" });
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (r === null) throw new Error(`ir/from-ast: number_toFixed produced no result in ${cx.funcName}`);
     return r;
   }
@@ -7199,7 +7497,10 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       (expr.arguments.length !== 2 ||
         !expr.arguments.every((arg) => ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)))
     ) {
-      throw new Error(`ir/from-ast: String.replace requires two literal-string arguments (${cx.funcName})`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: String.replace requires two literal-string arguments (${cx.funcName})`,
+      );
     }
     const r = lowerStringMethodCall(methodName, recv, expr.expression.expression, expr.arguments, cx);
     if (r !== null) return r;
@@ -7226,13 +7527,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const flatInfo = cx.resolver?.getExternClassInfo?.(className);
     const method = chained?.method ?? flatInfo?.methods.get(methodName);
     if (!method) {
-      throw new Error(`ir/from-ast: extern class ${className} has no method "${methodName}" in ${cx.funcName}`);
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: extern class ${className} has no method "${methodName}" in ${cx.funcName}`,
+      );
     }
     const definingClass = chained?.importPrefix ?? flatInfo?.importPrefix ?? className;
     // params[0] is the receiver — userParams = params.slice(1).
     const userParams = method.params.slice(1);
     if (expr.arguments.length > userParams.length) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: method ${definingClass}.${methodName} has ${expr.arguments.length} args, max ${userParams.length} in ${cx.funcName}`,
       );
     }
@@ -7250,6 +7555,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
           hostCallbackPlan.signature.params.length !== 0 ||
           hostCallbackPlan.signature.returnType !== null
         ) {
+          // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
           throw new Error(`ir/from-ast: invalid host void callback plan for ${definingClass}.${methodName}`);
         }
         const closure = lowerHostVoidCallbackExpression(hostCallbackArrow, hostCallbackPlan, cx);
@@ -7265,6 +7571,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
           irVal({ kind: "externref" }),
         );
         if (wrapped === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: __make_callback produced no value in ${cx.funcName}`);
         }
         args.push(wrapped);
@@ -7298,6 +7605,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     }
     const r = cx.builder.emitExternCall(definingClass, methodName, recv, args, resultType);
     if (resultType !== null && r === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: extern.call produced no result in ${cx.funcName}`);
     }
     return r;
@@ -7321,10 +7629,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // inherited-member key propagation.
   const method = findClassMember(recvType.shape, methodName, "method");
   if (!method) {
-    throw new Error(`ir/from-ast: class ${recvType.shape.className} has no method "${methodName}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: class ${recvType.shape.className} has no method "${methodName}" in ${cx.funcName}`,
+    );
   }
   if (expr.arguments.length !== method.params.length) {
-    throw new Error(
+    demoteToLegacy(
+      "method-call-unsupported",
       `ir/from-ast: method ${recvType.shape.className}.${methodName} has ${expr.arguments.length} args, expected ${method.params.length} in ${cx.funcName}`,
     );
   }
@@ -7334,7 +7646,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
     const argType = cx.builder.typeOf(argVal);
     if (!irTypeEquals(argType, expected)) {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: arg ${i} of ${recvType.shape.className}.${methodName} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
       );
     }
@@ -7357,6 +7670,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const r = cx.builder.emitClassCall(recv, methodName, "method", args, method.returnType, method.target);
   if (method.returnType !== null && r === null) {
     // Defensive — emitClassCall returns null only when resultType is null.
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: class.call produced no result in ${cx.funcName}`);
   }
   return r;
@@ -7427,6 +7741,7 @@ function emitStringRelational(
 ): IrValueId {
   const sign = cx.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], irVal({ kind: "i32" }));
   if (sign === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
   }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
@@ -7533,7 +7848,8 @@ function lowerStringMethodCall(
   }
 
   if (args.length < sig.requiredArgs || args.length > sig.hostArgs.length) {
-    throw new Error(
+    demoteToLegacy(
+      "method-call-unsupported",
       `ir/from-ast: String.${methodName}(...) arg count ${args.length} not in [${sig.requiredArgs}, ${sig.hostArgs.length}] (${cx.funcName})`,
     );
   }
@@ -7569,7 +7885,8 @@ function lowerStringMethodCall(
         const indexExpr = args[0]!;
         const semantic = proveAdditiveOperand(indexExpr, cx);
         if (semantic !== "number" && semantic !== "no-checker") {
-          throw new Error(
+          demoteToLegacy(
+            "method-call-unsupported",
             `ir/from-ast: String.${methodName} index is not provably numeric (${semantic}) in ${cx.funcName}`,
           );
         }
@@ -7582,7 +7899,8 @@ function lowerStringMethodCall(
       }
       const evidence = proveTypedStringMethod(receiverEvidence, methodName, indexType === null ? [] : [indexType]);
       if (!evidence) {
-        throw new Error(
+        demoteToLegacy(
+          "string-evidence-unsupported",
           `ir/from-ast: String.${methodName} requires typed string receiver/encoding evidence (${cx.funcName})`,
         );
       }
@@ -7633,7 +7951,8 @@ function lowerStringMethodCall(
         argVal = lowerExpr(args[i]!, cx, { kind: "string" });
       }
     } else {
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: String.${methodName} arg ${i} expected ValType ${expectedHost.kind} not in slice 13c (${cx.funcName})`,
       );
     }
@@ -7680,7 +7999,8 @@ function lowerStringMethodCall(
         loweredArgs.push(i32Len);
         continue;
       }
-      throw new Error(
+      demoteToLegacy(
+        "method-call-unsupported",
         `ir/from-ast: String.${methodName} optional arg ${i} omitted in nativeStrings mode not in slice 13c (${cx.funcName})`,
       );
     } else {
@@ -7713,6 +8033,7 @@ function lowerStringMethodCall(
 
   const r = cx.builder.emitCall(irIntrinsicFuncRef(funcName), loweredArgs, sig.result);
   if (r === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
   return r;
@@ -7764,7 +8085,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   // #3000 — private-field write (`this.#x = v`). Same mangling as the read
   // path so the write targets the identical legacy struct slot.
   if (!ts.isPropertyAccessExpression(lhs) || (!ts.isIdentifier(lhs.name) && !ts.isPrivateIdentifier(lhs.name))) {
-    throw new Error(`ir/from-ast: malformed property assignment LHS in ${cx.funcName}`);
+    demoteToLegacy("property-write-unsupported", `ir/from-ast: malformed property assignment LHS in ${cx.funcName}`);
   }
   const fieldName = irPrivateFieldName(lhs.name);
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
@@ -7782,14 +8103,18 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
         const newValue = lowerExpr(expr.right, cx, setter.params[0]!);
         const newValueType = cx.builder.typeOf(newValue);
         if (!irTypeEquals(newValueType, setter.params[0]!)) {
-          throw new Error(
+          demoteToLegacy(
+            "property-write-unsupported",
             `ir/from-ast: assignment to setter ${recvType.shape.className}.${fieldName} (${describeIrType(setter.params[0]!)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
           );
         }
         cx.builder.emitClassCall(recv, fieldName, "setter", [newValue], null, setter.target);
         return;
       }
-      throw new Error(`ir/from-ast: class ${recvType.shape.className} has no field "${fieldName}" in ${cx.funcName}`);
+      demoteToLegacy(
+        "property-write-unsupported",
+        `ir/from-ast: class ${recvType.shape.className} has no field "${fieldName}" in ${cx.funcName}`,
+      );
     }
     lowerCheckedClassFieldSet(recv, recvType.shape, fieldName, expr.right, cx);
     return;
@@ -7798,7 +8123,8 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   if (recvType.kind === "object") {
     const fieldIdx = recvType.shape.fields.findIndex((f) => f.name === fieldName);
     if (fieldIdx < 0) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: object has no field "${fieldName}" (shape: ${describeIrType(recvType)}) in ${cx.funcName}`,
       );
     }
@@ -7809,7 +8135,8 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       : (coerceIrNumeric(rawValue, fieldType, cx) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, fieldType)) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: assignment to .${fieldName} (${describeIrType(fieldType)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
       );
     }
@@ -7833,7 +8160,8 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     );
     const resolved = cx.resolver?.resolveExternMember?.(recvType.className, fieldName, "property", lhs);
     if (!resolved?.property) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: extern class ${recvType.className} has no property "${fieldName}" in ${cx.funcName}`,
       );
     }
@@ -7860,7 +8188,10 @@ function lowerCheckedClassFieldSet(
 ): void {
   const field = shape.fields.find((candidate) => candidate.name === fieldName);
   if (!field) {
-    throw new Error(`ir/from-ast: class ${shape.className} has no field "${fieldName}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "property-write-unsupported",
+      `ir/from-ast: class ${shape.className} has no field "${fieldName}" in ${cx.funcName}`,
+    );
   }
   const rawValue = lowerExpr(expression, cx, field.type);
   // (#3673) Native numeric slots retain their physical representation while
@@ -7870,7 +8201,8 @@ function lowerCheckedClassFieldSet(
     : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
   const newValueType = cx.builder.typeOf(newValue);
   if (!irTypeEquals(newValueType, field.type)) {
-    throw new Error(
+    demoteToLegacy(
+      "property-write-unsupported",
       `ir/from-ast: assignment to ${shape.className}.${fieldName} (${describeIrType(field.type)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
     );
   }
@@ -7884,11 +8216,12 @@ function lowerConstructorFieldInitializers(
 ): void {
   const receiverType = cx.builder.typeOf(receiver);
   if (receiverType.kind !== "class") {
-    throw new Error(`ir/from-ast: constructor receiver is not class-shaped (${cx.funcName})`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: constructor receiver is not class-shaped (${cx.funcName})`);
   }
   let priorOrdinal = -1;
   for (const initializer of initializers) {
     if (initializer.sourceOrdinal <= priorOrdinal) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
       throw new Error(`ir/from-ast: constructor field plan is not in source order (${cx.funcName})`);
     }
     priorOrdinal = initializer.sourceOrdinal;
@@ -7944,7 +8277,7 @@ function lowerConstructorFieldInitializers(
  */
 function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
   if (cx.funcKind !== "generator") {
-    throw new Error(`ir/from-ast: yield outside generator function in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: yield outside generator function in ${cx.funcName}`);
   }
 
   // ---------------------------------------------------------------
@@ -7953,7 +8286,7 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
   if (expr.asteriskToken) {
     if (!expr.expression) {
       // TS parser enforces this; keep as defense-in-depth.
-      throw new Error(`ir/from-ast: yield* requires an iterable in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: yield* requires an iterable in ${cx.funcName}`);
     }
     // Lower the iterable with an externref hint; the iterable's
     // actual IrType might be vec/string/object/externref. Coerce to
@@ -8087,6 +8420,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
       if (provider !== null) {
         const unboxed = cx.builder.emitCall(provider, [value], irVal({ kind: "f64" }));
         if (unboxed === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
         }
         return unboxed;
@@ -8121,14 +8455,16 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   // gate (`proveUnboxedNumberLocal`): together they keep the value unboxed only
   // while it is provably a pure number AND box it at the proven escape edge.
   if (actualVal && actualVal.kind === "f64") {
-    throw new Error(
+    demoteToLegacy(
+      "return-type-legacy-coupling",
       `ir/from-ast: unboxed f64 number returned into an 'any' (externref) result — the ` +
         `no-box number representation is unsound at this escape sink; demote to the SAFE ` +
         `boxed legacy lowering (boxes via __box_number) in ${cx.funcName} (#2782)`,
     );
   }
   if (actualVal && (actualVal.kind === "i32" || actualVal.kind === "i64")) {
-    throw new Error(
+    demoteToLegacy(
+      "return-type-legacy-coupling",
       `ir/from-ast: return of numeric ${actualVal.kind} into an 'any' (externref) result ` +
         `needs the box helper — deferring to legacy in ${cx.funcName}`,
     );
@@ -8159,11 +8495,11 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   //    and iter-host arms.
   const init = stmt.initializer;
   if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) {
-    throw new Error(`ir/from-ast: for-of init shape unexpected (${cx.funcName})`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of init shape unexpected (${cx.funcName})`);
   }
   const decl = init.declarations[0]!;
   if (!ts.isIdentifier(decl.name)) {
-    throw new Error(`ir/from-ast: for-of destructuring init not in slice 6 (${cx.funcName})`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: for-of destructuring init not in slice 6 (${cx.funcName})`);
   }
   const loopVarName = decl.name.text;
 
@@ -8217,7 +8553,8 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   // Iter-host arm: externref / class / object iterables.
   const isIterHostEligible = valTy?.kind === "externref" || iterableT.kind === "class" || iterableT.kind === "object";
   if (!isIterHostEligible) {
-    throw new Error(
+    demoteToLegacy(
+      "body-shape-rejected",
       `ir/from-ast: for-of iterable type ${describeIrType(iterableT)} not supported in slice 6 (${cx.funcName})`,
     );
   }
@@ -8244,23 +8581,28 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   }
   const init = stmt.initializer;
   if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: for-in init shape drift in ${cx.funcName}`);
   }
   const declaration = init.declarations[0]!;
   if (!ts.isIdentifier(declaration.name) || declaration.initializer) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: for-in head shape drift in ${cx.funcName}`);
   }
 
   const receiver = lowerExpr(stmt.expression, cx, irDynamic());
   if (cx.builder.typeOf(receiver).kind !== "dynamic") {
+    // invariant (producer-promise): the carrier the producer promised was dropped — #4502.
     throw new Error(`ir/from-ast: for-in receiver lost dynamic carrier in ${cx.funcName}`);
   }
 
   const externref = irVal({ kind: "externref" });
   const i32 = irVal({ kind: "i32" });
   const keys = cx.builder.emitCall(irRuntimeFuncRef(plan.keys), [receiver], externref);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (keys === null) throw new Error(`ir/from-ast: for-in keys helper returned void in ${cx.funcName}`);
   const length = cx.builder.emitCall(irRuntimeFuncRef(plan.len), [keys], i32);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (length === null) throw new Error(`ir/from-ast: for-in length helper returned void in ${cx.funcName}`);
 
   const counterSlot = cx.builder.declareSlot("__forin_i", { kind: "i32" });
@@ -8271,6 +8613,7 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   const cond = cx.builder.collectBodyInstrs(() => {
     condValue = cx.builder.emitBinary("i32.lt_s", cx.builder.emitSlotRead(counterSlot), length, i32);
   });
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (condValue === null) throw new Error(`ir/from-ast: for-in condition produced no value in ${cx.funcName}`);
 
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -8305,9 +8648,11 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
       [keys, cx.builder.emitSlotRead(counterSlot)],
       externref,
     );
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (key === null) throw new Error(`ir/from-ast: for-in key helper returned void in ${cx.funcName}`);
     cx.builder.emitSlotWrite(keySlot, key);
     const live = cx.builder.emitCall(irRuntimeFuncRef(plan.has), [receiver, key], i32);
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (live === null) throw new Error(`ir/from-ast: for-in liveness helper returned void in ${cx.funcName}`);
     const liveBody = cx.builder.collectBodyInstrs(() => lowerStmt(stmt.statement, bodyCx));
     cx.builder.emitIfStmt({ cond: live, then: liveBody, else: [] });
@@ -8406,7 +8751,7 @@ function coerceLoopCondToBool(
   if (kind === "ref") {
     return cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
   }
-  throw new Error(`ir/from-ast: ${loopKind} condition must be bool in ${cx.funcName}`);
+  demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ${loopKind} condition must be bool in ${cx.funcName}`);
 }
 
 function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
@@ -8433,6 +8778,7 @@ function lowerWhileStatement(stmt: ts.WhileStatement, cx: LowerCtx): void {
     condResult = coerceLoopCondToBool(raw, stmt.expression, loopCx, "while");
   });
   if (condResult === null || condResult === undefined) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: while cond produced no SSA value (${cx.funcName})`);
   }
   // #2952 slice 2 — the loop's label is threaded as the innermost loop for
@@ -8488,6 +8834,7 @@ function lowerDoStatement(stmt: ts.DoStatement, cx: LowerCtx): void {
     condResult = coerceLoopCondToBool(raw, stmt.expression, bodyCx, "do");
   });
   if (condResult === null || condResult === undefined) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: do-while cond produced no SSA value (${cx.funcName})`);
   }
 
@@ -8662,12 +9009,14 @@ function emitProvenCharReadI32(call: ts.CallExpression, proof: CharReadProof, cx
     const flat = cx.builder.emitSlotReadAs(proof.hoist.flatSlot, { kind: "string" });
     const index = lowerCharReadIndexI32(indexExpr, cx);
     const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.hoist.readFuncName), [flat, index], IR_I32);
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     if (read === null) throw new Error(`ir/from-ast: hoisted char read produced void (${cx.funcName})`);
     return read;
   }
   const recv = lowerExpr(receiverExpr, cx, { kind: "string" });
   const index = lowerCharReadIndexI32(indexExpr, cx);
   const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.trustedFuncName!), [recv, index], IR_I32);
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (read === null) throw new Error(`ir/from-ast: trusted char read produced void (${cx.funcName})`);
   return read;
 }
@@ -8780,6 +9129,7 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
     condResult = coerceLoopCondToBool(raw, cond, loopCx, "for");
   });
   if (condResult === null || condResult === undefined) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: for cond produced no SSA value (${cx.funcName})`);
   }
 
@@ -8970,7 +9320,10 @@ function lowerForOfString(stmt: ts.ForOfStatement, cx: LowerCtx, strV: IrValueId
   // as before #1185, just wired through one indirection.
   const strRef = cx.resolver?.resolveString?.();
   if (!strRef || strRef.kind !== "ref") {
-    throw new Error(`ir/from-ast: native-strings for-of needs resolver.resolveString() (${cx.funcName})`);
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: native-strings for-of needs resolver.resolveString() (${cx.funcName})`,
+    );
   }
 
   const counterSlot = cx.builder.declareSlot("__forof_si", { kind: "i32" });
@@ -9057,21 +9410,33 @@ function lowerForOfVec(
     dataValType = { kind: "ref", typeIdx: resolvedVec.lowering.arrayTypeIdx };
   } else {
     if (!valTy) {
-      throw new Error(`ir/from-ast: for-of iterable has no backend vec carrier in ${cx.funcName}`);
+      demoteToLegacy(
+        "array-representation-unsupported",
+        `ir/from-ast: for-of iterable has no backend vec carrier in ${cx.funcName}`,
+      );
     }
     elemValType = inferVecElementValTypeFromContext(valTy, cx);
     dataValType = inferVecDataValTypeFromContext(valTy, cx);
   }
   if (!elemValType) {
-    throw new Error(`ir/from-ast: for-of iterable's IR type is not a recognisable vec in ${cx.funcName}`);
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: for-of iterable's IR type is not a recognisable vec in ${cx.funcName}`,
+    );
   }
   const elemIrT = irVal(elemValType);
 
   if (!dataValType) {
-    throw new Error(`ir/from-ast: for-of vec has unexpected data field shape (${cx.funcName})`);
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: for-of vec has unexpected data field shape (${cx.funcName})`,
+    );
   }
   if (!valTy) {
-    throw new Error(`ir/from-ast: for-of vec has no backend value carrier (${cx.funcName})`);
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: for-of vec has no backend value carrier (${cx.funcName})`,
+    );
   }
   const counterSlot = cx.builder.declareSlot("__forof_i", { kind: "i32" });
   const lengthSlot = cx.builder.declareSlot("__forof_len", { kind: "i32" });
@@ -9266,7 +9631,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerDiscardedExpression(stmt.expression, cx);
       return;
     }
-    throw new Error(`ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(stmt)) {
     lowerWithStatement(stmt, cx);
@@ -9333,7 +9698,10 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     lowerEarlyReturn(stmt, cx);
     return;
   }
-  throw new Error(`ir/from-ast: unsupported body statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`);
+  demoteToLegacy(
+    "body-shape-rejected",
+    `ir/from-ast: unsupported body statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`,
+  );
 }
 
 /**
@@ -9345,11 +9713,15 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
  */
 function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
   if (!ts.isObjectLiteralExpression(stmt.expression) || !ts.isBlock(stmt.statement)) {
-    throw new Error(`ir/from-ast: with target/body outside the closed-object IR slice (${cx.funcName})`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: with target/body outside the closed-object IR slice (${cx.funcName})`,
+    );
   }
   const receiver = lowerObjectLiteral(stmt.expression, cx);
   const receiverType = cx.builder.typeOf(receiver);
   if (receiverType.kind !== "object") {
+    // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
     throw new Error(`ir/from-ast: with target did not lower to an object (${cx.funcName})`);
   }
 
@@ -9471,6 +9843,7 @@ function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatem
   if (stmt.label) {
     const target = cx.labelEnv?.get(stmt.label.text);
     if (target === undefined) {
+      // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
       throw new Error(
         `ir/from-ast: ${kind} ${stmt.label.text} targets no enclosing claimed labeled statement — selector gate failed (${cx.funcName})`,
       );
@@ -9482,6 +9855,7 @@ function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatem
   // switch, §14.9); unlabeled continue binds the nearest LOOP (§14.8).
   const target = kind === "break" ? cx.breakTargetLabel : cx.loopLabel;
   if (target === undefined) {
+    // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
     throw new Error(
       `ir/from-ast: ${kind} outside a claimed ${kind === "break" ? "loop/switch" : "loop"} — selector gate failed (${cx.funcName})`,
     );
@@ -9523,7 +9897,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
   const discRaw = dispatch ? dispatch.disc : lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
   const discT = asVal(cx.builder.typeOf(discRaw));
   if (!discT || (discT.kind !== "f64" && discT.kind !== "i32")) {
-    throw new Error(`ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
   }
   const discSlot = cx.builder.declareSlot("__switch_disc", discT);
   // A labeled switch (`lbl: switch (...)`) adopts the pre-allocated label
@@ -9545,6 +9919,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
       // the literal's value, as slice 4.
       const v = dispatch ? k : numericLiteralValue(clause.expression);
       if (v === null) {
+        // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
         throw new Error(
           `ir/from-ast: switch case test must be a numeric literal — selector gate failed (${cx.funcName})`,
         );
@@ -9674,12 +10049,18 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
     // A generator's `return` routes through __gen_set_return / the buffer
     // epilogue — a plain Wasm return would skip the generator wrap. The
     // selector rejects the shape; this is the defensive mirror.
-    throw new Error(`ir/from-ast: early return inside a generator not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "return-type-legacy-coupling",
+      `ir/from-ast: early return inside a generator not in IR scope (${cx.funcName})`,
+    );
   }
   if (cx.noEarlyReturn) {
     // Inside try/catch/finally (would skip inlined finally) or an
     // iterator-protocol for-of body (would skip iter.return cleanup).
-    throw new Error(`ir/from-ast: early return inside try/for-of-iter not in IR scope (${cx.funcName})`);
+    demoteToLegacy(
+      "return-type-legacy-coupling",
+      `ir/from-ast: early return inside try/for-of-iter not in IR scope (${cx.funcName})`,
+    );
   }
   if (cx.returnType === null) {
     if (stmt.expression) {
@@ -9689,7 +10070,10 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
     return;
   }
   if (!stmt.expression) {
-    throw new Error(`ir/from-ast: early bare return in non-void function in ${cx.funcName}`);
+    demoteToLegacy(
+      "return-type-legacy-coupling",
+      `ir/from-ast: early bare return in non-void function in ${cx.funcName}`,
+    );
   }
   const v = lowerExpr(stmt.expression, cx, cx.returnType);
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
@@ -9710,7 +10094,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
       const writable = cx.resolver?.resolveModuleBinding?.(id, rhs);
       if (!writable) {
-        throw new Error(
+        demoteToLegacy(
+          "property-write-unsupported",
           `ir/from-ast: assignment to readonly or representation-incompatible module binding "${id.text}" in ${cx.funcName}`,
         );
       }
@@ -9718,7 +10103,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       const newValue = lowerExpr(rhs, cx, writable.type);
       const newType = cx.builder.typeOf(newValue);
       if (!moduleStorageCompatible(newType, writable.type)) {
-        throw new Error(
+        demoteToLegacy(
+          "property-write-unsupported",
           `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
         );
       }
@@ -9726,14 +10112,18 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       cx.builder.emitGlobalSet(writable.globalRef, newValue);
       return;
     }
-    throw new Error(`ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "property-write-unsupported",
+      `ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`,
+    );
   }
   // (#3142 Slice 2) Module-scope binding — write the legacy global.
   if (binding.kind === "moduleGlobal") {
     const newValue = lowerExpr(rhs, cx, binding.type);
     const newType = cx.builder.typeOf(newValue);
     if (!moduleStorageCompatible(newType, binding.type)) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(binding.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
       );
     }
@@ -9745,7 +10135,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     const newValue = lowerExpr(rhs, cx, binding.type.inner);
     const newType = cx.builder.typeOf(newValue);
     if (!irTypeAssignable(newType, binding.type.inner)) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: assignment to captured "${id.text}" (${describeIrType(binding.type.inner)}) got ${describeIrType(newType)} in ${cx.funcName}`,
       );
     }
@@ -9755,7 +10146,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (binding.kind === "withField") {
     const newValue = lowerExpr(rhs, cx, binding.type);
     if (!irTypeAssignable(cx.builder.typeOf(newValue), binding.type)) {
-      throw new Error(
+      demoteToLegacy(
+        "property-write-unsupported",
         `ir/from-ast: assignment to with binding "${id.text}" (${describeIrType(binding.type)}) has incompatible value in ${cx.funcName}`,
       );
     }
@@ -9763,6 +10155,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return;
   }
   if (binding.kind !== "slot") {
+    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: assignment to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
@@ -9790,7 +10183,8 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     }
   }
   if (!irTypeAssignable(newType, logicalType)) {
-    throw new Error(
+    demoteToLegacy(
+      "property-write-unsupported",
       `ir/from-ast: assignment to "${id.text}" (${describeIrType(logicalType)}) got ${describeIrType(newType)} in ${cx.funcName}`,
     );
   }
@@ -9808,10 +10202,14 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
 function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, rhs: ts.Expression, cx: LowerCtx): void {
   const binding = cx.scope.get(id.text);
   if (!binding) {
-    throw new Error(`ir/from-ast: compound assign to undeclared identifier "${id.text}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "compound-assign-unsupported",
+      `ir/from-ast: compound assign to undeclared identifier "${id.text}" in ${cx.funcName}`,
+    );
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
+    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
@@ -9838,7 +10236,8 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
     if (checkerOperandFamily(rhs, cx) === "string" && rhsType.kind !== "string") {
-      throw new Error(
+      demoteToLegacy(
+        "compound-assign-unsupported",
         `ir/from-ast: checker-string RHS for "${id.text} +=" has contradictory carrier ${describeIrType(rhsType)} (${cx.funcName})`,
       );
     }
@@ -9868,7 +10267,8 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   }
   const slotValType = asVal(logicalType);
   if (!slotValType || slotValType.kind !== "f64") {
-    throw new Error(
+    demoteToLegacy(
+      "compound-assign-unsupported",
       `ir/from-ast: compound assign to non-f64 slot "${id.text}" (${describeIrType(logicalType)}) not in slice 6 (${cx.funcName})`,
     );
   }
@@ -9913,7 +10313,10 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       binop = "f64.div";
       break;
     default:
-      throw new Error(`ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`);
+      demoteToLegacy(
+        "compound-assign-unsupported",
+        `ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`,
+      );
   }
   const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
   if (storage.kind === "moduleGlobal") {
@@ -9939,10 +10342,14 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
 function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: LowerCtx): void {
   const binding = cx.scope.get(id.text);
   if (!binding) {
-    throw new Error(`ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`);
+    demoteToLegacy(
+      "compound-assign-unsupported",
+      `ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`,
+    );
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
+    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
     throw new Error(
       `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
@@ -9991,7 +10398,8 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   // counters (the common case for `let i = 0; i++` where `i: number`).
   // i32-typed counters fall back to legacy via the lowerer's throw.
   if (!slotValType || slotValType.kind !== "f64") {
-    throw new Error(
+    demoteToLegacy(
+      "compound-assign-unsupported",
       `ir/from-ast: increment/decrement of non-f64 slot "${id.text}" (${describeIrType(logicalType)}) not in slice 12 (${cx.funcName})`,
     );
   }
@@ -10026,7 +10434,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
   // hand-built-IR unit tests until then (byte-inert on the corpus).
   const cond = condType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawCond) : rawCond;
   if (condType.kind !== "dynamic" && asVal(condType)?.kind !== "i32") {
-    throw new Error(`ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
   }
 
   // #1820 — short-circuit semantics: only the selected arm may run. A prior
@@ -10062,7 +10470,8 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
     // `cond ? "true" : "false"` types as string on either string backend.
     // Only genuinely mismatched arm types still demote.
     if (!irTypeEquals(ttype, ftype)) {
-      throw new Error(
+      demoteToLegacy(
+        "operand-coercion-unsupported",
         `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
       );
     }
@@ -10115,10 +10524,12 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
     const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
     const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [rand, hint], externref);
     if (primitive === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
     }
     const number = cx.builder.emitCall(irRuntimeFuncRef("__unbox_number"), [primitive], irVal({ kind: "f64" }));
     if (number === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __unbox_number produced no value in ${cx.funcName}`);
     }
     return number;
@@ -10136,6 +10547,7 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
       const closure = cx.builder.emitObjectGet(rand, method.name, method.type);
       const primitive = cx.builder.emitClosureCall(closure, [], method.type.signature.returnType);
       if (primitive === null || method.type.signature.returnType === null) {
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         throw new Error(`ir/from-ast: OrdinaryToPrimitive method produced no value in ${cx.funcName}`);
       }
       const primitiveType = method.type.signature.returnType;
@@ -10150,6 +10562,7 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
           irVal({ kind: "f64" }),
         );
         if (number === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: string OrdinaryToPrimitive result produced no number in ${cx.funcName}`);
         }
         return number;
@@ -10239,13 +10652,19 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
     case ts.SyntaxKind.TildeToken: {
       const randType = typeOfValue(rand, cx);
       if (asVal(randType)?.kind !== "f64") {
-        throw new Error(`ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`);
+        demoteToLegacy(
+          "operand-coercion-unsupported",
+          `ir/from-ast: unary '~' expects a proven number in ${cx.funcName}`,
+        );
       }
       const minusOne = cx.builder.emitConst({ kind: "f64", value: -1 }, irVal({ kind: "f64" }));
       return cx.builder.emitBinary("js.bitxor", rand, minusOne, irVal({ kind: "f64" }));
     }
     default:
-      throw new Error(`ir/from-ast: unsupported prefix operator ${ts.SyntaxKind[expr.operator]} in ${cx.funcName}`);
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: unsupported prefix operator ${ts.SyntaxKind[expr.operator]} in ${cx.funcName}`,
+      );
   }
 }
 
@@ -10361,10 +10780,22 @@ function isSupportedPrimitiveFamily(
 }
 
 /**
- * A mismatched pair is a capability exit only when source evidence proves the
- * operands do not belong to the same already-supported primitive family.
- * Missing/unknown checker evidence cannot justify hiding a malformed carrier
- * as Unsupported.
+ * A mismatched pair is a capability exit unless source evidence positively
+ * contradicts it — i.e. the checker says both operands ARE the same
+ * already-supported primitive family, yet a carrier arrived that the fast path
+ * does not promise. Only that contradiction is a producer-contract violation.
+ *
+ * (#4502) The missing/unknown-evidence case used to return `false`, routing an
+ * *unproven* mismatch into a bare `Error` — an `invariant`, i.e. a HARD compile
+ * failure. That fails OPEN in exactly the situation the checker is least able
+ * to help: `any`-carried operands, where `checkerOperandFamily` answers
+ * `unknown` for ordinary untyped JS. Measured on this branch before the change:
+ * `export function main(s: string): number { return -(s as any); }` and the
+ * `!`/`~` equivalents did not compile at all (empty binary, `Codegen error: IR
+ * path failed`), while the legacy backend lowers all of them fine. Absence of
+ * evidence is not evidence that a producer lied, so the unknown case now
+ * demotes with the other capability gaps and only a POSITIVE contradiction
+ * stays an invariant.
  */
 function checkerProvesBinarySourceCapabilityGap(left: ts.Expression, right: ts.Expression, cx: LowerCtx): boolean {
   const leftFamily = checkerOperandFamily(left, cx);
@@ -10375,7 +10806,7 @@ function checkerProvesBinarySourceCapabilityGap(left: ts.Expression, right: ts.E
     leftFamily === "unknown" ||
     rightFamily === "unknown"
   ) {
-    return false;
+    return true;
   }
   if (isSupportedPrimitiveFamily(leftFamily) && leftFamily === rightFamily) return false;
   // Every other checker-proven family pair is valid source whose representation
@@ -10391,10 +10822,16 @@ function checkerProvesBinarySourceCapabilityGap(left: ts.Expression, right: ts.E
  * unary `!` already lowers boolean. If one of those proven families arrives
  * with an incompatible carrier, the producer contract is broken and the
  * caller must keep the failure as an Invariant.
+ *
+ * (#4502) Missing/unknown evidence now reports a capability gap, not a broken
+ * promise — see the note on {@link checkerProvesBinarySourceCapabilityGap} for
+ * the measured casualty (`-(s as any)`, `!(s as any)`, `~(s as any)` all
+ * hard-failed to an empty binary). The Invariant is retained only for the
+ * positive contradiction below.
  */
 function checkerProvesUnaryCoercionGap(expr: ts.PrefixUnaryExpression, cx: LowerCtx): boolean {
   const family = checkerOperandFamily(expr.operand, cx);
-  if (family === "no-checker" || family === "unknown") return false;
+  if (family === "no-checker" || family === "unknown") return true;
   if (expr.operator === ts.SyntaxKind.ExclamationToken) return family !== "boolean";
   return family !== "number" && family !== "boolean" && family !== "string";
 }
@@ -10519,13 +10956,19 @@ function findClassMember(
  */
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (!ts.isIdentifier(expr.right)) {
-    throw new Error(`ir/from-ast: instanceof RHS must be a class identifier (${cx.funcName})`);
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: instanceof RHS must be a class identifier (${cx.funcName})`,
+    );
   }
   const className = expr.right.text;
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
-    throw new Error(`ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`);
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`,
+    );
   }
   const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
   if (wrapperPlan) {
@@ -10539,6 +10982,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
         const payload = cx.builder.emitUnbox(lhs, JsTag.Object);
         const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
         if (result === null) {
+          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
           throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
         }
         whenObject = result;
@@ -10559,11 +11003,13 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     const lv = asVal(lt);
     if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {
       const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
       return result;
     }
     if (lv?.kind === "anyref" || lv?.kind === "eqref" || lv?.kind === "ref" || lv?.kind === "ref_null") {
       const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
       return result;
     }
@@ -10578,7 +11024,10 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   }
   const targetShape = cx.classShapes?.get(className);
   if (!targetShape) {
-    throw new Error(`ir/from-ast: instanceof RHS class "${className}" has no projected shape (${cx.funcName})`);
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: instanceof RHS class "${className}" has no projected shape (${cx.funcName})`,
+    );
   }
   const lhs = lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
   const lt = cx.builder.typeOf(lhs);
@@ -10596,7 +11045,8 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     // side-effecting emission arm keeps it (never silently dropped).
     return cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
   }
-  throw new Error(
+  demoteToLegacy(
+    "operand-coercion-unsupported",
     `ir/from-ast: instanceof on ${describeIrType(lt)} LHS is not lowered — legacy handles the dynamic path (${cx.funcName})`,
   );
 }
@@ -10696,16 +11146,20 @@ function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrVa
   const operands: ts.Expression[] = [];
   collectPreparedConcatOperands(expr, operands);
   if (operands.length !== 5) {
-    throw new Error(`ir/from-ast: prepared five-part concat has ${operands.length} operands in ${cx.funcName}`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: prepared five-part concat has ${operands.length} operands in ${cx.funcName}`,
+    );
   }
   const values = operands.map((operand) => {
     const value = lowerExpr(operand, cx, { kind: "string" });
     if (cx.builder.typeOf(value).kind !== "string") {
-      throw new Error(`ir/from-ast: prepared concat operand is not a string in ${cx.funcName}`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: prepared concat operand is not a string in ${cx.funcName}`);
     }
     return value;
   });
   const result = cx.builder.emitCall(target, values, { kind: "string" });
+  // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
   if (result === null) throw new Error(`ir/from-ast: prepared five-part concat returned void in ${cx.funcName}`);
   return result;
 }
@@ -10859,6 +11313,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       const dynR = rt.kind === "dynamic" ? rhs : boxConcreteToDynamic(rhs, rt, expr.right, cx);
       if (dynL !== null && dynR !== null) {
         const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [dynL, dynR], irDynamic());
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
         if (added === null) throw new Error(`ir/from-ast: dynamic '+' produced no result in ${cx.funcName}`);
         return added;
       }
@@ -11069,7 +11524,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       // WasmGC). Throw cleanly so the function falls back to legacy
       // rather than emitting an invalid `i32.eq` on externref operands.
       if (!isF64 && !isI32) {
-        throw new Error(
+        demoteToLegacy(
+          "operand-coercion-unsupported",
           `ir/from-ast: '${ts.tokenToString(op)}' on ${ltVal.kind} operands not supported in IR (${cx.funcName})`,
         );
       }
@@ -11080,7 +11536,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     case ts.SyntaxKind.ExclamationEqualsToken:
       // Slice 14 (#1228) — same fallback rationale as `===`/`==` above.
       if (!isF64 && !isI32) {
-        throw new Error(
+        demoteToLegacy(
+          "operand-coercion-unsupported",
           `ir/from-ast: '${ts.tokenToString(op)}' on ${ltVal.kind} operands not supported in IR (${cx.funcName})`,
         );
       }
@@ -11140,7 +11597,10 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // the early-fallback check at the top of `lowerBinary`; `??` is handled
     // by `lowerNullish`. If any reach here the early-dispatch is missing.
     default:
-      throw new Error(`ir/from-ast: unsupported binary operator ${ts.tokenToString(op)} in ${cx.funcName}`);
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: unsupported binary operator ${ts.tokenToString(op)} in ${cx.funcName}`,
+      );
   }
 
   return cx.builder.emitBinary(binop, lhs, rhs, resultType);
@@ -11176,7 +11636,8 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
   const lhsIsRef =
     lhsType.kind === "extern" || (lhsVal !== null && (lhsVal.kind === "externref" || lhsVal.kind === "ref_null"));
   if (!lhsIsRef) {
-    throw new Error(
+    demoteToLegacy(
+      "nullish-value-unsupported",
       `ir/from-ast: '??' on non-reference lhs (${describeIrType(lhsType)}) is not supported in IR (${cx.funcName})`,
     );
   }
@@ -11196,7 +11657,8 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
   });
   const rhsType = cx.builder.typeOf(thenValue);
   if (!irTypeEquals(rhsType, resultType)) {
-    throw new Error(
+    demoteToLegacy(
+      "nullish-value-unsupported",
       `ir/from-ast: '??' arm type mismatch (lhs ${describeIrType(resultType)} vs rhs ${describeIrType(rhsType)}) is not supported in IR (${cx.funcName})`,
     );
   }
@@ -11240,7 +11702,10 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const lhs =
     lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
   if (lhs === null) {
-    throw new Error(`ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`);
+    demoteToLegacy(
+      "logical-value-unsupported",
+      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
+    );
   }
 
   const resultType: IrType = irVal({ kind: "i32" });
@@ -11258,11 +11723,17 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
     } else if (asVal(rhsType)?.kind === "i32") {
       rhs = rawRhs;
     } else {
-      throw new Error(`ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`);
+      demoteToLegacy(
+        "logical-value-unsupported",
+        `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
+      );
     }
   });
   if (asVal(cx.builder.typeOf(rhs))?.kind !== "i32") {
-    throw new Error(`ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`);
+    demoteToLegacy(
+      "logical-value-unsupported",
+      `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
+    );
   }
   joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
 
@@ -11291,7 +11762,8 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
 }
 
 function requireF64(isF64: boolean, op: string, fn: string): void {
-  if (!isF64) throw new Error(`ir/from-ast: operator '${op}' requires number operands in ${fn}`);
+  if (!isF64)
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: operator '${op}' requires number operands in ${fn}`);
 }
 
 function typeOfValue(v: IrValueId, cx: LowerCtx): IrType {
@@ -11403,6 +11875,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
       : irImportFuncRef("env", "__extern_is_undefined");
     const flag = cx.builder.emitCall(provider, [v], irVal({ kind: "i32" }));
     if (flag === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __extern_is_undefined produced no result in ${cx.funcName}`);
     }
     return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
@@ -11592,7 +12065,8 @@ function tryLowerPrimitiveWrapperLooseEquality(
   const rightKind = primitiveWrapperConstructorName(expr.right, cx);
   if ((leftKind === null) === (rightKind === null)) return null;
   if (cx.resolver?.dynamicCarrierIsExternref?.() !== true) {
-    throw new Error(
+    demoteToLegacy(
+      "operand-coercion-unsupported",
       `ir/from-ast: primitive-wrapper loose equality requires the externref dynamic carrier (${cx.funcName})`,
     );
   }
@@ -11605,6 +12079,7 @@ function tryLowerPrimitiveWrapperLooseEquality(
   const primitiveType = wrapperOnLeft ? rt : lt;
   const primitiveExpression = wrapperOnLeft ? expr.right : expr.left;
   if (wrapperType.kind !== "extern" || wrapperType.className !== "Object") {
+    // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
     throw new Error(`ir/from-ast: primitive wrapper did not lower to extern:Object in ${cx.funcName}`);
   }
 
@@ -11612,6 +12087,7 @@ function tryLowerPrimitiveWrapperLooseEquality(
   const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
   const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [wrapper, hint], externref);
   if (primitive === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
   }
   const primitiveTag =
@@ -11619,7 +12095,10 @@ function tryLowerPrimitiveWrapperLooseEquality(
   const wrapperDynamic = cx.builder.emitBox(primitive, irDynamic(primitiveTag));
   const otherDynamic = boxConcreteToDynamic(primitiveOperand, primitiveType, primitiveExpression, cx);
   if (otherDynamic === null) {
-    throw new Error(`ir/from-ast: wrapper loose-equality primitive operand was not boxable in ${cx.funcName}`);
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: wrapper loose-equality primitive operand was not boxable in ${cx.funcName}`,
+    );
   }
   return cx.builder.emitDynEq(
     wrapperOnLeft ? wrapperDynamic : otherDynamic,
@@ -11729,6 +12208,7 @@ function tryLowerDynamicRelational(
   if (lt.kind === "dynamic" && rt.kind === "dynamic") {
     const result = cx.builder.emitCall(irRuntimeFuncRef(runtimeName), [lhs, rhs], irVal({ kind: "i32" }));
     if (result === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: dynamic relational helper ${runtimeName} produced no result in ${cx.funcName}`);
     }
     return result;
@@ -11811,6 +12291,7 @@ function tryLowerDynamicArithmetic(
     const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lf, rf], irVal({ kind: "f64" }));
     if (fmodResult === null) {
       // Unreachable: a non-null resultType always yields a value id.
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: internal — dynamic __fmod call produced no value in ${cx.funcName}`);
     }
     return fmodResult;
@@ -11889,6 +12370,7 @@ function allocateLoweredLiftedFunctionArtifact(
       sourceUnit.lexicalOwnerId === null ||
       !cx.identityContext?.unitByUnitId.has(sourceUnit.lexicalOwnerId as IrUnitId)
     ) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
       throw new Error(`ir/from-ast: lifted source identity diverged (${cx.funcName})`);
     }
     const displayOrdinal = cx.liftedCounter.value++;
@@ -11963,14 +12445,17 @@ function closureDefaultParamStart(
     const parameter = parameters[index]!;
     if (!parameter.initializer) {
       if (firstDefault !== parameters.length) {
-        throw new Error(`ir/from-ast: closure defaults must form a suffix (${funcName})`);
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: closure defaults must form a suffix (${funcName})`);
       }
     } else if (
       !ts.isIdentifier(parameter.name) ||
       parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
       !numericClosureDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerCx)
     ) {
-      throw new Error(`ir/from-ast: closure default parameter is outside the pure numeric subset (${funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: closure default parameter is outside the pure numeric subset (${funcName})`,
+      );
     } else if (firstDefault === parameters.length) {
       firstDefault = index;
     }
@@ -11987,7 +12472,7 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
   const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   const params: IrType[] = expr.parameters.map((p) => {
     if (!p.type) {
-      throw new Error(`ir/from-ast: closure params must have annotations (${cx.funcName})`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: closure params must have annotations (${cx.funcName})`);
     }
     // #2713 — rest (`...xs`) and optional (`x?`) params keep
     // an Identifier name, so the gate above lets them through and the lowering
@@ -11996,13 +12481,16 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
     // top-level selector gate (`select.ts` param-shape-rejected). Numeric
     // constant defaults are handled below through the exact legacy sentinel.
     if (p.questionToken || p.dotDotDotToken) {
-      throw new Error(`ir/from-ast: closure rest/optional param not in IR scope (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: closure rest/optional param not in IR scope (${cx.funcName})`,
+      );
     }
     const description = ts.isIdentifier(p.name) ? p.name.text : "<pattern>";
     return closureParameterTypeToIr(p.type, cx, `param ${description} of ${cx.funcName}.<closure>`);
   });
   if (!expr.type) {
-    throw new Error(`ir/from-ast: closure must have a return type annotation (${cx.funcName})`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: closure must have a return type annotation (${cx.funcName})`);
   }
   const returnType = typeNodeToIr(expr.type, `return type of ${cx.funcName}.<closure>`);
   const signature: IrClosureSignature = {
@@ -12023,14 +12511,21 @@ function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string
   if (isPrimitiveTypeNode(node)) return typeNodeToIr(node, where);
   if (ts.isFunctionTypeNode(node)) {
     const signature = irClosureSignatureFromFunctionTypeNode(node);
-    if (!signature) throw new Error(`ir/from-ast: unsupported closure-valued parameter signature (${where})`);
+    if (!signature)
+      demoteToLegacy(
+        "type-resolution-unsupported",
+        `ir/from-ast: unsupported closure-valued parameter signature (${where})`,
+      );
     return { kind: "closure", signature };
   }
   if (ts.isArrayTypeNode(node) && node.elementType.kind === ts.SyntaxKind.NumberKeyword) {
     const elementValType: ValType = { kind: "f64" };
     const elementType = irVal(elementValType);
     if (!cx.resolver?.resolveVecForElement?.(elementValType)) {
-      throw new Error(`ir/from-ast: resolver cannot register numeric closure parameter vec (${where})`);
+      demoteToLegacy(
+        "type-resolution-unsupported",
+        `ir/from-ast: resolver cannot register numeric closure parameter vec (${where})`,
+      );
     }
     return irVec(elementType, true);
   }
@@ -12039,7 +12534,10 @@ function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string
     const seen = new Set<string>();
     for (const member of node.members) {
       if (!ts.isPropertySignature(member) || member.questionToken || !member.type) {
-        throw new Error(`ir/from-ast: unsupported closure object parameter member (${where})`);
+        demoteToLegacy(
+          "type-resolution-unsupported",
+          `ir/from-ast: unsupported closure object parameter member (${where})`,
+        );
       }
       const name = ts.isIdentifier(member.name)
         ? member.name.text
@@ -12047,7 +12545,10 @@ function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string
           ? member.name.text
           : null;
       if (name === null || seen.has(name) || !isPrimitiveTypeNode(member.type)) {
-        throw new Error(`ir/from-ast: unsupported closure object parameter shape (${where})`);
+        demoteToLegacy(
+          "type-resolution-unsupported",
+          `ir/from-ast: unsupported closure object parameter shape (${where})`,
+        );
       }
       seen.add(name);
       fields.push({ name, type: typeNodeToIr(member.type, `${where}.${name}`) });
@@ -12055,7 +12556,7 @@ function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string
     fields.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     return { kind: "object", shape: { fields } };
   }
-  throw new Error(`ir/from-ast: unsupported closure parameter type (${where})`);
+  demoteToLegacy("type-resolution-unsupported", `ir/from-ast: unsupported closure parameter type (${where})`);
 }
 
 /**
@@ -12077,6 +12578,7 @@ function lowerHostVoidCallbackExpression(
     plan.signature.returnType !== null ||
     cx.liftedCounter.value !== plan.liftedOrdinal
   ) {
+    // invariant (producer-promise): the resolver promised a well-formed plan — #4502.
     throw new Error(`ir/from-ast: malformed host void callback plan (${cx.funcName})`);
   }
   return lowerClosureExpressionWithSignature(expr, plan.signature, plan.captureNames, cx, { hostOneShot: true });
@@ -12091,6 +12593,7 @@ function lowerClosureExpressionWithSignature(
 ): IrValueId {
   const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
   if ((signature.defaultParamStart ?? signature.params.length) !== defaultParamStart) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(`ir/from-ast: exact closure default-parameter plan diverged (${cx.funcName})`);
   }
   const captures = analyseCaptures(expr, cx, exact?.orderedReadonlyCaptures);
@@ -12101,6 +12604,7 @@ function lowerClosureExpressionWithSignature(
       actual.size !== expectedReadonlyCaptures.size ||
       [...actual].some((name) => !expectedReadonlyCaptures.has(name))
     ) {
+      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
       throw new Error(`ir/from-ast: exact closure capture proof diverged (${cx.funcName})`);
     }
   }
@@ -12118,6 +12622,7 @@ function lowerClosureExpressionWithSignature(
     (!sameIrCallableBinding(liftedTarget.binding, exact.expectedLiftedTarget.binding) ||
       liftedTarget.name !== exact.expectedLiftedTarget.name)
   ) {
+    // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
     throw new Error(
       `ir/from-ast: exact lifted target ${liftedTarget.name} does not match planned ${exact.expectedLiftedTarget.name} (${cx.funcName})`,
     );
@@ -12137,7 +12642,10 @@ function lowerClosureExpressionWithSignature(
     if (cap.mutable) {
       const innerVal = asVal(cap.type);
       if (!innerVal) {
-        throw new Error(`ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`,
+        );
       }
       // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
       const fieldType: IrType = { kind: "boxed", inner: irVal(innerVal) };
@@ -12150,7 +12658,10 @@ function lowerClosureExpressionWithSignature(
         cx.scope.set(cap.name, { kind: "local", value: cell, type: fieldType });
         captureArgs.push(cell);
       } else {
-        throw new Error(`ir/from-ast: closure mutable capture "${cap.name}" not in scope (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: closure mutable capture "${cap.name}" not in scope (${cx.funcName})`,
+        );
       }
     } else {
       // Read-only — pass the current scalar value. If a sibling closure
@@ -12164,7 +12675,10 @@ function lowerClosureExpressionWithSignature(
       } else if (live?.kind === "local") {
         v = live.value;
       } else {
-        throw new Error(`ir/from-ast: closure capture "${cap.name}" not in scope (${cx.funcName})`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: closure capture "${cap.name}" not in scope (${cx.funcName})`,
+        );
       }
       captureFieldTypes.push(cap.type);
       captureArgs.push(v);
@@ -12202,17 +12716,23 @@ function lowerClosureExpressionWithSignature(
  */
 function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx): void {
   if (!fn.name || !fn.body) {
-    throw new Error(`ir/from-ast: nested function without name or body in ${cx.funcName}`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: nested function without name or body in ${cx.funcName}`);
   }
   const innerName = fn.name.text;
   const params: IrType[] = fn.parameters.map((p) => {
     if (!ts.isIdentifier(p.name) || !p.type) {
-      throw new Error(`ir/from-ast: nested func params must be Identifier-named with annotations (${cx.funcName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: nested func params must be Identifier-named with annotations (${cx.funcName})`,
+      );
     }
     return typeNodeToIr(p.type, `param ${p.name.text} of ${cx.funcName}.${innerName}`);
   });
   if (!fn.type) {
-    throw new Error(`ir/from-ast: nested func must have a return type annotation (${cx.funcName})`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: nested func must have a return type annotation (${cx.funcName})`,
+    );
   }
   const returnType = typeNodeToIr(fn.type, `return type of ${cx.funcName}.${innerName}`);
   const signature: IrClosureSignature = { params, returnType };
@@ -12247,7 +12767,10 @@ function liftNestedFunction(
 ): IrFunction {
   const liftedName = liftedIdentity.name;
   if (signature.returnType === null) {
-    throw new Error(`ir/from-ast: void nested function signatures are outside slice 3 (${liftedName})`);
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: void nested function signatures are outside slice 3 (${liftedName})`,
+    );
   }
   const builder = new IrFunctionBuilder(liftedIdentity, [signature.returnType], false, cx.allocRegistry);
   const scope = new Map<string, ScopeBinding>();
@@ -12313,7 +12836,7 @@ function liftNestedFunction(
     allocRegistry: cx.allocRegistry,
   };
   if (!fn.body) {
-    throw new Error(`ir/from-ast: nested function ${innerName(fn)} has no body`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: nested function ${innerName(fn)} has no body`);
   }
   lowerStatementList(fn.body.statements, innerCx);
 
@@ -12346,7 +12869,7 @@ function liftClosureBody(
 ): IrFunction {
   const body = expr.body;
   if (!body) {
-    throw new Error(`ir/from-ast: object method closure has no body (${cx.funcName})`);
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: object method closure has no body (${cx.funcName})`);
   }
   const liftedName = liftedIdentity.name;
   const builder = new IrFunctionBuilder(
@@ -12452,14 +12975,17 @@ function liftClosureBody(
 
   for (const pending of pendingDefaults) {
     if (asVal(pending.type)?.kind !== "f64") {
-      throw new Error(`ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: closure default parameter must use the f64 carrier (${liftedName})`,
+      );
     }
     const rawBits = builder.emitUnary("i64.reinterpret_f64", pending.rawValue, IR_I64);
     const sentinelBits = builder.emitConst({ kind: "i64", value: LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS }, IR_I64);
     const missing = builder.emitBinary("i64.eq", rawBits, sentinelBits, IR_I32);
     const fallback = lowerExpr(pending.initializer, innerCx, pending.type);
     if (!irTypeAssignable(builder.typeOf(fallback), pending.type)) {
-      throw new Error(`ir/from-ast: closure default initializer type mismatch (${liftedName})`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: closure default initializer type mismatch (${liftedName})`);
     }
     const resolved = builder.emitSelect(missing, fallback, pending.rawValue, pending.type);
     scope.set(pending.name, { kind: "local", value: resolved, type: pending.type });
@@ -12472,7 +12998,7 @@ function liftClosureBody(
   if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
     if (signature.returnType === null) {
       if (!allowConciseVoidBody) {
-        throw new Error(`ir/from-ast: void host callbacks must be block-bodied (${liftedName})`);
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: void host callbacks must be block-bodied (${liftedName})`);
       }
       lowerDiscardedExpression(body, innerCx);
       builder.terminate({ kind: "return", values: [] });
@@ -12485,14 +13011,18 @@ function liftClosureBody(
     // Concise body — wrap as `return <expr>`.
     const v = lowerExpr(body, innerCx, signature.returnType);
     if (!irTypeEquals(builder.typeOf(v), signature.returnType)) {
-      throw new Error(
+      demoteToLegacy(
+        "body-shape-rejected",
         `ir/from-ast: closure body type ${describeIrType(builder.typeOf(v))} != declared return ${describeIrType(signature.returnType)} (${liftedName})`,
       );
     }
     builder.terminate({ kind: "return", values: [v] });
   } else {
     if (!ts.isBlock(body)) {
-      throw new Error(`ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[body.kind]})`);
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: closure body must be a block (got ${ts.SyntaxKind[body.kind]})`,
+      );
     }
     lowerStatementList(body.statements, innerCx);
   }
@@ -12585,7 +13115,10 @@ function analyseCaptures(
     if (binding.kind === "withField") {
       const receiverType = cx.builder.typeOf(binding.receiver);
       if (receiverType.kind !== "object") {
-        throw new Error(`ir/from-ast: with binding "${name}" has a non-object receiver in ${cx.funcName}`);
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: with binding "${name}" has a non-object receiver in ${cx.funcName}`,
+        );
       }
       captures.push({
         name,
@@ -12601,7 +13134,8 @@ function analyseCaptures(
       // would require either lifting the inner closure to a top-level
       // ref.func or adding closure VALUE fields to the capture struct.
       // Defer.
-      throw new Error(
+      demoteToLegacy(
+        "body-shape-rejected",
         `ir/from-ast: closure inside ${cx.funcName} captures non-local binding "${name}" — not in slice 3`,
       );
     }
@@ -12733,7 +13267,7 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.
-      throw new Error(`ir/from-ast: destructuring catch param not in slice 9 (${cx.funcName})`);
+      demoteToLegacy("body-shape-rejected", `ir/from-ast: destructuring catch param not in slice 9 (${cx.funcName})`);
     }
     const catchCx: LowerCtx = { ...cx, scope: catchScope, noEarlyReturn: true };
     const catchBody = cx.builder.collectBodyInstrs(() => {
