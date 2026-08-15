@@ -45,6 +45,7 @@ import {
   emitParamDefaultArgMissingCheck,
   paramDefaultNeedsArgc,
 } from "./statements/nested-declarations.js";
+import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
@@ -752,9 +753,17 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
         hoistVarDeclarations(ctx, fctx, decl.body.statements);
         hoistLetConstWithTdz(ctx, fctx, decl.body.statements);
         reifyCurrentDirectEvalBindings(ctx, fctx);
-        hoistFunctionDeclarations(ctx, fctx, decl.body.statements);
-        for (const stmt of decl.body.statements) {
-          compileStatement(ctx, fctx, stmt);
+        // (#4456) Names this body hoists are lexically its own; pop them again
+        // so a later same-named declaration elsewhere is not silently aliased
+        // to this one's compiled function.
+        const nameScope = beginNestedFunctionNameScope(ctx);
+        try {
+          hoistFunctionDeclarations(ctx, fctx, decl.body.statements);
+          for (const stmt of decl.body.statements) {
+            compileStatement(ctx, fctx, stmt);
+          }
+        } finally {
+          endNestedFunctionNameScope(ctx, nameScope);
         }
       }
 
@@ -836,22 +845,30 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       reifyCurrentDirectEvalBindings(ctx, fctx);
       // Hoist function declarations: JS semantics require function declarations
       // to be available before their textual position in the enclosing scope.
-      hoistFunctionDeclarations(ctx, fctx, bodyStatements);
+      // (#4456) …and require them to STOP being visible at the end of this
+      // body. The scope is closed after the statement loop below, since a
+      // hoisted name stays resolvable for the whole body.
+      const nameScope = beginNestedFunctionNameScope(ctx);
+      try {
+        hoistFunctionDeclarations(ctx, fctx, bodyStatements);
 
-      // (#1042/#1796/#2895/#2906) Async/await state-machine activation. The
-      // CPS (host) + drive (standalone/host) gating, result-type rewrite, and
-      // emitter dispatch were extracted into `maybeActivateAsync` (#2957
-      // phase 1) so the arrow/method/object-literal body-compile paths can
-      // reuse the exact same entry point in phases 2–3. On a match the helper
-      // has already emitted the full body, so the normal statement loop below
-      // is skipped. Byte-inert: the internal `ts.isFunctionDeclaration` guards
-      // are preserved, so declaration activation is unchanged.
-      const asyncCpsHandled = maybeActivateAsync(ctx, fctx, decl, func);
+        // (#1042/#1796/#2895/#2906) Async/await state-machine activation. The
+        // CPS (host) + drive (standalone/host) gating, result-type rewrite, and
+        // emitter dispatch were extracted into `maybeActivateAsync` (#2957
+        // phase 1) so the arrow/method/object-literal body-compile paths can
+        // reuse the exact same entry point in phases 2–3. On a match the helper
+        // has already emitted the full body, so the normal statement loop below
+        // is skipped. Byte-inert: the internal `ts.isFunctionDeclaration` guards
+        // are preserved, so declaration activation is unchanged.
+        const asyncCpsHandled = maybeActivateAsync(ctx, fctx, decl, func);
 
-      if (!asyncCpsHandled) {
-        for (const stmt of bodyStatements) {
-          compileStatement(ctx, fctx, stmt);
+        if (!asyncCpsHandled) {
+          for (const stmt of bodyStatements) {
+            compileStatement(ctx, fctx, stmt);
+          }
         }
+      } finally {
+        endNestedFunctionNameScope(ctx, nameScope);
       }
     }
 

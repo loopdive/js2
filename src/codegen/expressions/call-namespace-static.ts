@@ -2651,11 +2651,11 @@ export function compileNamespaceStaticCall(
 
   // Check if this is a static method call: ClassName.staticMethod(args)
   if (ts.isIdentifier(propAccess.expression) && ctx.classSet.has(propAccess.expression.text)) {
-    const clsName = propAccess.expression.text;
+    const clsName = ctx.classExprNameMap.get(propAccess.expression.text) ?? propAccess.expression.text;
     const methodName = propAccess.name.text;
     const fullName = `${clsName}_${methodName}`;
     if (ctx.staticMethodSet.has(fullName)) {
-      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)); // (#1983)
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")); // (#1983)
       if (funcIdx !== undefined) {
         // No self parameter for static methods
         const paramTypes = getFuncParamTypes(ctx, funcIdx);
@@ -2685,7 +2685,7 @@ export function compileNamespaceStaticCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-        const finalStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+        const finalStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? funcIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalStaticIdx });
 
         const sig = ctx.checker.getResolvedSignature(expr);

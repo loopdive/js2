@@ -187,6 +187,58 @@ function buildTrampolineThisSlot(
 }
 
 /**
+ * Reconcile the receiver produced by {@link buildTrampolineThisSlot} with the
+ * actual first parameter of the method.  The trampoline's receiver is always
+ * the nullable object-struct reference used by the closure ABI, but late type
+ * resolution can leave a method's hidden `this` parameter on a DIFFERENT
+ * reference carrier (`externref`/`anyref`).  Passing the struct reference
+ * directly in that case makes the generated `call` fail Wasm validation.  Keep
+ * this at the ABI boundary instead of weakening validation or relying on stack
+ * fixups.
+ *
+ * (#4469) The reconciliation is deliberately limited to a CROSS-CARRIER
+ * mismatch.  `ref`/`ref_null` are the same carrier family and differ only in
+ * nullability, and {@link buildTrampolineThisSlot} emits a null receiver ON
+ * PURPOSE: the #2025 passthrough hands `ref.null` to the method whenever the
+ * resolved `this` is non-null but does not `ref.test` as this exact struct
+ * (a foreign receiver, e.g. `this.#m.call({})`).  Bridging `ref_null $S` to
+ * `ref $S` there means `ref.as_non_null`, which turns that designed
+ * passthrough into an UNCATCHABLE `null_deref` trap at the ABI boundary —
+ * before the method body (which may never touch `this` at all, as in
+ * `#m() { return super.method(); }`) gets to run.  Nullability is therefore
+ * settled by the callee's own signature, never by a cast here.
+ */
+function coerceTrampolineThisSlot(
+  ctx: CodegenContext,
+  body: Instr[],
+  objStructTypeIdx: number,
+  methodThisType: ValType | undefined,
+  methodUsesThis: boolean,
+  fctx?: FunctionContext,
+): void {
+  if (!methodThisType) return;
+  // A method which never reads `this` is valid when extracted and called with
+  // an absent receiver.  Keeping the nullable value also avoids narrowing a
+  // provisional signature before the method body pass settles its ABI.
+  if (!methodUsesThis) return;
+  const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
+  if (isStructRefCarrier(source) && isStructRefCarrier(methodThisType)) {
+    // Same carrier family.  Same struct ⇒ already compatible up to
+    // nullability, which must stay nullable (see the #4469 note above).  A
+    // distinct type index is handled by the existing method-arg reconciliation
+    // path; the receiver path should not add an unsafe cast for an unrelated
+    // object shape.
+    return;
+  }
+  body.push(...coercionInstrs(ctx, source, methodThisType, fctx));
+}
+
+/** `ref` and `ref_null` are one carrier family — they differ only in nullability. */
+function isStructRefCarrier(type: ValType): boolean {
+  return type.kind === "ref" || type.kind === "ref_null";
+}
+
+/**
  * #1118: Emit an object-literal method as a first-class closure value.
  *
  * Object-literal methods are compiled as Wasm functions with signature
@@ -262,6 +314,7 @@ export function emitObjectMethodAsClosure(
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
   if (ntShift > 0 && inLiveShiftRange(methodFuncIdx, importsBeforeNT)) methodFuncIdx += ntShift;
   const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
+  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -441,6 +494,16 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
+      // (#4466) Do NOT re-coerce the receiver here, and do NOT alias
+      // `tFctx.body` to `newBody` to make that possible. The emit-time call
+      // sites (`emitObjectMethodAsClosure`, `ensureMethodClosureSingleton`)
+      // already reconcile the receiver; repeating it on the finalize REBUILD
+      // path corrupted the private-method trampoline
+      // (`class/elements/super-access-inside-a-private-method.js` →
+      // "dereferencing a null pointer" in `__obj_meth_tramp_*_cached`). The
+      // aliasing is independently against the rule in CLAUDE.md — a
+      // FunctionContext must own `body: []`, never a shared reference, or the
+      // savedBody/swap pattern writes through into someone else's buffer.
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });
@@ -690,6 +753,7 @@ export function ensureMethodClosureSingleton(
       anyTempLocalIdx,
       methodUsesThisCached,
     );
+    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }

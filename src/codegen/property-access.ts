@@ -228,6 +228,7 @@ import {
   PA_FALLTHROUGH,
   tryBufferViewAttributeReads,
   tryBuiltinNamespaceDeferredReads,
+  tryClassExpressionStaticMemberRead,
   tryConstructorPrototypeIdentity,
   tryDynamicReceiverRuntimeDispatchReads,
   tryGlobalThisAndProcessRead,
@@ -3420,6 +3421,13 @@ export function compilePropertyAccess(
     if (__r !== PA_FALLTHROUGH) return __r;
   }
 
+  // (#4460) `class { static m() {} }.m` — same static-member emission as the
+  // identifier band above, for a receiver that is an in-place class expression.
+  {
+    const __r = tryClassExpressionStaticMemberRead(ctx, fctx, expr, propName);
+    if (__r !== PA_FALLTHROUGH) return __r;
+  }
+
   {
     const __r = tryPrototypeMethodAndArityReads(ctx, fctx, expr, propName, objType);
     if (__r !== PA_FALLTHROUGH) return __r;
@@ -4370,7 +4378,7 @@ export function compileElementAccess(
         // externref instead of the legacy `ref.null.extern` so that
         // `const f = C['method']; f()` actually invokes the method.
         if (ctx.staticMethodSet.has(fullName)) {
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
           if (funcIdx !== undefined) {
             const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
             if (closureRef) {

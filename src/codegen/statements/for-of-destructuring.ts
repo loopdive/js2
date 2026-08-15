@@ -20,6 +20,7 @@ import {
   emitExternrefDestructureGuard,
   emitNativeObjectRest,
   emitObjectPatternRestFromVec,
+  patternIteratorStepCount,
 } from "../destructuring-params.js";
 import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
 import { findUnresolvableInArrayPattern, findUnresolvableInObjectPattern } from "../expressions/unresolvable-assign.js";
@@ -83,6 +84,34 @@ function emitGlobalSyncWriteback(
     }
     fctx.body.push({ op: "global.set", index: syncGlobalIdx });
   }
+}
+
+/**
+ * (#4447) Re-resolve a module global's ABSOLUTE index at write time, then emit
+ * the sync writeback.
+ *
+ * A module global's absolute index shifts every time a string-constant IMPORT
+ * global is added (`addStringConstantGlobal` → `fixupModuleGlobalIndices`,
+ * which re-maps `ctx.moduleGlobals` and every already-emitted `global.get/set`
+ * — but obviously not an index a caller stashed in a local variable). Between
+ * resolving the target and emitting its writeback these paths now register a
+ * property-name constant and/or compile a default initializer, either of which
+ * can import a string constant. A stale index then lands in the IMPORT range:
+ * "immutable global #N cannot be assigned" (reproduced on
+ * `for ({ x: a = 11 } of [{}])` in the JS-host lane).
+ *
+ * `hadGlobal` preserves the caller's decision that this target IS a module
+ * global (a name absent from `ctx.moduleGlobals` must stay unsynced).
+ */
+function emitGlobalSyncWritebackByName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  targetLocal: number,
+  targetName: string,
+  hadGlobal: boolean,
+): void {
+  if (!hadGlobal) return;
+  emitGlobalSyncWriteback(ctx, fctx, targetLocal, ctx.moduleGlobals.get(targetName));
 }
 
 export function compileForOfDestructuring(
@@ -739,6 +768,39 @@ function emitBoxedForOfAssignStore(
   fctx.body.push({ op: "struct.set", typeIdx: boxedCap.refCellTypeIdx, fieldIdx: 0 });
 }
 
+/** True when an assignment pattern binds at least one target. */
+function assignPatternIsNonEmpty(pattern: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression): boolean {
+  return ts.isObjectLiteralExpression(pattern) ? pattern.properties.length > 0 : pattern.elements.length > 0;
+}
+
+/**
+ * (#4447) Destructure a NESTED assignment pattern out of an externref value
+ * already sitting in `valueLocal`.
+ *
+ * §13.15.5.4/§13.15.5.5 recurse into a nested pattern through the same
+ * DestructuringAssignmentEvaluation as the top level, so the nested value gets
+ * its own RequireObjectCoercible/GetIterator — `for ({ x: { y } } of [{}])`
+ * must throw TypeError, not silently bind `undefined`. Array patterns route to
+ * the externref array path (which performs the #4447 GetIterator
+ * materialisation); object patterns route to the extern-get property path.
+ */
+function destructureNestedExternrefPattern(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  pattern: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression,
+  valueLocal: number,
+  stmt: ts.ForOfStatement,
+): void {
+  if (assignPatternIsNonEmpty(pattern)) {
+    emitExternrefDestructureGuard(ctx, fctx, valueLocal);
+  }
+  if (ts.isArrayLiteralExpression(pattern)) {
+    compileForOfAssignDestructuringExternref(ctx, fctx, pattern, valueLocal, stmt);
+  } else {
+    compileForOfIteratorAssignDestructuring(ctx, fctx, pattern, valueLocal, stmt);
+  }
+}
+
 export function compileForOfAssignDestructuring(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -769,6 +831,16 @@ export function compileForOfAssignDestructuring(
       // through a non-empty object pattern must throw TypeError (#1225).
       if (elemType.kind === "externref" && expr.properties.length > 0) {
         emitExternrefDestructureGuard(ctx, fctx, elemLocal);
+        // (#4447) An externref element is a REAL object at runtime — an empty
+        // object literal `[{}]`, an `any`-typed source, a boxed value. The
+        // default-only loop below never READ a property, so
+        // `for ({ x: t = d } of [{}])` dropped the write entirely (the target
+        // resolved to the KEY name, and only shorthand defaults were seen), and
+        // a shorthand default fired UNCONDITIONALLY even when the property was
+        // present. Route to the extern-get path, which does the real
+        // `__extern_get` read plus §13.15.5.4 undefined-only defaulting.
+        compileForOfIteratorAssignDestructuring(ctx, fctx, expr, elemLocal, stmt);
+        return;
       }
       // Primitives (bool, number, string) are object-coercible in JS.
       // Empty destructuring `for ({} of [val])` is a no-op — just iterate.
@@ -830,15 +902,111 @@ export function compileForOfAssignDestructuring(
         propName = resolveComputedKeyExpression(ctx, prop.name.expression);
       }
       if (!propName) continue; // skip truly unresolvable computed property names
-      const targetName = ts.isShorthandPropertyAssignment(prop)
-        ? prop.name.text
-        : ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.initializer)
-          ? prop.initializer.text
-          : propName;
+
+      // (#4447) Split the property's VALUE position into (target, default).
+      // §13.15.5.4 ObjectAssignmentPattern: `{ k: t = d }` parses as a
+      // PropertyAssignment whose initializer is the AssignmentExpression
+      // `t = d`, and `{ k = d }` as a ShorthandPropertyAssignment carrying an
+      // `objectAssignmentInitializer`. Before this, neither shape was
+      // recognised here: `targetName` fell through to `propName` (so
+      // `for ({y: b = 22} of [{y: 5}])` wrote a variable named `y`, not `b`)
+      // and the default was dropped entirely.
+      const targetExpr: ts.Expression = ts.isShorthandPropertyAssignment(prop)
+        ? prop.name
+        : ts.isBinaryExpression(prop.initializer) && prop.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? prop.initializer.left
+          : prop.initializer;
+      const defaultInit: ts.Expression | undefined = ts.isShorthandPropertyAssignment(prop)
+        ? prop.objectAssignmentInitializer
+        : ts.isBinaryExpression(prop.initializer) && prop.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? prop.initializer.right
+          : undefined;
+      const targetName = ts.isIdentifier(targetExpr) ? targetExpr.text : propName;
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
+      const isMemberTarget = ts.isPropertyAccessExpression(targetExpr) || ts.isElementAccessExpression(targetExpr);
+      const isNestedPattern = ts.isObjectLiteralExpression(targetExpr) || ts.isArrayLiteralExpression(targetExpr);
       if (fieldIdx === -1) {
+        // (#4447) The property is ABSENT ⇒ the read is `undefined`. A nested
+        // pattern must then RequireObjectCoercible/GetIterator on `undefined`
+        // and throw TypeError (§13.15.5.4 step 3 → §13.15.5.2) — that is the
+        // `obj-prop-nested-{obj,array}-undefined` family, which previously
+        // bound nothing and threw nothing. A default initializer, if present,
+        // fires first and the nested pattern destructures ITS value instead.
+        if (isNestedPattern) {
+          const nestedLocal = allocLocal(fctx, `__forof_objnestmiss_${fctx.locals.length}`, { kind: "externref" });
+          if (defaultInit) {
+            const instrs = collectInstrs(fctx, () => {
+              const dt = compileExpression(ctx, fctx, defaultInit, { kind: "externref" });
+              if (dt && dt.kind !== "externref") coerceType(ctx, fctx, dt, { kind: "externref" });
+              fctx.body.push({ op: "local.set", index: nestedLocal });
+            });
+            fctx.body.push(...instrs);
+          } else {
+            fctx.body.push({ op: "ref.null.extern" });
+            fctx.body.push({ op: "local.set", index: nestedLocal });
+          }
+          destructureNestedExternrefPattern(ctx, fctx, targetExpr, nestedLocal, stmt);
+          continue;
+        }
+        // The read is `undefined` ⇒ a default initializer, if any, MUST fire
+        // (§13.15.5.4 KeyedDestructuringAssignmentEvaluation step 4). Only a
+        // default-less miss is a genuine silent drop.
+        if (defaultInit && !isMemberTarget) {
+          let missLocal = fctx.localMap.get(targetName);
+          let missSyncGlobalIdx: number | undefined;
+          if (missLocal === undefined) {
+            const globalIdx = ctx.moduleGlobals.get(targetName);
+            if (globalIdx !== undefined) {
+              const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+              const globalType = globalDef?.type ?? { kind: "externref" as const };
+              missLocal = allocLocal(fctx, targetName, globalType);
+              missSyncGlobalIdx = globalIdx;
+            }
+          }
+          if (missLocal !== undefined) {
+            const boxedCapMiss = fctx.boxedCaptures?.get(targetName);
+            const missType = boxedCapMiss ? boxedCapMiss.valType : (getLocalType(fctx, missLocal) ?? undefined);
+            const instrs = collectInstrs(fctx, () => {
+              const dfltType = compileExpression(ctx, fctx, defaultInit, missType ?? { kind: "externref" });
+              if (boxedCapMiss) {
+                emitBoxedForOfAssignStore(ctx, fctx, missLocal!, dfltType ?? boxedCapMiss.valType, boxedCapMiss);
+              } else {
+                if (dfltType && missType && !valTypesMatch(dfltType, missType)) {
+                  coerceType(ctx, fctx, dfltType, missType);
+                }
+                fctx.body.push({ op: "local.set", index: missLocal! });
+              }
+            });
+            fctx.body.push(...instrs);
+            if (!boxedCapMiss) {
+              emitGlobalSyncWritebackByName(ctx, fctx, missLocal, targetName, missSyncGlobalIdx !== undefined);
+            }
+            continue;
+          }
+        }
         reportSilentFallback(ctx, "lookup-miss-skip", "loops:forof-assign-destructure-field-miss", prop);
+        continue;
+      }
+
+      // (#4447) Nested pattern in the value position — `for ({ x: { y } } of …)`
+      // / `for ({ x: [y] } of …)`. Extract the field (applying any default),
+      // then recurse through the top-level dispatcher so the nested value gets
+      // its own RequireObjectCoercible / GetIterator. Previously `targetName`
+      // degraded to the KEY and the nested targets were never written.
+      if (isNestedPattern) {
+        const fieldEntryN = fields[fieldIdx];
+        if (!fieldEntryN) continue;
+        const fieldTypeN = fieldEntryN.type;
+        const nestedLocal = allocLocal(fctx, `__forof_objnested_${fctx.locals.length}`, fieldTypeN);
+        fctx.body.push({ op: "local.get", index: elemLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+        if (defaultInit) {
+          emitDefaultValueCheck(ctx, fctx, fieldTypeN, nestedLocal, defaultInit, fieldTypeN, true);
+        } else {
+          fctx.body.push({ op: "local.set", index: nestedLocal });
+        }
+        compileForOfAssignDestructuring(ctx, fctx, targetExpr, nestedLocal, fieldTypeN, vecTypeIdx, arrTypeIdx, stmt);
         continue;
       }
 
@@ -848,18 +1016,19 @@ export function compileForOfAssignDestructuring(
       // route through emitAssignToTarget → the #2664 member-set dispatcher. This
       // emits into the LIVE loop body, so there is no detached-buffer funcIdx
       // repoint hazard (unlike the assignment-expression path).
-      if (
-        ts.isPropertyAssignment(prop) &&
-        (ts.isPropertyAccessExpression(prop.initializer) || ts.isElementAccessExpression(prop.initializer))
-      ) {
+      if (isMemberTarget) {
         const fieldEntryM = fields[fieldIdx];
         if (!fieldEntryM) continue;
         const fieldTypeM = fieldEntryM.type;
         const tmpV = allocLocal(fctx, `__forof_objmemtgt_${fctx.locals.length}`, fieldTypeM);
         fctx.body.push({ op: "local.get", index: elemLocal });
         fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-        fctx.body.push({ op: "local.set", index: tmpV });
-        emitAssignToTarget(ctx, fctx, prop.initializer, tmpV, fieldTypeM);
+        if (defaultInit) {
+          emitDefaultValueCheck(ctx, fctx, fieldTypeM, tmpV, defaultInit, fieldTypeM, true);
+        } else {
+          fctx.body.push({ op: "local.set", index: tmpV });
+        }
+        emitAssignToTarget(ctx, fctx, targetExpr, tmpV, fieldTypeM);
         continue;
       }
 
@@ -877,6 +1046,28 @@ export function compileForOfAssignDestructuring(
       const fieldEntry2 = fields[fieldIdx];
       if (!fieldEntry2) continue;
       const fieldType = fieldEntry2.type;
+
+      // (#4447) Present field WITH a default: fire the initializer only when
+      // the read is `undefined` (object-property semantics — a genuine `null`
+      // does NOT trigger it, §13.15.5.4 / #1550).
+      if (defaultInit) {
+        const boxedCapDflt = fctx.boxedCaptures?.get(targetName);
+        if (boxedCapDflt) {
+          const dfltTmp = allocLocal(fctx, `__forof_objdflt_${fctx.locals.length}`, fieldType);
+          fctx.body.push({ op: "local.get", index: elemLocal });
+          fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+          emitDefaultValueCheck(ctx, fctx, fieldType, dfltTmp, defaultInit, fieldType, true);
+          fctx.body.push({ op: "local.get", index: dfltTmp });
+          emitBoxedForOfAssignStore(ctx, fctx, targetLocal, fieldType, boxedCapDflt);
+          continue;
+        }
+        const targetTypeD = getLocalType(fctx, targetLocal);
+        fctx.body.push({ op: "local.get", index: elemLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+        emitDefaultValueCheck(ctx, fctx, fieldType, targetLocal, defaultInit, targetTypeD ?? undefined, true);
+        emitGlobalSyncWritebackByName(ctx, fctx, targetLocal, targetName, targetSyncGlobalIdx !== undefined);
+        continue;
+      }
       // (#2692) Box-aware write: when `targetName` is a closure-captured-mutable
       // var, `targetLocal` is the ref-cell-ref local (now the common case since
       // #2692 boxes such vars eagerly at function-top). A plain
@@ -917,7 +1108,7 @@ export function compileForOfAssignDestructuring(
         if (expr.elements.length > 0) {
           emitExternrefDestructureGuard(ctx, fctx, elemLocal);
         }
-        compileForOfAssignDestructuringExternref(ctx, fctx, expr, elemLocal);
+        compileForOfAssignDestructuringExternref(ctx, fctx, expr, elemLocal, stmt);
       }
       return;
     }
@@ -984,7 +1175,7 @@ export function compileForOfAssignDestructuring(
           // slice (a JS array host / native array standalone), then PutValue it.
           fctx.body.push({ op: "local.get", index: elemLocal });
           fctx.body.push({ op: "extern.convert_any" });
-          emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+          emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name), stmt);
           continue;
         }
 
@@ -1393,8 +1584,38 @@ function emitForOfRestAssignment(
   spread: ts.SpreadElement,
   restStartIndex: number,
   syncGlobalForName: (name: string) => number | undefined,
+  /** (#4447) Enclosing for-of — needed to recurse into a nested rest target. */
+  stmtForNested?: ts.ForOfStatement,
 ): boolean {
   const restTarget = spread.expression;
+
+  // (#4447) NESTED rest target — `for ([...{ 1: x }] of …)` / `for ([...[y]] of …)`.
+  // §13.15.5.5 AssignmentRestElement PutValue's the remainder into an
+  // AssignmentPattern just like any other target, so slice first and then
+  // destructure the slice. Previously any non-identifier rest target dropped
+  // the source and bound nothing.
+  if (
+    stmtForNested !== undefined &&
+    (ts.isObjectLiteralExpression(restTarget) || ts.isArrayLiteralExpression(restTarget))
+  ) {
+    let nestedSliceIdx = ctx.funcMap.get("__extern_slice");
+    if (nestedSliceIdx === undefined) {
+      ensureLateImport(ctx, "__extern_slice", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      nestedSliceIdx = ctx.funcMap.get("__extern_slice");
+    }
+    if (nestedSliceIdx === undefined) {
+      fctx.body.push({ op: "drop" });
+      return true;
+    }
+    const nestedRestLocal = allocLocal(fctx, `__forof_restnested_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "f64.const", value: restStartIndex });
+    fctx.body.push({ op: "call", funcIdx: nestedSliceIdx });
+    fctx.body.push({ op: "local.set", index: nestedRestLocal });
+    destructureNestedExternrefPattern(ctx, fctx, restTarget, nestedRestLocal, stmtForNested);
+    return true;
+  }
+
   // Pop the source externref the caller pushed — we only need it when the target
   // resolves; for an unhandled target shape, drop it to keep the stack balanced.
   if (!ts.isIdentifier(restTarget)) {
@@ -1576,32 +1797,88 @@ function emitVecRestAssignment(
 /**
  * Handle assignment destructuring of externref arrays in for-of.
  * Uses __extern_get(elem, box(i)) for each element, with default value support.
+ *
+ * (#4447) The element is first normalised through `__array_from_iter_n` —
+ * §13.15.5.2 ArrayAssignmentPattern performs GetIterator(value) and steps the
+ * iterator once per element, then IteratorCloses when the pattern did not
+ * exhaust it. Reading `elem[i]` directly (what this did before) never touches
+ * `@@iterator`/`next`/`return`, so a for-of head assigning FROM a user iterable
+ * (`for ([x,] of [iterable])`) observed zero `next()` calls and zero
+ * `return()` calls. This mirrors the plain assignment-destructuring path in
+ * `expressions/assignment.ts` (#1454/#1592/#3100 S4) exactly: bounded step
+ * count from the pattern, `-1` (unbounded drain) when a rest element is
+ * present, and carrier-aware `__extern_get_idx` reads on standalone/WASI.
+ * Plain arrays with the default `@@iterator` keep the indexed fast path inside
+ * the helper, so array sources stay byte-equivalent.
  */
 function compileForOfAssignDestructuringExternref(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ArrayLiteralExpression,
   elemLocal: number,
+  /** (#4447) Enclosing for-of — needed to recurse into nested patterns. */
+  stmtForNested: ts.ForOfStatement,
 ): void {
-  // Ensure __extern_get is available (#1866: ensureLateImport routes to the
+  // (#4447) GetIterator materialisation — must run BEFORE the readers are
+  // resolved, since `ensureLateImport` can shift function indices.
+  let srcLocal = elemLocal;
+  if (expr.elements.length > 0) {
+    const matStepCount = patternIteratorStepCount(expr.elements);
+    const matIterIdx = ensureLateImport(
+      ctx,
+      "__array_from_iter_n",
+      [{ kind: "externref" }, { kind: "f64" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (matIterIdx !== undefined) {
+      const matLocal = allocLocal(fctx, `__forof_dstr_mat_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.get", index: elemLocal });
+      fctx.body.push({ op: "f64.const", value: matStepCount });
+      fctx.body.push({ op: "call", funcIdx: matIterIdx });
+      fctx.body.push({ op: "local.set", index: matLocal });
+      srcLocal = matLocal;
+    }
+  }
+
+  // (#3100 S4) Standalone/WASI element reads use the carrier-aware native
+  // `__extern_get_idx(src, f64 i)` — the native `__extern_get` is string-keyed
+  // and misses the `$Vec` carrier `__array_from_iter_n` produces. Host mode
+  // keeps `__extern_get` + `__box_number` (byte-identical to pre-#4447).
+  const useIdxReads = ctx.standalone || ctx.wasi;
+  const readName = useIdxReads ? "__extern_get_idx" : "__extern_get";
+  const readKeyType: ValType = useIdxReads ? { kind: "f64" } : { kind: "externref" };
+  // Ensure the reader is available (#1866: ensureLateImport routes to the
   // native object-runtime impl under --target standalone — no leaked
   // `env::__extern_get` host import — and to the host import in JS-host mode).
-  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, readName, [{ kind: "externref" }, readKeyType], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  let getIdx = ctx.funcMap.get("__extern_get");
+  let getIdx = ctx.funcMap.get(readName);
   if (getIdx === undefined) return;
 
-  // Ensure __box_number is available
+  // Ensure __box_number is available (host mode only — it boxes the index key).
   let boxIdx = ctx.funcMap.get("__box_number");
-  if (boxIdx === undefined) {
+  if (!useIdxReads && boxIdx === undefined) {
     const importsBefore = ctx.numImportFuncs;
     const boxType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "__box_number", { kind: "func", typeIdx: boxType });
     shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
     boxIdx = ctx.funcMap.get("__box_number");
-    getIdx = ctx.funcMap.get("__extern_get");
+    getIdx = ctx.funcMap.get(readName);
   }
-  if (boxIdx === undefined || getIdx === undefined) return;
+  if ((!useIdxReads && boxIdx === undefined) || getIdx === undefined) return;
+
+  /**
+   * Push `src[i]` as an externref — the single read shape this function used to
+   * inline five times. Host: `__extern_get(src, __box_number(i))`; standalone:
+   * `__extern_get_idx(src, i)`.
+   */
+  const pushElemRead = (i: number): void => {
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "f64.const", value: i });
+    if (!useIdxReads) fctx.body.push({ op: "call", funcIdx: boxIdx! });
+    fctx.body.push({ op: "call", funcIdx: getIdx! });
+  };
 
   // Lazily register __extern_set for property/element-access destructuring
   // targets. We only register if/when we actually need it; that keeps the
@@ -1625,9 +1902,11 @@ function compileForOfAssignDestructuringExternref(
     if (ts.isOmittedExpression(el)) continue;
     if (ts.isSpreadElement(el)) {
       // (#2602) Rest element `...y`: PutValue the slice from index `i` onward.
-      // The element local is already an externref source — push it directly.
-      fctx.body.push({ op: "local.get", index: elemLocal });
-      emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+      // (#4447) Slice the MATERIALISED source — a rest element passes -1 to
+      // `__array_from_iter_n`, i.e. an unbounded drain, so `srcLocal` already
+      // holds every value the iterator produced.
+      fctx.body.push({ op: "local.get", index: srcLocal });
+      emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name), stmtForNested);
       continue;
     }
 
@@ -1637,6 +1916,23 @@ function compileForOfAssignDestructuringExternref(
     if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       targetEl = el.left;
       defaultInit = el.right;
+    }
+
+    // (#4447) Nested pattern element — `for ([[x]] of …)` / `for ([{x}] of …)`.
+    // Read the slot, apply any default, then recurse so the nested value runs
+    // its own RequireObjectCoercible / GetIterator. Previously a non-identifier,
+    // non-member target fell through to the `isIdentifier` bail below and the
+    // whole nested pattern was silently dropped.
+    if (ts.isObjectLiteralExpression(targetEl) || ts.isArrayLiteralExpression(targetEl)) {
+      const nestedLocal = allocLocal(fctx, `__forof_extnested_${fctx.locals.length}`, { kind: "externref" });
+      pushElemRead(i);
+      if (defaultInit) {
+        emitDefaultValueCheck(ctx, fctx, { kind: "externref" }, nestedLocal, defaultInit, { kind: "externref" });
+      } else {
+        fctx.body.push({ op: "local.set", index: nestedLocal });
+      }
+      destructureNestedExternrefPattern(ctx, fctx, targetEl, nestedLocal, stmtForNested);
+      continue;
     }
 
     // #1258 — destructure-assignment target may be a property access
@@ -1675,11 +1971,8 @@ function compileForOfAssignDestructuringExternref(
           fctx.body.push({ op: "ref.null.extern" });
         }
       }
-      // Push value: __extern_get(elem, box(i))
-      fctx.body.push({ op: "local.get", index: elemLocal });
-      fctx.body.push({ op: "f64.const", value: i });
-      fctx.body.push({ op: "call", funcIdx: boxIdx });
-      fctx.body.push({ op: "call", funcIdx: getIdx! });
+      // Push value: src[i]
+      pushElemRead(i);
       // Defaults on property targets: if the read is undefined, fall back to default.
       // Spec applies to ALL destructure targets identically, but the existing emit
       // path uses `emitDefaultValueCheck` against a local. For property targets
@@ -1722,11 +2015,8 @@ function compileForOfAssignDestructuringExternref(
     if (boxedCap && !defaultInit) {
       // Boxed-capture path: <local.get cell-ref> <value> <struct.set 0>
       fctx.body.push({ op: "local.get", index: targetLocal });
-      // Push value: __extern_get(elem, box(i))
-      fctx.body.push({ op: "local.get", index: elemLocal });
-      fctx.body.push({ op: "f64.const", value: i });
-      fctx.body.push({ op: "call", funcIdx: boxIdx });
-      fctx.body.push({ op: "call", funcIdx: getIdx! });
+      // Push value: src[i]
+      pushElemRead(i);
       // Coerce value to the cell's inner type if needed (refCell stores valType)
       if (boxedCap.valType.kind !== "externref") {
         coerceType(ctx, fctx, { kind: "externref" }, boxedCap.valType);
@@ -1766,11 +2056,8 @@ function compileForOfAssignDestructuringExternref(
       const undefIdx = ensureExternIsUndefined(ctx, fctx);
       // Push the box-ref for the eventual struct.set.
       fctx.body.push({ op: "local.get", index: targetLocal });
-      // Get the extracted value: __extern_get(elem, box(i)) -> externref
-      fctx.body.push({ op: "local.get", index: elemLocal });
-      fctx.body.push({ op: "f64.const", value: i });
-      fctx.body.push({ op: "call", funcIdx: boxIdx! });
-      fctx.body.push({ op: "call", funcIdx: getIdx! });
+      // Get the extracted value: src[i] -> externref
+      pushElemRead(i);
       // Tee into a temp so we can both test-undefined and reuse on else.
       const tmpExt = allocLocal(fctx, `__forof_dflt_ext_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.tee", index: tmpExt });
@@ -1819,11 +2106,8 @@ function compileForOfAssignDestructuringExternref(
       continue;
     }
 
-    // Emit: __extern_get(elem, box(i)) -> externref
-    fctx.body.push({ op: "local.get", index: elemLocal });
-    fctx.body.push({ op: "f64.const", value: i });
-    fctx.body.push({ op: "call", funcIdx: boxIdx });
-    fctx.body.push({ op: "call", funcIdx: getIdx! });
+    // Emit: src[i] -> externref
+    pushElemRead(i);
 
     if (defaultInit) {
       const targetType = getLocalType(fctx, targetLocal);
@@ -1862,20 +2146,90 @@ export function compileForOfIteratorAssignDestructuring(
       if (ts.isSpreadAssignment(prop)) continue;
       if (!ts.isShorthandPropertyAssignment(prop) && !ts.isPropertyAssignment(prop)) continue;
 
+      // (#4447) Numeric-literal keys count: `for ([...{ 1: x }] of [[1,2,3]])`
+      // reads index 1 of the rest slice. §13.2.5.5 canonicalises a numeric
+      // PropertyName to its string form, which `prop.name.text` already is.
       const propName = ts.isShorthandPropertyAssignment(prop)
         ? prop.name.text
         : ts.isIdentifier(prop.name)
           ? prop.name.text
-          : ts.isStringLiteral(prop.name)
+          : ts.isStringLiteral(prop.name) || ts.isNumericLiteral(prop.name)
             ? prop.name.text
             : undefined;
       if (!propName) continue;
 
-      const targetName = ts.isShorthandPropertyAssignment(prop)
-        ? prop.name.text
-        : ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.initializer)
-          ? prop.initializer.text
-          : propName;
+      // (#4447) Same (target, default) split as the struct path — `{ k: t = d }`
+      // is a PropertyAssignment over the AssignmentExpression `t = d`, and
+      // `{ k = d }` a ShorthandPropertyAssignment with an
+      // `objectAssignmentInitializer`. Neither was recognised here: the target
+      // fell back to the KEY name and the default was dropped.
+      const targetExpr: ts.Expression = ts.isShorthandPropertyAssignment(prop)
+        ? prop.name
+        : ts.isBinaryExpression(prop.initializer) && prop.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? prop.initializer.left
+          : prop.initializer;
+      const defaultInit: ts.Expression | undefined = ts.isShorthandPropertyAssignment(prop)
+        ? prop.objectAssignmentInitializer
+        : ts.isBinaryExpression(prop.initializer) && prop.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? prop.initializer.right
+          : undefined;
+      const isMemberTarget = ts.isPropertyAccessExpression(targetExpr) || ts.isElementAccessExpression(targetExpr);
+      const targetName = ts.isIdentifier(targetExpr) ? targetExpr.text : propName;
+
+      /** Push `__extern_get(elem, "propName")` — the read shared by every arm. */
+      const pushPropRead = (): boolean => {
+        // Register string constant for property name.
+        addStringConstantGlobal(ctx, propName);
+        // Refresh getIdx in case addStringConstantGlobal shifted indices.
+        getIdx = ctx.funcMap.get("__extern_get");
+        if (getIdx === undefined) return false;
+        // (#51) Materialize the key via the dual-mode helper — nativeStrings
+        // stores a `-1` sentinel global so a bare `global.get` would crash
+        // binary emit.
+        fctx.body.push({ op: "local.get", index: elemLocal });
+        for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
+        fctx.body.push({ op: "call", funcIdx: getIdx });
+        return true;
+      };
+
+      // (#4447) Nested pattern in the value position — `for ({ x: { y } } of …)`.
+      // Read the property, apply any default, then recurse so the nested value
+      // performs its own RequireObjectCoercible / GetIterator (an absent or
+      // `undefined`/`null` property must throw TypeError, not bind silently).
+      if (ts.isObjectLiteralExpression(targetExpr) || ts.isArrayLiteralExpression(targetExpr)) {
+        const nestedLocal = allocLocal(fctx, `__forof_iternested_${fctx.locals.length}`, { kind: "externref" });
+        if (!pushPropRead()) continue;
+        if (defaultInit) {
+          emitDefaultValueCheck(
+            ctx,
+            fctx,
+            { kind: "externref" },
+            nestedLocal,
+            defaultInit,
+            { kind: "externref" },
+            true,
+          );
+        } else {
+          fctx.body.push({ op: "local.set", index: nestedLocal });
+        }
+        destructureNestedExternrefPattern(ctx, fctx, targetExpr, nestedLocal, stmt);
+        continue;
+      }
+
+      // (#4447) Member-expression target — `for ({k: obj.y} of iterable)`.
+      // Route through the #2664 member-set dispatcher via a temp, mirroring
+      // the struct path's #2869 arm.
+      if (isMemberTarget) {
+        const tmpM = allocLocal(fctx, `__forof_itermemtgt_${fctx.locals.length}`, { kind: "externref" });
+        if (!pushPropRead()) continue;
+        if (defaultInit) {
+          emitDefaultValueCheck(ctx, fctx, { kind: "externref" }, tmpM, defaultInit, { kind: "externref" }, true);
+        } else {
+          fctx.body.push({ op: "local.set", index: tmpM });
+        }
+        emitAssignToTarget(ctx, fctx, targetExpr, tmpM, { kind: "externref" });
+        continue;
+      }
 
       let targetLocal = fctx.localMap.get(targetName);
       let iterObjSyncGlobalIdx: number | undefined;
@@ -1888,24 +2242,42 @@ export function compileForOfIteratorAssignDestructuring(
         iterObjSyncGlobalIdx = globalIdx;
       }
 
-      // Register string constant for property name
-      addStringConstantGlobal(ctx, propName);
+      // (#4447) Boxed-capture target: write THROUGH the ref cell.
+      const boxedCapIter = fctx.boxedCaptures?.get(targetName);
+      if (boxedCapIter) {
+        const tmpB = allocLocal(fctx, `__forof_iterdflt_${fctx.locals.length}`, { kind: "externref" });
+        if (!pushPropRead()) continue;
+        if (defaultInit) {
+          emitDefaultValueCheck(ctx, fctx, { kind: "externref" }, tmpB, defaultInit, { kind: "externref" }, true);
+        } else {
+          fctx.body.push({ op: "local.set", index: tmpB });
+        }
+        fctx.body.push({ op: "local.get", index: tmpB });
+        emitBoxedForOfAssignStore(ctx, fctx, targetLocal, { kind: "externref" }, boxedCapIter);
+        continue;
+      }
 
-      // Refresh getIdx in case addStringConstantGlobal shifted indices
-      getIdx = ctx.funcMap.get("__extern_get");
-      if (getIdx === undefined) continue;
+      if (!pushPropRead()) continue;
 
-      // Emit: __extern_get(elem, "propName") -> externref. (#51) Materialize the
-      // key via the dual-mode helper — nativeStrings stores a `-1` sentinel global
-      // so a bare `global.get` would crash binary emit.
-      fctx.body.push({ op: "local.get", index: elemLocal });
-      for (const instr of stringConstantExternrefInstrs(ctx, propName)) fctx.body.push(instr);
-      fctx.body.push({ op: "call", funcIdx: getIdx });
+      if (defaultInit) {
+        // §13.15.5.4 step 4: the initializer fires only when the read is
+        // `undefined` — object-property semantics, so a genuine `null` keeps.
+        const targetTypeI = getLocalType(fctx, targetLocal);
+        emitDefaultValueCheck(
+          ctx,
+          fctx,
+          { kind: "externref" },
+          targetLocal,
+          defaultInit,
+          targetTypeI ?? undefined,
+          true,
+        );
+      } else {
+        // Coerce externref to target local's type and set
+        emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
+      }
 
-      // Coerce externref to target local's type and set
-      emitCoercedLocalSet(ctx, fctx, targetLocal, { kind: "externref" });
-
-      emitGlobalSyncWriteback(ctx, fctx, targetLocal, iterObjSyncGlobalIdx);
+      emitGlobalSyncWritebackByName(ctx, fctx, targetLocal, targetName, iterObjSyncGlobalIdx !== undefined);
     }
   } else if (ts.isArrayLiteralExpression(expr)) {
     // for ([x, y] of iterable) — use __extern_get(elem, box(i)) for each element
@@ -1955,7 +2327,7 @@ export function compileForOfIteratorAssignDestructuring(
         // / generator source, incl. for-await). The element local is externref —
         // push it directly and slice from index `i`.
         fctx.body.push({ op: "local.get", index: elemLocal });
-        emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name));
+        emitForOfRestAssignment(ctx, fctx, el, i, (name) => ctx.moduleGlobals.get(name), stmt);
         continue;
       }
 

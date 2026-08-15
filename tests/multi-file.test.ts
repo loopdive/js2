@@ -196,6 +196,24 @@ describe("multi-file compilation", () => {
     expect(e.decrement(5)).toBe(4);
   });
 
+  it("preserves private CJS export fields across module boundaries", async () => {
+    const files = {
+      "./react.ts": `
+        const reactExports = {};
+        reactExports.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = 42;
+        export { reactExports };
+      `,
+      "./main.ts": `
+        import { reactExports } from "./react";
+        export function getPrivateExport(): number {
+          return reactExports.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
+        }
+      `,
+    };
+    const e = await compileAndRunMulti(files, "./main.ts");
+    expect(e.getPrivateExport()).toBe(42);
+  });
+
   it("entry file can have its own functions alongside imports", async () => {
     const files = {
       "./math.ts": `

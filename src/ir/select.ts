@@ -1233,6 +1233,7 @@ export function assessIrImplicitConstructorSubject(
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
+  currentPreparedClassBindingNames = new Set<string>();
   earlyReturnLoopDepth = 0;
   earlyReturnBarrierDepth = 1;
   forInitLeakedNames = new Set<string>();
@@ -1323,6 +1324,13 @@ let currentNestedFunctionNames: ReadonlySet<string> = new Set();
 // TDZ-visible lexical values prevent an earlier use from falling through to a
 // same-text top-level declaration; statement-list scopes remain independent.
 let currentLexicalValueBindingNames: ReadonlySet<string> = new Set();
+// (#4448) Names the walk itself bound to an EXACT prepared class declaration /
+// class-expression initializer in this subject. `scope` alone cannot say which
+// declaration a name came from, so a parameter or local variable that merely
+// shares a projected class's text must never be read back as that class's
+// constructor identity. Populated only where the class arms add the binding;
+// branch-scoped by `withProjectionEvidenceScope`.
+let currentPreparedClassBindingNames = new Set<string>();
 // Async names are accepted only as the immediate operand of await (#1796).
 let currentAsyncDeclNames: ReadonlySet<string> = new Set();
 
@@ -1660,6 +1668,7 @@ function whyNotIrClaimable(
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = fn.body ? collectDirectNestedFunctionNames(fn.body) : new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
+  currentPreparedClassBindingNames = new Set<string>();
   currentStableFunctionCallSubject =
     currentSelectionOptions?.stableFunctionCallIntegrationBuildable === true &&
     !isMethod &&
@@ -3155,6 +3164,9 @@ function isPhase1StatementListInScope(
       const projected = currentLocalClassDeclarations.get(s.name.text);
       if (projected !== s || !localClasses.has(s.name.text)) return shapeNo("nontail-class-unprepared", s);
       scope.add(s.name.text);
+      // (#4448) Record WHICH binding this name is, so a later `new <name>()`
+      // reads the class identity only when the walk itself bound it here.
+      currentPreparedClassBindingNames.add(s.name.text);
       continue;
     }
     // Slice 3 (#1169c): bare call expression statement (drop the result).
@@ -4882,6 +4894,9 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       // constructor binding is consumed only by the dedicated `new C(...)`
       // and static-member selector arms, never as a first-class IR value.
       scope.add(d.name.text);
+      // (#4448) Same identity record as the nested class-declaration arm: this
+      // exact `const C = class {…}` initializer, not merely the text `C`.
+      currentPreparedClassBindingNames.add(d.name.text);
       continue;
     }
     const declarationList = d.parent;
@@ -6394,9 +6409,14 @@ function withProjectionEvidenceScope<T>(callback: () => T): T {
   currentClassBindings = new Map(currentClassBindings);
   currentCallableArities = new Map(currentCallableArities);
   currentCallableReturnClasses = new Map(currentCallableReturnClasses);
+  // (#4448) A class binding introduced inside this branch must not be visible
+  // to a sibling branch that declares the same text as a plain value.
+  const previousPreparedClassBindings = currentPreparedClassBindingNames;
+  currentPreparedClassBindingNames = new Set(currentPreparedClassBindingNames);
   try {
     return callback();
   } finally {
+    currentPreparedClassBindingNames = previousPreparedClassBindings;
     const scoped = projectionBindingSnapshot();
     const invalidatedOuterNames = new Set([...previous[0].keys(), ...previous[1].keys(), ...previous[2].keys()]);
     restoreProjectionBindings(previous);
@@ -6912,7 +6932,13 @@ function projectedConstructorArity(className: string): number | undefined {
 }
 
 function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): boolean {
-  const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.has(name);
+  // (#4448) A name in scope stands for the projected class ONLY when the walk
+  // bound it to that class's declaration. Testing `currentLocalClassDeclarations`
+  // alone matched on TEXT, so `function test(Box: number)` / `const Box = 1`
+  // inherited the outer `class Box`'s constructor identity and the shape was
+  // claimed; JS throws `TypeError: Box is not a constructor` there, while the
+  // emitted module returned a constructed Box. Measurements: #4448's issue file.
+  const exactNestedClassBinding = scope.has(name) && currentPreparedClassBindingNames.has(name);
   return (
     (!scope.has(name) || exactNestedClassBinding) &&
     !currentNestedFunctionNames.has(name) &&
@@ -9133,6 +9159,7 @@ export function assessModuleInit(
   currentCallableReturnClasses = new Map<string, string>();
   currentNestedFunctionNames = new Set<string>();
   currentLexicalValueBindingNames = new Set<string>();
+  currentPreparedClassBindingNames = new Set<string>();
   earlyReturnLoopDepth = 0;
   earlyReturnBarrierDepth = 1;
   forInitLeakedNames = new Set();

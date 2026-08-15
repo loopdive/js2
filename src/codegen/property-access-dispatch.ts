@@ -180,6 +180,7 @@ import {
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
+import { tryEmitFunctionValueConstructorRead } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
@@ -429,6 +430,11 @@ export function tryConstructorPrototypeIdentity(
       if (ctorIdn !== undefined) return ctorIdn;
     }
   }
+
+  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
+  // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
+  const fnValueCtor = tryEmitFunctionValueConstructorRead(ctx, fctx, expr, propName, objType);
+  if (fnValueCtor !== undefined) return fnValueCtor;
 
   // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
   // → the GENUINE, identity-stable reified builtin-constructor object (supersedes
@@ -1933,7 +1939,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // (same as ClassName.method path at line 992) — avoids generic
       // fallthrough cast of undefined.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -1986,99 +1992,178 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     // Resolve class expressions (var C = class {}) through the expr-name map
     const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
     if (ctx.classSet.has(resolvedClass)) {
-      const fullName = `${resolvedClass}_${propName}`;
-      // #2020: static fields are inherited. `class B extends A {}; B.count`
-      // resolves to A's `A_count` global. The own-class lookup misses, so walk
-      // the parent chain (classParentMap) retrying `<Ancestor>_<prop>` — own
-      // statics still shadow because the own lookup runs first.
-      const globalIdx = ctx.staticProps.get(fullName) ?? resolveInheritedStaticProp(ctx, resolvedClass, propName);
-      if (globalIdx !== undefined) {
-        fctx.body.push({ op: "global.get", index: globalIdx });
-        const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-        return globalDef?.type ?? { kind: "f64" };
-      }
-      // ClassName.prototype — return a singleton prototype global (externref)
-      // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
-      if (propName === "prototype") {
-        if (emitLazyProtoGet(ctx, fctx, resolvedClass)) {
-          return { kind: "externref" };
-        }
-        // Fallback: return null externref
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
-      // ClassName.constructor — return the constructor function reference.
-      // (#3024) A class may declare a STATIC method literally named
-      // `constructor` (`static * constructor() {}` — legal, distinct from the
-      // instance constructor; the `grammar-static-ctor-*-meth-valid` test262
-      // family). `C.constructor` then reads that static method as a value and
-      // must be boxed like any other static method (a closure struct →
-      // `extern.convert_any`, the arm below). The legacy raw path here emitted
-      // `ref.func <C_constructor>` + `extern.convert_any` — but a funcref is
-      // NOT in the anyref hierarchy, so `extern.convert_any` on it is invalid
-      // Wasm (`call[N] expected externref, found ref.func of (ref M)`). Skip
-      // the raw path when a static method owns the name, letting the
-      // static-method closure arm below handle it correctly.
-      if (propName === "constructor" && !ctx.staticMethodSet.has(fullName)) {
-        const ctorName = `${resolvedClass}_constructor`;
-        const funcIdx = ctx.funcMap.get(ctorName);
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "ref.func", funcIdx });
-          fctx.body.push({ op: "extern.convert_any" });
-          return { kind: "externref" };
-        }
-        // Fallback: return null externref
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
-      }
-      // ClassName.staticMethod — return a callable closure-struct externref.
-      //
-      // (#1388) Previously emitted `ref.null.extern` because funcref isn't a
-      // subtype of anyref. Now we wrap the static method in a closure struct
-      // (struct.new with a funcref field) via `emitFuncRefAsClosure`, then
-      // convert the struct ref to externref with `extern.convert_any`.
-      //
-      // The call site (calls.ts:5380) sees a callable variable, casts the
-      // externref back to the matching closure struct type, and dispatches
-      // via `call_ref` through a trampoline. This makes the detached pattern
-      // `const gen = C.staticMethod; gen()` actually invoke the method,
-      // unblocking 273 test262 cases for class async-generator yield-star
-      // tests that follow this exact extraction pattern.
-      if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
-        if (funcIdx !== undefined) {
-          const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
-          if (closureRef) {
-            fctx.body.push({ op: "extern.convert_any" });
-            return { kind: "externref" };
-          }
-          // Fallback if closure construction fails for any reason
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-      }
-      // Instance method accessed as `ClassName.method` (without prototype) —
-      // unusual; keep the legacy null placeholder to preserve existing behavior.
-      if (ctx.classMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-      }
-      // ClassName.accessor — invoke static getter (#848)
-      const accessorKey = `${resolvedClass}_${propName}`;
-      if (ctx.classAccessorSet.has(accessorKey)) {
-        const getterName = `${resolvedClass}_get_${propName}`;
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
-        if (funcIdx !== undefined) {
-          const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
-          return retType ?? { kind: "externref" };
-        }
-      }
+      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
+      if (__r !== PA_FALLTHROUGH) return __r;
     }
   }
   return PA_FALLTHROUGH;
+}
+
+/**
+ * (#4460) Static-member read off a resolved compiled class NAME.
+ *
+ * Extracted VERBATIM from the `ClassName.<prop>` band of
+ * {@link tryIdentifierNamespaceAndStaticReceiverRead} so the same emission can
+ * also serve a receiver that is a class EXPRESSION written in place
+ * (`class { static m() {} }.m`) — see
+ * {@link tryClassExpressionStaticMemberRead}. The identifier band previously
+ * owned the only copy, so an in-place class expression matched no arm at all
+ * and fell through to the generic struct/dynamic member get, which yields
+ * `ref.null.extern`: the read was observably `null` at runtime even though the
+ * checker-driven `typeof` / `.length` folds still reported `"function"` / `0`.
+ *
+ * The caller has already established `ctx.classSet.has(resolvedClass)`.
+ * Returns {@link PA_FALLTHROUGH} where the original block fell out of its
+ * `if (ctx.classSet.has(...))` body without returning.
+ */
+function emitClassStaticMemberRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  resolvedClass: string,
+  propName: string,
+): PADispatchResult {
+  const fullName = `${resolvedClass}_${propName}`;
+  // #2020: static fields are inherited. `class B extends A {}; B.count`
+  // resolves to A's `A_count` global. The own-class lookup misses, so walk
+  // the parent chain (classParentMap) retrying `<Ancestor>_<prop>` — own
+  // statics still shadow because the own lookup runs first.
+  const globalIdx = ctx.staticProps.get(fullName) ?? resolveInheritedStaticProp(ctx, resolvedClass, propName);
+  if (globalIdx !== undefined) {
+    fctx.body.push({ op: "global.get", index: globalIdx });
+    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+    return globalDef?.type ?? { kind: "f64" };
+  }
+  // ClassName.prototype — return a singleton prototype global (externref)
+  // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
+  if (propName === "prototype") {
+    if (emitLazyProtoGet(ctx, fctx, resolvedClass)) {
+      return { kind: "externref" };
+    }
+    // Fallback: return null externref
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  // ClassName.constructor — return the constructor function reference.
+  // (#3024) A class may declare a STATIC method literally named
+  // `constructor` (`static * constructor() {}` — legal, distinct from the
+  // instance constructor; the `grammar-static-ctor-*-meth-valid` test262
+  // family). `C.constructor` then reads that static method as a value and
+  // must be boxed like any other static method (a closure struct →
+  // `extern.convert_any`, the arm below). The legacy raw path here emitted
+  // `ref.func <C_constructor>` + `extern.convert_any` — but a funcref is
+  // NOT in the anyref hierarchy, so `extern.convert_any` on it is invalid
+  // Wasm (`call[N] expected externref, found ref.func of (ref M)`). Skip
+  // the raw path when a static method owns the name, letting the
+  // static-method closure arm below handle it correctly.
+  if (propName === "constructor" && !ctx.staticMethodSet.has(fullName)) {
+    const ctorName = `${resolvedClass}_constructor`;
+    const funcIdx = ctx.funcMap.get(ctorName);
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "ref.func", funcIdx });
+      fctx.body.push({ op: "extern.convert_any" });
+      return { kind: "externref" };
+    }
+    // Fallback: return null externref
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  // ClassName.staticMethod — return a callable closure-struct externref.
+  //
+  // (#1388) Previously emitted `ref.null.extern` because funcref isn't a
+  // subtype of anyref. Now we wrap the static method in a closure struct
+  // (struct.new with a funcref field) via `emitFuncRefAsClosure`, then
+  // convert the struct ref to externref with `extern.convert_any`.
+  //
+  // The call site (calls.ts:5380) sees a callable variable, casts the
+  // externref back to the matching closure struct type, and dispatches
+  // via `call_ref` through a trampoline. This makes the detached pattern
+  // `const gen = C.staticMethod; gen()` actually invoke the method,
+  // unblocking 273 test262 cases for class async-generator yield-star
+  // tests that follow this exact extraction pattern.
+  if (ctx.staticMethodSet.has(fullName)) {
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
+    if (funcIdx !== undefined) {
+      const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
+      if (closureRef) {
+        fctx.body.push({ op: "extern.convert_any" });
+        return { kind: "externref" };
+      }
+      // Fallback if closure construction fails for any reason
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+  }
+  // Instance method accessed as `ClassName.method` (without prototype) —
+  // unusual; keep the legacy null placeholder to preserve existing behavior.
+  if (ctx.classMethodSet.has(fullName)) {
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+    if (funcIdx !== undefined) {
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+  }
+  // ClassName.accessor — invoke static getter (#848)
+  const accessorKey = `${resolvedClass}_${propName}`;
+  if (ctx.classAccessorSet.has(accessorKey)) {
+    const getterName = `${resolvedClass}_get_${propName}`;
+    const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
+    if (funcIdx !== undefined) {
+      const retType = emitGetterCallWithDummy(ctx, fctx, resolvedClass, getterName, funcIdx);
+      return retType ?? { kind: "externref" };
+    }
+  }
+  return PA_FALLTHROUGH;
+}
+
+/**
+ * (#4460) `class { static m() {} }.m` — a static member read taken directly off
+ * an in-place class EXPRESSION.
+ *
+ * The `ClassName.<prop>` band above requires an IDENTIFIER receiver, so a class
+ * expression written in place matched no arm and fell through to the generic
+ * struct / dynamic member get, which emits `ref.null.extern`. The value was
+ * therefore observably `null` at runtime while the checker-driven `typeof` and
+ * `.length` folds still answered `"function"` and `0` from the static type —
+ * a compile-time/runtime disagreement, and the reason
+ * `language/expressions/class/static-method-length-dflt.js` failed standalone
+ * while its `language/statements/class/` twin passed.
+ *
+ * The class body itself was already collected under a synthetic name
+ * (`__anonClass_<n>`, `declarations.ts` `registerClassExpression`), so the fix
+ * is purely to route the read through the SAME emission the declaration form
+ * uses — {@link emitClassStaticMemberRead}.
+ *
+ * Emission order: the member read is built into a scratch body first so the
+ * arm can decline without having emitted anything; only once it is known to
+ * handle the read is the class expression itself compiled (for its observable
+ * §15.7.1 effects — the own-name TDZ ReferenceError and the static-`prototype`
+ * TypeError live in `compileClassExpression`) and its value dropped. The
+ * scratch body stays on `fctx.savedBodies` across that compile so a late import
+ * added while compiling the receiver still shifts its func indices.
+ */
+export function tryClassExpressionStaticMemberRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+): PADispatchResult {
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (!ts.isClassExpression(receiver)) return PA_FALLTHROUGH;
+  const className = ctx.anonClassExprNames.get(receiver) ?? receiver.name?.text;
+  if (className === undefined || !ctx.classSet.has(className)) return PA_FALLTHROUGH;
+
+  const saved = pushBody(fctx);
+  const memberResult = emitClassStaticMemberRead(ctx, fctx, className, propName);
+  const memberInstrs = fctx.body;
+  popBody(fctx, saved);
+  if (memberResult === PA_FALLTHROUGH) return PA_FALLTHROUGH;
+
+  fctx.savedBodies.push(memberInstrs);
+  const receiverType = compileExpression(ctx, fctx, receiver);
+  fctx.savedBodies.pop();
+  if (receiverType) fctx.body.push({ op: "drop" });
+  fctx.body.push(...memberInstrs);
+  return memberResult;
 }
 
 export function tryPrototypeMethodAndArityReads(

@@ -120,7 +120,7 @@ const SECTIONS = [
       [
         "`ClassDeclaration`",
         "mixed",
-        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Residual nested rejects are per-class member SHAPE, not cardinality: a static member, an initialized instance field, heritage, no method, a `let`-bound class expression, or a method capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
         "#3522",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],

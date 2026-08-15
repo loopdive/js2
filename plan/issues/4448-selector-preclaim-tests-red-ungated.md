@@ -1,7 +1,9 @@
 ---
 id: 4448
 title: "issue-3529-selector-preclaim: 4 tests red on main — 3 broken by 6203320a (prepare recursive class layouts), 1 born red in #4430; tests/issue-*.test.ts are not CI-gated"
-status: ready
+status: done
+completed: 2026-08-15
+assignee: ttraenkler/opus-4448
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -14,6 +16,15 @@ area: ir
 language_feature: compiler-internals
 goal: ir-full-coverage
 related: [3529, 3520, 3522, 4430, 3341]
+loc-budget-allow:
+  # +27 lines in the file that OWNS the shadow predicate: the over-claim fix has
+  # to record which binding the walk bound, next to where it binds it.
+  - src/ir/select.ts
+func-budget-allow:
+  # +3 / +1 lines: the class-binding record must be written exactly where these
+  # two walkers bind the name, and a per-subject reset where they reset state.
+  - src/ir/select.ts::isPhase1StatementListInScope
+  - src/ir/select.ts::whyNotIrClaimable
 origin: "2026-08-15 dev-3518-standalone heads-up during the IR wave; provenance established by git bisect in the fable lane"
 ---
 
@@ -86,3 +97,98 @@ wave agent ran the file incidentally.
 npx vitest run tests/issue-3529-selector-preclaim.test.ts   # 66/66 target
 git bisect start dc7eb811 32af18f7                          # reproduces the provenance
 ```
+
+## Resolution (2026-08-15)
+
+Reproduced at `92f78620`: **4 failed | 62 passed**. Final state: **67 passed
+(67)** — the count moved from 66 because one stale rejection case was replaced
+by two sharper tests (below), not because a test was deleted to go green.
+
+### AC 2 — the two shadow cases: an OVER-CLAIM, fixed in the selector
+
+**Statement: local-class identity may NOT be inherited through a parameter or
+local-variable shadow.** The prepared-class model (#3520/#3522) keys a class on
+its *declaration* identity (`IrClassId` derives from the declaration site), not
+on its text; `localClassValueIsUnshadowed` was the one place that decided the
+question by NAME, and it got it wrong.
+
+Root cause is **not** `6203320a` (that commit does not touch `src/ir/select.ts`;
+the bisect landed on it because both commits are in the same day's IR wave).
+The real change is **`19902d67` "feat(ir): prepare bounded nested class
+components"**, which loosened the shadow predicate to admit a *nested* class
+declaration's own binding:
+
+```ts
+// 19902d67 (over-broad — matches on TEXT)
+const exactNestedClassBinding = scope.has(name) && currentLocalClassDeclarations.get(name)?.name !== undefined;
+```
+
+`currentLocalClassDeclarations` is unit-wide, so a **parameter** or **local
+variable** whose text happens to equal a projected class's name satisfied it and
+the `new Box(1)` arm read the outer class's constructor identity.
+
+**Probe (`.tmp/probe-shadow-runtime.ts`, compile + instantiate + run, four
+shapes) — the claim was not merely mislabelled, it produced a wrong answer:**
+
+| shape | node | wasm BEFORE fix | wasm AFTER fix |
+| --- | --- | --- | --- |
+| `function test(Box: number) { new Box(1); return 1 }` | throws `TypeError: Box is not a constructor` | **returned 1** | throws |
+| same, result observed (`return value.value`) | throws `TypeError` | **returned 1** | throws |
+| `const Box = 1; new Box(1); return 1` | throws `TypeError` | **returned 1** | throws |
+| same, result observed | throws `TypeError` | **returned 1** | throws |
+
+IR outcome before: `emitted/patch` (claimed). After: `unsupported/select/
+constructor-resolution-unsupported`, and the legacy path traps — matching JS's
+throw. So the test's expectation was right and the behavior was wrong.
+
+**Fix** (`src/ir/select.ts`): track *which binding* the walk bound, instead of
+matching text. A new per-subject `currentPreparedClassBindingNames` is populated
+at exactly the two places that introduce a prepared class binding — the nested
+`class` declaration statement arm and the `const C = class {…}` vardecl arm —
+and `localClassValueIsUnshadowed` consults that set. It is branch-scoped in
+`withProjectionEvidenceScope`, so a class bound inside one `if` arm is not
+visible to a sibling arm that binds the same text as a plain value. #3522's
+nested-class ownership tests stay green (both nested-class files pass), which is
+the coverage the loosening existed for.
+
+### AC 1 — per-test decisions
+
+| test | decision |
+| --- | --- |
+| `does not inherit local-class identity through a 'parameter' shadow` | **behavior bug fixed** (above) |
+| `does not inherit local-class identity through a 'local variable' shadow` | **behavior bug fixed** (above) |
+| `types 'class shape projection' before AST-to-IR build` | **expectation updated — the case is genuinely supported now.** `6203320a` preallocates the shape cell for a self-recursive class, so `class Builder { add(v): Builder { return new Builder(this.value + v) } }` is claimed and emitted. Not relabelled: the case moved to a new test that **executes** the module and asserts `test() === 3`, which matches node. (Direct selection without checker shapes still reports `class-projection-unsupported`; the compile path with projected shapes emits it.) `class-projection-unsupported` keeps its coverage in the four `rejects an unrepresentable class $name` cases, the missing-projection test, and the `instanceof` test. |
+| `uses checker class-expression identity and keeps a conservative conditional fallback` (born red in #4430) | **expectation was written against a source that never reaches the seam.** `const boxes = [new Box()]` is rejected by the vardecl arm first — reason `body-shape-rejected`, detail `vardecl-init-expr:ArrayLiteralExpression` — **identically with and without** `resolveLocalClassExpression`, and identically with a plain field instead of the computed getter. So `body-shape-rejected` is the correct classification and the array literal, not the member, is what decides. The test now uses a `Box[]` **parameter**, which does reach the seam: with the seam it yields the originally-expected `class-member-unsupported`, without it there is no rejection at all — so the reason is attributable to the seam. The array-literal behavior is pinned in its own new test, including the plain-member control. |
+
+### AC 3 — CI story: a new NON-required `issue-tests` job (option (a))
+
+`.github/workflows/ci.yml` gains `issue-tests` (+
+`scripts/select-changed-issue-tests.mjs`), split in two steps:
+
+* **pinned (fatal)** — a short curated list, currently just
+  `tests/issue-3529-selector-preclaim.test.ts`, verified green on main. A
+  failure there is a real regression. **Measured 45 s** of vitest on the 4-core
+  dev box (job cap 20 min).
+* **changed (advisory, `continue-on-error`)** — every `tests/issue-*.test.ts`
+  the PR touches, capped at 15 files.
+
+The split is deliberate. The suite is **not clean on main**: a small sample
+during this issue found **8 further pre-existing failures**, verified
+pre-existing by A/B against the unmodified `src/ir/select.ts` —
+`issue-3522-ir-class-compile-once` (2: constructor receiver accessors on the
+direct dispatch path, gc + standalone lanes), `issue-3529-dataflow-outcomes`
+(3), `issue-3529-integration-preflight` (3). A red **non-required** check drives
+`mergeStateStatus` to `UNSTABLE`, which `auto-enqueue` skips outright
+(#3878/#3904), so making the changed-files step fatal would strand PRs behind
+tests that were already red. Grow the pinned list as files are verified green;
+promote the job to required once the suite is clean. Documented in
+`docs/ci-policy.md` §"Optional / informational checks".
+
+### Gates run
+
+`tests/issue-3529-selector-preclaim.test.ts` 67/67 · `check:ir-fallbacks` OK, no
+bucket delta · `typecheck` clean · `lint` clean · `format:check` clean ·
+equivalence shards 1/8 and 4/8 "no new regressions" (shard 4 reports one
+baseline entry now passing — verified pre-existing on the unmodified base, so
+not attributable here and the baseline was left alone) · `#3522` nested-class
+ownership and `#3520` class-shape identity files green.

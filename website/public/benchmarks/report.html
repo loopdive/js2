@@ -256,8 +256,9 @@
            across the clamp() range. */
         --ring: 11px;
         position: relative;
-        width: clamp(78px, 24vw, 104px);
+        width: clamp(74px, calc(24vw - 4px), 100px);
         aspect-ratio: 1;
+        margin: 2px;
         flex-shrink: 0;
       }
       .edition-legend-donut-glow {

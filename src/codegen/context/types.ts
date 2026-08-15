@@ -3041,6 +3041,8 @@ export interface CodegenContext {
   ordinaryToPrimitiveObjectDeclarations: Set<ts.VariableDeclaration>;
   /** Initializer-node twin of `ordinaryToPrimitiveObjectDeclarations`. */
   ordinaryToPrimitiveObjectLiterals: Set<ts.ObjectLiteralExpression>;
+  /** Module-global names whose direct non-specific spread initializer is an open object. */
+  hostSpreadObjectGlobals: Set<string>;
   /**
    * (#1239) Variable names whose initializer is an object literal carrying
    * `get`/`set` accessors. Such variables are stored as plain JS host
