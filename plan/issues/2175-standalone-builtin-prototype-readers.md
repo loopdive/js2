@@ -6,7 +6,7 @@ model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-07-17
+updated: 2026-08-15
 priority: high
 feasibility: hard
 model: fable
@@ -1384,3 +1384,27 @@ Everything in the C3 spec §"Slice decomposition / V2-S3" EXCEPT the carrier:
   a Wasm exception from a SEPARATE gOPD engine body — a pre-existing limitation
   unrelated to the carrier; resolved once the reader-arm MOP replaces the
   synthesized-descriptor path.)
+
+## Wave-2 adoption note (fable, 2026-08-15, #4444 session)
+
+Adopted by `claude/es6-team-reflection` (claim on origin/issue-assignments;
+prior claim released). The v2 unified-substrate spec above remains the
+authoritative plan; S0+S1 are landed. Before executing further slices:
+
+1. **Reconcile against current main** — the sibling ES5 lane landed method
+   name/length meta + Function length descriptors (PR #4553 → merged via the
+   es5-standalone branch, #4566 merge; and #4445 this session showed
+   membership in `STRING_PROTO_METHODS` + `PROTO_METHOD_LENGTH` already flips
+   `length`/`name`/`prop-desc`/`not-a-constructor` files for String proto
+   members). Re-verify which of the v2 slices' target tests still fail on
+   main HEAD and re-anchor line/symbol references before writing code.
+2. **Re-measure the reflection bucket**: the ES2015 standalone bucket carries
+   ~324 reflection-style failures (2026-08-15 baseline) across
+   `length.js`/`name.js`/`prop-desc.js`/`not-a-constructor.js`/
+   `invoked-as-func.js`; the v2 spec's per-slice test gates name the rest.
+3. Execute the v2 slice decomposition in its stated order (it is
+   Opus-executable by design); honor the "Coordination / conflict flags"
+   section — the in-flight work it names may have landed or died, verify each.
+
+This issue unlocks: #2161 F6 (RegExp reflection), #4449's speciesctor lane
+(TypedArray), #4450's subclass lane (class), and the ES6 umbrella #4444 row 3.
