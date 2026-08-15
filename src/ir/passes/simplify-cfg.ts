@@ -21,6 +21,7 @@
 // converge in a few iterations.
 
 import { asBlockId, type IrBlock, type IrBranch, type IrFunction, type IrTerminator } from "../nodes.js";
+import { rawPredecessorCounts } from "../analysis/dominance.js";
 
 /**
  * Merge trivially-linked blocks. Returns the same reference when no
@@ -45,7 +46,10 @@ export function simplifyCFG(fn: IrFunction): IrFunction {
   // value-creating instr. Therefore it needs no AllocSiteRegistry interaction
   // (no preserve/alias/retire). If a future edit makes this pass drop or fuse
   // instrs, it must thread the registry and follow the three rules.
-  const predCount = computePredCount(fn);
+  // #4418 — the raw predecessor-edge multiset is the shared helper in
+  // analysis/dominance.ts now (it, not the deduped dominance pred lists, is
+  // what the single-predecessor merge rule is defined over).
+  const predCount = rawPredecessorCounts(fn);
 
   // Find the first eligible merge.
   for (let i = 0; i < fn.blocks.length; i++) {
@@ -55,7 +59,7 @@ export function simplifyCFG(fn: IrFunction): IrFunction {
     const targetId = t.branch.target as number;
     if (targetId === i) continue; // self-loop — don't merge into self
     if (targetId === 0) continue; // entry must stay at index 0
-    if ((predCount.get(targetId) ?? 0) !== 1) continue;
+    if (predCount[targetId] !== 1) continue;
     const target = fn.blocks[targetId];
     if (!target) continue;
     if (target.blockArgs.length > 0) continue; // see header
@@ -65,29 +69,6 @@ export function simplifyCFG(fn: IrFunction): IrFunction {
   }
 
   return fn;
-}
-
-// ---------------------------------------------------------------------------
-// Predecessor counting
-// ---------------------------------------------------------------------------
-
-function computePredCount(fn: IrFunction): Map<number, number> {
-  const count = new Map<number, number>();
-  for (let i = 0; i < fn.blocks.length; i++) count.set(i, 0);
-  for (const block of fn.blocks) {
-    const t = block.terminator;
-    if (t.kind === "br") {
-      bump(count, t.branch.target as number);
-    } else if (t.kind === "br_if") {
-      bump(count, t.ifTrue.target as number);
-      bump(count, t.ifFalse.target as number);
-    }
-  }
-  return count;
-}
-
-function bump(count: Map<number, number>, id: number): void {
-  count.set(id, (count.get(id) ?? 0) + 1);
 }
 
 // ---------------------------------------------------------------------------
