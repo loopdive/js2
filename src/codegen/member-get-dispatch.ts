@@ -98,6 +98,19 @@ export interface MemberGetMethodArm {
   methodFullName: string;
   /** The funcref-wrapper closure struct the lazy init `struct.new`s. */
   closureStructTypeIdx: number;
+  /**
+   * (#4440) The `$fnmeta`-carrying SUBTYPE to `struct.new` instead, and the
+   * operand to push last, when the method has resolvable metadata.
+   *
+   * This arm builds the singleton INDEPENDENTLY of
+   * `emitCachedMethodClosureAccess` — both lazy-inits write the same cache
+   * global, and whichever runs first in program order wins. If only one of them
+   * carried the metadata, `C.prototype.m.name` would depend on whether the
+   * typed read or the dynamic read happened to execute first. Recorded here at
+   * RESERVE time (the fill must not mint types, globals or string literals).
+   */
+  metaAllocStructTypeIdx?: number;
+  metaInit?: Instr[];
   /** Inheritance depth of the RECEIVER class — children sort first so an
    * override's arm shadows the superclass arm under WasmGC subtyping. */
   depth: number;
@@ -280,6 +293,10 @@ export function ensureMethodArmsForProp(ctx: CodegenContext, propName: string, f
       receiverStructTypeIdx: cand.receiverStructTypeIdx,
       methodFullName: cand.methodFullName,
       closureStructTypeIdx: singleton.closureStructTypeIdx,
+      // (#4440) mirror the metadata the typed read's lazy init pushes
+      ...(singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
+        ? { metaAllocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
+        : {}),
       depth: cand.depth,
     });
     ensured = true;
@@ -491,7 +508,14 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
                   value: ctx.closureInfoByTypeIdx.get(arm.closureStructTypeIdx)?.paramTypes.length ?? 0,
                 },
                 closureBagInitInstr(), // (#4241) $bag
-                { op: "struct.new", typeIdx: arm.closureStructTypeIdx },
+                // (#4440) `$fnmeta`, and the derived type that carries it. Deep-
+                // cloned per splice: this chain is built once per dispatcher and
+                // the SAME arm feeds both the externref and the typed-f64
+                // dispatcher, so sharing one `Instr` object across two bodies
+                // would double-remap it on a late-import shift
+                // (`reference_shared_instr_object_dce_double_remap`).
+                ...(arm.metaInit !== undefined ? (structuredClone(arm.metaInit) as Instr[]) : []),
+                { op: "struct.new", typeIdx: arm.metaAllocStructTypeIdx ?? arm.closureStructTypeIdx },
                 { op: "extern.convert_any" },
                 { op: "global.set", index: arm.cacheGlobalIdx },
               ],
