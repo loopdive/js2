@@ -19,9 +19,11 @@ related: [2161, 2158, 2159, 2101, 2100, 1907, 1888, 1914, 1539, 2861, 2885, 2949
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-descriptors.ts
   - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
@@ -1859,6 +1861,65 @@ at `hasOwnProperty` + a recorded blocker — do NOT ship guessed flags.
 Both views land in ONE boundary. `hasOwnProperty`=true + `gOPD`=undefined is a
 half-consistent MOP, worse than uniformly false. If gOPD turns out blocked on
 the flag store, hasOwnProperty does NOT land alone either.
+
+### RESULT (claude/es6-team-reflection) — implemented, every acceptance criterion
+### met, and it flips ZERO test262 files. Keep/revert is a judgement call.
+
+**Prerequisite resolved first, as the plan required.** Flags ARE stored: the
+#4176 write arm for `__defineProperty_value` passes the caller's flag word
+straight through to the companion's own `__defineProperty_value` call
+(`proto-index-store.ts` `spliceInto("__defineProperty_value", …)`, `local.get 3`),
+which runs the full normal flag translation into `$PropEntry.$flags`. Nothing
+had to be guessed, so the plan's "do NOT ship guessed flags" branch never
+applied.
+
+**That turned the design into receiver SUBSTITUTION rather than a bespoke
+probe.** New `protoIndexOwnViewSubstituteInstrs` replaces a `$NativeProto`
+receiver with its brand companion `$Object`; each view's existing `$Object` path
+then runs unchanged and builds the descriptor from the real stored entry.
+Own-layer only: `create = 0`, no chain walk, non-`$NativeProto` receivers
+untouched.
+
+**Two insertion sites, as the plan predicted — the funnel hypothesis held.**
+The differential trace found `__getOwnPropertyDescriptor` is a SINGLE native
+(`object-runtime-descriptors.ts`); a `$NativeProto` fails its `ref.test $Object`
+and falls into the non-object arm that answers `undefined`. Sites: `emitHasOwn`
+(`object-runtime.ts`, covers `__hasOwnProperty` + `__object_hasOwn`) and that
+gOPD native. No third site was needed.
+
+**Acceptance — all met:**
+- `.tmp/p5.js`: five views agree, both brands (`Date`/`Object`), both receiver
+  forms (syntactic + flowing). 123 → 345.
+- `.tmp/p6.js` (3725): flags round-trip — absent attributes read
+  `{writable:false, enumerable:false, configurable:false}`, explicit
+  `{writable:true, enumerable:true, configurable:true}` reads back true. A
+  synthesized descriptor could not tell these apart.
+- Negative controls on the same binary: absent key → `undefined`; inherited
+  `toString` on a plain object still NOT own; own key still own; a brand never
+  written to (`Map.prototype`) unaffected.
+- `prove-emit-identity`: **IDENTICAL, all 60**. The scratch local is appended
+  only when the arm emits — appending it unconditionally drifted 6 of 60, which
+  is why it is conditional.
+- Regressions: `issue-2175-v2s3b`, `issue-2175-s3b3`, `issue-2885`,
+  `issue-4160-proto-index-store`, `issue-4447-forof-dstr-standalone`,
+  `issue-2175-{native-proto-brands,typeof-function-arm,v2s2}` all green. The
+  `issue-4176` IR for-in case and the 3 `issue-2175-regexp-proto-readers`
+  getter-dispatch cases fail identically on base (verified earlier this session).
+- New test `tests/issue-2175-p2-own-view-companion.test.ts` (4/4).
+
+**Measurement — 0 flips.** The 125-candidate list: `pass=0 fail=121 ce=4`. A
+refined set (tests that BOTH `defineProperty` a builtin proto AND use an
+own-property view — 38 files): `pass=0 fail=34 ce=4`. Sampled failures are
+unrelated semantics (Array holes, `some`/`lastIndexOf`, frozen-length). **My
+regex scope was a poor proxy for what exercises these views** — that is a
+scoping finding, not a correctness one.
+
+**Recommendation (coordinator's call, not banked as a win):** KEEP. Unlike the
+#4492 candidacy widening I reverted, this is byte-identical for every module
+that does not write a builtin prototype, is unit-tested, closes a real spec gap,
+and satisfies the plan's own "one boundary" constraint — both views land
+together, so the MOP is never half-consistent. But it buys no conformance
+movement today, so if the bar is "must move the number", revert it.
 
 ### Acceptance
 

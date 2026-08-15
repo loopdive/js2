@@ -276,6 +276,72 @@ export function protoIndexRecvGetMissInstrs(
   ];
 }
 
+/**
+ * (#2175 P2) OWN-LAYER receiver substitution for the own-property views.
+ *
+ * An entry written by `Object.defineProperty(<Builtin>.prototype, k, d)` lives
+ * in the brand COMPANION (the write arms below re-target and recurse), and
+ * #4176 wired the companion into `__extern_get` / `__extern_has` only. So a
+ * read and `in` see it while `hasOwnProperty` and `getOwnPropertyDescriptor`
+ * answer false/undefined — measured on `Date.prototype` and `Object.prototype`
+ * alike (`.tmp/p5.js`), for both syntactic and flowing receivers.
+ *
+ * This rewrites `recvParam` IN PLACE: when the receiver is a `$NativeProto`
+ * whose companion exists, the param is replaced by the companion `$Object`, and
+ * the caller's existing `$Object` path then runs unchanged. Substitution rather
+ * than a bespoke probe is what makes the descriptor correct for free — the
+ * companion entry is an ordinary `$PropEntry` whose flags the write arm already
+ * populated (`__defineProperty_value` recursion passes the caller's flag word
+ * straight through), so gOPD reads real writable/enumerable/configurable bits
+ * instead of synthesized ones.
+ *
+ * OWN-ONLY, deliberately: `__protoidx_brand_off` answers a `$NativeProto`'s OWN
+ * brand, and this uses `create = 0` and performs **no chain walk**. An ordinary
+ * object is left untouched (the `ref.test` fails), so `hasOwnProperty` cannot
+ * start reporting inherited keys.
+ *
+ * Emits nothing when the store is unreserved — callers keep their exact bytes.
+ */
+export function protoIndexOwnViewSubstituteInstrs(
+  ctx: CodegenContext,
+  recvParam: number,
+  scratchExternLocal: number,
+): Instr[] {
+  const npTypeIdx = ctx.nativeProtoTypeIdx;
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  const companionIdx = ctx.funcMap.get(PROTOIDX_COMPANION);
+  if (npTypeIdx === undefined || brandOffIdx === undefined || companionIdx === undefined) return [];
+  return [
+    { op: "local.get", index: recvParam },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: npTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: recvParam },
+        { op: "call", funcIdx: brandOffIdx },
+        { op: "i32.const", value: 0 }, // own-layer probe: never mint here
+        { op: "call", funcIdx: companionIdx },
+        { op: "local.tee", index: scratchExternLocal },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          // Substitute ONLY when a companion exists. A brand nobody ever wrote
+          // to has no companion (create = 0 above), and the receiver must stay
+          // untouched so the caller's existing arms behave exactly as before.
+          then: [
+            { op: "local.get", index: scratchExternLocal },
+            { op: "local.set", index: recvParam },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 /** (#4176) Receiver-aware HAS consult `[recv, key] -> i32`; see get twin. */
 export function protoIndexRecvHasMissInstrs(
   ctx: CodegenContext,

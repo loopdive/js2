@@ -130,6 +130,7 @@ import {
   protoIndexForInPushInstrs,
   protoIndexGetIdxMissInstrs,
   protoIndexHasIdxInstrs,
+  protoIndexOwnViewSubstituteInstrs,
   protoIndexRecvGetMissInstrs,
   protoIndexRecvHasMissInstrs,
   reserveProtoIndexStore,
@@ -3439,8 +3440,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     objFindIdx,
   });
+  // (#2175 P2) A `$NativeProto` receiver is substituted by its brand COMPANION,
+  // where `defineProperty(<Builtin>.prototype, …)` actually stored the entry
+  // (#4176 write arms). Own-layer only, no chain walk, no-op for every other
+  // receiver. EMPTY when the proto-index store is unreserved — and the scratch
+  // local is then omitted too, so a module that never writes a builtin
+  // prototype keeps a byte-identical local vector (measured: appending it
+  // unconditionally drifted 6 of the 60 emit-identity corpus entries).
+  const hasOwnNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0, 3);
   const emitHasOwn = (name: string): void => {
     const body: Instr[] = [
+      ...hasOwnNpcArm,
       ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),
       // (#2896) Builtin-fn metadata arm: name/length are OWN properties of a
       // builtin function value (until deleted). get_meta returns non-null
@@ -3478,7 +3488,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       name,
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } }],
+      [
+        { name: "any", type: { kind: "anyref" } },
+        // (#2175 P2) companion scratch — appended LAST so no already-baked local
+        // index moves, and only when the arm above actually emits.
+        ...(hasOwnNpcArm.length > 0
+          ? ([{ name: "npc", type: { kind: "externref" } }] as { name: string; type: ValType }[])
+          : []),
+      ],
       body,
     );
   };

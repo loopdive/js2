@@ -48,6 +48,7 @@ import {
 // (#4230) VEC `Properties` maps — a complete own-key source built from the
 // #3537 bag ∪ the #3251 overlay companion.
 import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
+import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js"; // (#2175 P2) own-view companion substitution
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -2446,6 +2447,14 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "local.get", index: 6 },
       { op: "return" },
     ];
+    // (#2175 P2) Index of the companion scratch appended LAST to this native's
+    // local vector. Fixed locals are any=2, o=3, e=4, fl=5, desc=6; the six
+    // `strExotic` locals (7..12) are present only when that arm is active.
+    const gopdNpcLocal = 7 + (strExotic ? 6 : 0);
+    // Empty when the proto-index store is unreserved; the scratch local below is
+    // then omitted too, keeping the local vector byte-identical for modules that
+    // never write a builtin prototype.
+    const gopdNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0, gopdNpcLocal);
     const stringExoticArm: Instr[] = strExotic
       ? [
           // key must be a string property key (else no exotic own property).
@@ -2697,6 +2706,15 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         : []),
       // any = any.convert_extern(obj) ; if !$Object → vec receivers consult
       // the #3251 overlay (companion entry / implicit element descriptor),
+      // (#2175 P2) Substitute a `$NativeProto` receiver by its brand COMPANION
+      // before the `$Object` test below, so an entry written by
+      // `defineProperty(<Builtin>.prototype, …)` is described by the ordinary
+      // path — including its REAL flag bits, which the #4176 write arm already
+      // stored on the companion's `$PropEntry`. Without this the receiver failed
+      // `ref.test $Object` and fell into the non-object arm, answering
+      // `undefined` while a plain read of the same key returned its value.
+      // Own-layer only, no chain walk; inert for every other receiver.
+      ...gopdNpcArm,
       // then the primitive-receiver arm (#2984: nullish → TypeError, string →
       // §10.4.3 exotic, else undefined — where "undefined" is the #3319
       // singleton-aware miss return).
@@ -2799,6 +2817,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
               { name: "kStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
               { name: "kIdx", type: { kind: "i32" } },
             ] as { name: string; type: ValType }[])
+          : []),
+        // (#2175 P2) companion scratch — appended LAST so no already-baked local
+        // index moves, and only when the arm above actually emits.
+        ...(gopdNpcArm.length > 0
+          ? ([{ name: "npc", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
       ],
       body,
