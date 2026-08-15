@@ -120,7 +120,7 @@ const SECTIONS = [
       [
         "`ClassDeclaration`",
         "mixed",
-        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Residual nested rejects are per-class member SHAPE, not cardinality: a static member, an initialized instance field, heritage, no method, a `let`-bound class expression, or a method capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
         "#3522",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
@@ -382,6 +382,10 @@ const BUCKETS = {
   "string-builder-candidate": [
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
+  ],
+  "host-surface-unavailable": [
+    "deferred",
+    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
   ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],

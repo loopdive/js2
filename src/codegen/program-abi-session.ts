@@ -398,6 +398,17 @@ interface ProgramAbiGlobalTypeContract {
 interface PreparedImplicitConstructorSupportContract {
   readonly selfParamIndex: number;
   readonly parentInitFuncIdx?: FuncHandle;
+  /**
+   * (#3522) The exact containing terminal owner for a NESTED implicit
+   * constructor, or `null`/absent for a top-level one.
+   *
+   * The preparer proves the containing owner belongs to the same transaction
+   * before staging. Carrying the identity here keeps this guard fail-closed
+   * and EXACT — it verifies the inventory records precisely the nesting the
+   * caller claimed — instead of merely relaxing the old top-level-only
+   * `terminalOwnerId === null` assumption into an unchecked allowance.
+   */
+  readonly containingTerminalOwnerId?: IrUnitId | null;
 }
 
 export type ProgramAbiSlotLocator =
@@ -1065,7 +1076,7 @@ export class ProgramAbiSession {
     const unit = this.inventory.allUnits.find(({ id }) => id === unitId);
     if (
       unit?.kind !== "class-implicit-constructor" ||
-      unit.terminalOwnerId !== null ||
+      unit.terminalOwnerId !== (contract.containingTerminalOwnerId ?? null) ||
       contract.selfParamIndex < 0 ||
       !Number.isInteger(contract.selfParamIndex)
     ) {
@@ -1077,7 +1088,9 @@ export class ProgramAbiSession {
     const existing = this.preparedImplicitConstructorSupportContracts.get(unitId);
     if (
       existing &&
-      (existing.selfParamIndex !== contract.selfParamIndex || existing.parentInitFuncIdx !== contract.parentInitFuncIdx)
+      (existing.selfParamIndex !== contract.selfParamIndex ||
+        existing.parentInitFuncIdx !== contract.parentInitFuncIdx ||
+        (existing.containingTerminalOwnerId ?? null) !== (contract.containingTerminalOwnerId ?? null))
     ) {
       throw new ProgramAbiInvariantError(
         "session-draft-mismatch",
@@ -2508,16 +2521,20 @@ export class ProgramAbiSession {
     if (intent.kind !== "callable" || intent.origin !== "source" || !intent.unitId) return false;
     const unit = this.inventory.allUnits.find(({ id }) => id === intent.unitId);
     const locator = this.locators.get(draft.id);
+    const contract = this.preparedImplicitConstructorSupportContracts.get(intent.unitId);
     if (
       unit?.kind !== "class-implicit-constructor" ||
-      unit.terminalOwnerId !== null ||
+      // (#3522) A top-level implicit constructor has no containing terminal; a
+      // nested one records its enclosing executable. The recorded contract is
+      // the authority for which of the two this unit is, so the nesting is
+      // VERIFIED against the preparer's claim rather than assumed absent.
+      unit.terminalOwnerId !== (contract?.containingTerminalOwnerId ?? null) ||
       locator?.kind !== "defined-function"
     ) {
       return false;
     }
     const func = locator.value;
     const signature = this.module.types[func.typeIdx];
-    const contract = this.preparedImplicitConstructorSupportContracts.get(intent.unitId);
     if (
       !contract ||
       func.locals.length !== 0 ||
