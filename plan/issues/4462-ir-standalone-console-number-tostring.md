@@ -32,6 +32,16 @@ loc-budget-allow:
   - src/codegen/index.ts
   # `namesHostFreeConsoleSurface` — the selector half of the same one table.
   - src/ir/select.ts
+coercion-sites-allow:
+  # +3 `number_toString` mentions, none of them a coercion: a `funcMap` lookup,
+  # the on-demand `emitNativeNumberFormat` call the other lazy consumers already
+  # make, and one doc reference. The adapter hand-rolls NO ToString matrix — it
+  # calls the existing formatter and applies the SAME two-op ABI unwrap legacy
+  # already performs at `call-receiver-method.ts::unwrapToNative` (#3912). It
+  # lives here because this file owns `number_toString`'s emission and its
+  # `(f64) -> externref` ABI; putting the adapter anywhere else would separate
+  # the ABI from the code that chooses it.
+  - src/codegen/number-format-native.ts
 func-budget-allow:
   # +12: one host-free arm in the console dispatch and one in the toString
   # dispatch, each three lines of condition delegating to a named helper. The
