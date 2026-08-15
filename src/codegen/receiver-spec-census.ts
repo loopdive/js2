@@ -152,10 +152,3 @@ export function noteReceiverNotIdentifier(receiver: ts.Expression): void {
   if (!receiverSpecCensusEnabled()) return;
   noteReceiverUnproven(`shape:${receiverShapeOf(receiver)}`);
 }
-
-/** Test-only: drop every recorded count so one process can measure twice. */
-export function resetReceiverSpecCensus(): void {
-  receiverSpecCensus.buckets.clear();
-  receiverSpecCensus.shapes.clear();
-  receiverSpecCensus.unproven.clear();
-}
