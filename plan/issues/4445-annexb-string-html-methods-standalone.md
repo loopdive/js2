@@ -97,9 +97,14 @@ registers each unit in `ctx.nativeStrHelpers` under its `canonicalName`.
 ## Result (2026-08-15, Opus implementation — dev-4445-html)
 
 **Standalone 17/111 → 95/111 (+78) on the issue filter; the 13 HTML method
-dirs went 4/82 → 82/82. gc lane byte-identical (92/111 before and after).**
-A/B-measured against reverted HEAD copies, not inherited from an artifact;
-official scoped runner run agrees exactly with the direct-driver figures.
+dirs went 4/82 → 82/82. gc lane unchanged: 108/111 before and after, same 3
+failures file-for-file (official wrapper, all four arms).**
+A/B-measured against reverted HEAD copies, not inherited from an artifact.
+Correction (agent's own late re-measure): an earlier draft quoted gc as
+92/111 from a fast in-process driver; the 16-row gap was `strict rerun` rows
+the sharded path builds from a harness assembly the driver doesn't use. The
+official-wrapper figures above supersede it; the "gc unchanged" conclusion is
+unaffected.
 
 The plan's premise was stale: #3069 had already landed the native direct-call
 CreateHTML lowering. The actual gap was the VALUE-ERASED shape —

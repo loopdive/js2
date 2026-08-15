@@ -64,7 +64,8 @@ generator row).
 ## Session results (2026-08-15, wave 1)
 
 - **#4445 landed** (`5b715e1`): annexB String filter 17→95/111 standalone, 13
-  HTML dirs 4/82→82/82, gc byte-identical. Free follow-up found:
+  HTML dirs 4/82→82/82, gc unchanged (108/111 before/after, official wrapper —
+  an earlier 92/111 figure was a fast-driver artifact). Free follow-up found:
   `trimLeft`/`trimRight` miss the same `STRING_PROTO_METHODS` CSV (6 tests;
   `reference-*` also needs alias identity `trimLeft === trimStart`).
 - **#4447 slice 1 landed** (`8dcbc88`): standalone for-of/dstr 342→400/569,
