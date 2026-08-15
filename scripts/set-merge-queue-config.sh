@@ -44,35 +44,40 @@ RULESET_ID="${RULESET_ID:-16700772}"
 # CANONICAL VALUES — keep in sync with `docs/ci-policy.md` §3 and #3914.
 # -----------------------------------------------------------------------------
 #
-# MAX_ENTRIES_TO_MERGE — the BATCH CAP: how many queued PRs a single merge
-#   group may swallow, validated by ONE shard-matrix run. This is the knob that
-#   actually buys throughput here. Because the queue is serial, PRs pile up
-#   while a group is in flight *for free*, so batching them costs those PRs no
-#   latency — they were waiting for that run either way.
+# MAX_ENTRIES_TO_MERGE — the merge-grouping cap: how many consecutive GREEN
+#   queue entries GitHub may fast-forward into `main` in one operation.
 #
-#   5 is the project-lead's chosen cap. #3914's expected-runtime-per-merged-PR
-#   model puts the optimum at 4–5 for the observed merge_group failure rate
-#   (e ≈ 0.05–0.10): at e=0.05 N=5 is the best value in the table (0.426W vs
-#   0.435W for N=4); at e=0.10 N=4 edges it (0.594W vs 0.610W). The two are
-#   within noise of each other and both are ~1.85× better than serial. What
-#   matters is that the curve is a BOWL that turns back up — by N=12 you are
-#   back near the N=2 result — so this is a cap to hold, not a floor to raise.
+#   ⚠ #3914's original premise for this knob — "one group, one run, N PRs" —
+#   is NOT what GitHub's product does. Merge limits do NOT combine
+#   `merge_group` builds: every queued PR always gets its own temporary
+#   branch and its own full CI run, and min/max_entries_to_merge only group
+#   the final fast-forward of entries that have EACH already passed their own
+#   run (GitHub community discussion #58523; measured here 2026-08-15, see
+#   "Step 1+2 result" in the issue file). Native GitHub merge queue has no
+#   fewer-runs-than-PRs mode. The cap is therefore harmless but buys no CI
+#   throughput; 5 is kept because a bigger mergeable prefix is free on the
+#   rare occasion it can form.
 MAX_ENTRIES_TO_MERGE="${MAX_ENTRIES_TO_MERGE:-5}"
 #
-# MIN_ENTRIES_TO_MERGE — the quorum FLOOR. Now 2: #3914 Step 2 is LIVE.
-#   Step 2's precondition was "raise to 2 ONLY if Step 1 (cap 5) leaves groups
-#   at size 1", i.e. only if GitHub's formation is eager-with-minimum rather
-#   than min(available, cap). That precondition was measured and met on
-#   2026-08-14: all 30 merge groups dispatched that day went out at size 1
-#   under cap 5, including during a ~2h window where 2-3 green PRs sat queued
-#   behind a wedged head. Formation is eager; the cap alone never batches.
-#   The cost is unchanged and real — a genuinely solo PR pays the wait timer as
-#   pure added latency (~1/3 of dispatches on the measured day had no peer
-#   waiting), which is why the floor is the knob that needs a trigger and the
-#   cap does not.
+# MIN_ENTRIES_TO_MERGE — the quorum FLOOR. Back to 1: #3914 Step 2 was tried
+#   (floor 2, 5-min timer, live 2026-08-14T18:16Z) and MEASURED A NO-OP on
+#   2026-08-15: 29/29 successful merge groups still carried exactly one PR,
+#   including a window where entries for three PRs (#4557/#4558/#4559) sat
+#   stacked in the queue simultaneously and still consumed three full runs,
+#   merging one at a time ~15 min apart. Two reasons, both structural:
+#   1. The wait timer counts from queue entry, and GitHub "merges with fewer
+#      than the minimum" once it expires. Under load the head's queue wait
+#      (>= one ~15-min run) always exceeds any sane timer, so the floor is
+#      permanently waived by the time a merge decision is made.
+#   2. Even if it bound, merging >=2 entries together needs >=2 entries green
+#      at once, which max_entries_to_build=1 makes impossible — the next
+#      entry's run is only dispatched after the head merges (observed: +2 s).
+#   So a floor > 1 can never batch on this queue; its only observable effect
+#   is up to timer-minutes of added latency on quiet-queue fast merges
+#   (docs-only runs go green in ~2-3 min, inside the timer). Keep 1.
 #   This default MUST track the live ruleset. Apply is this script's DEFAULT
-#   mode, so a stale 1 here silently reverts the floor on the next bare run.
-MIN_ENTRIES_TO_MERGE="${MIN_ENTRIES_TO_MERGE:-2}"
+#   mode, so a stale value here silently rewrites the floor on the next bare run.
+MIN_ENTRIES_TO_MERGE="${MIN_ENTRIES_TO_MERGE:-1}"
 #
 # MAX_ENTRIES_TO_BUILD — SPECULATION DEPTH. Stays 1. This is NOT the batching
 #   knob and raising it is the thing that must not happen a third time.
@@ -131,8 +136,10 @@ shard jobs on a ~120-runner pool, which starves the one group that can merge
 in order to precompute results that are usually discarded. It is also the only
 setting that makes queue changes EJECT other PRs' in-flight runs.
 
-Want more PRs per run? Raise MAX_ENTRIES_TO_MERGE (the batch cap) instead —
-one group, one run, N PRs, no extra runner pressure.
+Note there is NO ruleset setting that batches N PRs into one CI run:
+MAX_ENTRIES_TO_MERGE / MIN_ENTRIES_TO_MERGE only group the final fast-forward
+of entries that each already passed their own run (measured 2026-08-15; GitHub
+community discussion #58523). Every queued PR always costs one full run.
 
 Full post-mortem + arithmetic: plan/issues/3914-ci-throughput-merge-queue-batching.md
 Prerequisite if you really mean it: shrink the merge_group shard matrix first
