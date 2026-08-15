@@ -142,6 +142,7 @@ import {
   tryCompileStandaloneBuiltinProtoMemberRead,
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
+import { tryEmitInstanceBuiltinProtoMethodValue } from "./instance-proto-method-identity.js"; // (#4481)
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -2173,6 +2174,11 @@ export function tryPrototypeMethodAndArityReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // (#4481) The STANDALONE analogue of the host-lane #3368 arm below, over every
+  // {Object,Array,Number,Boolean,String} × proto-method cell. Whole subsystem
+  // (measurements, both shadow gates, callee-position decline): the module.
+  const identityRead = tryEmitInstanceBuiltinProtoMethodValue(ctx, fctx, expr, propName);
+  if (identityRead !== undefined) return identityRead;
   // (#3368) A plain array's inherited method VALUE is the corresponding
   // `%Array.prototype%` function object. Method calls (`arr.toString()`) already
   // use the native array-method lowering, but a detached value read
