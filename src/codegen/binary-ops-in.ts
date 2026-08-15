@@ -28,6 +28,7 @@ import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
+import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -382,7 +383,15 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
     // Route through `__extern_has` for the real `in` check instead of
     // emitting an unconditional `false`.
-    if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref")) {
+    //
+    // (#4062) The same reasoning reaches one receiver further: a STATICALLY-TYPED
+    // array carrying a named expando (`a.foo = 7`) answers `7` on the read and
+    // folded `false` here, because a vec's field list is `["length","data"]` and
+    // the bag is invisible to both. `__extern_has`'s vec arm consults the #3251
+    // overlay and the #3537 bag, so routing makes `in` agree with the read — and
+    // only a folded `false` is routed, so no affirmative answer moves.
+    const vecNamedKeyRoute = !has && vecNamedKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
+    if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute)) {
       const hasIdx = ensureLateImport(
         ctx,
         "__extern_has",

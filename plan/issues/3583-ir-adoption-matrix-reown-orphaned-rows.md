@@ -15,6 +15,11 @@ language_feature: compiler-internals
 goal: ir-full-coverage
 related: [1131, 2952, 2949, 3518, 3522, 1373b]
 origin: "2026-07-24 Fable IR-migration review (plan/agent-context/fable-ir-review-2026-07-24.md §3) — 28 of 34 non-ir-owned, non-deferred adoption-matrix rows have no live owning issue"
+# CI follow-up to the assertion unwrap: `a as any` bodies became claimable,
+# so the string slice-1 arms in lowerBinary demote cleanly instead of
+# hard-erroring — the fix + its contract comments grow the dispatcher (+11).
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerBinary
 ---
 
 # #3583 — Re-own the orphaned IR adoption-matrix rows
