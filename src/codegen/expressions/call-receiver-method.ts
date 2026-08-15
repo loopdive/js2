@@ -121,6 +121,7 @@ import {
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
+import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   buildThrowJsErrorInstrs,
@@ -425,41 +426,39 @@ function tryCompileLateFnctorPrototypeMethodCall(
 }
 
 /**
- * (#4482) True when the receiver is a primitive-WRAPPER object (`new String(x)`
- * / `new Number(x)` / `new Boolean(x)`) and the called member is provably NOT a
- * member of that wrapper's own prototype — i.e. it can only be an OWN slot the
- * program wrote: a plain expando (`s.g = function () {…}`) or a method
- * transferred from another builtin's prototype
- * (`s.exec = RegExp.prototype.exec`, the §15.x.4 "is not generic" idiom).
+ * (#4482) True when the native String-family arm below must DECLINE because the
+ * member being called is provably not on the receiver's own prototype, so it can
+ * only have come from somewhere the arm cannot see:
  *
- * A wrapper lowers to a `$Object` in standalone, so the own slot IS reachable —
- * but the per-wrapper native dispatch arms below key on the wrapper's OWN
- * method table and cannot answer a foreign name; they silently produced
- * `undefined` (test262 `RegExp/prototype/{exec,test}/…_A2_T4`,
- * `Number/prototype/{toString,valueOf}/…_T01` block #2). Declining here routes
- * the call to the generic `$Object` dispatch at the bottom of
- * {@link compileReceiverMethodCall}, which reads the own slot and either
- * invokes it (correct for a real expando) or throws the §13.3.6.2
- * "called value is not a function" TypeError (#4221's guard inside
- * `__extern_method_call`).
+ *  * an OWN slot the program wrote on a primitive-WRAPPER receiver
+ *    (`new String("[a-b]").exec = RegExp.prototype.exec` — the §15.10.6.2
+ *    "is not generic" idiom, `…/exec/S15.10.6.2_A2_T{4,6}`); or
+ *  * an INHERITED slot the program installed on a builtin prototype, reached
+ *    through a PRIMITIVE receiver (`Object.prototype.exec =
+ *    RegExp.prototype.exec; ".".exec(m)` — `…/exec/S15.10.6.2_A2_T8`).
  *
- * ABSENT-NOT-WRONG: the TS wrapper interfaces (`String`/`Number`/`Boolean`)
- * declare exactly their prototype members, so a `getProperty` HIT keeps the
- * existing native arm. Only a provable miss declines. Primitive (non-wrapper)
- * string/number receivers can carry no own properties, so they are excluded and
- * keep their byte-identical fast paths.
+ * Either way the per-wrapper native dispatch keys on the receiver's OWN method
+ * table and cannot answer a foreign name; it silently produced `undefined`
+ * where the transferred intrinsic must run its brand check and throw a real
+ * `TypeError`. Declining routes the call past this arm to the stored-member /
+ * proto-inherited closure dispatch (`stored-member-closure-call.ts`), which
+ * reads the slot — own first, then the receiver's implicit chain via
+ * `__extern_method_call` — and applies it with the ORIGINAL receiver as `this`.
+ *
+ * ABSENT-NOT-WRONG, twice over:
+ *  * the TS interfaces (`String`/`Number`/`Boolean`, and `string` itself)
+ *    declare exactly their prototype members, so a `getProperty` HIT keeps the
+ *    existing native arm — only a provable MISS declines;
+ *  * a PRIMITIVE receiver carries no own slot, so its miss is only interesting
+ *    when the module actually wrote a named property onto a builtin prototype.
+ *    That is `ctx.protoNamedDirty`, the #4176 pre-scan flag — a module without
+ *    such a write compiles byte-identically on the primitive path.
  */
-function isWrapperOwnSlotMethodCall(ctx: CodegenContext, receiverType: ts.Type, method: string): boolean {
-  if (process.env.JS2WASM_TRACE_CRM) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[WRAP?] m=${method} standalone=${ctx.standalone} strW=${isStringWrapperType(receiverType)} numW=${isNumberWrapperType(receiverType)} boolW=${isBooleanWrapperType(receiverType)} ts=${ctx.checker.typeToString(receiverType)}`,
-    );
-  }
+function declinesToOwnOrInheritedSlot(ctx: CodegenContext, receiverType: ts.Type, method: string): boolean {
   if (!ctx.standalone) return false;
-  if (!isStringWrapperType(receiverType) && !isNumberWrapperType(receiverType) && !isBooleanWrapperType(receiverType)) {
-    return false;
-  }
+  const isWrapper =
+    isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
+  if (!isWrapper && !(isStringType(receiverType) && ctx.protoNamedDirty)) return false;
   // `toString`/`valueOf` are handled by the dedicated wrapper arms (which
   // already consult `sourceHasMethodReassignment`); leaving them here would
   // re-route a working path.
@@ -545,10 +544,6 @@ export function compileReceiverMethodCall(
   propAccess: ts.PropertyAccessExpression,
   expectedType?: ValType,
 ): InnerResult | undefined {
-  if (process.env.JS2WASM_TRACE_CRM) {
-    // eslint-disable-next-line no-console
-    console.error(`[CRM-ENTER] ${propAccess.expression.getText()}.${propAccess.name.text}()`);
-  }
   // (#3610) `<Builtin>.prototype.<brandedMethod>(...)` — e.g.
   // `Date.prototype.getTime()`. The prototype object carries no [[DateValue]],
   // so `thisTimeValue` throws TypeError (§21.4.4). Without this gate the
@@ -2512,7 +2507,7 @@ export function compileReceiverMethodCall(
     (isStringType(receiverType) ||
       receiverIsCaughtErrorStringRead(ctx, propAccess.expression) ||
       receiverIsNativeStringValType(ctx, fctx, propAccess.expression)) &&
-    !isWrapperOwnSlotMethodCall(ctx, receiverType, propAccess.name.text)
+    !declinesToOwnOrInheritedSlot(ctx, receiverType, propAccess.name.text)
   ) {
     const method = propAccess.name.text;
 
@@ -2940,7 +2935,23 @@ export function compileReceiverMethodCall(
 
   // Fallback .toString() for any type not already handled above
   // Handles: function.toString(), object.toString(), array.toString(), class instance.toString()
-  if (propAccess.name.text === "toString" && expr.arguments.length === 0) {
+  if (
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    // (#4482) …unless the program installed its OWN `toString` on THIS
+    // binding. Everything below answers `Object.prototype.toString` /
+    // `<Builtin>.prototype.toString` from the receiver's static type, which is
+    // right only while no own slot shadows it. §15.7.4.2 requires
+    // `Object.defineProperty(d, "toString", {value: Number.prototype.toString});
+    // d.toString()` on a Date to run the TRANSFERRED intrinsic and throw a
+    // real `TypeError`. Declining routes it to the stored-member closure arm,
+    // whose brand preamble does that (the expando-named half of the same rows,
+    // `d.myToString = …`, already threw before this change).
+    //
+    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does
+    // not override `toString` on this binding compiles byte-identically.
+    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString"))
+  ) {
     // #1463 — `someFn.toString()` where `someFn` is a top-level function
     // declaration → return the captured source text directly. Must happen
     // BEFORE the externref-routes-to-JS fallback below: top-level functions
@@ -3773,12 +3784,6 @@ export function compileReceiverMethodCall(
   // side. Host (gc) lane only: #3201's scope is the default lane and its
   // acceptance forbids standalone regressions (the native dispatcher's
   // struct-expando coverage is a follow-up).
-  if (process.env.JS2WASM_TRACE_CRM) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[CRM-END] ${propAccess.expression.getText()}.${propAccess.name.text}() recvWasm=${recvWasm.kind} recvTs=${ctx.checker.typeToString(recvTsType)} hasProp=${recvTsType.getProperty(propAccess.name.text) !== undefined}`,
-    );
-  }
   if (!ctx.standalone && !ctx.wasi) {
     // recvWasm hoisted above the any-arm block — one checker resolution
     // serves both fallbacks (oracle ratchet #1930/#3273).

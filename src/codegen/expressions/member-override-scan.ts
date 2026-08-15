@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * (#4482) Source-level "did this module install its own `<name>` slot?" scans.
+ *
+ * These sit next to — not inside — `calls.ts`'s `sourceHasMethodReassignment`
+ * (#1397) because they answer the same question at two DIFFERENT precisions,
+ * and which precision an arm needs depends on which direction it is gating:
+ *
+ * | predicate | precision | correct for |
+ * | --- | --- | --- |
+ * | `sourceHasMethodReassignment` (#1397, `calls.ts`) | whole file, assignment only | admitting a dynamic exit |
+ * | `sourceHasMethodOverride` | whole file, assignment ∪ `defineProperty` | admitting a dynamic exit |
+ * | `sourceOverridesMethodOnReceiver` | this binding, assignment ∪ `defineProperty` | DECLINING a static arm |
+ *
+ * The distinction is load-bearing and is the campaign's absent-not-wrong rule
+ * applied to a compile-time scan: over-admitting a dynamic exit costs a fast
+ * path, while over-declining a static arm produces a WRONG answer for a
+ * receiver that never acquired the slot.
+ */
+import { ts, forEachChild } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
+import { sourceHasMethodReassignment } from "./calls.js";
+
+/**
+ * (#4482) True when the source installs `<name>` on some object by a route
+ * `sourceHasMethodReassignment` cannot see: `Object.defineProperty(X, "<name>",
+ * …)` or `Object.defineProperties(X, { <name>: … })`.
+ *
+ * §15.x.4 "is not generic" test262 rows come in pairs — one block transfers the
+ * intrinsic by ASSIGNMENT (`s.valueOf = Number.prototype.valueOf`), the other by
+ * `Object.defineProperty`. The assignment half is already gated by #1397; the
+ * defineProperty half was invisible, so a static arm kept answering a value
+ * where the transferred method must throw (measured 2026-08-15:
+ * `Number/prototype/{toString,valueOf}/…_T03`).
+ *
+ * Same conservative scan discipline as `sourceHasMethodReassignment`: the whole
+ * SourceFile, any receiver expression, cached per `(sourceFile, name)`. A false
+ * positive only costs a static fast path on that member name.
+ */
+const _definePropertyCache = new WeakMap<ts.SourceFile, Map<string, boolean>>();
+function sourceHasDefinePropertyOverride(anchor: ts.Node, methodName: string): boolean {
+  const sf = anchor.getSourceFile();
+  if (!sf) return false;
+  let perFile = _definePropertyCache.get(sf);
+  if (perFile === undefined) {
+    perFile = new Map<string, boolean>();
+    _definePropertyCache.set(sf, perFile);
+  }
+  const cached = perFile.get(methodName);
+  if (cached !== undefined) return cached;
+
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression.name.text;
+      if (callee === "defineProperty" && node.arguments.length >= 2) {
+        const key = node.arguments[1];
+        if (key !== undefined && ts.isStringLiteralLike(key) && key.text === methodName) {
+          found = true;
+          return;
+        }
+      }
+      if (callee === "defineProperties" && node.arguments.length >= 2) {
+        const descs = node.arguments[1];
+        if (descs !== undefined && ts.isObjectLiteralExpression(descs)) {
+          for (const p of descs.properties) {
+            const n = p.name;
+            if (n === undefined) continue;
+            if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === methodName) {
+              found = true;
+              return;
+            }
+          }
+        }
+      }
+    }
+    forEachChild(node, visit);
+  }
+  visit(sf);
+  perFile.set(methodName, found);
+  return found;
+}
+
+/**
+ * (#4482) `sourceHasMethodReassignment` ∪ `sourceHasDefinePropertyOverride` —
+ * "the source installs an own `<methodName>` slot somewhere, by either route".
+ *
+ * This is the predicate a static builtin-method arm should consult before
+ * answering from the receiver's STATIC type: once a program can install its own
+ * `<name>`, the arm's answer is only correct if nothing overrode it, which the
+ * arm cannot know. Declining routes the call to the reflective dispatch, whose
+ * bodies already carry the §15.x.4 brand preamble (verified 2026-08-15: the
+ * expando-named half of every one of these rows — `s.myValueOf = …` — already
+ * throws a real `TypeError`, so only the interception is missing).
+ */
+export function sourceHasMethodOverride(ctx: CodegenContext, anchor: ts.Node, methodName: string): boolean {
+  return sourceHasMethodReassignment(ctx, anchor, methodName) || sourceHasDefinePropertyOverride(anchor, methodName);
+}
+
+/**
+ * (#4482) The RECEIVER-PRECISE form of {@link sourceHasMethodOverride}: the
+ * source installs `<methodName>` **on the same identifier** this call reads —
+ * `d.valueOf = …` or `Object.defineProperty(d, "valueOf", …)` for a call
+ * `d.valueOf()`.
+ *
+ * The conservative whole-file scan is the right admission test for an arm that
+ * sits AFTER every static arm has declined (nothing is lost by over-admitting
+ * there). It is the WRONG test for gating a static arm OFF, because declining
+ * on an unrelated `x.valueOf = …` elsewhere in the file would drop a correct
+ * native answer for a receiver that never had an own slot — a wrong answer on a
+ * maybe, which the campaign's absent-not-wrong rule forbids. Matching the
+ * receiver identifier keeps the decline to bindings that provably acquire the
+ * slot, so a module that does not override on THAT binding compiles unchanged.
+ *
+ * Non-identifier receivers answer `false` (nothing to match), which is the
+ * conservative direction: the static arm stays.
+ */
+export function sourceOverridesMethodOnReceiver(recvExpr: ts.Expression, methodName: string): boolean {
+  if (!ts.isIdentifier(recvExpr)) return false;
+  const recvName = recvExpr.text;
+  const sf = recvExpr.getSourceFile();
+  if (!sf) return false;
+
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.name) &&
+      node.left.name.text === methodName &&
+      ts.isIdentifier(node.left.expression) &&
+      node.left.expression.text === recvName
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "defineProperty" &&
+      node.arguments.length >= 2
+    ) {
+      const target = node.arguments[0];
+      const key = node.arguments[1];
+      if (
+        target !== undefined &&
+        key !== undefined &&
+        ts.isIdentifier(target) &&
+        target.text === recvName &&
+        ts.isStringLiteralLike(key) &&
+        key.text === methodName
+      ) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  }
+  visit(sf);
+  return found;
+}
