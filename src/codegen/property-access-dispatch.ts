@@ -3864,7 +3864,24 @@ export function finalizeStructAndDynamicMemberGet(
           // taught the consumer-side dispatch to use the typed read.
           let resultWasm: ValType =
             accessWasm.kind === "f64" || accessWasm.kind === "i32" ? accessWasm : ({ kind: "externref" } as const);
-          if (resultWasm.kind === "externref" && !preserveDynamicResultCarrier) {
+          // (#4420) The vote is only admissible when the ACCESS ITSELF is
+          // statically dynamic — `accessWasm.kind === "externref"`. The old
+          // guard tested `resultWasm`, which is set to externref for EVERY
+          // non-f64/i32 `accessWasm`, so a read whose static type is a concrete
+          // `ref`/`ref_null` (an array, a struct) was eligible too and could be
+          // collapsed to f64/i32 by an unrelated struct that merely shares the
+          // property NAME. Self-compiling `src/emit/binary.ts` hit exactly that:
+          // `instr.else` is `Instr[]` (`ref null $__vec_externref`), the only
+          // struct in the module carrying an `else` field is the `OP` opcode
+          // table (all-f64), so the single-candidate vote narrowed the read to
+          // f64 while the enclosing `.length` still emitted the typed
+          // `struct.get $__vec_externref 0` — `struct.get[0] expected (ref null
+          // 2), found local.tee of type f64`, a module the engine rejects while
+          // the compiler reported success. A concrete `ref`/`ref_null` access
+          // type is a STATEMENT about the value's representation; a name-keyed
+          // field vote may not overrule it. Such reads keep the honest
+          // externref result and are re-narrowed by the caller's own coercion.
+          if (resultWasm.kind === "externref" && accessWasm.kind === "externref" && !preserveDynamicResultCarrier) {
             const fieldKinds = new Set(structCandidates.map((c) => c.fieldType.kind));
             // (#3927) A hot/cold-split fnctor carries `propName` in its
             // lazily-allocated tail, and `findAlternateStructsForField`
