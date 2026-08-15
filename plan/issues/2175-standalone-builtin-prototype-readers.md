@@ -1556,7 +1556,84 @@ positive assertion paired with a negative that must stay 0 on the same binary.
 
 ---
 
-## S3b-2 triage (same lane, same session) — the consult tier is ALREADY DONE
+## P1/P2 triage — builtin-prototype `defineProperty` (claude/es6-team-reflection)
+
+Two defects handed to this lane as "P1 setter-never-fires on `Array.prototype`"
+and "P2 no-own-property on `Date.prototype`". Both isolated by differential
+probe; **no code written** (the fix sites spread past the two natives I could
+measure in-window — see "Why banked" below). Probes `.tmp/p1.js`–`.tmp/p5.js`,
+runnable via `npx tsx .tmp/p.ts --file <probe>`.
+
+### P1 — an inherited ACCESSOR on a builtin prototype is ignored by [[Set]]
+
+`Object.defineProperty(Array.prototype, "acc", {get, set})`, then on an array
+instance (`.tmp/p4.js`):
+
+| step | expected | actual |
+|---|---|---|
+| `arr.acc` (read, before write) | 42, getter runs | **42, getter runs** OK |
+| `arr.acc = 7` | inherited SETTER runs, no own prop created | **setter never runs** |
+| `arr.acc` (read, after write) | 42 (still the getter) | **not 42** |
+| `hasOwnProperty(arr, "acc")` | false | **true** |
+
+So the write creates an **own data property on the receiver**, shadowing the
+inherited accessor — §9.1.9 OrdinarySetWithOwnDescriptor step 3 (an inherited
+accessor's `[[Set]]` must be invoked, and no own property created) is not
+applied for companion-held accessors. The READ side is already correct
+(`.tmp/p3.js`: both the #4176 data path and the accessor getter work on an
+instance receiver), so this is purely `__extern_set`'s chain behaviour: its
+`$NativeProto` write arm covers "the receiver IS the proto"
+(`Array.prototype.foo = 1`), not "the receiver INHERITS an accessor from a
+brand companion".
+
+### P2 — companion entries are invisible to the OWN-property views
+
+`Object.defineProperty(Date.prototype, "p2", {value: 99})` (`.tmp/p5.js`):
+
+| view | result |
+|---|---|
+| `Date.prototype.p2` (syntactic read) | 99 OK |
+| `dp.p2` (flowing `$NativeProto`) | 99 OK |
+| `"p2" in dp` | true OK |
+| `hasOwnProperty(dp, "p2")` | **false** |
+| `gOPD(dp, "p2")` / `gOPD(Date.prototype, "p2")` | **undefined** |
+
+Brand-independent (`Object.prototype` behaves identically) and receiver-form
+independent. This matches #4176's own documented consult list exactly: it wires
+`__extern_get` / `__extern_has` (plus the vec/closure/closed-struct miss tails),
+and does **not** wire `__hasOwnProperty` or `__getOwnPropertyDescriptor`.
+
+**This CORRECTS my S3b-2 finding above.** That section says the consult tier
+"has no work left in it", measured on `%TypedArray%.prototype.find`. That
+measurement was only valid for **seeded** members, which gOPD answers through a
+different mechanism (#2885 synthesis / builtin-fn meta) — not through the
+companion. For entries **written** by `defineProperty`, the own-property views
+genuinely do need the consult. S3b-2 is therefore NOT complete; its remaining
+work is exactly P2.
+
+### Scope
+
+Regex-scoped against the standalone baseline (`.tmp/p1p2-scope.ts`), counting
+only currently non-passing files: **P2 ≈ 125 candidates**
+(`Object.defineProperty(<Builtin>.prototype, …)`), **P1 ≈ 11**
+(descriptor with a `set:` on a prototype). These are candidates by source
+shape, not confirmed yields — the fix must be measured against them before any
+claim, per the repeated lesson in this issue.
+
+### Why banked rather than implemented
+
+P2's fix is an own-layer companion probe
+(`ref.test $NativeProto` → `__protoidx_brand_off` → `__protoidx_companion(off, 0)`
+→ `__obj_find`, own-only, no chain walk) added to the own-property views.
+`__hasOwnProperty` is a contained single site (`object-runtime.ts`,
+`emitHasOwn`), but `__getOwnPropertyDescriptor` is spread across several modules
+(`builtin-static-gopd.ts`, `carrier-bag-visibility.ts`, `class-proto-object.ts`,
+`dyn-read.ts`, …), so the change could not be implemented AND measured against
+the 125 within the remaining window. Landing the `hasOwnProperty` half alone
+would ship a half-consistent MOP (`hasOwnProperty` true, `gOPD` undefined) —
+worse than the current uniformly-false state.
+
+P1 is a separate site (`__extern_set`'s chain walk) and a separate slice.
 
 Before writing S3b-2 I measured its premise, and the premise is false: with
 S3b-1 in place, `__getOwnPropertyDescriptor` / `__getOwnPropertyNames` /
