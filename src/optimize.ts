@@ -146,6 +146,68 @@ function isBrowserLikeRuntime(): boolean {
   return typeof window !== "undefined" || typeof (globalThis as any).WorkerGlobalScope !== "undefined";
 }
 
+/** Outcome of {@link validateEmittedBinary}. */
+export interface EmittedBinaryValidation {
+  /** `false` only when the engine actively REJECTED the bytes. */
+  valid: boolean;
+  /** The engine's first validation message, when one could be obtained. */
+  detail?: string;
+}
+
+/**
+ * Ask the host engine whether a Wasm binary is a valid module (#4420).
+ *
+ * This is the ONE place the "validate, then re-run through `new
+ * WebAssembly.Module` to recover the engine's detail string" idiom lives.
+ * `WebAssembly.validate` answers a bare boolean; constructing a `Module` is
+ * what surfaces the actual complaint (`Compiling function #103:"encodeInstr"
+ * failed: struct.get[0] expected type (ref null 2), found local.tee of type
+ * f64`) that makes a miscompile diagnosable. Callers: the compiler's opt-in
+ * `validate` gate (src/compiler.ts), the CLI's refuse-to-publish check
+ * (src/cli.ts, #3338), {@link optimizedBinaryValidates} (#1941), and the
+ * dogfood/npm-compat compile probe.
+ *
+ * Reports `valid: true` when validation cannot be performed at all (no
+ * `WebAssembly` global — an exotic embedding). That is deliberate and matches
+ * the pre-existing optimizer behavior: an environment that cannot validate
+ * must not have every compile fail, and it cannot run the module either.
+ */
+export function validateEmittedBinary(binary: Uint8Array): EmittedBinaryValidation {
+  const WA = (
+    globalThis as {
+      WebAssembly?: {
+        validate?: (b: BufferSource) => boolean;
+        Module?: new (b: BufferSource) => unknown;
+      };
+    }
+  ).WebAssembly;
+  if (!WA || typeof WA.validate !== "function") return { valid: true };
+  // Cast to BufferSource: under TS 5.7+ the typed-array generic types this as
+  // `Uint8Array<ArrayBufferLike>`, which the lib `validate`/`Module` overloads
+  // (param: BufferSource) don't structurally accept without the widening.
+  const bytes = binary as unknown as BufferSource;
+  let ok = false;
+  try {
+    ok = WA.validate(bytes);
+  } catch {
+    // A throw from validate means the bytes are structurally broken — treat
+    // as invalid rather than letting a malformed binary through.
+    ok = false;
+  }
+  if (ok) return { valid: true };
+  let detail: string | undefined;
+  if (typeof WA.Module === "function") {
+    try {
+      new WA.Module(bytes);
+      // Module construction accepting bytes `validate` rejected would be an
+      // engine inconsistency; trust the stricter answer and stay invalid.
+    } catch (err) {
+      detail = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return detail === undefined ? { valid: false } : { valid: false, detail };
+}
+
 /**
  * Validate optimizer output before trusting it (#1941).
  *
@@ -159,18 +221,7 @@ function isBrowserLikeRuntime(): boolean {
  * worse than the status quo.
  */
 function optimizedBinaryValidates(binary: Uint8Array): boolean {
-  const WA = (globalThis as { WebAssembly?: { validate?: (b: BufferSource) => boolean } }).WebAssembly;
-  if (!WA || typeof WA.validate !== "function") return true;
-  try {
-    // Cast to BufferSource: under TS 5.7+ the typed-array generic types this
-    // as `Uint8Array<ArrayBufferLike>`, which the lib.dom `validate` overload
-    // (param: BufferSource) doesn't structurally accept without the widening.
-    return WA.validate(binary as unknown as BufferSource);
-  } catch {
-    // A throw from validate means the bytes are structurally broken — treat
-    // as invalid rather than letting a malformed binary through.
-    return false;
-  }
+  return validateEmittedBinary(binary).valid;
 }
 
 /**

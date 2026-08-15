@@ -790,9 +790,16 @@ Corpus sweeps on this branch:
 - `language/expressions/instanceof` — **43 files, 0 leaking** (was 11 leaking).
 - The **59 files that name `env::__instanceof_check` as their SOLE host import**
   on the 2026-08-15 standalone baseline — **0 leaking, 0 compile-refused,
-  0 invalid Wasm** (each binary was `WebAssembly.compile`d).
-- gc/host **byte-identical**: sha256 of the compiled binary matched base for all
-  10 probe shapes (file-copy A/B on `identifiers.ts`).
+  0 invalid Wasm** (each binary was `WebAssembly.compile`d). Of those 59, **20
+  actually still leak on this branch's base**; the other 39 are stale baseline
+  entries already clean before this change (see SECONDARY acceptance).
+- gc/host **byte-identical**: sha256 of the compiled binary matched base on all
+  10 probe shapes (file-copy A/B on `identifiers.ts`). That is a SAMPLE, and it
+  is stated as one; what makes it a general claim is structural — the call site
+  is behind `noJsHost(ctx)`, which is exactly `ctx.wasi || ctx.standalone`
+  (`js-errors.ts:29`), so no gc/host compile can reach the new code at all. The
+  10 shapes are chosen to exercise every dispatch arm, i.e. they test the GATE,
+  not the population.
 
 ### The answer table, and why each arm is the least-wrong one available
 
@@ -859,20 +866,35 @@ walked by the ordinary late-import body shifter. **Nothing is minted at finalize
 
 ### SECONDARY acceptance — rows
 
-**The 59 sole-leak files** (the directly addressable population, from the
-2026-08-15 standalone baseline where all 59 are `compile_error`
-`host_import_leak`), re-run on this branch **with `TEST262_INCLUDE_PROPOSALS=1`**
-— see the scope note below, which is load-bearing:
+**+3 conversions, 0 regressions.** The live population is **20 files, not 59** —
+that correction is the last one on this issue and it came from applying the
+provenance habit to my own headline number.
 
-| after    | rows |
-| -------- | ---: |
-| **pass** |    4 |
-| fail     |   55 |
+The 59 came from the 2026-08-15 baseline, which records them as `compile_error`
+`host_import_leak`. Compiled on THIS BRANCH'S BASE, only **20 still emit
+`env::__instanceof_check`**; the other 39 are already import-free (stale entries,
+resolved by earlier slices). So 39 of the 59 were never mine to convert.
 
-59 × `compile_error` → **4 pass**, 0 regressions (a `compile_error` cannot
-regress). The four: `built-ins/Array/fromAsync/this-constructor`,
-`built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`,
-`language/expressions/instanceof/S11.8.6_A2.4_T3`.
+| the 20 that genuinely leak on base | after |
+| ---------------------------------- | ----: |
+| **pass**                           | **3** |
+| fail                               |    17 |
+
+The three: `built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`
+and `language/expressions/instanceof/S11.8.6_A2.4_T3`. All three leak on base ⇒
+CI scores them `compile_error` ⇒ pass-after is a genuine conversion.
+
+**`built-ins/Array/fromAsync/this-constructor` is NOT a conversion** and was
+counted as one in the first cut. It does not leak on base, and A/B measurement
+shows it PASSES on base and on branch. It is a stale baseline entry that my
+change cannot touch — the code only fires where the import would have been
+emitted.
+
+Why the first cut got it wrong: I measured the 59 only AFTER, then attributed
+every pass to the change because the baseline said they were all `compile_error`.
+The baseline was the artifact; "all 59 leak" was the figure inherited from it.
+The fix is one extra run — the same corpus on base — and it is the run that turns
+"4 files pass now" into "3 of them pass BECAUSE of this".
 
 **Scope note — the first cut of this table reported 24 `skip` and was NOT
 CI-comparable.** The local runner's DEFAULT scope excludes proposals, so 21
@@ -907,6 +929,62 @@ Also green on this branch: all **8 equivalence shards**
 `tests/issue-3962-native-user-instanceof.test.ts`,
 `tests/issue-4276-instanceof-object-family.test.ts`, `tests/issue-2994.test.ts`.
 
+### Was the 59-file population itself a hiding filter? Checked — no, but it exposed a stale scale claim
+
+The conversion count came from the **59 sole-leak** files, which is a FILTER: the
+baseline also lists **1,501 files naming `env::__instanceof_check` alongside other
+imports**, excluded on the assumption "they keep leaking the others, so they can't
+convert". That assumption was never measured, and it is derived from the
+baseline's error STRINGS rather than from compiling on this branch's base — so if
+another lane eliminated a co-occurring import after the baseline was captured, the
+file is effectively sole-leak now and this change converts it. That would be a
+conversion the count MISSES.
+
+Measured: 150-file deterministic sample (seed 20260815) of the 1,501, compiled on
+branch and on base.
+
+| | branch | base |
+| --- | ---: | ---: |
+| zero-import | 131 | 131 |
+| still leaking | 19 | 19 |
+| **still emitting `__instanceof_check`** | **0** | **0** |
+
+Output byte-identical between the two trees. **Two findings:**
+
+1. **The filter hid nothing attributable to this change** — zero delta on the
+   sample, so 59 stands as the population this change converts.
+2. **The baseline's co-leak population is materially STALE, and the "1,560 files
+   name it" figure must not be quoted as scale.** Not one sampled file still
+   emits `__instanceof_check` on current main; earlier slices (#2998, #3962,
+   Slice A, #4276) resolve those sites statically now. Corrected in the module
+   header, which had quoted 1,560.
+
+The check was worth running for the second finding alone, and the reasoning that
+would have skipped it — "those files keep leaking anyway, it wouldn't move the
+number" — is exactly the reasoning that keeps an unexamined filter alive.
+
+### The WASI half of the gate, measured rather than inferred
+
+`noJsHost` is `ctx.wasi || ctx.standalone` (`js-errors.ts:29`) — **two** targets,
+and the test262 lane measures only the first. The "cannot regress a passing test"
+argument was therefore verified for standalone (leak guard + baseline) and merely
+INFERRED for WASI ("an unsatisfiable `env::` import cannot instantiate under
+wasmtime"). That inference is sound but it is not a measurement, and a WASI unit
+test can assert compile-time properties without ever instantiating — so the
+inference does not even cover the shape most likely to notice.
+
+Measured instead. All **199 test files that compile with `target: "wasi"`**, run
+on this branch and on base (file-copy revert of `identifiers.ts`), comparing
+sorted failing-test NAMES rather than counts:
+
+| batch          | base | branch | name-set diff |
+| -------------- | ---: | -----: | ------------- |
+| files 1–67     |   49 |     49 | **identical** |
+| files 68–199   |   55 |     55 | **identical** |
+
+104 pre-existing failures (linear-IR families unrelated to this issue), **zero
+delta**. The WASI lane is inert to this change, as measured.
+
 ### Deliberately left, with reasons
 
 - **A closure RHS answers `false`, not the spec's `true`/TypeError.** A standalone
@@ -934,6 +1012,43 @@ closure arm is still conservative. **Exactly one dependency remains**: a runtime
 edge from a closure value to its prototype object (#2660 M3). With it, the
 `ownedPrototypeOrdinaryHasInstance` arm applies unchanged to closures and the
 `S15.3.5.3_A2_*` / `_A3_*` family becomes answerable.
+
+> **UPDATE 2026-08-15 — #2660 M3 LANDED; this dependency is CLOSED. The
+> `S15.3.5.3` family is NOT, and the reason is three separate other defects.**
+>
+> `src/codegen/closure-prototype-edge.ts` supplies the edge
+> (`__closure_proto_of`, an identity-keyed match against the
+> `__fn_closure_<name>` / `__class_<Name>` singletons, answering the SAME
+> prototype object the `[[Prototype]]` seeding uses). This module's callable arm
+> now (a) does the own-`prototype` read for a NON-`$Object` callable — a closure,
+> whose own props live in the #3468 bag — and (b) falls through a hasOwn miss to
+> the edge instead of returning 0, and (c) consults the edge on the NOT-callable
+> tail too, because a class value is `typeof "object"` here.
+>
+> Measured, `--target standalone`, whole `language/expressions/instanceof`
+> directory A/B through file-copy reverts: **24 → 26 pass, zero regressions**,
+> every other row byte-identical.
+>
+> | file | result | if still failing, the blocker is |
+> | --- | --- | --- |
+> | `S15.3.5.3_A2_T2` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T6` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T5` | fail | `new <Function(src) value>` evaluates to **null**, so §7.3.20 step 3 returns `false` before the prototype read. Runtime-eval lane (#2928/#4242). |
+> | `S15.3.5.3_A3_T1` | fail | same, plus `FACTORY.prototype.type=1` on a value with no compile-time prototype global. |
+> | `S15.3.5.3_A3_T2` | fail | `Object.prototype.isPrototypeOf({})` is `false` on base AND branch — the plain-object `$proto` → `Object.prototype` link (#4172 slice 2 / #4160). |
+>
+> The own-`prototype` half was verified to work on a `Function(src)` callable in
+> isolation (`hasOwnProperty(FF,"prototype")` is `true` after a write), so the
+> three residual files are not blocked by anything in this module. The
+> "documented residual" paragraph above and in the module header — *a closure RHS
+> answers `false`* — no longer holds for a closure that owns a `prototype` or has
+> a compile-time prototype global; it does still hold for a runtime-eval callable
+> with neither.
+>
+> Full write-up, including the split-brain root cause (one property, two disjoint
+> stores) and the gc/host byte-identity evidence, in
+> `plan/issues/2660-fnctor-instance-dynamic-use-escape-gate.md` § "M3 — the
+> closure → prototype runtime edge".
 
 An earlier revision named the expression-statement elimination as a second
 blocker for that family. It is not — see the correction below.
@@ -989,3 +1104,18 @@ supplying the import, while CI records it as `compile_error`. A local pass/fail 
 a leaking file is an upper bound on the host answer, **not** the verdict CI
 scores. This is what makes the identical before/after answer runs above meaningful
 rather than vacuous — and it is a trap for any "these tests pass locally" claim.
+
+**Every A/B above reverted through `.tmp/identifiers.base.ts`, and that artifact
+was verified byte-identical to base commit `88ff8c4` (`diff` against
+`git show 88ff8c4:…`), not assumed.** One diff validates the whole chain — the
+WASI 199-file run, the 59-file base sweep, the 150-file sample, the gc/host
+shas, and the `%TypedArray%` wrong-throw diagnosis all rest on that one file
+being what it claims to be.
+
+**Operational rule, better than "always measure the before-state": make the
+before-state CHEAP before you start.** Capture the revert copy at the FIRST
+edit, when it costs one `cp` (CLAUDE.md's file-copy A/B pattern). Whether the
+before-run happens turns out to depend less on discipline than on its price at
+the moment you face it: the 11-file directory A/B got run because it was cheap,
+the 59-file one got skipped because it was a corpus compile and the baseline was
+sitting right there claiming to already know the answer.

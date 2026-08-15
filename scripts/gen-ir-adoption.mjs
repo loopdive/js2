@@ -27,6 +27,7 @@ import * as prettier from "prettier";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DOC = join(ROOT, "plan/log/ir-adoption.md");
 const SELECT_TS = join(ROOT, "src/ir/select.ts");
+const CODEGEN_TS = join(ROOT, "src/codegen/index.ts");
 
 // --- curated per-kind rows (source of truth) -------------------------------
 // Each row: [kind, status, notes, tracking]. Pipe chars inside a cell must be
@@ -38,10 +39,15 @@ const SECTIONS = [
       [
         "`VariableStatement`",
         "mixed",
-        "Initialized `let`/`const` plus function-local `var` proven free of hoisting, redeclaration, capture, and scope escape (#3783). Destructuring and module-global `var` remain partial.",
+        "Initialized `let`/`const` plus function-local `var` proven free of hoisting, redeclaration, capture, and scope escape (#3783). Array-destructuring declarations DO claim (measured 2026-08-15, #3583). A UNION-typed annotation (`const y: string | null = …`) rejects at `vardecl-typenode:UnionType` regardless of what the body then does with it — that single gate, not the individual features, is what blocks the `??` / `x!` / `?.` / `null`-comparison rows below (#2949). Module-global `var` remains partial.",
         "#3783",
       ],
-      ["`ExpressionStatement`", "mixed", "Calls / assignments / pre-post `++ --` work. Other shapes throw.", "#1131"],
+      [
+        "`ExpressionStatement`",
+        "mixed",
+        "Calls, assignments, compound assigns (`y += x`) and pre/post `++ --` claim. VALUE-DISCARDING statements still reject: `x + 1;` at `nontail-compound-or-binary-stmt`, `x;` / `1;` / `cond ? a : b;` at `nontail-exprstmt-other` (measured 2026-08-15, #3583).",
+        "#3518",
+      ],
       [
         "`IfStatement`",
         "ir-owned",
@@ -54,22 +60,37 @@ const SECTIONS = [
         "Must have an expression in Phase 1; `return;` (void) added in slice 14.",
         "#1228",
       ],
-      ["`ForStatement`", "mixed", "Requires a condition; rejects bare `for(;;)`.", "#1131"],
-      ["`ForOfStatement`", "mixed", "Destructuring init throws (slice 6 sentinel).", "#1131"],
+      [
+        "`ForStatement`",
+        "mixed",
+        "Bare `for (;;)` and `for (init; ; incr)` ADOPTED (#3583): an omitted condition emits the constant-`true` cond buffer directly, byte-identical to the already-claimed `for (; true; )`. Residual: a TAIL-position `for` whose body `return`s rejects at `tail-unhandled` — the orthogonal tail-position gate, not the retired `for-missing-cond` arm.",
+        "#2952",
+      ],
+      [
+        "`ForOfStatement`",
+        "mixed",
+        'Array iteration claims. A DESTRUCTURING head (`for (const [p, q] of …)`) rejects at `nontail-forof` (measured 2026-08-15, #3583 — the old "slice 6 sentinel" note named the wrong arm).',
+        "#3518",
+      ],
       ["`WhileStatement`", "ir-owned", "—", "—"],
-      ["`TryStatement`", "mixed", "Basic try/catch lowered; finally + rethrow paths partial.", "#1131"],
+      [
+        "`TryStatement`",
+        "mixed",
+        'CORRECTED (measured 2026-08-15, #3583): `try`/`finally`, `try`/`catch`/`finally` and a `try`/`catch` assigning an outer local ALL claim — the old "finally + rethrow partial" note was backwards. What actually rejects is a `return` inside the `try` or `catch` (`tail-unhandled`), i.e. the residual is tail-position control flow, plus a catch clause with no binding.',
+        "#2952",
+      ],
       ["`ThrowStatement`", "ir-owned", "—", "—"],
       ["`Block`", "ir-owned", "Plain statement lists; scope handling via LowerCtx.", "—"],
       [
         "`SwitchStatement`",
         "mixed",
-        "Numeric-literal case tests claimed via the `switch` IR instr (block-per-case ladder; eq-chain dispatch, `br_table` for dense-int i32 discs; fallthrough + mid-position `default` + break/continue interplay — #2952 slice 4). Non-literal / string tests stay legacy.",
+        "Numeric-literal case tests claimed via the `switch` IR instr (block-per-case ladder; eq-chain dispatch, `br_table` for dense-int i32 discs; fallthrough + mid-position `default` + break/continue interplay — #2952 slice 4). String-literal tests claimed too: a `string.eq` chain resolves the disc to a clause index that feeds the same ladder (slice 6b). A function ENDING in a switch claims when every clause terminates and a `default` covers no-match, or when the function is void (slice 6a). Non-literal tests, MIXED numeric/string sets, and discs whose IR carrier is not the string carrier (indexed reads off a string array) stay legacy.",
         "#2952",
       ],
       [
         "`BreakStatement`",
         "mixed",
-        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver. Wider for-in forms stay direct.",
+        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver, including labeled for-in (slice 6c).",
         "#2952",
       ],
       [
@@ -87,20 +108,20 @@ const SECTIONS = [
       [
         "`LabeledStatement`",
         "mixed",
-        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4). Labeled for-in stays direct.",
+        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4); labeled for-in joins them through the same `pendingLoopLabel` path (slice 6c).",
         "#2952",
       ],
       [
         "`ForInStatement`",
         "mixed",
-        "Non-fast dynamic `for (var id in receiver)` with an unused head value claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Fast `$AnyValue`, typed receivers, wider heads, head-value uses, and labeled for-in stay direct.",
+        "Non-fast dynamic `for (var id in receiver)` claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Slice 6c widens it: the body may READ the head key (bound `asType: string` on the host-externref string carrier) and the loop may be labeled. Fast `$AnyValue`, typed receivers, wider heads, head WRITES/captures/redeclarations, and native-strings lanes stay direct.",
         "#2952",
       ],
       [
         "`ClassDeclaration`",
         "mixed",
-        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental (#3522).",
-        "#1370",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Residual nested rejects are per-class member SHAPE, not cardinality: a static member, an initialized instance field, heritage, no method, a `let`-bound class expression, or a method capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
+        "#3522",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
       ["`ExportDeclaration`", "deferred", "Module-level concern.", "—"],
@@ -114,31 +135,46 @@ const SECTIONS = [
       ["`NumericLiteral`", "ir-owned", "f64 / i32 per type hint.", "—"],
       ["`StringLiteral`", "ir-owned", "`nativeStrings` and host-string both supported.", "—"],
       ["`NoSubstitutionTemplateLiteral`", "ir-owned", "Treated as `StringLiteral`.", "—"],
-      ["`TemplateExpression`", "mixed", "Only constant-prefix patterns; complex interpolation throws.", "#1374"],
+      [
+        "`TemplateExpression`",
+        "mixed",
+        "STRING substitutions claim (`` `a${s}b` `` with `s: string`). A NUMERIC substitution rejects at `template-substitution-unsupported` (measured 2026-08-15, #3583). Re-owned from #1374 (`done`).",
+        "#3518",
+      ],
       ["`TrueKeyword` / `FalseKeyword`", "ir-owned", "—", "—"],
       [
         "`NullKeyword`",
         "mixed",
-        "`=== / !==` comparisons + bare `null` in a reference-shaped (externref) context. Non-reference (f64/i32) null context throws.",
-        "#1131",
+        "The blocker is the UNION-TYPED OPERAND, not `null` itself (measured 2026-08-15, #3583): `const y: string | null = x; return 1;` — no null comparison at all — already rejects at `vardecl-typenode:UnionType`, and a `string | null` PARAM rejects at `param-type-not-resolvable`. Separately, bare `null` in a non-reference (f64) context demotes at build with `nullish-value-unsupported`. Re-owned from wont-fix #1131 to #2949, whose dynamic/union value representation is the actual unblocker.",
+        "#2949",
       ],
-      ["`ThisKeyword`", "mixed", "Method bodies via #1370. Top-level `this` rejected.", "#1370"],
+      [
+        "`ThisKeyword`",
+        "mixed",
+        "`this` inside a claimed method body claims (measured 2026-08-15, #3583). Top-level `this` rejects (`unattributed-arm:helper-internal`). Re-owned from #1370 (`done`).",
+        "#3522",
+      ],
       ["`RegularExpressionLiteral`", "ir-owned", "Dispatches to dual RegExp backend.", "—"],
       [
         "`BinaryExpression`",
         "mixed",
-        "Arithmetic / comparison / `&& \\|\\|` / bitwise lowered. `??` lowered over same-typed reference operands (else throws). `%`, `**`, `in`, `instanceof` throw.",
-        "#1131",
+        'Arithmetic / comparison / `&& \\|\\|` / bitwise lowered. CORRECTED (measured 2026-08-15, #3583): `%` AND `instanceof` are both LOWERED — the old "`%`, `**`, `in`, `instanceof` throw" note was stale on two of four. Still rejecting: `**` and `in` at `expr-binary-op-**` / `expr-binary-op-in`, and the comma operator at `expr-binary-op-,`. `??` is gated by the union-typed operand (see `NullKeyword`), not by `??` itself.',
+        "#2949",
       ],
-      ["`PrefixUnaryExpression`", "mixed", "`-`, `+`, `!`, `++`, `--` lowered. `~` and `typeof` partial.", "#1131"],
+      [
+        "`PrefixUnaryExpression`",
+        "mixed",
+        'CORRECTED (measured 2026-08-15, #3583): `-`, `+`, `!`, `++`, `--` AND `~` (incl. the `~~x` truncation idiom) all lower — the old "`~` partial" note was stale. `typeof` is its own row (`TypeOfExpression`) and is not a residual here. Promotion candidate pending a complete operator/operand-type sweep. Re-owned from wont-fix #1131.',
+        "#3518",
+      ],
       ["`PostfixUnaryExpression`", "ir-owned", "`++`, `--`.", "—"],
       ["`ConditionalExpression`", "ir-owned", "Ternary.", "—"],
       ["`ParenthesizedExpression`", "ir-owned", "Pass-through.", "—"],
       [
         "`CallExpression`",
         "mixed",
-        "Direct calls to claimed funcs work. Externals require whitelist. Optional `?.()` throws.",
-        "#1371",
+        "Direct calls to claimed funcs work; `Math.floor` / `Math.pow` and the rest of the whitelisted external surface claim (measured 2026-08-15, #3583). Optional `?.()` rejects at `param-type-not-resolvable` — the union-typed callee, same root gate as the other optional-chaining rows. Re-owned from #1371 (`done`) to #2949.",
+        "#2949",
       ],
       [
         "`NewExpression`",
@@ -149,42 +185,67 @@ const SECTIONS = [
       [
         "`PropertyAccessExpression`",
         "mixed",
-        "Object / closure / string / vec / extern receivers. Optional `?.` partial.",
-        "#1374",
+        "Object / closure / string / vec / extern receivers claim. Optional `?.` rejects at the union-typed receiver (`vardecl-typenode:UnionType`), not at `?.` — measured 2026-08-15 (#3583). Re-owned from #1374 (`done`) to #2949.",
+        "#2949",
       ],
       [
         "`ElementAccessExpression`",
         "mixed",
-        "Constant string key + numeric array index. Other arg shapes throw.",
-        "#1131",
+        'Numeric index, VARIABLE index (`a[i]`) and string-literal key on an object all claim — measured 2026-08-15 (#3583); the old "other arg shapes throw" was stale on the variable-index case. Residual: `s[i]` on a string demotes at build (`element-access-unsupported`), and a `Record<string, …>` receiver rejects at resolve (`type-resolution-unsupported`). Re-owned from wont-fix #1131.',
+        "#2949",
       ],
       [
         "`ObjectLiteralExpression`",
         "mixed",
-        "Non-empty `{ key: val, ... }` lowered; empty literal, computed keys throw.",
-        "#1131",
+        "Non-empty `{ key: val, … }` and SHORTHAND `{ a }` lower (measured 2026-08-15, #3583). Empty `{}` rejects at `objectlit-empty` and computed keys at `objectlit-computed-key` — both still real. Re-owned from wont-fix #1131.",
+        "#3518",
       ],
       [
         "`ArrayLiteralExpression`",
         "mixed",
-        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`. Spread/sparse/mixed-type partial.",
-        "#1804",
+        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`; the EMPTY literal `[]` also claims (measured 2026-08-15, #3583). Spread/sparse/mixed-type partial. Re-owned from #1804 (`done`).",
+        "#3518",
       ],
-      ["`SpreadElement`", "mixed", "Static-arity spread in calls only.", "#1131"],
-      ["`FunctionExpression`", "mixed", "Nested closures via slice 3; named function-expressions partial.", "#1131"],
-      ["`ArrowFunction`", "mixed", "Same as `FunctionExpression`.", "#1131"],
+      [
+        "`SpreadElement`",
+        "mixed",
+        "Spread rejects in both measured positions (2026-08-15, #3583): in an array literal at `expr-arraylit-spread`, and in a call at the surrounding argument/receiver gate. Re-owned from wont-fix #1131.",
+        "#3518",
+      ],
+      [
+        "`FunctionExpression`",
+        "mixed",
+        'CORRECTED (measured 2026-08-15, #3583): NAMED function expressions claim, including self-recursive ones (`const f = function fact(n) { … fact(n-1) }`) — the old "named function-expressions partial" note was stale. Anonymous function expressions claim too. Re-owned from wont-fix #1131 to #3522 (R3 closures).',
+        "#3522",
+      ],
+      ["`ArrowFunction`", "mixed", "Same as `FunctionExpression`; measured claimed 2026-08-15 (#3583).", "#3522"],
       ["`TypeOfExpression`", "ir-owned", "Lowered to host import for externref values.", "—"],
       ["`VoidExpression`", "ir-owned", "`void 0` recognised.", "—"],
       ["`DeleteExpression`", "ir-owned", "—", "—"],
       [
         "`YieldExpression`",
         "mixed",
-        "Generator support via integration.ts; non-trivial state-machines partial.",
-        "#1131",
+        "Generator support via integration.ts. Measured 2026-08-15 (#3583): a `function*` declaration rejects at `tail-unhandled:ExpressionStatement`, and a function CONSUMING a generator drops via `call-graph-closure` — so the residual is two-sided. Re-owned from wont-fix #1131.",
+        "#3518",
       ],
-      ["`AwaitExpression`", "deferred", "Async bodies rejected at the function level today.", "#1373"],
-      ["`AsExpression` / `TypeAssertion`", "direct-only", "Type-erased; selector sees the operand.", "—"],
-      ["`NonNullExpression` (`x!`)", "direct-only", "Type-erased; rare in compiler-emitted code.", "—"],
+      [
+        "`AwaitExpression`",
+        "deferred",
+        "Async bodies rejected at the function level today; CPS lowering is the live workstream. Re-owned from #1373 (`done`) to #1373b (`in-progress`).",
+        "#1373b",
+      ],
+      [
+        "`AsExpression` / `TypeAssertion`",
+        "ir-owned",
+        "ADOPTED #3583. Type-erased wrappers (`x as T`, `<T>x`, `x satisfies T`) unwrap to the operand in BOTH `isPhase1Expr` (select.ts) and `lowerExpr` (from-ast.ts), so claim ⇔ lowering parity holds and the shape is exactly the operand's. Previously listed `direct-only` on the assumption they were already transparent — measurement (2026-08-15) showed every such shape rejecting at `expr-unhandled`; the pre-existing `isAsExpression` sites in select.ts are helper-local unwrappers, not the shape gate. Side finding: legacy direct codegen mis-compiles `<T>x` / `satisfies` (evaluates the operand as 0); the IR path is spec-correct — see the #3583 TODO list.",
+        "#3583",
+      ],
+      [
+        "`NonNullExpression` (`x!`)",
+        "ir-owned",
+        "ADOPTED #3583, same pass-through arms as `AsExpression`. Note that `x!` on a UNION-typed local still rejects — at `vardecl-typenode:UnionType`, i.e. the union local, not the `!` (#2949).",
+        "#3583",
+      ],
       ["`JsxElement` & JSX family", "deferred", "Out of scope.", "—"],
     ],
   },
@@ -192,7 +253,12 @@ const SECTIONS = [
     title: "Declarations",
     rows: [
       ["`FunctionDeclaration`", "ir-owned", "The IR claim unit. Each rejection bucket reduces the claim set.", "#1376"],
-      ["`MethodDeclaration`", "mixed", "#1370 Phase B; #3000-E adds subclass methods + `super.method()`.", "#1370"],
+      [
+        "`MethodDeclaration`",
+        "mixed",
+        "#1370 Phase B; #3000-E adds subclass methods + `super.method()`. A plain instance method claims (measured 2026-08-15, #3583). Re-owned from #1370 (`done`) to #3522.",
+        "#3522",
+      ],
       [
         "`ConstructorDeclaration`",
         "mixed",
@@ -202,11 +268,21 @@ const SECTIONS = [
       [
         "`GetAccessorDeclaration`",
         "mixed",
-        "#3000-B accessors; #3000-E subclass accessors (`Dog_get_breed`).",
-        "#3000",
+        "#3000-B accessors; #3000-E subclass accessors (`Dog_get_breed`). A getter over a private slot claims (measured 2026-08-15, #3583). Re-owned from #3000 (`done`) to #3522.",
+        "#3522",
       ],
-      ["`SetAccessorDeclaration`", "mixed", "#3000-B accessors over the private slot.", "#3000"],
-      ["`EnumDeclaration`", "direct-only", "Compile-time only; emitted as constants by direct codegen.", "(future)"],
+      [
+        "`SetAccessorDeclaration`",
+        "mixed",
+        "#3000-B accessors over the private slot; measured claimed 2026-08-15 (#3583). Re-owned from #3000 (`done`) to #3522.",
+        "#3522",
+      ],
+      [
+        "`EnumDeclaration`",
+        "direct-only",
+        'DECISION (#3583, 2026-08-15): adoptable, NOT deferred — but blocked on module-binding representation, not on anything enum-specific. Measured: `enum E { A = 1 }; … E.A` rejects at `expr-ident-not-in-scope`, and a plain module-level `const E = { A: 1 }` rejects at `expr-module-storage-unrepresentable` — the same gate, so an enum is just one more unrepresentable module binding. Re-owned from "(future)" to #2949, which owns that representation.',
+        "#2949",
+      ],
       ["`InterfaceDeclaration` / `TypeAliasDeclaration`", "deferred", "Type-erased; no Wasm output.", "—"],
     ],
   },
@@ -307,6 +383,10 @@ const BUCKETS = {
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
   ],
+  "host-surface-unavailable": [
+    "deferred",
+    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+  ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],
   "deferred-feature": ["deferred", "`eval` / `Proxy` / `with` — wont-fix"],
@@ -348,10 +428,12 @@ bucket work #2856–#2859.
 - **mixed** — \`from-ast.ts\` handles a *subset* of the kind. Whole-function
   rejection by the selector or per-node throws inside \`from-ast.ts\` causes
   the function to fall back to direct codegen via the demote-to-warning
-  path (\`src/codegen/index.ts:~1889\` for a selector-claimed function whose
-  types can't be resolved, and \`~2390\` for an IR-build throw; both emit a
-  severity-\`warning\`). Ratchet target: drive the rejection bucket to zero,
-  then promote to \`ir-owned\`.
+  path in \`src/codegen/index.ts\` — the \`catch\` around \`planIrOverlay\`'s
+  override-map build (a selector-claimed function whose types can't be
+  resolved) and \`formatIrPathFallbackDiagnostic\` (an IR build/verify/lower
+  throw); both emit a severity-\`warning\`. Cited by ANCHOR: the absolute
+  line numbers that used to appear here went stale twice. Ratchet target:
+  drive the rejection bucket to zero, then promote to \`ir-owned\`.
 - **direct-only** — IR has no handler; direct codegen is the only path. A
   function touching one of these kinds is rejected by the selector and
   compiles entirely via legacy.
@@ -375,6 +457,77 @@ MODULE whose module-init unit is not claimable (gated must-not-increase by
 per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).
 The current corpus floor is **0** (#3517): Calendar's nine-statement initializer
 and Algorithms' top-level generic Map initializer are both IR-owned.`;
+
+// --- post-claim codes (#3341 Slice C; cross-checked against src/codegen/index.ts)
+//
+// Every `IrUnsupportedCode` with a LIVE throw site at a post-claim stage
+// (`build`/`verify` — `lower`/`backend-legality` cannot express `unsupported`).
+// The classification is criterion (c) of the Slice C promotion bar: `strict`
+// codes are promoted into `STRICT_IR_POSTCLAIM_CODES` and hard-error; every
+// other row is a documented capability gap that must keep demoting to legacy.
+// `build()` fails if the two disagree, so neither side can drift alone.
+const POSTCLAIM = {
+  "class-member-unsupported": [
+    "strict",
+    "Its only post-claim arm (integration.ts, `isCtorMember`) restates `collectIrClassInstanceInitializers === undefined` — the exact helper the selector's `constructorFieldInitializersAreIrSafe` already ran, on both the explicit- and implicit-constructor paths. Reaching it on a CLAIMED ctor is a selector⇄builder desync.",
+  ],
+  "array-representation-unsupported": [
+    "capability gap",
+    "Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering.",
+  ],
+  "body-shape-rejected": [
+    "capability gap",
+    "One post-claim arm fires when `dynamicForInPlan` is absent — real on the LINEAR backend, whose resolver does not supply it.",
+  ],
+  "compound-assign-unsupported": ["capability gap", "#3565 restored demote-to-legacy contract."],
+  "constructor-arity-unsupported": [
+    "capability gap",
+    "`new Number()` / `new Boolean()` reach it; there is no selector arity gate for primitive wrappers.",
+  ],
+  "element-access-unsupported": ["capability gap", "#3565 restored demote-to-legacy contract."],
+  "element-store-unsupported": ["capability gap", "#3565 restored demote-to-legacy contract."],
+  "imported-call-planning-unsupported": [
+    "capability gap",
+    "Host-free targets legitimately lower generators via the legacy native state machine.",
+  ],
+  "method-call-unsupported": ["capability gap", "A receiver/method the IR method-call lowering does not yet handle."],
+  "module-init-legacy-coupling": [
+    "capability gap",
+    "Designed withdrawals where legacy owns the initializer. MEASURED NON-ZERO on the Slice C sweep (1/1340).",
+  ],
+  "nullish-value-unsupported": ["capability gap", "Bare `null` in an f64 context; #2949 owns the representation."],
+  "operand-coercion-unsupported": ["capability gap", "Operand coercions not yet in the typed IR engine (#4208)."],
+  "property-write-unsupported": ["capability gap", "Property assignment on a receiver shape outside slice 4."],
+  "return-type-legacy-coupling": ["capability gap", "#3565 restored contract — the verify.ts #1798 return gate."],
+  "string-evidence-unsupported": ["capability gap", "The typed `+=` proof gate lacks checker/producer evidence."],
+  "throw-value-unsupported": ["capability gap", "#4035 — `throw 42` / bare `throw` defer to legacy."],
+  "unboxed-number-local-unprovable": ["capability gap", "#3784 — the no-box NUMBER-local proof gate."],
+  "unknown-class-construction": ["capability gap", "#4035 — a selector-claimed class with no resolver metadata."],
+  "void-call-expression": ["capability gap", "A void call in value position is legal source, not a desync."],
+};
+
+const POSTCLAIM_INTRO = `## Post-claim codes (#3341 Slice C — after the claim, not before)
+
+The buckets above are decided BEFORE the IR claims a unit. A unit the
+selector already claimed can still fail, carrying a typed
+\`IrUnsupportedCode\` at a post-claim \`stage\`; those are baselined per
+stage in the \`postClaim\` section of \`scripts/ir-fallback-baseline.json\`
+(gated must-not-increase, all buckets empty today).
+
+A post-claim demote is legitimate only when the failing arm is a
+**capability gap**. When it instead restates a predicate the selector's own
+gate already evaluated, firing it post-claim is a selector⇄builder desync —
+"IR must always handle" — and the silent demote hides a compiler bug. Those
+codes are listed in \`STRICT_IR_POSTCLAIM_CODES\`
+(\`src/codegen/index.ts\`) and hard-error instead.
+
+Corpus-zero is **necessary but not sufficient** for promotion (the premise
+this issue was re-scoped to correct; Slice B's over-promotion had to be
+narrowed by #3565, #3784 and #4035). The full bar is in the code comment at
+\`STRICT_IR_POSTCLAIM_CODES\`. Stage scope is \`build\`/\`verify\`/\`lower\`/
+\`backend-legality\`; \`resolve\` is deliberately excluded — it is where a
+claim is legitimately withdrawn, and it carries the #1921
+\`type-resolution-unsupported\` contract.`;
 
 const FOOTER = `## How to update this table
 
@@ -409,6 +562,11 @@ function build() {
   }
   const bucketRows = Object.entries(BUCKETS).map(([reason, [cat, promotes]]) => [`\`${reason}\``, cat, promotes]);
   parts.push(BUCKETS_INTRO + "\n\n" + renderTable(["Bucket reason", "Category", "What promotes a row"], bucketRows));
+  crossCheckPostClaim();
+  const postClaimRows = Object.entries(POSTCLAIM)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([code, [cls, why]]) => [`\`${code}\``, cls, why]);
+  parts.push(POSTCLAIM_INTRO + "\n\n" + renderTable(["Post-claim code", "Classification", "Why"], postClaimRows));
   parts.push(FOOTER);
   return parts.join("\n\n") + "\n";
 }
@@ -438,6 +596,35 @@ function crossCheck() {
     if (missing.length) lines.push(`  in select.ts but missing from BUCKETS: ${missing.join(", ")}`);
     if (extra.length) lines.push(`  in BUCKETS but not in select.ts: ${extra.join(", ")}`);
     lines.push("  → reconcile BUCKETS in scripts/gen-ir-adoption.mjs.");
+    throw new Error(lines.join("\n"));
+  }
+}
+
+/**
+ * (#3341 Slice C) The `strict` rows here must EQUAL `STRICT_IR_POSTCLAIM_CODES`
+ * in src/codegen/index.ts. Criterion (c) of the promotion bar is "documented in
+ * plan/log/ir-adoption.md as IR-must-always-handle"; without this check that
+ * documentation could silently drift away from the set that actually
+ * hard-errors, which is exactly how a promotion stops being reviewable.
+ */
+function crossCheckPostClaim() {
+  const src = readFileSync(CODEGEN_TS, "utf8");
+  const m = src.match(/STRICT_IR_POSTCLAIM_CODES[\s\S]*?new Set<IrUnsupportedCode>\(\[([\s\S]*?)\]\)/);
+  if (!m) throw new Error("could not locate STRICT_IR_POSTCLAIM_CODES in src/codegen/index.ts");
+  const body = m[1].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const promoted = new Set([...body.matchAll(/"([a-z][a-z-]*)"/g)].map((lit) => lit[1]));
+  const documented = new Set(
+    Object.entries(POSTCLAIM)
+      .filter(([, [cls]]) => cls === "strict")
+      .map(([code]) => code),
+  );
+  const missing = [...promoted].filter((c) => !documented.has(c));
+  const extra = [...documented].filter((c) => !promoted.has(c));
+  if (missing.length || extra.length) {
+    const lines = ["post-claim strict cross-check FAILED (src/codegen/index.ts ⇄ POSTCLAIM):"];
+    if (missing.length) lines.push(`  promoted in STRICT_IR_POSTCLAIM_CODES but not documented strict: ${missing}`);
+    if (extra.length) lines.push(`  documented strict but not in STRICT_IR_POSTCLAIM_CODES: ${extra}`);
+    lines.push("  → reconcile POSTCLAIM in scripts/gen-ir-adoption.mjs.");
     throw new Error(lines.join("\n"));
   }
 }

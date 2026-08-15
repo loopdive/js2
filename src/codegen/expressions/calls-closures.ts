@@ -1850,7 +1850,11 @@ export function tryExternClassMethodOnAny(
   // handles genuine extern receivers correctly host-side.
   if (
     sourceDefinesFunctionMember(expr.getSourceFile(), methodName) ||
-    sourceAssignsAliasedFunctionMember(expr.getSourceFile(), propAccess.expression, methodName)
+    // (#4439) `noJsHost` widens the alias shape to a borrowed BUILTIN method
+    // (`o.match = String.prototype.match`), which otherwise first-matched the
+    // DOM `Cache.match` extern class and leaked `env::Cache_match` host-free.
+    // Host lane keeps the identifier-only answer, byte-identical.
+    sourceAssignsAliasedFunctionMember(expr.getSourceFile(), propAccess.expression, methodName, noJsHost(ctx))
   ) {
     return null;
   }

@@ -55,6 +55,19 @@ Be concise. Lead with the answer, then only the context needed to act on it.
     cp .tmp/base.ts src/foo.ts    # measure baseline
     cp .tmp/new.ts  src/foo.ts    # restore
     ```
+  - **Capture `.tmp/base.ts` at the FIRST edit — the measurement rationale is
+    stronger than the stash-safety one (2026-08-15, #2916/#4433 cross-audit).**
+    Of ~11 documentation corrections across those two issues, the large
+    majority were ONE defect: a figure inherited from an artifact (stale
+    baseline, stale skip list, unjustified scan filter, never-run lane),
+    restated as a measurement — and the skips tracked PRICE, not care: the
+    before-state check that got run cost one `cp`, the one that got skipped
+    cost a corpus compile, with a plausible artifact offering a free answer
+    exactly where measuring cost most. Capturing the revert copy up front
+    makes every later base run one `cp` away, so "measure the before-state
+    yourself" stops being a decision. Corollary: when you quote a number, name
+    the artifact it came from and when that artifact was made; a delta claimed
+    without a base run you executed is attribution, not measurement.
   - **Recovery if it already happened**: `git fsck --unreachable | grep commit`, then `git log -1 --format=%s <sha>` on each — a stash entry's message is `WIP on worktree-agent-<id>`, which identifies the **owner** unambiguously. Restore with `git checkout <sha> -- <paths>`. Tell the lead so the commit can be pinned (`git update-ref refs/recovered/<name> <sha>`) before garbage collection takes it; unreachable objects are collectable.
   - The hazard is **worse than it looks** because the failure is silent and delayed: `pop` succeeds, you keep working, and you only notice when the file you expected is someone else's. The victim usually suspects their own change first.
 - **Worktree cleanup after merge**: after a dev self-merges their PR, they remove their own worktree (`git worktree remove /workspace/.claude/worktrees/<branch>`) before claiming the next task. Tech-lead only removes worktrees for suspended or abandoned branches.
@@ -670,7 +683,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,380 / 43,621 (74.2 %)
+**test262 conformance**: 32,485 / 43,621 (74.5 %)
 
 <!-- AUTO:conformance-end -->
 

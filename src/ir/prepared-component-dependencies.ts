@@ -716,8 +716,21 @@ function implicitSupportRequirement(
     case "gen.push":
     case "gen.epilogue":
     case "gen.yieldStar":
-    case "gen.setReturn":
-      return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+    case "gen.setReturn": {
+      if (!instr.provider) {
+        return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+      }
+      // The boxing helper is a second, type-dependent callable. Fail closed
+      // unless the attachment agrees with the value type lowering will see.
+      const val = valueTypes.get(instr.value);
+      const needsBoxing = val?.kind === "val" && (val.val.kind === "f64" || val.val.kind === "i32");
+      return needsBoxing === (instr.boxProvider !== undefined)
+        ? null
+        : `${instr.kind} boxing attachment disagrees with its stashed value type`;
+    }
     case "throw":
       return exceptionSupportPrepared
         ? null
@@ -917,6 +930,22 @@ function recordUnitReference(
  * body. Preparation installs its exact `_init` support body; derived support
  * bodies additionally forward to their parent `_init`. Treat the non-terminal
  * callable as sealed support and let the caller record the parent chain.
+ *
+ * (#3522) This holds for a NESTED implicit constructor too. Its `terminalOwnerId`
+ * names the enclosing executable rather than being null, but its `_init` is the
+ * same AST-free support body — it is deliberately NOT a post-pass IR function,
+ * so routing it to `recordUnitReference` would always report a spurious
+ * `missing-function-body`. Preparedness is not assumed here: `addAbiDependency`
+ * resolves the support binding and fails closed with `unplanned-abi-binding`
+ * when this transaction did not actually prepare the unit.
+ *
+ * The discriminant is NON-TERMINALITY, not a null terminal owner. Since the
+ * #4402 initialized-field checkpoint an implicit constructor with initialized
+ * instance fields is an ORDINARY TERMINAL class-member owner carrying a real
+ * source body, and it must keep flowing through `recordUnitReference` as a
+ * source callable. Testing `terminalOwnerId === null` conflated the two: it
+ * excluded terminal initialized-field constructors and genuine nested support
+ * for the same incidental reason.
  */
 function recordImplicitConstructorSupportReference(
   evidence: MutableFunctionEvidence,
@@ -925,7 +954,8 @@ function recordImplicitConstructorSupportReference(
   ownership: OwnershipIndex,
 ): boolean {
   const unit = input.inventory.allUnits.find(({ id }) => id === targetUnitId);
-  if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null) return false;
+  const isTerminal = input.inventory.terminalUnits.some(({ id }) => id === targetUnitId);
+  if (unit?.kind !== "class-implicit-constructor" || isTerminal) return false;
   const bindingId = irUnitCallableBindingId(targetUnitId);
   addAbiDependency(evidence, input.abi, ownership, {
     bindingId,
@@ -1444,6 +1474,20 @@ function collectFunctionEvidence(
         nested.provider
       ) {
         recordExternalCallable(evidence, nested.provider, input.abi, ownership);
+      } else if (
+        (nested.kind === "gen.push" ||
+          nested.kind === "gen.epilogue" ||
+          nested.kind === "gen.yieldStar" ||
+          nested.kind === "gen.setReturn") &&
+        nested.provider
+      ) {
+        // #2951 — the generator runtime callables are ordinary external
+        // callables once they are symbolic. `gen.setReturn` may also pin the
+        // boxing helper for a numeric stashed value.
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
+        if (nested.kind === "gen.setReturn" && nested.boxProvider) {
+          recordExternalCallable(evidence, nested.boxProvider, input.abi, ownership);
+        }
       } else if (nested.kind === "closure.new") {
         if (nested.liftedFunc.binding.kind === "unit") {
           recordUnitReference(

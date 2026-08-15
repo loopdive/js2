@@ -811,14 +811,25 @@ function compileObjectLiteralWithAccessors(
       // Compile spread source and call __object_assign(target, [source])
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        // A spread source whose STATIC type is a closed-shape struct
-        // (`{...typedObj}`) must be materialized into a real open `$Object`
-        // before `__object_assign`.  Reinterpreting the struct with
-        // `extern.convert_any` leaves its GC fields invisible to the dynamic
-        // own-key walk, so inherited fields (notably Marked's rule tables) are
-        // silently lost.  This applies to the JS-host and native providers;
-        // both consume the same open-object representation here.
+        // (#3222 C1) In standalone/WASI, a spread source whose STATIC type is a
+        // closed-shape struct (`{...typedObj}`) would otherwise be reinterpreted
+        // as an externref via `coerceType` and handed to `__object_assign`, whose
+        // native enumeration walks only the open-`$Object` hash — so it copies
+        // NOTHING (the struct fields are invisible to `__object_keys`). Instead
+        // materialize the struct into a real open `$Object` first (own-enumerable
+        // fields only) so `__object_assign` enumerates and copies them correctly.
+        //
+        // (#4466) The `native-first` gate is load-bearing, not a leftover. The
+        // host lane reads closed structs through host reflection already, so it
+        // needs no materialization — and materializing there CHANGES OBSERVABLE
+        // SPEC BEHAVIOUR: the eager field walk snapshots the source before
+        // `__object_assign` runs, so a getter that mutates the outer object
+        // mid-spread no longer sees the spec's CopyDataProperties ordering
+        // (`language/expressions/{array,new,super}/spread-obj-manipulate-outter-
+        // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
+        // dogfood case in the host lane is not a safe trade.
         const spreadStructIdx =
+          ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&
           typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
           ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
@@ -2804,7 +2815,16 @@ export function compileObjectLiteralForStruct(
       // actually be compiled for THIS literal, not a sibling literal's body.
       const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx !== undefined) {
-        const closureType = emitObjectMethodAsClosure(ctx, fctx, methodFullName, methodFuncIdx, structTypeIdx);
+        // (#4440) `methodProp` is the object-literal member itself — pass it so
+        // the closure carries §15.1.5 `length` / §10.2.9 `name` metadata.
+        const closureType = emitObjectMethodAsClosure(
+          ctx,
+          fctx,
+          methodFullName,
+          methodFuncIdx,
+          structTypeIdx,
+          methodProp,
+        );
         if (closureType) {
           // (#1989) Method-shorthand `valueOf`/`toString` now store a
           // per-instance closure in the eqref field (each literal owns a

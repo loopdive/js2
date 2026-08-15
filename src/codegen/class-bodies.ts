@@ -11,6 +11,7 @@ import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { IrUnitId } from "../ir/identity.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -19,6 +20,7 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
@@ -1286,6 +1288,9 @@ export function collectClassDeclaration(
       // display name) does not collide with a user `function ClassName_m()`.
       const methodKey = classMemberFuncKey(ctx, fullName, memberKind);
       ctx.funcMap.set(methodKey, methodFuncIdx);
+      // (#4440) The method mint sites key everything by `fullName`; record the
+      // node under the same key so they can read §15.1.5 / §10.2.9 from it.
+      recordFnMetaMemberDeclaration(ctx, fullName, member);
 
       pushProgramAbiClassCallable(ctx, member, "unit", methodFuncIdx, {
         name: methodKey,
@@ -1341,6 +1346,7 @@ export function collectClassDeclaration(
       const getterFuncIdx = mintDefinedFunc(ctx);
       const getterKey = classMemberFuncKey(ctx, getterName); // (#1983) key + display name
       ctx.funcMap.set(getterKey, getterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, getterName, member); // (#4440) `get p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", getterFuncIdx, {
         name: getterKey,
@@ -1374,6 +1380,7 @@ export function collectClassDeclaration(
       const setterFuncIdx = mintDefinedFunc(ctx);
       const setterKey = classMemberFuncKey(ctx, setterName); // (#1983) key + display name
       ctx.funcMap.set(setterKey, setterFuncIdx);
+      recordFnMetaMemberDeclaration(ctx, setterName, member); // (#4440) `set p`
 
       pushProgramAbiClassCallable(ctx, member, "unit", setterFuncIdx, {
         name: setterKey,
@@ -1780,9 +1787,18 @@ function skipPreparedClassConstructorBody(
       const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
       const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
       const newFunc = newFuncIdx === undefined ? undefined : definedFuncAt(ctx, newFuncIdx);
+      // (#3522) A top-level implicit constructor has no containing terminal; a
+      // NESTED one records its enclosing executable. Membership in
+      // `skipImplicitConstructorUnitIds` is already the preparer's proof that
+      // the containing owner was prepared in the same transaction, so the
+      // residual obligation here is that the nesting belongs to the admitted
+      // bounded ordinary-class family — which excludes heritage, statics,
+      // computed keys, and initialized fields, and therefore cannot reach the
+      // shadow-identity inheritance surface (#4448).
+      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
       if (
         unit?.kind !== "class-implicit-constructor" ||
-        unit.terminalOwnerId !== null ||
+        !nestedFamilyOk ||
         ctx.irPlanningIdentityContext?.terminalByUnitId.has(unitId) ||
         ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== classDeclaration ||
         ctx.programAbiClassCallables?.functionForUnit(unitId) !== initFunc ||

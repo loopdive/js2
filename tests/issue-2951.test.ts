@@ -53,12 +53,11 @@ describe("#2951 gate-2 — IR-first generator skip-set narrowing", () => {
   it("JS-host: a value-returning generator compiles+runs correctly under IR-first", async () => {
     const res = await compileWith(VALUE_RETURN_GEN, { fileName: "test.ts" }, /* irFirst */ true);
     expect(res.success).toBe(true);
-    // (#3143) The IR-first skip set is now an ALLOWLIST restricted to f64-numeric
-    // bodies, so a generator is NOT skipped — it stays COMPILE-TWICE (correct;
-    // the IR overlay still owns its body). The compile-once optimization for
-    // JS-host generators is DEFERRED to the allowlist-widening track
-    // (#2855/#2856); this test locks the CORRECTNESS that #2951 established.
-    expect(res.irFirstSkipped ?? []).not.toContain("g");
+    // (2026-08-15) The generator half of #2951 is now CLOSED: an IR-claimed
+    // JS-host generator enters the prepared/compile-once route, so the legacy
+    // body is never emitted and the owner IS listed in `irFirstSkipped`. This
+    // superseded the earlier "#3143 f64-only allowlist ⇒ compile-twice" note.
+    expect(res.irFirstSkipped ?? []).toContain("g");
     // no hard compile error and no post-claim demotion (self-sufficiency proof)
     expect((res.errors ?? []).filter((e) => e.severity === "error")).toHaveLength(0);
     expect(res.irPostClaimErrors ?? []).toHaveLength(0);
@@ -70,8 +69,9 @@ describe("#2951 gate-2 — IR-first generator skip-set narrowing", () => {
 
   it("JS-host: the terminal return value surfaces once with done:true", async () => {
     const res = await compileWith(VALUE_RETURN_GEN, { fileName: "test.ts" }, true);
-    // (#3143) compile-twice under the f64-only allowlist — correctness preserved.
-    expect(res.irFirstSkipped ?? []).not.toContain("g");
+    // Compile-once, and the shipped body is the IR body — anti-vacuity for the
+    // skip: a skipped slot with no IR body would trap instead of draining.
+    expect(res.irFirstSkipped ?? []).toContain("g");
     const got = await drain(res.binary!, res.imports, res.stringPool, (gen) => {
       gen.next();
       gen.next();
@@ -91,5 +91,81 @@ describe("#2951 gate-2 — IR-first generator skip-set narrowing", () => {
     const res = await compileWith(VALUE_RETURN_GEN, { fileName: "test.ts" }, /* irFirst */ false);
     expect(res.success).toBe(true);
     expect(res.irFirstSkipped).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2951 generator compile-once (2026-08-15) — the deviation-3 half, closed.
+// ---------------------------------------------------------------------------
+//
+// Before this slice an IR-claimed generator emitted BOTH bodies: the direct
+// emitter compiled the legacy body and the IR overlay overwrote the slot
+// afterwards. The blocker was not the skip predicate but DEPENDENCY DISCOVERY:
+// `gen.push` / `gen.epilogue` / `gen.yieldStar` / `gen.setReturn` resolved
+// their host callables by name inside the lowerer, so prepared-component
+// sealing reported `implicit-support-reference-unavailable` and peeled the
+// owner back to the direct route. `attachIrGeneratorSupport` makes those
+// callables symbolic and `observeAttachedGeneratorProviders` observes them
+// BEFORE sealing (sealing runs before lowering), after which the ordinary
+// prepared/compile-once machinery admits the generator.
+const FOROF_GEN = `export function* counter(n: number) { for (let i = 0; i < n; i++) yield i; return n; }`;
+
+describe("#2951 — IR-claimed JS-host generators compile once", () => {
+  it("emits only the IR body (legacy body skipped) and still drains correctly", async () => {
+    const res = await compileWith(FOROF_GEN, { fileName: "test.ts", trackIrOutcomes: true }, true);
+    expect(res.success).toBe(true);
+    const generatorUnit = (res.irOutcomes ?? []).find((outcome) => outcome.displayName === "counter");
+    expect(generatorUnit).toBeDefined();
+    // The regression this test exists for: `legacyBodyEmitted` used to be true.
+    expect(generatorUnit?.legacyBodyEmitted).toBe(false);
+    expect(generatorUnit?.irBodyEmitted).toBe(true);
+    expect((res.errors ?? []).filter((e) => e.severity === "error")).toHaveLength(0);
+    expect(res.irPostClaimErrors ?? []).toHaveLength(0);
+
+    // Anti-vacuity: a skipped slot without a shipped IR body traps on call.
+    const importObj = buildImports(res.imports as never, undefined, res.stringPool as never) as Record<string, unknown>;
+    const { instance } = await WebAssembly.instantiate(res.binary!, importObj as never);
+    if (typeof importObj.setExports === "function") {
+      (importObj.setExports as (e: unknown) => void)(instance.exports);
+    }
+    const exports = instance.exports as { counter: (n: number) => Iterable<number> & Iterator<number> };
+    expect([...exports.counter(5)]).toEqual([0, 1, 2, 3, 4]);
+    const gen = exports.counter(2);
+    gen.next();
+    gen.next();
+    expect(gen.next()).toMatchObject({ done: true, value: 2 });
+  });
+
+  it("standalone generators stay compile-twice (out of scope — #680 native carrier)", async () => {
+    const res = await compileWith(
+      FOROF_GEN,
+      { fileName: "test.ts", target: "standalone", trackIrOutcomes: true },
+      true,
+    );
+    expect(res.success).toBe(true);
+    const generatorUnit = (res.irOutcomes ?? []).find((outcome) => outcome.displayName === "counter");
+    expect(generatorUnit?.legacyBodyEmitted).toBe(true);
+    expect(res.irFirstSkipped ?? []).not.toContain("counter");
+  });
+
+  it("the IR-first escape hatch still runs the generator identically", async () => {
+    // The legacy generator body was pure waste: the IR overlay overwrote the
+    // slot anyway, so dropping it changes compile work, not observable
+    // behaviour. (Byte-identity of the SHIPPED module against pre-slice `main`
+    // was measured separately — see the issue's Test Results. Flag-on vs
+    // flag-off is NOT byte-comparable: `=0` disables the whole IR-first
+    // ordering, not just this skip.)
+    const withoutFlag = await compileWith(FOROF_GEN, { fileName: "test.ts" }, false);
+    expect(withoutFlag.success).toBe(true);
+    const importObj = buildImports(withoutFlag.imports as never, undefined, withoutFlag.stringPool as never) as Record<
+      string,
+      unknown
+    >;
+    const { instance } = await WebAssembly.instantiate(withoutFlag.binary!, importObj as never);
+    if (typeof importObj.setExports === "function") {
+      (importObj.setExports as (e: unknown) => void)(instance.exports);
+    }
+    const exports = instance.exports as { counter: (n: number) => Iterable<number> };
+    expect([...exports.counter(5)]).toEqual([0, 1, 2, 3, 4]);
   });
 });

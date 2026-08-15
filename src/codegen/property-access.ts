@@ -228,6 +228,7 @@ import {
   PA_FALLTHROUGH,
   tryBufferViewAttributeReads,
   tryBuiltinNamespaceDeferredReads,
+  tryClassExpressionStaticMemberRead,
   tryConstructorPrototypeIdentity,
   tryDynamicReceiverRuntimeDispatchReads,
   tryGlobalThisAndProcessRead,
@@ -3417,6 +3418,13 @@ export function compilePropertyAccess(
 
   {
     const __r = tryIdentifierNamespaceAndStaticReceiverRead(ctx, fctx, expr, propName, objType);
+    if (__r !== PA_FALLTHROUGH) return __r;
+  }
+
+  // (#4460) `class { static m() {} }.m` — same static-member emission as the
+  // identifier band above, for a receiver that is an in-place class expression.
+  {
+    const __r = tryClassExpressionStaticMemberRead(ctx, fctx, expr, propName);
     if (__r !== PA_FALLTHROUGH) return __r;
   }
 

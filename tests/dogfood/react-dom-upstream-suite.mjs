@@ -389,7 +389,15 @@ async function compileImplementationOnly(implementation) {
   };
 }
 
-async function runProjectHarness({ report, log, implementation, reactSource, sharedSource, clientSource, selectedTests }) {
+async function runProjectHarness({
+  report,
+  log,
+  implementation,
+  reactSource,
+  sharedSource,
+  clientSource,
+  selectedTests,
+}) {
   const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
   const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: selectedTests });
@@ -411,7 +419,9 @@ async function runProjectHarness({ report, log, implementation, reactSource, sha
   const wasm = isolated?.wasm ?? null;
   const nativeHostErrors = [];
   const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
-  const nativeResults = new Map((await runNativeByFile(implementation, selectedTests)).map((entry) => [entry.id, entry]));
+  const nativeResults = new Map(
+    (await runNativeByFile(implementation, selectedTests)).map((entry) => [entry.id, entry]),
+  );
   await new Promise((resolve) => setTimeout(resolve, 200));
   disposeNativeHostErrorBoundary();
 
@@ -419,7 +429,8 @@ async function runProjectHarness({ report, log, implementation, reactSource, sha
     compile.errors?.[0]?.message ??
     compile.validationError ??
     (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
-  const implementationInvalid = compile.validates === true ? null : { error: compileError, compileMs: compile.durationMs ?? 0 };
+  const implementationInvalid =
+    compile.validates === true ? null : { error: compileError, compileMs: compile.durationMs ?? 0 };
   const statuses = wasm?.statuses ?? [];
   const wasmErrors = wasm?.errors ?? [];
   const tests = selectedTests.map((test, index) => {

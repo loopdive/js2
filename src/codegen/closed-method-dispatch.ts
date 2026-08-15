@@ -483,15 +483,27 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     const optionalParams = ctx.funcOptionalParams.get(fullName) ?? [];
     const hostDynamic = !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.has(methodName);
     // A fixed-arity call may under-apply a method only when every omitted
-    // formal has a default/optional marker.  The callee's normal parameter
-    // prologue recognizes the same sentinels as identifier calls; rejecting
-    // this case sends valid calls (e.g. marked's `inline(text)` where the
-    // second parameter defaults to `[]`) to the host fallback instead.
+    // formal has a default/optional marker AND `buildEntryArm` can faithfully
+    // stand in for it. Those are two different questions, and (#4466) treating
+    // them as one is what broke `({ m({} = {}) {} }).m()`: an omitted formal
+    // whose default is a non-constant EXPRESSION has to be evaluated by the
+    // callee, which needs to know the argument was absent. Only the f64 lane
+    // carries a sentinel the prologue recognizes; for every other lane the arm
+    // can push nothing better than a typed zero/null, which the callee cannot
+    // tell apart from an explicitly passed value — so it destructures a null
+    // instead of running `= {}`. Admit only what the arm can express; the rest
+    // falls back to the host path exactly as it did before.
+    const canSynthesizeOmitted = (index: number, type: ValType | undefined): boolean => {
+      const opt = optionalParams.find((o) => o.index === index);
+      if (!opt) return false;
+      if (!opt.hasExpressionDefault) return true; // constant default, or `?` with none
+      return type?.kind === "f64"; // the one lane with an absence sentinel
+    };
     if (exactArity !== null) {
       if (paramTypes.length < exactArity) continue;
       if (
         !hostDynamic &&
-        paramTypes.slice(exactArity).some((_type, i) => !optionalParams.some((o) => o.index === exactArity + i))
+        paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))
       ) {
         continue;
       }

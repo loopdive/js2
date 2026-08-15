@@ -20,6 +20,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 import { noJsHost } from "../js-errors.js";
 import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
+// (#4437) per-declaration `name` / §15.1.5 `length` carrier
+import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
+import { fnMetaSlotForMemberName } from "../function-instance-meta-methods.js"; // (#4440) static methods
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
   closureArityField,
@@ -71,6 +74,12 @@ function emitMemoizedNestedFnClosure(
   tdzFlaggedNested: NonNullable<ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>>,
   constructible: boolean,
   arity: number,
+  /**
+   * (#4437) The `$fnmeta` operand, when this closure's struct carries the slot.
+   * Pushed LAST — the field is appended after `__constructible`, so the
+   * `struct.new` operand order has to match or the emitter rejects it.
+   */
+  metaInit?: Instr[],
 ): void {
   const numCaptures = nestedCaptures.length;
   const numTdzFlags = tdzFlaggedNested.length;
@@ -291,6 +300,7 @@ function emitMemoizedNestedFnClosure(
     }
   }
   if (constructible) fctx.body.push({ op: "i32.const", value: 1 });
+  if (metaInit) for (const instr of metaInit) fctx.body.push(instr);
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
   fctx.body.push({ op: "local.set", index: memoLocal });
 
@@ -317,6 +327,19 @@ export function emitFuncRefAsClosure(
 ): ValType | null {
   const sig = getFuncSignature(ctx, funcIdx);
   if (!sig) return null;
+
+  // (#4437) The declaration behind `funcName`, for the `$fnmeta` slot. Resolved
+  // ONCE here (both paths below need it) but materialized lazily — `fnMetaSlot`
+  // mints an interned string global, and a path that ends up not carrying the
+  // slot should not leave one behind.
+  const metaDecl = ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName);
+  // (#4440) A STATIC class method reaches this helper (not the cached-singleton
+  // one — `property-access-dispatch.ts` reads `C.m` through `emitFuncRefAsClosure`),
+  // and its `funcName` is the physical `ClassName_m`, which neither map above
+  // holds. The member side table does; consulting it second keeps a real
+  // function declaration's own metadata winning wherever both could answer.
+  const metaSlotOf = (): ReturnType<typeof fnMetaSlot> =>
+    fnMetaSlot(ctx, metaDecl) ?? fnMetaSlotForMemberName(ctx, funcName);
 
   const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
   if (nestedCaptures && nestedCaptures.length > 0) {
@@ -361,6 +384,12 @@ export function emitFuncRefAsClosure(
           tdzFlaggedNested,
           constructible,
           userParams.length,
+          // Re-derived rather than cached alongside the struct type: the
+          // metadata is a pure function of `metaDecl`, and the global it reads
+          // is interned by key, so this yields the same instrs the mint site
+          // emitted. A cached Instr[] would be ALIASED into two bodies, which
+          // double-remaps on a late-import shift.
+          metaSlotOf()?.init,
         );
         return { kind: "ref", typeIdx: cachedArtifacts.structTypeIdx };
       }
@@ -388,6 +417,10 @@ export function emitFuncRefAsClosure(
     if (constructible) {
       captureFields.push({ name: "__constructible", type: { kind: "i32" }, mutable: false });
     }
+    // (#4437) This struct is ALREADY per-function, so the `$fnmeta` slot is
+    // appended in place — no extra subtype. Last, after `__constructible`.
+    const metaSlot = metaSlotOf();
+    if (metaSlot) captureFields.push(metaSlot.field);
     const closureName = `__fn_cap_${funcName}_${ctx.closureCounter++}`;
     const structTypeIdx = ctx.mod.types.length;
     ctx.mod.types.push({
@@ -402,6 +435,9 @@ export function emitFuncRefAsClosure(
       superTypeIdx: wrapperTypes.structTypeIdx,
     });
     if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+    if (metaSlot) {
+      registerFnMetaFamily(ctx, structTypeIdx, CLOSURE_CAPTURE_FIELD_BASE + captureFields.length - 1);
+    }
 
     // Use the base wrapper's func type so call_ref works via subtype cast
     const liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
@@ -488,6 +524,7 @@ export function emitFuncRefAsClosure(
       tdzFlaggedNested,
       constructible,
       userParams.length,
+      metaSlot?.init,
     );
     return { kind: "ref", typeIdx: structTypeIdx };
   }
@@ -522,14 +559,23 @@ export function emitFuncRefAsClosure(
   });
   ctx.funcMap.set(trampolineName, trampolineFuncIdx);
 
+  // (#4437) `structTypeIdx` here is the SHARED per-signature wrapper, so the
+  // metadata slot needs a per-base subtype. Falling back to the bare wrapper
+  // when the subtype cannot be minted keeps this path's previous behaviour
+  // (reflective `length` from `$arity`, no `name`) rather than failing.
+  const metaSlot = metaSlotOf();
+  const metaTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  const allocTypeIdx = metaTypeIdx ?? structTypeIdx;
+
   // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push(closureBagInitInstr());
   if (constructible) fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  if (metaTypeIdx !== undefined && metaSlot) for (const instr of metaSlot.init) fctx.body.push(instr);
+  fctx.body.push({ op: "struct.new", typeIdx: allocTypeIdx });
 
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return { kind: "ref", typeIdx: allocTypeIdx };
 }
 
 /**

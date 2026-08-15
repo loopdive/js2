@@ -408,6 +408,14 @@ const test262RunsStandaloneIndexSource = resolvePreferredFileOrNull(
   join(BENCHMARKS_RESULTS_DIR, "runs", "standalone-index.json"),
   join(PUBLIC_BENCH, "runs", "standalone-index.json"),
 );
+// Host-free per-edition twin (#4362) — consumed by the landing page's
+// edition-scope trend in standalone mode and report.html. Without this copy
+// the deployed site 404s the file and the standalone edition trend never
+// renders, even though promote-baseline appends it every run.
+const test262RunsStandaloneEditionsIndexSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "runs", "standalone-editions-index.json"),
+  join(PUBLIC_BENCH, "runs", "standalone-editions-index.json"),
+);
 copyFile(test262ReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-report.json"));
 if (test262StandaloneReportSource) {
   copyFile(test262StandaloneReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-standalone-report.json"));
@@ -425,6 +433,12 @@ if (test262RunsStandaloneIndexSource) {
   copyFile(
     test262RunsStandaloneIndexSource,
     join(PAGES_DIST, "benchmarks", "results", "runs", "standalone-index.json"),
+  );
+}
+if (test262RunsStandaloneEditionsIndexSource) {
+  copyFile(
+    test262RunsStandaloneEditionsIndexSource,
+    join(PAGES_DIST, "benchmarks", "results", "runs", "standalone-editions-index.json"),
   );
 }
 
