@@ -424,6 +424,49 @@ function tryCompileLateFnctorPrototypeMethodCall(
   return { kind: "externref" };
 }
 
+/**
+ * (#4482) True when the receiver is a primitive-WRAPPER object (`new String(x)`
+ * / `new Number(x)` / `new Boolean(x)`) and the called member is provably NOT a
+ * member of that wrapper's own prototype — i.e. it can only be an OWN slot the
+ * program wrote: a plain expando (`s.g = function () {…}`) or a method
+ * transferred from another builtin's prototype
+ * (`s.exec = RegExp.prototype.exec`, the §15.x.4 "is not generic" idiom).
+ *
+ * A wrapper lowers to a `$Object` in standalone, so the own slot IS reachable —
+ * but the per-wrapper native dispatch arms below key on the wrapper's OWN
+ * method table and cannot answer a foreign name; they silently produced
+ * `undefined` (test262 `RegExp/prototype/{exec,test}/…_A2_T4`,
+ * `Number/prototype/{toString,valueOf}/…_T01` block #2). Declining here routes
+ * the call to the generic `$Object` dispatch at the bottom of
+ * {@link compileReceiverMethodCall}, which reads the own slot and either
+ * invokes it (correct for a real expando) or throws the §13.3.6.2
+ * "called value is not a function" TypeError (#4221's guard inside
+ * `__extern_method_call`).
+ *
+ * ABSENT-NOT-WRONG: the TS wrapper interfaces (`String`/`Number`/`Boolean`)
+ * declare exactly their prototype members, so a `getProperty` HIT keeps the
+ * existing native arm. Only a provable miss declines. Primitive (non-wrapper)
+ * string/number receivers can carry no own properties, so they are excluded and
+ * keep their byte-identical fast paths.
+ */
+function isWrapperOwnSlotMethodCall(ctx: CodegenContext, receiverType: ts.Type, method: string): boolean {
+  if (process.env.JS2WASM_TRACE_CRM) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[WRAP?] m=${method} standalone=${ctx.standalone} strW=${isStringWrapperType(receiverType)} numW=${isNumberWrapperType(receiverType)} boolW=${isBooleanWrapperType(receiverType)} ts=${ctx.checker.typeToString(receiverType)}`,
+    );
+  }
+  if (!ctx.standalone) return false;
+  if (!isStringWrapperType(receiverType) && !isNumberWrapperType(receiverType) && !isBooleanWrapperType(receiverType)) {
+    return false;
+  }
+  // `toString`/`valueOf` are handled by the dedicated wrapper arms (which
+  // already consult `sourceHasMethodReassignment`); leaving them here would
+  // re-route a working path.
+  if (method === "toString" || method === "valueOf") return false;
+  return receiverType.getProperty(method) === undefined;
+}
+
 function tryCompileDerivedHostSubstringCharCodeAt(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -502,6 +545,10 @@ export function compileReceiverMethodCall(
   propAccess: ts.PropertyAccessExpression,
   expectedType?: ValType,
 ): InnerResult | undefined {
+  if (process.env.JS2WASM_TRACE_CRM) {
+    // eslint-disable-next-line no-console
+    console.error(`[CRM-ENTER] ${propAccess.expression.getText()}.${propAccess.name.text}()`);
+  }
   // (#3610) `<Builtin>.prototype.<brandedMethod>(...)` — e.g.
   // `Date.prototype.getTime()`. The prototype object carries no [[DateValue]],
   // so `thisTimeValue` throws TypeError (§21.4.4). Without this gate the
@@ -2462,9 +2509,10 @@ export function compileReceiverMethodCall(
   // `__extern_get`/dynamic path (null standalone). compileNativeStringMethodCall
   // compiles + flattens the receiver, which already yields a $AnyString ref.
   if (
-    isStringType(receiverType) ||
-    receiverIsCaughtErrorStringRead(ctx, propAccess.expression) ||
-    receiverIsNativeStringValType(ctx, fctx, propAccess.expression)
+    (isStringType(receiverType) ||
+      receiverIsCaughtErrorStringRead(ctx, propAccess.expression) ||
+      receiverIsNativeStringValType(ctx, fctx, propAccess.expression)) &&
+    !isWrapperOwnSlotMethodCall(ctx, receiverType, propAccess.name.text)
   ) {
     const method = propAccess.name.text;
 
@@ -3725,6 +3773,12 @@ export function compileReceiverMethodCall(
   // side. Host (gc) lane only: #3201's scope is the default lane and its
   // acceptance forbids standalone regressions (the native dispatcher's
   // struct-expando coverage is a follow-up).
+  if (process.env.JS2WASM_TRACE_CRM) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[CRM-END] ${propAccess.expression.getText()}.${propAccess.name.text}() recvWasm=${recvWasm.kind} recvTs=${ctx.checker.typeToString(recvTsType)} hasProp=${recvTsType.getProperty(propAccess.name.text) !== undefined}`,
+    );
+  }
   if (!ctx.standalone && !ctx.wasi) {
     // recvWasm hoisted above the any-arm block — one checker resolution
     // serves both fallbacks (oracle ratchet #1930/#3273).
