@@ -28,46 +28,64 @@ export function findInnermostNodeAtPosition(node: ts.Node, position: number): ts
  * sloppy-mode scripts, so we deliberately do not treat module = strict (see the
  * SourceFile branch below, which returns false).
  */
+// Strictness of a node is a pure function of its ancestor chain, and the
+// per-node walk was ~20% of detectEarlyErrors CPU (#4431) — four checks call
+// this on every Identifier/literal. Memoize per node: walk up only until a
+// cached ancestor or a terminal (SourceFile/class/strict function), then
+// backfill the whole visited chain, so repeated queries are O(1) amortized.
+const strictModeCache = new WeakMap<ts.Node, boolean>();
+
+/** Leading "use strict" directive scan (directives must be at the top). */
+function hasUseStrictDirective(stmts: readonly ts.Statement[]): boolean {
+  for (const stmt of stmts) {
+    if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
+      if (stmt.expression.text === "use strict") return true;
+    } else {
+      break; // Directives must be at the top
+    }
+  }
+  return false;
+}
+
 export function isStrictMode(node: ts.Node): boolean {
   // Check for "use strict" directives and class context
+  const chain: ts.Node[] = [];
+  let result: boolean | undefined;
   let current: ts.Node | undefined = node;
   while (current) {
+    const cached = strictModeCache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    chain.push(current);
     if (ts.isSourceFile(current)) {
-      // Check for "use strict" directive at file level
-      for (const stmt of current.statements) {
-        if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-          if (stmt.expression.text === "use strict") return true;
-        } else {
-          break; // Directives must be at the top
-        }
-      }
       // Don't assume module = strict. We add export {} synthetically for TS,
       // but the source may be a sloppy-mode script (test262 noStrict tests).
-      return false;
+      result = hasUseStrictDirective(current.statements);
+      break;
     }
     if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
-      return true;
+      result = true;
+      break;
     }
     if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current)
+      (ts.isFunctionDeclaration(current) ||
+        ts.isFunctionExpression(current) ||
+        ts.isArrowFunction(current) ||
+        ts.isMethodDeclaration(current)) &&
+      current.body &&
+      ts.isBlock(current.body) &&
+      hasUseStrictDirective(current.body.statements)
     ) {
-      // Check for "use strict" directive in function body
-      if (current.body && ts.isBlock(current.body)) {
-        for (const stmt of current.body.statements) {
-          if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
-            if (stmt.expression.text === "use strict") return true;
-          } else {
-            break; // Directives must be at the top
-          }
-        }
-      }
+      result = true;
+      break;
     }
     current = current.parent;
   }
-  return false;
+  const final = result ?? false;
+  for (const n of chain) strictModeCache.set(n, final);
+  return final;
 }
 
 export function isArgumentsOrEval(node: ts.Node): string | null {
@@ -734,6 +752,27 @@ export function hasAsyncModifier(node: ts.FunctionDeclaration): boolean {
 }
 
 /** Check if a private identifier is inside a class that declares it. */
+// The per-reference member scan was the single hottest early-error cost
+// (~34% of in-block CPU, #4431): every PrivateIdentifier re-walked every
+// member of every enclosing class. The declared private names of a class are
+// immutable per AST, so compute them once per class and cache.
+const classPrivateNamesCache = new WeakMap<ts.ClassLikeDeclaration, ReadonlySet<string>>();
+
+function privateNamesOf(cls: ts.ClassLikeDeclaration): ReadonlySet<string> {
+  let names = classPrivateNamesCache.get(cls);
+  if (names === undefined) {
+    const set = new Set<string>();
+    for (const member of cls.members) {
+      if (member.name && ts.isPrivateIdentifier(member.name)) {
+        set.add(member.name.escapedText as string);
+      }
+    }
+    names = set;
+    classPrivateNamesCache.set(cls, names);
+  }
+  return names;
+}
+
 export function isInsideClassWithPrivateName(node: ts.Node, privateName: string): boolean {
   let current: ts.Node | undefined = node.parent;
   while (current) {
@@ -748,12 +787,8 @@ export function isInsideClassWithPrivateName(node: ts.Node, privateName: string)
       const inHeritage = current.heritageClauses?.some((hc) => isNodeWithin(node, hc)) ?? false;
       if (!inHeritage) {
         // Check if this class declares the private name
-        for (const member of current.members) {
-          if (member.name && ts.isPrivateIdentifier(member.name)) {
-            if ((member.name.escapedText as string) === privateName) {
-              return true;
-            }
-          }
+        if (privateNamesOf(current).has(privateName)) {
+          return true;
         }
       }
       // Also check parent classes (super), but we can't easily resolve inheritance

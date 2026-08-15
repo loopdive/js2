@@ -101,6 +101,49 @@ function on(kinds: readonly ts.SyntaxKind[], check: NodeCheck): void {
   for (const kind of kinds) (NODE_CHECKS[kind] ??= []).push(check);
 }
 
+// Hoisted per-visit constants (#4431): these were allocated inside check
+// bodies on every matching node — the strict-reserved sets on EVERY
+// identifier in strict code — and showed up in the fired-check-body profile.
+const COMPOUND_ASSIGNMENT_OPS = [
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+];
+
+const STRICT_RESERVED_WORDS = new Set([
+  "implements",
+  "interface",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "static",
+]);
+
+const STRICT_RESERVED_ASSIGN_TARGETS = new Set([
+  "implements",
+  "interface",
+  "let",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "static",
+  "yield",
+]);
+
 /**
  * Run all per-node early-error checks rooted at `node`, recursing into its
  * descendants. Equivalent to the original detectEarlyErrors `visit` closure.
@@ -201,24 +244,7 @@ on([ts.SyntaxKind.BinaryExpression], (ctx, node) => {
 on([ts.SyntaxKind.BinaryExpression], (ctx, node) => {
   if (ts.isBinaryExpression(node)) {
     const op = node.operatorToken.kind;
-    const compoundOps = [
-      ts.SyntaxKind.PlusEqualsToken,
-      ts.SyntaxKind.MinusEqualsToken,
-      ts.SyntaxKind.AsteriskEqualsToken,
-      ts.SyntaxKind.SlashEqualsToken,
-      ts.SyntaxKind.PercentEqualsToken,
-      ts.SyntaxKind.AmpersandEqualsToken,
-      ts.SyntaxKind.BarEqualsToken,
-      ts.SyntaxKind.CaretEqualsToken,
-      ts.SyntaxKind.LessThanLessThanEqualsToken,
-      ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
-      ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
-      ts.SyntaxKind.AsteriskAsteriskEqualsToken,
-      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
-      ts.SyntaxKind.BarBarEqualsToken,
-      ts.SyntaxKind.QuestionQuestionEqualsToken,
-    ];
-    if (compoundOps.includes(op)) {
+    if (COMPOUND_ASSIGNMENT_OPS.includes(op)) {
       const isLogicalAssignment =
         op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
         op === ts.SyntaxKind.BarBarEqualsToken ||
@@ -832,8 +858,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
 // public, static, yield are reserved in strict mode.
 on([ts.SyntaxKind.Identifier], (ctx, node) => {
   if (ts.isIdentifier(node) && isStrictMode(node)) {
-    const strictReserved = new Set(["implements", "interface", "package", "private", "protected", "public", "static"]);
-    if (strictReserved.has(node.text)) {
+    if (STRICT_RESERVED_WORDS.has(node.text)) {
       // Skip property names — they're fine in strict mode
       const parent = node.parent;
       const isPropertyName =
@@ -1285,18 +1310,7 @@ on([ts.SyntaxKind.BinaryExpression], (ctx, node) => {
     let lhs: ts.Node = node.left;
     while (ts.isParenthesizedExpression(lhs)) lhs = lhs.expression;
     if (ts.isIdentifier(lhs)) {
-      const strictReservedAssign = new Set([
-        "implements",
-        "interface",
-        "let",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "static",
-        "yield",
-      ]);
-      if (strictReservedAssign.has(lhs.text)) {
+      if (STRICT_RESERVED_ASSIGN_TARGETS.has(lhs.text)) {
         ctx.addError(lhs, `Assignment to reserved word '${lhs.text}' in strict mode`);
       }
     }
