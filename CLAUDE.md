@@ -331,6 +331,12 @@ rejection breakdown.
 
 ## Team & Workflow
 
+**Plan/implement split (project-lead order, 2026-08-15): every issue gets an
+`## Implementation Plan` written by the Fable lane before implementation, and
+the implementation itself is done by an Opus subagent working from that plan.**
+Fable writes plans (measurements, exact functions/files, order-preservation
+constraints, acceptance criteria); Opus implements and validates against them.
+
 See [plan/method/team-setup.md](plan/method/team-setup.md) for full team config, roles, memory budget, communication protocol, and merge lessons. Agent preferences and rules are in `.claude/memory/` (MEMORY.md index).
 
 **Checklists** (read at the right moment, not at spawn time):
