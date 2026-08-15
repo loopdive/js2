@@ -135,11 +135,44 @@ exactly to the owners that provably cannot seal.
 
 ## Test Results
 
-| Manifestation | Before | After |
+Base for every A/B below: `5f3c86e7` (verified `origin/main` tip at branch
+time). Each "before" figure is a run this branch executed against reverted
+file copies of the two changed sources, not an inherited artifact.
+
+| Manifestation | Before (measured on 5f3c86e7) | After |
 | --- | --- | --- |
-| 1 — 3522 virtual-dispatch direct path (gc + standalone) | `irPostClaimErrors` carried one `build` entry for `run`; `run` `ir: false` | `irPostClaimErrors: []`; `run` now emits an IR body through the post-direct overlay (`ir: true`) — a coverage **gain** |
-| 2 — #4462 `algorithms.ts` standalone composition | `fibMemo` emitted, `main` not co-prepared | re-measured via `check:ir-only` standalone lane (see below) |
-| 3 — #4461 module-binding reader residual | — | not addressed by this slice (different failure code); bucket unchanged |
+| 1 — 3522 virtual-dispatch direct path (gc + standalone) | `irPostClaimErrors` carried one `build` entry for `run`; `run` `irBodyEmitted: false` | `irPostClaimErrors: []`; `run` now emits an IR body through the post-direct overlay (`irBodyEmitted: true`) — a coverage **gain**, not a loss |
+| 2 — #4462 `algorithms.ts` standalone composition | `fibMemo` emits; `main` is `select/host-surface-unavailable` and so never becomes a candidate on current main | unchanged — `main` constructs no local class (`new Map(...)` is module-level and extern), so no construction edge applies. #4462's blockers are `source-global-outside-component` plus a different `foreign-source-unit` shape. **Not fixed by this slice, and not regressed** (`check:ir-only` report byte-identical to base) |
+| 3 — #4461 module-binding reader residual | `let counter; function read(){return counter} export function run(){return read()+1}` — gc co-prepares all three owners into one component; **standalone fails to compile** (`success: false`, `read` → `resolve/late-preparation-unsupported`, `run` → `invariant/patch/unpatched-slot`) | byte-identical to base. **Not addressed**; the residual is a different failure code. Worth noting the standalone arm is a hard `success: false`, not a demotion |
 
 Manifestation 1 is the acceptance gate and is pinned by
-`tests/issue-4494.test.ts`.
+`tests/issue-4494.test.ts` (6/6, gc + standalone).
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| `tests/issue-3522-ir-class-compile-once.test.ts` | 42/42 (was 40/42 — the 2 reds are manifestation 1) |
+| `tests/issue-4494.test.ts` | 6/6 |
+| `pnpm run check:ir-fallbacks` | OK — no unintended / post-claim / module-level increases |
+| `pnpm run check:ir-only` | both lanes READY, at-or-above floors; report **byte-identical** to the base run (`diff` empty) |
+
+### Pre-existing reds on `5f3c86e7` (NOT caused by this change)
+
+Each was re-run against reverted file copies; the failure sets are identical,
+so these are red on main HEAD in this environment:
+
+- `tests/issue-3529-integration-preflight.test.ts` — 3 failures (also red in isolation)
+- `tests/issue-3522-ir-cross-owner-free-function.test.ts` — 2 failures
+- `tests/issue-3523-ir-calendar-retirement.test.ts` — 3 failures
+- `tests/issue-4259-class-accessor-outer-writeback-ir.test.ts` — 1 failure
+- `tests/{classes,class-methods,class-method-calls,class-method-struct-new,abstract-classes,class-expression}.test.ts` — 45 failures, all `WebAssembly.instantiate(): Import #0 module="string_constants": module is not an object or function` (harness/environment, not codegen)
+
+## Follow-up
+
+The construction edge closes the `class.new` case. The general parity
+statement — *a unit may only claim if its component seals* — is still not
+enforced for the other dependency codes that
+`derivePreparedComponentDependencies` can raise (`source-global-outside-component`,
+module-binding readers, host-provider bindings). Manifestations 2 and 3 live
+there and want their own edge kinds fed into the same fixpoint.
