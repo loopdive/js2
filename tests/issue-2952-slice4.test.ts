@@ -144,13 +144,33 @@ describe("#2952 slice 4 — selector claims (switch / labeled block)", () => {
     expect(claimed.has("test")).toBe(false);
   });
 
-  it("does NOT claim a switch with string case tests", () => {
+  // #2952 slice 6b/6a LIFTED this boundary: string-literal case tests now
+  // dispatch through a `string.eq` chain that resolves to a clause index, and
+  // a function ENDING in a switch is claimable when every clause terminates.
+  // See tests/issue-2952-slice6.test.ts for the positive coverage; the
+  // boundary that remains is the MIXED numeric/string test set.
+  it("claims a switch with string case tests (slice-6b flip)", () => {
     const claimed = selectionFor(`
       export function test(s: string): number {
         switch (s) {
           case "a": return 1;
           default: return 0;
         }
+      }
+    `);
+    expect(claimed.has("test")).toBe(true);
+  });
+
+  it("does NOT claim a switch mixing numeric and string case tests", () => {
+    const claimed = selectionFor(`
+      export function test(s: string): number {
+        let r = 0;
+        switch (s) {
+          case "a": r = 1; break;
+          case 2: r = 2; break;
+          default: r = 0;
+        }
+        return r;
       }
     `);
     expect(claimed.has("test")).toBe(false);

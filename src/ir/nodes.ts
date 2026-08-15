@@ -1909,6 +1909,12 @@ export interface IrInstrCoerceToExternref extends IrInstrBase {
 export interface IrInstrGenPush extends IrInstrBase {
   readonly kind: "gen.push";
   readonly value: IrValueId;
+  /**
+   * #2951 — the exact typed `__gen_push_*` runtime callable, attached by
+   * `attachIrGeneratorSupport` once value types are final. Prepared-component
+   * sealing proves this same Program ABI callable that lowering consumes.
+   */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2056,6 +2062,8 @@ export interface IrInstrForOfIter extends IrInstrBase {
  */
 export interface IrInstrGenEpilogue extends IrInstrBase {
   readonly kind: "gen.epilogue";
+  /** #2951 — exact `__create_generator` runtime callable (see `IrInstrGenPush.provider`). */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2087,6 +2095,8 @@ export interface IrInstrGenEpilogue extends IrInstrBase {
 export interface IrInstrGenYieldStar extends IrInstrBase {
   readonly kind: "gen.yieldStar";
   readonly inner: IrValueId;
+  /** #2951 — exact `__gen_yield_star` runtime callable (see `IrInstrGenPush.provider`). */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -2115,6 +2125,14 @@ export interface IrInstrGenYieldStar extends IrInstrBase {
 export interface IrInstrGenSetReturn extends IrInstrBase {
   readonly kind: "gen.setReturn";
   readonly value: IrValueId;
+  /** #2951 — exact `__gen_set_return` runtime callable (see `IrInstrGenPush.provider`). */
+  readonly provider?: IrFuncRef;
+  /**
+   * #2951 — exact `__box_number` runtime callable, attached only when the
+   * stashed value is `f64`/`i32` and therefore needs boxing before the
+   * `(externref, externref)` call. Absent for already-externref values.
+   */
+  readonly boxProvider?: IrFuncRef;
 }
 
 // ---------------------------------------------------------------------------

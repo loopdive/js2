@@ -1,7 +1,8 @@
 ---
 id: 2955
 title: "De-polymorph the IR front-end on string mode: abstract IR string ops resolved at lower time"
-status: ready
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-07-02
 updated: 2026-07-17
@@ -375,3 +376,39 @@ inverted) flips native+standalone `string-forof` hashes — the read is live.
   sha256-proven over the corpus in host/native/standalone.
 - **Equivalence green both modes / string-heavy net-zero** — per-slice CI
   (slices 1–3 landed green; 4–5 stacked PRs follow the same gate).
+
+## Status note (fable, 2026-08-15)
+
+Live grep on main @ `7add6938`: `src/ir/from-ast.ts` has **zero
+functional `nativeStrings` reads** — every remaining match is a comment
+documenting the relocation (verified down to the one non-comment mention,
+which is a thrown-message string in the slice-13c pad path, gated on the
+plan value, not a mode read). Mode decisions route through resolver
+capability queries and `resolveFunc` sentinels (the #3156/#3167 pattern).
+
+**Grep gate now ENFORCED** (this session):
+`tests/issue-2955-depolymorph-gate.test.ts` strips comments/strings from
+`from-ast.ts` and fails on any `nativeStrings` token — criterion 1 of the
+acceptance is met and ratcheted.
+
+**Criterion 2 — CLOSED AS SUPERSEDED (accepted design deviation).** The
+`IrFromAstResolver` doc block (from-ast.ts ~310) records the endpoint the
+implementation converged on: the raw `nativeStrings()` discriminator is
+deliberately OFF the front-end interface; every former mode read is a
+narrow, named, resolver-owned capability/representation/strategy query
+(`stringIsExternref`, `hasHostNumberBox`, `hasHostBooleanBox`,
+`hasHostNumberToString`, `stringMethodPlan`, `stringForOfPlan`,
+`stringFromCharCodePlan`). Representation sites build identical IR
+(types are resolver-deferred `IrType.string`); STRATEGY sites (for-of
+char-loop vs iter-host, per-method plans with differing arg reps)
+legitimately build different IR by design — the alternative (lowering
+owning both loop builders) was the original criterion's implied shape,
+and the implemented design achieves the issue's actual goal (no drift
+channel: a new representation-polymorphic branch is a compile error,
+since the discriminator is not reachable from from-ast) at far lower
+cost. Criterion 3 (per-mode byte identity + equivalence green) was
+proven per-slice — see the ✅ notes above.
+
+**CLOSED 2026-08-15**: criterion 1 met + CI-gated
+(`tests/issue-2955-depolymorph-gate.test.ts`), criterion 2 superseded as
+documented, criterion 3 proven per-slice.

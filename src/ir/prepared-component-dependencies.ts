@@ -716,8 +716,21 @@ function implicitSupportRequirement(
     case "gen.push":
     case "gen.epilogue":
     case "gen.yieldStar":
-    case "gen.setReturn":
-      return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+    case "gen.setReturn": {
+      if (!instr.provider) {
+        return `${instr.kind} resolves generator runtime callables without explicit symbolic refs`;
+      }
+      // The boxing helper is a second, type-dependent callable. Fail closed
+      // unless the attachment agrees with the value type lowering will see.
+      const val = valueTypes.get(instr.value);
+      const needsBoxing = val?.kind === "val" && (val.val.kind === "f64" || val.val.kind === "i32");
+      return needsBoxing === (instr.boxProvider !== undefined)
+        ? null
+        : `${instr.kind} boxing attachment disagrees with its stashed value type`;
+    }
     case "throw":
       return exceptionSupportPrepared
         ? null
@@ -1444,6 +1457,20 @@ function collectFunctionEvidence(
         nested.provider
       ) {
         recordExternalCallable(evidence, nested.provider, input.abi, ownership);
+      } else if (
+        (nested.kind === "gen.push" ||
+          nested.kind === "gen.epilogue" ||
+          nested.kind === "gen.yieldStar" ||
+          nested.kind === "gen.setReturn") &&
+        nested.provider
+      ) {
+        // #2951 — the generator runtime callables are ordinary external
+        // callables once they are symbolic. `gen.setReturn` may also pin the
+        // boxing helper for a numeric stashed value.
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
+        if (nested.kind === "gen.setReturn" && nested.boxProvider) {
+          recordExternalCallable(evidence, nested.boxProvider, input.abi, ownership);
+        }
       } else if (nested.kind === "closure.new") {
         if (nested.liftedFunc.binding.kind === "unit") {
           recordUnitReference(
