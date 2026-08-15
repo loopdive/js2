@@ -40,13 +40,38 @@
  *    with `ref.eq` per level (object-runtime-prototype.ts). ONE walk, shared
  *    with #3962 and Slice C; no parallel `[[Prototype]]` mechanism.
  *
- * What it cannot decide is `Get(C, "prototype")` for a **closure**: a standalone
- * function value is a WasmGC closure-wrapper struct, and its prototype object
- * lives in a per-fnctor module GLOBAL keyed by the COMPILE-TIME symbol name
- * (`fnctor-prototype.ts`). There is no runtime edge from the closure value to
- * that global. Verified by probe on this branch: a dynamic `k["prototype"]` read
- * off a function value answers `undefined` for a `function` declaration, a
- * `var F = function(){}` and a `class` alike.
+ * ## The closure → prototype edge (#2660 M3) — what this module could NOT decide
+ *
+ * Until #2660 M3, `Get(C, "prototype")` was unanswerable for a **closure**: a
+ * standalone function value is a WasmGC closure-wrapper struct, and its
+ * prototype object lives in a module GLOBAL keyed by the COMPILE-TIME symbol
+ * name (`fnctor-prototype.ts`, and `ctx.protoGlobals` for classes), with no
+ * runtime edge from the value. So a closure RHS answered the conservative
+ * `false` and `S15.3.5.3_A2_T2/T6` / `_A3_T1/T2` kept failing.
+ *
+ * Two arms close it, in this precedence order:
+ *
+ * 1. **Own `prototype` on a NON-`$Object` callable.** The `ref.test $Object`
+ *    branch below gained an `else`. `__hasOwnProperty`/`__extern_get` dispatch
+ *    on the receiver kind themselves and route a closure into its own-property
+ *    bag (#3468), where `F.prototype = v` actually lands — so the read is
+ *    exactly as authoritative there as on a branded carrier. This is what lets
+ *    `FACTORY.prototype = undefined` / `= "error"` on a `new Function` value
+ *    reach the §7.3.20 step-5 TypeError (`S15.3.5.3_A2_T2` and `_A2_T6`,
+ *    measured fail→pass) instead of the conservative `false`.
+ * 2. **The identity edge**, `__closure_proto_of`
+ *    (`closure-prototype-edge.ts`), consulted when NO own `prototype` exists —
+ *    which is why the hasOwn miss now falls through instead of returning 0. It
+ *    matches the value against the canonical singleton global for each user
+ *    constructor / class by `ref.eq` and answers the SAME object the
+ *    `[[Prototype]]` seeding uses, so a hit is the genuine `Get(C,"prototype")`
+ *    and a miss is `null`. It is also consulted on the NOT-callable tail,
+ *    because a CLASS value is `typeof "object"` in this backend (reason 2
+ *    there) yet is callable per spec.
+ *
+ * Both arms emit NOTHING when the module has no edges, and neither can produce
+ * a wrong `true`: arm 2 is an exact identity match, and arm 1 reads a property
+ * the program itself wrote.
  *
  * ## The answers, and why each is the least-wrong one available
  *
@@ -118,6 +143,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { ts } from "../ts-api.js";
 import { OBJ_FLAG_CALLABLE } from "./builtin-callable-brand.js";
+import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { noJsHost } from "./js-errors.js";
@@ -165,6 +191,13 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
   const primitiveIdxs = (["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"] as const).map(
     (n) => ensureLateImport(ctx, n, [EXTERNREF], [I32]),
   );
+  // (#2660 M3) The function-value → prototype-object identity edge. It is a
+  // RESERVED defined function (`ensureObjectRuntime` above reserves it under
+  // `noJsHost`), so its funcIdx is stable here and its BODY is filled at
+  // finalize, once every fnctor/class prototype global exists. `undefined` only
+  // when the reservation did not happen, in which case every arm below that
+  // depends on it emits nothing and this helper keeps its previous answers.
+  const closureProtoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
   flushLateImportShifts(ctx, null);
 
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
@@ -242,16 +275,13 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
   // A non-object P is likewise refused only when PROVABLY primitive, for the
   // same reason as `isProvenPrimitive`: an unrecognised P is simply not in V's
   // chain, and the walk already answers 0 for a non-`$Object`.
-  const ownedPrototypeOrdinaryHasInstance: Instr[] = [
-    { op: "local.get", index: P_TARGET },
-    ...stringConstantExternrefInstrs(ctx, "prototype"),
-    { op: "call", funcIdx: hasOwnIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
-    { op: "local.get", index: P_TARGET },
-    ...stringConstantExternrefInstrs(ctx, "prototype"),
-    { op: "call", funcIdx: externGetIdx },
-    { op: "local.set", index: L_PROTO },
+  //
+  // (#2660 M3) The next three are FACTORIES, not shared arrays: the tail is
+  // emitted at three points in one body, and a shared `Instr` object is
+  // double-remapped by the finalize index walks
+  // (`reference_shared_instr_object_dce_double_remap`).
+  /** §7.3.20 steps 5–7 for a `prototype` value already in `L_PROTO`. */
+  const ordinaryHasInstanceTail = (): Instr[] => [
     ...isNullish(L_PROTO),
     ...isProvenPrimitive(L_PROTO),
     { op: "i32.or" },
@@ -260,6 +290,53 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
     { op: "local.get", index: P_VALUE },
     { op: "call", funcIdx: isProtoOfIdx },
     { op: "return" },
+  ];
+  /**
+   * §7.3.20 steps 4–7 for a target that OWNS a `prototype` property. (#2660 M3)
+   * A hasOwn MISS FALLS THROUGH to the identity-edge arm instead of `return 0`
+   * — see the module header's "the closure → prototype edge".
+   */
+  const ownedPrototypeOrdinaryHasInstance = (): Instr[] => [
+    { op: "local.get", index: P_TARGET },
+    ...stringConstantExternrefInstrs(ctx, "prototype"),
+    { op: "call", funcIdx: hasOwnIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: P_TARGET },
+        ...stringConstantExternrefInstrs(ctx, "prototype"),
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: L_PROTO },
+        ...ordinaryHasInstanceTail(),
+      ],
+    },
+  ];
+
+  /**
+   * (#2660 M3) `Get(C, "prototype")` through the function-value → prototype
+   * identity edge — see the module header. A miss answers `null` and this arm
+   * falls through, preserving the documented conservative `false`.
+   */
+  const prototypeEdgeArm = (): Instr[] => {
+    if (closureProtoOfIdx === undefined) return [];
+    return [
+      { op: "local.get", index: P_TARGET },
+      { op: "call", funcIdx: closureProtoOfIdx },
+      { op: "local.tee", index: L_PROTO },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: ordinaryHasInstanceTail() },
+    ];
+  };
+
+  /** §7.3.20 step 3 — Type(V) is not Object ⇒ false, before any prototype read. */
+  const requireObjectValue = (): Instr[] => [
+    ...isNullish(P_VALUE),
+    { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
+    ...isObjectValue(P_VALUE),
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
   ];
 
   const body: Instr[] = [
@@ -280,11 +357,7 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
         // §7.3.20 step 3: Type(V) is not Object → false, BEFORE any prototype
         // read. Order matters: a primitive V must not fire a `prototype`
         // accessor nor throw on a non-object prototype (#2702).
-        ...isNullish(P_VALUE),
-        { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
-        ...isObjectValue(P_VALUE),
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
+        ...requireObjectValue(),
         // A #4120-branded builtin constructor carrier is a real `$Object`, so
         // its `prototype` own property is an authoritative read. Tested by
         // reading the brand bit DIRECTLY rather than through
@@ -300,21 +373,48 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
         {
           op: "if",
           blockType: { kind: "empty" },
+          // (#2660 M3) The ELSE arm is new: a callable that is NOT an `$Object`
+          // is a WasmGC closure carrier, whose own `prototype` lives in the
+          // #3468 side bag — an equally authoritative read. Module header, "the
+          // closure → prototype edge", half 1.
+          else: ownedPrototypeOrdinaryHasInstance(),
           then: [
             { op: "local.get", index: L_TARGET_ANY },
             { op: "ref.cast", typeIdx: objectTypeIdx },
             { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
             { op: "i32.const", value: OBJ_FLAG_CALLABLE },
             { op: "i32.and" },
-            { op: "if", blockType: { kind: "empty" }, then: ownedPrototypeOrdinaryHasInstance },
+            { op: "if", blockType: { kind: "empty" }, then: ownedPrototypeOrdinaryHasInstance() },
           ],
         },
-        // Callable, but its `[[Prototype]]` source is a per-fnctor compile-time
-        // global with no runtime edge from the value — see the module header's
-        // "residual". Conservative `false`, never a wrong `true` or a wrong throw.
+        // (#2660 M3) No own `prototype` anywhere — try the identity edge to the
+        // compile-time prototype registry before giving up.
+        ...prototypeEdgeArm(),
+        // Callable, and its `[[Prototype]]` source is not reachable from the
+        // value — see the module header's "residual". Conservative `false`,
+        // never a wrong `true` or a wrong throw.
         ...returnConst(0),
       ],
     },
+
+    // (#2660 M3) NOT callable by `__typeof_function` — which in this backend
+    // includes every CLASS value (`typeof C === "object"`, reason 2 below). A
+    // class object IS callable per spec, so answering §7.3.20 for one through
+    // the `__class_<Name>` identity edge is a correction, not a widening.
+    ...(closureProtoOfIdx === undefined
+      ? []
+      : ([
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: closureProtoOfIdx },
+          { op: "local.tee", index: L_PROTO },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...requireObjectValue(), ...ordinaryHasInstanceTail()],
+          },
+        ] satisfies Instr[])),
 
     // NOT CALLABLE ⇒ conservative `false`. §13.10.2 steps 1/4 say TypeError, and
     // this arm deliberately does not emit one. Three independent reasons, each

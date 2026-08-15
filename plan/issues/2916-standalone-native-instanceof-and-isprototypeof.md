@@ -935,6 +935,43 @@ edge from a closure value to its prototype object (#2660 M3). With it, the
 `ownedPrototypeOrdinaryHasInstance` arm applies unchanged to closures and the
 `S15.3.5.3_A2_*` / `_A3_*` family becomes answerable.
 
+> **UPDATE 2026-08-15 — #2660 M3 LANDED; this dependency is CLOSED. The
+> `S15.3.5.3` family is NOT, and the reason is three separate other defects.**
+>
+> `src/codegen/closure-prototype-edge.ts` supplies the edge
+> (`__closure_proto_of`, an identity-keyed match against the
+> `__fn_closure_<name>` / `__class_<Name>` singletons, answering the SAME
+> prototype object the `[[Prototype]]` seeding uses). This module's callable arm
+> now (a) does the own-`prototype` read for a NON-`$Object` callable — a closure,
+> whose own props live in the #3468 bag — and (b) falls through a hasOwn miss to
+> the edge instead of returning 0, and (c) consults the edge on the NOT-callable
+> tail too, because a class value is `typeof "object"` here.
+>
+> Measured, `--target standalone`, whole `language/expressions/instanceof`
+> directory A/B through file-copy reverts: **24 → 26 pass, zero regressions**,
+> every other row byte-identical.
+>
+> | file | result | if still failing, the blocker is |
+> | --- | --- | --- |
+> | `S15.3.5.3_A2_T2` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T6` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T5` | fail | `new <Function(src) value>` evaluates to **null**, so §7.3.20 step 3 returns `false` before the prototype read. Runtime-eval lane (#2928/#4242). |
+> | `S15.3.5.3_A3_T1` | fail | same, plus `FACTORY.prototype.type=1` on a value with no compile-time prototype global. |
+> | `S15.3.5.3_A3_T2` | fail | `Object.prototype.isPrototypeOf({})` is `false` on base AND branch — the plain-object `$proto` → `Object.prototype` link (#4172 slice 2 / #4160). |
+>
+> The own-`prototype` half was verified to work on a `Function(src)` callable in
+> isolation (`hasOwnProperty(FF,"prototype")` is `true` after a write), so the
+> three residual files are not blocked by anything in this module. The
+> "documented residual" paragraph above and in the module header — *a closure RHS
+> answers `false`* — no longer holds for a closure that owns a `prototype` or has
+> a compile-time prototype global; it does still hold for a runtime-eval callable
+> with neither.
+>
+> Full write-up, including the split-brain root cause (one property, two disjoint
+> stores) and the gc/host byte-identity evidence, in
+> `plan/issues/2660-fnctor-instance-dynamic-use-escape-gate.md` § "M3 — the
+> closure → prototype runtime edge".
+
 An earlier revision named the expression-statement elimination as a second
 blocker for that family. It is not — see the correction below.
 

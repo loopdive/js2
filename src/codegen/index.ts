@@ -277,6 +277,7 @@ import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { fillClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
@@ -5204,6 +5205,9 @@ export function generateModule(
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
 
+    // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
+    fillClosurePrototypeEdge(ctx);
+
     // (#3468) Fill after all closure types and object-runtime deps are known.
     fillClosurePropHelpers(ctx);
 
@@ -7637,6 +7641,9 @@ export function generateMultiModule(
     emitStructFieldBooleanMarkers(ctx);
     emitStructFieldPresenceGetters(ctx);
     emitStructFieldSetters(ctx);
+
+    // (#2660 M3) Same ordering as the single-source pipeline.
+    fillClosurePrototypeEdge(ctx);
 
     // (#3468) Multi-source compilation can reserve the closure own-property
     // side-table helpers too. Fill their placeholders only after every source

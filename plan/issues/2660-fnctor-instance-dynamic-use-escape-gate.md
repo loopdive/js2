@@ -1,9 +1,10 @@
 ---
 id: 2660
 title: "Whole-program escape/dynamic-use gate for reconstructing `new F()` instances as `$Object` (value-rep infra)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-06-25
+updated: 2026-08-15
 priority: medium
 feasibility: hard
 model: fable
@@ -13,7 +14,7 @@ area: codegen, value-rep, analysis
 language_feature: constructor functions, prototype chain, dynamic property access
 goal: test262-conformance
 related: [2580, 1888, 1712, 1100, 2009, 747, 4155, 4157, 3683]
-assignee: "ttraenkler/senior-dev-s3b"
+assignee: "ttraenkler/claude-es5-standalone"
 oracle-ratchet-allow:
   # (S3b, +1 ctx.checker in fnctor-typed-bindings.ts) The Slice-2 admission
   # needs the escape gate's write-once prototype-method resolution
@@ -25,6 +26,19 @@ oracle-ratchet-allow:
   # (use-site resolution, declaration identity) goes through `ctx.oracle`.
   - src/codegen/fnctor-typed-bindings.ts
 loc-budget-allow:
+  # (M3, +7) Two `fillClosurePrototypeEdge(ctx)` calls — one per pipeline
+  # (`generateModule`, `generateMultiModule`) — plus one import and a one-line
+  # ordering comment each. A finalize FILL can only be invoked from the
+  # finalize sequence; every line of decision and emission logic lives in the
+  # new subsystem module `src/codegen/closure-prototype-edge.ts`.
+  - src/codegen/index.ts
+  # (M3, +4) One `reserveClosurePrototypeEdge(ctx)` call plus its import and a
+  # two-line rationale, inside the existing `ctx.standalone || ctx.wasi`
+  # reserve block. The reservation must happen at exactly this point — BEFORE
+  # the `__extern_*` arms bake their `call <idx>` — which is the same
+  # constraint that pins `reserveClosurePropHelpers` / `reserveVecPropHelpers`
+  # / `reserveInstanceProps` to the same block.
+  - src/codegen/object-runtime.ts
   # (S3b, +18) The pinned member-SET path gains the same receiver-typed hook
   # the pinned GET already carries (#4155 Phase 2's own grant pattern): the
   # admission is on the receiver's COMPILED ValType, so the call must sit at
@@ -38,6 +52,14 @@ loc-budget-allow:
   # else. Decision logic is all in fnctor-typed-bindings.ts.
   - src/codegen/statements/variables.ts
 func-budget-allow:
+  # (M3, +3 each) The reserve/fill hooks land inside three already-oversized
+  # (#3399) driver functions because that is where the reserve-before-bake and
+  # fill-at-finalize orderings are defined. Splitting them is the #3399
+  # refactor and must not ride along with a behavioural slice — the same
+  # rationale S3b's grants below carry.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   # (S3b, +7) The cascade-tail hook above lands inside this (already-oversized,
   # #3399) function because the slot-type cascade IS this function; splitting
   # it is the #3399 refactor and must not ride along with a flag-gated
@@ -851,3 +873,159 @@ under umbrella #4157 Workstream 1, flag-gated `JS2WASM_FNCTOR_TYPED_BINDINGS`
 
 Remaining #2660 scope (S3c ctor-body reconstruction, the floor-risk full
 merge_group slice) is untouched by this lap.
+
+## M3 — the closure → prototype runtime edge (2026-08-15, claude-es5-standalone, max reasoning)
+
+> Dispatched as the SOLE remaining dependency of #2916 (its "What is left to
+> close this issue" names exactly one thing: a runtime edge from a closure value
+> to its prototype object). New subsystem module
+> `src/codegen/closure-prototype-edge.ts`; consumers in
+> `native-dynamic-instanceof.ts` and `closure-props.ts`.
+
+### Verify-first — the problem was NOT where the issue text said it was
+
+The prior write-ups (#2916's residual, this file's S2 header) frame the gap as
+"`new F()` instances do not link to `F.prototype`". Measured on the branch base
+under `--target standalone`, that is **already fixed**:
+
+| probe (standalone, base) | before |
+| --- | --- |
+| `Object.getPrototypeOf(new F()) === F.prototype` | **true** |
+| `F.prototype={q:7}; (new F()).q` | **7** |
+| `var K:any = F; typeof K["prototype"]` | `"undefined"` |
+| `F.prototype={q:7}; var K:any=F; K["prototype"].q` | `undefined` — while the STATIC `F.prototype.q` reads **7** |
+| `var i = new F(); var K:any = F; i instanceof K` | **false** |
+
+So the instance→prototype link is live (S3a + #4172's work). What was missing is
+the **value→prototype** direction, and the concrete defect is a **SPLIT BRAIN**:
+one property, two disjoint stores.
+
+- `F.prototype` on an escape-gate-APPROVED fnctor is intercepted by S2 and lives
+  in the per-fnctor module global `__fnctor_proto_<name>`, keyed by the
+  COMPILE-TIME symbol name.
+- Every other `f.prototype` read/write goes through `__extern_get`/`__extern_set`
+  into the closure's own-property BAG (#3468), keyed by runtime identity.
+
+A dynamic consumer only ever reaches the second store, so it answered
+`undefined` for exactly the functions whose prototype the compiler knows best.
+
+### The fix — ONE identity-keyed edge, not a third store
+
+`src/codegen/closure-prototype-edge.ts` reserves and finalize-fills a native
+`__closure_proto_of(value: externref) -> externref`. It pairs two registries
+that already exist and are singletons by construction:
+
+| function kind | identity key | prototype object |
+| --- | --- | --- |
+| user fn declaration | `ctx.funcClosureGlobals` → `__fn_closure_<name>` (#1340; exists so `foo === foo` holds) | `ctx.fnctorPrototypeObject` (S2), lazily vivified with `__new_plain_object` exactly as `emitFnctorProtoGet` does |
+| class | `ctx.classObjectGlobals` → `__class_<Name>` (#1395) | `ctx.protoGlobals` — NOT vivified (that object is built by `class-proto-object.ts` with the methods installed; minting an empty one here would be a second, wrong identity) |
+
+The body is a `ref.eq` match against each singleton, guarded by `ref.test (ref
+eq)` so a host externref can never trap the cast. **A wrong `true` is
+structurally unreachable**: the lookup is exact object identity, and the value
+returned is the SAME object the `[[Prototype]]` seeding uses — so a consumer
+either gets the genuine `Get(C,"prototype")` or gets `null` and keeps its
+previous conservative answer. Functions with no singleton (a nested `function`
+memoized in a LOCAL, an arrow, a `Function(src)` value) are absent from the
+table by construction, not by an ad-hoc exclusion — which is why an arrow keeps
+answering `undefined` for `.prototype` (§15.3) with no special case.
+
+### Consumers
+
+1. **`native-dynamic-instanceof.ts`** (§7.3.20). Three changes:
+   - the `ref.test $Object` branch gained an **`else`**, so a callable that is
+     NOT an `$Object` — i.e. a closure carrier — also gets the own-`prototype`
+     read. `__hasOwnProperty`/`__extern_get` dispatch on receiver kind
+     themselves and route a closure into its #3468 bag, where `f.prototype = v`
+     actually lands, so that read is exactly as authoritative there as on a
+     branded `$Object` carrier;
+   - the hasOwn MISS now **falls through** instead of `return 0`, into the
+     identity-edge arm;
+   - the NOT-callable tail also consults the edge, because a CLASS value is
+     `typeof "object"` in this backend while being callable per spec.
+2. **`closure-props.ts` `__closure_prop_get`** — a `prototype`-keyed arm ahead
+   of the bag read. **Precedence is the spec's: an own bag entry always wins**,
+   tested with `__hasOwnProperty` rather than "did the bag read return
+   undefined", because `f.prototype = undefined` and an absent `prototype` are
+   indistinguishable by value and must behave oppositely (§7.3.20 step 5 ⇒
+   TypeError vs. nothing is known).
+
+Both arm builders return an EMPTY instruction list when the module has no edges,
+so `__closure_prop_get` keeps its previous body **and local list**.
+
+### Measured (all `--target standalone`, A/B through `.tmp/base-*.ts` revert copies)
+
+`language/expressions/instanceof`, all 43 files, `runTest262File`:
+
+| | base | branch |
+| --- | ---: | ---: |
+| pass | 24 | **26** |
+
+**+2, zero regressions** — `S15.3.5.3_A2_T2` and `_A2_T6` flip; every other row
+is byte-identical between the two runs. Three collateral directories are
+byte-identical run-to-run: `built-ins/Object/getPrototypeOf` 39/39,
+`built-ins/Object/prototype/isPrototypeOf` 6/10,
+`language/statements/function` 191/256.
+
+Behavioural probes, before → after:
+
+| probe | before | after |
+| --- | --- | --- |
+| `var K:any=F; K["prototype"]` (approved fnctor) | `undefined` | the prototype object |
+| `K["prototype"] === F.prototype` (identity) | n/a | **true** |
+| `new F() instanceof K`, `K` an `any` binding | `false` | **true** |
+| `({}) instanceof K` | `false` | `false` (unchanged — membership, not identity) |
+| `K.prototype = undefined; ({}) instanceof K` | `false` | **TypeError** |
+| `typeof (()=>1)["prototype"]` | `"undefined"` | `"undefined"` (unchanged) |
+
+**gc/host is BYTE-IDENTICAL** — sha256 of the compiled binary matched base on all
+6 probe programs (fnctor+prototype, class, dynamic instanceof, closure props,
+plain, arrow). Structural, not just sampled: the reservation is inside
+`ensureObjectRuntime`'s `ctx.standalone || ctx.wasi` block. A standalone/WASI
+module with no closures at all is byte-identical too (the reserved helper is
+dead-code-eliminated); one WITH closures but no user constructor carries ~27
+bytes of dead reserved helper, the same cost shape as the other six #3468
+reservations.
+
+### The five files the dispatch named — 2 flip, 3 have OTHER owners
+
+Measured with `runTest262File`, `--target standalone`, QuickJS runtime-eval
+engine linked (the adapter had to be built first — without it `Function(src)`
+files error out before reaching any assertion, which is what the first base run
+showed).
+
+| file | base | branch | blocker if still failing |
+| --- | --- | --- | --- |
+| `S15.3.5.3_A2_T2` | fail | **pass** | — |
+| `S15.3.5.3_A2_T6` | fail | **pass** | — |
+| `S15.3.5.3_A2_T5` | fail | fail | `new <Function(src) value>` evaluates to **null** (measured directly: `typeof` is `"object"`, the value is `null`). §7.3.20 step 3 then correctly returns `false` before the prototype read, so the TypeError cannot fire. Its CHECK#2 (`instance.constructor === FACTORY`) needs the same thing. Runtime-eval lane (#2928/#4242), not this edge. |
+| `S15.3.5.3_A3_T1` | fail | fail | same `new <runtime-eval callable>` → null, plus `FACTORY.prototype.type = 1` needs a vivified prototype on a value with no compile-time global. |
+| `S15.3.5.3_A3_T2` | fail | fail | `Object.prototype.isPrototypeOf({})` answers **false** on base AND branch — the plain-object `$proto` → `Object.prototype` link. #4172 slice 2 / #4160. |
+
+The own-`prototype` half of the arm was verified to work on a `Function(src)`
+callable in isolation (`hasOwnProperty(FF,"prototype")` is `true` after a write),
+so T5/A3_T1 are not blocked by anything in this module.
+
+### Deliberately NOT done
+
+- **No vivification for a closure with no compile-time prototype global.** It
+  would need a store, and the only one available is the #3468 bag — whose keys
+  are enumerable (`for (var k in f)` counts them), so every function would grow
+  a visible `prototype` own property, and an arrow would grow one it must not
+  have. The narrow, correct version of this is a `prototype` slot on the closure
+  carrier, which is a representation change, not this slice.
+- **`new F()` instance reconstruction (S3c)** and the `new F()`/`$proto` linking
+  work — the latter is #4172's live scope (`ttraenkler/W2-prototype-chain`) and
+  was deliberately not touched. This lap is the function-VALUE side only; the two
+  meet at the ONE prototype object, which is why the edge returns the registry's
+  object rather than minting its own.
+- **Class instances**: the edge answers `Get(C,"prototype")` for a class value
+  correctly, but `Object.getPrototypeOf(new C())` is not that object on current
+  main, so `new C() instanceof K` stays `false` (a missed conversion). Class-side
+  `$proto` seeding is #3976's surface.
+
+Files: `src/codegen/closure-prototype-edge.ts` (new),
+`src/codegen/native-dynamic-instanceof.ts`, `src/codegen/closure-props.ts`,
+`src/codegen/object-runtime.ts` (reserve hook), `src/codegen/index.ts` (two fill
+hooks), `tests/issue-2660-m3-closure-prototype-edge.test.ts` (11 cases; 6 of them
+fail on base, 5 are refusal/regression pins that must hold both ways).

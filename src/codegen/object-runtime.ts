@@ -95,6 +95,7 @@ import {
   reserveCarrierBagVisibility,
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -1037,6 +1038,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // these defined arms are not emitted, and nothing here is reserved.
   if (ctx.standalone || ctx.wasi) {
     reserveClosurePropHelpers(ctx);
+    // (#2660 M3) The function-value → prototype-object identity edge — same
+    // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
+    reserveClosurePrototypeEdge(ctx);
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
