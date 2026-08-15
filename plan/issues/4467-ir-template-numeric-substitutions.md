@@ -1,7 +1,8 @@
 ---
 id: 4467
 title: "IR: adopt NUMERIC template-literal substitutions (`\\`a${n}b\\``)"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -116,6 +117,77 @@ Two facts fall out of the last row and drive the design:
   with spec-correct `"true"`/`"false"`; otherwise they keep rejecting and the
   residual is recorded below.
 
+## Result
+
+Same probe, same three lanes, after the change:
+
+| substitution                  | host  | nativeStrings | standalone |
+| ----------------------------- | ----- | ------------- | ---------- |
+| `` `a${s}b` `` (string)       | CLAIM | CLAIM         | CLAIM      |
+| `` `a${n}b` `` (f64)          | CLAIM | CLAIM         | CLAIM      |
+| `` `${s}=${n}!` `` (mixed)    | CLAIM | CLAIM         | CLAIM      |
+| `` `v${3}` `` (num literal)   | CLAIM | CLAIM         | CLAIM      |
+| `` `a${n * 2}b` `` (num expr) | CLAIM | CLAIM         | CLAIM      |
+| `` `len=${s.length}` `` (i32) | CLAIM | CLAIM         | CLAIM      |
+| `` `a${b}b` `` (boolean)      | reject (unchanged) | reject | reject |
+
+`${s.length}` is worth calling out separately: it is the i32-CARRIED numeric
+operand, so it exercises the `f64.convert_i32_s` arm of the conversion without
+needing a `number`-annotated binding. (The explicit `type i32 = number` alias
+could NOT be used to exercise it — `const k: i32 = …` is itself rejected at
+`body-shape-rejected`, an unrelated pre-existing blocker on the i32 vardecl
+type node, so the alias never reaches the template arm at all.)
+
+### Special-value pins (§7.1.17 / §6.1.6.1.13)
+
+All three lanes match node exactly for `0`, `-0` → `"0"`, `1`, `-1`, `42`,
+`3.5`, `-3.5`, `0.1`, `1e21` (fixed→exponential threshold), `1e-7`
+(small-magnitude threshold), `123456789012345680` (past 2^53 exactness),
+`2 ** 31` (past i32 range — no wrap), `NaN`, `Infinity`, `-Infinity`.
+
+Expectations are computed from node's own template evaluation rather than a
+hand-written table, so the pin cannot drift from the spec the host implements.
+
+## Residual: BOOLEAN substitutions (deliberate, not an oversight)
+
+`` `${b}` `` with `b: boolean` keeps rejecting. The seam does NOT give it for
+free: a boolean lowers to IR's `i32`, the same carrier a native-annotated
+number uses, so once the checker family is gone the lowerer cannot tell
+`${true}` → `"true"` from `${1}` → `"1"`. Admitting it would break claim ⇔
+lowering parity in the one direction that produces WRONG OUTPUT rather than a
+demote. The unblocker is an IR boolean brand on the value, not a formatter;
+until then the selector rejects and the legacy path (which still has the
+checker type at the substitution site — `emitBoolToString`, string-ops.ts)
+handles it correctly.
+
 ## Test Results
 
-(filled in by the implementation commit)
+- `tests/issue-4467.test.ts` — **16/16 pass**. Per lane: claim, special-value
+  pins, legacy↔IR dual-run equality, and the mixed/multi/expression/i32-carried
+  shapes; plus boolean and object substitutions pinned as still rejecting at
+  `template-substitution-unsupported`.
+- `pnpm run check:ir-fallbacks` — OK, no unintended/post-claim/module-level
+  increases.
+- `node scripts/gen-ir-adoption.mjs --check` — clean (row regenerated).
+- `pnpm run check:ir-only` — verdict READY; single-host 37/37 emitted,
+  0 unsupported; standalone floors exactly at baseline (17 emitted,
+  20 unsupported, same per-code split) — no regression.
+- `scripts/check-loc-budget.mjs` / `check-func-budget.mjs` — OK under the
+  allowances granted in this frontmatter.
+- Pre-existing failures confirmed identical on base `9e17d34f` (NOT caused by
+  this change, verified by re-running each in a worktree at that sha):
+  `pnpm run check:linear-ir` (already FAIL: IR-compiled count 8→6,
+  `illegal:instr-vec.set_length` and `select:string-builder-candidate` both
+  0→2) and `tests/issue-2029-tagged-template-capture-local-index.test.ts`
+  ("materializes a forward capturing sibling returned as a callable").
+- `tsc --noEmit`: 484 errors, all the known `@types/node` resolution noise
+  under symlinked `node_modules`; 22 non-`TS2591`/`TS2304` errors, none in any
+  file this change touches. CI runs the real typecheck.
+- `node scripts/profile-godfiles.mjs --check` — 11 regressions, byte-identical
+  to the same command on base `9e17d34f`; none in a file this change touches.
+- `node scripts/check-oracle-ratchet.mjs`, `check-issue-ids.mjs
+  --against-main`, `prettier --check`, `biome lint` — all clean.
+- `scripts/equivalence-gate.mjs`, all 8 shards — no new regressions. (Shard 2
+  additionally reports one baseline known-failure as `fixed`:
+  `coercion/arithmetic-add standalone-O any string + any string concatenates`.
+  Not attributed to this change — the shape has no template literal in it.)
