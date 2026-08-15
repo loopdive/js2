@@ -15,15 +15,16 @@
     "standalone": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 19,
-      "irBodyEmittedFloor": 19,
-      "legacyBodyEmittedCeiling": 26,
-      "unsupportedCeiling": 18,
+      "emittedFloor": 20,
+      "irBodyEmittedFloor": 20,
+      "legacyBodyEmittedCeiling": 22,
+      "unsupportedCeiling": 17,
       "unsupportedByCode": {
-        "select/body-shape-rejected": 5,
+        "select/body-shape-rejected": 3,
         "select/host-surface-unavailable": 4,
-        "select/call-graph-closure": 4,
+        "select/call-graph-closure": 3,
         "select/date-constructor-unsupported": 1,
+        "resolve/late-preparation-unsupported": 2,
         "select/async-function": 4
       },
       "invariantCeiling": 0

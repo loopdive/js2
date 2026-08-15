@@ -2,9 +2,9 @@
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
 status: in-progress
-assignee: ttraenkler/dev-opus5-gen
+assignee: claude/es6-team-generators
 created: 2026-06-30
-updated: 2026-07-24
+updated: 2026-08-15
 priority: high
 feasibility: hard
 model: fable
@@ -670,3 +670,43 @@ bytes identical). The composition rules:
 - Any future js-host widening of the native carrier must preserve #3032's
   observable contract: creation runs nothing; `next(v)` two-way communication
   (impossible under the buffer) comes free with the carrier.
+
+## Wave-2 adoption + re-triage plan (fable, 2026-08-15, #4444 session)
+
+Stale-lane adoption per project-lead direction (prior claim `dev-opus5-gen`
+inactive since 2026-07-24; re-claimed by `claude/es6-team-generators` with
+--force on origin/issue-assignments; same for #2906/`dev-laneB`).
+
+The ES2015 standalone bucket still carries **~500 generator-attributed
+non-passes** (2026-08-15 baseline, `.tmp/es6-standalone-clusters.ts`): ~313
+runtime/leak failures mentioning `__gen_*`/`__create_generator` host imports
+across `language/{expressions,statements}/generators`, class gen-methods,
+object gen-shorthand and for-of; plus ~96 CEs "native generator lowering
+currently supports only sequential numeric yields" concentrated in
+`language/expressions/yield` (46) and assignment (12).
+
+Given F1/F1b/F2/D2/D4 are landed and the residual work was routed out (see
+"Slice routing after D2"), the burn-down is a **candidate-gate widening +
+routed-slice execution** problem, not a new-machine problem:
+
+1. **Triage first (mandatory)**: sample 10 representative failures per family
+   on CURRENT main and classify: (a) body-shape not yet a native-carrier
+   candidate (gate refusal → which check), (b) carrier candidate but wrong
+   semantics, (c) routed-slice gap (#2173-2b yield*-close, #2906-3c
+   try/catch-across-yield planner, #2951 IR gen.setReturn, F1c boxed-any
+   resume bindings), (d) reflection/#2175. Record the counts table here.
+2. **Widen the candidate gate** for the largest (a) family — the
+   "sequential numeric yields" refusal message marks the legacy pre-carrier
+   lowering; find why those bodies don't route to the F1 boxed-any carrier
+   (expression-position generators? method generators? see #3032's
+   composition note above — W3 route (b) capture slots is the preferred
+   endgame).
+3. **Execute the routed slices** blocking (c), smallest first; spread/
+   `Array.from` precision for the boxed-any carrier is named small + unowned.
+4. Class gen-methods + object gen-shorthand (~90 combined) likely share one
+   creation-site gate — check `isGenerator` routing for method bodies.
+
+Validation: `TEST262_TARGET=standalone TEST262_PATH_FILTER="language/expressions/generators|language/statements/generators|language/expressions/yield" pnpm run test:262`
++ gc control; equivalence guard; per-slice unit tests. Do NOT regress the
+js-host eager-buffer lane (#3032 contract: js-host bytes identical unless
+deliberately widening W6).

@@ -94,8 +94,9 @@
 // wins), not a crash and not an invalid module: the entries stay in `funcMap`
 // pointing at real, fully-compiled functions. That is the intended safety
 // property of a marker-based stack — partial adoption is sound.
-import type ts from "typescript";
+import { ts } from "../ts-api.js"; // value import: the scope walk needs the `is*` predicates
 import type { CodegenContext } from "./context/types.js";
+import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
 
 /**
  * One shadowed bare-name registration, captured across every side table that
@@ -154,22 +155,181 @@ function stackFor(ctx: CodegenContext): ShadowedFuncBinding[] {
 /** Opaque marker for a body scope; the depth of the shadow stack at entry. */
 export type NestedFunctionNameScope = number;
 
+function isFunctionLikeScope(n: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(n) ||
+    ts.isFunctionExpression(n) ||
+    ts.isArrowFunction(n) ||
+    ts.isMethodDeclaration(n) ||
+    ts.isConstructorDeclaration(n) ||
+    ts.isGetAccessorDeclaration(n) ||
+    ts.isSetAccessorDeclaration(n)
+  );
+}
+
+/**
+ * The FRAME `node` is hoisted into: the nearest enclosing function-like node,
+ * or the `SourceFile` at top level. `undefined` means UNDETERMINABLE — the
+ * parent chain ran out without reaching either, which a synthesized node can
+ * do — and callers must decline rather than guess.
+ *
+ * A function declaration is hoisted to its enclosing FUNCTION, not its
+ * enclosing block (Annex B §B.3.3), so the block chain is deliberately walked
+ * through. Same walk as `call-identifier.ts`'s `isOutOfScopeNestedBinding` and
+ * `transitiveVisibleDeclarationCaptures`; kept in step with them on purpose.
+ *
+ * Returning the `SourceFile` rather than `undefined` for top level is
+ * load-bearing (#4586): eval'd code is re-parsed into its own `SourceFile`, and
+ * conflating "top level" with "undeterminable" made every eval-lane pair look
+ * undeterminable and decline — which is what re-broke the 24-file
+ * `eval-…-existing-fn-no-init` family.
+ */
+function enclosingFunctionScope(node: ts.Node): ts.Node | undefined {
+  for (let p: ts.Node | undefined = node.parent; p !== undefined; p = p.parent) {
+    if (isFunctionLikeScope(p)) return p;
+    if (ts.isSourceFile(p)) return p;
+  }
+  return undefined;
+}
+
+/**
+ * Do `a` and `b` denote the same runtime FRAME?
+ *
+ * Node identity is the answer everywhere except the eval lane, where it is
+ * wrong in a way that costs a compile error (#4586). Every direct/indirect
+ * `eval` is parsed into its OWN synthetic `SourceFile` — measured: four
+ * `eval('function err(){}')` calls in one catch block produce four distinct
+ * `<eval>.ts` nodes — but the declarations they contain are reified into the
+ * HOST frame, not into a frame of their own. So two eval `SourceFile`s are
+ * never *evidence* of different frames, and treating them as such shadowed a
+ * registration nothing would restore:
+ * `annexB/…/var-env-lower-lex-catch-non-strict.js` went straight back to
+ * `absoluteFuncIndex: unresolved call target (funcIdx=undefined)`.
+ *
+ * Deliberately conservative rather than exact: two evals in genuinely
+ * different host frames are also read as same-frame, so a cross-frame alias
+ * introduced through two separate evals stays unfixed. That is the pre-#4456
+ * lowering — absent-not-wrong — and it is the safe direction, since the
+ * failure mode in the other direction is an invalid module.
+ */
+function sameFrame(a: ts.Node, b: ts.Node): boolean {
+  if (a === b) return true;
+  return isEvalSourceFile(a) && isEvalSourceFile(b);
+}
+
+function isEvalSourceFile(n: ts.Node): boolean {
+  return ts.isSourceFile(n) && n.fileName === EVAL_SOURCE_FILENAME;
+}
+
+/**
+ * Is `decl` declared at the TOP of its frame — i.e. directly in the frame's
+ * statement list rather than inside a `Block` / `CaseClause` / `DefaultClause`
+ * within it?
+ *
+ * This is the Annex B distinction that matters at HOIST time. A top-of-frame
+ * declaration is installed by ordinary FunctionDeclarationInstantiation /
+ * EvalDeclarationInstantiation and owns the name from the first statement
+ * onward; a block-level one is a §B.3.3 web-compat candidate that only assigns
+ * the var-scoped binding **when its block is evaluated**.
+ */
+function isTopOfFrameDeclaration(decl: ts.FunctionDeclaration): boolean {
+  const parent: ts.Node | undefined = decl.parent;
+  if (parent === undefined) return false;
+  if (ts.isSourceFile(parent) || ts.isModuleBlock(parent)) return true;
+  // A function's own body block IS the top of that frame; any other block is a
+  // nested statement list and therefore §B.3.3 territory.
+  if (ts.isBlock(parent)) {
+    const owner: ts.Node | undefined = parent.parent;
+    return owner !== undefined && isFunctionLikeScope(owner);
+  }
+  return false;
+}
+
 /**
  * Should compiling `decl` shadow the existing bare-name registration?
  *
- * True when the name is live in `funcMap` under a DIFFERENT owner. Three
- * distinct "owners" are folded into that:
+ * ## Three-way, and every branch is paid for by a measured regression
  *
- *  - another nested declaration (the #4456 case proper, incl. a genuine
- *    lexical shadow one scope in);
- *  - a top-level declaration or import, which has no `funcMapOwnerDecl` record
- *    (#4133's convention) — a nested declaration shadows those too;
- *  - a bodyless reservation or re-hoist of THIS declaration, where the owner
- *    IS `decl` and nothing must move.
+ * #4456's own defect is **cross-FRAME** aliasing: two declarations in two
+ * different function activations collapsing onto one physical function. The
+ * first cut fired the shadow for *any* other owner, which was too broad; the
+ * second cut declined for the whole same-frame case, which was too narrow and
+ * cost 24 test262 files. Both were caught only by the `merge_group`
+ * re-validation, never at PR level.
  *
- * The compiler's own synthesized helpers all carry a `__` prefix and are
- * excluded, so a user declaration can never displace `__box_number` and
- * friends out from under an in-flight emission.
+ * The predicate is therefore three-way, and the branches are not interchangeable
+ * — each was measured against the reproduction that forces it (2026-08-15):
+ *
+ * | reproduction                                          | needs           |
+ * | ----------------------------------------------------- | --------------- |
+ * | `P(){function inner(){5}}` + `Q(){function inner(){7}}` | cross-frame ⇒ SHADOW |
+ * | 24× `annexB/…/eval-{func,global}-existing-fn-no-init`  | top-of-frame newcomer ⇒ SHADOW |
+ * | `annexB/…/block-decl-nested-blocks-with-fun-decl`      | block-vs-block ⇒ DECLINE |
+ * | `annexB/…/var-env-lower-lex-catch-non-strict` (CE)     | eval frames merged + directional rule ⇒ DECLINE |
+ * | `function err(){}` + `eval('async function* err(){}')` (CE) | owner clause ⇒ DECLINE |
+ *
+ * ### Different frames ⇒ shadow
+ *
+ * The #4456 case proper. Nothing subtle: two activations, two bindings, two
+ * physical functions. See {@link sameFrame} for why frame identity is not just
+ * node identity in the eval lane.
+ *
+ * ### Same frame ⇒ only a TOP-OF-FRAME newcomer may displace a BLOCK-level one
+ *
+ * This is Annex B §B.3.3 hoist order, and it is DIRECTIONAL. A top-of-frame
+ * declaration is installed by ordinary FunctionDeclarationInstantiation /
+ * EvalDeclarationInstantiation and owns the name from the first statement
+ * onward. A block-level declaration is a §B.3.3 web-compat candidate that
+ * assigns the var-scoped binding only **when its block is evaluated**. So the
+ * top-of-frame one must win *at hoist*, whichever order the two are seen in:
+ *
+ *  - block hoisted first, top-of-frame second ⇒ SHADOW, so the top-of-frame
+ *    declaration takes the name back;
+ *  - top-of-frame first, block second ⇒ DECLINE, and the pre-existing
+ *    "already registered, skip" gate leaves the top-of-frame one in place.
+ *
+ * The 24-file `eval-…-existing-fn-no-init` family is exactly this, and it is
+ * the *first* order: measured, the block declaration is hoisted first and the
+ * top-of-frame declaration arrives as the newcomer. Each of those tests reads
+ * the binding (`init = f`) BEFORE the block runs and asserts it is the
+ * top-of-frame function; declining there returned `"inner declaration"`.
+ *
+ * Both sides block-level ⇒ DECLINE, and that is the other regression:
+ * `block-decl-nested-blocks-with-fun-decl.js` has no top-of-frame declaration
+ * at all, so §B.3.3's own applicability machinery (`annexb-cancel.ts`) owns the
+ * answer and this gate must not interfere. Note that test is the
+ * Annex-B-INAPPLICABLE variant; for *applicable* sibling blocks B.3.3 rebinds
+ * at each declaration's evaluation, so last-executed-wins is equally correct
+ * and equally must not be "healed". Same decline, two different reasons.
+ *
+ * Both sides top-of-frame ⇒ DECLINE. There is no §B.3.3 question to answer, and
+ * shadowing repeatedly in one frame is what produced the `funcIdx=undefined`
+ * compile error on `var-env-lower-lex-catch-non-strict.js` (four eval'd `err`
+ * declarations reified into one catch block).
+ *
+ * ### The owner clause — never displace an OWNER-LESS registration
+ *
+ * Applied before either of the above. The incumbent must have a
+ * `funcMapOwnerDecl` record, i.e. be a nested declaration. Absent ⇒ the name
+ * belongs to a top-level declaration, an import or a synthesized helper
+ * (#4133's convention), and shadowing it deletes a registration no scope on the
+ * stack will put back — an independent route to the same CE, smallest
+ * reproduction in the table, and NOT reachable by the frame rules, since an
+ * incumbent with no owner record has no computable scope to compare.
+ *
+ * Consequence, accepted deliberately: a nested declaration shadowing a
+ * same-named TOP-LEVEL one stays unfixed. It costs nothing observable — that
+ * shape returned the wrong answer on the first cut too (the IR front-end's
+ * bare-name direct-call plan called the top-level unit even though both
+ * functions were emitted), so it was already a pinned `it.fails` residual in
+ * `tests/issue-4456.test.ts`. Its real owner is that call-binding resolution,
+ * not this gate.
+ *
+ * An UNDETERMINABLE scope on either side declines rather than guessing:
+ * a synthesized declaration can carry a detached parent chain.
+ *
+ * `__`-prefixed names stay excluded so a user declaration can never displace
+ * `__box_number` and friends out from under an in-flight emission.
  */
 export function nestedFuncDeclNeedsShadow(
   ctx: CodegenContext,
@@ -177,9 +337,24 @@ export function nestedFuncDeclNeedsShadow(
   funcName: string,
 ): boolean {
   if (!ctx.funcMap.has(funcName)) return false;
-  if (ctx.funcMapOwnerDecl.get(funcName) === decl) return false;
   if (funcName.startsWith("__")) return false;
-  return true;
+
+  const incumbent = ctx.funcMapOwnerDecl.get(funcName);
+  if (incumbent === undefined || incumbent === decl) return false;
+
+  const incumbentScope = enclosingFunctionScope(incumbent);
+  const declScope = enclosingFunctionScope(decl);
+  // Undeterminable on either side: decline rather than guess.
+  if (incumbentScope === undefined || declScope === undefined) return false;
+
+  // Different frames — the #4456 case proper. Two activations, two bindings,
+  // two physical functions.
+  if (!sameFrame(incumbentScope, declScope)) return true;
+
+  // Same frame. The ONLY displacement allowed here is a top-of-frame
+  // declaration taking the name back from a block-level one, and it is
+  // directional on purpose (see the doc comment above).
+  return isTopOfFrameDeclaration(decl) && !isTopOfFrameDeclaration(incumbent);
 }
 
 /**

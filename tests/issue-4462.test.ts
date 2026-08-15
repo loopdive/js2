@@ -165,13 +165,27 @@ describe("#4462 reference corpus, standalone lane", () => {
   it("claims algorithms.ts::joinNums, and reports main's REAL residual", async () => {
     const outcomes = await standaloneOutcomes("website/playground/examples/js/algorithms.ts");
     expect(outcomeFor(outcomes, "joinNums").kind).toBe("emitted");
-    // Honest residual: `main` is no longer blocked on the console surface, and
-    // NOT on `joinNums` either (the issue predicted that). It is blocked on
-    // `fibMemo`, whose Map-typed body is `body-shape-rejected`.
+    // Honest residual, re-measured after composing with `main` (#4583 native
+    // `$Map`): `main` is no longer blocked on the console surface, and NOT on
+    // `joinNums` either (the issue predicted that). It is blocked on `fibMemo`
+    // — but `fibMemo`'s own blocker MOVED. Before #4583 it was
+    // `select/body-shape-rejected` (Map-typed body), so `main` cascaded as
+    // `select/call-graph-closure`. #4583 made that body claimable, and with
+    // THIS issue making `main` a claim candidate too, the enlarged prepared
+    // component fails to seal: both demote to
+    // `resolve/late-preparation-unsupported` (`fibMemo`:
+    // `source-global-outside-component` on the module-init-owned TDZ/module
+    // bindings plus unplanned Map-runtime ABI callables; `main`:
+    // `foreign-source-unit` on the now-non-candidate `fibMemo`). That is the
+    // parity gap #4494 named as its manifestation 2 and explicitly did NOT
+    // close — see its "Follow-up" section. Pinning the code here so the
+    // partitioning fix has a witness that flips.
     const main = outcomeFor(outcomes, "main");
     expect(main.kind).toBe("unsupported");
-    expect(main.kind === "unsupported" ? main.code : "").toBe("call-graph-closure");
-    expect(outcomeFor(outcomes, "fibMemo").kind).toBe("unsupported");
+    expect(main.kind === "unsupported" ? main.code : "").toBe("late-preparation-unsupported");
+    const fibMemo = outcomeFor(outcomes, "fibMemo");
+    expect(fibMemo.kind).toBe("unsupported");
+    expect(fibMemo.kind === "unsupported" ? fibMemo.code : "").toBe("late-preparation-unsupported");
     expect(outcomes.filter((o) => o.kind === "invariant")).toEqual([]);
   });
 

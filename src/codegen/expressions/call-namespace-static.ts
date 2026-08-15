@@ -2699,7 +2699,13 @@ export function compileNamespaceStaticCall(
             getWasmFuncReturnType(ctx, finalStaticIdx) ?? resolveWasmType(ctx, retType),
           );
         }
-        return VOID_RESULT;
+        // Synthetic calls produced for a conditional callee may not retain a
+        // source parent, so TypeScript can decline to resolve their signature
+        // even though the selected static method has a concrete emitted result.
+        // Returning VOID_RESULT here makes the caller drop that result and
+        // synthesize null. Preserve the actual Wasm signature in that case.
+        if (wasmFuncReturnsVoid(ctx, finalStaticIdx)) return VOID_RESULT;
+        return getWasmFuncReturnType(ctx, finalStaticIdx) ?? { kind: "externref" };
       }
     }
   }

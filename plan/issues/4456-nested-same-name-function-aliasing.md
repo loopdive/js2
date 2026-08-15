@@ -233,3 +233,226 @@ TS-parser scan (`.tmp/scan-4456.mts`; grep is useless here, the predicate is
    `nestedFnClosureArtifacts` dedupe, not this defect.
 
 Both (1) and (2) were **unchanged** base → fixed, so neither is a regression.
+
+> **Residual (1) still fails, but its MECHANISM changed with the follow-up
+> narrowing below** — the gate now declines on an owner-less incumbent, so
+> `B`'s `inner` is no longer compiled at all. Counted from the emitted binary:
+> **2** occurrences of `inner` on the first cut, **1** after the narrowing (the
+> pre-#4456 count). The observable answer is identical in both, which is why
+> the `it.fails` pin held through both cuts. The description above is the
+> first-cut mechanism; see the corrected note in `tests/issue-4456.test.ts`.
+
+## Merge-group regressions (2026-08-15)
+
+PR #4572 was green at PR level and **failed the `merge_group` re-validation**
+with 9 host-lane (gc target) test262 entries reported as regressed. This
+section records what each one actually was.
+
+### Attribution — A/B, all on the host/gc lane, in one worktree
+
+Five source states were compared on the same tree
+(`.claude/worktrees/agent-a3cab5d54ed4eef60`, base `d6329d8a6`):
+
+| state | what it is |
+| ----- | ---------- |
+| `PRE4572` | **every** `src/` file reverted to `9e17d34f3`, the commit before the #4572 merge |
+| `BASE` | current tree with only the three #4456 files reverted |
+| `NO4460` | current tree with only #4460's two files reverted (#4572 shipped **both** issues) |
+| `MAIN` | current tree, i.e. #4456 exactly as shipped |
+| `NARROW` | current tree + the narrowed gate (this follow-up) |
+
+| # | test262 entry | PRE4572 | BASE | NO4460 | MAIN | NARROW | verdict |
+| - | ------------- | ------- | ---- | ------ | ---- | ------ | ------- |
+| 1 | `annexB/…/eval-code/direct/var-env-lower-lex-catch-non-strict.js` | PASS | PASS | PASS | **COMPILE_ERROR** | PASS | **MINE — fixed** |
+| 2 | `annexB/…/function-code/block-decl-nested-blocks-with-fun-decl.js` | PASS | PASS | PASS | **FAIL** (got 2, want 1) | PASS | **MINE — fixed** |
+| 3 | `language/expressions/object/dstr/meth-dflt-obj-ptrn-empty.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 4 | `…/dstr/gen-meth-dflt-obj-ptrn-empty.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 5 | `…/dstr/async-gen-meth-dflt-obj-ptrn-empty.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 6 | `language/statements/class/elements/super-access-inside-a-private-method.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 7 | `language/expressions/array/spread-obj-manipulate-outter-obj-in-getter.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 8 | `language/expressions/new/spread-obj-manipulate-outter-obj-in-getter.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 9 | `language/expressions/super/call-spread-obj-manipulate-outter-obj-in-getter.js` | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+| 10 | `language/statements/class/elements/private-method-get-and-call.js` (also cited) | FAIL | FAIL | FAIL | FAIL | FAIL | not mine |
+
+**Two of the nine are #4456's; the other seven fail identically with the entire
+`src/` tree reverted to the commit before #4572 merged.** They are therefore not
+attributable to #4456, nor to #4460 (its two files were reverted independently —
+column `NO4460` — and nothing moved). Whatever made CI call them `pass` at the
+merge base, this tree does not reproduce a pass for them in any source state;
+they need their own triage against the baseline, not a fix here.
+
+### A trap in the A/B harness, worth writing down
+
+The first pass of this A/B called
+`runTest262File(file, cat, 15000, "gc")` to select the host/gc lane. **There is
+no `"gc"` lane.** The parameter is typed `target?: "standalone"`, and a truthy
+value flows into the compile options as `{ target: "gc" }` *and* turns off
+`deferTopLevelInit` (`tests/test262-runner.ts` L3728 / L4219 / L4636). The
+result was 8 of 10 files failing with `TypeError: sameValue is not a function`
+— a harness artifact that looks exactly like a broad real regression, and that
+reproduced identically in *every* source state, which is what gave it away. The
+host/gc lane is `target === undefined`. Both #1 and #2 above read as
+already-broken-at-base under the bad driver.
+
+### Root cause, and why the fix is two clauses rather than one
+
+The shadow mechanism is push-on-hoist / pop-at-end-of-body. The first cut fired
+it whenever a name was live in `funcMap` under anything other than this exact
+declaration, which is too broad in two independent directions:
+
+1. **Same function frame.** Two declarations of one name in the same body have
+   no boundary *between* them at which to restore, so the shadow stays live for
+   the rest of the body and the Annex B §B.3.3 / #3419 machinery that already
+   resolves same-frame duplicates is handed a namespace it does not expect. In
+   #2 it let a deliberately NOT-Annex-B-applicable inner block declaration take
+   `g`'s var-scoped `f`; in #1 the eval-inline path hoists each synthesized
+   declaration into the current frame, so shadows accumulated with nothing to
+   restore them and a later call resolved to a scoped-away index.
+2. **Owner-less incumbent.** A top-level declaration, an import, or a
+   synthesized helper carries no `funcMapOwnerDecl` record (#4133's
+   convention), and the first cut read "no record ⇒ different owner ⇒ shadow",
+   deleting a registration no scope on the stack would put back.
+
+The fix requires the incumbent to (a) carry an owner record and (b) live in a
+genuinely different enclosing function-like scope from `decl`; anything
+undeterminable declines. **Neither clause subsumes the other** — measured by
+running each alone:
+
+| reproduction | scope clause alone | owner clause alone | both |
+| ------------ | ------------------ | ------------------ | ---- |
+| `block-decl-nested-blocks-with-fun-decl.js` | PASS | FAIL | PASS |
+| `var-env-lower-lex-catch-non-strict.js` | PASS | COMPILE_ERROR | PASS |
+| `function err(){}` + `eval('async function* err(){}')` | COMPILE_ERROR | PASS | PASS |
+
+The third row is the smallest reproduction of the `funcIdx=undefined` CE and is
+reachable only through clause (2), which is why both stay.
+
+Declining is **absent-not-wrong**: it restores the exact pre-#4456 lowering for
+the declined shapes. The cross-frame shapes #4456 exists to fix are untouched —
+that is the whole alias matrix in `tests/issue-4456.test.ts`, all still green.
+
+### What changed
+
+- `src/codegen/nested-function-name-scope.ts` — `nestedFuncDeclNeedsShadow`
+  narrowed as above; new `enclosingFunctionScope` walk (same walk as
+  `call-identifier.ts`'s `isOutOfScopeNestedBinding`, deliberately kept in
+  step). `nested-declarations.ts` and `function-body.ts` are **unchanged** from
+  the shipped PR — the defect was entirely in the predicate.
+- `tests/issue-4456.test.ts` — three new pins, each verified to FAIL against
+  the shipped predicate and pass with the narrowing, plus one control that
+  passes on both (labelled as such, since a "pin" that never reproduced is not
+  a pin). The Annex-B-applicable sibling-block shape is asserted
+  last-executed-wins, per B.3.3, not "healed". Residual (1)'s explanation
+  corrected to match the state it is now pinned against.
+
+### Controls
+
+| control | result |
+| ------- | ------ |
+| `tests/issue-4456.test.ts` (21 tests, incl. the full alias matrix) | all pass; the 3 new pins fail on the shipped predicate |
+| fn-family pins: `issue-4436`, `4437`, `4440`, `4442`, `4456`, `4460` | 93 pass; `issue-4442`'s 6 failures are a runtime-eval-provider cache fault that reproduces identically on `BASE` — pre-existing |
+| byte-identity stride: 60 closure-heavy test262 files with **no** same-named nested declarations, compiled and sha256'd | **60/60 byte-identical to `origin/main`**, 0 compile errors |
+| the 10-file A/B table above | 2 fixed, 8 unchanged, 0 newly broken |
+
+Sample selection for the stride is deterministic (`.tmp/pick-stride.mts`): every
+test262 file under nine function/closure-heavy directories declaring ≥2 nested
+function-likes, minus any file containing two same-named function declarations
+(0 such files in the population), strided to 60.
+
+## Third cut — the same-frame decline was too broad (2026-08-15, PR #4586)
+
+The narrowing above **landed on `main`** and then failed the merged-state
+regression gate with a content-current baseline (run 31901836342): **net −22**,
+24 pass→fail against the 2 heals. `ecd8135ad` is an ancestor of `origin/main`,
+so `main` carried the regression live until this cut.
+
+### The regressed family, and why the second cut broke it
+
+All 24 are `annexB/language/eval-code/{direct,indirect}/…-existing-fn-no-init.js`
+— 8 statement shapes × {`eval-func`, `eval-global`} × {direct, indirect}. Each
+eval'd body is, in essence:
+
+```js
+init = f;{ function f() { return "inner declaration"; } }function f() { return "outer declaration"; }
+```
+
+`init = f` is evaluated **before** the block, so per B.3.3.3 it must capture the
+**top-of-frame** declaration: a block-level declaration is a §B.3.3 web-compat
+candidate that assigns the var-scoped binding only *when its block is
+evaluated*, and the `no-init` in the family name is precisely the case where the
+binding already exists and is therefore not re-initialised. Expected
+`"outer declaration"`; the second cut gave `"inner declaration"`.
+
+The second cut declined for the entire same-frame case, which handed the name to
+whichever declaration the legacy flat path left holding it — the block one.
+
+### What the predicate actually sees (measured, not assumed)
+
+Instrumenting the predicate settled two things that guesswork had backwards:
+
+| shape | newcomer `decl` | incumbent | frames |
+| ----- | --------------- | --------- | ------ |
+| the 24-family | `FunctionDeclaration@SourceFile` (top-of-frame) | `FunctionDeclaration@Block` | same |
+| `var-env-lower-lex-catch` (heal #1) | `@SourceFile` | `@SourceFile` | "same" only after the eval fix below |
+| `block-decl-nested-blocks` (heal #2) | `@Block` | `@Block` | same |
+| cross-frame `P`/`Q` (#4456 proper) | `@Block` | `@Block` | different |
+
+1. **The orientation is the reverse of the obvious one.** The block-level
+   declaration is hoisted FIRST and is the *incumbent*; the top-of-frame one
+   arrives as the *newcomer*. So the rule cannot be "protect a top-of-frame
+   incumbent" — it has to let a top-of-frame **newcomer displace** a block-level
+   incumbent. Written the other way round it fixes nothing.
+2. **Every `eval` call is parsed into its OWN synthetic `SourceFile`.** The four
+   evals in `var-env-lower-lex-catch` produce four distinct `<eval>.ts` nodes.
+   Comparing scope-node identity therefore read them as *cross-frame* and
+   re-shadowed — the `funcIdx=undefined` CE came straight back on the first
+   attempt at this cut. `sameFrame` now treats two eval `SourceFile`s as one
+   frame (conservative: two evals in genuinely different host frames also read
+   as same-frame, which is the pre-#4456 lowering, i.e. absent-not-wrong).
+
+### The rule
+
+Owner clause first (unchanged, still load-bearing on its own), then:
+
+- **different frames ⇒ SHADOW** — #4456 proper;
+- **same frame ⇒ SHADOW only if the newcomer is top-of-frame and the incumbent
+  is not.** Directional, so the top-of-frame declaration wins at hoist in either
+  encounter order: block-then-top shadows; top-then-block declines and the
+  pre-existing "already registered, skip" gate leaves it in place.
+- both block-level ⇒ decline (heal #2, and B.3.3's own applicability machinery
+  owns the answer); both top-of-frame ⇒ decline (heal #1's CE).
+
+### Results
+
+| control | result |
+| ------- | ------ |
+| the 24-file family | **24/24 pass** (0/24 on the second cut) |
+| heal #1 `var-env-lower-lex-catch-non-strict` (CE) | pass |
+| heal #2 `block-decl-nested-blocks-with-fun-decl` | pass |
+| **whole `annexB/language` subtree, 845 files**, vs current `main` | **499 → 523: +24 heals, 0 regressions** |
+| `tests/issue-4456.test.ts` | 30/30; the 9 new corner pins all fail on the second cut |
+| byte-identity stride, 60 closure-heavy files | 60/60 byte-identical to current `origin/main` |
+| `typecheck`, `biome lint`, `check:oracle-ratchet`, `prettier` | green |
+
+### A reduction that does NOT stand in for the family — stated because it is a trap
+
+The 9 corner pins added to `tests/issue-4456.test.ts` are reductions of the
+family shape, and they are **not equivalent to it**:
+
+| revision | the 24 family files | the reductions |
+| -------- | ------------------- | -------------- |
+| pre-#4456 base | PASS | wrong |
+| first cut (shipped) | PASS | wrong |
+| second cut | FAIL | wrong |
+| this cut | PASS | right |
+
+A hand reduction of this shape is *harder* than the family — wrong on every
+earlier revision, including the two where the family passed. Module-level vs
+in-function placement, `deferTopLevelInit`, and string / numeric /
+non-constant-foldable bodies were each tried and none closed the gap; the
+remaining difference is the test262 wrapper's harness prelude, which registers a
+large number of top-level functions before the test body and so changes the
+hoist environment the predicate sees. The pins are kept — each is a shape this
+cut genuinely fixes — but the family's regression guard is the test262 lane,
+and the pins say so in their own comment. Treating them as the family's pin
+would have been a false measurement.

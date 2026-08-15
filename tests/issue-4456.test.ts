@@ -48,6 +48,35 @@ async function runStandalone(source: string): Promise<number> {
   return (instance.exports as { test(): number }).test();
 }
 
+/**
+ * Assert that `js` COMPILES. Used for the two regressions that were hard
+ * COMPILE ERRORS rather than wrong answers, and that need JS-only syntax
+ * (`eval`, async generators) the standalone runner above cannot host.
+ */
+async function expectCompiles(js: string): Promise<void> {
+  const result = await compile(js, {
+    allowJs: true,
+    fileName: "issue-4456-ce.js",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+}
+
+/**
+ * Compile and run `js` on the HOST lane and return `test()`.
+ *
+ * The standalone runner above cannot host `eval`, and the eval-lane shapes are
+ * the ones that force half this predicate, so they need their own runner.
+ */
+async function runHost(js: string): Promise<number> {
+  const result = await compile(js, { allowJs: true, fileName: "issue-4456-host.ts", skipSemanticDiagnostics: true });
+  expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
+  const { buildImports } = await import("../src/runtime.js");
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  return (instance.exports as { test(): number }).test();
+}
+
 /** Wrap `body` as the whole of an exported `test()`. */
 const inTest = (body: string): string => `export function test(): number { ${body} }`;
 
@@ -256,8 +285,10 @@ describe("#4456 — same-named nested function declarations in different scopes"
 
     it("same-frame duplicates: two blocks, and if/else (#3419 / Annex B paths)", async () => {
       // These were already right on the base revision — they go through the
-      // last-wins and Annex B block paths, not the cross-frame hoist gate. They
-      // are here because the shadow now fires inside those paths too.
+      // last-wins and Annex B block paths, not the cross-frame hoist gate, and
+      // the gate DECLINES on them (same enclosing function scope). They are
+      // here because the first cut of the gate did NOT decline, which is what
+      // shipped the two Annex B regressions pinned below.
       expect(
         await runStandalone(
           inTest(`
@@ -310,15 +341,180 @@ describe("#4456 — same-named nested function declarations in different scopes"
     });
   });
 
+  describe("the gate must SHADOW — a top-of-frame decl owns the name at hoist (B.3.3.3)", () => {
+    // ## What these are, and what they are NOT
+    //
+    // The regression that forced this branch of the predicate is the 24-file
+    // `annexB/…/eval-{func,global}-{block-decl,if-*,switch-*}-existing-fn-no-init`
+    // family: it PASSED on the shipped predicate and went 24× pass→fail (net −22)
+    // in the merge queue when the second cut declined for the whole same-frame
+    // case. Those 24 files are verified directly against the real runner — 24/24
+    // with this predicate, 0/24 with the second cut — and that lane, not this
+    // file, is their guard.
+    //
+    // The cases below are REDUCTIONS of that shape, and they are deliberately
+    // NOT described as the family, because measurement says they are not
+    // equivalent to it. Values returned (2 = correct, the top-of-frame `"outer
+    // declaration"`; 1 = the block-level `"inner declaration"`):
+    //
+    //   revision                      family      these reductions
+    //   pre-#4456 base                PASS        1  (wrong)
+    //   #4456 first cut (shipped)     PASS        1  (wrong)
+    //   #4456 second cut              FAIL        1  (wrong)
+    //   this predicate                PASS        2  (right)
+    //
+    // So a hand reduction of this shape is HARDER than the family: it was wrong
+    // on every previous revision, including the two where the family passed.
+    // Several structural knobs were tried and none closed the gap — module-level
+    // vs in-function placement, `deferTopLevelInit`, string vs numeric vs
+    // non-constant-foldable bodies. The remaining difference is the test262
+    // wrapper's harness prelude, which registers a large number of top-level
+    // functions before the test body and so changes the hoist environment the
+    // predicate sees. Reproducing that faithfully means depending on the
+    // test262 checkout and `wrapTest` from a unit test, which this file does
+    // not do.
+    //
+    // They are kept because they are still real, useful pins — each is a shape
+    // this predicate FIXES relative to every earlier revision — but read them as
+    // "neighbours of the family that this rule also gets right", not as the
+    // family's regression guard.
+    const corners: ReadonlyArray<readonly [string, string]> = [
+      ["direct eval, function scope", `(function() { eval('%%'); }());`],
+      ["direct eval, global scope", `eval('%%');`],
+      ["indirect eval, global scope", `(0,eval)('%%');`],
+    ];
+    const carriers: ReadonlyArray<readonly [string, string]> = [
+      ["block", `{ function f() { return "inner declaration"; } }`],
+      ["switch-case", `switch (1) { case 1: function f() { return "inner declaration"; } }`],
+      ["if-no-else", `if (true) { function f() { return "inner declaration"; } }`],
+    ];
+    const evalArg = (carrier: string) => `init = f;${carrier}function f() { return "outer declaration"; }`;
+
+    for (const [cornerLabel, wrapper] of corners) {
+      for (const [carrierLabel, carrier] of carriers) {
+        it(`${cornerLabel}, ${carrierLabel} carrier — the pre-existing binding is not modified`, async () => {
+          expect(
+            await runHost(`var init;
+${wrapper.replace("%%", evalArg(carrier))}
+export function test(): number { return init() === "outer declaration" ? 2 : 1; }`),
+          ).toBe(2);
+        });
+      }
+    }
+  });
+
+  describe("the gate must DECLINE — merge-group regressions from the first cut", () => {
+    // Each of these PASSED before #4456 and REGRESSED when the gate shipped, and
+    // each is pinned against the state that actually reproduced: every `it` here
+    // was re-run against `origin/main`'s un-narrowed predicate and observed to
+    // fail there. The clauses are independent — measured 2026-08-15, no one of
+    // them fixes all of these — so each gets a pin.
+
+    it("[block-vs-block] Annex-B-inapplicable inner block decl must not steal the var binding", async () => {
+      // annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js.
+      // `g`'s var-scoped `f` is the OUTER block's declaration; the inner block's
+      // is deliberately NOT Annex-B applicable (replacing it with `var f` would
+      // be an early error against the outer block's lexical `f`), so it never
+      // rebinds `g`'s `f`. Shadowing let it take the name: `f()` gave 2.
+      //
+      // NOTE this is the NON-applicable variant, not a counterexample to B.3.3's
+      // "rebind as each declaration is evaluated" rule — for APPLICABLE sibling
+      // blocks last-executed-wins is correct, and that shape is a control above.
+      expect(
+        await runStandalone(`
+          function g(): number {
+            { function f() { return 1; } { function f() { return 2; } } }
+            return f();
+          }
+          export function test(): number { return g(); }
+        `),
+      ).toBe(1);
+    });
+
+    it("[both top-of-frame] several eval declarations keep a resolvable call target", async () => {
+      // annexB/language/eval-code/direct/var-env-lower-lex-catch-non-strict.js,
+      // verbatim. Each synthesized declaration is reified into the SAME catch
+      // frame, so the shadows had no body boundary to be restored at and
+      // accumulated; a later call then resolved to an index that had been scoped
+      // away — `absoluteFuncIndex: unresolved call target (funcIdx=undefined)
+      // baked into a compiled function body`.
+      //
+      // TWO parts of the predicate are load-bearing here, both measured:
+      //  - `sameFrame` must merge the four DISTINCT `<eval>.ts` SourceFiles the
+      //    four eval calls produce, or they read as cross-frame and the CE comes
+      //    straight back (it did, on the first attempt at the third cut);
+      //  - the same-frame rule must then decline, which it does because BOTH
+      //    sides are top-of-frame — the directional half of the rule.
+      // The OWNER clause alone does not fix this one: each incumbent here does
+      // carry an owner record.
+      await expectCompiles(`
+        try { throw null; } catch (err) {
+          eval('function err() {}');
+          eval('function* err() {}');
+          eval('async function err() {}');
+          eval('async function* err() {}');
+        }
+      `);
+    });
+
+    it("[owner clause] an eval declaration must not displace a TOP-LEVEL registration", async () => {
+      // The second, distinct trigger for the same CE, and the smallest shape
+      // that reaches it: a top-level declaration owns the name, and an
+      // eval-synthesized async generator of the same name arrives. A top-level
+      // declaration has NO `funcMapOwnerDecl` record (#4133's convention), so
+      // the first cut read "no record ⇒ different owner ⇒ shadow" and deleted a
+      // registration nothing would restore.
+      //
+      // Measured: the SCOPE clause alone does NOT fix this one — the incumbent's
+      // scope cannot even be computed without an owner record — which is why
+      // both clauses are load-bearing rather than one being a superset.
+      await expectCompiles(`
+        function err() { return 1; }
+        eval('async function* err() {}');
+      `);
+    });
+
+    it("same-frame block duplicates still resolve to the last one executed", async () => {
+      // A control, not a pin: this shape compiles on the un-narrowed gate too.
+      // It is here because it is the Annex-B-APPLICABLE sibling of the first
+      // test — B.3.3 rebinds the var-scoped name as each declaration is
+      // evaluated, so last-executed-wins is the CORRECT answer and the gate
+      // must not "heal" it into per-block functions.
+      expect(
+        await runStandalone(`
+          export function test(): number {
+            { function err2() { return 1; } }
+            { function err2() { return 2; } }
+            { function err2() { return 3; } }
+            return err2();
+          }
+        `),
+      ).toBe(3);
+    });
+  });
+
   describe("residuals — known-failing shapes, pinned so a fix is noticed", () => {
-    it.fails("a nested declaration shadowing a same-named CONSTANT-FOLDABLE top-level one", async () => {
-      // Owner: the IR front-end's direct-call binding resolution
-      // (`src/ir/from-ast.ts`, `cx.scope.get(calleeName)` + the AST-site call
-      // plan), which is bare-name keyed and picks the top-level unit. The
-      // scope fix DOES emit B's own function — disassembly shows it — but the
-      // IR plan calls the top-level one and `passes/inline-small.ts` then
-      // inlines its constant body. Narrow: with a non-constant top-level
-      // `inner` the same source lowers to a correct `return_call`.
+    it.fails("a nested declaration shadowing a same-named TOP-LEVEL one", async () => {
+      // Deliberately not fixed, and the reason CHANGED with the narrowing —
+      // the observable result did not, which is why this stayed an `it.fails`
+      // through both cuts.
+      //
+      //   first cut  the gate shadowed the top-level registration, so B's own
+      //              function WAS emitted (two `inner`s in the module, counted
+      //              from the binary) and the wrong one was merely CALLED: the
+      //              IR front-end's bare-name direct-call plan
+      //              (`src/ir/from-ast.ts`) picked the top-level unit and
+      //              `passes/inline-small.ts` inlined its constant body.
+      //   narrowed   the gate DECLINES on an incumbent with no
+      //              `funcMapOwnerDecl` record, so B's declaration is not
+      //              compiled at all (one `inner` in the module) — exactly the
+      //              pre-#4456 lowering.
+      //
+      // That trade is deliberate: shadowing an owner-less registration is the
+      // very thing that produced the `funcIdx=undefined` compile error pinned
+      // above, and it bought nothing here — the answer was already wrong.
+      // Fixing this shape for real belongs to the IR call-binding resolution,
+      // not to this gate.
       expect(
         await runStandalone(`
           function inner() { return 5; }

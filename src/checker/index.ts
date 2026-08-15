@@ -400,6 +400,22 @@ export interface AnalyzeOptions {
    * every program that does not trigger a TS prelude injection.
    */
   forceTsGrammar?: boolean;
+  /**
+   * #4452 — tsconfig discovery for the on-disk `analyzeFiles` path.
+   *
+   *   - `undefined` (default) — find the nearest `tsconfig.json` walking up
+   *     from the entry file and use its `compilerOptions` as the BASE. If no
+   *     config is reachable, the legacy hardcoded option set is used.
+   *   - `string` — path to a specific config file to use instead of searching.
+   *     A path that cannot be read is a hard error (the caller asked for it
+   *     explicitly, so silently ignoring it would hide a config mistake).
+   *   - `false` — force the legacy hardcoded options even when a config IS
+   *     reachable (escape hatch / A-B comparison).
+   *
+   * Only consumed by `analyzeFiles`; the in-memory paths have no project on
+   * disk to read.
+   */
+  tsconfig?: string | false;
 }
 
 /**
@@ -1178,6 +1194,82 @@ export function analyzeMultiSource(
 }
 
 /**
+ * #4452 — emit-shaping options dropped from a project's `compilerOptions`
+ * before they reach `ts.createProgram`. `analyzeFiles` builds a TYPE-ONLY
+ * program (`noEmit: true`, `program.emit()` is never called), so every one of
+ * these is inert at best; `composite` / `incremental` / `tsBuildInfoFile` are
+ * worse than inert because TypeScript raises config-level complaints about
+ * them under `noEmit` and can touch the filesystem for a build it will never
+ * run. Dropping them keeps a real project's tsconfig usable as-is.
+ */
+const EMIT_ONLY_COMPILER_OPTIONS = [
+  "outDir",
+  "outFile",
+  "declaration",
+  "declarationDir",
+  "declarationMap",
+  "emitDeclarationOnly",
+  "sourceMap",
+  "inlineSourceMap",
+  "inlineSources",
+  "composite",
+  "incremental",
+  "tsBuildInfoFile",
+] as const;
+
+/**
+ * #4452 — resolve the project `compilerOptions` for `analyzeFiles`.
+ *
+ * Returns `undefined` when the legacy hardcoded options should be used: the
+ * caller passed `tsconfig: false`, there is no filesystem host (browser
+ * bundle), or no `tsconfig.json` is reachable from the entry file. An
+ * EXPLICIT `tsconfig` path that cannot be read throws instead of falling back
+ * — the caller named it, so a typo must not silently degrade to a different
+ * option set.
+ */
+function resolveProjectCompilerOptions(
+  resolvedEntry: string,
+  tsconfigOption: string | false | undefined,
+): ts.CompilerOptions | undefined {
+  if (tsconfigOption === false) return undefined;
+  const sys = ts.sys;
+  if (!sys) return undefined; // no disk host — legacy options
+  const pathMod = require("node:path") as typeof import("node:path");
+
+  let configPath: string | undefined;
+  if (typeof tsconfigOption === "string") {
+    configPath = pathMod.resolve(tsconfigOption);
+    if (!sys.fileExists(configPath)) {
+      throw new Error(`tsconfig not found: ${configPath}`);
+    }
+  } else {
+    configPath = ts.findConfigFile(pathMod.dirname(resolvedEntry), (f) => sys.fileExists(f), "tsconfig.json");
+    if (!configPath) return undefined;
+  }
+
+  const read = ts.readConfigFile(configPath, (f) => sys.readFile(f));
+  if (read.error || !read.config) {
+    if (typeof tsconfigOption === "string") {
+      const detail = read.error ? ts.flattenDiagnosticMessageText(read.error.messageText, " ") : "empty config";
+      throw new Error(`tsconfig could not be read: ${configPath} — ${detail}`);
+    }
+    // A broken config found by SEARCH is not the caller's stated intent; fall
+    // back rather than refusing to compile a file that merely lives near it.
+    return undefined;
+  }
+
+  // `parseJsonConfigFileContent` resolves `extends`, path-valued options
+  // (`rootDir`, `paths`, `typeRoots`, …) against the config's directory and
+  // maps the string enums onto their `ts.*Kind` values. We take only
+  // `.options`; the program's roots stay entry-anchored, so `include` /
+  // `exclude` / `files` are deliberately ignored.
+  const parsed = ts.parseJsonConfigFileContent(read.config, sys, pathMod.dirname(configPath), undefined, configPath);
+  const options: ts.CompilerOptions = { ...parsed.options };
+  for (const key of EMIT_ONLY_COMPILER_OPTIONS) delete options[key];
+  return options;
+}
+
+/**
  * Analyze a TypeScript project from an entry file on disk.
  * Uses ts.createProgram with real filesystem access -- TypeScript resolves
  * all imports automatically via its standard module resolution.
@@ -1189,19 +1281,49 @@ export function analyzeFiles(entryPath: string, analyzeOptions?: AnalyzeOptions)
   const resolvedEntry = pathMod.resolve(entryPath);
 
   const entryIsJsx = resolvedEntry.endsWith(".tsx") || resolvedEntry.endsWith(".jsx");
-  const compilerOptions: ts.CompilerOptions = {
+
+  // #4452 — the BASE options are the project's own, when a `tsconfig.json` is
+  // reachable from the entry. Hardcoding a single option set here made the
+  // compiler disagree with `tsc` about the very sources it was compiling:
+  // `rootDir: dirname(entry)` rejected any cross-directory import
+  // ("File 'x' is not under 'rootDir'"), `Node10` without interop rejected
+  // CJS default imports, and `strict` WITHOUT `noImplicitAny` disabled TS's
+  // evolving-array/object inference — which is what produced the
+  // "not assignable to parameter of type 'never'" /
+  // "Property 'x' does not exist on type '{}'" cluster on code that
+  // type-checks clean under its own tsconfig.
+  const projectOptions = resolveProjectCompilerOptions(resolvedEntry, analyzeOptions?.tsconfig);
+  const baseOptions: ts.CompilerOptions = projectOptions ?? {
+    // ---- legacy defaults: no project config in scope --------------------
+    // Load-bearing for arbitrary input outside a TS project (playground /
+    // dogfood paths compile a lone file that has no tsconfig above it).
+    // Unchanged from the pre-#4452 behavior, deliberately, so that path is
+    // byte-neutral.
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Node10,
     strict: true,
+    // Lenient on purpose: with no config we do not know the author's intent
+    // and js2wasm's codegen tolerates implicit `any`. When a tsconfig IS in
+    // scope, the project's own strictness governs instead.
     noImplicitAny: false,
-    noEmit: true,
     rootDir: pathMod.dirname(resolvedEntry),
-    // Enable JSX parsing when the entry file is .tsx/.jsx (#1531).
-    ...(entryIsJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
+  };
+
+  const compilerOptions: ts.CompilerOptions = {
+    ...baseOptions,
+    // ---- pipeline-required overrides, applied over ANY base -------------
+    // Type-only program: js2wasm emits wasm itself and never calls
+    // `program.emit()`, so a project's emit settings must not write anything.
+    noEmit: true,
+    // Enable JSX parsing when the entry file is .tsx/.jsx (#1531) — but only
+    // if the config did not already choose a `jsx` mode, so a project that
+    // selected `preserve`/`react` keeps its choice.
+    ...(entryIsJsx && baseOptions.jsx === undefined ? { jsx: ts.JsxEmit.ReactJSX } : {}),
   };
 
   if (analyzeOptions?.allowJs) {
+    // The caller states the graph contains JS; this outranks the config.
     compilerOptions.allowJs = true;
     compilerOptions.checkJs = true;
   }
