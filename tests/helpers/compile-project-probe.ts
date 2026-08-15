@@ -4,7 +4,7 @@
 // graphs can synchronously occupy the compiler for longer than Vitest's worker
 // heartbeat, producing a false infrastructure failure after valid assertions.
 
-import { compileProject, type CompileOptions } from "../../src/index.js";
+import { compileProject, validateEmittedBinary, type CompileOptions } from "../../src/index.js";
 
 export const COMPILE_PROJECT_PROBE_MARKER = "__JS2_COMPILE_PROJECT_PROBE__";
 
@@ -15,15 +15,16 @@ if (!entry || !rawOptions) {
 
 const options = JSON.parse(rawOptions) as CompileOptions;
 const result = await compileProject(entry, options);
+// (#4420) `success` means codegen finished, not that the engine accepts the
+// bytes — the package-entry harness reports "compiled" off this probe, so the
+// verdict has to come from the shared engine gate rather than a local copy of
+// the validate-then-recover-the-detail idiom.
 let valid = false;
 let validationError: string | null = null;
 if (result.success) {
-  try {
-    new WebAssembly.Module(result.binary);
-    valid = true;
-  } catch (error) {
-    validationError = error instanceof Error ? error.message : String(error);
-  }
+  const validation = validateEmittedBinary(result.binary);
+  valid = validation.valid;
+  validationError = valid ? null : (validation.detail ?? "emitted binary failed WebAssembly validation");
 }
 const report = {
   success: result.success,
