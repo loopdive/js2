@@ -22,6 +22,7 @@ import { noJsHost } from "../js-errors.js";
 import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
+import { fnMetaSlotForMemberName } from "../function-instance-meta-methods.js"; // (#4440) static methods
 import {
   CLOSURE_CAPTURE_FIELD_BASE,
   closureArityField,
@@ -332,7 +333,13 @@ export function emitFuncRefAsClosure(
   // mints an interned string global, and a path that ends up not carrying the
   // slot should not leave one behind.
   const metaDecl = ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName);
-  const metaSlotOf = (): ReturnType<typeof fnMetaSlot> => fnMetaSlot(ctx, metaDecl);
+  // (#4440) A STATIC class method reaches this helper (not the cached-singleton
+  // one — `property-access-dispatch.ts` reads `C.m` through `emitFuncRefAsClosure`),
+  // and its `funcName` is the physical `ClassName_m`, which neither map above
+  // holds. The member side table does; consulting it second keeps a real
+  // function declaration's own metadata winning wherever both could answer.
+  const metaSlotOf = (): ReturnType<typeof fnMetaSlot> =>
+    fnMetaSlot(ctx, metaDecl) ?? fnMetaSlotForMemberName(ctx, funcName);
 
   const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
   if (nestedCaptures && nestedCaptures.length > 0) {
