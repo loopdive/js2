@@ -895,6 +895,12 @@ export interface AstToIrOptions {
    * unsupported storage still demotes.
    */
   readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
+  /**
+   * Host-lane dynamic method names observed while lowering IR. The legacy
+   * finalizer uses this shared set to expose ordinary class-member bridges for
+   * dynamic receivers; standalone/WASI callers may omit it.
+   */
+  readonly hostDynamicClassMethodNames?: Set<string>;
 }
 
 /**
@@ -1261,6 +1267,7 @@ export function lowerFunctionAstToIr(
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
+    hostDynamicClassMethodNames: options.hostDynamicClassMethodNames,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
@@ -2283,6 +2290,8 @@ interface LowerCtx {
   readonly latticeParamFacts?: LatticeParamFacts;
   /** See {@link AstToIrOptions.numericLocalScalarForDecl}. */
   readonly numericLocalScalarForDecl?: (decl: ts.VariableDeclaration) => "number" | undefined;
+  /** Host-lane dynamic method names observed while lowering IR. */
+  readonly hostDynamicClassMethodNames?: Set<string>;
   /**
    * #1586: module-global allocation-site registry, threaded so lifted-closure
    * builders mint stable ids on the same registry as the outer function.
@@ -4891,9 +4900,14 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * value list is reordered to match.
  */
 function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
-  if (expr.properties.length === 0) {
-    throw new Error(`ir/from-ast: empty object literal not in slice 2 (${cx.funcName})`);
-  }
+  // #4471 — an empty literal is admitted only when the selector proved it
+  // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
+  // `object.new`. The property loop below is already a no-op at zero
+  // properties, so the empty case needs no arm of its own: it falls through to
+  // `emitObjectNew({ fields: [] }, [])`, which the WasmGC/linear resolvers both
+  // register as an ordinary (fieldless) struct. `lowerOrdinaryToPrimitive-
+  // ObjectLiteral` returns null for a zero-property literal, so the
+  // valueOf/toString path is not entered.
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
   const built: { name: string; type: IrType; value: IrValueId }[] = [];
@@ -7032,6 +7046,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   if (recvType.kind === "dynamic") {
+    // Preserve the static property name for the host-side ordinary-class
+    // bridge. IR's dynamic runtime helper intentionally accepts an arbitrary
+    // key at execution time, so the finalizer otherwise cannot know which
+    // compiled class methods need `__member_kind_*`/`__call_*` exports.
+    cx.hostDynamicClassMethodNames?.add(methodName);
     const firstArgumentText = expr.arguments[0]?.getText();
     const isNarrowStringReplace =
       methodName === "replace" &&
