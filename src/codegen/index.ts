@@ -2522,6 +2522,11 @@ function planIrOverlay(
         const fact = ctx.oracle.typeFactOf(receiver);
         return fact.kind === "any" || fact.kind === "unknown";
       },
+      // #2952 slice 6c — reading the enumerated key in the body needs the
+      // head slot (an externref from the #2964 helpers) to BE the string
+      // carrier. That holds exactly when `resolveString()` yields externref,
+      // i.e. when native strings are off.
+      forInHeadValueIsHostString: !ctx.nativeStrings,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),

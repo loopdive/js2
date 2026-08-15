@@ -83,13 +83,13 @@ const SECTIONS = [
       [
         "`SwitchStatement`",
         "mixed",
-        "Numeric-literal case tests claimed via the `switch` IR instr (block-per-case ladder; eq-chain dispatch, `br_table` for dense-int i32 discs; fallthrough + mid-position `default` + break/continue interplay — #2952 slice 4). Non-literal / string tests stay legacy.",
+        "Numeric-literal case tests claimed via the `switch` IR instr (block-per-case ladder; eq-chain dispatch, `br_table` for dense-int i32 discs; fallthrough + mid-position `default` + break/continue interplay — #2952 slice 4). String-literal tests claimed too: a `string.eq` chain resolves the disc to a clause index that feeds the same ladder (slice 6b). A function ENDING in a switch claims when every clause terminates and a `default` covers no-match, or when the function is void (slice 6a). Non-literal tests, MIXED numeric/string sets, and discs whose IR carrier is not the string carrier (indexed reads off a string array) stay legacy.",
         "#2952",
       ],
       [
         "`BreakStatement`",
         "mixed",
-        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver. Wider for-in forms stay direct.",
+        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver, including labeled for-in (slice 6c).",
         "#2952",
       ],
       [
@@ -107,13 +107,13 @@ const SECTIONS = [
       [
         "`LabeledStatement`",
         "mixed",
-        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4). Labeled for-in stays direct.",
+        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4); labeled for-in joins them through the same `pendingLoopLabel` path (slice 6c).",
         "#2952",
       ],
       [
         "`ForInStatement`",
         "mixed",
-        "Non-fast dynamic `for (var id in receiver)` with an unused head value claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Fast `$AnyValue`, typed receivers, wider heads, head-value uses, and labeled for-in stay direct.",
+        "Non-fast dynamic `for (var id in receiver)` claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Slice 6c widens it: the body may READ the head key (bound `asType: string` on the host-externref string carrier) and the loop may be labeled. Fast `$AnyValue`, typed receivers, wider heads, head WRITES/captures/redeclarations, and native-strings lanes stay direct.",
         "#2952",
       ],
       [
