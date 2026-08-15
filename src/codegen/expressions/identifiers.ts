@@ -47,6 +47,7 @@ import { reportSilentFallback } from "../fallback-telemetry.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
+import { tryEmitNativeDynamicInstanceOf } from "../native-dynamic-instanceof.js";
 import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
@@ -1713,6 +1714,19 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // throws. Declines (null) in gc/host mode — see native-ordinary-instanceof.ts.
   const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
   if (nonCallableThrow) return nonCallableThrow;
+
+  // (#2916 Slice B) Host-free §13.10.2 + §7.3.20 for the fully-dynamic RHS.
+  // Returns the SAME 0/1/2 tri-state `__instanceof_check` did, so the throw
+  // guard below is reused unchanged. Declines (null) in gc/host mode — that lane
+  // keeps the host predicate byte-identically. See native-dynamic-instanceof.ts
+  // for the per-representation answer table and the documented residual (a
+  // closure RHS has no runtime edge to its prototype object, so it answers
+  // `false` rather than guessing).
+  const nativeDynamic = tryEmitNativeDynamicInstanceOf(ctx, fctx, expr);
+  if (nativeDynamic) {
+    emitInstanceofThrowGuard(ctx, fctx);
+    return nativeDynamic;
+  }
 
   // (#2702) `__instanceof_check` implements §13.10.2 InstanceofOperator +
   // §7.3.20 OrdinaryHasInstance and returns a tri-state (0/1/2) so the
