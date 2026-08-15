@@ -1917,6 +1917,20 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     lowerTail(stmt.elseStatement, { ...cx, scope: new Map(cx.scope) });
     return;
   }
+  // #2952 slice 6a — a function ENDING in a `switch`. The switch lowers
+  // through the SAME `IrInstrSwitch` ladder as the non-tail form (slice 4);
+  // only the block terminator differs. The selector proved one of:
+  //   - void return  → control may fall out of the ladder into the implicit
+  //     empty return (mirrors the `tail-if-noelse` void arm above);
+  //   - non-void     → `switchAllPathsTerminate` proved every clause leaves
+  //     the function and a `default` covers the no-match path, so the
+  //     instruction after the ladder is unreachable (same terminator the
+  //     throw-tail arm uses).
+  if (ts.isSwitchStatement(stmt)) {
+    lowerSwitchStatement(stmt, { ...cx, scope: new Map(cx.scope) });
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
   throw new Error(`ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`);
 }
 
@@ -7924,7 +7938,22 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
   const loopScope = conservativeLoopStringEncodingScope(stmt, cx);
   const bodyScope = new Map(loopScope);
-  bodyScope.set(declaration.name.text, { kind: "slot", slotIndex: keySlot, type: externref });
+  // #2952 slice 6c — the head binding is now READABLE in the body. The key
+  // helper hands back an externref; when the active string carrier IS the
+  // host externref (`resolveString()`), that value is interchangeable with an
+  // `IrType.string`, so tag the binding `asType: string` and identifier reads
+  // compose with the ordinary string ops — the same `asType` idiom
+  // `lowerForOfString` uses for its `(ref $AnyString)` element slot. On a
+  // native-strings lane the carriers differ, so the tag is withheld and the
+  // selector's `forInHeadValueIsHostString` gate keeps head-value uses off
+  // the IR path entirely (fail-closed, not claim-then-demote).
+  const headIsHostString = cx.resolver?.resolveString?.()?.kind === "externref";
+  bodyScope.set(declaration.name.text, {
+    kind: "slot",
+    slotIndex: keySlot,
+    type: externref,
+    ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
+  });
   const bodyCx: LowerCtx = {
     ...cx,
     scope: bodyScope,
@@ -8921,6 +8950,14 @@ function lowerLabeledStatement(stmt: ts.LabeledStatement, cx: LowerCtx): void {
     lowerForOfStatement(inner, innerCx);
     return;
   }
+  // #2952 slice 6c — labeled for-in. It lowers to `for.loop`, whose
+  // `loopLabel` IS the pre-allocated id, so `break lbl` / `continue lbl`
+  // resolve through the same slice-2/3 machinery with no new obligation
+  // (no iterator ⇒ no IteratorClose to interleave).
+  if (ts.isForInStatement(inner)) {
+    lowerForInStatement(inner, innerCx);
+    return;
+  }
   // #2952 slice 4 — `lbl: switch (...)`: the switch adopts the label as
   // its breakLabel (via pendingLoopLabel), so `break lbl` and unlabeled
   // `break` target the same frame.
@@ -8987,7 +9024,24 @@ function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatem
  * are dead and skipped (verifier requires br.label last-in-buffer).
  */
 function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
-  const discRaw = lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
+  const clauses = stmt.caseBlock.clauses;
+  const stringTestTexts = clauses.map((clause) =>
+    ts.isCaseClause(clause) ? stringLiteralCaseTestValue(clause.expression) : null,
+  );
+  const isStringSwitch = stringTestTexts.some((text) => text !== null);
+
+  // #2952 slice 6b — a STRING-tested switch reuses the numeric ladder by
+  // computing a dispatch INDEX first: `disc` is compared against each case's
+  // literal with the IR's abstract `string.eq`, and the matching clause's
+  // index (or -1) becomes the i32 discriminant of the ordinary
+  // `IrInstrSwitch`. Deliberately NO new IR node/field (and therefore no
+  // exhaustiveness sweep): the ladder, br_table fast path, fallthrough
+  // layout, `break` frame and verifier rules all stay exactly as slice 4
+  // shipped them, and preparation still sees the string consts / `string.eq`
+  // as ordinary IR instructions, so provider binding needs no special case.
+  const dispatch = isStringSwitch ? lowerStringSwitchDispatch(stmt, cx, stringTestTexts) : null;
+
+  const discRaw = dispatch ? dispatch.disc : lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
   const discT = asVal(cx.builder.typeOf(discRaw));
   if (!discT || (discT.kind !== "f64" && discT.kind !== "i32")) {
     throw new Error(`ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
@@ -9004,9 +9058,13 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
   };
   const tests: (number | null)[] = [];
   const bodies: (readonly IrInstr[])[] = [];
-  for (const clause of stmt.caseBlock.clauses) {
+  for (let k = 0; k < clauses.length; k++) {
+    const clause = clauses[k]!;
     if (ts.isCaseClause(clause)) {
-      const v = numericLiteralValue(clause.expression);
+      // String switch: the test IS the clause index (the dispatch chain
+      // above already resolved the literal comparison). Numeric switch:
+      // the literal's value, as slice 4.
+      const v = dispatch ? k : numericLiteralValue(clause.expression);
       if (v === null) {
         throw new Error(
           `ir/from-ast: switch case test must be a numeric literal — selector gate failed (${cx.funcName})`,
@@ -9027,6 +9085,85 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
   }
   cx.builder.emitSwitch({ disc: discRaw, discSlot, tests, bodies, breakLabel });
   joinScopeStringEncodingFacts(cx.scope, [switchCx.scope]);
+}
+
+/**
+ * #2952 slice 6b — compute the dispatch INDEX of a string-tested switch.
+ *
+ * Emits, into the CURRENT buffer (so no cross-buffer SSA reference is
+ * created — nested buffers are self-contained, see the slice-1 note):
+ *
+ * ```
+ *   <disc>                       ;; evaluated exactly ONCE (§14.12.9 step 1)
+ *   match := -1
+ *   if (string.eq(disc, lit[n-1])) match := n-1     ;; REVERSE source order
+ *   …
+ *   if (string.eq(disc, lit[0]))   match := 0
+ *   → slot.read(match)                              ;; i32 discriminant
+ * ```
+ *
+ * **Why reverse order + unconditional writes rather than a short-circuiting
+ * chain.** A short-circuit chain would have to evaluate `disc` inside a
+ * NESTED if-buffer, which cannot reference the outer buffer's SSA value; it
+ * would need a string-typed slot and therefore a mode-dependent `(ref
+ * $AnyString)` / externref slot ValType. Emitting all comparisons flat in one
+ * buffer and letting the FIRST clause in source order win by writing LAST is
+ * observationally identical: both operands are strings, so `string.eq` is
+ * total, pure and cannot throw — evaluating a comparison JS would have
+ * skipped is unobservable. First-clause-wins on duplicate literals is
+ * preserved. The measured cost is `n` comparisons instead of up to `n`; a
+ * short-circuiting variant is a pure optimisation, banked.
+ *
+ * The `-1` sentinel is out of the `[0, n)` clause-index range, so it falls to
+ * the ladder's no-match target — the `default` clause when present, past the
+ * ladder otherwise — through the SAME code slice 4 already emits (including
+ * `br_table`, whose min-biased index goes out of range for -1).
+ */
+function lowerStringSwitchDispatch(
+  stmt: ts.SwitchStatement,
+  cx: LowerCtx,
+  stringTestTexts: readonly (string | null)[],
+): { readonly disc: IrValueId } {
+  const i32 = irVal({ kind: "i32" });
+  const discV = lowerExpr(stmt.expression, cx, { kind: "string" });
+  const discKind = cx.builder.typeOf(discV).kind;
+  if (discKind !== "string") {
+    // Selector mirror (`switch-disc-not-string` / `switch-disc-not-string-carrier`).
+    // `IrUnsupportedError` — NOT a bare `throw` — because under IR-first
+    // (#2138) a bare build throw is an `unexpected-internal-throw` INVARIANT
+    // (hard compile error), while a named Unsupported reason demotes cleanly.
+    // The selector gates this shape out, so this is a defence-in-depth mirror
+    // that should never fire; if it ever does, legacy still compiles the
+    // function. Same channel the neighbouring string-operand `===` arm uses.
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: string-tested switch disc lowered to ${discKind}, not string, in ${cx.funcName}`,
+    );
+  }
+  const matchSlot = cx.builder.declareSlot("__switch_str_match", { kind: "i32" });
+  cx.builder.emitSlotWrite(matchSlot, cx.builder.emitConst({ kind: "i32", value: -1 }, i32));
+  for (let k = stringTestTexts.length - 1; k >= 0; k--) {
+    const text = stringTestTexts[k];
+    if (text === null) continue; // default clause — no comparison
+    const literal = cx.builder.emitStringConst(text);
+    const matched = cx.builder.emitStringEq(discV, literal, false);
+    const then = cx.builder.collectBodyInstrs(() => {
+      cx.builder.emitSlotWrite(matchSlot, cx.builder.emitConst({ kind: "i32", value: k }, i32));
+    });
+    cx.builder.emitIfStmt({ cond: matched, then, else: [] });
+  }
+  return { disc: cx.builder.emitSlotRead(matchSlot) };
+}
+
+/**
+ * #2952 slice 6b — the text of a string-literal case test. `null` for any
+ * other expression shape (numeric literals take the slice-4 path; everything
+ * else is selector-rejected).
+ */
+function stringLiteralCaseTestValue(expr: ts.Expression): string | null {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+  return null;
 }
 
 /**
