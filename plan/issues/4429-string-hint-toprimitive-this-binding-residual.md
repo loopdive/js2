@@ -12,6 +12,11 @@ horizon: s
 feasibility: medium
 reasoning_effort: high
 task_type: bug
+loc-budget-allow:
+  # emitWithCurrentThis + the three wrapped dispatch arms live at the existing
+  # string-hint sites in the coercion engine; extracting them would split the
+  # __current_this save/install/restore across modules mid-dispatch.
+  - src/codegen/type-coercion.ts
 area: codegen
 es_edition: 5
 language_feature: to-primitive
