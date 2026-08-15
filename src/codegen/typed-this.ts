@@ -83,6 +83,14 @@ import { type PresenceSlot, presenceSlotOf, presenceTestInstrs } from "./fnctor-
 import { undefinedExternInstrs } from "./any-helpers.js";
 // (#3685 step 1) decline census — inert unless JS2WASM_PROVEN_RECEIVER_STATS=1
 import { noteProvenReceiver, noteProvenReceiverPhase, provenReceiverStatsEnabled } from "./proven-receiver-stats.js";
+// (#4405 Phase 0) funnel census ABOVE the proven-receiver tail — inert unless
+// JS2WASM_RECEIVER_SPEC_STATS=1. Every note is a statement; see the module head.
+import {
+  noteReceiverDeclineDetail,
+  noteReceiverNotIdentifier,
+  noteReceiverNotThis,
+  noteReceiverSpec,
+} from "./receiver-spec-census.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 // `shared.js` holds the late-bound delegates precisely so a feature module can
 // reach the expression/coercion engines without a cycle back through
@@ -407,13 +415,24 @@ export function resolveTypedThisField(
   const structTypeIdx = fctx.typedThisStructIdx;
   const structName = fctx.typedThisStructName;
   const localIdx = fctx.typedThisLocalIdx;
-  if (structTypeIdx === undefined || structName === undefined || localIdx === undefined) return undefined;
+  if (structTypeIdx === undefined || structName === undefined || localIdx === undefined) {
+    // (#4405 Phase 0) The attempt came from a function that has no typed twin —
+    // a constructor, or a method with no write-once verdict. Silent until now,
+    // and the single largest bucket in the funnel, so it gets a name.
+    noteReceiverSpec("not-in-twin");
+    return undefined;
+  }
   // `JS2WASM_TYPED_THIS=shim` — emit the twins + the `ref.test` forward shim but
   // NONE of the inline field lowerings. The A/B against a full build isolates
   // the shim's per-call overhead from the inline branches' win, which is the
   // only way to tell "the branches don't pay" from "the shim eats the win".
   if (process.env.JS2WASM_TYPED_THIS === "shim") return undefined;
-  if (receiver.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+  if (receiver.kind !== ts.SyntaxKind.ThisKeyword) {
+    // (#4405 Phase 0) In a twin, but the receiver is not `this` — the exact
+    // population #4405 targets, histogrammed by shape.
+    noteReceiverNotThis(receiver);
+    return undefined;
+  }
   if (RESERVED_PROPS.has(propName)) {
     noteDeclinedField(`reserved:${propName}`);
     return undefined;
@@ -424,7 +443,11 @@ export function resolveTypedThisField(
     return undefined;
   }
   const fields = ctx.structFields.get(structName);
-  if (!fields) return undefined;
+  if (!fields) {
+    // (#4405 Phase 0) The twin's own struct has no field table registered.
+    noteReceiverSpec(`no-field-table:${structName}`);
+    return undefined;
+  }
   const fieldIdx = fields.findIndex((f) => f.name === propName);
   if (fieldIdx < 0) {
     noteDeclinedField(`nofield:${propName}`);
@@ -482,9 +505,19 @@ export function resolveTypedThisWritableField(
 ): TypedThisField | undefined {
   if (ts.isPrivateIdentifier(target.name)) return undefined;
   const f = resolveTypedThisField(ctx, fctx, target.expression, target.name.text);
-  if (!f || !f.mutable) return undefined;
+  if (!f) return undefined;
+  if (!f.mutable) {
+    // (#4405 Phase 0) An immutable slot cannot take `struct.set` — the write
+    // falls back to the dispatcher. Unnamed until now, and load-bearing for
+    // Phase 3: a write-side emitter inherits exactly this carve-out.
+    noteReceiverSpec(`write-immutable:${target.name.text}`);
+    return undefined;
+  }
   const accessType = ctx.checker.getTypeAtLocation(target);
-  if (accessType.getCallSignatures && accessType.getCallSignatures().length > 0) return undefined;
+  if (accessType.getCallSignatures && accessType.getCallSignatures().length > 0) {
+    noteReceiverSpec(`write-callsig:${target.name.text}`);
+    return undefined;
+  }
   return f;
 }
 
@@ -1525,7 +1558,10 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
   // (`this.state.pos`) needs the S2 read lowering to type the intermediate, and
   // an arbitrary call receiver would have to be spilled to a temp to keep the
   // evaluate-once contract — both are separate slices.
-  if (!ts.isIdentifier(receiver)) return undefined;
+  if (!ts.isIdentifier(receiver)) {
+    noteReceiverNotIdentifier(receiver); // (#4405 Phase 0)
+    return undefined;
+  }
 
   const sf = receiver.getSourceFile();
   if (sf === undefined) return undefined;
@@ -1551,6 +1587,8 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
   // keeps `this` resolvable, though this path never asks about `this`.
   const enclosing = fctx.typedThisStructName?.slice("__fnctor_".length);
   const verdict = receiverClassOf(result, receiver, enclosing);
+  // (#4405 Phase 0) Attribute every refusal to the pass that produced it.
+  if (verdict === undefined) noteReceiverDeclineDetail(result, receiver);
   if (process.env.JS2WASM_PROVEN_FIELDS_DEBUG === "1") {
     console.error(
       `[proven-fields] receiver ${receiver.getText()} -> ${verdict ?? "(unproven)"}` +
