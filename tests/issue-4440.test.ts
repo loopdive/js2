@@ -229,24 +229,24 @@ describe("#4440 — `new Function` with a non-string argument", () => {
     ).toBe(5);
   });
 
-  it("PINS the known cost of the fold: `f.constructor` is still unimplemented", async () => {
-    // The fold's one measured regression, pinned deliberately so it cannot be
-    // "fixed" silently or forgotten. §20.2.3.1 says every function object's
-    // `constructor` is `%Function%`; this compiler has no `.constructor` arm for
-    // a function-valued receiver at all, so an AOT-compiled closure answers
-    // `undefined`. That gap is PRE-EXISTING — A/B'd identical on the pre-#4437
-    // tree (`09ecad8`), where `built-ins/Function/S15.3.2.1_A1_T6` and `_A3_T15`
-    // already fail with the same message — but the `null`-body fold moves
-    // `S15.3.2.1_A1_T10` off the runtime-eval tier (which DOES answer
-    // `constructor`) and onto the AOT path, so that one file regresses in
-    // exchange for the six `S15.3.5.1_A2/_A3` files.
+  it("R6 LANDED (#4442): `f.constructor` is `%Function%`, not `undefined`", async () => {
+    // This pin used to assert `g.constructor === undefined`, with the note that
+    // it "flips to `=== Function` when the `%Function%` carrier lands (see R6)".
+    // #4442 landed it, so this is that flip — kept as a pin in THIS file so the
+    // fold's cost cannot silently come back.
     //
-    // When the `%Function%` carrier lands (see R6 on the issue), this assertion
-    // flips to `=== Function` and A1_T10 comes back.
+    // It asserts the carrier's SHAPE rather than `=== Function` because
+    // `runStandalone` instantiates against an EMPTY import object: writing the
+    // bare `Function` identifier here would make the module provider-linked
+    // (an `intrinsic-value` boundary site) and it would no longer be host-free.
+    // That is not a workaround — it is the whole point of #4442's split, and
+    // the `=== Function` identity is pinned in `tests/issue-4442.test.ts`,
+    // which runs the linked kind through the real provider seam.
     expect(
       await runStandalone(`
         function g(a, b) {}
-        return g.constructor === undefined ? 1 : 0;`),
+        var c = g.constructor;
+        return (c !== undefined && c.name === "Function" && c.length === 1) ? 1 : 0;`),
     ).toBe(1);
   });
 
