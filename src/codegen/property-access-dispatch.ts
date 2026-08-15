@@ -180,6 +180,7 @@ import {
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
+import { tryEmitFunctionValueConstructorRead } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
@@ -429,6 +430,11 @@ export function tryConstructorPrototypeIdentity(
       if (ctorIdn !== undefined) return ctorIdn;
     }
   }
+
+  // (#4442) `<fn>.constructor` → `%Function%` (§20.2.3.1); the arm and the
+  // emitter the bare `Function` read shares live in function-intrinsic-carrier.ts.
+  const fnValueCtor = tryEmitFunctionValueConstructorRead(ctx, fctx, expr, propName, objType);
+  if (fnValueCtor !== undefined) return fnValueCtor;
 
   // (#3006) Standalone `<Builtin>.prototype.constructor` / `<instance>.constructor`
   // → the GENUINE, identity-stable reified builtin-constructor object (supersedes
