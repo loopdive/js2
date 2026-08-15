@@ -70,6 +70,13 @@
  *    way; `fib-recursive` (self-recursive, already declined) and `string-hash`
  *    (not a leaf) were untouched, which is what identified the rule.
  *
+ *    **Rule 5 gates `loop-leaf` only, NOT the `hot` rule** of entry (48), even
+ *    though `hot` is the same frequency-rule shape and would readmit exactly
+ *    this callee (the landing `fib` kernel clears `hotMax` comfortably). `hot`
+ *    is flag-gated OFF and still being measured; narrowing another lane's
+ *    in-flight experiment would invalidate its numbers. Whoever flips it on
+ *    owns deciding whether a loop-carrying callee belongs under it.
+ *
  * ## Correctness — what is proven and what is declined
  *
  * Inlining at the wasm level rewrites three things, and a wrong answer on any
@@ -148,6 +155,7 @@
  *   JS2WASM_IR_INLINE=report                  analyse + print, mutate NOTHING
  *   JS2WASM_IR_INLINE=on                      adapters + single-caller + loop-leaf
  *   JS2WASM_IR_INLINE=adapters,single,loop    pick rules individually
+ *   JS2WASM_IR_INLINE=on,hot,hotmax=N         + the hot non-leaf rule (entry 48)
  *   JS2WASM_IR_INLINE=on,count                + runtime site-execution counter
  *   JS2WASM_IR_INLINE=on,poison               + perturb every inlined result
  *   ...,maxsize=N  ...,growth=N  ...,verbose
@@ -181,6 +189,16 @@ export interface InlineOptions {
   single: boolean;
   /** Small loop-free leaf callees whose site sits inside a loop (rules 1 + 5). */
   loop: boolean;
+  /**
+   * (#4157 entry 48) Small HOT callees regardless of caller count or leaf-ness
+   * — the `no-rule` hole: 72 % of all declines are small multi-caller non-leaf
+   * helpers (`__str_equals` 2.7k sites, `__unbox_number` 1.8k, `__is_truthy`
+   * 1.7k …) that `single` (needs callerCount == 1) and `loop` (needs a
+   * call-free body) structurally cannot admit. Calls inside the copied body
+   * stay calls — one pass never chains — so the only new risk is size, which
+   * `hotMax` × the shared growth cap bound. OFF by default; measure first.
+   */
+  hot: boolean;
   /** Rule 2 — accept whenever the SPECIALISED size is <= the call site's cost. */
   specialise: boolean;
   /** Runtime counter global, incremented once per executed inlined body. */
@@ -201,6 +219,8 @@ export interface InlineOptions {
   singleMax: number;
   /** Instruction ceiling for a loop-body leaf callee. */
   loopMax: number;
+  /** Instruction ceiling for a hot non-leaf callee (`hot` rule). */
+  hotMax: number;
   /** Whole-module ceiling on net instructions added. */
   growth: number;
   verbose: boolean;
@@ -215,8 +235,10 @@ const DEFAULTS: InlineOptions = {
   specialise: false,
   count: false,
   poison: "off",
+  hot: false,
   singleMax: 400,
   loopMax: 60,
+  hotMax: 60,
   growth: 400_000,
   verbose: false,
 };
@@ -255,6 +277,7 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
       if (!Number.isFinite(v)) continue;
       if (k === "maxsize" || k === "singlemax") o.singleMax = v;
       else if (k === "loopmax") o.loopMax = v;
+      else if (k === "hotmax") o.hotMax = v;
       else if (k === "growth") o.growth = v;
       continue;
     }
@@ -281,6 +304,12 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
       case "loop":
         o.enabled = true;
         o.loop = true;
+        break;
+      case "hot":
+        // NOT part of the `on` preset (yet) — a candidate rule under
+        // measurement. `JS2WASM_IR_INLINE=on,hot` composes it with the preset.
+        o.enabled = true;
+        o.hot = true;
         break;
       case "specialise":
       case "specialize":
@@ -960,25 +989,40 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         // A hotter site earns a larger body budget — one extra `loopMax` per
         // decade of estimated frequency.
         const loopBudget = opts.loopMax * Math.max(1, Math.log10(weight));
+        // Everything the loop-leaf rule asks EXCEPT rule 5, so the near-miss
+        // below can name the one callee the rule turned away on cost grounds.
+        const loopLeafFits = opts.loop && weight >= LOOP_WEIGHT && isLeaf && effSize <= loopBudget;
 
         let rule: string | null = null;
         if (opts.adapters && isAdapter(callee.name)) rule = "adapter";
         else if (opts.specialise && specSize <= siteCost) rule = "specialised";
         else if (opts.single && callerCount[cp] === 1 && !addressTaken[cp] && effSize <= opts.singleMax)
           rule = "single-caller";
-        else if (opts.loop && weight >= LOOP_WEIGHT && isLeaf && !facts.loops && effSize <= loopBudget)
-          rule = "loop-leaf";
+        else if (loopLeafFits && !facts.loops) rule = "loop-leaf";
+        // (#4157 entry 48) `hot` — the no-rule hole. Same hotness bar and
+        // weight-scaled budget as loop-leaf, but caller count and leaf-ness do
+        // not gate: nested calls in the copy stay calls (no chaining in one
+        // pass), and multi-caller only means the body is copied at more than
+        // one site, which is exactly what the growth cap is for.
+        // Rule 5 deliberately does NOT gate this one — see the module header.
+        else if (opts.hot && weight >= LOOP_WEIGHT && effSize <= opts.hotMax * Math.max(1, Math.log10(weight)))
+          rule = "hot";
 
         if (!rule) {
-          // Report the loop-leaf near-miss under its own name: "no-rule" would
-          // hide the one decline whose CAUSE is a cost-model judgement rather
-          // than a missing rule, and this bucket is how a future retune finds
-          // out what rule 5 is actually costing.
-          const nearMiss =
-            opts.loop && weight >= LOOP_WEIGHT && isLeaf && facts.loops && effSize <= loopBudget
-              ? "loop-in-callee"
-              : "no-rule";
-          declined(callee.name, nearMiss);
+          // Rule 5's near-miss gets its own name: "no-rule" would hide the one
+          // decline whose CAUSE is a cost-model judgement rather than a missing
+          // rule, and this bucket is how a future retune prices it.
+          const reason = loopLeafFits && facts.loops ? "loop-in-callee" : "no-rule";
+          // Verbose: carry the per-callee facts in the key — they are
+          // per-callee constants, so identical strings aggregate and the
+          // report shows WHY each hot candidate missed every rule.
+          if (opts.verbose)
+            bump(
+              stats.declinedCallees,
+              `${callee.name} ${reason} eff=${effSize} leaf=${isLeaf ? 1 : 0} callers=${callerCount[cp]}`,
+            );
+          bump(stats.declines, reason);
+          bump(stats.declines, `${calleeFamily(callee.name)}:${reason}`);
           continue;
         }
         if (growth + rawSize > opts.growth) {
