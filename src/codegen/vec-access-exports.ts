@@ -668,7 +668,7 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         },
         ...boxInstrs,
       ];
-      const thenBranch = guardVecElementRead(vecTypeIdx, elementRead, oobUndefinedInstrs);
+      const thenBranch = guardVecElementRead(vecTypeIdx, arrTypeIdx, elementRead, oobUndefinedInstrs);
       current = [
         { op: "local.get", index: 2 },
         { op: "ref.test", typeIdx: vecTypeIdx },
