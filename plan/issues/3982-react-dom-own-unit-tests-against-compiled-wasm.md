@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-13
+updated: 2026-08-15
 priority: high
 horizon: m
 feasibility: medium
@@ -248,6 +248,52 @@ parameter back to the inferred fiber representation and insert the generic
 dynamic-to-typed nullable narrowing at the producer/call boundary. Keep Wasm
 validation authoritative; coercing the signature or suppressing the error
 would only hide an invalid module.
+
+## Current checkpoint (2026-08-14)
+
+The client-only published implementation (React plus the shared and client
+react-dom CJS modules) now compiles and validates as Wasm. The bounded run used
+the unchanged upstream extractor and admitted 1,261 of 2,003 tests; 681 tests
+that reference `ReactDOMServer` are retained in the report with the explicit
+`needs-react-dom-server` reason. The server renderer is a separate CJS graph and
+still produces an invalid WasmGC type graph when concatenated into this lane,
+so those tests are deferred rather than counted as client implementation
+failures. The harness also now preserves upstream `const` bindings and reports
+the two-module client result without a false setup error.
+
+The bounded client probe now instantiates and executes one original test. It
+reaches ReactDOM's client renderer but fails in the constructor bridge with
+`[object Object] is not a constructor`; this is a runtime/compiler boundary
+finding, not a Wasm validation failure. A full pass-rate claim is not made
+until that constructor value is preserved and the server-renderer slice has its
+own valid module path.
+
+## Capture-continuation checkpoint (2026-08-15)
+
+The constructor-capture fix is now on the draft follow-up. It preserves
+immutable boxed captures across lifted closure frames and lazily materializes
+nullable cells from their raw binding before a conditional closure is called.
+The client module remains valid Wasm, but the first admitted upstream probe now
+reaches a separate null-cell dereference in the generated constructor closure.
+The follow-up therefore stays draft until that runtime path is fixed; this
+checkpoint intentionally records the remaining failure instead of claiming a
+pass-rate improvement.
+
+## Project-module checkpoint (2026-08-15)
+
+Draft PR [#4507](https://github.com/loopdive/js2wasm/pull/4507) now compiles
+React, the shared client module, and the scheduler as separate project files
+in a killable worker. The adapter gives each published CommonJS export carrier
+a unique top-level name; this avoids the multi-file `exports`/`default` name
+collision that previously made imported React internals empty. It also installs
+the same jsdom globals in the worker and defers module initialization until the
+Wasm instance is wired.
+
+The client graph now validates and initializes as Wasm. The first unchanged
+upstream probe reaches the renderer and reports the next real runtime finding:
+`Cannot create property 'stateNode' on boolean 'false'`. This is recorded as a
+behavioral compiler/runtime gap, not a compile or Wasm-validation failure; the
+PR remains draft until that path is addressed.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 

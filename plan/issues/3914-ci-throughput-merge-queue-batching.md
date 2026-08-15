@@ -485,15 +485,65 @@ that converts directly into queue throughput.
       the speculation guard and `tests/issue-3914-merge-queue-config.test.ts`.
       `docs/ci-policy.md` §3 records the canonical values, why the two knobs
       differ, and why a tail append never ejects a running group.
-- [ ] **Follow-up (needs an admin-scoped `gh` — the only remaining step):**
-      run `./scripts/set-merge-queue-config.sh` (cap 5, floor 1, build 1) and
-      observe one backed-up window. Only if groups stay size-1, Step 2:
-      `MIN_ENTRIES_TO_MERGE=2` with a 2-minute wait timer. Rollback is
-      `MAX_ENTRIES_TO_MERGE=1 ./scripts/set-merge-queue-config.sh`; no code
-      revert, since every code change here is a no-op at batch size 1.
+- [x] **Follow-up — DONE, with a negative result (see "Step 1+2 result"
+      below):** Step 1 (cap 5) applied, groups stayed size 1; Step 2 (floor 2,
+      5-min timer) applied 2026-08-14T18:16Z, groups **still** stayed size 1
+      (29/29 on 2026-08-15). Root cause: GitHub merge limits do not combine
+      `merge_group` builds at all — the premise of Part 2 was wrong.
+- [ ] **Revert the floor to 1** (`MIN_ENTRIES_TO_MERGE=1
+      ./scripts/set-merge-queue-config.sh`, needs repo-admin `gh`/PAT — the
+      script's default is 1 again, so a bare run applies it). The floor-2
+      config batches nothing and taxes quiet-queue docs-only merges with up
+      to ~3 min of wait-timer latency.
 - [ ] **Verify after merge:** on the first post-merge `merge_group` run, confirm
       (a) max shard start < 60 s, (b) both lanes' max job within ~1 min,
       (c) `changes` job < 20 s, (d) total run wall ≈ 11 min.
+
+## Step 1+2 result (2026-08-15) — the floor is a no-op; Part 2's premise was wrong
+
+Step 2 went live 2026-08-14T18:16Z (ruleset 16700772: `min_entries_to_merge: 2`,
+`min_entries_to_merge_wait_minutes: 5`, cap 5, build 1, HEADGREEN). Measured the
+next day, 03:23–13:34Z: **29/29 successful `merge_group` runs carried exactly
+one PR** (counted as merge commits in each queue ref's `base..head`), one full
+shard-matrix run each, PRs merging one at a time ~15 min apart. Decisive
+counterexample: entries for #4557/#4558/#4559 were all stacked in the queue by
+12:44Z (their queue merge commits are dated 12:39:40/12:44:21/12:44:42Z) and
+still consumed three separate full runs, merging at 13:18/13:34/13:49Z.
+
+Why, in two layers:
+
+1. **The wait timer can never survive a busy queue.** It counts from queue
+   entry, and GitHub's documented behavior is that after it elapses the queue
+   "stop[s] waiting for more entries and merge[s] with fewer than the minimum".
+   The head's queue wait under load is ≥ one ~15-min run, so a 5-min timer is
+   always expired by merge-decision time and the floor is permanently waived.
+2. **The deeper one: GitHub merge limits do not combine `merge_group` builds —
+   period.** Every queued PR always gets its own temporary branch and its own
+   full CI run; `min`/`max_entries_to_merge` only group the final fast-forward
+   of entries that have each already passed their own run (GitHub community
+   discussion #58523 confirms; today's runs demonstrate). "N PRs validated by
+   one 102-job run" — the whole Part 2 design goal — **does not exist as a mode
+   of GitHub's native merge queue.** Even with a timer long enough to bind, a
+   ≥2 merge needs ≥2 simultaneously-green entries, which `max_entries_to_build:
+   1` precludes: the next entry's run is dispatched ~2 s *after* the head
+   merges (observed on every pair today).
+
+Consequences:
+
+- Floor reverted to 1 (it batches nothing and adds up to timer-minutes of
+  latency to quiet-queue docs-only merges, which go green inside the timer).
+  Cap 5 / build 1 unchanged. `docs/ci-policy.md` §3 and
+  `set-merge-queue-config.sh` corrected — the script's refusal message itself
+  repeated the "one group, one run" claim.
+- The P1/P2/P3 multi-member-group hardening stays: multi-PR groups can still
+  occur as merged *prefixes* (e.g. if speculation were ever re-enabled) and the
+  fixes are no-ops at size 1.
+- Real per-run amortisation, if ever wanted, means leaving the native queue:
+  a batch-building queue product (Mergify-style) or a bot-maintained train PR
+  (combine N green PRs into one PR, enqueue that). Both are project-lead
+  decisions with their own failure modes; neither is a ruleset flip. The
+  cheaper lever that remains inside this repo is cutting per-run cost (Part 3
+  landed −17 %; L3/L4 in `plan/ci-acceleration-review.md` remain the big one).
 
 ## Notes / non-goals
 

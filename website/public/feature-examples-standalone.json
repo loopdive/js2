@@ -52,7 +52,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 37,
+      "passCount": 42,
       "totalCount": 59
     },
     {
@@ -64,7 +64,7 @@
     {
       "name": "Comma operator",
       "testCategories": ["language/expressions/comma"],
-      "passCount": 5,
+      "passCount": 6,
       "totalCount": 6
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 525,
+      "passCount": 537,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 917,
+      "passCount": 905,
       "totalCount": 1177
     },
     {
@@ -126,7 +126,7 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 613,
+      "passCount": 615,
       "totalCount": 699
     },
     {
@@ -144,19 +144,19 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3939,
+      "passCount": 3946,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1002,
+      "passCount": 1005,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 610,
+      "passCount": 612,
       "totalCount": 667
     },
     {
@@ -179,13 +179,13 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1776,
+      "passCount": 1787,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1593,
+      "passCount": 1594,
       "totalCount": 1896
     },
     {
@@ -197,13 +197,13 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1068,
+      "passCount": 1070,
       "totalCount": 1131
     },
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 350,
+      "passCount": 351,
       "totalCount": 440
     },
     {
@@ -215,7 +215,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 3618,
+      "passCount": 3629,
       "totalCount": 4290
     },
     {
@@ -227,7 +227,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1329,
+      "passCount": 1334,
       "totalCount": 1552
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1749,
+      "passCount": 1763,
       "totalCount": 2486
     },
     {
@@ -263,7 +263,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 319,
+      "passCount": 321,
       "totalCount": 461
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2593,
+      "passCount": 2599,
       "totalCount": 3812
     },
     {
@@ -504,7 +504,7 @@
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 113,
+      "passCount": 114,
       "totalCount": 393
     },
     {
@@ -528,7 +528,7 @@
     {
       "name": "Array.fromAsync",
       "testCategories": [],
-      "passCount": 11,
+      "passCount": 12,
       "totalCount": 95
     },
     {
@@ -540,7 +540,7 @@
     {
       "name": "Iterator sequencing (Iterator.concat)",
       "testCategories": [],
-      "passCount": 10,
+      "passCount": 11,
       "totalCount": 32
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 157,
+      "passCount": 161,
       "totalCount": 178
     },
     {

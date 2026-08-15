@@ -811,24 +811,14 @@ function compileObjectLiteralWithAccessors(
       // Compile spread source and call __object_assign(target, [source])
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        // (#3222 C1) In standalone/WASI, a spread source whose STATIC type is a
-        // closed-shape struct (`{...typedObj}`) would otherwise be reinterpreted
-        // as an externref via `coerceType` and handed to `__object_assign`, whose
-        // native enumeration walks only the open-`$Object` hash — so it copies
-        // NOTHING (the struct fields are invisible to `__object_keys`). Instead
-        // materialize the struct into a real open `$Object` first (own-enumerable
-        // fields only) so `__object_assign` enumerates and copies them correctly.
-        // Host/gc lanes keep the byte-identical `extern.convert_any` + host
-        // `__object_assign` (host reflection reads closed structs already).
-        //
-        // Gated on the native provider: this handler's array-builder and
-        // `__object_assign` merge below use `$ObjVec`, while compatibility mode
-        // retains the `__js_array_new` host import. Materialize the closed struct
-        // only where the whole downstream path remains native. (The
-        // object-REST fix IS `standalone || wasi` — its `__extern_rest_object`
-        // downstream is native in both.)
+        // A spread source whose STATIC type is a closed-shape struct
+        // (`{...typedObj}`) must be materialized into a real open `$Object`
+        // before `__object_assign`.  Reinterpreting the struct with
+        // `extern.convert_any` leaves its GC fields invisible to the dynamic
+        // own-key walk, so inherited fields (notably Marked's rule tables) are
+        // silently lost.  This applies to the JS-host and native providers;
+        // both consume the same open-object representation here.
         const spreadStructIdx =
-          ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&
           typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
           ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
@@ -1257,43 +1247,79 @@ export function _hasRuntimeComputedKey(ctx: CodegenContext, expr: ts.ObjectLiter
   return false;
 }
 
+function isModuleGlobalHostSpreadIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ts.isIdentifier(expression)) return false;
+  return ctx.hostSpreadObjectGlobals.has(expression.text);
+}
+
+function isModuleGlobalObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
+  const declaration = expr.parent;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || declaration.initializer !== expr) return false;
+  const list = declaration.parent;
+  const statement = list.parent;
+  return ts.isVariableDeclarationList(list) && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
+}
+
 /**
- * (#2714 / #2804) True when a spread-containing object literal must be built via
- * the host plain-object (`$Object`/externref) path rather than a closed struct,
- * because its evaluation context does not pin a CONCRETE object SHAPE the struct
- * path could faithfully build/enumerate: `any` / `unknown` / `object`, NO
- * contextual type at all, or a shapeless object type with zero own properties
- * (e.g. the `object` param of `Object.keys`).
- *
- * This is the single source of truth for the routing decision below AND for the
- * variable-declaration local typing (statements/variables.ts, index.ts var
- * hoist). Keeping them in lockstep is what fixes #2804: `const b = { ...a, z: 3 }`
- * (no annotation) has NO contextual type, so the literal takes the host path —
- * but the receiving variable's INFERRED type is a concrete struct `{x;y;z}`, so
- * without this shared predicate the local was typed as that struct while the
- * initializer produced a host `$Object`, and the externref→struct coercion
- * (ref.test/ref.cast) failed at runtime → `b.x` read NaN / null. The variable
- * sites consult this predicate and force an externref local so the local
- * representation matches the host-object value (and `b.x` routes through
- * `__extern_get`, preserving the spread's insertion-order keys + values, which
- * the struct path cannot — its field order follows TS's own-prop-first inferred
- * type, not the runtime CopyDataProperties insertion order).
- *
- * A CONCRETE annotated target (`const x: { a: number } = { ...o }`, ≥1 property)
- * has a specific contextual type → returns false → keeps the struct path so
- * typed consumers still receive a struct (#2714 control).
+ * Read a host/open object into a closed struct when it is used as a field of
+ * another closed literal.  This keeps the containing value on the fast static
+ * field path without forcing the entire module-level object graph onto the
+ * dynamic host dispatcher.  The source remains an open object for callers
+ * that need its runtime key set; only this typed field receives a snapshot of
+ * the fields its consumer declares.
  */
+function compileHostObjectAsStruct(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+  target: ValType,
+): ValType | null {
+  if (target.kind !== "ref" && target.kind !== "ref_null") return null;
+  const typeIdx = target.typeIdx;
+  const typeName = ctx.typeIdxToStructName.get(typeIdx);
+  const fields = typeName === undefined ? undefined : ctx.structFields.get(typeName);
+  if (!fields || fields.length === 0) return null;
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  if (getIdx === undefined) return null;
+  flushLateImportShifts(ctx, fctx);
+  const finalGetIdx = ctx.funcMap.get("__extern_get") ?? getIdx;
+  const sourceLocal = allocTempLocal(fctx, { kind: "externref" });
+  const sourceType = compileExpression(ctx, fctx, expression, { kind: "externref" });
+  if (!sourceType) return null;
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+  for (const field of fields) {
+    fctx.body.push({ op: "local.get", index: sourceLocal });
+    addStringConstantGlobal(ctx, field.name);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, field.name));
+    fctx.body.push({ op: "call", funcIdx: finalGetIdx });
+    coerceType(ctx, fctx, { kind: "externref" }, field.type);
+  }
+  fctx.body.push({ op: "struct.new", typeIdx });
+  releaseTempLocal(fctx, sourceLocal);
+  return { kind: "ref", typeIdx };
+}
+
 export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (expr.properties.length === 0) return false;
   if (!expr.properties.some((p) => ts.isSpreadAssignment(p))) return false;
   const spreadCtxType = ctx.checker.getContextualType(expr);
-  return (
+  const nonSpecificContext =
     !spreadCtxType ||
     (spreadCtxType.flags & ts.TypeFlags.Any) !== 0 ||
     (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
     (spreadCtxType.flags & ts.TypeFlags.NonPrimitive) !== 0 ||
-    spreadCtxType.getProperties().length === 0
-  );
+    spreadCtxType.getProperties().length === 0;
+  if (!nonSpecificContext) {
+    // A concrete context still owns a closed shape. The nested carrier is only
+    // needed for shapeless module globals, just like a direct spread.
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -2397,6 +2423,7 @@ export function compileObjectLiteralForStruct(
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
     return null;
   }
+  const mayHaveModuleHostSpreadField = isModuleGlobalObjectLiteral(expr);
 
   // Check if there are any spread assignments — if so, compile spread sources into locals.
   // (#2009 R3) `propIndex` records each spread's position in `expr.properties` so the
@@ -2777,7 +2804,16 @@ export function compileObjectLiteralForStruct(
       // actually be compiled for THIS literal, not a sibling literal's body.
       const methodFuncIdx = literalMethodFuncIdx.get(field.name) ?? ctx.funcMap.get(methodFullName);
       if (methodFuncIdx !== undefined) {
-        const closureType = emitObjectMethodAsClosure(ctx, fctx, methodFullName, methodFuncIdx, structTypeIdx);
+        // (#4440) `methodProp` is the object-literal member itself — pass it so
+        // the closure carries §15.1.5 `length` / §10.2.9 `name` metadata.
+        const closureType = emitObjectMethodAsClosure(
+          ctx,
+          fctx,
+          methodFullName,
+          methodFuncIdx,
+          structTypeIdx,
+          methodProp,
+        );
         if (closureType) {
           // (#1989) Method-shorthand `valueOf`/`toString` now store a
           // per-instance closure in the eqref field (each literal owns a
@@ -2834,7 +2870,10 @@ export function compileObjectLiteralForStruct(
     if (prop && ts.isPropertyAssignment(prop)) {
       // Track closure types for valueOf/toString fields
       const bodyLenBefore = fctx.body.length;
-      compileExpression(ctx, fctx, prop.initializer, field.type);
+      const hostFieldValue = mayHaveModuleHostSpreadField && isModuleGlobalHostSpreadIdentifier(ctx, prop.initializer);
+      if (!hostFieldValue || compileHostObjectAsStruct(ctx, fctx, prop.initializer, field.type) === null) {
+        compileExpression(ctx, fctx, prop.initializer, field.type);
+      }
       trackToPrimitiveClosureTypes(ctx, fctx, typeName, field, bodyLenBefore);
     } else if (shorthandProp && ts.isShorthandPropertyAssignment(shorthandProp)) {
       // Shorthand { x } means the value is the identifier x — compile it.
@@ -5110,6 +5149,25 @@ export function compileArrayConstructorCall(
   }
 
   if (args.length === 1) {
+    // §23.1.1.1 step 5: a single NON-Number argument is an element, not a
+    // length — `Array(null)` / `Array("1")` / `Array(new Number(0))` build the
+    // one-element array `[arg]` (test262 S15.4.2.2_A2.3_T1–T4; the call and
+    // `new` forms behave identically). Provably-non-number args (static tag ≠
+    // number) take this path; `mixed` (any-typed) keeps length behavior.
+    const argTag = ctx.oracle.staticJsTypeOf(args[0]!);
+    if (argTag !== "number" && argTag !== "mixed" && !ts.isSpreadElement(args[0]!)) {
+      const oneVecIdx =
+        elemWasm.kind === "externref" ? vecTypeIdx : getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+      const oneArrIdx = getArrTypeIdxFromVec(ctx, oneVecIdx);
+      compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
+      fctx.body.push({ op: "array.new_fixed", typeIdx: oneArrIdx, length: 1 });
+      const oneData = allocLocal(fctx, `__arr_data_${fctx.locals.length}`, { kind: "ref", typeIdx: oneArrIdx });
+      fctx.body.push({ op: "local.set", index: oneData });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "local.get", index: oneData });
+      fctx.body.push({ op: "struct.new", typeIdx: oneVecIdx });
+      return { kind: "ref_null", typeIdx: oneVecIdx };
+    }
     // Array(n) → sparse array of length n with default values.
     // #2000 — §23.1.1.1 step 4.b: when the single argument is a Number it is a
     // length, and `len !== ToUint32(len)` must throw a RangeError ("Invalid

@@ -44,14 +44,30 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - ⚠ **Check what `origin` IS first — in some checkouts (including agent worktrees of `/workspace`) `origin` is the FORK, whose `main` has diverged from upstream.** Branching from fork-main silently bundles unrelated fork-side commits into your PR, invisible until a conflict forces a look (bit a dev 2026-08-02: 18-file PR, 16 unintended). When in doubt: `git fetch upstream && git worktree add … upstream/main`, and verify with `git merge-base --is-ancestor upstream/main <your-base>` reasoning — the authoritative base is **upstream**, whatever the remote is named.
 - **Branch base — `origin/main`, never the merge-queue tip (#2522)**: for independent work, branch from `origin/main`, then `git merge origin/main` again right before enqueue — that catch-up rebases the work onto future-main but incorporates only PRs that _actually landed_. Do **not** branch from a `gh-readonly-queue/main/pr-N-<sha>` tip or otherwise base work on the queue's _speculative_ end-state: queued PRs eject, and a base built on an ejected PR carries phantom commits that force a rebase (forbidden — public main is append-only). **Exception — known dependency (explicit predecessor-stacking)**: when a new task is known to depend on / heavily overlap a specific in-flight PR, branch from _that PR's real branch_ (durable, not the ephemeral queue ref) and enqueue only after the predecessor lands; re-merge it if it changes. The inter-PR conflict rate is a queue-_speculation_ lever (`max_entries_to_build > 1`, re-raise once runner capacity from #2519 allows), not a dev-branch-base lever.
 - **Push safety**: `.git/config` sets `push.default=current` — `git push` always pushes to the remote branch matching the local branch name, regardless of upstream tracking. This prevents the `git worktree add -b <branch> origin/main` trap where the inherited tracking ref routes pushes to origin/main.
-- **NEVER use `git stash` in a worktree — `refs/stash` is a SINGLE SHARED STACK across every worktree of the repo.** It lives in the common `.git` dir, not per-worktree, so with agents running in parallel it is an interleaved free-for-all: your `git stash pop` takes whatever entry is on top, which is very likely **another agent's**, and drops it from the stack. This is not theoretical — on 2026-07-31 two agents popped each other's stashes within minutes, losing 546 lines of `native-strings-rewrite.ts` and 240 lines of `src/runtime.ts`. Both were recoverable only as dangling commits.
-  - **Instead, for a revert-and-measure (A/B) cycle, use file copies:**
+- **`git stash` is safe ONLY when you are provably the only one working in this clone — `refs/stash` is a SINGLE SHARED STACK across every worktree of the repo.** It lives in the common `.git` dir, not per-worktree, so with agents running in parallel it is an interleaved free-for-all: your `git stash pop` takes whatever entry is on top, which is very likely **another agent's**, and drops it from the stack. This is not theoretical — on 2026-07-31 two agents popped each other's stashes within minutes, losing 546 lines of `native-strings-rewrite.ts` and 240 lines of `src/runtime.ts`. Both were recoverable only as dangling commits.
+  - **When you MAY use it (2026-08-14):** you are the sole agent in your own worktree, or you are on the main working copy and no other agent is working in it. A solo session — one agent, no teammates spawned, no other worktrees active — is the ordinary case for this, and there `git stash` is an ordinary tool.
+  - **How to establish "alone" — check, do not assume.** `git worktree list` shows every worktree sharing this stack; `git stash list` shows entries you did not create. If either says someone else is here, use file copies. The hazard is *concurrency*, not the command.
+  - **Still prefer file copies for a revert-and-measure (A/B) cycle** even when alone: the copies survive a crash, can be diffed, and let you flip back and forth without touching shared refs at all.
+  - **The file-copy A/B pattern:**
     ```bash
     cp src/foo.ts .tmp/new.ts
     git show HEAD:src/foo.ts > .tmp/base.ts
     cp .tmp/base.ts src/foo.ts    # measure baseline
     cp .tmp/new.ts  src/foo.ts    # restore
     ```
+  - **Capture `.tmp/base.ts` at the FIRST edit — the measurement rationale is
+    stronger than the stash-safety one (2026-08-15, #2916/#4433 cross-audit).**
+    Of ~11 documentation corrections across those two issues, the large
+    majority were ONE defect: a figure inherited from an artifact (stale
+    baseline, stale skip list, unjustified scan filter, never-run lane),
+    restated as a measurement — and the skips tracked PRICE, not care: the
+    before-state check that got run cost one `cp`, the one that got skipped
+    cost a corpus compile, with a plausible artifact offering a free answer
+    exactly where measuring cost most. Capturing the revert copy up front
+    makes every later base run one `cp` away, so "measure the before-state
+    yourself" stops being a decision. Corollary: when you quote a number, name
+    the artifact it came from and when that artifact was made; a delta claimed
+    without a base run you executed is attribution, not measurement.
   - **Recovery if it already happened**: `git fsck --unreachable | grep commit`, then `git log -1 --format=%s <sha>` on each — a stash entry's message is `WIP on worktree-agent-<id>`, which identifies the **owner** unambiguously. Restore with `git checkout <sha> -- <paths>`. Tell the lead so the commit can be pinned (`git update-ref refs/recovered/<name> <sha>`) before garbage collection takes it; unreachable objects are collectable.
   - The hazard is **worse than it looks** because the failure is silent and delayed: `pop` succeeds, you keep working, and you only notice when the file you expected is someone else's. The victim usually suspects their own change first.
 - **Worktree cleanup after merge**: after a dev self-merges their PR, they remove their own worktree (`git worktree remove /workspace/.claude/worktrees/<branch>`) before claiming the next task. Tech-lead only removes worktrees for suspended or abandoned branches.
@@ -190,7 +206,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - `language/import/import-defer/` (proposal, no harness)
   - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
   - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
-  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+  - one **feature** skip only: `IsHTMLDDA`. (`top-level-await` was listed here
+    until 2026-08-15 but is NOT skipped — `shouldSkip` has no such branch;
+    `tests/test262-runner.ts` ~L3269 explicitly HANDLES those files via the
+    #1612 synchronous TLA wrapper, so they run and count. The stale line
+    nearly caused 4 real regressions to be dismissed as "CI skips these"
+    during #4433.)
 
   **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
   **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures
@@ -327,6 +348,12 @@ rejection breakdown.
 - `--nativeStrings` — use WasmGC i16 arrays instead of wasm:js-string (auto for WASI)
 
 ## Team & Workflow
+
+**Plan/implement split (project-lead order, 2026-08-15): every issue gets an
+`## Implementation Plan` written by the Fable lane before implementation, and
+the implementation itself is done by an Opus subagent working from that plan.**
+Fable writes plans (measurements, exact functions/files, order-preservation
+constraints, acceptance criteria); Opus implements and validates against them.
 
 See [plan/method/team-setup.md](plan/method/team-setup.md) for full team config, roles, memory budget, communication protocol, and merge lessons. Agent preferences and rules are in `.claude/memory/` (MEMORY.md index).
 
@@ -656,7 +683,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,369 / 43,621 (74.2 %)
+**test262 conformance**: 32,380 / 43,621 (74.2 %)
 
 <!-- AUTO:conformance-end -->
 

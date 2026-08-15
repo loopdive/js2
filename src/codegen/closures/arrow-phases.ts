@@ -32,11 +32,15 @@ import {
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
-import { emitBoundsCheckedArrayGet } from "../shared.js";
+import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+// (#4437) per-declaration `name` / §15.1.5 `length` carrier
+import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
+// (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
+import { fnMetaSlotForMemberDecl } from "../function-instance-meta-methods.js";
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -691,9 +695,35 @@ export function mintClosureStructTypes(
     closureName: string;
     isNamedFuncExpr: boolean;
     constructible: boolean;
+    /** (#4437) The arrow / function expression itself, for the `$fnmeta` slot. */
+    decl?: ts.Node;
   },
-): { structTypeIdx: number; liftedFuncTypeIdx: number; liftedSelfTypeIdx: number; liftedParams: ValType[] } {
+): {
+  structTypeIdx: number;
+  liftedFuncTypeIdx: number;
+  liftedSelfTypeIdx: number;
+  liftedParams: ValType[];
+  /**
+   * (#4437) The type to `struct.new` and the `$fnmeta` operand, when this
+   * closure carries metadata.
+   *
+   * For a CAPTURE-carrying closure this equals `structTypeIdx` — that struct is
+   * already per-closure, so the slot grows in place and no type identity
+   * changes. For a capture-free closure the wrapper is SHARED across every
+   * closure of the signature, so the slot needs a per-base subtype; the
+   * reported `structTypeIdx` deliberately stays the BASE, because that is the
+   * type every other site casts to and a cast to a MORE derived type traps on a
+   * value stored as the base (see `emitCachedFuncClosureExternref`'s note).
+   */
+  meta?: { allocTypeIdx: number; init: Instr[] };
+} {
   const { captures, arrowParams, closureResults, closureName, isNamedFuncExpr, constructible } = opts;
+  // (#4440) An object-literal accessor/method reaches this mint site as its
+  // OWN declaration node (`literals.ts` casts a `Get/SetAccessorDeclaration` to
+  // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
+  // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
+  // property KEY, not from a function name. The member walk answers it.
+  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;
@@ -707,6 +737,17 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = wrapperTypes.liftedFuncTypeIdx;
       liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      // (#4437) Shared wrapper ⇒ the metadata slot needs a per-base subtype.
+      const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+      if (metaSlot && allocTypeIdx !== undefined) {
+        return {
+          structTypeIdx,
+          liftedFuncTypeIdx,
+          liftedSelfTypeIdx,
+          liftedParams,
+          meta: { allocTypeIdx, init: metaSlot.init },
+        };
+      }
     } else {
       // Fallback: create a unique struct type
       const structFields = [
@@ -750,6 +791,10 @@ export function mintClosureStructTypes(
     if (constructible) {
       structFields.push({ name: "__constructible", type: { kind: "i32" as const }, mutable: false });
     }
+    // (#4437) A capture-carrying closure's struct is ALREADY per-closure, so
+    // the slot is appended in place — last, after `__constructible`, matching
+    // the operand order `emitClosureConstruction` pushes.
+    if (metaSlot) structFields.push(metaSlot.field);
 
     // For closures with captures, make the struct a subtype of the shared
     // wrapper struct so ref.cast at call sites succeeds. Named func exprs need
@@ -805,6 +850,22 @@ export function mintClosureStructTypes(
       liftedSelfTypeIdx = structTypeIdx;
       liftedParams = [{ kind: "ref_null", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
       liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
+    }
+  }
+  if (metaSlot) {
+    // Registered here rather than at each mint branch so every path that grew
+    // the field also gets its family arm — the slot is always LAST, so its
+    // index is the struct's field count minus one.
+    const fields = ctx.mod.types[structTypeIdx];
+    if (fields?.kind === "struct" && fields.fields[fields.fields.length - 1]?.name === metaSlot.field.name) {
+      registerFnMetaFamily(ctx, structTypeIdx, fields.fields.length - 1);
+      return {
+        structTypeIdx,
+        liftedFuncTypeIdx,
+        liftedSelfTypeIdx,
+        liftedParams,
+        meta: { allocTypeIdx: structTypeIdx, init: metaSlot.init },
+      };
     }
   }
   return { structTypeIdx, liftedFuncTypeIdx, liftedSelfTypeIdx, liftedParams };
@@ -1060,6 +1121,60 @@ export function emitClosureParamDestructuring(
  * value (boxing mutable captures into ref cells, re-aiming the outer local),
  * then the TDZ-flag ref cells, then `struct.new` the closure struct.
  */
+function findUnboxedCaptureLocal(
+  fctx: FunctionContext,
+  name: string,
+  boxedLocalIdx: number,
+  valueType: ValType,
+): number | undefined {
+  for (let localOffset = 0; localOffset < fctx.locals.length; localOffset++) {
+    const localIdx = fctx.params.length + localOffset;
+    if (localIdx === boxedLocalIdx) continue;
+    const local = fctx.locals[localOffset];
+    if (local?.name === name && valTypesMatch(local.type, valueType)) return localIdx;
+  }
+  return undefined;
+}
+
+/**
+ * Push a live capture cell, repairing a nullable cell which was allocated by
+ * an earlier conditional closure site but did not execute on this path. The
+ * cell itself is the shared identity used by all later closures; only its
+ * first value comes from the original unboxed slot. This keeps lazy closure
+ * construction safe without snapshotting a mutable binding into a fresh cell.
+ */
+function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowClosureCapture): void {
+  const boxed = fctx.boxedCaptures?.get(cap.name);
+  const boxedLocalIdx = cap.localIdx;
+  const boxedType = getLocalType(fctx, boxedLocalIdx);
+  const valueType = boxed?.valType;
+  const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
+  const nullableBox =
+    boxed !== undefined &&
+    valueType !== undefined &&
+    (boxedType?.kind === "ref" || boxedType?.kind === "ref_null") &&
+    boxedType.typeIdx === boxed.refCellTypeIdx &&
+    rawLocalIdx !== undefined;
+  if (!nullableBox) {
+    fctx.body.push({ op: "local.get", index: boxedLocalIdx });
+    return;
+  }
+
+  const refCellTypeIdx = boxed.refCellTypeIdx;
+  fctx.body.push({ op: "local.get", index: boxedLocalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: refCellTypeIdx } },
+    then: [
+      { op: "local.get", index: rawLocalIdx },
+      { op: "struct.new", typeIdx: refCellTypeIdx },
+      { op: "local.tee", index: boxedLocalIdx },
+    ],
+    else: [{ op: "local.get", index: boxedLocalIdx }],
+  });
+}
+
 export function emitClosureConstruction(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1067,6 +1182,8 @@ export function emitClosureConstruction(
   liftedFuncIdx: number,
   structTypeIdx: number,
   arity: number,
+  /** (#4437) The `$fnmeta` operand + the type to allocate, from `mintClosureStructTypes`. */
+  meta?: { allocTypeIdx: number; init: Instr[] },
 ): void {
   // A construction site in a conditional arm cannot own the canonical box for
   // a captured parameter: compilation re-aims all later reads to that box even
@@ -1105,8 +1222,10 @@ export function emitClosureConstruction(
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {
-        // Already a ref cell — pass the ref cell reference directly
-        fctx.body.push({ op: "local.get", index: cap.localIdx });
+        // Already a ref cell — pass the shared cell reference directly. If a
+        // conditional closure site allocated the nullable cell but did not
+        // execute, lazily repair that same cell from the raw binding.
+        pushCaptureCell(ctx, fctx, cap);
       } else {
         // Wrap the current value in a ref cell
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
@@ -1122,7 +1241,11 @@ export function emitClosureConstruction(
         fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
       }
     } else {
-      fctx.body.push({ op: "local.get", index: cap.localIdx });
+      if (cap.alreadyBoxed && fctx.boxedCaptures?.has(cap.name)) {
+        pushCaptureCell(ctx, fctx, cap);
+      } else {
+        fctx.body.push({ op: "local.get", index: cap.localIdx });
+      }
     }
   }
 
@@ -1165,7 +1288,8 @@ export function emitClosureConstruction(
     fctx.body.push({ op: "i32.const", value: 1 });
   }
 
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  if (meta) for (const instr of meta.init) fctx.body.push(instr);
+  fctx.body.push({ op: "struct.new", typeIdx: meta ? meta.allocTypeIdx : structTypeIdx });
 }
 
 /**

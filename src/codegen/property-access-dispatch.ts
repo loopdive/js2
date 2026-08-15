@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
+import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge, usesNativeSymbolProvider } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
@@ -1932,7 +1933,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // (same as ClassName.method path at line 992) — avoids generic
       // fallthrough cast of undefined.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "ref.null.extern" });
           return { kind: "externref" };
@@ -2044,7 +2045,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // unblocking 273 test262 cases for class async-generator yield-star
       // tests that follow this exact extraction pattern.
       if (ctx.staticMethodSet.has(fullName)) {
-        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (funcIdx !== undefined) {
           const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
           if (closureRef) {
@@ -2430,15 +2431,14 @@ export function tryLengthAndNameReads(
         !fctx.localMap.has(rootNode.text) &&
         !(fctx.boxedCaptures?.has(rootNode.text) ?? false);
       if (!isLibrarySig || !rootIsReachableBuiltin) {
-        // ES spec: Function.length = number of required params before first
-        // optional/default/rest. TS forbids required-after-optional, so filtering
-        // out optional/default/rest is equivalent to iterating until the first one.
+        // (#4436) ES §15.1.5 ExpectedArgumentCount — a PREFIX count that stops
+        // at the first defaulted/optional/rest parameter, NOT a filter of them.
+        // The old `filter().length` justified itself with "TS forbids
+        // required-after-optional", which is false for the JS this compiler
+        // accepts: `function f(x = 42, y) {}` has `length === 0`, not 1. See
+        // function-expected-argument-count.ts for the measured divergence table.
         const sig = lengthSigs[0]!;
-        const paramCount = sig.parameters.filter((p: any) => {
-          const decl = p.valueDeclaration;
-          if (!decl || !ts.isParameter(decl)) return true;
-          return !decl.dotDotDotToken && !decl.questionToken && !decl.initializer;
-        }).length;
+        const paramCount = expectedArgumentCountOfSignature(sig);
         fctx.body.push({ op: "f64.const", value: paramCount });
         return { kind: "f64" };
       }
@@ -3864,7 +3864,24 @@ export function finalizeStructAndDynamicMemberGet(
           // taught the consumer-side dispatch to use the typed read.
           let resultWasm: ValType =
             accessWasm.kind === "f64" || accessWasm.kind === "i32" ? accessWasm : ({ kind: "externref" } as const);
-          if (resultWasm.kind === "externref" && !preserveDynamicResultCarrier) {
+          // (#4420) The vote is only admissible when the ACCESS ITSELF is
+          // statically dynamic — `accessWasm.kind === "externref"`. The old
+          // guard tested `resultWasm`, which is set to externref for EVERY
+          // non-f64/i32 `accessWasm`, so a read whose static type is a concrete
+          // `ref`/`ref_null` (an array, a struct) was eligible too and could be
+          // collapsed to f64/i32 by an unrelated struct that merely shares the
+          // property NAME. Self-compiling `src/emit/binary.ts` hit exactly that:
+          // `instr.else` is `Instr[]` (`ref null $__vec_externref`), the only
+          // struct in the module carrying an `else` field is the `OP` opcode
+          // table (all-f64), so the single-candidate vote narrowed the read to
+          // f64 while the enclosing `.length` still emitted the typed
+          // `struct.get $__vec_externref 0` — `struct.get[0] expected (ref null
+          // 2), found local.tee of type f64`, a module the engine rejects while
+          // the compiler reported success. A concrete `ref`/`ref_null` access
+          // type is a STATEMENT about the value's representation; a name-keyed
+          // field vote may not overrule it. Such reads keep the honest
+          // externref result and are re-narrowed by the caller's own coercion.
+          if (resultWasm.kind === "externref" && accessWasm.kind === "externref" && !preserveDynamicResultCarrier) {
             const fieldKinds = new Set(structCandidates.map((c) => c.fieldType.kind));
             // (#3927) A hot/cold-split fnctor carries `propName` in its
             // lazily-allocated tail, and `findAlternateStructsForField`

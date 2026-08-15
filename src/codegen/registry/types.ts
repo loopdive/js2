@@ -139,6 +139,38 @@ export function getOrRegisterVecBaseType(ctx: CodegenContext): number {
 }
 
 /**
+ * (#4443) Is `typeIdx` an INDEXABLE CARRIER — `$__vec_base` itself or any
+ * (transitive) subtype of it?
+ *
+ * Every concrete vec, subview, TypedArray view and the regexp match-result
+ * struct subtypes `$__vec_base`, so this is the one reliable way to ask "does
+ * this struct's element data live in a `data`/`buf` array, read by the
+ * dedicated vec / typed-array arms?". Callers that answer that question by
+ * NAME instead go stale the moment a new carrier is minted: the array-like
+ * fill in `object-runtime.ts` listed `__vec_*` / `__arr_*` / `__subview_*` and
+ * so silently admitted `__regexp_match_vec`, `__template_vec_externref`,
+ * `__ta_view_<K>` and `__ta_dyn_view` as ordinary closed structs (#4443).
+ *
+ * The walk is bounded by the type-table size so a malformed or cyclic
+ * supertype chain cannot hang finalize. Returns false when no `$__vec_base`
+ * has been registered — a module with no vecs has no carriers either.
+ */
+export function isVecBaseSubtype(ctx: CodegenContext, typeIdx: number): boolean {
+  const vecBaseTypeIdx = ctx.vecBaseTypeIdx;
+  if (vecBaseTypeIdx < 0) return false;
+  if (typeIdx === vecBaseTypeIdx) return true;
+  for (let cur = typeIdx, hops = 0; hops < ctx.mod.types.length; hops++) {
+    const def = ctx.mod.types[cur];
+    if (!def || def.kind !== "struct") return false;
+    const sup = def.superTypeIdx;
+    if (sup === undefined || sup < 0) return false;
+    if (sup === vecBaseTypeIdx) return true;
+    cur = sup;
+  }
+  return false;
+}
+
+/**
  * (#4034) Run `fn` with `usesVecValue` pinned to its current value, so vec
  * types registered by COMPILER-INTERNAL emission (runtime preludes, reflective
  * accessors, type-index-stability stubs) do not read as user array usage.

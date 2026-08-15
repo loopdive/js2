@@ -33,6 +33,10 @@ import {
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+// (#4437) per-declaration `name` / §15.1.5 `length` carrier
+import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
+// (#4440) the METHOD half of the same carrier — class/object-literal members
+import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -183,6 +187,39 @@ function buildTrampolineThisSlot(
 }
 
 /**
+ * Reconcile the receiver produced by {@link buildTrampolineThisSlot} with the
+ * actual first parameter of the method.  The trampoline's receiver is always
+ * the nullable object-struct reference used by the closure ABI, but late type
+ * resolution can leave a method's hidden `this` parameter as `externref` (or a
+ * different reference carrier).  Passing the struct reference directly in
+ * that case makes the generated `call` fail Wasm validation.  Keep this at the
+ * ABI boundary instead of weakening validation or relying on stack fixups.
+ */
+function coerceTrampolineThisSlot(
+  ctx: CodegenContext,
+  body: Instr[],
+  objStructTypeIdx: number,
+  methodThisType: ValType | undefined,
+  methodUsesThis: boolean,
+  fctx?: FunctionContext,
+): void {
+  if (!methodThisType) return;
+  // A method which never reads `this` is valid when extracted and called with
+  // an absent receiver.  Keeping the nullable value also avoids narrowing a
+  // provisional signature before the method body pass settles its ABI.
+  if (!methodUsesThis) return;
+  const source: ValType = { kind: "ref_null", typeIdx: objStructTypeIdx };
+  if (source.kind === methodThisType.kind) {
+    // Same-kind references are already compatible when they name the same
+    // struct.  A distinct type index is handled by the existing method-arg
+    // reconciliation path; the receiver path should not add an unsafe cast
+    // for an unrelated object shape.
+    return;
+  }
+  body.push(...coercionInstrs(ctx, source, methodThisType, fctx));
+}
+
+/**
  * #1118: Emit an object-literal method as a first-class closure value.
  *
  * Object-literal methods are compiled as Wasm functions with signature
@@ -212,6 +249,12 @@ export function emitObjectMethodAsClosure(
   methodName: string,
   methodFuncIdx: number,
   objStructTypeIdx: number,
+  /**
+   * (#4440) The object-literal member this closure is the value of, when the
+   * caller has it. Unlike the class path there is no side table to consult —
+   * `literals.ts` holds the node right at the call — so it is passed directly.
+   */
+  memberDecl?: ts.Node,
 ): ValType | null {
   const sig = getFuncSignature(ctx, methodFuncIdx);
   if (!sig) return null;
@@ -252,6 +295,7 @@ export function emitObjectMethodAsClosure(
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
   if (ntShift > 0 && inLiveShiftRange(methodFuncIdx, importsBeforeNT)) methodFuncIdx += ntShift;
   const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
+  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -290,10 +334,19 @@ export function emitObjectMethodAsClosure(
   });
 
   // Emit: ref.func $trampoline, (#3673) $arity, (#4241) $bag, struct.new $closure_struct
+  //
+  // (#4440) …plus the `$fnmeta` operand when the member carries resolvable
+  // metadata. The base wrapper struct is SHARED across every function of this
+  // signature, so the slot lives on a per-base SUBTYPE — allocate the derived
+  // type and report the BASE (#4437's note 3: a `ref.cast` to a MORE derived
+  // type traps on a value stored as the base; widening is the safe direction).
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, memberDecl);
+  const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push(closureBagInitInstr());
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  if (metaSlot && allocTypeIdx !== undefined) for (const instr of metaSlot.init) fctx.body.push(instr);
+  fctx.body.push({ op: "struct.new", typeIdx: allocTypeIdx !== undefined && metaSlot ? allocTypeIdx : structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
 }
@@ -422,6 +475,8 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
+      tFctx.body = newBody;
+      coerceTrampolineThisSlot(ctx, newBody, t.objStructTypeIdx, sig.params[0], usesThis, tFctx);
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });
@@ -543,6 +598,13 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
  * The func-decl caller appends its own `any.convert_extern` + `ref.cast`
  * recovery after this returns.
  */
+/** (#4437) Narrow a singleton's optional metadata pair into the emit argument. */
+function fnMetaAllocOf(singleton: FuncClosureSingleton): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
+  return singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
+    ? { allocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
+    : undefined;
+}
+
 function emitLazyClosureCacheAccess(
   fctx: FunctionContext,
   cacheGlobalIdx: number,
@@ -550,13 +612,16 @@ function emitLazyClosureCacheAccess(
   structTypeIdx: number,
   arity: number,
   constructible = false,
+  /** (#4437) `$fnmeta` operand + the SUBTYPE to allocate, when the slot exists. */
+  meta?: { allocStructTypeIdx: number; metaInit: Instr[] },
 ): void {
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
     { op: "i32.const", value: arity }, // (#3673) $arity
     closureBagInitInstr(), // (#4241) $bag
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
-    { op: "struct.new", typeIdx: structTypeIdx },
+    ...(meta ? meta.metaInit : []),
+    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
     { op: "extern.convert_any" },
     { op: "global.set", index: cacheGlobalIdx },
   ];
@@ -593,6 +658,8 @@ export function emitCachedMethodClosureAccess(
     trampolineFuncIdx,
     closureStructTypeIdx,
     ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+    /* constructible */ false,
+    fnMetaAllocOf(singleton), // (#4440)
   );
   return true;
 }
@@ -619,7 +686,7 @@ export function ensureMethodClosureSingleton(
   methodName: string,
   methodFuncIdx: number,
   objStructTypeIdx: number,
-): { cacheGlobalIdx: number; trampolineFuncIdx: number; closureStructTypeIdx: number } | null {
+): FuncClosureSingleton | null {
   // Resolve the user-visible signature so we know the wrapper struct's
   // funcref shape. Method signature is [(ref null objStruct), ...userParams]
   // → results; strip the leading `this` to derive the closure-callable
@@ -659,6 +726,7 @@ export function ensureMethodClosureSingleton(
       anyTempLocalIdx,
       methodUsesThisCached,
     );
+    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
@@ -714,7 +782,20 @@ export function ensureMethodClosureSingleton(
     ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
   }
 
-  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+  // (#4440) A class / object-literal method is #4437's R1 residual: this site
+  // has only `methodName`, so the §15.1.5 walk had nothing to read and `length`
+  // fell back to `$arity` (the DECLARED FORMAL COUNT — 1 for `m(x = 42)`, spec
+  // 0). `class-bodies.ts` records the declaration under exactly this physical
+  // name; a member whose key is computed/private records nothing and keeps the
+  // pre-#4440 answers, which is the safe direction (see the methods module).
+  const metaSlot = fnMetaSlotForMemberName(ctx, methodName);
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  return {
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx: structTypeIdx,
+    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+  };
 }
 
 /**
@@ -745,6 +826,19 @@ export interface FuncClosureSingleton {
   readonly cacheGlobalIdx: number;
   readonly trampolineFuncIdx: number;
   readonly closureStructTypeIdx: number;
+  /**
+   * (#4437) The type to `struct.new`, when the closure carries a `$fnmeta`
+   * slot — a per-base SUBTYPE of `closureStructTypeIdx`.
+   *
+   * Deliberately SEPARATE from `closureStructTypeIdx`, which stays the base:
+   * the read path casts the cached externref back with `ref.cast`, and this
+   * helper's own doc records that casting to a MORE derived type traps on a
+   * value stored as the base. Allocating derived and casting to the base is the
+   * safe direction; the reverse is the live `illegal cast` hazard.
+   */
+  readonly allocStructTypeIdx?: number;
+  /** (#4437) The `$fnmeta` operand for `allocStructTypeIdx`, pushed last. */
+  readonly metaInit?: Instr[];
 }
 
 /**
@@ -883,7 +977,22 @@ export function ensureFuncClosureSingleton(
   }
 
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
-  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+
+  // (#4437) The cached singleton is the canonical value of a top-level function
+  // DECLARATION — the receiver every `verifyProperty(f, "name", …)` sees. It is
+  // built exactly once into the cache global, so the metadata operand costs one
+  // push per module, not per reference.
+  const metaSlot = fnMetaSlot(
+    ctx,
+    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
+  );
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  return {
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx: structTypeIdx,
+    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+  };
 }
 
 /**
@@ -928,6 +1037,7 @@ export function emitCachedFuncClosureExternref(
     closureStructTypeIdx,
     ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
     constructible,
+    fnMetaAllocOf(singleton),
   );
   return true;
 }
@@ -971,6 +1081,7 @@ export function emitCachedFuncClosureAccess(
     structTypeIdx,
     ctx.closureInfoByTypeIdx.get(structTypeIdx)?.paramTypes.length ?? 0,
     constructible,
+    fnMetaAllocOf(singleton),
   );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });

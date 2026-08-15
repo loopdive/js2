@@ -4370,7 +4370,7 @@ export function compileElementAccess(
         // externref instead of the legacy `ref.null.extern` so that
         // `const f = C['method']; f()` actually invokes the method.
         if (ctx.staticMethodSet.has(fullName)) {
-          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+          const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
           if (funcIdx !== undefined) {
             const closureRef = emitFuncRefAsClosure(ctx, fctx, fullName, funcIdx);
             if (closureRef) {

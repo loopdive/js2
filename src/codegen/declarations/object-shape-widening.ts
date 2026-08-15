@@ -443,11 +443,31 @@ export function collectEmptyObjectWidening(
             // can resolve the variable type to a struct ref instead of externref
             const fields: FieldDef[] = extraProps.map((wp) => ({
               name: wp.name,
-              type: wp.type,
+              // `__*` keys are frequently package-private CJS export slots
+              // whose value is produced by a different module's anonymous
+              // object shape. Keeping a ref-typed slot here makes that
+              // cross-module structural identity requirement unsound (the
+              // assignment then stores null after a failed cast). Use the
+              // universal host carrier for these dynamic/private keys; the
+              // property accessor will still preserve their normal JS value.
+              type: wp.name.startsWith("__") ? { kind: "externref" } : wp.type,
               mutable: true,
             }));
             const structName = `__anon_${ctx.anonTypeCounter++}`;
             registerStructType(ctx, structName, fields);
+            // The empty-object widening path creates the struct outside
+            // `compileObjectLiteral`, so it does not get the normal insertion
+            // order record. Preserve every source-written key—including
+            // user-facing `__*` names such as React's
+            // `__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE`—
+            // as a real field. Without this provenance the generic
+            // `isInternalStructFieldName` screen hides the field from the
+            // generated getter/dynamic read and cross-module consumers observe
+            // `undefined` even though the assignment ran.
+            ctx.structInsertionOrder.set(
+              structName,
+              extraProps.map((property) => property.name),
+            );
             // Map variable declaration key to struct name for later lookup
             ctx.widenedVarStructMap.set(varKey, structName);
             // Also try to map TS types (may not match later due to type identity)

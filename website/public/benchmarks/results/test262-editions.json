@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 7603,
-    "fail": 1409,
-    "ce": 17,
+    "pass": 7608,
+    "fail": 1402,
+    "ce": 19,
     "skip": 0,
     "total": 9029,
     "pct": 84,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8994,
-    "fail": 2604,
+    "pass": 8996,
+    "fail": 2602,
     "ce": 105,
     "skip": 1,
     "total": 11704,
@@ -111,17 +111,17 @@
       },
       {
         "name": "arrow-function",
-        "pass": 389,
-        "fail": 51,
+        "pass": 390,
+        "fail": 50,
         "ce": 0,
         "skip": 0,
         "total": 440,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "Proxy",
-        "pass": 193,
-        "fail": 238,
+        "pass": 194,
+        "fail": 237,
         "ce": 0,
         "skip": 0,
         "total": 431,
@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4214,
-    "fail": 1529,
-    "ce": 49,
+    "fail": 1527,
+    "ce": 51,
     "skip": 0,
     "total": 5792,
     "pct": 73,
@@ -2196,8 +2196,8 @@
       {
         "name": "class",
         "pass": 3455,
-        "fail": 811,
-        "ce": 17,
+        "fail": 809,
+        "ce": 19,
         "skip": 0,
         "total": 4283,
         "pct": 81
@@ -2214,8 +2214,8 @@
       {
         "name": "class-methods-private",
         "pass": 1342,
-        "fail": 366,
-        "ce": 1,
+        "fail": 364,
+        "ce": 3,
         "skip": 0,
         "total": 1709,
         "pct": 79
@@ -2313,8 +2313,8 @@
       {
         "name": "async-functions",
         "pass": 224,
-        "fail": 30,
-        "ce": 0,
+        "fail": 28,
+        "ce": 2,
         "skip": 0,
         "total": 254,
         "pct": 88
@@ -4250,8 +4250,8 @@
   },
   {
     "edition": "Proposals",
-    "pass": 809,
-    "fail": 4050,
+    "pass": 815,
+    "fail": 4044,
     "ce": 159,
     "skip": 96,
     "total": 5114,
@@ -4269,8 +4269,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4138,
-    "fail": 1218,
-    "ce": 89,
+    "fail": 1222,
+    "ce": 85,
     "skip": 0,
     "total": 5445,
     "pct": 76

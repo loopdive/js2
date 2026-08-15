@@ -152,6 +152,13 @@ import {
   type IrUnitId,
 } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
+// (#3931) the #2682 canonical char-read-loop recogniser, ported to the IR.
+import {
+  type CharReadProof,
+  detectCanonicalCharReadLoopShape,
+  matchProvenCharRead,
+  type ProvenCharReads,
+} from "./char-read-loop.js";
 import {
   computeI32PureNames,
   type I32PureNames,
@@ -562,6 +569,32 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   } | null;
   /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
+  /**
+   * (#3931) Backend half of the #2682 canonical char-read-loop hoist. Asked
+   * ONCE per recognised loop (`ir/char-read-loop.ts` has already discharged
+   * the `0 <= i < recv.length` proof); `null` refuses the optimisation and the
+   * loop lowers exactly as before.
+   *
+   * `hoist` is the native-strings answer: `flattenFuncName` is called ONCE in
+   * the loop preheader and its result parked in a string-carrier slot, after
+   * which each body read is `readFuncName(flat, i)` — no per-iteration
+   * flatten, no bounds/NaN branch. `trustedFuncName` is the host answer: host
+   * strings have no flattenable descriptor, so there the win is purely
+   * dropping the guard around the `wasm:js-string` builtin.
+   *
+   * Both names take/produce only STRING-carrier and i32 values — deliberately,
+   * so no IR value here is typed with a raw backend `ref` (a prepared
+   * component carrying one is refused, which would demote the whole function
+   * and silently undo the optimisation).
+   *
+   * Mode-free by construction on the from-ast side (the #2955 discipline): all
+   * the helper names come from here, so a backend with neither answer (linear,
+   * Porffor) simply omits the callback.
+   */
+  charReadPlan?(): {
+    hoist: { flattenFuncName: string; readFuncName: string } | null;
+    trustedFuncName: string | null;
+  } | null;
   /**
    * (#2856) Resolve an extern-class member through the legacy inheritance
    * chain (`ctx.externClasses` + `ctx.externClassParent` — e.g. `appendChild`
@@ -1917,6 +1950,20 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     lowerTail(stmt.elseStatement, { ...cx, scope: new Map(cx.scope) });
     return;
   }
+  // #2952 slice 6a — a function ENDING in a `switch`. The switch lowers
+  // through the SAME `IrInstrSwitch` ladder as the non-tail form (slice 4);
+  // only the block terminator differs. The selector proved one of:
+  //   - void return  → control may fall out of the ladder into the implicit
+  //     empty return (mirrors the `tail-if-noelse` void arm above);
+  //   - non-void     → `switchAllPathsTerminate` proved every clause leaves
+  //     the function and a `default` covers the no-match path, so the
+  //     instruction after the ladder is unreachable (same terminator the
+  //     throw-tail arm uses).
+  if (ts.isSwitchStatement(stmt)) {
+    lowerSwitchStatement(stmt, { ...cx, scope: new Map(cx.scope) });
+    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    return;
+  }
   throw new Error(`ir/from-ast: unsupported tail statement ${ts.SyntaxKind[stmt.kind]} in ${cx.funcName}`);
 }
 
@@ -2181,6 +2228,17 @@ interface LowerCtx {
    * unproven read falls to the SAFE bounds-checked read (no trap).
    */
   readonly safeIndexedArrays?: ReadonlySet<string>;
+  /**
+   * (#3931) The #2682 canonical char-read-loop proof(s) active for the CURRENT
+   * loop body, keyed by receiver name — the IR twin of legacy's
+   * `fctx.hoistedCharReads`. Installed by `lowerForStatement` on a fresh body
+   * cx (so it scopes to the loop and nested loops accumulate outward) and
+   * consulted by `matchProvenCharRead` at `recv.charCodeAt(i)` sites, which
+   * may then skip the §22.1.3.3 bounds/NaN guard and read the hoisted
+   * descriptor directly. Never leaks into a nested function: the recogniser
+   * refuses any body containing one.
+   */
+  readonly provenCharReads?: ProvenCharReads;
   /**
    * #2952 slice 2 — the innermost enclosing CLAIMED loop's label, threaded
    * onto the body cx by every loop lowerer. `lowerBreakContinueStatement`
@@ -2717,7 +2775,7 @@ function lowerNarrowedI32Element(value: ts.Expression, cx: LowerCtx): IrValueId 
  * REGRESS an expression #3758 already handles.
  */
 function isFusedI32Lowerable(e: ts.Expression, cx: LowerCtx): boolean {
-  return isWrapI32Lowerable(e, promotedI32Probe(cx)) || isI32PureExprIR(e, cx.i32PureNames);
+  return isWrapI32Lowerable(e, promotedI32Probe(cx)) || isI32PureExprIR(e, cx.i32PureNames, cx.provenCharReads);
 }
 
 /**
@@ -2822,7 +2880,7 @@ function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): 
   // `i32.sub`/guarded-`i32.mul` and narrows genuine leaves with the cheap
   // `i32.trunc_sat_f64_s`. Checked BEFORE the generic lowering below so a
   // mixed promoted/pure subtree never degrades to the full ToInt32 dance.
-  if (isI32PureExprIR(inner, cx.i32PureNames)) return emitI32PureExpr(inner, cx);
+  if (isI32PureExprIR(inner, cx.i32PureNames, cx.provenCharReads)) return emitI32PureExpr(inner, cx);
 
   // Comparisons (and anything else the predicates admit) already lower to i32
   // through the ordinary path — take it and assert the representation.
@@ -3649,6 +3707,20 @@ function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
 
 function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isParenthesizedExpression(expr)) {
+    return lowerExpr(expr.expression, cx, hint);
+  }
+  // (#3583) Type-erased assertion wrappers emit nothing at runtime, so lowering
+  // is the operand's lowering under the SAME hint — the hint comes from the
+  // consuming context (declared type / param ABI / return ABI), which is what
+  // decides the value representation, so the asserted type cannot change the
+  // emitted bytes. Paired with the matching `isPhase1Expr` arm in select.ts:
+  // selector claim ⇔ lowering parity.
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
     return lowerExpr(expr.expression, cx, hint);
   }
   // (#1373b C-1) `await <e>` in a claimed async body — the legacy SYNC
@@ -6272,6 +6344,22 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
 
+  // (#3931) A proven-in-bounds `recv.charCodeAt(i)` inside a canonical
+  // char-read loop. Intercepted here, BEFORE the receiver is lowered, so the
+  // native arm reads the hoisted descriptor instead of re-deriving one. The
+  // result is an i32 code unit widened to the f64 every charCodeAt consumer
+  // expects; the i32-pure path (`emitI32PureExpr`) takes the i32 directly and
+  // is what removes the surrounding ToInt32 dance.
+  //
+  // `f64.convert_i32_s`, not `_u`: a UTF-16 code unit is `[0, 65535]` (the
+  // native read zero-extends an i16 array element, the host builtin returns
+  // the same range), so the two conversions are bit-identical here — and the
+  // signed one is already in `IrUnop`, so this adds no backend surface.
+  const provenCharRead = matchProvenCharRead(expr, cx.provenCharReads);
+  if (provenCharRead !== null) {
+    return cx.builder.emitUnary("f64.convert_i32_s", emitProvenCharReadI32(expr, provenCharRead, cx), IR_F64);
+  }
+
   // #4385 — ES5 §15.3.4. `%Function.prototype%` is a callable intrinsic
   // object. Evaluate arguments left-to-right for effects, discard them, then
   // call the symbolic zero-arg provider which returns the lane's real
@@ -7924,7 +8012,22 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
   const loopScope = conservativeLoopStringEncodingScope(stmt, cx);
   const bodyScope = new Map(loopScope);
-  bodyScope.set(declaration.name.text, { kind: "slot", slotIndex: keySlot, type: externref });
+  // #2952 slice 6c — the head binding is now READABLE in the body. The key
+  // helper hands back an externref; when the active string carrier IS the
+  // host externref (`resolveString()`), that value is interchangeable with an
+  // `IrType.string`, so tag the binding `asType: string` and identifier reads
+  // compose with the ordinary string ops — the same `asType` idiom
+  // `lowerForOfString` uses for its `(ref $AnyString)` element slot. On a
+  // native-strings lane the carriers differ, so the tag is withheld and the
+  // selector's `forInHeadValueIsHostString` gate keeps head-value uses off
+  // the IR path entirely (fail-closed, not claim-then-demote).
+  const headIsHostString = cx.resolver?.resolveString?.()?.kind === "externref";
+  bodyScope.set(declaration.name.text, {
+    kind: "slot",
+    slotIndex: keySlot,
+    type: externref,
+    ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
+  });
   const bodyCx: LowerCtx = {
     ...cx,
     scope: bodyScope,
@@ -8252,10 +8355,116 @@ function literalCounterEntry(stmt: ts.ForStatement, cx: LowerCtx): { value: numb
   return { value, slotIndex: binding.slotIndex };
 }
 
-function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
-  if (!stmt.condition) {
-    throw new Error(`ir/from-ast: for without cond not in slice 12 (${cx.funcName})`);
+/**
+ * (#3931) Lower a proven char-read loop's INDEX operand to a native i32.
+ *
+ * The index is the loop's own induction identifier (the match in
+ * `matchProvenCharRead` admits nothing else), so when #3741 gave it an i32
+ * SLOT the read is just that slot — no `f64.convert_i32_s` / `trunc_sat`
+ * round trip, which is a per-iteration saving on top of the dropped guard.
+ * Anything else takes the ordinary f64 lowering and the cheap narrowing the
+ * guarded helpers' i32 index arg already used.
+ */
+function lowerCharReadIndexI32(indexExpr: ts.Expression, cx: LowerCtx): IrValueId {
+  if (ts.isIdentifier(indexExpr)) {
+    const binding = cx.scope.get(indexExpr.text);
+    if (binding !== undefined && binding.kind === "slot" && binding.i32Storage === true) {
+      return cx.builder.emitSlotRead(binding.slotIndex);
+    }
   }
+  const numeric = lowerExpr(indexExpr, cx, IR_F64);
+  return asVal(cx.builder.typeOf(numeric))?.kind === "i32"
+    ? numeric
+    : cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, IR_I32);
+}
+
+/**
+ * (#3931) Emit one proven `recv.charCodeAt(i)` as a native i32 code unit —
+ * the read site half of the #2682 port. The caller must have matched the
+ * expression against an ACTIVE proof (`matchProvenCharRead`), which is what
+ * makes dropping §22.1.3.3's bounds/NaN arm byte-faithful rather than a
+ * semantic change.
+ *
+ * Native strings: `readFunc(flat, i)` against the receiver flattened once in
+ * the preheader — legacy's `emitHoistedCharCodeAtRead`, one (inlinable) call
+ * deep. Host strings: the unguarded builtin wrapper, with the receiver
+ * lowered here (a plain identifier read — no observable evaluation-order
+ * effect, and the ONLY expression the recogniser admits).
+ */
+function emitProvenCharReadI32(call: ts.CallExpression, proof: CharReadProof, cx: LowerCtx): IrValueId {
+  const receiverExpr = (call.expression as ts.PropertyAccessExpression).expression;
+  const indexExpr = call.arguments[0]!;
+  if (proof.hoist) {
+    const flat = cx.builder.emitSlotReadAs(proof.hoist.flatSlot, { kind: "string" });
+    const index = lowerCharReadIndexI32(indexExpr, cx);
+    const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.hoist.readFuncName), [flat, index], IR_I32);
+    if (read === null) throw new Error(`ir/from-ast: hoisted char read produced void (${cx.funcName})`);
+    return read;
+  }
+  const recv = lowerExpr(receiverExpr, cx, { kind: "string" });
+  const index = lowerCharReadIndexI32(indexExpr, cx);
+  const read = cx.builder.emitCall(irIntrinsicFuncRef(proof.trustedFuncName!), [recv, index], IR_I32);
+  if (read === null) throw new Error(`ir/from-ast: trusted char read produced void (${cx.funcName})`);
+  return read;
+}
+
+/**
+ * (#3931) The preheader half: recognise the canonical char-read loop and, if
+ * the backend offers a plan, emit the loop-invariant hoist ONCE before the
+ * loop and return the proof to install on the body cx.
+ *
+ * MUST be called while the builder's current buffer is the OUTER one (after
+ * the `for` init is lowered, before the cond/body buffers are collected), so
+ * the flatten + descriptor reads run exactly once per loop entry — the same
+ * placement contract legacy's `detectCanonicalCharReadLoop` documents.
+ *
+ * Returns `null` (having emitted nothing) on any deviation: an unrecognised
+ * shape, no oracle to prove the receiver is a string, or a backend with no
+ * plan. Refuse-loud, never miscompile.
+ */
+function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): CharReadProof | null {
+  const plan = cx.resolver?.charReadPlan?.() ?? null;
+  if (!plan) return null;
+  const oracle = cx.oracle;
+  if (!oracle) return null;
+  const shape = detectCanonicalCharReadLoopShape(stmt, (id) => oracle.typeFactOf(id).kind === "string");
+  if (!shape) return null;
+
+  if (!plan.hoist) {
+    if (!plan.trustedFuncName) return null;
+    return {
+      recvName: shape.recvName,
+      indexName: shape.indexName,
+      hoist: null,
+      trustedFuncName: plan.trustedFuncName,
+    };
+  }
+
+  const hoist = plan.hoist;
+  // The carrier ValType for the slot, exactly as `lowerForOfString` gets it.
+  const carrier = cx.resolver?.resolveString?.();
+  if (!carrier || carrier.kind !== "ref") return null;
+  const recv = lowerExpr(shape.recvIdent, cx, { kind: "string" });
+  if (cx.builder.typeOf(recv).kind !== "string") return null;
+  // Result typed `IrType.string`, NOT a raw `ref $NativeString`: a flat string
+  // IS a string carrier value, and a raw-ref-typed IR value would fail the
+  // prepared-component ABI gate and demote the whole function.
+  const flat = cx.builder.emitCall(irIntrinsicFuncRef(hoist.flattenFuncName), [recv], { kind: "string" });
+  if (flat === null) return null;
+  // A slot (not an SSA value) because it is read from INSIDE the loop body's
+  // own instruction buffer — the same reason `lowerForOfString` parks its
+  // receiver in one. Named after legacy's hoist locals.
+  const flatSlot = cx.builder.declareSlot("__cca_flat", carrier);
+  cx.builder.emitSlotWrite(flatSlot, flat);
+  return {
+    recvName: shape.recvName,
+    indexName: shape.indexName,
+    hoist: { flatSlot, readFuncName: hoist.readFuncName },
+    trustedFuncName: null,
+  };
+}
+
+function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
   // #2952 slice 3 — adopt a labeled statement's pre-allocated id when set
   // (consumed here; cleared so init/body contexts don't leak it inward).
   const loopLabel = cx.pendingLoopLabel ?? cx.builder.freshLoopLabel();
@@ -8276,16 +8485,35 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
 
   const loopCx: LowerCtx = { ...innerCx, scope: conservativeLoopStringEncodingScope(stmt, innerCx) };
 
+  // (#3931) 1b. The #2682 canonical char-read hoist. Emitted HERE — after the
+  // init, before any buffer is collected — so the loop-invariant flatten +
+  // `.data`/`.off` descriptor reads land in the preheader and run once. The
+  // proof is threaded onto the body cx below (never onto cond/update: the
+  // condition is where `i < recv.length` is ESTABLISHED, and the update runs
+  // after the body, where `i` may already be out of range).
+  const charReadProof = installCanonicalCharReadProof(stmt, loopCx);
+
   // 2. Cond — collect its IR into a buffer.
   // Capture the value id `lowerExpr` returns rather than the buffer's last
   // instruction result (fragile — see #1980).
   let condResult: IrValueId | null = null;
   const condInstrs = loopCx.builder.collectBodyInstrs(() => {
-    const raw = lowerExpr(stmt.condition!, loopCx, irVal({ kind: "i32" }));
+    // (#3583) An omitted condition is `true` per the spec. Emit the constant
+    // directly rather than synthesizing a `ts.factory.createTrue()` node: a
+    // parentless synthetic node has no checker identity, and every downstream
+    // helper here (`coerceLoopCondToBool`, string-encoding scoping) is
+    // AST-position-sensitive. This is byte-identical to the already-claimed
+    // `for (; true; )` form, whose `TrueKeyword` arm emits the same const.
+    const cond = stmt.condition;
+    if (!cond) {
+      condResult = loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+      return;
+    }
+    const raw = lowerExpr(cond, loopCx, irVal({ kind: "i32" }));
     // #2136 — coerce a numeric-truthiness `for` cond (e.g. `for (...; k; ...)`
     // with f64 `k`) to an i32 bool via ToBoolean inside the cond buffer,
     // instead of bailing to legacy (#1980). Mirrors the while-loop arm.
-    condResult = coerceLoopCondToBool(raw, stmt.condition!, loopCx, "for");
+    condResult = coerceLoopCondToBool(raw, cond, loopCx, "for");
   });
   if (condResult === null || condResult === undefined) {
     throw new Error(`ir/from-ast: for cond produced no SSA value (${cx.funcName})`);
@@ -8312,15 +8540,23 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
           ...(denseFillPair ? [denseFillPair] : []),
         ])
       : null;
+  // (#3931) Nested loops accumulate outward, exactly like `safeIndexedArrays`:
+  // an inner loop over a DIFFERENT receiver keeps the outer receiver's proof
+  // live (the outer `i` is still in range inside the inner body), while a
+  // same-name receiver is shadowed by the inner (fresher) proof.
+  const provenCharReads: ProvenCharReads | undefined = charReadProof
+    ? new Map([...(loopCx.provenCharReads ?? new Map()), [charReadProof.recvName, charReadProof]])
+    : loopCx.provenCharReads;
   const bodyCx: LowerCtx = safePairs
     ? {
         ...loopCx,
         scope: bodyScope,
         safeIndexedArrays: safePairs,
+        provenCharReads,
         loopLabel,
         breakTargetLabel: loopLabel,
       }
-    : { ...loopCx, scope: bodyScope, loopLabel, breakTargetLabel: loopLabel };
+    : { ...loopCx, scope: bodyScope, provenCharReads, loopLabel, breakTargetLabel: loopLabel };
   const bodyInstrs = loopCx.builder.collectBodyInstrs(() => {
     if (bodyOverride) bodyOverride(bodyCx);
     else lowerStmt(stmt.statement, bodyCx);
@@ -8921,6 +9157,14 @@ function lowerLabeledStatement(stmt: ts.LabeledStatement, cx: LowerCtx): void {
     lowerForOfStatement(inner, innerCx);
     return;
   }
+  // #2952 slice 6c — labeled for-in. It lowers to `for.loop`, whose
+  // `loopLabel` IS the pre-allocated id, so `break lbl` / `continue lbl`
+  // resolve through the same slice-2/3 machinery with no new obligation
+  // (no iterator ⇒ no IteratorClose to interleave).
+  if (ts.isForInStatement(inner)) {
+    lowerForInStatement(inner, innerCx);
+    return;
+  }
   // #2952 slice 4 — `lbl: switch (...)`: the switch adopts the label as
   // its breakLabel (via pendingLoopLabel), so `break lbl` and unlabeled
   // `break` target the same frame.
@@ -8987,7 +9231,24 @@ function lowerBreakContinueStatement(stmt: ts.BreakStatement | ts.ContinueStatem
  * are dead and skipped (verifier requires br.label last-in-buffer).
  */
 function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
-  const discRaw = lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
+  const clauses = stmt.caseBlock.clauses;
+  const stringTestTexts = clauses.map((clause) =>
+    ts.isCaseClause(clause) ? stringLiteralCaseTestValue(clause.expression) : null,
+  );
+  const isStringSwitch = stringTestTexts.some((text) => text !== null);
+
+  // #2952 slice 6b — a STRING-tested switch reuses the numeric ladder by
+  // computing a dispatch INDEX first: `disc` is compared against each case's
+  // literal with the IR's abstract `string.eq`, and the matching clause's
+  // index (or -1) becomes the i32 discriminant of the ordinary
+  // `IrInstrSwitch`. Deliberately NO new IR node/field (and therefore no
+  // exhaustiveness sweep): the ladder, br_table fast path, fallthrough
+  // layout, `break` frame and verifier rules all stay exactly as slice 4
+  // shipped them, and preparation still sees the string consts / `string.eq`
+  // as ordinary IR instructions, so provider binding needs no special case.
+  const dispatch = isStringSwitch ? lowerStringSwitchDispatch(stmt, cx, stringTestTexts) : null;
+
+  const discRaw = dispatch ? dispatch.disc : lowerExpr(stmt.expression, cx, irVal({ kind: "f64" }));
   const discT = asVal(cx.builder.typeOf(discRaw));
   if (!discT || (discT.kind !== "f64" && discT.kind !== "i32")) {
     throw new Error(`ir/from-ast: switch disc must lower to i32/f64 in ${cx.funcName}`);
@@ -9004,9 +9265,13 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
   };
   const tests: (number | null)[] = [];
   const bodies: (readonly IrInstr[])[] = [];
-  for (const clause of stmt.caseBlock.clauses) {
+  for (let k = 0; k < clauses.length; k++) {
+    const clause = clauses[k]!;
     if (ts.isCaseClause(clause)) {
-      const v = numericLiteralValue(clause.expression);
+      // String switch: the test IS the clause index (the dispatch chain
+      // above already resolved the literal comparison). Numeric switch:
+      // the literal's value, as slice 4.
+      const v = dispatch ? k : numericLiteralValue(clause.expression);
       if (v === null) {
         throw new Error(
           `ir/from-ast: switch case test must be a numeric literal — selector gate failed (${cx.funcName})`,
@@ -9027,6 +9292,85 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
   }
   cx.builder.emitSwitch({ disc: discRaw, discSlot, tests, bodies, breakLabel });
   joinScopeStringEncodingFacts(cx.scope, [switchCx.scope]);
+}
+
+/**
+ * #2952 slice 6b — compute the dispatch INDEX of a string-tested switch.
+ *
+ * Emits, into the CURRENT buffer (so no cross-buffer SSA reference is
+ * created — nested buffers are self-contained, see the slice-1 note):
+ *
+ * ```
+ *   <disc>                       ;; evaluated exactly ONCE (§14.12.9 step 1)
+ *   match := -1
+ *   if (string.eq(disc, lit[n-1])) match := n-1     ;; REVERSE source order
+ *   …
+ *   if (string.eq(disc, lit[0]))   match := 0
+ *   → slot.read(match)                              ;; i32 discriminant
+ * ```
+ *
+ * **Why reverse order + unconditional writes rather than a short-circuiting
+ * chain.** A short-circuit chain would have to evaluate `disc` inside a
+ * NESTED if-buffer, which cannot reference the outer buffer's SSA value; it
+ * would need a string-typed slot and therefore a mode-dependent `(ref
+ * $AnyString)` / externref slot ValType. Emitting all comparisons flat in one
+ * buffer and letting the FIRST clause in source order win by writing LAST is
+ * observationally identical: both operands are strings, so `string.eq` is
+ * total, pure and cannot throw — evaluating a comparison JS would have
+ * skipped is unobservable. First-clause-wins on duplicate literals is
+ * preserved. The measured cost is `n` comparisons instead of up to `n`; a
+ * short-circuiting variant is a pure optimisation, banked.
+ *
+ * The `-1` sentinel is out of the `[0, n)` clause-index range, so it falls to
+ * the ladder's no-match target — the `default` clause when present, past the
+ * ladder otherwise — through the SAME code slice 4 already emits (including
+ * `br_table`, whose min-biased index goes out of range for -1).
+ */
+function lowerStringSwitchDispatch(
+  stmt: ts.SwitchStatement,
+  cx: LowerCtx,
+  stringTestTexts: readonly (string | null)[],
+): { readonly disc: IrValueId } {
+  const i32 = irVal({ kind: "i32" });
+  const discV = lowerExpr(stmt.expression, cx, { kind: "string" });
+  const discKind = cx.builder.typeOf(discV).kind;
+  if (discKind !== "string") {
+    // Selector mirror (`switch-disc-not-string` / `switch-disc-not-string-carrier`).
+    // `IrUnsupportedError` — NOT a bare `throw` — because under IR-first
+    // (#2138) a bare build throw is an `unexpected-internal-throw` INVARIANT
+    // (hard compile error), while a named Unsupported reason demotes cleanly.
+    // The selector gates this shape out, so this is a defence-in-depth mirror
+    // that should never fire; if it ever does, legacy still compiles the
+    // function. Same channel the neighbouring string-operand `===` arm uses.
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `ir/from-ast: string-tested switch disc lowered to ${discKind}, not string, in ${cx.funcName}`,
+    );
+  }
+  const matchSlot = cx.builder.declareSlot("__switch_str_match", { kind: "i32" });
+  cx.builder.emitSlotWrite(matchSlot, cx.builder.emitConst({ kind: "i32", value: -1 }, i32));
+  for (let k = stringTestTexts.length - 1; k >= 0; k--) {
+    const text = stringTestTexts[k];
+    if (text === null) continue; // default clause — no comparison
+    const literal = cx.builder.emitStringConst(text);
+    const matched = cx.builder.emitStringEq(discV, literal, false);
+    const then = cx.builder.collectBodyInstrs(() => {
+      cx.builder.emitSlotWrite(matchSlot, cx.builder.emitConst({ kind: "i32", value: k }, i32));
+    });
+    cx.builder.emitIfStmt({ cond: matched, then, else: [] });
+  }
+  return { disc: cx.builder.emitSlotRead(matchSlot) };
+}
+
+/**
+ * #2952 slice 6b — the text of a string-literal case test. `null` for any
+ * other expression shape (numeric literals take the slice-4 path; everything
+ * else is selector-rejected).
+ */
+function stringLiteralCaseTestValue(expr: ts.Expression): string | null {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+  return null;
 }
 
 /**
@@ -10055,6 +10399,10 @@ function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
     // Nested bitwise/shift result — falls through to the leaf case below:
     // lower via the existing general path (unchanged), then narrow.
   }
+  // (#3931) The proven char-read leaf is ALREADY an i32 code unit — take it
+  // directly rather than widening to f64 and narrowing straight back.
+  const provenCharRead = matchProvenCharRead(inner, cx.provenCharReads);
+  if (provenCharRead !== null) return emitProvenCharReadI32(inner as ts.CallExpression, provenCharRead, cx);
   const f64Value = lowerExpr(e, cx, irVal({ kind: "f64" }));
   const valueType = asVal(typeOfValue(f64Value, cx));
   if (valueType?.kind === "i32") return f64Value; // already i32 — no redundant narrowing
@@ -10209,8 +10557,8 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // unsound; see #3745's revert history).
   const i32PureBitwiseOperands =
     isIrBitwiseOperatorToken(op) &&
-    isI32PureExprIR(expr.left, cx.i32PureNames) &&
-    isI32PureExprIR(expr.right, cx.i32PureNames);
+    isI32PureExprIR(expr.left, cx.i32PureNames, cx.provenCharReads) &&
+    isI32PureExprIR(expr.right, cx.i32PureNames, cx.provenCharReads);
   const lhs = i32PureBitwiseOperands
     ? emitI32PureExpr(expr.left, cx)
     : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
@@ -10278,11 +10626,15 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // back to legacy.
   if (lt.kind === "string" || rt.kind === "string") {
     if (lt.kind !== "string" || rt.kind !== "string") {
+      // Always a clean demote, never the invariant backstop: one operand is
+      // statically string-kinded here, so this is a slice-1 capability gap by
+      // construction. The checker-proof gate is deliberately NOT required —
+      // a type-erased operand (`a as any` over a string param) reaches this
+      // arm with an unprovable source type, and the #3583 assertion unwrap
+      // made those bodies claimable (regressed comparison-coercion/
+      // string-arithmetic-coercion equivalence tests to hard errors).
       const detail = `ir/from-ast: mixed string/non-string operand for '${ts.tokenToString(op)}' is not in slice 1 (${cx.funcName})`;
-      if (checkerProvesBinarySourceCapabilityGap(expr.left, expr.right, cx)) {
-        throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-      }
-      throw new Error(detail);
+      throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
     }
     switch (op) {
       case ts.SyntaxKind.PlusToken:
@@ -10315,7 +10667,14 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       case ts.SyntaxKind.GreaterThanEqualsToken:
         return emitStringRelational(lhs, rhs, "i32.ge_s", cx);
       default:
-        throw new Error(`ir/from-ast: string operator '${ts.tokenToString(op)}' not in slice 1 (${cx.funcName})`);
+        // Clean demote (see the mixed-operand arm above): `"a" % "b"`-style
+        // shapes are legitimate JS whose coercion slice 1 simply doesn't
+        // carry — the legacy dynamic path owns them.
+        throw new IrUnsupportedError(
+          "operand-coercion-unsupported",
+          "build",
+          `ir/from-ast: string operator '${ts.tokenToString(op)}' not in slice 1 (${cx.funcName})`,
+        );
     }
   }
 
@@ -12027,10 +12386,10 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
-  if (valTy?.kind === "f64" || valTy?.kind === "i32" || valueType.kind === "class") {
-    // Slice 9 defers numerics (need a box helper) and class instances (#4035:
-    // `extern.convert_any` on an IR class struct renders as "[object Object]"
-    // not "Cls: msg" — a SILENT wrong answer, so IR declines). Legacy takes over.
+  if (valTy?.kind === "f64" || valTy?.kind === "i32") {
+    // Slice 9 still defers numerics (they need a box helper). Class instances
+    // are lowered again (#4097): #4035 declined them for a render gap that the
+    // `__exn_render_prepare` user-class arm now closes on BOTH paths.
     demoteToLegacy("throw-value-unsupported", `ir/from-ast: throw ${valueType.kind} not in slice 9 (${cx.funcName})`);
   }
   // Reference-shaped — coerce to externref. The helper is a no-op

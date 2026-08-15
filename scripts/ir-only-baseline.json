@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-09",
+  "generated": "2026-08-15",
   "lanes": {
     "single-host": {
       "entryFloor": 5,
@@ -10,6 +10,22 @@
       "legacyBodyEmittedCeiling": 10,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},
+      "invariantCeiling": 0
+    },
+    "standalone": {
+      "entryFloor": 5,
+      "terminalUnitFloor": 37,
+      "emittedFloor": 17,
+      "irBodyEmittedFloor": 17,
+      "legacyBodyEmittedCeiling": 27,
+      "unsupportedCeiling": 20,
+      "unsupportedByCode": {
+        "select/body-shape-rejected": 11,
+        "select/call-graph-closure": 3,
+        "select/date-constructor-unsupported": 1,
+        "select/primitive-method-unsupported": 1,
+        "select/async-function": 4
+      },
       "invariantCeiling": 0
     }
   }

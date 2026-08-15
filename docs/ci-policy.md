@@ -186,9 +186,9 @@ Two test262 workflows currently run on PRs:
     #1081 runs/<merge-base> cache, then latest-main baseline — i.e. exactly
     the pre-#1956 behavior.
   - **Canonical queue configuration: `max_entries_to_build: 1` (no
-    speculation), `max_entries_to_merge: 5` (BATCH UP TO 5 PRs PER GROUP),
-    `min_entries_to_merge: 2` with a 5-minute wait timer (#3914 Step 2, live
-    since 2026-08-14 — see the floor note below).** These live in the repo
+    speculation), `max_entries_to_merge: 5`, `min_entries_to_merge: 1`
+    (#3914 Step 2 was tried at floor 2 on 2026-08-14 and measured a NO-OP on
+    2026-08-15 — reverted; see the floor note below).** These live in the repo
     ruleset, not in any workflow file, so they are applied and read back with
     **`scripts/set-merge-queue-config.sh`** (`--show` to read, `--check` to
     diff, no flag to apply; needs repo-admin `gh`). Before that script existed
@@ -196,15 +196,18 @@ Two test262 workflows currently run on PRs:
     six weeks stale — it still said `max_entries_to_build: 5` long after the
     2026-06-20 wedge reverted it. Treat the script's `--show` output as
     authoritative and this paragraph as the intent.
-  - **The two knobs are not the same thing, and only one of them is safe.**
-    - `max_entries_to_merge` (**the batch cap, 5**) puts up to five queued PRs
-      into **one** merge group validated by **one** shard-matrix run. Runner
-      pressure is unchanged and the fixed ~170 s per-run overhead is divided
-      across the batch. It costs the batched PRs no latency: the queue is
-      serial, so they were already waiting for that run. Measured 2026-07-31:
-      the median PR waited 23.6 min for a 13.3 min run and 13 of 20 groups had
-      another PR already waiting when they were dispatched — all of which still
-      went out as size-1 groups.
+  - **The two knobs are not the same thing — and NEITHER of them batches CI
+    runs.** (Corrected 2026-08-15; the previous version of this bullet claimed
+    the cap gives "one run for N PRs", which is not what GitHub's product does.)
+    - `max_entries_to_merge` / `min_entries_to_merge` (**merge limits**) only
+      group the final fast-forward to `main` of queue entries that have EACH
+      already passed **their own** `merge_group` run. GitHub's docs describe
+      them as "the number of pull requests to merge into the base branch at the
+      same time", and merge limits explicitly do **not** combine `merge_group`
+      builds (GitHub community discussion #58523). Every queued PR always gets
+      its own temporary branch and its own full shard-matrix run — the native
+      merge queue has **no fewer-runs-than-PRs mode**. The fixed per-run
+      overhead can never be amortised across PRs with these knobs.
     - `max_entries_to_build` (**speculation depth, 1**) builds up to N
       _separate_ groups concurrently, each with its own full run. It is capped
       at a ~1.25× theoretical win, it puts 5 × ~102 shard jobs on a
@@ -235,22 +238,30 @@ Two test262 workflows currently run on PRs:
     optimistic-batch/split-on-failure: re-enqueue the members singly to
     attribute. Cost is one wasted run, which is the `e`-weighted term in
     #3914's sizing.
-  - **`min_entries_to_merge` is now 2 — #3914 Step 2 fired.** Its precondition
-    was "raise the floor only if groups are observed to stay size-1 at cap 5,
-    i.e. only if GitHub's formation is eager-with-minimum rather than
-    `min(available, cap)`". Measured 2026-08-14 and met: **all 30 merge groups
-    dispatched that day went out at size 1**, reconstructed by walking each
-    group's `base_sha` forward on `main` and counting the merge commits it
-    produced. That included a ~2h window (15:41–17:40Z) in which 2-3 green PRs
-    sat queued behind a head that could not go green, and they still merged one
-    at a time afterwards. Cap 5 alone never batches; the floor is what forms
-    groups.
-    The cost is unchanged and was always the point of the trigger: raising the
-    cap is free, raising the floor is not — a genuinely solo PR pays the wait
-    timer as pure added latency (~1/3 of measured dispatches had no peer
-    waiting). The live timer is **5 minutes**, not the 2 minutes this section
-    originally prescribed; that is the knob to revisit first if solo-PR latency
-    is felt, since it bounds the added wait directly.
+  - **`min_entries_to_merge` is back to 1 — #3914 Step 2 was tried and
+    measured a NO-OP.** The floor was raised to 2 (5-min timer) on
+    2026-08-14T18:16Z on the "the floor is what forms groups" hypothesis.
+    Measured across all of 2026-08-15 up to 13:34Z: **29/29 successful merge
+    groups still carried exactly one PR**, one full run each, merging ~15 min
+    apart — including a window where entries for #4557/#4558/#4559 were
+    stacked in the queue simultaneously (their queue merge commits are all
+    dated 12:39–12:44Z) and still consumed three full runs. The floor cannot
+    bind on this queue, for two structural reasons:
+    1. the wait timer counts from queue entry and, per GitHub's docs, the
+       queue then "stop[s] waiting for more entries and merge[s] with fewer
+       than the minimum" — under load the head's queue wait (≥ one ~15-min
+       run) always exceeds the timer, so the floor is waived at every merge
+       decision;
+    2. merging ≥2 entries together requires ≥2 entries green simultaneously,
+       which `max_entries_to_build: 1` makes impossible — the next entry's
+       run is only dispatched **after** the head merges (observed +2 s).
+    Its only observable effect is added latency on quiet-queue fast merges
+    (docs-only runs go green in ~2-3 min, inside the timer). Conclusion for
+    future readers: **no ruleset setting batches N PRs into one CI run** —
+    that mode does not exist in GitHub's native merge queue. Genuine per-run
+    amortisation requires a queue product that builds batches (e.g.
+    Mergify-style) or a bot-maintained train PR — a project-lead decision,
+    not a ruleset flip.
   - **Intra-group masking is narrower than this doc used to claim.** It applies
     only to the test262 _delta_ gate, not to `quality` / `cheap gate` /
     `equivalence-*` (pass/fail), nor to the catastrophic guard (#1668) or the

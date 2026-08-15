@@ -94,6 +94,7 @@ import { protoIndexGetIdxMissInstrs, protoIndexHasIdxInstrs } from "./proto-inde
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -744,6 +745,38 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
 
+  /**
+   * (#4434) Mark the module as carrying an indexed-lane-reachable companion
+   * entry when the key is a canonical numeric STRING that is not an array
+   * index (`"4294967295"`, `"4294967296"`, `"1e21"`).
+   *
+   * The `__extern_get_idx` prologue is gated on this flag, and the define path
+   * set it only for keys with an index `>= 0` — but `arr[4294967295]` reaches
+   * that same prologue as an f64 whose `number_toString` is the stored key. So
+   * the flag has to follow reachability, not index-ness; see
+   * `canonicalNumericKeyGuard`'s doc comment. Returns `[]` (no-op) when
+   * `__str_to_number` is unavailable, leaving today's behaviour.
+   */
+  const markNumericLikeNamedKey = (keyLocal: number, scratchF64: number): Instr[] => {
+    const strToNumberIdx = ctx.funcMap.get("__str_to_number");
+    if (strToNumberIdx === undefined) return [];
+    return canonicalNumericKeyGuard(
+      keyLocal,
+      scratchF64,
+      {
+        strToNumber: strToNumberIdx,
+        numberToString: numToStringIdx,
+        strFlatten: strFlattenIdx,
+        strEquals: strEqualsIdx,
+        anyStrTypeIdx,
+      },
+      [
+        { op: "i32.const", value: 1 },
+        { op: "global.set", index: core.numericFlagGlobalIdx },
+      ],
+    );
+  };
+
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
     { op: "local.get", index: keyLocal },
@@ -760,6 +793,56 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
     { op: "local.set", index: lenLocal },
   ];
+
+  /**
+   * (#4434) The BACKED length — `min(vec.length, array.len(vec.data))`.
+   *
+   * `vecLen` answers the LOGICAL length, which is what §10.4.2.2's
+   * at-or-beyond-length rejections must compare against, so it deliberately
+   * stays as it is. But the two places that ask "is index `i` a REAL, already
+   * existing element?" must use the physical bound instead: the `a.length = N`
+   * setter can push the logical length past the backing (vec-index-domain.ts
+   * §2), and an index in that tail is a HOLE — it has no implicit
+   * `{value, w/e/c: true}` descriptor to seed or to report, and reading it to
+   * find one is exactly the `array.get` that trapped.
+   *
+   * Per-carrier because `data`'s array type is not on `$__vec_base`. The
+   * fallthrough (no carrier matched) leaves `lenLocal` at the logical length —
+   * unreachable in practice, since every caller sits behind
+   * `carrierWhitelistGuard`, and it degrades to the previous behaviour rather
+   * than to zero.
+   */
+  const vecBackedLen = (anyLocal: number, lenLocal: number): Instr[] => {
+    const arms: Instr[] = [];
+    for (const c of carriers) {
+      const capacity = (): Instr[] => [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: c.vecTypeIdx },
+        { op: "struct.get", typeIdx: c.vecTypeIdx, fieldIdx: 1 },
+        { op: "array.len", typeIdx: c.arrTypeIdx } as Instr,
+      ];
+      arms.push(
+        { op: "local.get", index: anyLocal },
+        { op: "ref.test", typeIdx: c.vecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // if array.len(data) < len → len = array.len(data)
+            ...capacity(),
+            { op: "local.get", index: lenLocal },
+            { op: "i32.lt_u" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [...capacity(), { op: "local.set", index: lenLocal }],
+            },
+          ],
+        },
+      );
+    }
+    return [...vecLen(anyLocal, lenLocal), ...arms];
+  };
 
   const clearDeletedIndexMarker = (l: {
     comp: number;
@@ -957,6 +1040,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "newLenI", type: { kind: "i32" } },
         { name: "k", type: { kind: "i32" } },
         { name: "lenPrim", type: { kind: "externref" } },
+        // (#4434) min(length, array.len(data)) — the "is this a REAL element?"
+        // bound. Distinct from `len` because §10.4.2.2's rejections compare
+        // against the LOGICAL length; only the seed asks about backing.
+        { name: "backedLen", type: { kind: "i32" } },
+        // (#4434) f64 scratch for the canonical-numeric-string key test.
+        { name: "keyNum", type: { kind: "f64" } },
       ];
       // (#3251 S3) Full §7.1.4 ToNumber for the length value — ArraySetLength
       // must accept `{value: "2"}` and `{value: {toString(){return "2"}}}`
@@ -1350,6 +1439,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.set", index: 6 },
         ...parseIndex(1, 7),
         ...vecLen(4, 8),
+        ...vecBackedLen(4, 19),
         // (#4227) §10.4.2.2 step 3 — frozen `length` blocks an index at/after it.
         ...nonWritableLengthIndexGuard(rejectionDeps, { comp: 5, i: 7, len: 8, entry: 9 }),
         // (#4227) §10.1.6.3 step 2 — a non-extensible array takes no new index.
@@ -1376,8 +1466,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
+              // (#4434) BACKED length, not logical: an index in the unbacked
+              // tail is a hole, so the define is a FIRST definition (defaults
+              // all false) rather than a redefine of an implicit
+              // `{value, w/e/c: true}` element — and seeding it would have
+              // read `data[i]` past the backing, which is what trapped.
               then: buildRealElementSeed(
-                { comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 8 },
+                { comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 19 },
                 objFindIdx,
                 dpValueIdx,
                 externGetIdxIdx,
@@ -1385,6 +1480,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               ),
             },
           ],
+        },
+        // (#4434) A named key that is nonetheless a canonical numeric STRING is
+        // reachable through the INDEXED read lane, so it has to arm the
+        // numeric-companion flag the same way an index define does.
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.lt_s" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: markNumericLikeNamedKey(1, 20),
         },
         // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
         // Deliberately NOT applied on the accessor path: converting a data
@@ -1493,6 +1599,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "len", type: { kind: "i32" } },
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
         { name: "wasDeleted", type: { kind: "i32" } },
+        // (#4434) min(length, array.len(data)) — see the `__vec_dp_value` twin.
+        { name: "backedLen", type: { kind: "i32" } },
+        // (#4434) f64 scratch for the canonical-numeric-string key test.
+        { name: "keyNum", type: { kind: "f64" } },
       ];
       const bailReturnVec = (): Instr[] => [{ op: "local.get", index: 0 }, { op: "return" }];
       fn.body = [
@@ -1535,6 +1645,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.set", index: 7 },
         ...parseIndex(1, 8),
         ...vecLen(5, 9),
+        ...vecBackedLen(5, 12),
         { op: "local.get", index: 8 },
         { op: "i32.const", value: 0 },
         { op: "i32.ge_s" },
@@ -1557,8 +1668,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
+              // (#4434) BACKED length — see the `__vec_dp_value` twin.
               then: buildRealElementSeed(
-                { comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 9 },
+                { comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 12 },
                 objFindIdx,
                 dpValueIdx,
                 externGetIdxIdx,
@@ -1566,6 +1678,15 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               ),
             },
           ],
+        },
+        // (#4434) canonical-numeric named key → arm the indexed-lane flag.
+        { op: "local.get", index: 8 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.lt_s" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: markNumericLikeNamedKey(1, 13),
         },
         // Delegate the accessor define (validation + merge live in the native).
         { op: "local.get", index: 7 },
@@ -1740,8 +1861,11 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         },
         // No entry: synthesize the implicit element descriptor for an
         // in-bounds index — {value: vec[i], w/e/c: true}. Do NOT seed on reads.
+        // (#4434) BACKED length: an index in the unbacked tail left by
+        // `a.length = N` is a hole, and a hole has no own descriptor — gOPD
+        // must answer `undefined`, not `{value: undefined, w/e/c: true}`.
         ...parseIndex(1, 4),
-        ...vecLen(2, 5),
+        ...vecBackedLen(2, 5),
         { op: "local.get", index: 4 },
         { op: "i32.const", value: 0 },
         { op: "i32.ge_s" },
@@ -1977,11 +2101,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const pComp = base + 1;
       const pE = base + 2;
       const pGetter = base + 3;
+      const pIdx = base + 4;
+      const pBacked = base + 5;
       fn.locals.push(
         { name: "__ov_any", type: { kind: "anyref" } },
         { name: "__ov_comp", type: { kind: "ref_null", typeIdx: objectTypeIdx } },
         { name: "__ov_e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
         { name: "__ov_getter", type: { kind: "externref" } },
+        // (#4434) the truncated index and the BACKED length, for the
+        // companion-vs-vec authority decision on a plain data entry.
+        { name: "__ov_idx", type: { kind: "i32" } },
+        { name: "__ov_backed", type: { kind: "i32" } },
       );
       const prologue: Instr[] = [
         // (#3673) Gate on the numeric-companion flag, NOT the state global: a
@@ -2083,7 +2213,43 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                             { op: "return" },
                           ],
                         },
-                        // plain data entry → fall through to the vec read
+                        // (#4434) A plain data entry normally falls through to
+                        // the vec read, because the define wrote its [[Value]]
+                        // back into the element and later plain writes keep
+                        // that fresh. That reasoning holds ONLY where the vec
+                        // physically backs the index. Two cases where it does
+                        // not, both of which read as `undefined` before this:
+                        //
+                        //   - a key outside the canonical array-index domain
+                        //     (`arr[4294967295]` — the write-back is skipped
+                        //     because `__obj_index_of_key` reports -1, so the
+                        //     companion is the only copy);
+                        //   - an index in the unbacked tail left by
+                        //     `a.length = N` (vec-index-domain.ts §2).
+                        //
+                        // In both, the companion is authoritative. Decided at
+                        // READ time rather than by marking the entry at define
+                        // time, so a later `a.length = …` that grows or shrinks
+                        // the backing cannot leave a stale authority bit.
+                        { op: "local.get", index: 1 },
+                        { op: "i32.trunc_sat_f64_s" },
+                        { op: "local.set", index: pIdx },
+                        ...vecBackedLen(pAny, pBacked),
+                        { op: "local.get", index: pIdx },
+                        { op: "local.get", index: pBacked },
+                        { op: "i32.ge_u" },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: pE },
+                            { op: "ref.as_non_null" },
+                            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                            { op: "extern.convert_any" },
+                            { op: "return" },
+                          ],
+                        },
+                        // backed data entry → fall through to the vec read
                       ],
                     },
                   ],

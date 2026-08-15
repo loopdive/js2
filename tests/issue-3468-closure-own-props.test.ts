@@ -131,9 +131,17 @@ describe("#3468 C-core — closure own-property side table (dynamic path, verifi
   });
 
   it("does not let a custom own property shadow the builtin metadata path", async () => {
-    // A user closure's `.length` is a pre-existing 0 via the any-path (its meta
-    // is not populated); the point here is that writing a custom prop must NOT
-    // change that — i.e. the side table doesn't shadow the builtin-meta arm.
+    // The invariant under test is unchanged: writing a custom own property must
+    // NOT disturb `.length` — the #3468 side table does not shadow the metadata
+    // arm.
+    //
+    // (#4436) The EXPECTED VALUE changed from 0 to 2. The 0 was never this
+    // test's subject; it was the flat `box_number(0)` the dyn-read closure arm
+    // returned for any closure the #2896 builtin-meta helper declined ("arity
+    // not statically tracked"). It IS tracked — the `$arity` header slot
+    // (#3673) — and the generic user-closure arm now reads it, so a
+    // two-parameter arrow correctly answers 2. Pinning 0 here would pin the
+    // defect, not the invariant.
     const { ret } = await runStandalone(`
       export function test(): number {
         let seed = 1;
@@ -143,7 +151,7 @@ describe("#3468 C-core — closure own-property side table (dynamic path, verifi
         return (g as any).length;
       }
     `);
-    expect(ret).toBe(0);
+    expect(ret).toBe(2);
   });
 
   it("includes shared noncapturing wrapper structs in the rollout (#3468 F1)", async () => {

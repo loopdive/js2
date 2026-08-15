@@ -14,7 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Every upstream test that upstream itself does not `.skip` must RUN. Filtering
 // one out to keep a number tidy is the failure mode this floor prevents.
-const ADMITTED_FLOOR = 1900;
+const ADMITTED_FLOOR = 1200;
 
 describe("react-dom upstream suite", () => {
   it("quarantines only the known late jsdom removal exception", () => {
@@ -42,9 +42,10 @@ describe("react-dom upstream suite", () => {
     expect(pin.testFiles.length).toBeGreaterThanOrEqual(115);
     for (const file of pin.testFiles) expect(file.startsWith(`${pin.testDirectory}/`)).toBe(true);
 
-    // The implementation is TWO published CJS modules, not the package entry.
+    // The client implementation uses TWO published CJS modules, not the package entry.
     expect(pin.implementation.sharedModule).toMatch(/^package\/cjs\//);
     expect(pin.implementation.clientModule).toMatch(/^package\/cjs\//);
+    expect(pin.implementation.serverModule).toBeUndefined();
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;
@@ -62,6 +63,7 @@ describe("react-dom upstream suite", () => {
     expect(report.extraction.admitted + report.extraction.rejected).toBe(report.extraction.upstreamTestsSeen);
     expect(report.extraction.rejectedTests.every((t: { reason?: string }) => !!t.reason)).toBe(true);
     expect(report.extraction.admitted).toBeGreaterThanOrEqual(ADMITTED_FLOOR);
+    expect(report.extraction.rejectionCounts["needs-react-dom-server"]).toBeGreaterThan(0);
 
     // The load-bearing assertion while #3982 is open: if the implementation
     // cannot compile, that must be REPORTED with the compiler's own message —

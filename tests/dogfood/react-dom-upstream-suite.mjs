@@ -8,8 +8,8 @@
 // same commit. Only three things are actually different, and each is the reason
 // a separate harness exists at all:
 //
-//   1. TWO published CJS modules make up the implementation (the shared entry
-//      plus the 536 KB client renderer), and each needs its OWN function scope:
+//   1. TWO published CJS modules make up the client implementation (the shared
+//      entry and the client renderer), and each needs its OWN function scope:
 //      react and react-dom both declare a top-level `noop`, so a bare
 //      concatenation dies with `Duplicate identifier 'noop'` before a single
 //      test runs.
@@ -36,9 +36,12 @@ import { setupReactDomImplementation, setupReactDomUpstreamSuite } from "./setup
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
 import { REACT_EXPECT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./react-upstream-shim.mjs";
+import { compileProjectInWorker, compileSourceInWorker } from "./upstream-suite-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
+const GENERATED_ROOT = join(HERE, ".react-dom-upstream-suite-impl");
+const PROJECT_ROOT = join(HERE, ".react-dom-upstream-suite-project");
 
 let nativeContextFile = "<setup>";
 let nativeContextTest = "<setup>";
@@ -155,29 +158,45 @@ exports.unstable_setDisableYieldValue = undefined;
 function buildImplementationSource({ reactSource, sharedSource, clientSource }) {
   const wiredClientSource = wireRequires(clientSource);
   return [
+    "var __REACT__, __SCHEDULER__, __REACTDOM_SHARED__, __REACTDOM__;",
+    "var __reactDomInitialized = false;",
     "function __reactModule() { var exports = {};",
     reactSource,
     "return exports; }",
-    "var __REACT__ = __reactModule();",
     "function __schedulerModule() { var exports = {};",
     REACT_DOM_SCHEDULER_SHIM,
     "return exports; }",
-    "var __SCHEDULER__ = __schedulerModule();",
     "function __reactDomSharedModule() { var exports = {};",
     wireRequires(sharedSource),
     "return exports; }",
-    "var __REACTDOM_SHARED__ = __reactDomSharedModule();",
     "function __reactDomClientModule() { var exports = {};",
     wiredClientSource,
     "return exports; }",
-    "var __REACTDOM__ = __reactDomClientModule();",
+    "function __reactDomEnsureInit() {",
+    "if (__reactDomInitialized) return;",
+    "__reactDomInitialized = true;",
+    "__REACT__ = __reactModule();",
+    "__SCHEDULER__ = __schedulerModule();",
+    "__REACTDOM_SHARED__ = __reactDomSharedModule();",
+    "__REACTDOM__ = __reactDomClientModule();",
+    "}",
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude) {
-  const lines = [`document.body.textContent = "";`];
+function reactDomTestSetup(prelude, testSource = prelude) {
+  const lines = [`__reactDomEnsureInit();`, `document.body.textContent = "";`];
   const binds = (name, expression) => {
-    if (new RegExp(`\\b(?:let|var)\\s+${name}\\b`).test(prelude)) lines.push(`${name} = ${expression};`);
+    const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
+    if (declaration && declaration[1] !== "const") {
+      lines.push(`${name} = ${expression};`);
+    } else if (!declaration && new RegExp(`\\b${name}\\b`).test(testSource)) {
+      // Imports are intentionally removed by the upstream extractor. A
+      // server-renderer import therefore has no surviving declaration even
+      // though the test body still uses the binding. Declare only bindings
+      // that the test actually reaches for; unconditional `var` declarations
+      // would collide with retained `const`/`let` preludes.
+      lines.push(`var ${name} = ${expression};`);
+    }
   };
   binds("React", "__REACT__");
   binds("ReactDOM", "__REACTDOM_SHARED__");
@@ -185,8 +204,12 @@ function reactDomTestSetup(prelude) {
   binds("OuterReactDOMClient", "__REACTDOM__");
   binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
   binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
-  if (/\b(?:let|var)\s+act\b/.test(prelude)) {
-    lines.push(`act = async function (callback) {
+  const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
+  if (actDeclaration && actDeclaration[1] === "const") {
+    // Preserve an upstream const binding; the extractor's import rewrite owns
+    // its value and assigning to it would turn a harness setup into a failure.
+  } else if (actDeclaration || /\bact\b/.test(testSource)) {
+    lines.push(`${actDeclaration ? "act" : "var act"} = async function (callback) {
   var result;
   __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
   if (result !== null && result !== undefined && typeof result.then === "function") await result;
@@ -197,8 +220,8 @@ function reactDomTestSetup(prelude) {
 }
 
 function withReactDomSetup(test) {
-  const leadingDeclarations = /^(?:(?:let|var)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
-  const setup = reactDomTestSetup(test.prelude);
+  const leadingDeclarations = /^(?:(?:let|var|const)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
+  const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`);
   const prelude = `${leadingDeclarations}${setup}\n${test.prelude.slice(leadingDeclarations.length)}`;
   return { ...test, prelude };
 }
@@ -207,9 +230,81 @@ function buildModuleSource(implementation, tests) {
   return [
     implementation,
     REACT_EXPECT_SHIM,
+    `export function __reactDomInit() { __reactDomEnsureInit(); }`,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test))),
     LAST_ERROR_EXPORT,
   ].join("\n");
+}
+
+function buildProjectModuleSource({ exportName, moduleName, imports, bindings = "", source }) {
+  // The multi-file compiler currently publishes module-scope bindings in one
+  // Wasm namespace. Keep the CJS export carrier top-level (so the large React
+  // production bodies do not become nested function expressions), but give
+  // each file a unique carrier name before exposing it as a named ESM export.
+  // Reusing a bare `exports`/`default` binding across React, shared, and client
+  // modules made importers observe the wrong (usually empty) object.
+  const carrier = `__${moduleName}Exports`;
+  const wiredSource = source.replace(/\bexports\b/g, carrier);
+  return `${imports}\nconst ${carrier} = {};\n${bindings}\n${wiredSource}\nexport { ${carrier} as ${exportName} };\n`;
+}
+
+// Keep each published CJS implementation file in its own project module.
+// Concatenating the 560 KB client graph into every test batch both repeats
+// compilation work and makes a single compiler watchdog unable to distinguish
+// a slow implementation from a pathological test body.
+function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
+  const entry = [
+    'import { __reactExports } from "./react.ts";',
+    'import { __sharedExports } from "./shared.ts";',
+    'import { __clientExports } from "./client.ts";',
+    'import { __schedulerExports } from "./scheduler.ts";',
+    "const __REACT__ = __reactExports;",
+    "const __REACTDOM_SHARED__ = __sharedExports;",
+    "const __REACTDOM__ = __clientExports;",
+    "const __SCHEDULER__ = __schedulerExports;",
+    "function __reactDomEnsureInit() {}",
+    REACT_EXPECT_SHIM,
+    `export function __reactDomInit() { __reactDomEnsureInit(); }`,
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test))),
+    LAST_ERROR_EXPORT,
+    `export function upstreamTestNames() { return [${tests.map((test) => JSON.stringify(test.id)).join(", ")}]; }`,
+    `export function upstreamTestCount() { return ${tests.length}; }`,
+  ].join("\n");
+  return {
+    "react.ts": buildProjectModuleSource({
+      exportName: "__reactExports",
+      moduleName: "react",
+      imports: "",
+      source: reactSource,
+    }),
+    "scheduler.ts": buildProjectModuleSource({
+      exportName: "__schedulerExports",
+      moduleName: "scheduler",
+      imports: "",
+      source: REACT_DOM_SCHEDULER_SHIM,
+    }),
+    "shared.ts": buildProjectModuleSource({
+      exportName: "__sharedExports",
+      moduleName: "shared",
+      imports: 'import { __reactExports } from "./react.ts";',
+      bindings: "var __REACT__ = __reactExports;",
+      source: wireRequires(sharedSource),
+    }),
+    "client.ts": buildProjectModuleSource({
+      exportName: "__clientExports",
+      moduleName: "client",
+      imports:
+        'import { __reactExports } from "./react.ts";\n' +
+        'import { __sharedExports } from "./shared.ts";\n' +
+        'import { __schedulerExports } from "./scheduler.ts";',
+      bindings:
+        "var __REACT__ = __reactExports;\n" +
+        "var __REACTDOM_SHARED__ = __sharedExports;\n" +
+        "var __SCHEDULER__ = __schedulerExports;",
+      source: wireRequires(clientSource),
+    }),
+    "entry.ts": entry,
+  };
 }
 
 function buildNativeRunners(implementation, tests) {
@@ -217,7 +312,7 @@ function buildNativeRunners(implementation, tests) {
     implementation,
     REACT_EXPECT_SHIM,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test), { exported: false })),
-    `return { __lastError: function () { return __lastError; }, tests: { ${tests
+    `return { init: function () { __reactDomEnsureInit(); }, __lastError: function () { return __lastError; }, tests: { ${tests
       .map((test) => `${JSON.stringify(test.id)}: ${test.id}`)
       .join(", ")} } };`,
   ].join("\n");
@@ -229,6 +324,7 @@ async function runNative(implementation, tests) {
   try {
     const nativeRequire = createRequire(import.meta.url);
     const runners = buildNativeRunners(implementation, tests)(nativeRequire);
+    runners.init();
     const out = [];
     for (const test of tests) {
       nativeContextTest = test.id;
@@ -271,36 +367,137 @@ async function runNativeByFile(implementation, tests) {
 // per test only burns wall clock while hiding the actual finding.
 async function compileImplementationOnly(implementation) {
   const source = `${implementation}\nexport function __probe() {\n  return 1;\n}`;
+  const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
+  const result = await compileSourceInWorker({
+    generatedPath: join(GENERATED_ROOT, "generated-implementation.ts"),
+    source,
+    timeoutMs,
+    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1" },
+  });
+  const compile = result?.compile;
+  if (!compile) return { validates: false, compileMs: 0, error: "compile worker returned no result" };
+  return {
+    validates: compile.validates === true,
+    compileMs: compile.durationMs ?? 0,
+    error:
+      compile.errors?.[0]?.message ??
+      compile.validationError ??
+      (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted"),
+    binaryBytes: compile.binaryBytes ?? 0,
+    timedOut: compile.timedOut === true,
+  };
+}
+
+async function runProjectHarness({ report, log, implementation, reactSource, sharedSource, clientSource, selectedTests }) {
+  const configuredTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300_000;
+  const files = buildProjectFiles({ reactSource, sharedSource, clientSource, tests: selectedTests });
   const started = performance.now();
-  let result;
-  try {
-    result = await compile(source, {
-      fileName: "react-dom.js",
-      skipSemanticDiagnostics: true,
-      experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
-    });
-  } catch (thrown) {
-    return {
-      validates: false,
-      compileMs: Math.round(performance.now() - started),
-      error: thrown instanceof Error ? thrown.message : String(thrown),
+  const isolated = await compileProjectInWorker({
+    generatedRoot: PROJECT_ROOT,
+    entryFile: "entry.ts",
+    files,
+    timeoutMs,
+    workerEnv: { DOGFOOD_INSTALL_JSDOM: "1", DOGFOOD_NAMED_TEST_EXPORTS: "1" },
+  });
+  const compile = isolated?.compile ?? {
+    success: false,
+    validates: false,
+    durationMs: Math.round(performance.now() - started),
+    binaryBytes: 0,
+    errors: [{ message: "compile worker returned no result" }],
+  };
+  const wasm = isolated?.wasm ?? null;
+  const nativeHostErrors = [];
+  const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
+  const nativeResults = new Map((await runNativeByFile(implementation, selectedTests)).map((entry) => [entry.id, entry]));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  disposeNativeHostErrorBoundary();
+
+  const compileError =
+    compile.errors?.[0]?.message ??
+    compile.validationError ??
+    (compile.timedOut ? `compile timeout after ${timeoutMs}ms` : compile.success ? null : "no binary emitted");
+  const implementationInvalid = compile.validates === true ? null : { error: compileError, compileMs: compile.durationMs ?? 0 };
+  const statuses = wasm?.statuses ?? [];
+  const wasmErrors = wasm?.errors ?? [];
+  const tests = selectedTests.map((test, index) => {
+    const native = nativeResults.get(test.id) ?? {};
+    const entry = {
+      id: test.id,
+      file: test.file,
+      fullName: test.fullName,
+      nativePassed: native.value === 1,
+      nativeMessage: native.error ?? native.message ?? "",
     };
-  }
-  const compileMs = Math.round(performance.now() - started);
-  if (!result.success || !result.binary?.length) {
-    return { validates: false, compileMs, error: result.errors?.[0]?.message ?? "no binary emitted" };
-  }
-  try {
-    await WebAssembly.compile(result.binary);
-    return { validates: true, compileMs, error: null, binaryBytes: result.binary.length };
-  } catch (error) {
-    return {
-      validates: false,
-      compileMs,
-      error: error instanceof Error ? error.message : String(error),
-      binaryBytes: result.binary.length,
-    };
-  }
+    if (!entry.nativePassed) {
+      entry.status = "harness-incompatible";
+    } else if (implementationInvalid) {
+      entry.status = "skipped";
+      entry.skippedReason = compileError ?? "binary did not compile";
+    } else if (wasm?.fatal) {
+      entry.status = "trapped";
+      entry.compiledMessage = wasm.fatal;
+    } else {
+      entry.compiledPassed = statuses[index] === true;
+      entry.status = entry.compiledPassed ? "pass" : "fail";
+      if (!entry.compiledPassed) entry.compiledMessage = wasmErrors[index] ?? "";
+    }
+    return entry;
+  });
+  const scored = tests.filter((test) => ["pass", "fail", "trapped"].includes(test.status));
+  const passed = tests.filter((test) => test.status === "pass").length;
+  const harnessIncompatible = tests.filter((test) => test.status === "harness-incompatible").length;
+  const implementationInvalidTests = tests.filter((test) => test.status === "skipped").length;
+  report.compile = {
+    success: compile.success === true,
+    durationMs: compile.durationMs ?? 0,
+    binaryBytes: compile.binaryBytes ?? 0,
+    batches: [{ file: "react-dom-project", tests: selectedTests.length, ...compile }],
+    invalidBatches: compile.validates === true ? 0 : 1,
+    implementationInvalid,
+    quarantined: [],
+  };
+  report.validation = { validates: compile.validates === true, firstError: compileError };
+  report.results = {
+    scored: scored.length,
+    passed,
+    failed: scored.length - passed,
+    harnessIncompatible,
+    implementationInvalidTests,
+    nativeHostErrors,
+    tests,
+  };
+  report.summary = {
+    headline:
+      `${passed}/${scored.length} executed upstream react-dom tests pass against compiled Wasm ` +
+      `(${report.extraction.admitted} of ${report.extraction.upstreamTestsSeen} upstream tests admitted; ` +
+      `${harnessIncompatible} need infrastructure the harness cannot supply; ` +
+      `${implementationInvalidTests} blocked before Wasm execution)` +
+      (implementationInvalid ? " — react-dom's project does not compile to a valid module" : ""),
+    passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
+    upstreamTestsSeen: report.extraction.upstreamTestsSeen,
+    admitted: report.extraction.admitted,
+    scored: scored.length,
+    passed,
+    failed: scored.length - passed,
+    harnessIncompatible,
+    implementationInvalidTests,
+    nativeHostErrors: nativeHostErrors.length,
+    compileMs: compile.durationMs ?? 0,
+    binaryBytes: compile.binaryBytes ?? 0,
+    batches: 1,
+    invalidBatches: compile.validates === true ? 0 : 1,
+    implementationInvalid: implementationInvalid !== null,
+    implementationError: implementationInvalid?.error ?? null,
+    binaryValidates: compile.validates === true,
+  };
+  mkdirSync(dirname(REPORT_PATH), { recursive: true });
+  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  log(`[dogfood] ${report.summary.headline}`);
+  log(`[dogfood] full report → ${REPORT_PATH}`);
+  return report;
 }
 
 function splitBySize(tests) {
@@ -375,6 +572,18 @@ export async function runHarness({ quiet = false } = {}) {
     admitAll: process.env.DOGFOOD_REACT_DOM_ADMIT_ALL !== "0",
     supportedInfrastructure: new Set(["needs-react-dom", "needs-act", "needs-dom", "needs-scheduler"]),
   });
+  // The browser server renderer is a separate published CJS graph. Including
+  // it in this client module currently produces an invalid WasmGC type graph,
+  // so keep those original tests visible but explicitly deferred instead of
+  // turning every client test into an implementation-invalid zero.
+  const serverTests = extracted.tests.filter((test) => /\bReactDOMServer\b/.test(`${test.prelude}\n${test.body}`));
+  if (serverTests.length > 0) {
+    const serverIds = new Set(serverTests.map((test) => test.id));
+    extracted.tests = extracted.tests.filter((test) => !serverIds.has(test.id));
+    extracted.rejected.push(...serverTests.map((test) => ({ ...test, reason: "needs-react-dom-server" })));
+    extracted.rejectionCounts["needs-react-dom-server"] =
+      (extracted.rejectionCounts["needs-react-dom-server"] ?? 0) + serverTests.length;
+  }
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
     admitted: extracted.tests.length,
@@ -390,6 +599,22 @@ export async function runHarness({ quiet = false } = {}) {
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
       `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted`,
   );
+
+  // The project lane compiles the published React, shared, and client modules
+  // once, then runs all selected tests from one small entry module. The legacy
+  // concatenated batch lane remains available for comparison while the project
+  // graph is being hardened, but is no longer the default compatibility path.
+  if (process.env.DOGFOOD_REACT_DOM_PROJECT !== "0") {
+    return runProjectHarness({
+      report,
+      log,
+      implementation,
+      reactSource,
+      sharedSource,
+      clientSource,
+      selectedTests,
+    });
+  }
 
   // --- 3. DOES THE IMPLEMENTATION COMPILE AT ALL? --------------------------
   const baseline = await compileImplementationOnly(implementation);
@@ -474,17 +699,29 @@ export async function runHarness({ quiet = false } = {}) {
       admitted = admitted.concat(batchTests);
       let compiled = null;
       if (validates) {
+        let instance = null;
         try {
           const imports = result.importObject ?? {};
-          const { instance } = await WebAssembly.instantiate(result.binary, imports);
+          ({ instance } = await WebAssembly.instantiate(result.binary, imports));
           imports.setInstance?.(instance);
           imports.__setInstance?.(instance);
+          instance.exports.__reactDomInit?.();
           compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
         } catch (error) {
           const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          let payload = "";
+          const tag = instance?.exports?.__exn_tag ?? instance?.exports?.__tag;
+          if (tag && typeof error?.getArg === "function") {
+            try {
+              const value = error.getArg(tag, 0);
+              payload = value === undefined || value === null ? "" : ` payload=${String(value)}`;
+            } catch {
+              // Foreign exception tags cannot be decoded by this instance.
+            }
+          }
           const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
           const source = offsetMatch ? sourceAtWasmOffset(result.sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
-          firstError = `instantiate failed: ${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
+          firstError = `instantiate failed: ${stack}${payload}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
         }
       }
 

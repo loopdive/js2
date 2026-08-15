@@ -80,6 +80,7 @@ import {
   getOrRegisterBoundFnType,
   getOrRegisterVecBaseType,
   getOrRegisterVecType,
+  isVecBaseSubtype,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import { builtinCtorCallableArmInstrs } from "./builtin-ctor-callable.js"; // (#4394) wrapper-ctor [[Call]] arm
@@ -95,6 +96,7 @@ import {
   reserveCarrierBagVisibility,
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -105,6 +107,7 @@ import {
   reserveInstanceProps,
 } from "./instance-props.js";
 import { buildErrorPropSetArm, reserveErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` MOP
+import { reserveFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) `length` own-property on user closures
 import {
   INSTANCE_FIELD_DELETED,
   buildTombstoneScreen,
@@ -188,6 +191,7 @@ import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#422
 import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
 import { ensureWrapperConstructorCarriers, wrapperConstructorArmInstrs } from "./wrapper-constructor-carrier.js"; // (#4223) runtime `<wrapper>.constructor`
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
+import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
 /** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
@@ -1036,6 +1040,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // these defined arms are not emitted, and nothing here is reserved.
   if (ctx.standalone || ctx.wasi) {
     reserveClosurePropHelpers(ctx);
+    // (#2660 M3) The function-value → prototype-object identity edge — same
+    // reserve-before-arms-bake discipline; see `closure-prototype-edge.ts`.
+    reserveClosurePrototypeEdge(ctx);
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
@@ -1043,6 +1050,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
     reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
     reserveInstanceProps(ctx); // (#4194) per-instance WRITE-through + expando over that bag
+    reserveFunctionInstanceProps(ctx); // (#4436) `length` own-property on a user function instance
     // (#4160) Prototype-index store — self-gated on `ctx.standalone &&
     // ctx.protoIndexDirty`, so a flag-clear module reserves NOTHING and every
     // consult site below resolves `funcMap.get("__protoidx_*") === undefined`,
@@ -1107,6 +1115,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     { name: "fkey", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } as ValType },
     { name: "isName", type: { kind: "i32" } as ValType },
     { name: "isLen", type: { kind: "i32" } as ValType },
+    // (#4437) local 6 — the `$fnmeta` struct of a user closure, as an externref.
+    // Appended LAST so `fillBuiltinFnMeta`'s by-index reads of 2..5 are
+    // untouched; `fillFunctionInstanceProps` is the only writer.
+    { name: "fnmeta", type: { kind: "externref" } as ValType },
   ];
   if (ctx.standalone) {
     registerNative(
@@ -1134,7 +1146,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__builtinfn_push_ownnames",
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } as ValType }],
+      [
+        { name: "any", type: { kind: "anyref" } as ValType },
+        // (#4437) local 3 — the `$fnmeta` struct, gating the `"name"` push.
+        { name: "fnmeta", type: { kind: "externref" } as ValType },
+      ],
       [{ op: "i32.const", value: 0 }],
     );
   }
@@ -4187,24 +4203,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 blockType: { kind: "empty" },
                 then: [{ op: "i32.const", value: -1 }, { op: "return" }],
               },
-              // val = val * 10 + (c - '0')
-              { op: "local.get", index: 7 },
-              { op: "i32.const", value: 10 },
-              { op: "i32.mul" },
-              { op: "local.get", index: 6 },
-              { op: "i32.const", value: 0x30 },
-              { op: "i32.sub" },
-              { op: "i32.add" },
-              { op: "local.tee", index: 7 },
-              // overflow / out-of-range guard: if val < 0 (wrapped past i32 max)
-              // treat as a string key (return -1)
-              { op: "i32.const", value: 0 },
-              { op: "i32.lt_s" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [{ op: "i32.const", value: -1 }, { op: "return" }],
-              },
+              // (#4434) val = val * 10 + (c - '0'), with an EXACT pre-multiply
+              // overflow guard. The former post-hoc `val < 0` test only caught
+              // keys whose wrap landed in the negative half: "4294967296"
+              // accumulates to exactly 0 and was reported as array index 0, so
+              // `Object.defineProperty(arr, "4294967296", …)` invented a
+              // property at index 0 and grew `length` to 1. See
+              // vec-index-domain.ts §1.
+              ...canonicalIndexDigitStep(7, 6, 8),
               // i++
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 1 },
@@ -4230,6 +4236,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "i", type: { kind: "i32" } },
         { name: "c", type: { kind: "i32" } },
         { name: "val", type: { kind: "i32" } },
+        // (#4434) scratch for the decoded digit — the exact overflow guard has
+        // to inspect it before it is folded into the accumulator.
+        { name: "digit", type: { kind: "i32" } },
       ],
       body,
     );
@@ -7051,6 +7060,12 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: [...idxMiss(), { op: "return" }],
           },
+          // (#4434) …and if i is past the PHYSICAL backing → also a miss. A
+          // logical `length` can exceed `array.len(data)` (only the
+          // `a.length = N` setter creates this — see vec-index-domain.ts §2),
+          // and without this guard `a.length = 3; a[1]` TRAPPED on the
+          // `array.get` below instead of reading the hole as undefined.
+          ...backedBoundsGuard(2, 4, typeIdx, arrTypeIdx, idxMiss),
           // return box(vec.data[i])
           { op: "local.get", index: 2 },
           { op: "ref.cast", typeIdx },
@@ -9162,6 +9177,19 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // their element reads go through the dedicated typed-array paths, and
   // widening their `.length` here would change established fall-through
   // behaviour).
+  //
+  // (#4443) The name list states the right rule the wrong way; `isVecBase-
+  // Subtype` (registry/types.ts) is its structural form — see there for the
+  // carriers the names miss. What one costs when it slips through: it declares
+  // `length` but no integer-named FIELDS, so `numericFields` is empty and its
+  // `__extern_get_idx` arm degenerates to "`ref.test` the carrier → answer the
+  // prototype-index consult, unconditionally". The arm is skipped while
+  // `protoGetMiss()` is undefined, so an ordinary module never shows it; ANY
+  // builtin-prototype write mints it, and since these arms splice at body
+  // index 3 AFTER `fillExternGetIdxVecArms` put the real element arms there,
+  // it lands AHEAD of the `vec.data[i]` read. Measured on
+  // `$__regexp_match_vec`: `Number.prototype.foo = 1; "1020".match(/0./)[0]`
+  // read `undefined` while `.length` / `.index` / `m["0"]` stayed correct.
   type ArrayLikeCand = {
     typeIdx: number;
     lengthFieldIdx: number;
@@ -9183,6 +9211,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       structName.startsWith("$")
     )
       continue;
+    // (#4443) …and the structural form of that same rule — see the note above.
+    if (isVecBaseSubtype(ctx, typeIdx)) continue;
     const lengthFieldIdx = fields.findIndex(
       (f) =>
         f.name === "length" &&

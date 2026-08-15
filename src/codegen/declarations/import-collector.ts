@@ -45,6 +45,7 @@ import {
   hasDeclareModifier,
   parseRegExpLiteral,
 } from "../index.js";
+import { isPlainNamedMethodDeclaration, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeBigIntFormat } from "../bigint-format-native.js";
@@ -284,6 +285,41 @@ function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolea
   return (
     !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
   );
+}
+
+/**
+ * (#4454) True when this object literal will install a PLAIN-NAMED method
+ * shorthand (`m() {}`, `"m"() {}`, `0() {}`) through the
+ * `this`-forwarding `env::__make_getter_callback` bridge, so the collector must
+ * pre-register that import.
+ *
+ * A SPREAD-bearing literal with no concrete contextual type is diverted to the
+ * host plain-object path by `objectLiteralSpreadTakesHostPath` (#2804), whose
+ * MethodDeclaration arm materializes each method as a real runtime own property
+ * via `emitObjectLiteralMethodFn` → `compileArrowAsCallback({needsThis:true})` →
+ * the bridge. The collector previously registered it only for get/set accessors
+ * (#1239) and computed method keys (#1433/#3048), so `{ ...src, m() {…} }`
+ * reached the emit site with an empty `funcMap` and hard-CE'd with
+ * "Missing __make_getter_callback import" — found by the #4420 self-hosting
+ * sweep, where `src/ts-api.ts` synthesizes its TS7 shim as
+ * `{ ...astMod, ...isMod, createProgram() {…}, … }` typed `Record<string, unknown>`.
+ *
+ * Gating on the EMITTER'S OWN predicate rather than on "has a spread" keeps
+ * pre-pass and emit site in lockstep — the discipline that avoids re-introducing
+ * the late-import index-shift hazard (#1384) — and leaves a concretely-annotated
+ * target (`const o: { a: number; m(): number } = { ...s, m() {…} }`) on the
+ * struct path with no unused import.
+ *
+ * Host/GC only, mirroring `emitObjectLiteralMethodFn`'s own branch: standalone /
+ * native-first lowers the method to a host-free closure (#2194) and must not
+ * declare the unsatisfiable `env::` import.
+ */
+function objectLiteralMethodNeedsGetterBridge(ctx: CodegenContext, node: ts.Node): boolean {
+  if (!ts.isObjectLiteralExpression(node)) return false;
+  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") return false;
+  if (!node.properties.some((p) => ts.isSpreadAssignment(p))) return false;
+  if (!node.properties.some((p) => isPlainNamedMethodDeclaration(p))) return false;
+  return objectLiteralSpreadTakesHostPath(ctx, node);
 }
 
 /** Single-pass visitor called on every AST node */
@@ -993,6 +1029,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
           break;
         }
       }
+    }
+    if (!state.getterCallbackFound && objectLiteralMethodNeedsGetterBridge(ctx, node)) {
+      state.getterCallbackFound = true;
     }
   }
   // ── getterCallbackFound: Object.defineProperty / Reflect.defineProperty with accessor descriptor (#929) ──

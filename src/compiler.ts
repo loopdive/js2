@@ -18,6 +18,7 @@ import {
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
+import { resetDerivationFlagCache } from "./derivation-flags.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
 import type { CodegenOptions } from "./codegen/context/types.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
@@ -64,7 +65,7 @@ import { normalizeScriptHtmlLikeComments } from "./compiler/html-like-comments.j
 import * as irIds from "./compiler/ir-outcome-inventory.js";
 import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
-import { optimizeBinaryAsync } from "./optimize.js";
+import { optimizeBinaryAsync, validateEmittedBinary } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
 import {
   foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
@@ -1223,12 +1224,39 @@ function runPipeline(input: PipelineInput): CompileResult {
   // API callers. The serialized helper therefore cannot silently recover the
   // low-level buildImports compatibility defaults.
   const importsHelper = generateImportsHelper(adapterManifest);
+
+  // Step 8 (#4420): opt-in engine validation. `success: true` above only says
+  // codegen finished — it is NOT a claim that the bytes form a module, and a
+  // miscompile therefore escaped as a green result (`compileFiles` on
+  // `src/emit/binary.ts` returned success with 268 KB the engine rejected).
+  // Wired HERE, at the one exit every driver funnels through (compileSourceSync
+  // / compileSource / compileMultiSource / compileFilesSource all return
+  // runPipeline's result), so no caller can be validated while another is not.
+  // Runs BEFORE the async wasm-opt pass, which is deliberate: the optimizer
+  // validates its own output already (#1941, and it refuses to ship bytes it
+  // broke), so this gate answers for what CODEGEN produced. The binary is
+  // still returned on failure — a caller that just learned its module is
+  // invalid needs the bytes to dump or diff.
+  let emittedBinaryAccepted = true;
+  if (options.validate === true && binary.length > 0) {
+    const validation = validateEmittedBinary(binary);
+    if (!validation.valid) {
+      emittedBinaryAccepted = false;
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `emitted WebAssembly failed validation${validation.detail ? ` — ${validation.detail}` : ""}`,
+        "error",
+      );
+    }
+  }
+
   return {
     binary,
     wat,
     dts,
     importsHelper,
-    success: true,
+    success: emittedBinaryAccepted,
     errors,
     stringPool: mod.stringPool,
     sourceMap: sourceMapJson,
@@ -1322,6 +1350,14 @@ export function compileSourceSync(
   // Without this, the depth accumulates across compilations in the same process
   // (e.g., test262 worker pool), causing false "depth exceeded" errors.
   resetCompileDepth();
+
+  // (#4415) Re-read the derivation flags once for this compile instead of on
+  // every predicate call. `process.env` is ~85x slower than a cached boolean
+  // and these predicates run in the hot lowering path. Resetting HERE — the one
+  // choke point every compile passes through, including the re-entrant
+  // runtime-eval path — is what keeps the ~244 test sites that set and delete
+  // these variables between compiles working.
+  resetDerivationFlagCache();
 
   // #2146 — fail fast if any codegen delegate was never wired, instead of
   // throwing an obscure error only when the relevant feature is exercised. This entry pulls
