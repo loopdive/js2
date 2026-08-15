@@ -708,7 +708,14 @@ export function planIrCompilationByIdentity(
       const boundedNestedOrdinaryClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
-      const exactAccessorClass = nestedClass || boundedTopLevelAccessorClass;
+      // (#3522) Arms the accessor-only WRITEBACK contract (exact syntax-key
+      // descriptors + `boundedNestedAccessorAbiEvidence`: string getters,
+      // `dynamic` setters). Naming that family explicitly is behaviour-
+      // preserving — before accessors joined the ordinary family, a nested
+      // class reaching this loop WITH an accessor was necessarily accessor-only
+      // — and routes an accessor on a bounded nested ORDINARY class down the
+      // ordinary descriptor-by-name-and-kind path proven at top level instead.
+      const exactAccessorClass = (nestedClass && boundedAccessorClass) || boundedTopLevelAccessorClass;
       selectImplicitConstructorClaim(implicitSelection, { classId, declaration }, nestedClass, candidates.length);
       const markBoundedClassFallback = (): void => {
         if (!trackFallbacks) return;
@@ -921,13 +928,15 @@ export function planIrCompilationByIdentity(
         }
       }
       if (boundedAccessorClass || boundedNestedOrdinaryClass) {
+        // The atom is exactly the body-bearing callables the admitting
+        // predicate counted. (#3522) The ordinary family now owns its
+        // accessors too; counting only ctor+methods would leave every accessor
+        // claim pending, withdrawing the whole class on arrival.
         const expectedCount = declaration.members.filter((member) => {
-          if (boundedAccessorClass) {
-            return (
-              (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) && member.body !== undefined
-            );
-          }
-          return (ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member)) && member.body !== undefined;
+          if (member.body === undefined) return false;
+          const isAccessor = ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member);
+          if (boundedAccessorClass) return isAccessor;
+          return ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member) || isAccessor;
         }).length;
         if (pendingBoundedClassClaims.size === expectedCount) {
           for (const [unitId, claim] of pendingBoundedClassClaims) classClaims.set(unitId, claim);

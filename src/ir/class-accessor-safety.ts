@@ -90,13 +90,30 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * checkpoint). Admitting zero here does NOT admit an implicit DERIVED
  * constructor: `heritageClauses` is rejected above, so no forwarding chain and
  * no shadow-identity inheritance surface is reachable from this predicate.
+ *
+ * #3522 — instance GET/SET ACCESSORS are ordinary members of this family.
+ * An accessor's definition evaluation is exactly a method's: a body-bearing
+ * callable installed on the prototype, with no initializer running in the
+ * containing frame. The lowering, the callable ABI, and the accessor
+ * descriptor plumbing already exist and are proven at top level (a top-level
+ * class with a getter, or with a getter/setter pair reading `this`, compiles
+ * once today). Only the member-shape gate here was method-only, which
+ * withdrew the entire enclosing owner for any nested class carrying one.
+ *
+ * Accessor shape is restricted exactly as methods are — non-static (rejected
+ * above for every member), undecorated, identifier-named, body-bearing, and
+ * fixed-arity (getter zero parameters, setter exactly one plain parameter).
+ * Semantic-key collisions, static/instance placement collisions, and
+ * descriptor mismatches are NOT this predicate's contract: the identity
+ * selector re-derives each accessor's exact descriptor and withdraws the whole
+ * bounded class when any of them is ambiguous.
  */
 export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
     return false;
   }
   let constructorCount = 0;
-  let methodCount = 0;
+  let callableMemberCount = 0;
   for (const member of declaration.members) {
     if (hasDecorators(member) || hasModifier(member, ts.SyntaxKind.StaticKeyword)) return false;
     if (ts.isPropertyDeclaration(member)) {
@@ -122,12 +139,25 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
       ) {
         return false;
       }
-      methodCount++;
+      callableMemberCount++;
+      continue;
+    }
+    if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+      if (
+        !member.body ||
+        !ts.isIdentifier(member.name) ||
+        hasModifier(member, ts.SyntaxKind.AbstractKeyword) ||
+        !hasFixedPreparedParameters(member.parameters) ||
+        member.parameters.length !== (ts.isGetAccessorDeclaration(member) ? 0 : 1)
+      ) {
+        return false;
+      }
+      callableMemberCount++;
       continue;
     }
     return false;
   }
-  return constructorCount <= 1 && methodCount > 0;
+  return constructorCount <= 1 && callableMemberCount > 0;
 }
 
 /**
