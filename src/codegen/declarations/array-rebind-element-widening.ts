@@ -73,6 +73,16 @@ export function rebindWidenedArrayVecType(
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
   if (!ts.isIdentifier(decl.name)) return undefined;
+  if (!widenedVarsOf(ctx, sourceFile).has(decl.name.text)) return undefined;
+  return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) };
+}
+
+/**
+ * Memoized analysis result for one file. Both entry points go through here:
+ * `typeof` asks per OPERAND, so an uncached recompute would walk the whole file
+ * once per `typeof x[i]` in it.
+ */
+function widenedVarsOf(ctx: CodegenContext, sourceFile: ts.SourceFile): ReadonlySet<string> {
   let perFile = analysisCache.get(ctx);
   if (perFile === undefined) {
     perFile = new Map();
@@ -83,8 +93,7 @@ export function rebindWidenedArrayVecType(
     widened = collectElementRebindWidenedVars(ctx, sourceFile);
     perFile.set(sourceFile, widened);
   }
-  if (!widened.has(decl.name.text)) return undefined;
-  return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) };
+  return widened;
 }
 
 /**
@@ -109,11 +118,7 @@ export function elementReadOfRebindWidenedArray(ctx: CodegenContext, expr: ts.Ex
   const base = expr.expression;
   const decl = ctx.oracle.variableDeclarationOf(base);
   if (decl === undefined || !ts.isIdentifier(decl.name) || !isModuleScoped(decl)) return false;
-  const sourceFile = decl.getSourceFile();
-  const perFile = analysisCache.get(ctx);
-  const widened = perFile?.get(sourceFile) ?? collectElementRebindWidenedVars(ctx, sourceFile);
-  if (perFile !== undefined && !perFile.has(sourceFile)) perFile.set(sourceFile, widened);
-  return widened.has(decl.name.text);
+  return widenedVarsOf(ctx, decl.getSourceFile()).has(decl.name.text);
 }
 
 /** True when `node` is hoisted to module scope — i.e. no function-like ancestor. */
