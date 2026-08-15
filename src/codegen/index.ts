@@ -17,6 +17,7 @@ import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
+import { fillRuntimeEvalConstructDriver } from "./runtime-eval-construct.js"; // (#4438)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/#4157)
@@ -278,7 +279,9 @@ import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { fillClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { fillInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
+import { fillFunctionInstanceProps } from "./function-instance-props.js"; // (#4436) user-closure `length` own property
 import { fillInstanceProps } from "./instance-props.js"; // (#4194) instance expando bag substrate
 import { fillErrorPropHelpers } from "./error-props.js"; // (#4098) native Error `$props` shared MOP
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
@@ -5184,6 +5187,7 @@ export function generateModule(
     fillNativeConstructDrivers(ctx);
 
     fillConstructBoundDriver(ctx); // (#4196) §10.4.1.2 [[Construct]] through $__bound_fn
+    fillRuntimeEvalConstructDriver(ctx); // (#4438) §10.2.2 [[Construct]] through an eval-lane callable
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -5210,6 +5214,9 @@ export function generateModule(
     // `__call_fn_method_0..4` are registered. No-op when no standalone open-any
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
+
+    // (#2660 M3) FIRST — `fillClosurePropHelpers` reads the same edge table.
+    fillClosurePrototypeEdge(ctx);
 
     // (#3468) Fill after all closure types and object-runtime deps are known.
     fillClosurePropHelpers(ctx);
@@ -5415,6 +5422,13 @@ export function generateModule(
     // `hasOwnProperty` / `getOwnPropertyNames` reads over a builtin function
     // value resolve its spec `name`/`length` at runtime, host-free. No-op when
     // no builtin closure was materialized (standalone only).
+    // (#4436) The GENERIC user-closure `length` arm must be spliced FIRST: both
+    // fills splice at body index 0, so the builtin arms below land in front of
+    // it. That ordering is required — a #2896 meta struct is itself a
+    // funcref-wrapper-root descendant, and the builtin arms always `return`
+    // (including the deleted case), so this generic arm can never shadow a
+    // builtin's own metadata with a raw `$arity`.
+    fillFunctionInstanceProps(ctx);
     fillBuiltinFnMeta(ctx);
 
     // `$__ta_ctor` name/length arm for the same meta consult — a TypedArray
@@ -7645,6 +7659,9 @@ export function generateMultiModule(
     emitStructFieldPresenceGetters(ctx);
     emitStructFieldSetters(ctx);
 
+    // (#2660 M3) Same ordering as the single-source pipeline.
+    fillClosurePrototypeEdge(ctx);
+
     // (#3468) Multi-source compilation can reserve the closure own-property
     // side-table helpers too. Fill their placeholders only after every source
     // has registered its closure types, matching the single-source pipeline.
@@ -7868,6 +7885,7 @@ export function generateMultiModule(
     // multi-file module without such a site stays byte-identical.
     fillNativeConstructDrivers(ctx);
     fillConstructBoundDriver(ctx); // (#4196) same stub hazard; degrades to null
+    fillRuntimeEvalConstructDriver(ctx); // (#4438) same stub hazard; degrades to null
     // Native Proxy trap drivers use the same finalize-only closure bridge in
     // project compilation as in the single-source pipeline.
     fillProxyDispatch(ctx);

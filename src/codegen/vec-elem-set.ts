@@ -166,8 +166,24 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   const elem = arrDef.element;
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
+  const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
+  // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
+  // externref vec, and BOTH fields this helper touches (`length`, `data`) are
+  // declared on that parent. The IR path types the receiving binding from the
+  // logical `vec<externref>` IrType, which carries no brand, so a holey-typed
+  // parameter made the call itself unrepresentable — V8 rejected the module
+  // with `local.set expected type (ref null $__holey_array), found (ref null
+  // $__vec_externref)`. Take the PARENT carrier in the signature and in every
+  // struct access: a holey instance is a valid argument by subtyping (the
+  // legacy path, which does type its binding `$__holey_array`, is unaffected),
+  // the hole-preserving growth semantics below are unchanged, and no cast is
+  // needed in either direction. Same idiom as the #4426 `.length=` receiver
+  // fix — type the receiver at the level that owns the fields being written.
+  const parentTypeIdx = vecDef.superTypeIdx;
+  const carrierTypeIdx = holeyCarrier && parentTypeIdx !== undefined ? parentTypeIdx : vecTypeIdx;
+
   const tagIdx = ensureExnTag(ctx);
-  const vecParam: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
+  const vecParam: ValType = { kind: "ref_null", typeIdx: carrierTypeIdx };
   const sigIdx = addFuncType(ctx, [vecParam, { kind: "i32" }, elem], [], `$${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
 
@@ -180,7 +196,6 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   const NDATA = 5;
   const OCAP = 6;
   const OLEN = 7;
-  const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
 
   const body: Instr[] = [
     // ── Null guard (#441 parity): if (vec == null) throw TypeError ─────────
@@ -194,7 +209,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     },
     // ── data = vec.data ─────────────────────────────────────────────────────
     { op: "local.get", index: VEC },
-    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 1 },
     { op: "local.set", index: DATA },
     // ── Grow when idx >= capacity (legacy sequence) ─────────────────────────
     { op: "local.get", index: IDX },
@@ -260,7 +275,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
         { op: "local.get", index: VEC },
         { op: "local.get", index: NDATA },
         { op: "ref.as_non_null" },
-        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "struct.set", typeIdx: carrierTypeIdx, fieldIdx: 1 },
         // data = newData
         { op: "local.get", index: NDATA },
         { op: "local.set", index: DATA },
@@ -271,7 +286,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
           // A write beyond logical length can land in already-allocated spare
           // capacity. Preserve absence in the full [oldLength, idx) gap.
           { op: "local.get", index: VEC },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+          { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
           { op: "local.set", index: OLEN },
           { op: "local.get", index: IDX },
           { op: "local.get", index: OLEN },
@@ -301,7 +316,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     { op: "i32.const", value: 1 },
     { op: "i32.add" },
     { op: "local.get", index: VEC },
-    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+    { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
     { op: "i32.gt_s" },
     {
       op: "if",
@@ -311,7 +326,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
         { op: "local.get", index: IDX },
         { op: "i32.const", value: 1 },
         { op: "i32.add" },
-        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
+        { op: "struct.set", typeIdx: carrierTypeIdx, fieldIdx: 0 },
       ],
     },
   ];

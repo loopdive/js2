@@ -3017,6 +3017,7 @@ export function compileArrowAsClosure(
     closureResults,
     closureName,
     isNamedFuncExpr: !!isNamedFuncExpr,
+    decl: arrow, // (#4437) the `$fnmeta` slot's source of `name` + §15.1.5 `length`
     constructible:
       (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
       ts.isFunctionExpression(arrow) &&
@@ -3213,6 +3214,7 @@ export function compileArrowAsClosure(
     liftedFuncIdx,
     structTypeIdx,
     hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
+    mintedTypes.meta, // (#4437)
   );
   if (directGenericGlobalIdx !== undefined) {
     // Keep one typed handle to the exact closure instance installed on the

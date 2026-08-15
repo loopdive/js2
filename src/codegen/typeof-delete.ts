@@ -10,6 +10,7 @@ import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
+import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -1692,6 +1693,11 @@ export function compileTypeofExpression(
     if (ts.isIdentifier(bareTdz) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
+    // (#4428) Same disagreement one level down: `typeof x[0]` on an array whose
+    // element representation was widened must read the value, not the type.
+    if (elementReadOfRebindWidenedArray(ctx, bareTdz)) {
+      forceRuntimeTypeof = true;
+    }
     // (#4394) JSDoc-typed JS parameter — the declared type is not enforced at
     // runtime, so the fold is unsound (see typeofFoldUnsoundForJsParam).
     if (!forceRuntimeTypeof && typeofFoldUnsoundForJsParam(ctx, bareTdz)) {
@@ -1926,6 +1932,11 @@ export function compileTypeofComparison(
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#4428) Element read off an array whose ELEMENT representation was widened
+  // — the checker still reports the first declaration's element type.
+  if (staticTypeof !== null && elementReadOfRebindWidenedArray(ctx, operand)) {
     staticTypeof = null;
   }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a

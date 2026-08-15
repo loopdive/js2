@@ -55,6 +55,19 @@ Be concise. Lead with the answer, then only the context needed to act on it.
     cp .tmp/base.ts src/foo.ts    # measure baseline
     cp .tmp/new.ts  src/foo.ts    # restore
     ```
+  - **Capture `.tmp/base.ts` at the FIRST edit — the measurement rationale is
+    stronger than the stash-safety one (2026-08-15, #2916/#4433 cross-audit).**
+    Of ~11 documentation corrections across those two issues, the large
+    majority were ONE defect: a figure inherited from an artifact (stale
+    baseline, stale skip list, unjustified scan filter, never-run lane),
+    restated as a measurement — and the skips tracked PRICE, not care: the
+    before-state check that got run cost one `cp`, the one that got skipped
+    cost a corpus compile, with a plausible artifact offering a free answer
+    exactly where measuring cost most. Capturing the revert copy up front
+    makes every later base run one `cp` away, so "measure the before-state
+    yourself" stops being a decision. Corollary: when you quote a number, name
+    the artifact it came from and when that artifact was made; a delta claimed
+    without a base run you executed is attribution, not measurement.
   - **Recovery if it already happened**: `git fsck --unreachable | grep commit`, then `git log -1 --format=%s <sha>` on each — a stash entry's message is `WIP on worktree-agent-<id>`, which identifies the **owner** unambiguously. Restore with `git checkout <sha> -- <paths>`. Tell the lead so the commit can be pinned (`git update-ref refs/recovered/<name> <sha>`) before garbage collection takes it; unreachable objects are collectable.
   - The hazard is **worse than it looks** because the failure is silent and delayed: `pop` succeeds, you keep working, and you only notice when the file you expected is someone else's. The victim usually suspects their own change first.
 - **Worktree cleanup after merge**: after a dev self-merges their PR, they remove their own worktree (`git worktree remove /workspace/.claude/worktrees/<branch>`) before claiming the next task. Tech-lead only removes worktrees for suspended or abandoned branches.
@@ -193,7 +206,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - `language/import/import-defer/` (proposal, no harness)
   - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
   - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
-  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+  - one **feature** skip only: `IsHTMLDDA`. (`top-level-await` was listed here
+    until 2026-08-15 but is NOT skipped — `shouldSkip` has no such branch;
+    `tests/test262-runner.ts` ~L3269 explicitly HANDLES those files via the
+    #1612 synchronous TLA wrapper, so they run and count. The stale line
+    nearly caused 4 real regressions to be dismissed as "CI skips these"
+    during #4433.)
 
   **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
   **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures
@@ -330,6 +348,12 @@ rejection breakdown.
 - `--nativeStrings` — use WasmGC i16 arrays instead of wasm:js-string (auto for WASI)
 
 ## Team & Workflow
+
+**Plan/implement split (project-lead order, 2026-08-15): every issue gets an
+`## Implementation Plan` written by the Fable lane before implementation, and
+the implementation itself is done by an Opus subagent working from that plan.**
+Fable writes plans (measurements, exact functions/files, order-preservation
+constraints, acceptance criteria); Opus implements and validates against them.
 
 See [plan/method/team-setup.md](plan/method/team-setup.md) for full team config, roles, memory budget, communication protocol, and merge lessons. Agent preferences and rules are in `.claude/memory/` (MEMORY.md index).
 
@@ -659,7 +683,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,369 / 43,621 (74.2 %)
+**test262 conformance**: 32,380 / 43,621 (74.2 %)
 
 <!-- AUTO:conformance-end -->
 

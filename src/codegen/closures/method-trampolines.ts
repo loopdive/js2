@@ -33,6 +33,8 @@ import {
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+// (#4437) per-declaration `name` / §15.1.5 `length` carrier
+import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -543,6 +545,13 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
  * The func-decl caller appends its own `any.convert_extern` + `ref.cast`
  * recovery after this returns.
  */
+/** (#4437) Narrow a singleton's optional metadata pair into the emit argument. */
+function fnMetaAllocOf(singleton: FuncClosureSingleton): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
+  return singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
+    ? { allocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
+    : undefined;
+}
+
 function emitLazyClosureCacheAccess(
   fctx: FunctionContext,
   cacheGlobalIdx: number,
@@ -550,13 +559,16 @@ function emitLazyClosureCacheAccess(
   structTypeIdx: number,
   arity: number,
   constructible = false,
+  /** (#4437) `$fnmeta` operand + the SUBTYPE to allocate, when the slot exists. */
+  meta?: { allocStructTypeIdx: number; metaInit: Instr[] },
 ): void {
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
     { op: "i32.const", value: arity }, // (#3673) $arity
     closureBagInitInstr(), // (#4241) $bag
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
-    { op: "struct.new", typeIdx: structTypeIdx },
+    ...(meta ? meta.metaInit : []),
+    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
     { op: "extern.convert_any" },
     { op: "global.set", index: cacheGlobalIdx },
   ];
@@ -745,6 +757,19 @@ export interface FuncClosureSingleton {
   readonly cacheGlobalIdx: number;
   readonly trampolineFuncIdx: number;
   readonly closureStructTypeIdx: number;
+  /**
+   * (#4437) The type to `struct.new`, when the closure carries a `$fnmeta`
+   * slot — a per-base SUBTYPE of `closureStructTypeIdx`.
+   *
+   * Deliberately SEPARATE from `closureStructTypeIdx`, which stays the base:
+   * the read path casts the cached externref back with `ref.cast`, and this
+   * helper's own doc records that casting to a MORE derived type traps on a
+   * value stored as the base. Allocating derived and casting to the base is the
+   * safe direction; the reverse is the live `illegal cast` hazard.
+   */
+  readonly allocStructTypeIdx?: number;
+  /** (#4437) The `$fnmeta` operand for `allocStructTypeIdx`, pushed last. */
+  readonly metaInit?: Instr[];
 }
 
 /**
@@ -883,7 +908,22 @@ export function ensureFuncClosureSingleton(
   }
 
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
-  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
+
+  // (#4437) The cached singleton is the canonical value of a top-level function
+  // DECLARATION — the receiver every `verifyProperty(f, "name", …)` sees. It is
+  // built exactly once into the cache global, so the metadata operand costs one
+  // push per module, not per reference.
+  const metaSlot = fnMetaSlot(
+    ctx,
+    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
+  );
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  return {
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx: structTypeIdx,
+    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+  };
 }
 
 /**
@@ -928,6 +968,7 @@ export function emitCachedFuncClosureExternref(
     closureStructTypeIdx,
     ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
     constructible,
+    fnMetaAllocOf(singleton),
   );
   return true;
 }
@@ -971,6 +1012,7 @@ export function emitCachedFuncClosureAccess(
     structTypeIdx,
     ctx.closureInfoByTypeIdx.get(structTypeIdx)?.paramTypes.length ?? 0,
     constructible,
+    fnMetaAllocOf(singleton),
   );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });

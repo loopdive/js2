@@ -31,7 +31,13 @@ import {
   resolveWasmType,
   TYPED_ARRAY_NAMES,
 } from "../index.js";
-import { getSubviewArrTypeIdx, isHoleyArrayType, isSubviewTypeIdx, isTaViewTypeIdx } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write
+import {
+  getOrRegisterVecBaseType,
+  getSubviewArrTypeIdx,
+  isHoleyArrayType,
+  isSubviewTypeIdx,
+  isTaViewTypeIdx,
+} from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
@@ -3901,21 +3907,41 @@ function compilePropertyAssignment(
   if (target.name.text === "length") {
     const arrInfo = resolveArrayInfo(ctx, objType);
     if (arrInfo) {
-      const { vecTypeIdx } = arrInfo;
+      // The checker's FLOW type picks `vecTypeIdx`, but the receiver's runtime
+      // representation can be a sibling vec (an evolving `var x = []` global is
+      // stored as `$__vec_externref` while a later `x = [0]` narrows the flow
+      // type to `number[]` → `$__vec_f64`; the local-set-coerce repair then
+      // emits a sibling `ref.cast` that always traps — `illegal cast` on every
+      // `x.length = n` after reassignment, test262 S15.4.5.1_A1.3_T1). The
+      // write only touches field 0 (`length`), which lives on the shared
+      // `$__vec_base` supertype, so type the receiver as the base: every
+      // concrete vec upcasts safely and the store is identical.
+      const vecBaseIdx = getOrRegisterVecBaseType(ctx);
       // Compile receiver (vec struct ref)
       const structObjResult = compileExpression(ctx, fctx, target.expression);
       if (!structObjResult) return null;
       const vecTmp = allocLocal(fctx, `__arr_len_set_vec_${fctx.locals.length}`, {
         kind: "ref_null",
-        typeIdx: vecTypeIdx,
+        typeIdx: vecBaseIdx,
       });
       fctx.body.push({ op: "local.set", index: vecTmp });
       // Compile value (the new length)
       const valType = compileExpression(ctx, fctx, value);
       if (!valType) return null;
+      // §10.4.2.4 step 3: ToUint32(ToNumber(value)). A non-numeric value
+      // (`arr.length = "1"` / `null` / `new Number(1)`) used to fall to the
+      // local-set-coerce repair, whose bare `__unbox_number` reads wrapper
+      // objects as NaN and stored 0 (test262 S15.4.5.1_A1.3_T1). Coerce
+      // ref-ish values through the real ToNumber chain (ToPrimitive + unbox)
+      // so wrappers and strings get their valueOf/parse, then validate.
+      let lenValKind = valType.kind;
+      if (lenValKind !== "i32" && lenValKind !== "f64") {
+        coerceType(ctx, fctx, valType, { kind: "f64" });
+        lenValKind = "f64";
+      }
       // Convert f64 to i32 if needed
       const newLenTmp = allocLocal(fctx, `__arr_len_set_nl_${fctx.locals.length}`, { kind: "i32" });
-      if (valType.kind === "f64") {
+      if (lenValKind === "f64") {
         // (#4222) §10.4.2.4 ArraySetLength step 3 — RangeError, not a clamp;
         // body in array-length-define.ts, which owns the defineProperty forms.
         emitArraySetLengthValidation(ctx, fctx);
@@ -3924,7 +3950,7 @@ function compilePropertyAssignment(
       // Set vec.length = newLen
       fctx.body.push({ op: "local.get", index: vecTmp });
       fctx.body.push({ op: "local.get", index: newLenTmp });
-      fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 });
       // Return the new length as the assignment expression result
       fctx.body.push({ op: "local.get", index: newLenTmp });
       if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
