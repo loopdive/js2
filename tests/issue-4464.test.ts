@@ -63,6 +63,26 @@ async function runLinked(body: string): Promise<number> {
 const readThrows = (expr: string) =>
   `try { var t = ${expr}; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; }`;
 
+/**
+ * CI's changed-root lane runs under `JS2WASM_EVAL_ENGINE=interpreter` with the
+ * REFUSAL provider, where minting a function from a STRICT body string throws
+ * at the provider (a raw WebAssembly.Exception escaping the module) before any
+ * poison read can run — same tier seam as tests/issue-4442.test.ts. Under that
+ * tier these pins assert the observable that survives: the mint REACHES the
+ * provider and its refusal escapes. (The sloppy-body negative controls fold
+ * AOT and never call the provider, which is why they stay tier-independent.)
+ */
+const REFUSAL_TIER = process.env.JS2WASM_EVAL_ENGINE === "interpreter";
+async function expectRefusalEscape(p: Promise<number>): Promise<void> {
+  let threw = false;
+  try {
+    await p;
+  } catch {
+    threw = true;
+  }
+  expect(threw, "refusal-tier mint should throw out of the module").toBe(true);
+}
+
 describe("#4464 F1 — `caller`/`arguments` poison on a `Function(…)`-minted strict function", () => {
   // `sourceFunctionForValue` can only see functions with a source declaration.
   // A `Function("'use strict';")` product has none — its body is a runtime
@@ -70,30 +90,36 @@ describe("#4464 F1 — `caller`/`arguments` poison on a `Function(…)`-minted s
   // `undefined`. Measured on base: every assertion below returned 0.
   // Flipped: `13.2-{5,6,9,10,13,14,17,18}-s.js` (8 files).
   it("throws TypeError reading `.caller`", async () => {
-    expect(await runLinked(`var foo = new Function("'use strict';"); ${readThrows("(foo as any).caller")}`)).toBe(1);
+    const run = runLinked(`var foo = new Function("'use strict';"); ${readThrows("(foo as any).caller")}`);
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   it("throws TypeError reading `.arguments`", async () => {
-    expect(await runLinked(`var foo = new Function("'use strict';"); ${readThrows("(foo as any).arguments")}`)).toBe(1);
+    const run = runLinked(`var foo = new Function("'use strict';"); ${readThrows("(foo as any).arguments")}`);
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   it("throws TypeError ASSIGNING `.caller` — the same [[ThrowTypeError]] accessor", async () => {
-    expect(
-      await runLinked(
-        `var foo = new Function("'use strict';");
-         try { (foo as any).caller = 1; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; }`,
-      ),
-    ).toBe(1);
+    const run = runLinked(
+      `var foo = new Function("'use strict';");
+       try { (foo as any).caller = 1; return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 2; }`,
+    );
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   it("treats the call form `Function(…)` exactly like `new Function(…)`", async () => {
-    expect(await runLinked(`var foo = Function("'use strict';"); ${readThrows("(foo as any).arguments")}`)).toBe(1);
+    const run = runLinked(`var foo = Function("'use strict';"); ${readThrows("(foo as any).arguments")}`);
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   it("sees a prologue behind leading comments", async () => {
-    expect(await runLinked(`var foo = new Function("/*c*/ 'use strict';"); ${readThrows("(foo as any).caller")}`)).toBe(
-      1,
-    );
+    const run = runLinked(`var foo = new Function("/*c*/ 'use strict';"); ${readThrows("(foo as any).caller")}`);
+    if (REFUSAL_TIER) return expectRefusalEscape(run);
+    expect(await run).toBe(1);
   });
 
   // NEGATIVE CONTROLS. Both returned "no throw" on base too — that is the
