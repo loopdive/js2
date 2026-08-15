@@ -113,16 +113,139 @@ var newArr = Array.prototype.filter.call(obj, () => true);
 // index → [19], length 1.   we answer length 0.
 ```
 
-The family's deltas (`0 vs 1`, `0 vs 2`, `3 vs 2`, `4 vs 3`, `2 vs 3`) share one
-shape: **index enumeration over a sparse array-like `$Object` is wrong when the
-`length` getter mutates the object during step 2**. The work is therefore in the
-Array generic path's `HasProperty`/index reads over `$Object`
-(`__extern_length` / `__extern_has_idx` / `__extern_get_idx`) — NOT in receiver
-coercion, so it does not touch anything #2742/#4207 own.
+### CORRECTION — the root cause above is WRONG. Measured, then re-measured.
 
-**Recommended next action**: re-scope #4492 to the Array + Function halves and
-take the filter 9-b slice first. Not started here — starting before the re-scope
-risks the same collision the String half would have caused.
+My first reading of this cluster, stated in an earlier revision of this section
+and reported to the coordinator, was: *"index enumeration over a sparse
+array-like `$Object` is wrong when the `length` getter mutates the object during
+step 2."* **That is wrong on both counts.** It is not enumeration, and mutation
+is irrelevant. Probes `.tmp/f1.js`–`.tmp/f7.js`, standalone:
+
+- **Data-property `length` works.** `{2:6.99, 8:19, length:10}` →
+  `Array.prototype.filter.call(o, ()=>true)` returns **2**, correct. `HasProperty`
+  and index reads on a plain `$Object` array-like are fine (`2 in o`, `8 in o`,
+  `o[8] === 19` all correct).
+- **Accessor `length` yields 0, mutation or not.** A getter that merely counts
+  calls and returns 10 — no `delete` anywhere — fails identically.
+- **The decisive probe** (`.tmp/f7.js`) counts getter invocations around the
+  call: a direct `o.length` before → getter runs (hits 1, value 10); the
+  `filter.call` → **hits unchanged**; a direct `o.length` after → getter runs
+  (hits 2, value 10). So the accessor is installed correctly, works before and
+  after, and **`filter` never performs `Get(O,"length")` on this receiver at
+  all**; it obtains a length by some other path that answers 0 for an accessor.
+
+`__extern_length`'s `$Object` arm is NOT the culprit — it already routes through
+`__extern_get` (`object-runtime-enumeration.ts:474-527`, "#2036 — array-like
+`$Object` arm: ToLength(Get(O,"length"))"), which is accessor-aware. So either
+filter does not use `__extern_length` for this receiver, or it reads the raw
+`$PropEntry` value slot (empty for an accessor ⇒ 0) somewhere in its own length
+acquisition.
+
+**Why the mutating-getter framing was seductive and wrong:** every test in the
+family *does* have a mutating getter, because that is how the 9-b step tests
+observe evaluation order — so the mutation was present in 100% of the failures
+and looked causal. It is a confound, not the cause. Removing it does not fix the
+test; removing the *accessor* does.
+
+### SECOND CORRECTION — it is not the length acquisition either. No code landed.
+
+I took the "route filter's length through the #2036 accessor-aware [[Get]]"
+step, implemented it, and **disproved it**. The change is reverted; the tree
+carries no code from this attempt. What the probes establish:
+
+1. **The receiver is a CLOSED-SHAPE STRUCT, not a `$Object`.** Decisive
+   discriminator (`.tmp/f8.js`): identical content and an identical accessor,
+   built two ways. As an object LITERAL (`{2:6.99, 8:19}` → closed struct, WAT
+   shows `struct.new 45` with `$__sget_2`/`$__sget_8` getters) the length getter
+   ran **0** times and `filter` returned **0** elements. Built by dynamic writes
+   (`b={}; b[2]=…; b[8]=…` → real `$Object`) the getter ran **1** time and
+   `filter` returned **2**. The `$Object` arm was always right; the receiver
+   never reached it.
+2. **`__extern_get` is NOT the gap.** `.tmp/f9.js`: a computed `a["length"]`
+   (which routes through `__extern_get`) invokes the accessor and returns 10 on
+   the closed struct. So the accessor IS visible to `__extern_get`.
+3. **`__extern_length` is NOT the gap either.** The inline array-like loop does
+   call it (func 169, confirmed by index→name mapping). I widened its
+   non-`$Object` fall-through to run the same `ToLength(Get(O,"length"))`, then
+   replaced that branch with a **sentinel constant 7** — and `filter` still
+   returned 0 elements. A length of 7 would have visited index 2 and produced 1.
+   **The result is 0 for any length**, so the ELEMENT reads are empty and length
+   is not what is failing.
+
+**Narrowed target (this is where the next attempt should start).**
+`fillExternArrayLikeStructArms` (`object-runtime.ts:9145`) only mints the
+integer-index arms for a closed struct it accepts as an array-like CANDIDATE,
+and candidacy requires the struct to declare a **`length` FIELD**
+(`fields.findIndex(f => f.name === "length" && …)`). An object literal whose
+`length` arrives via `Object.defineProperty` has no such field, so no numeric
+arms are minted and `__extern_get_idx`/`__extern_has_idx` see none of its
+integer-named fields — the borrowed generic then iterates over nothing. This
+matches every observation, including why `{2:6.99, 8:19, length:10}` (a real
+`length` field ⇒ a candidate) filters correctly.
+
+**Caveat on the reverted change, stated so it is not lost:** the
+`__extern_length` widening may still be *needed* (a closed struct's accessor
+`length` should not read 0), but the experiment could not confirm it — the
+observable result is 0 whatever the length is. I reverted rather than keep an
+unvalidated behaviour change that demonstrably fixes nothing on its own; it
+should be re-made together with the candidate-gate fix, where it can actually be
+measured.
+
+**Method note for the next lane:** the mutating-getter framing (correction 1) and
+the length-acquisition framing (correction 2) were both inferred from what the
+tests are *about* rather than from a differential probe. The probe that settled
+it each time was the same shape: hold the data constant and vary ONE
+representational choice (literal vs dynamic build; real length vs sentinel).
+
+### THIRD attempt — candidacy widening. Implemented, did NOT land. Reverted.
+
+One timeboxed attempt at the narrowed target. **Both source files are reverted
+to base; this slice has landed no code.** What was tried and what it proves:
+
+**Change (2 sites, exactly as scoped):**
+1. `fillExternArrayLikeStructArms` (`object-runtime.ts`) — admit a closed struct
+   with integer-named fields as an array-like candidate even with **no `length`
+   field**, and skip minting an `__extern_length` arm for such a candidate (its
+   length must come from the generic fall-through, since a `defineProperty`
+   accessor cannot be a struct field).
+2. `__extern_length` (`object-runtime-enumeration.ts`) — re-made the
+   `ToLength(Get(O,"length"))` widening on the non-`$Object` fall-through, so
+   those candidates get an accessor-aware length. (`Instr` builders are
+   factories, not shared arrays — the double-remap hazard.)
+
+**The candidacy gate was genuinely the blocker, and the widening genuinely
+opens it.** Instrumented, the object literal now reaches the loop and is
+admitted: `[cand] __anon_0 lenIdx=-1 numeric=2 vecSub=false`. Before the change
+it was rejected at `if (lengthFieldIdx < 0) continue;`.
+
+**But the observable behaviour did not move at all** — `.tmp/f8.js` still
+answers `filter` → 0 elements with 0 getter invocations, identical to base. So
+admitting the candidate and minting its index arms is **necessary but not
+sufficient**: something downstream of the arms still reads nothing. The
+remaining unknown is why `__extern_get(<closed struct>, "length")` does not
+invoke the expando accessor from `__extern_length`'s fall-through, when the
+SAME lookup through a computed `a["length"]` does (`.tmp/f9.js`, getter runs,
+returns 10). Those two facts are not yet reconciled and that is where a fourth
+attempt should start.
+
+**Why this is reverted rather than banked as partial progress:** on its own the
+candidacy widening changes emitted code for every closed struct with integer
+fields (new index arms, changed byte output) while fixing nothing measurable —
+the same "unvalidated change that fixes nothing" I declined to keep for the
+`__extern_length` widening in attempt 2. Keeping it would trade real regression
+risk for no test movement.
+
+**Cost note:** three attempts across one budget window for an 11-file cluster.
+Each attempt disproved a plausible mechanism and narrowed the target, but the
+transfer cost of that knowledge is low compared to the archaeology cost of
+re-deriving it — the probes are all preserved (`.tmp/f1.js`–`.tmp/f9.js`,
+runnable via `.tmp/p.ts --file`), and the two source edits are reconstructible
+from this section in minutes. Recommend a lane that already owns the
+closed-struct / array-like machinery take it from here rather than a fourth
+attempt from this lane.
+
+**Scope note:** this is still clean of #2742/#4207 territory (it is length
+acquisition, not receiver coercion), so the slice assignment stands.
 
 ## Validation
 
@@ -130,20 +253,14 @@ risks the same collision the String half would have caused.
 — baseline ~103 non-pass in the ES5 bucket (the filter also runs ES6+ files;
 diff per-file against the fresh baseline, not by count). gc-lane control.
 
-## Re-scope decision (fable, 2026-08-15)
+## Coordinator routing note (fable, 2026-08-15)
 
-Accepted the triage above in full. **#4492 is re-scoped to the Array + Function
-halves only** (~44 real failures + the 2 routed to #2175):
-
-- The String bucket (~13 + the transfer shape) is FOLDED OUT to its owners:
-  #2742 (in-progress, `ttraenkler/codex-es5-string`) and #4207 (ready,
-  `ttraenkler/W28`). Do not implement String receiver coercion here.
-- The `Array.prototype.filter` 9-b slice (11 files) is approved and dispatched
-  to the reflection lane (sparse array-like index enumeration under a mutating
-  `length` getter — `__extern_length`/`__extern_has_idx`/`__extern_get_idx`).
-- `Function.prototype.{call,apply,bind}` this-binding (10) stays here but MUST
-  be pre-dispatch-gated before anyone starts it.
-- Process note: this issue was filed without running `pre-dispatch-gate.mjs`
-  on its constituent buckets — the gate at implementation time caught what
-  filing time missed. Gate at FILING time for cluster issues that aggregate
-  previously-tracked symptoms.
+The filter 9-b banked state above is CROSS-REFERENCED to the #4491 lane's
+in-flight computed-string-key read-path fix: `a["foo"]` missing where `a.foo`
+hits (arrays) and this cluster's `__extern_get(<closed struct>, "length")`
+not invoking the expando accessor while computed `a["length"]` does are
+likely the same `__extern_get` arm-ordering family on closed shapes. The
+#4491 lane should test the banked f8 probe after its read-path commit; if it
+doesn't flip, the candidacy widening (necessary-but-insufficient, edits
+reconstructible from the section above) composes with whatever it finds.
+Reflection lane redirected to P1/P2 (its substrate).
