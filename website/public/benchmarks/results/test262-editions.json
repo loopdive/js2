@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7599,
-    "fail": 1413,
+    "pass": 7606,
+    "fail": 1406,
     "ce": 17,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8994,
-    "fail": 2604,
+    "pass": 8995,
+    "fail": 2603,
     "ce": 105,
     "skip": 1,
     "total": 11704,
@@ -111,12 +111,12 @@
       },
       {
         "name": "arrow-function",
-        "pass": 389,
-        "fail": 51,
+        "pass": 390,
+        "fail": 50,
         "ce": 0,
         "skip": 0,
         "total": 440,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "Proxy",

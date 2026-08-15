@@ -245,8 +245,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 246,
-      "fail": 24,
+      "pass": 247,
+      "fail": 23,
       "ce": 0,
       "skip": 0
     },
@@ -665,8 +665,8 @@
   },
   "built-ins/Array": {
     "ES5": {
-      "pass": 136,
-      "fail": 76,
+      "pass": 143,
+      "fail": 69,
       "ce": 0,
       "skip": 0
     },
@@ -1159,14 +1159,6 @@
       "skip": 0
     }
   },
-  "built-ins/Infinity": {
-    "ES5": {
-      "pass": 5,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Boolean": {
     "ES5": {
       "pass": 4,
@@ -1177,6 +1169,14 @@
     "ES2015": {
       "pass": 4,
       "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/Infinity": {
+    "ES5": {
+      "pass": 5,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }
@@ -1357,14 +1357,6 @@
       "skip": 0
     }
   },
-  "language/directive-prologue": {
-    "ES5": {
-      "pass": 60,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/computed-property-names": {
     "ES2015": {
       "pass": 20,
@@ -1389,6 +1381,14 @@
     "ES2023": {
       "pass": 28,
       "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/directive-prologue": {
+    "ES5": {
+      "pass": 60,
+      "fail": 2,
       "ce": 0,
       "skip": 0
     }
@@ -1479,6 +1479,14 @@
       "skip": 0
     }
   },
+  "built-ins/encodeURI": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/Symbol": {
     "ES2015": {
       "pass": 52,
@@ -1507,14 +1515,6 @@
     "ES2027": {
       "pass": 4,
       "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/encodeURI": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 1,
       "ce": 0,
       "skip": 0
     }
