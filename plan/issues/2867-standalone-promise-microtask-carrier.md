@@ -3,7 +3,7 @@ id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
 status: ready
 created: 2026-06-30
-updated: 2026-07-02
+updated: 2026-08-15
 priority: high
 feasibility: hard
 model: fable
@@ -275,3 +275,39 @@ Stays **in-progress**. Merged so far:
 and the measured slice-1d gate-widen (`isStandalonePromiseActive` +
 `isStandaloneThenChainNativeActive` → standalone), plus the deferred
 `allSettled`/`any`/generic-iterable follow-ups above.
+
+## Wave-2 adoption + plan refresh (fable, 2026-08-15, #4444 session)
+
+Stale-lane adoption per project-lead direction (no lane active; claim taken by
+`claude/es6-team-promise` on origin/issue-assignments). Current ES2015-bucket
+standalone taxonomy for the Promise cluster (~233 non-pass, measured from the
+2026-08-15 baseline via `.tmp/es6-standalone-clusters.ts` — re-measure on
+current main before starting, the #4444 wave did not touch these paths):
+
+| ~Tests | Symptom | Owning gap |
+|---|---|---|
+| 50 | CE `standalone target emitted host imports: env::Promise_all/Promise_race (+__js_array_new/push)` | **Gap 4 combinators are LANDED natively (PR #2403) but the gate is not widened** — this is the "slice-1d gate-widen" already named Still open above |
+| 44 | `async continuation threw before completion: illegal cast [__then_fulfill_N ← __drain_microtasks]` | then-chain value carrier mis-cast on the drive layer |
+| 13 | `Promise.resolve is not yet implemented in --target standalone` (+ similar statics) | missing native statics routing |
+| ~35 | AsyncTestFailure / completion-marker | drive-layer semantics; triage after the above |
+| rest | reflection-style (`length`/`prop-desc` etc.) | #2175's lane — skip |
+
+### Slice order (each independently validatable)
+
+1. **S-1d gate-widen (highest value/effort ratio)**: find the
+   `isStandalonePromiseActive` / `isStandaloneThenChainNativeActive` gates and
+   widen to `--target standalone`; the native combinators + then-chain already
+   exist for the wasi lane. Measure `built-ins/Promise` scoped before/after —
+   expect the 50 CEs to flip to run (some to pass, some to new taxonomy).
+2. **`__then_fulfill` illegal cast (44)**: reproduce one (`built-ins/Promise/all/*`),
+   inspect the fulfill-callback value ABI on the microtask drive; likely an
+   externref/struct mismatch on resolve-value delivery through `__drain_microtasks`.
+3. **Native `Promise.resolve`/statics (13)**: route through the landed carrier
+   (`Promise.resolve` = new-promise + ResolvePromise; check what Gap 1
+   assimilation already provides).
+4. Re-measure and re-taxonomize the ~35 semantic residuals; fix bounded
+   sub-buckets; leave `allSettled`/`any` follow-ups documented if out of reach.
+
+Validation per slice: `TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/Promise" pnpm run test:262`
+(baseline ~233 non-pass in ES6 bucket; full Promise dir is larger) + gc lane
+control on the same filter + targeted unit tests per slice.

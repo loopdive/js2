@@ -400,7 +400,7 @@ function mapId(rename: ReadonlyMap<IrValueId, IrValueId>, v: IrValueId): IrValue
  * Rewrite operand IDs in an instruction. Does NOT touch `result` — reserved
  * for caller-scope renames (where we only redirect uses, not definitions).
  */
-function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrValueId>): IrInstr {
+export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrValueId>): IrInstr {
   if (rename.size === 0) return inst;
   switch (inst.kind) {
     case "const":

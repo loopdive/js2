@@ -29,7 +29,8 @@ if (args.includes("--ts7")) {
   process.env.JS2WASM_TS7 = "1";
 }
 
-const { compile, compileProject, entryHasRelativeImports, formatCompileExplanation } = await import("./index.js");
+const { compile, compileProject, entryHasRelativeImports, formatCompileExplanation, validateEmittedBinary } =
+  await import("./index.js");
 const { buildDefaultDefines } = await import("./compiler/define-substitution.js");
 
 if (args.includes("--version") || args.includes("-v")) {
@@ -495,22 +496,14 @@ if (suppressedAllowlist > 0) {
 // output file is written — so a malformed artifact never escapes with a
 // success exit code. Optimizer-availability warnings stay nonfatal because the
 // preserved binary they fall back to still reaches this check and validates.
-// Cast to BufferSource: under TS 5.7+ the typed-array generic types this as
-// `Uint8Array<ArrayBufferLike>`, which the lib `validate`/`Module` overloads
-// (param: BufferSource) don't structurally accept without the widening — the
-// same cast `optimizedBinaryValidates` uses in src/optimize.ts.
-const binaryForValidation = result.binary as unknown as BufferSource;
-if (!WebAssembly.validate(binaryForValidation)) {
-  let detail = "";
-  try {
-    // Constructing a Module surfaces the first engine validation detail that
-    // `WebAssembly.validate` (a bare boolean) does not expose.
-    new WebAssembly.Module(binaryForValidation);
-  } catch (err) {
-    detail = err instanceof Error ? err.message : String(err);
-  }
+// (#4420) Shared with the compiler's opt-in `validate` gate and the optimizer's
+// own output check — `validateEmittedBinary` owns the validate-then-recover-the-
+// engine-detail idiom (including the BufferSource cast TS 5.7+ requires).
+const cliValidation = validateEmittedBinary(result.binary);
+if (!cliValidation.valid) {
   console.error(
-    `${absInput}: error: emitted WebAssembly failed validation and was not written` + (detail ? ` — ${detail}` : ""),
+    `${absInput}: error: emitted WebAssembly failed validation and was not written` +
+      (cliValidation.detail ? ` — ${cliValidation.detail}` : ""),
   );
   process.exit(1);
 }

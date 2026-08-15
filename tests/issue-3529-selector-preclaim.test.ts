@@ -83,7 +83,10 @@ const PRECLAIM_CASES: ReadonlyArray<{
   {
     name: "template coercion",
     code: "template-substitution-unsupported",
-    source: "export function test(value: number): string { return `value=${value}`; }",
+    // #4467 adopted NUMERIC substitutions, so this case now uses a BOOLEAN
+    // one — deliberately still rejecting (boolean shares the i32 carrier
+    // with native-annotated numbers; needs an IR boolean brand first).
+    source: "export function test(flag: boolean): string { return `flag=${flag}`; }",
   },
   {
     name: "ambient Error constructor",
@@ -126,17 +129,21 @@ const PRECLAIM_CASES: ReadonlyArray<{
       return first(1);
     }`,
   },
-  {
-    name: "class shape projection",
-    code: "class-projection-unsupported",
-    source: `class Builder {
+];
+
+// (#4448) The self-recursive `Builder` shape below used to sit in
+// PRECLAIM_CASES as a `class-projection-unsupported` rejection. `6203320a`
+// (feat(ir): prepare recursive class layouts) preallocates the shape cell for a
+// class whose own method constructs it, so the shape is now claimed and
+// emitted. The expectation moved here rather than being relabelled: the case is
+// pinned by EXECUTING the module, so "supported" is backed by the answer and
+// not only by an outcome tag.
+const RECURSIVE_CLASS_SOURCE = `class Builder {
       value: number;
       constructor(value: number) { this.value = value; }
       add(value: number): Builder { return new Builder(this.value + value); }
     }
-    export function test(): number { return new Builder(1).add(2).value; }`,
-  },
-];
+    export function test(): number { return new Builder(1).add(2).value; }`;
 
 describe("#3529 selector preclaim capability parity", () => {
   it("keeps checker-proven computed numbers on the supported toString path", async () => {
@@ -154,6 +161,21 @@ describe("#3529 selector preclaim capability parity", () => {
   it.each(PRECLAIM_CASES)("types $name before AST-to-IR build", async ({ code, source }) => {
     const result = await compile(source, { fileName: `${code}.ts`, trackIrOutcomes: true });
     expectSelectUnsupported(outcomes(result), "test", code);
+  });
+
+  it("emits a self-recursive class shape and computes its answer (#4448)", async () => {
+    const result = await compile(RECURSIVE_CLASS_SOURCE, {
+      fileName: "recursive-class-shape.ts",
+      trackIrOutcomes: true,
+    });
+    expect(outcomes(result).find((entry) => entry.displayName === "test")).toMatchObject({
+      kind: "emitted",
+      stage: "patch",
+      irBodyEmitted: true,
+      legacyBodyEmitted: false,
+    });
+    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+    expect((instance.exports.test as () => number)()).toBe(3);
   });
 
   it("uses the Date backend-capability seam on host-free targets", async () => {
@@ -598,16 +620,23 @@ describe("#3529 selector preclaim capability parity", () => {
   });
 
   it("uses checker class-expression identity and keeps a conservative conditional fallback", () => {
+    // (#4448) The seam is reached through an element access whose receiver the
+    // body walk already accepts. This assertion was born red in #4430 against a
+    // `const boxes = [new Box()]` local: an array-literal initializer is
+    // rejected by the vardecl arm before any member arm runs, so the seam was
+    // never consulted there (pinned separately below). A `Box[]` parameter
+    // reaches it — the seam names the class, and its computed getter is then
+    // the authoritative rejection.
     const seamSource = `class Box { get ["value"](): number { return 1; } }
-      export function test(): number {
-        const boxes = [new Box()];
-        return boxes[0].value;
-      }`;
+      export function test(boxes: Box[]): number { return boxes[0].value; }`;
     expect(
       directFallbackReason(seamSource, "test", {
         resolveLocalClassExpression: (expression) => (ts.isElementAccessExpression(expression) ? "Box" : undefined),
       }),
     ).toBe("class-member-unsupported");
+    // Without the seam there is no class identity for `boxes[0]`, so the
+    // rejection above is attributable to the seam and not to the shape.
+    expect(directFallbackReason(seamSource)).toBeUndefined();
 
     const conservativeSource = `class Box { get ["value"](): number { return 1; } }
       export function test(flag: boolean): number {
@@ -615,6 +644,27 @@ describe("#3529 selector preclaim capability parity", () => {
         return box.value;
       }`;
     expect(directFallbackReason(conservativeSource)).toBe("class-member-unsupported");
+  });
+
+  it("rejects an array-literal class binding at the vardecl arm, ahead of the identity seam (#4448)", () => {
+    const source = `class Box { get ["value"](): number { return 1; } }
+      export function test(): number {
+        const boxes = [new Box()];
+        return boxes[0].value;
+      }`;
+    const withSeam = directFallbackReason(source, "test", {
+      resolveLocalClassExpression: (expression) => (ts.isElementAccessExpression(expression) ? "Box" : undefined),
+    });
+    // Identical with and without the seam: the array-literal initializer decides,
+    // so the member (computed getter or plain field) is not what rejects here.
+    expect(withSeam).toBe("body-shape-rejected");
+    expect(directFallbackReason(source)).toBe("body-shape-rejected");
+    const plainMemberSource = `class Box { value: number; constructor() { this.value = 1; } }
+      export function test(): number {
+        const boxes = [new Box()];
+        return boxes[0].value;
+      }`;
+    expect(directFallbackReason(plainMemberSource)).toBe("body-shape-rejected");
   });
 
   it.each([

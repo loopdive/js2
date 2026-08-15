@@ -930,6 +930,22 @@ function recordUnitReference(
  * body. Preparation installs its exact `_init` support body; derived support
  * bodies additionally forward to their parent `_init`. Treat the non-terminal
  * callable as sealed support and let the caller record the parent chain.
+ *
+ * (#3522) This holds for a NESTED implicit constructor too. Its `terminalOwnerId`
+ * names the enclosing executable rather than being null, but its `_init` is the
+ * same AST-free support body — it is deliberately NOT a post-pass IR function,
+ * so routing it to `recordUnitReference` would always report a spurious
+ * `missing-function-body`. Preparedness is not assumed here: `addAbiDependency`
+ * resolves the support binding and fails closed with `unplanned-abi-binding`
+ * when this transaction did not actually prepare the unit.
+ *
+ * The discriminant is NON-TERMINALITY, not a null terminal owner. Since the
+ * #4402 initialized-field checkpoint an implicit constructor with initialized
+ * instance fields is an ORDINARY TERMINAL class-member owner carrying a real
+ * source body, and it must keep flowing through `recordUnitReference` as a
+ * source callable. Testing `terminalOwnerId === null` conflated the two: it
+ * excluded terminal initialized-field constructors and genuine nested support
+ * for the same incidental reason.
  */
 function recordImplicitConstructorSupportReference(
   evidence: MutableFunctionEvidence,
@@ -938,7 +954,8 @@ function recordImplicitConstructorSupportReference(
   ownership: OwnershipIndex,
 ): boolean {
   const unit = input.inventory.allUnits.find(({ id }) => id === targetUnitId);
-  if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null) return false;
+  const isTerminal = input.inventory.terminalUnits.some(({ id }) => id === targetUnitId);
+  if (unit?.kind !== "class-implicit-constructor" || isTerminal) return false;
   const bindingId = irUnitCallableBindingId(targetUnitId);
   addAbiDependency(evidence, input.abi, ownership, {
     bindingId,

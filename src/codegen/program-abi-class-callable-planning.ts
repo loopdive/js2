@@ -403,6 +403,13 @@ export class ProgramAbiClassCallableRegistry {
     contract: {
       readonly selfParamIndex: number;
       readonly parent?: { readonly unitId: IrUnitId; readonly funcIdx: FuncHandle };
+      /**
+       * (#3522) Exact containing terminal owner of a NESTED implicit
+       * constructor, or `null`/absent when the class is top-level. The caller
+       * proves the containing owner is in the same preparation transaction;
+       * this guard then verifies the inventory records exactly that nesting.
+       */
+      readonly containingTerminalOwnerId?: IrUnitId | null;
     },
   ): FuncHandle {
     this.assertOpen(unitId);
@@ -412,7 +419,12 @@ export class ProgramAbiClassCallableRegistry {
       ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
       .at(-1);
     const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
-    if (unit?.kind !== "class-implicit-constructor" || unit.terminalOwnerId !== null || !canonical || !func) {
+    if (
+      unit?.kind !== "class-implicit-constructor" ||
+      unit.terminalOwnerId !== (contract.containingTerminalOwnerId ?? null) ||
+      !canonical ||
+      !func
+    ) {
       throw new ProgramAbiInvariantError(
         "missing-source-unit",
         `implicit constructor support ${unitId} has no exact live non-terminal allocator`,
@@ -427,6 +439,7 @@ export class ProgramAbiClassCallableRegistry {
     this.session.recordPreparedImplicitConstructorSupport(unitId, {
       selfParamIndex: contract.selfParamIndex,
       ...(contract.parent ? { parentInitFuncIdx: contract.parent.funcIdx } : {}),
+      containingTerminalOwnerId: contract.containingTerminalOwnerId ?? null,
     });
     const expectedBindingId = irUnitCallableBindingId(unitId);
     if (this.session.hasPlan(expectedBindingId)) {

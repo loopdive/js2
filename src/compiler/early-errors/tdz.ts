@@ -102,6 +102,18 @@ export function checkTDZInStatements(ctx: EarlyErrorContext, stmts: ts.NodeArray
  * five nested-scope descent boundaries are ported verbatim from
  * `checkForTDZRef`; only emission is deferred to the caller so that the
  * original grouped-by-name ordering is preserved.
+ *
+ * #4453: a nested block scope that re-declares a pending name shadows the outer
+ * binding throughout its subtree, so a reference there is to the INNER binding
+ * and is not a TDZ violation of the outer declaration:
+ *
+ *     if (c) { const x = 1; use(x); }   // ← both were flagged before #4453
+ *     const x = 2;
+ *
+ * The shadowed names are subtracted from `names` for that subtree only, which
+ * narrows what the single traversal matches without adding a traversal — the
+ * #4432 structure and its emission order are unchanged (removing matches cannot
+ * reorder the ones that remain).
  */
 function collectTDZRefs(node: ts.Node, names: Set<string>, matches: Map<string, ts.Node[]>): void {
   if (ts.isIdentifier(node)) {
@@ -133,7 +145,128 @@ function collectTDZRefs(node: ts.Node, names: Set<string>, matches: Map<string, 
   ) {
     return;
   }
+  const inner = shadowedNames(node, names);
+  if (inner !== undefined) {
+    // Every pending name is shadowed here — nothing in this subtree can name an
+    // outer binding, so the whole subtree is skipped.
+    if (inner.size === 0) return;
+    forEachChild(node, (child: ts.Node) => collectTDZRefs(child, inner, matches));
+    return;
+  }
   forEachChild(node, (child: ts.Node) => collectTDZRefs(child, names, matches));
+}
+
+/**
+ * The scopes a TDZ reference scan can descend into that introduce lexical
+ * bindings of their own (#4453). Function and class scopes are NOT here: the
+ * scan stops at those outright, before this is consulted.
+ */
+function isNestedLexicalScope(node: ts.Node): boolean {
+  return (
+    ts.isBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isCatchClause(node)
+  );
+}
+
+/**
+ * `names` minus the lexical names `node` introduces, or `undefined` when `node`
+ * is not a nested lexical scope OR declares none of `names` (#4453).
+ *
+ * `undefined` deliberately covers both cases: both mean *keep traversing with
+ * the caller's set*, and collapsing them keeps the check allocation-free on the
+ * hot path — a narrowed Set is built only for a scope that actually re-declares
+ * a pending name, which is rare.
+ *
+ * What each boundary contributes:
+ * - `Block` — its LexicallyDeclaredNames: let/const (including destructuring
+ *   patterns), plus function and class declarations.
+ * - `CaseBlock` — one shared scope across every clause (ES §14.12.2).
+ * - `for` / `for-in` / `for-of` — a let/const head binding scopes over the
+ *   whole statement, head and body alike.
+ * - `CatchClause` — the catch parameter binding.
+ */
+function shadowedNames(node: ts.Node, names: Set<string>): Set<string> | undefined {
+  if (ts.isBlock(node)) {
+    return shadowStatementList(node.statements, names, undefined);
+  }
+  if (ts.isCaseBlock(node)) {
+    let out: Set<string> | undefined;
+    for (const clause of node.clauses) {
+      out = shadowStatementList(clause.statements, names, out);
+    }
+    return out;
+  }
+  if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+    const init = node.initializer;
+    if (init === undefined || !ts.isVariableDeclarationList(init)) return undefined;
+    const flags = init.flags;
+    if ((flags & ts.NodeFlags.Let) === 0 && (flags & ts.NodeFlags.Const) === 0) return undefined;
+    let out: Set<string> | undefined;
+    for (const decl of init.declarations) {
+      out = shadowBinding(decl.name, names, out);
+    }
+    return out;
+  }
+  if (ts.isCatchClause(node)) {
+    if (node.variableDeclaration === undefined) return undefined;
+    return shadowBinding(node.variableDeclaration.name, names, undefined);
+  }
+  return undefined;
+}
+
+/** Subtract a statement list's lexically-declared names from `names` (#4453). */
+function shadowStatementList(
+  stmts: readonly ts.Statement[],
+  names: Set<string>,
+  out: Set<string> | undefined,
+): Set<string> | undefined {
+  for (const stmt of stmts) {
+    if (ts.isVariableStatement(stmt)) {
+      const flags = stmt.declarationList.flags;
+      if ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) {
+        for (const decl of stmt.declarationList.declarations) {
+          out = shadowBinding(decl.name, names, out);
+        }
+      }
+    } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+      out = shadowName(stmt.name.text, names, out);
+    } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+      out = shadowName(stmt.name.text, names, out);
+    }
+  }
+  return out;
+}
+
+/** Subtract every identifier bound by a (possibly destructuring) binding name. */
+function shadowBinding(
+  name: ts.BindingName,
+  names: Set<string>,
+  out: Set<string> | undefined,
+): Set<string> | undefined {
+  if (ts.isIdentifier(name)) return shadowName(name.text, names, out);
+  for (const el of name.elements) {
+    if (ts.isBindingElement(el)) out = shadowBinding(el.name, names, out);
+  }
+  return out;
+}
+
+/**
+ * Subtract one name, materializing the narrowed set only on a real hit. `out`
+ * is always a subset of `names`, so once it exists the delete is unconditional.
+ */
+function shadowName(text: string, names: Set<string>, out: Set<string> | undefined): Set<string> | undefined {
+  if (out !== undefined) {
+    out.delete(text);
+    return out;
+  }
+  if (!names.has(text)) return undefined;
+  const narrowed = new Set(names);
+  narrowed.delete(text);
+  return narrowed;
 }
 
 /**
@@ -170,5 +303,11 @@ export function checkForTDZRef(ctx: EarlyErrorContext, node: ts.Node, name: stri
   ) {
     return;
   }
+  // #4453: same shadowing rule as `collectTDZRefs`. This path scans a single
+  // declaration's initializer, where a nested lexical scope is reachable only
+  // through a node that is not one of the function-like boundaries above (an
+  // object-literal method body, say) — rare enough that the probe Set is built
+  // only once the kind test has already matched.
+  if (isNestedLexicalScope(node) && shadowedNames(node, new Set([name])) !== undefined) return;
   forEachChild(node, (child: ts.Node) => checkForTDZRef(ctx, child, name));
 }

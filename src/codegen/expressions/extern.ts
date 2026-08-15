@@ -427,7 +427,7 @@ export function emitLazyClassObjectGet(ctx: CodegenContext, fctx: FunctionContex
     try {
       for (const methodName of staticMethodNames) {
         const fullName = `${className}_${methodName}`;
-        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static"));
         if (methodIdx === undefined) continue;
         addStringConstantGlobal(ctx, methodName);
         const methodNameGlobalIdx = ctx.stringGlobalMap.get(methodName);

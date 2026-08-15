@@ -29,23 +29,9 @@ import type { ValType } from "./types.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
-
-/**
- * #1850 — successor block ids of a block, derived from its terminator.
- * `return`/`unreachable` have none; `br` has one; `br_if` has two.
- */
-function successors(block: IrBlock): readonly number[] {
-  const t = block.terminator;
-  switch (t.kind) {
-    case "br":
-      return [t.branch.target as number];
-    case "br_if":
-      return [t.ifTrue.target as number, t.ifFalse.target as number];
-    case "return":
-    case "unreachable":
-      return [];
-  }
-}
+// #4418 — shared, cached dominance analysis (formerly a private set-based
+// computation in this file, #1850).
+import { crossCheckDominance, dominanceOf, type DominanceInfo } from "./analysis/dominance.js";
 
 /**
  * #1850 — map every SSA value (instruction result or block arg) to the id of
@@ -99,66 +85,13 @@ function buildDefTypeMap(func: IrFunction): Map<IrValueId, IrType> {
   return m;
 }
 
-/**
- * #1850 — classic iterative dominator-set computation over the block CFG
- * (Cooper/Harvey/Kennedy-style fixpoint on full sets — O(blocks²) but the
- * functions the IR path claims are small). `dom[b]` is the set of blocks that
- * dominate `b` (every path from entry to `b` passes through them), with `b`
- * dominating itself. The entry block is `blocks[0]`; blocks unreachable from
- * entry keep the conservative full set, which never produces a false dominance
- * violation. Assumes block ids are the contiguous range 0..n-1 (checked by the
- * caller).
- */
-function computeDominators(func: IrFunction): ReadonlySet<number>[] {
-  const n = func.blocks.length;
-  if (n === 0) return [];
-
-  // Predecessor lists.
-  const preds: number[][] = Array.from({ length: n }, () => []);
-  for (const block of func.blocks) {
-    const from = block.id as number;
-    for (const s of successors(block)) {
-      if (s >= 0 && s < n) preds[s].push(from);
-    }
-  }
-
-  const all = new Set<number>();
-  for (let i = 0; i < n; i++) all.add(i);
-
-  // Init: entry dominated only by itself; every other block by all blocks.
-  const dom: Set<number>[] = [];
-  for (let i = 0; i < n; i++) dom.push(i === 0 ? new Set([0]) : new Set(all));
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let b = 1; b < n; b++) {
-      // newDom = {b} ∪ (∩ dom[p] for all preds p). Intersection over no preds
-      // is the universe (full set) — keeps unreachable blocks conservative.
-      let inter: Set<number> | null = null;
-      for (const p of preds[b]) {
-        if (inter === null) {
-          inter = new Set(dom[p]);
-        } else {
-          for (const x of [...inter]) if (!dom[p].has(x)) inter.delete(x);
-        }
-      }
-      const next = inter ?? new Set(all);
-      next.add(b);
-      if (!setsEqual(next, dom[b])) {
-        dom[b] = next;
-        changed = true;
-      }
-    }
-  }
-  return dom;
-}
-
-function setsEqual(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
-  if (a.size !== b.size) return false;
-  for (const x of a) if (!b.has(x)) return false;
-  return true;
-}
+// #1850's private dominator-set computation moved to the shared, cached
+// analysis module (#4418): `src/ir/analysis/dominance.ts`. The verifier is
+// its first consumer — same check, now CHK idoms on flat arrays instead of
+// O(blocks²) full sets rebuilt on every verification. One behavioural
+// contract carried over exactly: an UNREACHABLE use-block never produces a
+// dominance violation (the old full-set init made `doms.has(db)` true there;
+// the new predicate special-cases reachability — see `dominatedCrossBlockDef`).
 
 export interface IrVerifyError {
   readonly message: string;
@@ -442,14 +375,22 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   // aren't, skip the dominance check (the id error above already fires) so we
   // don't index out of bounds.
   const defBlock = blockIdsContiguous ? buildDefBlockMap(func) : null;
-  const dominators = blockIdsContiguous ? computeDominators(func) : null;
+  const dominance = blockIdsContiguous ? dominanceOf(func) : null;
+  // #4418 — corpus-wide audit of the fast dominance analysis against the
+  // naive reachability definition. Opt-in (quadratic per function); the unit
+  // tests run the same cross-check on synthetic general graphs.
+  if (dominance && process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1") {
+    for (const msg of crossCheckDominance(func, dominance)) {
+      errors.push({ message: `dominance self-check: ${msg}`, func: func.name });
+    }
+  }
 
   // #1924 — build the def→IrType map once (O(n)); reused by the per-instruction
   // type rules and the branch-arg type check below.
   const typeOf = buildDefTypeMap(func);
 
   for (const block of func.blocks) {
-    verifyBlock(func, block, defs, errors, defBlock, dominators);
+    verifyBlock(func, block, defs, errors, defBlock, dominance);
   }
 
   // Check branch-arg arity AND types against target block signatures (#1924).
@@ -891,7 +832,7 @@ function verifyBlock(
   defs: Set<IrValueId>,
   errors: IrVerifyError[],
   defBlock: ReadonlyMap<IrValueId, number> | null,
-  dominators: readonly ReadonlySet<number>[] | null,
+  dominance: DominanceInfo | null,
 ): void {
   const here = block.id as number;
   // #1850 — cross-block dominance: a use whose value is defined in a *different*
@@ -901,11 +842,13 @@ function verifyBlock(
   // either local (let the local check decide) or a dominance violation (which we
   // report here).
   const dominatedCrossBlockDef = (u: IrValueId, atBlock: number, what: string): boolean => {
-    if (!defBlock || !dominators) return false;
+    if (!defBlock || !dominance) return false;
     const db = defBlock.get(u);
     if (db === undefined || db === atBlock) return false; // not a cross-block def
-    const doms = dominators[atBlock];
-    if (doms && doms.has(db)) return true; // def-block dominates use-block — OK
+    // An unreachable use-block never violates dominance — #1850's full-set
+    // init answered "dominated" there, and this predicate preserves that.
+    if (!dominance.reachable[atBlock]) return true;
+    if (dominance.dominates(db, atBlock)) return true; // def dominates use — OK
     errors.push({
       message: `use of SSA value ${u} in ${what} (block ${atBlock}) is not dominated by its def in block ${db}`,
       func: func.name,
