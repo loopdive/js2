@@ -161,9 +161,11 @@ export function tryCompileFnctorInstanceGetPrototypeOf(
   const ctorName = resolveFnctorInstanceCtorName(ctx, arg0);
   if (ctorName === undefined) return null;
   // §20.1.2.12 evaluates its argument; keep the side effects of e.g. a direct
-  // `Object.getPrototypeOf(new F())` before answering.
+  // `Object.getPrototypeOf(new F())` before answering. This `compileExpression`
+  // overload returns `ValType | null` (never the `VOID_RESULT` sentinel), so the
+  // null check alone keeps the stack balanced.
   const argType = compileExpression(ctx, fctx, arg0);
-  if (argType) fctx.body.push({ op: "drop" });
+  if (argType !== null) fctx.body.push({ op: "drop" });
   if (emitFnctorProtoGet(ctx, fctx, ctorName)) return { kind: "externref" };
   // The proto-get declined without emitting anything (its contract), but the
   // argument is already compiled and dropped, so answer the host-free null the

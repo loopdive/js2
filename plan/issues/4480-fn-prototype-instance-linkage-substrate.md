@@ -1,7 +1,7 @@
 ---
 id: 4480
 title: "standalone substrate: every function owns a real `.prototype` object linked to its instances — the recurring blocker behind F3/#4455-R3/R4/Array-A1 (~25+ rows)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -94,6 +94,187 @@ it is the highest-leverage single substrate gap in the ES5 bucket
   regressions; the design section documents the carrier for successors.
 
 ---
+
+## Status — NOT `done`, and deliberately so
+
+S1 and S2 are landed and verified (two commits, 1,332 files swept, +3 / −0).
+S3 (`F.prototype = obj` re-points the slot per construction site) was **not
+attempted**. The issue is left `in-progress` rather than `done` because the
+stated acceptance bar (**≥15 rows**) was **not met — measured +3** — and this
+agent will not mark an issue done against a bar it did not clear.
+
+The decision that needs a human is which of these the bar should become,
+because the evidence says the original number was an over-attribution rather
+than a shortfall in the work (details in Test Results):
+
+- **(a) Accept and re-scope.** The substrate is correct, documented, and
+  inert on 509 control files. Re-file the ~10 misattributed `S13.2.*` rows
+  against value representation / `[[Construct]]` return semantics, where
+  their root causes actually are, and close this at +3.
+- **(b) Keep open for the representation work.** The one change that would
+  retire R1, R3 and R4 together is shrinking the bespoke `$__fnctor_<F>`
+  struct population so instances ARE `$Object`s (#3976-style conversion
+  applied to fnctors). That is a separate XL slice, not a continuation of
+  this one.
+
+Recommendation: (a) plus a new issue for the representation work. Do not
+re-run S1/S2 — they are done and pinned.
+
+## Root cause
+
+Two distinct causes, one per slice. Neither is "the walk is broken".
+
+**S1 — the carrier was gated to a population §13.2 does not recognise.**
+`resolveUserFnctorName` only admitted fnctors the #2660 escape gate had
+*approved for reconstruction*, i.e. constructors with ≥1 `reconstruct`-classified
+`new F()` site. §13.2 steps 16–18 give a `.prototype` object to EVERY function,
+including one that is never constructed — and that is the population the
+S13.2_A1 / S13.2_A4 rows live in. Worse than missing: for a never-constructed
+fnctor the base did not merely lack the object, it answered a DIFFERENT one than
+the program had just assigned (`F.prototype = p; F.prototype === p` → false),
+because the read and the write resolved through different mechanisms.
+
+A second, independent S1 cause: the `=== undefined` observation is compiled by
+`property-nullish-read.ts`, which bypasses `property-access-dispatch.ts`
+entirely and reads through `__get_member_*` / `__extern_get`. So the ONE arm
+that materialises the automatic object never ran on that route, and a single
+module could answer `typeof F.prototype === "object"` and
+`F.prototype === undefined` at the same time — exactly what `S13.2_A1_T1`
+asserts.
+
+**S2 — the instance has no `$proto` field to link.** A `new F()` does not
+lower to an `$Object`; it lowers to the bespoke `$__fnctor_<F>` WasmGC struct
+minted by `new-super.ts`, and that struct has no prototype slot. Measured in
+the emitted WAT: the native `__isPrototypeOf` / `__getPrototypeOf` walk opens
+with `ref.test (ref $Object)` on the value, the struct fails it, and the loop
+exits before its first iteration. The result is not just a missing link — S1
+made the module contradict ITSELF, `F.prototype` answering the new global while
+`Object.getPrototypeOf(i)` answered something else.
+
+## Fix
+
+- **S1** (`expressions/fnctor-prototype.ts`, `property-nullish-read.ts`):
+  widen `resolveUserFnctorName` with a third arm for fnctors with NO `new F()`
+  site in the module, filtered to ORDINARY functions
+  (`isOrdinaryFunctionSymbol` — a generator's `.prototype` is
+  `%GeneratorPrototype%` and is already answered correctly further down the
+  dispatch, so admitting one here would shadow a right answer with a wrong
+  one). Install the §13.2 step 10 `constructor` back-ref inside
+  `emitFnctorProtoGet` — the single shared mint point — with
+  `{writable, !enumerable, configurable}`, declining wherever the identifier
+  read is not provably the `__fn_closure_<name>` singleton. Add the
+  interception to the `=== undefined` route so both routes share one object.
+- **S2** (`fnctor-instance-prototype.ts`, one 5-line hook in
+  `call-builtin-static.ts`): answer `Object.getPrototypeOf(i)` from the same
+  global when `i` is provably a `new F()` instance, using the per-constructor
+  struct type as a static [[Prototype]]. Two conditions, stated once — see the
+  Design section.
+
+## Test Results
+
+All runs below executed on this branch by this agent (`--target standalone`,
+`tests/test262-runner.ts` standalone lane); base is `793b5c0e1`, the
+merge-base the S1 snapshot was taken against.
+
+### Scoped standalone sweeps (base vs S1+S2, both runs mine)
+
+Base is the code at `0e47b7ae0` — this branch immediately before the #4480
+work, i.e. the same tree with the five touched files reverted and
+`fnctor-instance-prototype.ts` removed. Both directions of every swap were
+executed as file copies; no `git stash` was used (shared stack, other agents
+active).
+
+| scope | files | base | S1+S2 | flips |
+| --- | --- | --- | --- | --- |
+| `language/statements/function` + `language/expressions/function` + `language/expressions/new` + `built-ins/Object/getPrototypeOf` + `built-ins/Object/prototype/isPrototypeOf` | 823 | pass 647 / fail 173 / CE 3 | pass **650** / fail 170 / CE 3 | **+3, zero regressions** |
+| `built-ins/Function` | 509 | pass 252 / fail 243 / CE 14 | pass 252 / fail 243 / CE 14 | **0 changed either way** |
+| **total swept** | **1,332** | | | **+3 / −0** |
+
+Flip list (all three from S1's widened carrier):
+
+- `language/statements/function/S13.2_A1_T1.js` fail → pass
+- `language/statements/function/S13.2_A1_T2.js` fail → pass
+- `language/statements/function/S13.2_A4_T1.js` fail → pass
+
+The `built-ins/Function` row is the CONTROL, and it is the one worth keeping:
+509 files whose statuses are identical in both directions, i.e. the change is
+inert on the whole `Function.prototype` surface rather than merely
+"probably fine". It was swept precisely because it had been left out of the
+first scope.
+
+A focused re-run of the 76-file `language/statements/function/S13.2*` family
+gives the same answer independently: base pass 45 / fail 30 / CE 1 →
+S1 pass 48 / fail 27 / CE 1, the same three files, no regressions.
+
+### Against the acceptance bar — this is SHORT, and the reason is a finding
+
+The bar asked for **≥15 rows**; the measured result is **+3**. That gap is
+not a partially-done implementation, it is what the corpus turned out to
+contain, and the evidence is above:
+
+- The issue's premise was that ~25 rows are blocked on the prototype
+  substrate. Reading the 27 remaining `S13.2*` failures individually shows
+  most are **not** prototype-linkage rows at all: `S13.2.2_A12` wants
+  `obj.id === "id_string"` and gets `0` (a typed-field value-representation
+  bug — `this.id = 0` types the slot f64 before `this.id = func()` assigns a
+  string); `A7_T1`/`A8_T1`/`A8_T2`/`A15_T1..T4` are `[[Construct]]`
+  return-value semantics (#4464 F2); `A18_T1/T2` are `arguments.callee`.
+  Those were counted toward this issue by their file names, not by their
+  root cause.
+- `isPrototypeOf` is thin in the corpus generally: **63 files** in all of
+  test262 mention it, **7** in this issue's scope. It cannot carry 15 rows.
+- The two isPrototypeOf rows that ARE prototype-linkage rows
+  (`S13.2.2_A1_T1/T2`) need a **function-valued** prototype, which
+  `(ref null $Object)` cannot hold, and would still fail their CHECK#2 even
+  if CHECK#1 were folded.
+
+So the honest reading is: the substrate is now correct and documented, and
+the ~25-row estimate was an over-attribution. The remaining mass in this
+family belongs to value representation and `[[Construct]]` return semantics,
+which is where a successor should aim — see Residuals.
+
+### Pins
+
+- `tests/issue-4480.test.ts` — 19 tests green (13 from S1, 5 new S2 pins,
+  plus R5). Includes the ordering pin that `Object.getPrototypeOf(F)` still
+  reports %Function.prototype%.
+- `tests/issue-4464.test.ts` — 20 green; its F3 `it.fails` residual was
+  flipped to a passing `it` because S1 closed it.
+- Named fn-family controls: `4436`, `4437`, `4440` (56 green), `4442`
+  (13 green), `4456`, `4460`, `4464` (20 green) — all green under
+  `JS2WASM_EVAL_ENGINE=interpreter`.
+- **Eval-tier note:** `4442` and `4464` fail on this container under the
+  DEFAULT engine with `quickjs provider is not built`. Verified as
+  environment, not regression, by an A/B: the same 6 + 5 failures occur with
+  every #4480 file reverted. Building the refusal provider
+  (`npx tsx scripts/build-runtime-eval-provider.mjs --refusal-only`) and
+  running under `JS2WASM_EVAL_ENGINE=interpreter` makes both files fully
+  green.
+- `tests/equivalence/` (per-file, scoped to what the diff can touch):
+  `issue-799-prototype-chain`, `issue-4123-param-receiver-proto-method`,
+  `wrapper-constructors`, `function-name-length`,
+  `nested-function-recursion`, `new-expression-spread`,
+  `spread-in-new-expressions`, `iterator-protocol-custom` — all green.
+  `new-non-constructor` has 2 failures **that predate this work** (A/B'd
+  against the reverted tree: identical 2 failures).
+- Gates: `typecheck` clean; LOC + function budgets pass with the two
+  frontmatter allowances above; `check:oracle-ratchet` reports
+  `getTypeAtLocation +0, ctx.checker +0` across the 5 changed codegen files.
+
+## Residuals
+
+| id | shape | why it is still absent | owner |
+| --- | --- | --- | --- |
+| R1 | `var H = function(){}; new H(); H.prototype` | `H` IS constructed but is not escape-gate-approved (`keep-typed`/`keep-static`), so its instances live in a struct the global is not linked to. Answering would be WRONG, not merely late. | shrink the bespoke-struct population (#3976-style conversion) |
+| R2 | `var G = function(){}; G.prototype.constructor === G` | the back-ref needs the `__fn_closure_<name>` singleton, which this shape's identifier read does not go through; the read is answered by the plain-object `.constructor` fold instead. `S13.2_A4_T2`. | #4480 successor |
+| R3 | `F.prototype = <a function>; P.isPrototypeOf(new F())` | `$Object.$proto` is typed `(ref null $Object)`, so a closure struct cannot be stored in it. A representation limit; widening the field perturbs the canonical rec-group boundary (#2514). `S13.2.2_A1_T1/T2`. | value-representation |
+| R4 | `F.prototype.isPrototypeOf(i)` | **the blocker is the escape gate, not the walk.** Writing the call is itself a dynamic method use on `F`'s prototype, so #2660 demotes `F` and the `.prototype` read stops coming from the global. Instrumented: `struct=108 resolve=undefined`, versus `struct=17 resolve=F` for the same module read through `Object.getPrototypeOf`. A `ref.test` arm was written and measured unreachable, then removed rather than shipped as dead code. | #2660 escape-gate |
+| R5 | S2 under a whole `F.prototype = p` reassignment | condition 2 declines by design — one mutable global cannot model "the value captured at construction". | S3 (per-site capture) |
+| — | `S13.2.2_A7/A8/A12/A15/A17` (~10 rows) | NOT prototype linkage: `[[Construct]]` return-value semantics and typed-field value representation (`this.id = 0` then `this.id = "s"` types the slot f64). | #4464 / value-representation |
+
+Each of R1–R5 has an `it.fails` pin in `tests/issue-4480.test.ts`, so a
+successor that fixes one is told by a failing test rather than having to
+re-derive the shape.
 
 ## Design — the carrier, and what it can and cannot link
 
