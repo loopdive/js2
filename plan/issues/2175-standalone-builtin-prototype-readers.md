@@ -6,7 +6,7 @@ model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-08-15
+updated: 2026-07-17
 priority: high
 feasibility: hard
 model: fable
@@ -16,6 +16,12 @@ area: standalone
 language_feature: compiler-internals
 goal: standalone-mode
 related: [2161, 2158, 2159, 2101, 2100, 1907, 1888, 1914, 1539, 2861, 2885, 2949, 2963, 2984, 3025, 3027]
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/context/create-context.ts::createCodegenContext
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
 ---
@@ -1384,27 +1390,210 @@ Everything in the C3 spec §"Slice decomposition / V2-S3" EXCEPT the carrier:
   a Wasm exception from a SEPARATE gOPD engine body — a pre-existing limitation
   unrelated to the carrier; resolved once the reader-arm MOP replaces the
   synthesized-descriptor path.)
+---
 
-## Wave-2 adoption note (fable, 2026-08-15, #4444 session)
+## Reconcile + Implementation log — V2-S3b-1 (claude/es6-team-reflection, 2026-08-15)
 
-Adopted by `claude/es6-team-reflection` (claim on origin/issue-assignments;
-prior claim released). The v2 unified-substrate spec above remains the
-authoritative plan; S0+S1 are landed. Before executing further slices:
+> NOTE for the integrator: this worktree is `origin/main` @ `9e17d34f3`, which
+> does not yet carry the "Wave-2 adoption note" added on the session branch by
+> `a89bc2ff4` (docs-only). This section is the answer to that note's step 1-3.
+> All code changes are UNCOMMITTED in
+> `/home/user/js2wasm/.claude/worktrees/agent-a805762abeefbfd8c`.
 
-1. **Reconcile against current main** — the sibling ES5 lane landed method
-   name/length meta + Function length descriptors (PR #4553 → merged via the
-   es5-standalone branch, #4566 merge; and #4445 this session showed
-   membership in `STRING_PROTO_METHODS` + `PROTO_METHOD_LENGTH` already flips
-   `length`/`name`/`prop-desc`/`not-a-constructor` files for String proto
-   members). Re-verify which of the v2 slices' target tests still fail on
-   main HEAD and re-anchor line/symbol references before writing code.
-2. **Re-measure the reflection bucket**: the ES2015 standalone bucket carries
-   ~324 reflection-style failures (2026-08-15 baseline) across
-   `length.js`/`name.js`/`prop-desc.js`/`not-a-constructor.js`/
-   `invoked-as-func.js`; the v2 spec's per-slice test gates name the rest.
-3. Execute the v2 slice decomposition in its stated order (it is
-   Opus-executable by design); honor the "Coordination / conflict flags"
-   section — the in-flight work it names may have landed or died, verify each.
+### R0 — reconcile. Row 3 is **259**, not ~324.
 
-This issue unlocks: #2161 F6 (RegExp reflection), #4449's speciesctor lane
-(TypedArray), #4450's subclass lane (class), and the ES6 umbrella #4444 row 3.
+Candidate list from `.test262-cache/test262-standalone-current.jsonl`
+(baseline_sha `734fab88`, generated 2026-08-15 10:16Z), edition-classified with
+`scripts/generate-editions.ts`. **I then re-ran all 311 candidates on HEAD**
+through `runTest262File(..., "standalone")` rather than trusting the baseline:
+
+- **52 already pass** — the entire `annexB/built-ins/String` block, flipped free
+  by #4445. The `~324` figure predates it.
+- **259 still fail**, 0 CE. Biggest cluster `built-ins/TypedArray/**` = **121**.
+
+### R0.2 — root cause, isolated by probe (not by re-reading the spec)
+
+`harness/testTypedArray.js:64` is `var TypedArray = Object.getPrototypeOf(Int8Array)`.
+On HEAD: `Object.getPrototypeOf(Int8Array)` → the #2901 ctor carrier OK,
+`TA.prototype` → the `%TypedArray%` `$NativeProto` OK, **`TA.prototype.find` →
+`undefined`** FAIL. The syntactic surface is healthy the whole way
+(`Int8Array.prototype.find` is a function; `gOPD(…, "name").value === "find"`).
+All three error signatures in the bucket ("Cannot convert undefined or null to
+object" x143, "isConstructor invoked with a non-function value" x55, `typeof` is
+`"undefined"` x26) are that one `undefined`.
+
+### R0.3 — v2's banked V2-S3b is LARGER than it now needs to be
+
+`proto-index-store.ts` (#4160, generalized #4176) landed after the v2 spec and
+already provides what C3 asked for: the per-brand `$Object` COMPANION table, a
+`$NativeProto`-aware receiver-brand classifier (`__protoidx_brand_off`, generic
+over the brand band — `proto-index-store.ts:849-878`), and receiver-aware
+consults spliced into `__extern_get`/`__extern_has`. Verified live **before**
+writing code: a write+read round-trip through a flowing `%TypedArray%.prototype`
+already worked. The companion is just minted EMPTY.
+
+So V2-S3b's `$props` field / `__nativeproto_ensure_props` / 7 new reader arms are
+**not needed for the GET path**. What is missing is (1) POPULATION and (2)
+ARMING — both existing reserve gates (`protoIndexDirty`, `protoNamedDirty`) are
+*write*-shaped pre-scans, so a purely reflective READER reserved nothing.
+**This supersedes v2 D1/D2/D3 for GET**, and is strictly better on the spec's own
+invariant: no `$NativeProto` layout change, so `buildLazyNativeProtoGetInstrs`
+stays byte-identical.
+
+### R0.4 — v2 "Coordination / conflict flags", each re-checked
+
+#2949 slice 3 **landed** (`closure-classifier.ts` is the single arm list);
+#2984 **landed in part** (`refusalBodyFallback` + #3250 getter fallback are in
+`native-proto.ts`); #2963 P2 untouched (I do not enter `calls.ts`); #2158 S2
+inherits the brand-agnostic consults for free. v2's named file-conflict surface
+(`property-access.ts`, `calls.ts`) is NOT touched by this slice. Stale anchors
+in v2: fact 4 (corrected by the V2-S1 log), `BUILTIN_BRAND_TABLE` moved to
+`builtin-brands.ts` (#4176), `property-access.ts` is now 5,835 lines,
+`__extern_get` starts at `object-runtime.ts:1895`.
+
+### What landed
+
+- `context/types.ts` + `create-context.ts` — new pre-scan flag `protoMemberDirty`.
+- `array-holes.ts` — `isProtoMemberValueUse`: a branded `<Builtin>.prototype` in
+  VALUE position, or any `Object/Reflect.getPrototypeOf(…)` call. Excludes the
+  `defineProperty(X.prototype, …)` write-target position (already covered by
+  `protoNamedDirty`). Never sets `protoIndexDirty`, so the HOF hole visit-skip
+  and typed element lanes keep their fast paths.
+- `native-proto.ts` — `ensureNativeProtoCompanionSeeder(ctx, brand)` emits
+  `__nativeproto_seed_<brand>(companion)`, installing each glue CSV member as a
+  §17 data property (`__defineProperty_value`, flags `0xBD`) holding the **#2963
+  singleton**, so the runtime-read value keeps identity with the syntactic
+  surfaces. Doubly demand-gated: `protoMemberDirty` AND that brand's proto
+  actually materializing.
+- `object-runtime.ts` (1 line + import) — `flushPendingNativeProtoSeeders` at the
+  END of `ensureObjectRuntime`.
+- `proto-index-store.ts` — reserve gate accepts `protoMemberDirty`;
+  `fillCompanionBody` gains (a) a seed dispatch on companion mint and (b) a
+  force-`create` arm for seeded offsets.
+
+### Two defects the work surfaced, both found by measurement
+
+1. **Ordering.** A proto can materialize BEFORE `__defineProperty_value` exists.
+   Traced: RegExp (brand offset 1) did; `Array` (offset 2) did not. Building the
+   seeder eagerly silently skipped RegExp — reintroducing the exact defect for a
+   subset of brands. Fixed by parking the brand and flushing at the end of
+   `ensureObjectRuntime` — still ordinary body-compilation time, so no minting or
+   type registration happens at finalize.
+2. **`create=0` on the read probes.** Both `__protoidx_get_k`/`has_k` probe with
+   `create=0` — right for #4176 (a companion exists only once written), wrong for
+   a seeded brand whose members are waiting. `"exec" in q` answered 0 while
+   `q.exec` answered a function. Fixed by forcing `create=1` for exactly the
+   seeded offsets, so GET and `in` agree by construction.
+
+### Accessors are deliberately NOT seeded (recorded regression + a corrected claim)
+
+Seeding getters as accessor entries flips `tests/issue-2885.test.ts` "plain read
+`RegExp.prototype.global` is undefined (Site 3 invokes the getter)" from pass to
+FAIL. That test passes on unmodified main, so it is a genuine regression.
+§22.2.6 requires the legacy accessor read with
+`SameValue(this, %RegExp.prototype%)` to answer `undefined`.
+
+**Correction, recorded deliberately.** My first write-up of this — in an earlier
+revision of this section and of the in-code comment — asserted the cause was
+"`__extern_get`'s accessor branch invokes `$get` with the original receiver,
+defeating the identity arm". **That is not established, and the probe I based it
+on measured the wrong path** (a plain-JS `RegExp.prototype.global`, which takes
+the syntactic getter arm, not the dynamic one). Re-measured properly, with
+accessor seeding ON:
+
+- `const g: any = (RegExp.prototype as any).global; g === undefined` → **true**
+  (correct);
+- the INLINE form the test uses, `(RegExp.prototype as any).global === undefined`
+  → **false**.
+
+So the divergence is between the INLINE and MATERIALIZED read paths — the same
+class of defect as the #2984 path-dependent `typeof` that V2-S1 fixed — and the
+mechanism is **unidentified**. Whoever takes the accessor tier should start from
+that inline/bound split, not from a receiver-binding theory.
+
+Gate for the accessor tier: the four
+`%TypedArray%.prototype.{buffer,byteLength,byteOffset,length}/prop-desc.js`
+files, which fail identically before and after this slice.
+
+### Measured result
+
+| | before (HEAD 9e17d34f3) | after |
+|---|---|---|
+| `built-ins/TypedArray/**` reflection (121 files) | 0 pass | **96 pass** |
+| remaining 138 row-3 files | 0 pass | 0 pass (unchanged — they exercise the SYNTACTIC surface, not the flowing one) |
+| `scripts/prove-emit-identity.mjs` (60 file x target) | — | **IDENTICAL, all 60** |
+
+Row 3 net: **259 → 163**. Zero lost anywhere.
+
+Regression sweep (isolated runs; batched runs add load flakes):
+`issue-2885`, `issue-2861` (+5 glue files), `issue-2896`, `issue-2963` x2,
+`issue-2175-{native-proto-brands,typeof-function-arm,v2s2-singleton-identity}`,
+`issue-4159`, `issue-4160` x2, `issue-4161`, `issue-4120`, `issue-2734`,
+`issue-2580-m3-protochain` — all green. Pre-existing failures confirmed by
+A/B against the unmodified base, NOT caused here: 3 getter-dispatch tests in
+`issue-2175-regexp-proto-readers.test.ts` (3/12 on base and on branch), the
+`issue-4176` "prepared IR for-in" case (1 failed / 12 passed on base), and all 5
+host-lane `issue-2580-m3-protoextend` tests (5 failed / 5 on base).
+Enumeration checked separately: seeded members are non-enumerable, so for-in over
+`{a,b}` still yields 2 keys and over `[1,2,3]` still yields 3.
+
+New test: `tests/issue-2175-v2s3b-proto-companion-seed.test.ts` (7/7), each
+positive assertion paired with a negative that must stay 0 on the same binary.
+
+### Remaining 25 of the 121, by owner
+
+- **14** — statics on the `%TypedArray%` CTOR object (`of` / `from` /
+  `Symbol.species` / `name` / `length`): the #2901 carrier owns only
+  `prototype`. This is v2 **C1-ctor / V2-S4**.
+- **5** — `Symbol.*` proto members: symbol keys deliberately do not participate
+  in the store's key normalizer. **V2-S5**.
+- **4** — accessor `prop-desc.js` (`buffer`/`byteLength`/`byteOffset`/`length`):
+  the accessor tier above.
+- **1** — `%TypedArray%.prototype.slice.length` should be 2; a
+  `TYPED_ARRAY_PROTO_METHOD_LENGTH` table entry.
+- **1** — `Symbol.toStringTag/invoked-as-func.js` null-pointer in `__module_init`.
+
+---
+
+## S3b-2 triage (same lane, same session) — the consult tier is ALREADY DONE
+
+Before writing S3b-2 I measured its premise, and the premise is false: with
+S3b-1 in place, `__getOwnPropertyDescriptor` / `__getOwnPropertyNames` /
+`__hasOwnProperty` on a **flowing `$NativeProto`** already work. Probe
+(`.tmp/s13.js` / `.tmp/s14.js`), `%TypedArray%.prototype` bound through the
+harness idiom:
+
+```
+gOPD(p, "find")            → a descriptor (not undefined)
+  .value                   → a function
+  .writable                → true
+  .enumerable              → false
+  .configurable            → true      // §17, exactly right
+getOwnPropertyNames(p)     → non-empty
+hasOwnProperty.call(p,"find") → true
+gOPD(p, "nope")            → undefined  // negative control holds
+```
+
+They work because those natives share the same receiver-aware companion consult
+that S3b-1 populated — no separate arms were needed. **So S3b-2 as scoped in the
+v2 plan has no work left in it**; its only remaining item is the accessor tier,
+which is blocked as recorded above.
+
+One anomaly worth a follow-up, not chased here: in a single function that calls
+`gOPD` twice, the conjunction `d !== undefined && typeof d.value === "function"`
+read false for the first descriptor while an identical single-`gOPD` function
+read true. That is consistent with the double-gOPD limitation the V2-S3a log
+already banked ("`gOPD(p,"exec").value === gOPD(p,"exec").value` throws from a
+SEPARATE gOPD engine body"). Not investigated further.
+
+### Revised slice plan (supersedes v2's V2-S3 for the GET path)
+
+- **S3b-1** — DONE (this entry).
+- **S3b-2** — consult tier: **no work required** (measured above). Accessor tier:
+  **blocked** on the inline-vs-materialized divergence, mechanism unidentified.
+- **S3b-3** — ctor-object population (v2 C1-ctor / S4). Now the highest-value
+  next slice: it owns **14 of the 25** TypedArray residuals plus the 18
+  `built-ins/TypedArrayConstructors/<View>/{length,name}.js` failures in the
+  138-file remainder, which are the same defect (a builtin ctor object owning
+  only `prototype`, so `length`/`name` are not own properties).
+- V2-S5 (symbols / instance chain), S6, S7 unchanged.

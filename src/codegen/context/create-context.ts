@@ -143,6 +143,7 @@ export function createCodegenContext(
     holeyArrayFilterCallNodes: new Set(), // (#4222) exact direct filter consumers
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
+    protoMemberDirty: false, // (#2175 V2-S3b-1) scanForArrayHoles: branded builtin .prototype reaches the dynamic reader as a VALUE
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
     vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
