@@ -1,7 +1,8 @@
 ---
 id: 4445
 title: "annexB String.prototype HTML methods (anchor/big/…/sup) return undefined in standalone — implement CreateHTML natively"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
@@ -14,6 +15,10 @@ area: codegen
 es_edition: es6
 goal: standalone-mode
 related: [4444, 3256, 2175]
+loc-budget-allow:
+  - src/codegen/array-object-proto.ts
+func-budget-allow:
+  - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
 ---
 
 # #4445 — annexB String HTML methods: implement CreateHTML in standalone
@@ -88,3 +93,32 @@ registers each unit in `ctx.nativeStrHelpers` under its `canonicalName`.
   `"_".anchor('"x"')` (quote escaping), `"".link(undefined)`, and an abrupt
   `{toString(){throw …}}` receiver, both targets.
 - Equivalence guard: `npm test -- tests/equivalence.test.ts` unaffected.
+
+## Result (2026-08-15, Opus implementation — dev-4445-html)
+
+**Standalone 17/111 → 95/111 (+78) on the issue filter; the 13 HTML method
+dirs went 4/82 → 82/82. gc lane byte-identical (92/111 before and after).**
+A/B-measured against reverted HEAD copies, not inherited from an artifact;
+official scoped runner run agrees exactly with the direct-driver figures.
+
+The plan's premise was stale: #3069 had already landed the native direct-call
+CreateHTML lowering. The actual gap was the VALUE-ERASED shape —
+`String.prototype.anchor.call(x, v)` — because the 13 names were missing from
+`STRING_PROTO_METHODS` in `src/codegen/array-object-proto.ts`. Fix: 13 names
+into that CSV + 9 zero-arities into `PROTO_METHOD_LENGTH` + a reflective
+CreateHTML closure body (`src/codegen/string-proto-html.ts`, spec-order
+RequireObjectCoercible → ToString(this) → ToString(value)+quote-escape) reusing
+the #3069 tag table (moved to `html-wrapper-native.ts` behind an own-property
+accessor `htmlWrapperFor`). The reflection files (length/name/prop-desc/
+not-a-constructor) flipped for free via the existing method-meta machinery —
+no new reflection machinery was built. Also fixed a latent hazard: bare
+`HTML_WRAPPER_TAGS[member]` answered inherited `Object.prototype.toString` for
+`member === "toString"`, which would have compiled
+`String.prototype.toString.call(x)` to `"<undefined>x</undefined>"`.
+
+**Follow-up worth its own issue**: `trimLeft`/`trimRight` have the identical
+CSV defect (6 tests) — 4 flip by adding the names; `reference-trimStart/End`
+additionally need alias identity (`trimLeft === trimStart`), which the CSV
+mechanism cannot express. Residual annexB String failures (16) are all
+non-HTML members: #1474 dynamic-regexp refusals, `substr` coercion, the trim
+aliases.
