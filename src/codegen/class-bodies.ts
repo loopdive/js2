@@ -11,6 +11,7 @@ import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { IrUnitId } from "../ir/identity.js";
+import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -1750,9 +1751,18 @@ function skipPreparedClassConstructorBody(
       const initFunc = initLocalIdx === undefined ? undefined : ctx.mod.functions[initLocalIdx];
       const newFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName));
       const newFunc = newFuncIdx === undefined ? undefined : definedFuncAt(ctx, newFuncIdx);
+      // (#3522) A top-level implicit constructor has no containing terminal; a
+      // NESTED one records its enclosing executable. Membership in
+      // `skipImplicitConstructorUnitIds` is already the preparer's proof that
+      // the containing owner was prepared in the same transaction, so the
+      // residual obligation here is that the nesting belongs to the admitted
+      // bounded ordinary-class family — which excludes heritage, statics,
+      // computed keys, and initialized fields, and therefore cannot reach the
+      // shadow-identity inheritance surface (#4448).
+      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
       if (
         unit?.kind !== "class-implicit-constructor" ||
-        unit.terminalOwnerId !== null ||
+        !nestedFamilyOk ||
         ctx.irPlanningIdentityContext?.terminalByUnitId.has(unitId) ||
         ctx.irPlanningIdentityContext?.declarationByUnitId.get(unitId) !== classDeclaration ||
         ctx.programAbiClassCallables?.functionForUnit(unitId) !== initFunc ||
