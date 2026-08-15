@@ -95,7 +95,10 @@ the correct hit count, `*` marks a wrong answer.
 
 So the operator is irrelevant: **every** non-assignment binary operator, the
 conditional operator, array/object literals and parenthesised compositions lose
-their operands' effects at top level. `instanceof` is one member of the family.
+their operands' effects at top level. `instanceof` is one member of the family —
+independently confirmed from the #2916 lane, where a bare
+`lhs() instanceof Object;` (a **builtin** RHS, which never reaches that issue's
+dynamic-RHS substrate) also evaluated neither operand.
 
 `typeof a();` is the one shape wrong in **both** positions — a second, distinct
 elimination site (below).
@@ -222,6 +225,22 @@ evaluated" / "ran, answered false" / "ran, threw"):
 | --- | --- | --- |
 | base | 101 | LHS ran; `instanceof` answered `false` instead of throwing |
 | fixed | 101 | identical |
+
+**Independently reproduced on the #2916 lane's own tree** (a different worktree,
+counting appended markers rather than a bit-encoded log), which states the
+mechanism more sharply than the prose above — one bare `lhs() instanceof rhs()`,
+three contexts:
+
+| context | operands evaluated |
+| --- | --- |
+| bare statement at module top level | **0** |
+| the same statement inside a top-level `try` | 2 |
+| the same statement inside a function | 2 |
+
+The `try` is the entire difference, and it is why the top-level measurement does
+not generalise to the S15.3.5.3 shape. Correction applied on that side in commit
+`4170f94` (branch `worktree-agent-ad38d38be0d655887`), which keeps the original
+claim visible as an explicit correction rather than deleting it.
 
 All three tests are therefore blocked by the #2916 closure-RHS prototype
 residual **alone**, and they do not move here — `_T2` and `_T6` fail with the
