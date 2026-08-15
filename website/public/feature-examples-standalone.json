@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 914,
+      "passCount": 915,
       "totalCount": 1177
     },
     {
@@ -144,7 +144,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3943,
+      "passCount": 3946,
       "totalCount": 4581
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1749,
+      "passCount": 1752,
       "totalCount": 2486
     },
     {
@@ -504,7 +504,7 @@
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 113,
+      "passCount": 114,
       "totalCount": 393
     },
     {
