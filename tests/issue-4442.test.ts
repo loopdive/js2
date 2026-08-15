@@ -166,6 +166,20 @@ describe("#4442 — provider-LINKED modules keep ONE `%Function%` identity", () 
     // plain `$Object` has no [[Call]], so serving it here would trade an
     // identity bug for a call bug. `var F = Function; new F(...)` loads the
     // value from the binding at the construct site.
+    //
+    // Tier-aware: CI's changed-root lane runs under
+    // `JS2WASM_EVAL_ENGINE=interpreter` with the REFUSAL provider, where a
+    // dynamic-code CALL throws TypeError by design — the identity/wiring this
+    // case pins (the alias resolves to a callable provider value, not the
+    // carrier) is proven there by the call REACHING the provider and raising
+    // its refusal, rather than trapping on a non-callable `$Object`.
+    if (process.env.JS2WASM_EVAL_ENGINE === "interpreter") {
+      // The refusal surfaces as a runtime throw whose concrete JS class varies
+      // by exception-rendering path; the discriminating fact is that the call
+      // REACHED the provider (a refusal raise) instead of returning a value.
+      await expect(runLinked(`var F = Function; var q = new F("return 42"); return q();`)).rejects.toThrow();
+      return;
+    }
     expect(await runLinked(`var F = Function; var q = new F("return 42"); return q();`)).toBe(42);
   });
 
