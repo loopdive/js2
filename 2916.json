@@ -1,9 +1,10 @@
 {
   "id": "2916",
-  "assignee": "ttraenkler/dev-es5-coercion",
-  "status": "released",
-  "branch": "issue-2916-standalone-instanceof-isprototypeof",
-  "claimed_at": "2026-07-31T07:49:15Z",
-  "updated_at": "2026-07-31T08:55:03Z",
-  "released_at": "2026-07-31T08:55:03Z"
+  "assignee": "ttraenkler/claude-es5-standalone",
+  "requested_by": "ttraenkler/claude-es5-standalone",
+  "status": "in-progress",
+  "branch": "issue-2916-standalone-dynamic-instanceof",
+  "claimed_at": "2026-08-15T02:43:29Z",
+  "updated_at": "2026-08-15T02:43:29Z",
+  "write_id": "3890-m4tbhdy0"
 }
