@@ -996,7 +996,15 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   const needsNumBox = member === "charCodeAt" || member === "codePointAt";
   // Do ALL late-import-adding ops FIRST (mirrors emitArrayProtoMemberBody), so
   // every helper funcIdx fetched by NAME afterwards is post-shift-correct.
+  // (#4465) `unboxArgToI32` now runs ToPrimitive(number) first, so it can execute
+  // a user `valueOf`/`toString`. §22.1.3.{2,3,4} put that AFTER
+  // `RequireObjectCoercible(this)` + `ToString(this)`, so the sequence is
+  // registered here (where the late import must be added for funcidx stability)
+  // and REPLAYED after step (2) — the `emitTransferredCharAtProtoMemberBody`
+  // splice/defer discipline.
+  const posStart = fctx.body.length;
   const posLocal = unboxArgToI32(ctx, fctx, 2); // → __unbox_number import + flush
+  const deferredPos = fctx.body.splice(posStart, fctx.body.length - posStart);
   let boxIdx: number | undefined;
   if (needsNumBox) {
     boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
@@ -1022,6 +1030,9 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
   const flatLocal = allocLocal(fctx, `__str_pm_flat_${fctx.locals.length}`, flatStringType(ctx));
   fctx.body.push({ op: "local.set", index: flatLocal });
+
+  // (3) NOW coerce the position argument — after ToString(this) (see (1) above).
+  for (const instr of deferredPos) fctx.body.push(instr);
 
   const strTy = ctx.nativeStrTypeIdx; // flat string struct: 0=len, 1=off, 2=data
   const dataTy = ctx.nativeStrDataTypeIdx;
@@ -1224,7 +1235,16 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // (1) Do ALL late-import-adding ops FIRST (mirrors charCodeAt), so every helper
   // funcIdx fetched by NAME afterwards is post-shift-correct.
   //   fromIndex: unbox param 3 → i32 (null/undefined → 0 via NaN→trunc_sat).
+  // (#4465) The unbox now runs `ToPrimitive(number)` first, so it can execute a
+  // USER `valueOf`/`toString` and throw. §22.1.3.{8,9} order that AFTER
+  // `ToString(this)` and `ToString(searchString)` (S15.5.4.{7,8}_A4_T4/T5 assert
+  // exactly which of two throwing coercions wins), so the sequence is emitted
+  // here — where the late-import registration must happen for funcidx stability
+  // — and REPLAYED at step (5a). Same splice/defer discipline as
+  // `emitTransferredCharAtProtoMemberBody`.
+  const fromStart = fctx.body.length;
   const fromLocal = unboxArgToI32(ctx, fctx, 3);
+  const deferredFrom = fctx.body.splice(fromStart, fctx.body.length - fromStart);
   const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (boxIdx === undefined) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
@@ -1243,7 +1263,22 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // miss it — see emitStringRequireObjectCoercible.
   emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (4) lastIndexOf default position: §22.1.3.9 — an absent / `undefined` position
+  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
+  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
+  // ToPrimitive-first sequence (#3992).
+  const flattenExtern = (paramIdx: number, label: string): number => {
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
+    const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
+    fctx.body.push({ op: "local.set", index: local });
+    return local;
+  };
+  const recvLocal = flattenExtern(1, "__str_srch_recv");
+  const needleLocal = flattenExtern(2, "__str_srch_needle");
+
+  // (5a) NOW coerce the position (§22.1.3.{8,9} step 4) — after both ToStrings.
+  for (const instr of deferredFrom) fctx.body.push(instr);
+
+  // (5b) lastIndexOf default position: §22.1.3.9 — an absent / `undefined` position
   // is ToIntegerOrInfinity → +∞ ⇒ search from the end. In standalone both map to a
   // null externref, so ref.is_null selects the from-end sentinel (0x7fffffff). An
   // explicit numeric position (incl. saturating large values) keeps its unboxed i32.
@@ -1259,18 +1294,6 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
     });
     fctx.body.push({ op: "local.set", index: fromLocal });
   }
-
-  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
-  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
-  // ToPrimitive-first sequence (#3992).
-  const flattenExtern = (paramIdx: number, label: string): number => {
-    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
-    const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
-    fctx.body.push({ op: "local.set", index: local });
-    return local;
-  };
-  const recvLocal = flattenExtern(1, "__str_srch_recv");
-  const needleLocal = flattenExtern(2, "__str_srch_needle");
 
   // (6) call __str_indexOf/__str_lastIndexOf(recv, needle, fromIndex) → i32 index.
   fctx.body.push({ op: "local.get", index: recvLocal });
@@ -1312,7 +1335,12 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // (1) Do ALL late-import-adding ops FIRST (mirrors the 3a body), so every
   // helper funcIdx fetched by NAME afterwards is post-shift-correct.
   //   position/endPosition: unbox param 3 → i32 (null/undefined → 0).
+  // (#4465) The unbox now runs `ToPrimitive(number)` first and can therefore
+  // execute user code; §22.1.3.{6,7,23} order that after both ToStrings, so the
+  // sequence is registered here (funcidx stability) and replayed at (5a).
+  const posStart = fctx.body.length;
   const posLocal = unboxArgToI32(ctx, fctx, 3);
+  const deferredPos = fctx.body.splice(posStart, fctx.body.length - posStart);
   const boxBoolIdx = ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (boxBoolIdx === undefined) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
@@ -1331,7 +1359,22 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // miss it — see emitStringRequireObjectCoercible.
   emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (4) endsWith default endPosition: §22.1.3.6 step 6 — absent/`undefined`
+  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
+  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
+  // ToPrimitive-first sequence (#3992).
+  const flattenExtern = (paramIdx: number, label: string): number => {
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
+    const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
+    fctx.body.push({ op: "local.set", index: local });
+    return local;
+  };
+  const recvLocal = flattenExtern(1, "__str_srchb_recv");
+  const needleLocal = flattenExtern(2, "__str_srchb_needle");
+
+  // (5a) NOW coerce the position — after both ToStrings (see the note at (1)).
+  for (const instr of deferredPos) fctx.body.push(instr);
+
+  // (5b) endsWith default endPosition: §22.1.3.6 step 6 — absent/`undefined`
   // endPosition ⇒ end = len. Mirror the DIRECT path's 0x7fffffff sentinel
   // (string-ops.ts), which the core clamps to sLen. `includes`/`startsWith`
   // default position 0 is exactly what unboxArgToI32 already yields for null.
@@ -1346,18 +1389,6 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
     });
     fctx.body.push({ op: "local.set", index: posLocal });
   }
-
-  // (5) recv = flatten(? ToString(this)); needle = flatten(? ToString(searchString)).
-  // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
-  // ToPrimitive-first sequence (#3992).
-  const flattenExtern = (paramIdx: number, label: string): number => {
-    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
-    const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
-    fctx.body.push({ op: "local.set", index: local });
-    return local;
-  };
-  const recvLocal = flattenExtern(1, "__str_srchb_recv");
-  const needleLocal = flattenExtern(2, "__str_srchb_needle");
 
   // (6) call the core (recv, needle, pos) → i32 boolean → box as JS boolean.
   fctx.body.push({ op: "local.get", index: recvLocal });
