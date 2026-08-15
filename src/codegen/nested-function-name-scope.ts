@@ -193,8 +193,26 @@ function enclosingFunctionScope(node: ts.Node): ts.Node | undefined {
  * already correct before #4456 (the two-sibling-blocks and if/else cases in
  * `tests/issue-4456.test.ts` pass on the base revision).
  *
- * The first cut of this predicate did not draw that line, and it shipped two
- * real regressions, both measured by A/B on the merged tree:
+ * The first cut of this predicate did not draw that line, and the merge_group
+ * re-validation of PR #4572 caught two real regressions on the host/gc lane.
+ * Both are fixed here, and — this is the part worth keeping — **they are fixed
+ * by two DIFFERENT clauses, neither of which subsumes the other.** Measured
+ * 2026-08-15 by running each clause alone against both reproductions:
+ *
+ * | reproduction                              | scope clause alone | owner clause alone |
+ * | ----------------------------------------- | ------------------ | ------------------ |
+ * | `block-decl-nested-blocks-with-fun-decl`   | PASS               | FAIL               |
+ * | `var-env-lower-lex-catch-non-strict`       | PASS               | COMPILE_ERROR      |
+ * | `function err(){}` + `eval('async function* err(){}')` | COMPILE_ERROR | PASS  |
+ *
+ * ### The scope clause — same FRAME has no boundary to restore at
+ *
+ * The whole mechanism is push-on-hoist / pop-at-END-OF-BODY. Two declarations
+ * of one name in the SAME body therefore have no boundary *between* them: the
+ * shadow is pushed and stays live for the rest of that body, and the pre-
+ * existing Annex B / #3419 machinery that already resolves same-frame
+ * duplicates gets handed a namespace it did not expect. So the mechanism is
+ * simply inapplicable there, and the gate declines.
  *
  *  - `annexB/…/block-decl-nested-blocks-with-fun-decl.js` — `g()` declares
  *    `function f(){return 1}` in a block and `function f(){return 2}` in a
@@ -202,29 +220,40 @@ function enclosingFunctionScope(node: ts.Node): ts.Node | undefined {
  *    applicable, so `g`'s var-scoped `f` must stay the outer one. Shadowing let
  *    the inner declaration take the name: `f()` returned 2.
  *  - `annexB/…/direct/var-env-lower-lex-catch-non-strict.js` — four
- *    `eval('function err(){}')` calls in one catch block. The eval-inline path
- *    hoists each synthesized declaration into the CURRENT frame with no scope
- *    around it, so shadows accumulated and a later call resolved to an index
- *    that had been scoped away: `absoluteFuncIndex: unresolved call target`.
+ *    `eval('function err(){}')`-family calls in one catch block. The eval-inline
+ *    path hoists each synthesized declaration into the CURRENT frame, so the
+ *    shadows accumulated with nothing to restore them and a later call resolved
+ *    to an index that had been scoped away: `absoluteFuncIndex: unresolved call
+ *    target (funcIdx=undefined) baked into a compiled function body`.
  *
- * Both are same-frame. So the gate now requires the incumbent and the newcomer
- * to live in genuinely different function-like scopes, and DECLINES otherwise —
- * absent-not-wrong: declining restores the exact pre-#4456 lowering for those
- * shapes, which is the behaviour the Annex B machinery expects.
+ * Declining is absent-not-wrong: it restores the exact pre-#4456 lowering for
+ * those shapes, which is what the Annex B machinery expects. Note the first is
+ * the Annex-B-INAPPLICABLE variant — for applicable sibling blocks, B.3.3
+ * rebinds the var-scoped name at each declaration's evaluation, so
+ * last-executed-wins is CORRECT and must not be "healed" either. Same decline,
+ * both reasons.
  *
- * Two further conditions, both narrowing:
+ * ### The owner clause — never displace an OWNER-LESS registration
  *
- *  - The incumbent must have a `funcMapOwnerDecl` record, i.e. be a NESTED
- *    declaration. Absent ⇒ the name belongs to a top-level declaration, an
- *    import or a synthesized helper (#4133's convention), and this helper must
- *    not displace it — that also keeps the second regression above from
- *    recurring through a different door. (Consequence: a nested declaration
- *    shadowing a same-named top-level one is left unfixed. It is a pinned
- *    residual, and its real owner is the IR front-end's bare-name call
- *    resolution, not this gate.)
- *  - An UNDETERMINABLE scope on either side declines, rather than guessing.
- *    Synthesized declarations from eval-inline can carry a detached parent
- *    chain, and a guess there is exactly how the CE above was produced.
+ * The incumbent must have a `funcMapOwnerDecl` record, i.e. be a nested
+ * declaration. Absent ⇒ the name belongs to a top-level declaration, an import
+ * or a synthesized helper (#4133's convention). Shadowing those deletes a
+ * registration that no scope on the stack will put back, which is the second,
+ * independent route to the same `funcIdx=undefined` CE — smallest reproduction
+ * in the table above, and NOT reachable by the scope clause, since an incumbent
+ * with no owner record has no computable scope to compare.
+ *
+ * Consequence, accepted deliberately: a nested declaration shadowing a
+ * same-named TOP-LEVEL one stays unfixed. It costs nothing observable — that
+ * shape returned the wrong answer on the first cut too (the IR front-end's
+ * bare-name direct-call plan called the top-level unit even though both
+ * functions were emitted), so it was already a pinned `it.fails` residual in
+ * `tests/issue-4456.test.ts`. Its real owner is that call-binding resolution,
+ * not this gate.
+ *
+ * An UNDETERMINABLE scope on either side likewise declines rather than
+ * guessing: synthesized declarations from eval-inline can carry a detached
+ * parent chain.
  *
  * `__`-prefixed names stay excluded so a user declaration can never displace
  * `__box_number` and friends out from under an in-flight emission.
@@ -234,7 +263,6 @@ export function nestedFuncDeclNeedsShadow(
   decl: ts.FunctionDeclaration,
   funcName: string,
 ): boolean {
-  if (process.env.JS2WASM_DISABLE_4456 === "1") return false; // TEMP A/B
   if (!ctx.funcMap.has(funcName)) return false;
   if (funcName.startsWith("__")) return false;
 
