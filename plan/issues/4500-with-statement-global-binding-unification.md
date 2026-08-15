@@ -157,3 +157,78 @@ NODE_OPTIONS=--max-old-space-size=3072 node scripts/build-quickjs-eval-provider.
   removing `with` entirely preserves the failure.
 - ~~"Closure capture is broken."~~ **False.** The identical closure shape over a
   `var`-declared global is correct; only the `this.`-assigned global fails.
+
+## Implementation Plan (fable, 2026-08-15)
+
+Source picture (verified against source 2026-08-15): script-goal globals have
+TWO storages today —
+
+- **`var`-declared** → wasm module globals (`ctx.moduleGlobals`,
+  `global.get/set`, e.g. assignment.ts ~L208-217).
+- **Implicit / `this.`-assigned** → the realm global-environment object:
+  pre-scan `recordSloppyImplicitGlobalNames` populates
+  `ctx.sloppyImplicitGlobals` (see module-init-collection.ts ~L160-176,
+  index.ts ~L3714); reads go through `emitImplicitGlobalRead`
+  (identifiers.ts ~L929 → global-environment.ts ~L335); writes through
+  `ensureGlobalEnvironmentOperation("__extern_set")`
+  (assignment.ts ~L885, unresolvable-assign.ts ~L181/L246/L258). The env
+  object exists natively in standalone (probes' bare-read row works).
+
+The unification rule: **one canonical storage per name, decided statically.**
+`var`-declared in the compiled script ⇒ module global. Otherwise ⇒ env
+object. Each defect row is a path that picks the WRONG storage for its name.
+
+### Slice A — `this.p` ⇄ module global (probe rows 2 and 3)
+
+Where a member access's receiver is the realm global object
+(`receiverIsRealmGlobalObject` / `isGlobalObjectExpr`,
+sloppy-this-global.ts ~L164/~L191, global-environment.ts ~L613) AND the
+property name is in `ctx.moduleGlobals`: compile the access as
+`global.get`/`global.set` on the module global instead of the env-object
+op. Sites: the member-read dispatch and member-write path that currently
+route such receivers to `__extern_get`/`__extern_set` (find them by tracing
+the row-2 probe: `var p1 = 1; p1 = 2; this.p1` — the `this.p1` read's arm).
+Coerce through the module global's declared type with the existing
+`coerceType` (the #3534 box-on-store invariant applies if the global is
+externref). `delete this.p1` on a var global: emit `false` (var globals are
+non-configurable) — add a probe row for it.
+
+### Slice B — closure bare-write of an implicit global (probe row 1)
+
+`this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2` fails, yet the
+write path at assignment.ts ~L885 already consults `sloppyImplicitGlobals`.
+So EITHER the closure's write compiles through a different arm (the
+auto-local at ~L899, or an unresolvable-assign arm that allocated a local
+before the set was consulted), OR the pre-scan runs after the closure body
+compiles, OR the checker resolves `p1` inside the closure to something
+else entirely. Diagnose FIRST: instrument all four candidate arms
+(assignment.ts L885/L899, unresolvable-assign.ts L181/L246) and compile the
+row-1 probe; record which arm fires. Then fix that arm to route through the
+env-object write. The auto-local arm's own comment (#4231 RC-F) documents
+why minting a local is destructive — whatever the diagnosis, the fix must
+not introduce a new local for a name in `sloppyImplicitGlobals`.
+
+### Order
+
+Slice B first (it is the closure row, likely the bigger test262 share and
+carries no representation change), then Slice A. Separate boundaries, each
+with its own measurement. If Slice B's diagnosis reveals the pre-scan
+ordering is the defect, fixing the ordering may also change Slice A's
+baseline — re-measure between slices.
+
+### Measurement (both slices)
+
+1. The probe tables in this file: all WRONG rows flip to ok, all ok rows
+   (incl. the var-global control and the two localisation rows) stay ok —
+   both targets.
+2. Scoped test262 A/B, standalone: `language/statements/with` against the
+   68-row baseline (quickjs provider per Instrument warning; rebuild bundles
+   per arm) — expect the 6 `p1 === "x1"` rows to flip; plus
+   `language/eval-code` and `language/global-code` as global-semantics
+   control buckets. Zero pass→non-pass.
+3. gc-lane control on the same buckets. Zero pass→non-pass.
+4. The `var`-global fast path must not change bytes for programs with no
+   `this.`-global interplay: compile 2-3 var-global-only samples before/after
+   and diff the binaries — byte-identical expected (Slice A only adds arms
+   behind a `receiverIsRealmGlobalObject && moduleGlobals.has` test that such
+   programs never take; Slice B is behind `sloppyImplicitGlobals`).

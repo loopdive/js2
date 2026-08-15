@@ -1,9 +1,9 @@
 ---
 id: 4495
 title: "Standalone: a string-initialised JS local keeps a native-string slot and stores NULL when assigned a dynamic value"
-status: blocked
+status: ready
 sprint: current
-blocked_on: "Fable-lane implementation plan (wide blast radius — do not claim; see body)"
+blocked_on: ""
 created: 2026-08-15
 updated: 2026-08-15
 priority: high
@@ -181,3 +181,82 @@ NODE_OPTIONS=--max-old-space-size=3072 node scripts/build-quickjs-eval-provider.
 
 Both bundles must be rebuilt **per A/B arm** — the test262 pool worker imports
 `scripts/compiler-bundle.mjs`, not `src/`.
+
+## Implementation Plan (fable, 2026-08-15)
+
+Direction is fixed by the issue: **definition-side slot widening**, coercion
+site `type-coercion.ts:2469` unchanged. The plan adds the how, the guardrails,
+and the measurement protocol.
+
+### Step 1 — localize the slot-decision site (no fix yet)
+
+Compile the `id(1)` repro and find where the local `result` is assigned its
+`ref $AnyString` slot. Concretely: instrument the local-allocation path (the
+allocator that chooses a native-string slot from a string-literal initializer)
+and log `(name, chosenSlot, decidingInput)` for the repro. Record the exact
+function+file in this section before proceeding. Do NOT start from a grep for
+"AnyString" across the tree — start from the repro, backwards from the trap:
+the `ref.null` at type-coercion.ts:2469 receives `toIdx` = the slot's type;
+its caller chain names the slot's owner.
+
+### Step 2 — the widening condition (precise, not heuristic)
+
+Widen a local's slot to the boxed/dynamic representation (`externref` /
+`$AnyValue`, whichever the surrounding function already uses for dynamic
+locals) **iff**:
+
+- the local's slot would otherwise be a native-string type, AND
+- some reaching assignment's RHS is **not provably string** by the existing
+  static answer (the same oracle the initializer decision uses — do not
+  introduce a new type query; route through `ctx.oracle` per the ratchet).
+
+"Provably string": string literal, concat of provably-strings, call whose
+oracle signature returns string, typeof result, String(...) — whatever
+predicate the slot-decision site ALREADY uses for initializers, reused
+verbatim for subsequent assignments. The condition is per-local and
+whole-function (all reaching defs), not flow-sensitive — a local that is
+sometimes-dynamic is dynamic.
+
+Explicitly NOT in scope: TS-annotated `: string` locals (annotation wins,
+current behavior stands — a wrong annotation is user error); params (separate
+inference, #2867's S2 already touched param-return-inference.ts — do not
+disturb); `let`/`const` with provably-string-only assignments (no change).
+
+### Step 3 — expected emitted-code consequence
+
+Widened locals lose the native-string fast path: reads that fed `__str_concat`
+directly now go through the boxed-value string coercion (the same path a
+param-typed dynamic value takes today — `'' + id(1)` with no intermediate
+local works, per the isolation table, so the boxed lowering exists and is
+correct; the fix routes the local through it).
+
+### Step 4 — measurement protocol (the hard part; do not skip any arm)
+
+All arms measured yourself, provenance labels on every number:
+
+1. **Repro gate**: the 3 crash rows in the isolation table flip to correct
+   values; the 5 ok rows stay ok. One probe file, both targets
+   (standalone + gc).
+2. **Widening-precision census**: instrument the widening condition and
+   compile the equivalence corpus (`tests/equivalence/`) + `playground/examples/`;
+   report HOW MANY locals widen. An unexpectedly large count (>~5% of
+   string-slot locals) means the "provably string" predicate is too weak —
+   stop and strengthen it before running the big lanes.
+3. **Scoped test262 A/B, standalone**: `language/statements/with` against the
+   68-row baseline (`.tmp/with-base2.jsonl`, quickjs provider built per the
+   Instrument warning above — rebuild bundles per arm), plus
+   `language/expressions/addition` + `language/types/string` as
+   string-heavy control buckets. Zero pass→non-pass.
+4. **gc-lane control**: same buckets, `--target` default. This is NOT
+   carrier-gated; the default lane changes bytes too. Zero pass→non-pass.
+5. **Perf spot-check**: `benchmarks/` string-heavy case (or a 10^6-iteration
+   concat microbench in `.tmp/` if no committed bench isolates strings),
+   before/after, same box, 3 runs each, report medians. A >10% regression on
+   a string-heavy microbench blocks landing — take it back to the predicate.
+
+### Acceptance
+
+The issue's 4 criteria + the Step-4 arms. The expected test262 yield is the
+#4206 rows: 4 `result === undefined` rows plus whatever the 13 crash rows'
+underlying assertions do — re-measure, expect modest (~single digits) direct
+flips; the value is un-blocking #4206's cluster arithmetic, not a big number.
