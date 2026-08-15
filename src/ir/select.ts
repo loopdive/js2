@@ -170,18 +170,20 @@ export type IrFallbackReason =
   // bucketing them as *unintended* overstated what shape work could fix by 6
   // of 11 units on the #3518 standalone reference corpus.
   //
-  // The bucket deliberately holds two kinds of member — do not read it as
-  // uniformly permanent:
+  // The bucket held two kinds of member. One has since been retired:
   //   - PERMANENT here: DOM (`document.*`). Legacy's own `--target standalone`
   //     body for those units still leaks `env.Document_createElement`,
   //     `env.Node_appendChild` & co. past the #2961 import-leak gate, so there
   //     is genuinely nothing host-free to lower to.
-  //   - DEFERRED-BUT-FIXABLE: `console.*`. Standalone DOES have a host-free
-  //     sink (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that
-  //     legacy uses; the IR's console arm only knows the host-import form
-  //     (`irImportFuncRef("env", "console_log_<variant>")`). Retiring that is
-  //     tracked separately — see the standalone console + native
-  //     `number_toString` follow-up filed alongside #4457.
+  //   - RETIRED (#4462): `console.*`. Standalone always had a host-free sink
+  //     (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that legacy
+  //     uses; the IR's console arm knew only the host-import form. It now has
+  //     its own capability row (`consoleSurfaceCapability`) and a host-free
+  //     lowering, so a `console.*` unit is claimed rather than bucketed here.
+  //     A console call STILL lands here when this target has no sink at all, or
+  //     when the call shape is outside the lowered slice (multi-arg, expression
+  //     position, a method the IR does not lower) — a pre-claim rejection, which
+  //     is the point: the alternative is a post-claim demote.
   | "host-surface-unavailable"
   | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 

@@ -181,3 +181,70 @@ Order matters; each step is separately verifiable.
 5. **Ratchet** `scripts/ir-only-baseline.json` standalone-lane-only
    (`host-surface-unavailable` 6 → 4, `emittedFloor`/`irBodyEmittedFloor` +1),
    and re-run `node scripts/gen-ir-adoption.mjs --check`.
+
+## Test Results
+
+### `pnpm run check:ir-only` — standalone lane (host lane unchanged, 37/37 READY)
+
+| metric                            | before | after |
+| --------------------------------- | -----: | ----: |
+| emitted / IR bodies               |     17 |    19 |
+| legacy bodies                     |     27 |    26 |
+| unsupported                       |     20 |    18 |
+| invariants                        |      0 |     0 |
+| `host-surface-unavailable`        |      6 |     4 |
+| `primitive-method-unsupported`    |      1 |     0 |
+| `call-graph-closure`              |      3 |     4 |
+
+Units that changed state: `classes.ts::main` (→ emitted),
+`algorithms.ts::joinNums` (→ emitted), `algorithms.ts::main`
+(`host-surface-unavailable` → `call-graph-closure`).
+
+`pnpm run check:ir-fallbacks`: no unintended / post-claim / module-level
+growth. `scripts/ir-only-baseline.json` ratcheted standalone-lane-only.
+
+### Runtime parity (acceptance criterion 4)
+
+`classes.ts` and `algorithms.ts` compiled `--target standalone`, instantiated,
+`main()` run, output drained through `__stdout_prepare`/`__stdout_char`. Both
+byte-identical to `node`, both binaries with **ZERO imports**.
+
+Note for anyone reproducing this: the readout exports are stripped by #4035's
+export-policy sink unless `hostBridge: "always"` is passed, so a bare
+`compile(src, { target: "standalone" })` exposes only `main` and the output is
+unobservable. That is by design (exports are GC roots), not a missing sink.
+
+### The `classes.ts::main` internal throw — diagnosis
+
+Root cause: exactly what `assertNotDeferred` says, and nothing behind it. The
+probe that produced it opened the SELECTOR arm while the capability table still
+read `hostExternCapability(jsHost=false) === "defer"` and no host-free lowering
+existed — a selector↔table disagreement by construction. With the row split out
+(`consoleSurfaceCapability`) and the lowering in place, the disagreement cannot
+arise: `classes.ts::main` now emits with zero `irPostClaimErrors` and zero
+`invariant` outcomes (asserted in `tests/issue-4462.test.ts`). There was no
+second, hidden failure behind it.
+
+### Residuals, stated honestly
+
+- **`algorithms.ts::main` is blocked on `fibMemo`, not on `joinNums`.** The
+  issue predicted `joinNums` (`call-graph-closure` via the array `.join()`
+  surface); measurement disagrees. `joinNums`' blocker was
+  `primitive-method-unsupported` — `arr[i].toString()` — which this issue's
+  native formatter fixed, so `joinNums` now CLAIMS. `main`'s remaining unclaimed
+  callee is `fibMemo`, whose `Map`-typed body is `body-shape-rejected`. It never
+  touched the array `.join()` surface at all.
+- **Numeric `console.log` arguments printed NOTHING in standalone before this**
+  and print correctly after. Legacy's `emitStandaloneStdoutAppendValue` drops a
+  bare scalar ("best-effort, never a marker", #3469), so `console.log(42)`
+  silently produced empty output on the legacy path. The IR arm renders it. The
+  legacy path is unchanged and still drops.
+- **Legacy hijacks a shadowed `console` (pre-existing, out of scope).**
+  `calls.ts` dispatches `console.<m>` on identifier TEXT with no shadow guard,
+  so `const console = {...}; console.log(x)` still reaches the sink in a
+  legacy-compiled body. The IR side is shadow-safe (checker-backed resolver);
+  fixing legacy belongs to the #2855 retirement, not here.
+- **Booleans have no host-free console rendering yet.** `console.log(flag)`
+  demotes through the typed UNSUPPORTED channel rather than printing `1`/`0`.
+  `"true"`/`"false"` needs a value-position string select the slice does not
+  build; numbers and strings are covered.
