@@ -68,10 +68,11 @@ const MINIMIZED_OBJECT_SLOT = `
 // interface. Identical codegen path — slot 1 is still a GC ref that the
 // `__vec_f64` arm cannot produce — but this one also RUNS, so the fix can be
 // checked for more than validator silence. (The interface-typed variant above
-// trips a separate, pre-existing defect in the host round-trip of a struct
-// through `Object.entries`, which is why it is only compiled here: on the
-// unfixed compiler both variants are `WebAssembly.validate === false`, and on
-// the fixed compiler the array variant returns the value asserted below.)
+// was only compiled here because it then tripped a separate, pre-existing
+// defect — one declared shape lowered to two struct types, so the value slot
+// failed its `ref.cast` with "illegal cast". That is #4493, now fixed; the
+// interface variant's runtime assertion lives in
+// `tests/issue-4493-object-entries-struct-cast.test.ts`.)
 //
 // The record is declared already in sorted order deliberately: it keeps the
 // assertion on what this fix governs — that BOTH tuple slots survive the

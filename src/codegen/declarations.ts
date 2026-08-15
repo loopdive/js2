@@ -146,6 +146,7 @@ import { inferImplicitAnyParamType, resolveGenericCallSiteTypes } from "./declar
 import {
   collectInterface,
   collectObjectType,
+  publishDeclaredShapesForDedup,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
 import { profileCount, profilePhase } from "../compile-profile.js";
@@ -1179,6 +1180,12 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // This fixes ordering issues (e.g. Outer references Inner, regardless of
   // declaration order) and ensures nested destructuring works correctly.
   resolveStructFieldTypes(ctx, sourceFile);
+
+  // (#4493) Now that the declared shapes have their final field types, publish
+  // them into the anonymous-struct dedup index so an identically-shaped object
+  // literal reuses the declared struct rather than minting a duplicate that the
+  // shape-brand pass would later separate from it.
+  publishDeclaredShapesForDedup(ctx, sourceFile);
 
   // Collect class declarations (struct types + constructor/method functions)
   // Also collect class expressions in variable declarations: const C = class { ... }
