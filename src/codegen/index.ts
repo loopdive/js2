@@ -397,6 +397,7 @@ import {
   compileDeclarations,
   createUnifiedCollectorState,
   finalizeUnifiedCollector,
+  functionReturnsDynamicObjectCarrier,
   preallocateModuleInitCallable,
   unifiedVisitNode,
 } from "./declarations.js";
@@ -2546,7 +2547,14 @@ function planIrOverlay(
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
   };
   const legacyCallerAbiIsProjected = (declaration: ts.FunctionDeclaration): boolean => {
-    if (hasFullyAnnotatedScalarAbi(declaration)) return true;
+    // (#3518) The certified surface now includes `string` positions, whose
+    // carrier both front-ends derive from the SAME `ctx.nativeStrings` /
+    // `ctx.anyStrTypeIdx` pair. `functionReturnsDynamicObjectCarrier` is the one
+    // legacy return-carrier override that no annotation predicts, so it is
+    // handed in as evidence rather than re-derived.
+    if (hasFullyAnnotatedScalarAbi(declaration, { returnCarrierIsOverridden: functionReturnsDynamicObjectCarrier })) {
+      return true;
+    }
     const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
     const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
     if (
