@@ -294,6 +294,33 @@ None of these is new logic, and none is a split candidate created by this
 change — the splits these budgets exist to force are #3399's, on functions
 that were already far over.
 
+## Merge with `origin/main` (#4487 landed mid-flight)
+
+Two conflicts in `src/ir/from-ast.ts`, both in `lowerArrayLiteral`, both from
+#4487's spread adoption landing while this sweep was in flight. Resolved inline
+rather than routed to a `[CONFLICT]` task because the resolution is mechanical
+and is precisely this issue's mandate — **flagged for review all the same**:
+
+1. **The spread/elision guard.** #4487 split the old single arm into two
+   (elision; spread with no statically provable length) and wrote both as bare
+   `Error`. Kept #4487's control flow verbatim, applied #4502's typing
+   (`array-representation-unsupported` for both — both are legal array
+   literals `vec.new_fixed` cannot express).
+2. **The non-scalar element-type arm.** No semantic conflict at all: **#4487
+   and this sweep independently reached the same verdict AND the same code**
+   (`array-representation-unsupported`), #4487 via
+   `throw new IrUnsupportedError(...)` and #4502 via `demoteToLegacy(...)`,
+   which are the same thing. Kept #4487's rationale comment (it carries a
+   measurement) and routed it through the shared helper.
+
+That independent agreement is the corroboration a rule-driven sweep most wants.
+
+**Post-merge completeness check:** `src/ir/from-ast.ts` now holds 98 bare
+`throw new Error` sites (down from 336), and a scan for sites carrying neither
+the `// invariant (producer-promise):` marker nor the documented sibling-arm
+shape returns **zero** — every surviving bare throw in the swept files is a
+deliberate, annotated invariant. All gates re-run green after the merge.
+
 ## Acceptance criteria
 
 1. ✅ Every bare `throw new Error` in `from-ast.ts` and its build-stage

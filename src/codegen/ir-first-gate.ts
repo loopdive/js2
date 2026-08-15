@@ -306,6 +306,24 @@ export interface IrIdentityLocalCallEdges {
   readonly callees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
   /** Local targets reached from AST regions that have no R0 executable owner. */
   readonly calleesFromUnownedCallers: ReadonlySet<IrUnitId>;
+  /**
+   * (#4494) Construction edges: `new C()` executes `C`'s explicit constructor
+   * body plus every explicit constructor in `C`'s local `extends` ancestry.
+   * `derivePreparedComponentDependencies` records exactly that edge for a
+   * `class.new` (`recordClassConstructorInitReference` → `recordUnitReference`),
+   * so a prepared component that contains the constructing owner but not those
+   * constructor units can never seal — it fails closed with
+   * `foreign-source-unit`.
+   *
+   * This is kept separate from `callees` deliberately: it is a *one-directional*
+   * requirement. A constructing owner needs its constructor targets to be
+   * co-prepared, but a constructor does NOT need its constructing callers to be
+   * co-prepared (a legacy or module-init caller reaches it through the sealed
+   * `<Class>_new` support wrapper). Folding these into `callees` would also feed
+   * the reverse `callers` closure and withdraw constructors that prepare fine
+   * today.
+   */
+  readonly constructionCallees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
 }
 
 /**
@@ -360,6 +378,48 @@ export function collectLocalCallEdgesByIdentity(
     const candidates = candidatesByName.get(statement.name.text) ?? [];
     candidates.push(unitId);
     candidatesByName.set(statement.name.text, candidates);
+  }
+
+  // (#4494) Top-level class declarations, so a `new C()` can name the exact
+  // constructor units its component must contain.
+  const topLevelClassesByName = new Map<string, ts.ClassDeclaration[]>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isClassDeclaration(statement) || !statement.name) continue;
+    const declarations = topLevelClassesByName.get(statement.name.text) ?? [];
+    declarations.push(statement);
+    topLevelClassesByName.set(statement.name.text, declarations);
+  }
+  const explicitConstructorChain = (className: string): readonly IrUnitId[] => {
+    const chain: IrUnitId[] = [];
+    const visited = new Set<ts.ClassDeclaration>();
+    let pending = topLevelClassesByName.get(className) ?? [];
+    while (pending.length > 0) {
+      const next: ts.ClassDeclaration[] = [];
+      for (const declaration of pending) {
+        if (visited.has(declaration)) continue;
+        visited.add(declaration);
+        // Only an EXPLICIT constructor owns a terminal source body that the
+        // component must contain. An implicit constructor's `_init` is an
+        // AST-free support body that `recordImplicitConstructorSupportReference`
+        // seals without requiring candidacy.
+        const constructorDeclaration = declaration.members.find(ts.isConstructorDeclaration);
+        if (constructorDeclaration?.body) {
+          const unitId = identityContext.unitIdByDeclaration.get(constructorDeclaration);
+          if (unitId !== undefined) chain.push(unitId);
+        }
+        const heritage = declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+        const baseExpression = heritage?.types[0]?.expression;
+        if (!baseExpression || !ts.isIdentifier(baseExpression)) continue;
+        next.push(...(topLevelClassesByName.get(baseExpression.text) ?? []));
+      }
+      pending = next;
+    }
+    return chain;
+  };
+  const constructorChainsByName = new Map<string, readonly IrUnitId[]>();
+  for (const className of topLevelClassesByName.keys()) {
+    const chain = explicitConstructorChain(className);
+    if (chain.length > 0) constructorChainsByName.set(className, chain);
   }
   for (const unit of identityContext.inventory.allUnits) {
     const declaration = identityContext.declarationByUnitId.get(unit.id);
@@ -480,13 +540,26 @@ export function collectLocalCallEdgesByIdentity(
     }
     for (const candidate of candidates) targets.add(candidate);
   };
+  const constructionCallees = new Map<IrUnitId, Set<IrUnitId>>();
+  const recordConstruction = (caller: IrUnitId | null, name: string): void => {
+    if (caller === null) return;
+    const chain = constructorChainsByName.get(name);
+    if (!chain) return; // extern/host constructor, or a class with only implicit constructors
+    let targets = constructionCallees.get(caller);
+    if (!targets) {
+      targets = new Set<IrUnitId>();
+      constructionCallees.set(caller, targets);
+    }
+    for (const unitId of chain) targets.add(unitId);
+  };
   const walk = (node: ts.Node, inheritedOwner: IrUnitId | null): void => {
     const boundaryOwner = ownerByBoundary.get(node);
     const owner = boundaryOwner === undefined ? inheritedOwner : boundaryOwner;
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) recordCall(owner, node.expression.text);
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) recordConstruction(owner, node.expression.text);
     ts.forEachChild(node, (child) => walk(child, owner));
   };
   walk(sourceFile, null);
 
-  return Object.freeze({ callees, calleesFromUnownedCallers });
+  return Object.freeze({ callees, calleesFromUnownedCallers, constructionCallees });
 }

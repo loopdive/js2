@@ -9583,7 +9583,7 @@ export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts
 /**
  * Compute a hash key for a list of struct fields (for O(1) structural dedup).
  */
-function fieldsHashKey(fields: FieldDef[]): string {
+export function fieldsHashKey(fields: FieldDef[]): string {
   const parts: string[] = [];
   for (const f of fields) {
     const t = f.type;

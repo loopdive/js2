@@ -214,7 +214,19 @@ export type ValType =
   | { kind: "i32"; boolean?: true; symbol?: true }
   | { kind: "i64"; bigint?: boolean }
   | { kind: "f32" }
-  | { kind: "f64" }
+  // (#2864 wave-2 S1) `undefSentinel` is the same kind of structural-only BRAND
+  // on the `f64` carrier: it marks an f64 that was read out of a slot which
+  // genuinely CAN hold `undefined` (today: a native generator's IteratorResult
+  // `value` field, whose UNDEF_F64_BITS pattern MEANS undefined — see
+  // value-tags.ts). Every `.kind === "f64"` check still matches, so numeric
+  // codegen is byte-identical; the brand is consulted only at the BOX site
+  // (`coerceType(f64 → externref)`) to pick sentinel-aware boxing instead of a
+  // bare `__box_number`. This is deliberately NOT a change to the generic f64
+  // box, whose #3315 note is correct: an ARBITRARY f64 carrying the sentinel
+  // bits is a computed NaN (`Math.abs` preserves the payload) and must stay a
+  // number. The brand is exactly the "dedicated identity-carrying slot" seam
+  // that note points at. Keep it optional + inert.
+  | { kind: "f64"; undefSentinel?: true }
   | { kind: "v128" }
   | { kind: "i8" }
   | { kind: "i16" }
