@@ -5815,6 +5815,46 @@
           },
           "standalone": {}
         }
+      },
+      "recordedIn": "ca2fb3b55de7bb4938772c06c67fda62c84c5c95"
+    },
+    {
+      "generatedAt": "2026-08-15T18:27:40.157Z",
+      "sourceRevision": "ca2fb3b55de7bb4938772c06c67fda62c84c5c95",
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.003455745850309721
+          },
+          "standalone": {
+            "static": 67937.89186295307,
+            "dynamic": 0.14586248619841022
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0015760793328423019
+          },
+          "standalone": {
+            "static": 526.1343140045125,
+            "dynamic": 0.26198780258460547
+          }
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.08948194974475189
+          },
+          "standalone": {
+            "static": 18.579145138011707,
+            "dynamic": 0.17677188519838166
+          }
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.011460395390961598
+          },
+          "standalone": {}
+        }
       }
     }
   ]
