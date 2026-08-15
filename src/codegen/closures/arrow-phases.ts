@@ -32,9 +32,9 @@ import {
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
-import { emitBoundsCheckedArrayGet } from "../shared.js";
+import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
 import {
@@ -1060,6 +1060,60 @@ export function emitClosureParamDestructuring(
  * value (boxing mutable captures into ref cells, re-aiming the outer local),
  * then the TDZ-flag ref cells, then `struct.new` the closure struct.
  */
+function findUnboxedCaptureLocal(
+  fctx: FunctionContext,
+  name: string,
+  boxedLocalIdx: number,
+  valueType: ValType,
+): number | undefined {
+  for (let localOffset = 0; localOffset < fctx.locals.length; localOffset++) {
+    const localIdx = fctx.params.length + localOffset;
+    if (localIdx === boxedLocalIdx) continue;
+    const local = fctx.locals[localOffset];
+    if (local?.name === name && valTypesMatch(local.type, valueType)) return localIdx;
+  }
+  return undefined;
+}
+
+/**
+ * Push a live capture cell, repairing a nullable cell which was allocated by
+ * an earlier conditional closure site but did not execute on this path. The
+ * cell itself is the shared identity used by all later closures; only its
+ * first value comes from the original unboxed slot. This keeps lazy closure
+ * construction safe without snapshotting a mutable binding into a fresh cell.
+ */
+function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowClosureCapture): void {
+  const boxed = fctx.boxedCaptures?.get(cap.name);
+  const boxedLocalIdx = cap.localIdx;
+  const boxedType = getLocalType(fctx, boxedLocalIdx);
+  const valueType = boxed?.valType;
+  const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
+  const nullableBox =
+    boxed !== undefined &&
+    valueType !== undefined &&
+    (boxedType?.kind === "ref" || boxedType?.kind === "ref_null") &&
+    boxedType.typeIdx === boxed.refCellTypeIdx &&
+    rawLocalIdx !== undefined;
+  if (!nullableBox) {
+    fctx.body.push({ op: "local.get", index: boxedLocalIdx });
+    return;
+  }
+
+  const refCellTypeIdx = boxed.refCellTypeIdx;
+  fctx.body.push({ op: "local.get", index: boxedLocalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: refCellTypeIdx } },
+    then: [
+      { op: "local.get", index: rawLocalIdx },
+      { op: "struct.new", typeIdx: refCellTypeIdx },
+      { op: "local.tee", index: boxedLocalIdx },
+    ],
+    else: [{ op: "local.get", index: boxedLocalIdx }],
+  });
+}
+
 export function emitClosureConstruction(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1105,8 +1159,10 @@ export function emitClosureConstruction(
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {
-        // Already a ref cell — pass the ref cell reference directly
-        fctx.body.push({ op: "local.get", index: cap.localIdx });
+        // Already a ref cell — pass the shared cell reference directly. If a
+        // conditional closure site allocated the nullable cell but did not
+        // execute, lazily repair that same cell from the raw binding.
+        pushCaptureCell(ctx, fctx, cap);
       } else {
         // Wrap the current value in a ref cell
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
@@ -1122,7 +1178,11 @@ export function emitClosureConstruction(
         fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
       }
     } else {
-      fctx.body.push({ op: "local.get", index: cap.localIdx });
+      if (cap.alreadyBoxed && fctx.boxedCaptures?.has(cap.name)) {
+        pushCaptureCell(ctx, fctx, cap);
+      } else {
+        fctx.body.push({ op: "local.get", index: cap.localIdx });
+      }
     }
   }
 
