@@ -173,6 +173,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
+  expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
@@ -1568,6 +1569,19 @@ function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void 
         ts.isIdentifier(s.expression.left)
       ) {
         lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
+        continue;
+      }
+      // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
+      // `cond ? a : b;`. The expression evaluates for its effects and its
+      // SSA result is simply never consumed (a discarded ternary becomes an
+      // `if.stmt`, so only the taken arm evaluates). The selector's
+      // `isPhase1DiscardedExpr` admits exactly this set. Every MUTATING
+      // shape has a dedicated arm above and is refused by that selector arm,
+      // so one reaching here is a real selector↔builder divergence and must
+      // still surface as an unsupported shape rather than being lowered as
+      // an ordinary value.
+      if (!expressionStatementMutatesAtTopLevel(s.expression)) {
+        lowerDiscardedExpression(s.expression, cx);
         continue;
       }
       throw new Error(`ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
@@ -8993,6 +9007,14 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
         lowerIncrementDecrement(stmt.expression.operand, op, cx);
         return;
       }
+    }
+    // (#4459) Value-discarding statement inside a body buffer — the same
+    // `lowerDiscardedExpression` the top-level walker uses. A discarded
+    // ternary collects one buffer per arm and emits `if.stmt` (#2952
+    // slice 2), which nests correctly inside loop / try / switch bodies.
+    if (!expressionStatementMutatesAtTopLevel(stmt.expression)) {
+      lowerDiscardedExpression(stmt.expression, cx);
+      return;
     }
     throw new Error(`ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }

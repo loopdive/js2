@@ -1,10 +1,11 @@
 ---
 id: 4459
 title: "IR: adopt value-discarding expression statements (`x + 1;`, `x;`, `cond ? a : b;`)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
+assignee: ttraenkler/opus-4459
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,19 @@ language_feature: statements
 goal: ir-full-coverage
 related: [3518, 3583]
 origin: "2026-08-15 IR-migration session — matrix residual on the ExpressionStatement row (measured in #3583)"
+# The statement-position gate lives in the two selector walkers and their two
+# lowerer twins; splitting a 4-arm predicate out of them would need the
+# module-private `shapeNo`/`isPhase1Expr`/`isPhase1ConditionExpr` threaded as
+# callbacks, which costs more than the +130/+22 lines it saves.
+loc-budget-allow:
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+# `isPhase1StatementListInScope` sat exactly ON its 347-line budget, so the
+# one-line arm + its comment trips the gate no matter how it is worded; the
+# arm has to live in this walker because that is where the statement-position
+# gate is.
+func-budget-allow:
+  - src/ir/select.ts::isPhase1StatementListInScope
 ---
 
 # #4459 — Adopt value-discarding expression statements
