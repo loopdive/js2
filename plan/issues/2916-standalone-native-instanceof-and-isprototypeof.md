@@ -914,24 +914,55 @@ Also green on this branch: all **8 equivalence shards**
 ### What is left to close this issue
 
 Slice B's substrate is in place; the issue stays `in-progress` because the
-closure arm is still conservative. The one dependency is a **runtime edge from a
-closure value to its prototype object** (#2660 M3). With it, the
+closure arm is still conservative. **Exactly one dependency remains**: a runtime
+edge from a closure value to its prototype object (#2660 M3). With it, the
 `ownedPrototypeOrdinaryHasInstance` arm applies unchanged to closures and the
-`S15.3.5.3_A2_*` / `_A3_*` family becomes answerable — modulo the
-expression-statement elimination below, which must be fixed too.
+`S15.3.5.3_A2_*` / `_A3_*` family becomes answerable.
 
-### Adjacent defect found while measuring — NOT caused by this change
+An earlier revision named the expression-statement elimination as a second
+blocker for that family. It is not — see the correction below.
 
-**A bare `lhs() instanceof rhs();` expression STATEMENT is eliminated whole,
-including both operands' side effects.** Reproduced with a builtin RHS (which
-never reaches this substrate) and on base `identifiers.ts`, so it predates Slice B.
+### Adjacent defect found while measuring — real, but it does NOT gate the A2/A3 family
 
-It matters here because it is a *second* reason `S15.3.5.3_A2_T2/T5/T6` cannot
-pass: each spells the operator as a bare statement inside a `try` and expects the
-TypeError from it — if the statement is dropped, no tri-state can ever throw.
-Anyone attributing those three to the prototype gap alone will fix the wrong
-thing. The order-of-evaluation regression test in
-`tests/es5-standalone-instanceof.test.ts` binds its result for exactly this reason.
+**A bare `lhs() instanceof rhs();` expression STATEMENT at TOP LEVEL is
+eliminated whole, including both operands' side effects.** Reproduced with a
+builtin RHS (which never reaches this substrate) and on base `identifiers.ts`, so
+it predates Slice B. Filed and fixed as #4433, which found the real scope is much
+broader than `instanceof`: at top level every non-assignment binary operator, the
+conditional operator, array/object literals and parenthesised compositions
+dropped their operands' effects (`a() + b();` → neither call ran).
+
+**CORRECTION — an earlier revision of this section claimed the elimination was a
+*second* reason `S15.3.5.3_A2_T2/T5/T6` cannot pass. That was wrong**, and it is
+worth recording *how* it was wrong because the mistake is cheap to repeat. The
+measurement behind it was taken at TOP LEVEL; the three test files spell the
+operator inside a `try`, and that difference is decisive —
+`collectDeclarations` keeps a top-level `TryStatement` **wholesale** (the
+control-flow arm, `declarations.ts` ~L2131), so its body lowers through the
+ordinary in-function path, which has always compiled operands. Generalising a
+top-level result to an inside-`try` context without re-measuring is the entire
+error.
+
+Re-measured on this branch with the counting probe (`order.length` after
+`lhs() instanceof rhs()`, `lhs`/`rhs` both appending a marker):
+
+| placement                    | operands evaluated |
+| ---------------------------- | -----------------: |
+| bare statement at top level  |                  0 |
+| **inside a top-level `try`** |              **2** |
+| inside a function            |                  2 |
+
+Independently confirmed by the #4433 lane with the exact T2 shape instrumented
+(base = fixed = 101: LHS runs, `instanceof` answers false instead of throwing),
+and T2/T6 fail with the identical `#1.1: O is not an object` message before and
+after that fix.
+
+**So `S15.3.5.3_A2_T2/T5/T6` are blocked by the closure-RHS prototype residual
+ALONE.** One thing to fix, not two.
+
+The order-of-evaluation regression test in
+`tests/es5-standalone-instanceof.test.ts` still binds its result, because it
+probes the bare top-level form deliberately and this branch predates #4433.
 
 ### Instrument note for the next measurer
 
