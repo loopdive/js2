@@ -84,23 +84,22 @@
  * Filtering the marker here would make the first case answer `$arity` again and
  * silently un-delete the property.
  *
- * ## Scope — `length` only, and why `name` is NOT here
- * `$arity` is a per-INSTANCE field, so `length` needs no per-function type.
- * `name` has no runtime carrier on a user closure and cannot be added without
- * either a new header field (which changes gc-mode bytes — #2896's standing
- * constraint) or a per-function meta subtype. Left as a measured residual on
- * the issue rather than half-answered here.
+ * ## Scope — `name` and the exact `length` arrived in #4437
+ * #4436 shipped `length` only, answered from `$arity`, and left two measured
+ * residuals: `name` had no runtime carrier at all, and `$arity` is the DECLARED
+ * FORMAL COUNT, which diverges from §15.1.5 whenever a parameter is defaulted or
+ * optional (`function f(x = 42) {}` — `$arity` 1, spec `length` 0). `$arity`
+ * could not simply be re-pointed at the spec value: `closure-exports.ts`'s
+ * under-application widening dispatches at `max(n, $arity)` and would stop
+ * padding omitted arguments.
  *
- * ## Known value divergence (documented, not hidden)
- * `$arity` is the **declared formal count**, which equals §15.1.5
- * ExpectedArgumentCount for every parameter list without a defaulted or
- * optional parameter (rest is already excluded at the allocation site, which
- * pushes `max(0, params - 1)`). For `function f(x = 42) {}` the spec `length`
- * is 0 while `$arity` is 1. `$arity` cannot simply be re-pointed at the spec
- * value: `closure-exports.ts`'s under-application widening dispatches at
- * `max(n, $arity)` and would stop padding omitted arguments. The exact-value
- * fix needs the per-function meta subtype above; it is tracked as this issue's
- * residual.
+ * #4437 closes both with a second, independent carrier — a `$fnmeta` slot on
+ * the closure struct pointing at a per-DECLARATION `{name, length}` struct
+ * (`function-instance-meta.ts` mints it, `function-instance-meta-arms.ts` reads
+ * it). The arms below consult it FIRST and fall back to `$arity` for `length`,
+ * so a closure whose mint site does not carry the slot keeps exactly #4436's
+ * answer rather than losing the property. `name` has no fallback: without the
+ * slot it declines, which is "the property is absent" — never a wrong name.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -108,11 +107,24 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { addFuncType } from "./registry/types.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+// (#4437) the per-declaration `name` / §15.1.5 `length` carrier — read surface
+import { fnMetaArms, type FnMetaArms } from "./function-instance-meta-arms.js";
 
 /** `(externref fn, externref key) -> i32` — 1 iff fn's bag holds ANY entry for key. */
 export const FNINST_BAG_OWNS = "__fninst_bag_owns";
 /** `(externref fn, externref key) -> i32` — 1 iff the #4098 marker was written. */
 export const FNINST_TOMBSTONE = "__fninst_tombstone";
+/**
+ * (#4437) `(externref fn) -> externref` — fn's `$__fn_instance_meta` struct as
+ * an externref, or null when fn carries no `$fnmeta` slot.
+ *
+ * Reserved with an `externref` result rather than `(ref null
+ * $__fn_instance_meta)` on purpose: the metadata struct type is minted lazily at
+ * the first closure that carries the slot, which is long after this reservation,
+ * and a reserved func type cannot name a type that does not exist yet. The two
+ * consumers cast back — one `any.convert_extern` + `ref.cast` each.
+ */
+export const FNINST_META = "__fninst_meta";
 
 const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 const CLOSURE_BAG_ENSURE = "__closure_bag_ensure";
@@ -155,6 +167,20 @@ export function reserveFunctionInstanceProps(ctx: CodegenContext): void {
 
   reserve(FNINST_BAG_OWNS);
   reserve(FNINST_TOMBSTONE);
+
+  // (#4437) The per-declaration metadata resolver — one param, externref result.
+  {
+    const typeIdx = addFuncType(ctx, [EXT], [EXT], `$${FNINST_META}_type`);
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: FNINST_META,
+      typeIdx,
+      locals: [],
+      body: [{ op: "ref.null.extern" }],
+      exported: false,
+    });
+    ctx.funcMap.set(FNINST_META, funcIdx);
+  }
 }
 
 /**
@@ -220,7 +246,11 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
       { op: "call", funcIdx: lookupIdx },
       { op: "local.tee", index: 2 },
       { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
       // The bag is a `__new_plain_object` product; screen before the cast so a
       // future substrate change can never trap inside a helper that must not
       // throw (#3468 S1 discipline).
@@ -228,7 +258,11 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
       { op: "local.get", index: 2 },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -251,7 +285,11 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
       { op: "call", funcIdx: ensureIdx },
       { op: "local.tee", index: 2 },
       { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
       { op: "local.get", index: 2 }, // receiver = the bag
       { op: "local.get", index: 1 }, // key
       { op: "local.get", index: 2 }, // value = the bag  ← the marker
@@ -271,14 +309,14 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   ];
 
   /**
-   * `i32`: is param 1 the string `"length"`?
+   * `i32`: is param 1 the string `key`?
    *
    * Classified HERE rather than read from `fillBuiltinFnMeta`'s shared
    * `isLen` local (5): that preamble returns early when the module
    * materialized no builtin closure at all (`metaMap.size === 0`), which would
    * leave local 5 unset and silently disable this arm for exactly the programs
-   * that have only user functions. A non-string key can never be `"length"`,
-   * so the `ref.test` guard also keeps the flatten/compare off every
+   * that have only user functions. A non-string key can never be `"length"` or
+   * `"name"`, so the `ref.test` guard also keeps the flatten/compare off every
    * numeric-key read.
    *
    * A FACTORY (fresh `Instr` objects per call): the same shape goes into two
@@ -286,7 +324,7 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
    * double-remap on a later import shift (see
    * `reference_shared_instr_object_dce_double_remap`).
    */
-  const keyIsLength = (): Instr[] => [
+  const keyIs = (key: string): Instr[] => [
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
@@ -299,12 +337,13 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
         { op: "ref.cast", typeIdx: anyStrTypeIdx },
         { op: "call", funcIdx: strFlattenIdx },
         { op: "ref.as_non_null" },
-        ...nativeStringLiteralInstrs(ctx, "length"),
+        ...nativeStringLiteralInstrs(ctx, key),
         { op: "call", funcIdx: strEqualsIdx },
       ],
       else: [{ op: "i32.const", value: 0 }],
     },
   ];
+  const keyIsLength = (): Instr[] => keyIs("length");
 
   /** `!__fninst_bag_owns(param0, param1)` — the bag has not taken the key over. */
   const bagFree = (): Instr[] => [
@@ -315,10 +354,10 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   ];
 
   /**
-   * The shared `(receiver is a closure) && (key is "length") && (bag free)`
+   * The shared `(receiver is a closure) && (key is `key`) && (bag free)`
    * guard, wrapping `then`. `anyLocal` receives `any.convert_extern(param0)`.
    */
-  const closureLengthArm = (anyLocal: number, then: Instr[]): Instr[] => [
+  const closureKeyArm = (anyLocal: number, key: string, then: Instr[]): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.set", index: anyLocal },
@@ -326,27 +365,68 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...keyIsLength(), ...bagFree(), { op: "i32.and" }, { op: "if", blockType: { kind: "empty" }, then }],
+      then: [...keyIs(key), ...bagFree(), { op: "i32.and" }, { op: "if", blockType: { kind: "empty" }, then }],
     },
   ];
+  const closureLengthArm = (anyLocal: number, then: Instr[]): Instr[] => closureKeyArm(anyLocal, "length", then);
 
-  // ── generic arm: __builtinfn_get_meta(fn, "length") → box_number($arity) ──
-  // Registered locals: 2 = any, 3 = fkey, 4 = isName, 5 = isLen. Only 2 is
-  // touched here, and `fillBuiltinFnMeta`'s preamble re-sets it in front.
+  // (#4437) `meta.present(L)` leaves `__fninst_meta(fn)` in local L and yields
+  // the i32 "is present" flag, so the `name` arm and the exact-`length` arm ask
+  // the same question once. Read surface: function-instance-meta-arms.ts.
+  const meta = fnMetaArms(ctx);
+  meta.fillResolver(setFn);
+
+  // ── generic arm: __builtinfn_get_meta(fn, "length"|"name") ───────────────
+  // Registered locals: 2 = any, 3 = fkey, 4 = isName, 5 = isLen, 6 = fnmeta
+  // (#4437). Only 2 and 6 are touched here; `fillBuiltinFnMeta`'s preamble
+  // re-sets 2 in front. `length` prefers the `$fnmeta` §15.1.5 value and falls
+  // back to `$arity` (see the module header for why they are two numbers);
+  // `name` has NO fallback, so a slot-less closure declines — "absent", never a
+  // wrong name. Answering `name` here also makes the write REFUSAL correct for
+  // free: `buildBuiltinFnSetRefusalArm` refuses any `__extern_set` whose key
+  // `get_meta` claims, which is §10.2.8's `writable: false`.
   const getMetaFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_get_meta");
   if (getMetaFn) {
     getMetaFn.body.splice(
       0,
       0,
       ...closureLengthArm(2, [
+        ...(meta.available
+          ? ([
+              ...meta.present(6),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [...meta.boxedLength(6, boxNumIdx), { op: "return" }],
+              },
+            ] satisfies Instr[])
+          : []),
         { op: "local.get", index: 2 },
         { op: "ref.cast", typeIdx: rootIdx },
-        { op: "struct.get", typeIdx: rootIdx, fieldIdx: CLOSURE_ARITY_FIELD_IDX },
+        {
+          op: "struct.get",
+          typeIdx: rootIdx,
+          fieldIdx: CLOSURE_ARITY_FIELD_IDX,
+        },
         { op: "f64.convert_i32_s" },
         { op: "call", funcIdx: boxNumIdx },
         { op: "return" },
       ]),
     );
+    if (meta.available) {
+      getMetaFn.body.splice(
+        0,
+        0,
+        ...closureKeyArm(2, "name", [
+          ...meta.present(6),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...meta.name(6), { op: "return" }],
+          },
+        ]),
+      );
+    }
   }
 
   // ── __builtinfn_gopd's get_meta→descriptor prologue, when #2896 won't ─────
@@ -361,100 +441,172 @@ export function fillFunctionInstanceProps(ctx: CodegenContext): void {
   // true. Measured: that split is precisely what the first cut of this module
   // produced. Splicing here only when #2896 will not is what keeps the two
   // surfaces consistent without emitting the prologue twice.
+  spliceGopdPrologue(ctx);
+
+  // ── generic arm: __builtinfn_delete(fn, "length"|"name") → tombstone, 1 ──
+  //
+  // Deletability ships with visibility (#4010's ordering law): `propertyHelper`'s
+  // `isConfigurable` is `delete obj[k]; return !hasOwnProperty(obj, k)`, so a
+  // visible-but-undeletable property fails every `verifyProperty` naming
+  // `configurable: true` — which is all of them. `name` is added here in the
+  // same change that makes it visible, for exactly that reason.
+  const tombstoneArm = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: tombstoneIdx },
+    // A failed ensure (no bag substrate) must NOT report "handled", or
+    // `delete` would claim success while the property stays visible.
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+    },
+  ];
+  const deleteFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_delete");
+  if (deleteFn) {
+    deleteFn.body.splice(0, 0, ...closureLengthArm(2, tombstoneArm()));
+    if (meta.available) {
+      // Gated on the receiver actually HAVING metadata: a closure with no
+      // `$fnmeta` slot has no `name` own property, and tombstoning a key that
+      // was never visible would take the bag's `name` slot away from a later
+      // `f.name = "x"` expando.
+      deleteFn.body.splice(
+        0,
+        0,
+        ...closureKeyArm(2, "name", [
+          ...meta.present(6),
+          { op: "if", blockType: { kind: "empty" }, then: tombstoneArm() },
+        ]),
+      );
+    }
+  }
+
+  spliceOwnNamesArm(ctx, { meta, isClosure, bagOwnsIdx, objVecPushIdx });
+}
+
+/**
+ * `__builtinfn_gopd`'s `get_meta` → descriptor prologue, spliced only when
+ * `fillBuiltinFnMeta` will NOT run.
+ *
+ * `__getOwnPropertyDescriptor` calls `__builtinfn_gopd`, whose body is otherwise
+ * filled ONLY by `fillBuiltinFnMeta` — and that fill returns early when the
+ * module materialized no builtin closure meta type at all (`metaMap.size === 0`).
+ * A program of nothing but user functions is exactly that case, so
+ * `__builtinfn_gopd` would keep its `ref.null.extern` placeholder and
+ * `gOPD(f, "length")` would answer `undefined` even though `hasOwnProperty`
+ * (which calls `get_meta` DIRECTLY, one level up) answers true. Measured: that
+ * split is precisely what the first cut of #4436 produced. Splicing here only
+ * when #2896 will not is what keeps the two surfaces consistent without emitting
+ * the prologue twice.
+ */
+function spliceGopdPrologue(ctx: CodegenContext): void {
   const metaMap = ctx.builtinFnMetaByTypeIdx;
   const builtinFillWillRun = metaMap !== undefined && metaMap.size > 0;
   const gopdFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_gopd");
   const getMetaFuncIdx = ctx.funcMap.get("__builtinfn_get_meta");
   const createDescIdx = ctx.funcMap.get("__create_descriptor");
-  if (!builtinFillWillRun && gopdFn && getMetaFuncIdx !== undefined && createDescIdx !== undefined) {
-    gopdFn.body.splice(
-      0,
-      0,
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: getMetaFuncIdx },
-      { op: "local.tee", index: 2 },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 2 },
-          { op: "i32.const", value: FLAG_CONFIGURABLE },
-          { op: "call", funcIdx: createDescIdx },
-          { op: "return" },
-        ],
-      },
-    );
-  }
+  if (builtinFillWillRun || !gopdFn || getMetaFuncIdx === undefined || createDescIdx === undefined) return;
+  gopdFn.body.splice(
+    0,
+    0,
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: getMetaFuncIdx },
+    { op: "local.tee", index: 2 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 2 },
+        { op: "i32.const", value: FLAG_CONFIGURABLE },
+        { op: "call", funcIdx: createDescIdx },
+        { op: "return" },
+      ],
+    },
+  );
+}
 
-  // ── generic arm: __builtinfn_delete(fn, "length") → tombstone, 1 ──────────
-  const deleteFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_delete");
-  if (deleteFn) {
-    deleteFn.body.splice(
-      0,
-      0,
-      ...closureLengthArm(2, [
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: tombstoneIdx },
-        // A failed ensure (no bag substrate) must NOT report "handled", or
-        // `delete` would claim success while the property stays visible.
-        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
-      ]),
-    );
-  }
-
-  // ── generic arm: __builtinfn_push_ownnames(fn, vec) → push "length" ───────
-  // `getOwnPropertyNames` only. for-in / `Object.keys` read `__obj_ordered`
-  // (enumerable-only) and never reach here, which is what keeps `length`
-  // correctly non-enumerable.
-  //
-  // Params are (0 = fn, 1 = vec) and the ONLY registered local is 2 — the vec
-  // parameter must not be clobbered, so the receiver is narrowed into 2.
-  //
-  // ⚠ This arm PUSHES AND FALLS THROUGH — it must NOT return 1. The caller in
-  // `object-runtime-descriptors.ts` reads the result as "this receiver's own
-  // names are COMPLETE" and returns the vector immediately, skipping the
-  // `bagKeysIf` carrier-bag key source directly below it. That is right for a
-  // builtin function value (`name`/`length` are all it has) and wrong for a user
-  // closure, which also carries #3468 expandos: returning 1 here dropped `p`
-  // from `Object.getOwnPropertyNames(f)` after `f.p = 12` (caught by
-  // `issue-4010.test.ts` "function: getOwnPropertyNames includes the expando").
-  // Falling through lets the bag arm append the expandos after `length`, which
-  // is also the correct §10.1.11 creation order.
+/**
+ * `__builtinfn_push_ownnames(fn, vec)` → push `"length"`, then `"name"` when the
+ * receiver carries #4437 metadata.
+ *
+ * `getOwnPropertyNames` only. for-in / `Object.keys` read `__obj_ordered`
+ * (enumerable-only) and never reach here, which is what keeps both properties
+ * correctly non-enumerable. §10.2.x creation order is `length` then `name`, and
+ * the `name` push is gated on the SAME `__fninst_meta` consult `get_meta` uses,
+ * so enumeration and the descriptor cannot disagree about existence.
+ *
+ * Params are (0 = fn, 1 = vec); registered locals are 2 (receiver, narrowed —
+ * the vec parameter must not be clobbered) and 3 (#4437 metadata).
+ *
+ * ⚠ This arm PUSHES AND FALLS THROUGH — it must NOT return 1. The caller in
+ * `object-runtime-descriptors.ts` reads the result as "this receiver's own names
+ * are COMPLETE" and returns the vector immediately, skipping the `bagKeysIf`
+ * carrier-bag key source directly below it. That is right for a builtin function
+ * value (`name`/`length` are all it has) and wrong for a user closure, which also
+ * carries #3468 expandos: returning 1 here dropped `p` from
+ * `Object.getOwnPropertyNames(f)` after `f.p = 12` (caught by
+ * `issue-4010.test.ts` "function: getOwnPropertyNames includes the expando").
+ * Falling through lets the bag arm append the expandos after `length`, which is
+ * also the correct §10.1.11 creation order.
+ */
+function spliceOwnNamesArm(
+  ctx: CodegenContext,
+  deps: {
+    meta: FnMetaArms;
+    isClosure: (anyLocal: number) => Instr[];
+    bagOwnsIdx: number;
+    objVecPushIdx: number | undefined;
+  },
+): void {
+  const { meta, isClosure, bagOwnsIdx, objVecPushIdx } = deps;
   const pushOwnFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_push_ownnames");
-  if (pushOwnFn && objVecPushIdx !== undefined) {
-    pushOwnFn.body.splice(
-      0,
-      0,
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 2 },
-      ...isClosure(2),
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // Presence is asked with the SAME `"length"` key the arm would push.
-          { op: "local.get", index: 0 },
-          ...nativeStringLiteralInstrs(ctx, "length"),
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: bagOwnsIdx },
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 1 }, // vec
-              ...nativeStringLiteralInstrs(ctx, "length"),
-              { op: "extern.convert_any" },
-              { op: "call", funcIdx: objVecPushIdx },
-            ],
-          },
-        ],
-      },
-    );
-  }
+  if (!pushOwnFn || objVecPushIdx === undefined) return;
+
+  /** Push `key` into the vec unless the receiver's bag has taken it over. */
+  const pushIfLive = (key: string): Instr[] => [
+    // Presence is asked with the SAME key the arm would push.
+    { op: "local.get", index: 0 },
+    ...nativeStringLiteralInstrs(ctx, key),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: bagOwnsIdx },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 }, // vec
+        ...nativeStringLiteralInstrs(ctx, key),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objVecPushIdx },
+      ],
+    },
+  ];
+  pushOwnFn.body.splice(
+    0,
+    0,
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: 2 },
+    ...isClosure(2),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...pushIfLive("length"),
+        ...(meta.available
+          ? ([
+              ...meta.present(3),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: pushIfLive("name"),
+              },
+            ] satisfies Instr[])
+          : []),
+      ],
+    },
+  );
 }

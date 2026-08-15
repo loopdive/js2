@@ -1110,6 +1110,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     { name: "fkey", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } as ValType },
     { name: "isName", type: { kind: "i32" } as ValType },
     { name: "isLen", type: { kind: "i32" } as ValType },
+    // (#4437) local 6 — the `$fnmeta` struct of a user closure, as an externref.
+    // Appended LAST so `fillBuiltinFnMeta`'s by-index reads of 2..5 are
+    // untouched; `fillFunctionInstanceProps` is the only writer.
+    { name: "fnmeta", type: { kind: "externref" } as ValType },
   ];
   if (ctx.standalone) {
     registerNative(
@@ -1137,7 +1141,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__builtinfn_push_ownnames",
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } as ValType }],
+      [
+        { name: "any", type: { kind: "anyref" } as ValType },
+        // (#4437) local 3 — the `$fnmeta` struct, gating the `"name"` push.
+        { name: "fnmeta", type: { kind: "externref" } as ValType },
+      ],
       [{ op: "i32.const", value: 0 }],
     );
   }
