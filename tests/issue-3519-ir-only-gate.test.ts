@@ -318,4 +318,105 @@ describe("#3519 honest IR-only gate", () => {
       ]),
     );
   });
+
+  // #3518 — the standalone lane is measured but not asserted to be compile-once.
+  describe("per-lane readiness (#3518 standalone lane)", () => {
+    const twoLaneBaseline = (standalone: Partial<IrOnlyBaseline["lanes"][string]> = {}): IrOnlyBaseline => ({
+      ...baseline(),
+      lanes: {
+        ...baseline().lanes,
+        standalone: {
+          entryFloor: 1,
+          terminalUnitFloor: 2,
+          emittedFloor: 1,
+          irBodyEmittedFloor: 1,
+          legacyBodyEmittedCeiling: 2,
+          unsupportedCeiling: 1,
+          unsupportedByCode: { "select/async-function": 1 },
+          invariantCeiling: 0,
+          ...standalone,
+        },
+      },
+    });
+    const baselineLane = (entries: readonly IrOnlyEntryObservation[]): IrOnlyLaneObservation => ({
+      name: "standalone",
+      expectedEntries: entries.length,
+      entries,
+      readiness: "baseline",
+    });
+    const mixed = () => entry([emitted("kept", true), unsupported("deferred")]);
+
+    it("does not fail --policy=ir-only for a lane whose readiness is 'baseline'", () => {
+      const verdict = evaluateIrOnlyReport(
+        [lane([entry([emitted("a")])]), baselineLane([mixed()])],
+        twoLaneBaseline(),
+        "ir-only",
+      );
+      expect(verdict.failures).toEqual([]);
+      expect(verdict.ready).toBe(true);
+      expect(verdict.lanes.find((l) => l.name === "standalone")?.readiness).toBe("baseline");
+      // The default (absent field) stays strict, so existing lanes are unchanged.
+      expect(verdict.lanes.find((l) => l.name === "single-host")?.readiness).toBe("ir-only");
+    });
+
+    it("still fails --policy=ir-only when the SAME population sits in a strict lane", () => {
+      const strict: IrOnlyLaneObservation = { ...baselineLane([mixed()]), readiness: "ir-only" };
+      const verdict = evaluateIrOnlyReport([lane([entry([emitted("a")])]), strict], twoLaneBaseline(), "ir-only");
+      expect(verdict.ready).toBe(false);
+      expect(verdict.failures).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("standalone: 1 unsupported unit(s)"),
+          expect.stringContaining("standalone: 2 unit(s) still emitted a legacy body"),
+        ]),
+      );
+    });
+
+    it("ratchets a 'baseline' lane against its floors and per-code ceilings", () => {
+      const regressed = evaluateIrOnlyReport(
+        [lane([entry([emitted("a")])]), baselineLane([mixed()])],
+        twoLaneBaseline({ irBodyEmittedFloor: 2, emittedFloor: 2 }),
+        "ir-only",
+      );
+      expect(regressed.ready).toBe(false);
+      expect(regressed.failures).toEqual(
+        expect.arrayContaining([expect.stringContaining("IR-body-emitted floor regressed 1 < 2")]),
+      );
+
+      const grown = evaluateIrOnlyReport(
+        [lane([entry([emitted("a")])]), baselineLane([mixed()])],
+        twoLaneBaseline({ unsupportedByCode: {} }),
+        "ir-only",
+      );
+      expect(grown.failures).toEqual(
+        expect.arrayContaining([expect.stringContaining("unsupported select/async-function grew 1 > 0")]),
+      );
+    });
+
+    it("keeps anti-vacuity and invariant checks live on a 'baseline' lane", () => {
+      const vacuous = evaluateIrOnlyReport(
+        [lane([entry([emitted("a")])]), baselineLane([entry([])])],
+        twoLaneBaseline(),
+        "ir-only",
+      );
+      expect(vacuous.ready).toBe(false);
+      expect(vacuous.failures).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("standalone: zero emitted units"),
+          expect.stringContaining("missing terminal telemetry"),
+        ]),
+      );
+    });
+
+    it("regenerates a committed baseline for every lane, keyed by name", () => {
+      const regenerated = baselineFrom([lane([entry([emitted("a")])]), baselineLane([mixed()])]);
+      expect(Object.keys(regenerated.lanes).sort()).toEqual(["single-host", "standalone"]);
+      expect(regenerated.lanes.standalone).toMatchObject({
+        emittedFloor: 1,
+        irBodyEmittedFloor: 1,
+        legacyBodyEmittedCeiling: 2,
+        unsupportedCeiling: 1,
+        unsupportedByCode: { "select/async-function": 1 },
+      });
+    });
+  });
 });
