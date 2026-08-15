@@ -933,10 +933,11 @@ export function planIrCompilationByIdentity(
         // accessors too; counting only ctor+methods would leave every accessor
         // claim pending, withdrawing the whole class on arrival.
         const expectedCount = declaration.members.filter((member) => {
-          if (member.body === undefined) return false;
           const isAccessor = ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member);
-          if (boundedAccessorClass) return isAccessor;
-          return ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member) || isAccessor;
+          const isOrdinary = ts.isConstructorDeclaration(member) || ts.isMethodDeclaration(member);
+          if (!isAccessor && !isOrdinary) return false;
+          if (member.body === undefined) return false;
+          return boundedAccessorClass ? isAccessor : true;
         }).length;
         if (pendingBoundedClassClaims.size === expectedCount) {
           for (const [unitId, claim] of pendingBoundedClassClaims) classClaims.set(unitId, claim);
