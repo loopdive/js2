@@ -1543,6 +1543,20 @@ function compileNewFunctionDeclaration(
   const ctorParams = fnctorConstructorParams(ctx, userCtorParams, captureLayout.allParamTypes);
 
   const ctorName = `${structName}_new`;
+  // (#4464 — DELIBERATELY NOT WIDENED) Making this result an externref, so an
+  // object-returning body could hand its object back (§10.2.1.3 step 13), does
+  // not fix `S13.2.2_A7_T1`/`_A8_T1/T2`/`_A15_T1..T4`, because the blocker is
+  // one level UP: a property read on the `new` site's value is typed from the
+  // CHECKER's constructor-instance type, not from what the body returned. The
+  // scoped sweep shows exactly that signature — `__obj.prop` answers `1`,
+  // `null` or `NaN` where the string `"A"` was written to a plain object, i.e.
+  // the read resolves against the struct slot's static type rather than the
+  // returned object. Handing back an arbitrary object therefore requires
+  // re-typing every read at the call site: the #3976 class-object conversion's
+  // territory, not this constructor's. See this issue's `## Residuals`.
+  // (An earlier WIP pass on this branch reports having built and reverted the
+  // widening; that run is not reproduced here — the sweep signature above is
+  // the evidence this comment stands on.)
   const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = mintDefinedFunc(ctx);
@@ -1592,13 +1606,20 @@ function compileNewFunctionDeclaration(
     params: paramDefs,
     locals: [],
     localMap: new Map(),
-    returnType: { kind: "ref", typeIdx: structTypeIdx },
+    returnType: ctorResults[0]!,
     body: [],
     blockDepth: 0,
     breakStack: [],
     continueStack: [],
     labelMap: new Map(),
     savedBodies: [],
+    // (#4464) This IS a [[Construct]] body: §10.2.1.3 step 13 governs its
+    // `return`s (Object overrides `this`; anything else is discarded and the
+    // result is `this`). Without the bit a `return <primitive>` compiled
+    // through the generic value path, which coerced the operand to the struct
+    // return type — i.e. pushed `ref.null $__fnctor_<F>` — and the `new` site
+    // trapped on the first property read. See `isFnctorConstructor`.
+    isFnctorConstructor: true,
     // The JS-host constructor executes with a concrete fnctor receiver, which
     // lets constructor-time prototype calls use the in-Wasm driver before
     // exports are available. Standalone keeps the historical dynamic `this`
@@ -1694,7 +1715,8 @@ function compileNewFunctionDeclaration(
   // (`this.context = this.initialContext()`) already resolve through the
   // vivified prototype.
 
-  // Return the struct instance
+  // Return the constructed receiver (as externref when the body's `return`s
+  // widened the result — #4464).
   ctorFctx.body.push({ op: "local.get", index: selfLocal });
 
   // 5. Emit the call to the constructor at the call site
@@ -1745,6 +1767,28 @@ function compileNewFunctionExpression(
   }
 
   const needsArguments = usesArguments(body);
+
+  // (#4464) §10.2.1.3 steps 1-5: `new <FunctionExpression>(…)` creates an
+  // ordinary object, calls the body with it as `this`, and yields it (unless
+  // the body returns an Object of its own). This lowering used to do none of
+  // that — it called the body and then pushed a literal `ref.null.extern` with
+  // the comment "we don't construct actual objects" — so `new function
+  // __func(){this.prop=1}` evaluated to null and the very next property read
+  // trapped (`S13.2.2_A16_T1/T2/T3`).
+  //
+  // The receiver is a native `$Object` minted at the call site and threaded in
+  // as a TRAILING parameter. Trailing, not leading, is load-bearing: the
+  // `arguments` materialization below indexes the formal parameters from a
+  // fixed `paramOffset` of 1 (just past the closure struct), so prepending
+  // would have silently shifted every mapped-argument slot.
+  //
+  // Reserve the import BEFORE any instruction of this construction is emitted:
+  // a late import shifts defined-function indices, and the flush can only
+  // patch instructions it can reach. Declining here (no object runtime) keeps
+  // the historical null result rather than emitting a half-built construction.
+  const newPlainObjectIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const constructsReceiver = newPlainObjectIdx !== undefined;
 
   // 2. Determine the parameter list for the lifted function
   //    Use the function's formal params if it has them, otherwise
@@ -1840,8 +1884,14 @@ function compileNewFunctionExpression(
   // 5. Build the lifted function
   //    Params: (ref $closure_struct, arg0: f64, arg1: f64, ...)
   const liftedParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }, ...formalParams];
+  if (constructsReceiver) liftedParams.push({ kind: "externref" }); // (#4464) the `this` receiver
 
-  const liftedFuncTypeIdx = addFuncType(ctx, liftedParams, [], `${closureName}_type`);
+  const liftedFuncTypeIdx = addFuncType(
+    ctx,
+    liftedParams,
+    constructsReceiver ? [{ kind: "externref" }] : [],
+    `${closureName}_type`,
+  );
 
   // Create the lifted function context
   const paramDefs: { name: string; type: ValType }[] = [
@@ -1860,19 +1910,24 @@ function compileNewFunctionExpression(
       paramDefs.push({ name: `__arg${i}`, type: { kind: "f64" } });
     }
   }
+  // (#4464) Named `this` so the ordinary `this.<prop> = …` lowering resolves it
+  // out of `localMap` exactly as a class constructor's receiver does.
+  const receiverParamIdx = paramDefs.length;
+  if (constructsReceiver) paramDefs.push({ name: "this", type: { kind: "externref" } });
 
   const liftedFctx: FunctionContext = {
     name: closureName,
     params: paramDefs,
     locals: [],
     localMap: new Map(),
-    returnType: null,
+    returnType: constructsReceiver ? { kind: "externref" } : null,
     body: [],
     blockDepth: 0,
     breakStack: [],
     continueStack: [],
     labelMap: new Map(),
     savedBodies: [],
+    ...(constructsReceiver ? { constructThisExternLocal: receiverParamIdx } : {}),
   };
   // `new (function () { ... })` lowers to a synthetic lifted function, but its
   // body keeps the function expression's source strictness.
@@ -2033,6 +2088,12 @@ function compileNewFunctionExpression(
   for (const stmt of body.statements) {
     compileStatement(ctx, liftedFctx, stmt);
   }
+  // (#4464) Fall-through completion of a [[Construct]] body yields the
+  // receiver (§10.2.1.3 step 13's `undefined` branch), and it doubles as the
+  // function's required result value.
+  if (constructsReceiver) {
+    liftedFctx.body.push({ op: "local.get", index: receiverParamIdx });
+  }
   if (savedFunc) ctx.funcStack.pop();
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
@@ -2080,12 +2141,37 @@ function compileNewFunctionExpression(
   });
   fctx.body.push({ op: "local.set", index: closureLocal });
 
+  // (#4464) Mint the construction receiver BEFORE the arguments so the
+  // `$Object` exists no matter what the argument expressions do, and park it in
+  // a local — it is the LAST call operand and the value the site yields.
+  let receiverLocal: number | undefined;
+  if (constructsReceiver) {
+    const resolvedNewObjIdx = ctx.funcMap.get("__new_plain_object") ?? newPlainObjectIdx!;
+    fctx.body.push({ op: "call", funcIdx: resolvedNewObjIdx });
+    receiverLocal = allocLocal(fctx, `__ctor_this_${closureId}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: receiverLocal });
+  }
+
   // Push __self argument
   fctx.body.push({ op: "local.get", index: closureLocal });
 
-  // Push call-site arguments (flattened, spread already resolved)
+  // Push call-site arguments (flattened, spread already resolved).
+  // (#4464) Arity is now enforced here: a surplus argument is evaluated (source
+  // order, side effects intact) and dropped, a missing one gets its parameter's
+  // default. Previously both cases pushed the wrong number of operands, which
+  // with the trailing receiver operand would be a module-validation error
+  // rather than a silently shifted parameter.
   for (let i = 0; i < flatArgs.length; i++) {
-    compileExpression(ctx, fctx, flatArgs[i]!, formalParams[i]);
+    const actual = compileExpression(ctx, fctx, flatArgs[i]!, formalParams[i]);
+    if (i >= formalParams.length && actual !== null && actual !== undefined) {
+      fctx.body.push({ op: "drop" });
+    }
+  }
+  for (let i = flatArgs.length; i < formalParams.length; i++) {
+    pushDefaultValue(fctx, formalParams[i]!, ctx);
+  }
+  if (receiverLocal !== undefined) {
+    fctx.body.push({ op: "local.get", index: receiverLocal });
   }
 
   // Call the lifted function. Re-resolve its index from funcMap: compiling the
@@ -2098,9 +2184,13 @@ function compileNewFunctionExpression(
   const resolvedLiftedIdx = ctx.funcMap.get(closureName) ?? liftedFuncIdx;
   fctx.body.push({ op: "call", funcIdx: resolvedLiftedIdx });
 
-  // new expression returns the constructed object — produce externref null
-  // since we don't construct actual objects, and callers typically discard the result
-  fctx.body.push({ op: "ref.null.extern" });
+  // (#4464) The lifted body now RETURNS the construction result (its receiver,
+  // or an Object the body returned instead), so the call already leaves it on
+  // the stack. Only the declined path — no object runtime in this module — has
+  // a void call and still needs the historical null placeholder.
+  if (!constructsReceiver) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
   return { kind: "externref" };
 }
 
