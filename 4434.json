@@ -1,10 +1,11 @@
 {
   "id": "4434",
   "assignee": "ttraenkler/claude-es5-standalone",
-  "requested_by": "ttraenkler/claude-es5-standalone",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4434-vec-index-domain-sparse-tail",
   "claimed_at": "2026-08-15T04:32:39Z",
-  "updated_at": "2026-08-15T04:32:39Z",
-  "write_id": "19182-wpvs4iss"
+  "updated_at": "2026-08-15T05:49:17Z",
+  "write_id": "29117-o060kyfy",
+  "released_at": "2026-08-15T05:49:17Z"
 }
