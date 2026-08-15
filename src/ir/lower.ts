@@ -2587,9 +2587,11 @@ export function lowerIrFunctionBody<S, Slot>(
         // value (arg 1), boxed to externref
         emitValue(instr.value, out);
         if (valueT?.kind === "f64") {
+          // pushraw-ok(#2951): plain call op — boxes the f64 return value to externref, mirrors the gen.setReturn contract above
           emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
         } else if (valueT?.kind === "i32") {
           emitter.pushRaw(out, { op: "f64.convert_i32_s" });
+          // pushraw-ok(#2951): plain call op — boxes the widened i32 return value to externref, same contract as the f64 arm
           emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
         } else if (valueT?.kind === "ref" || valueT?.kind === "ref_null") {
           emitter.emitToExternref(out);

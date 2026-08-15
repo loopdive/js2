@@ -10437,11 +10437,15 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // back to legacy.
   if (lt.kind === "string" || rt.kind === "string") {
     if (lt.kind !== "string" || rt.kind !== "string") {
+      // Always a clean demote, never the invariant backstop: one operand is
+      // statically string-kinded here, so this is a slice-1 capability gap by
+      // construction. The checker-proof gate is deliberately NOT required —
+      // a type-erased operand (`a as any` over a string param) reaches this
+      // arm with an unprovable source type, and the #3583 assertion unwrap
+      // made those bodies claimable (regressed comparison-coercion/
+      // string-arithmetic-coercion equivalence tests to hard errors).
       const detail = `ir/from-ast: mixed string/non-string operand for '${ts.tokenToString(op)}' is not in slice 1 (${cx.funcName})`;
-      if (checkerProvesBinarySourceCapabilityGap(expr.left, expr.right, cx)) {
-        throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-      }
-      throw new Error(detail);
+      throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
     }
     switch (op) {
       case ts.SyntaxKind.PlusToken:
@@ -10474,7 +10478,14 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       case ts.SyntaxKind.GreaterThanEqualsToken:
         return emitStringRelational(lhs, rhs, "i32.ge_s", cx);
       default:
-        throw new Error(`ir/from-ast: string operator '${ts.tokenToString(op)}' not in slice 1 (${cx.funcName})`);
+        // Clean demote (see the mixed-operand arm above): `"a" % "b"`-style
+        // shapes are legitimate JS whose coercion slice 1 simply doesn't
+        // carry — the legacy dynamic path owns them.
+        throw new IrUnsupportedError(
+          "operand-coercion-unsupported",
+          "build",
+          `ir/from-ast: string operator '${ts.tokenToString(op)}' not in slice 1 (${cx.funcName})`,
+        );
     }
   }
 
