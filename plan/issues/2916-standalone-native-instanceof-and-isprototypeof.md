@@ -859,14 +859,37 @@ walked by the ordinary late-import body shifter. **Nothing is minted at finalize
 
 ### SECONDARY acceptance — rows
 
-`language/expressions/instanceof` (43 files), standalone. The before/after
-*answer* runs are **byte-identical** — every one of the 11 previously-refused
-files produces exactly the answer the host `__instanceof_check` produced. That is
-the correctness evidence: the native tri-state reproduces the host's observable
+**The 59 sole-leak files** (the directly addressable population, from the
+2026-08-15 standalone baseline where all 59 are `compile_error`
+`host_import_leak`), re-run on this branch:
+
+| after       | rows |
+| ----------- | ---: |
+| **pass**    |    4 |
+| fail        |   31 |
+| skip        |   24 |
+
+59 × `compile_error` → **4 pass**, 0 regressions (a `compile_error` cannot
+regress). The four: `built-ins/Array/fromAsync/this-constructor`,
+`built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`,
+`language/expressions/instanceof/S11.8.6_A2.4_T3`. The 24 skips are Temporal
+proposal files.
+
+**`language/expressions/instanceof` (43 files).** The before/after *answer* runs
+are **byte-identical** — every one of the 11 previously-refused files produces
+exactly the answer the host `__instanceof_check` produced. That is the
+correctness evidence: the native tri-state reproduces the host's observable
 behaviour on this corpus, it does not merely stop leaking.
 
-CI delta for the directory: 11 × `compile_error` → 1 `pass` + 10 `fail`,
-**0 regressions**. The one conversion is `S11.8.6_A2.4_T3`.
+(The one diff that DID appear between the two intermediate corpus runs was the
+`%TypedArray%` wrong throw described above, and the fix restored exact host
+parity there too — a single line changed back to `Expected true but got false`.)
+
+Also green on this branch: all **8 equivalence shards**
+(`scripts/equivalence-gate.mjs`, "No new equivalence regressions"), and
+`tests/es5-standalone-instanceof.test.ts` (20),
+`tests/issue-3962-native-user-instanceof.test.ts`,
+`tests/issue-4276-instanceof-object-family.test.ts`, `tests/issue-2994.test.ts`.
 
 ### Deliberately left, with reasons
 
@@ -885,6 +908,17 @@ CI delta for the directory: 11 × `compile_error` → 1 `pass` + 10 `fail`,
   (`symbol-hasinstance-*`, 4 files).
 - **`instanceof Object` on a `$Object`** — #4276's lane, deliberately untouched
   (`S11.8.6_A1`, and `S11.8.6_A6_T4` CHECK#3 which blocks that file regardless).
+- **The §13.10.2 step 1/4 TypeError for a RUNTIME non-object / non-callable RHS**
+  — see "no wrong throws" above. Statically provable cases still throw.
+
+### What is left to close this issue
+
+Slice B's substrate is in place; the issue stays `in-progress` because the
+closure arm is still conservative. The one dependency is a **runtime edge from a
+closure value to its prototype object** (#2660 M3). With it, the
+`ownedPrototypeOrdinaryHasInstance` arm applies unchanged to closures and the
+`S15.3.5.3_A2_*` / `_A3_*` family becomes answerable — modulo the
+expression-statement elimination below, which must be fixed too.
 
 ### Adjacent defect found while measuring — NOT caused by this change
 
