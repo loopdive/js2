@@ -19,6 +19,11 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/module-bindings.ts
   - src/ir/integration.ts
+  # +7/+4 below are merge-resolution artifacts of the queue-bot's main-merge
+  # (985b8f0d interleaving #4575/#4581 god-file edits with this branch's
+  # #4457-based edits), not new feature code in the barrels.
+  - src/ir/select.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/integration.ts::compileIrPathFunctions

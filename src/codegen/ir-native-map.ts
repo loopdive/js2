@@ -47,17 +47,6 @@ export const IR_NATIVE_MAP_GET_NUM_FN = "__ir_map_get_num";
 /** `map.set(numberKey, numberValue)`, returning the receiver (chainable). */
 export const IR_NATIVE_MAP_SET_NUM_FN = "__ir_map_set_num";
 
-export const IR_NATIVE_MAP_ADAPTER_FNS: readonly string[] = [
-  IR_NATIVE_MAP_NEW_FN,
-  IR_NATIVE_MAP_GET_NUM_FN,
-  IR_NATIVE_MAP_SET_NUM_FN,
-];
-
-/** True when `symbol` names one of the #4461 adapters. */
-export function isIrNativeMapAdapter(symbol: string): boolean {
-  return IR_NATIVE_MAP_ADAPTER_FNS.includes(symbol);
-}
-
 function addAdapter(ctx: CodegenContext, name: string, params: ValType[], results: ValType[], body: Instr[]): void {
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined && definedFuncAt(ctx, existing) !== undefined) return;
