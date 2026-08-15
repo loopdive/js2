@@ -33,6 +33,9 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 oracle-ratchet-allow:
   - src/codegen/literals.ts
 ---
