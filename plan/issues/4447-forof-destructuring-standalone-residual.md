@@ -14,6 +14,15 @@ area: codegen
 es_edition: es6
 goal: standalone-mode
 related: [4444, 2566, 1219, 999]
+loc-budget-allow:
+  - src/codegen/statements/for-of-destructuring.ts
+  - src/codegen/iterator-native.ts
+func-budget-allow:
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfIteratorAssignDestructuring
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuring
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
 ---
 
 # #4447 — for-of destructuring standalone residual
@@ -87,3 +96,38 @@ sub-bucket, each with its own commit:
 - gc lane must not regress: the same lowering runs in both lanes — run the
   same filter with `TEST262_TARGET=gc` before finishing.
 - Equivalence guard: `npm test -- tests/equivalence.test.ts`.
+
+## Result — slice 1 (2026-08-15, Opus implementation — dev-4447-dstr)
+
+**standalone for-of/dstr 342→400/569 (+58, 0 lost); gc 344→395/569 (+51, 0
+lost); standalone assignment/dstr cross-check 240→246/370 (+6, 0 lost).**
+File-copy A/B against HEAD; measured on a quiescent tree. 19 new unit tests
+(`tests/issue-4447-forof-dstr-standalone.test.ts`) + 13-file regression sweep.
+
+Four root causes, all in the ASSIGNMENT form of for-of heads (the binding form
+routes through `destructureParamArray` and was already correct):
+
+1. §13.15.5.2 GetIterator was never performed — elements were read via
+   `__extern_get(elem, i)`, so user iterables saw zero `next()`/`return()`.
+2. `__iterator_next`'s closed-struct read required BOTH `__sget_done` AND
+   `__sget_value`, so a conformant `{done}`-only IteratorResult degraded to
+   "exhausted on step 1" and suppressed IteratorClose.
+3. Object assignment patterns dropped defaults and wrote the KEY name instead
+   of the target (`{k: t = d}` wrote `k`, ignored `d`).
+4. Nested patterns in value/element/rest position were silently dropped
+   (isIdentifier bail) instead of recursing + throwing TypeError on
+   null/undefined.
+
+Secondary fixes: `emitGlobalSyncWritebackByName` (stale module-global index
+after `addStringConstantGlobal` import-global remap → "immutable global #3
+cannot be assigned"); `__sget_done` result-type following the field type (f64
+fed `__is_truthy`) — additive gate, pre-existing path untouched.
+
+**Deferred (named in worktree RESULT-4447.md with reasons)**: assignment-target
+evaluation ORDER (needs interleaved stepping — rewrite of shared lowering);
+§7.4.9 IteratorClose refinements (throwing/non-Object `return()` — needs a
+native throw path, #2038 note); NamedEvaluation/fn.name (6); nested obj pattern
+over rest slice (string-keyed `__extern_get` misses `$Vec`, #3100);
+generator-carrier (27, #2864). **Natural follow-up: the BINDING form**
+(`destructureParamArray`, `src/codegen/destructuring-params.ts`, ~30 residual
+tests).
