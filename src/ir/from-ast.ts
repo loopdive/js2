@@ -12197,10 +12197,10 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
-  if (valTy?.kind === "f64" || valTy?.kind === "i32" || valueType.kind === "class") {
-    // Slice 9 defers numerics (need a box helper) and class instances (#4035:
-    // `extern.convert_any` on an IR class struct renders as "[object Object]"
-    // not "Cls: msg" — a SILENT wrong answer, so IR declines). Legacy takes over.
+  if (valTy?.kind === "f64" || valTy?.kind === "i32") {
+    // Slice 9 still defers numerics (they need a box helper). Class instances
+    // are lowered again (#4097): #4035 declined them for a render gap that the
+    // `__exn_render_prepare` user-class arm now closes on BOTH paths.
     demoteToLegacy("throw-value-unsupported", `ir/from-ast: throw ${valueType.kind} not in slice 9 (${cx.funcName})`);
   }
   // Reference-shaped — coerce to externref. The helper is a no-op
