@@ -1,8 +1,9 @@
 ---
 id: 2916
 title: "[SUBSTRATE][ARCH] Standalone native instanceof operator + isPrototypeOf residual (~31 leaky-PASS conversions)"
-status: ready
-updated: 2026-08-08
+status: in-progress
+assignee: ttraenkler/claude-es5-standalone
+updated: 2026-08-15
 loc-budget-allow:
   - src/codegen/expressions/identifiers.ts
 sprint: current
@@ -755,3 +756,366 @@ those eight files depend on — the §7.3.20-step-1 non-callable rule must DECLI
 for a `Function(…)`/`new Function(…)`-valued RHS — across all three declaration
 spellings, so the real hazard is caught in the fast lane instead of only in a
 lane that has the interpreter linked.
+
+---
+
+## SLICE B LANDED 2026-08-15 — the fully-dynamic RHS is host-free (`native-dynamic-instanceof.ts`)
+
+`env::__instanceof_check` is **gone from every dynamic-RHS shape**. The residual
+arm `emitDynamicInstanceOf` now calls a DEFINED native tri-state helper
+(`__instanceof_dynamic`) instead of the host predicate. `emitInstanceofThrowGuard`
+is reused unchanged — the helper returns the SAME 0/1/2 contract the import did.
+
+### PRIMARY acceptance — met, measured per shape (not on one sample)
+
+Instrument: `compile(src, { target: "standalone" })`, reading the module's
+`imports` list. Verified against the standalone baseline JSONL first — the raw-file
+import probe reproduces the baseline's `compile_error` set for
+`language/expressions/instanceof` **exactly** (same 11 files), so it is the same
+instrument CI applies.
+
+| shape                                            | before                    | after     |
+| ------------------------------------------------ | ------------------------- | --------- |
+| `a instanceof K`, `K` an `any`-typed local       | `env::__instanceof_check` | **clean** |
+| `x instanceof K`, `K` a fn-valued param          | `env::__instanceof_check` | **clean** |
+| `a instanceof holder.K` (property access)        | `env::__instanceof_check` | **clean** |
+| `a instanceof mk()` (call result)                | `env::__instanceof_check` | **clean** |
+| `o instanceof (o = 0, Object)` (comma expr)      | `env::__instanceof_check` | **clean** |
+| `p.isPrototypeOf(a)`, `p` a dynamic receiver     | clean (Slice C, 08-08)    | clean     |
+| builtin-name RHS · user-class RHS · Error family | clean                     | clean     |
+| static `C.prototype.isPrototypeOf(a)`            | clean                     | clean     |
+
+Corpus sweeps on this branch:
+
+- `language/expressions/instanceof` — **43 files, 0 leaking** (was 11 leaking).
+- The **59 files that name `env::__instanceof_check` as their SOLE host import**
+  on the 2026-08-15 standalone baseline — **0 leaking, 0 compile-refused,
+  0 invalid Wasm** (each binary was `WebAssembly.compile`d). Of those 59, **20
+  actually still leak on this branch's base**; the other 39 are stale baseline
+  entries already clean before this change (see SECONDARY acceptance).
+- gc/host **byte-identical**: sha256 of the compiled binary matched base on all
+  10 probe shapes (file-copy A/B on `identifiers.ts`). That is a SAMPLE, and it
+  is stated as one; what makes it a general claim is structural — the call site
+  is behind `noJsHost(ctx)`, which is exactly `ctx.wasi || ctx.standalone`
+  (`js-errors.ts:29`), so no gc/host compile can reach the new code at all. The
+  10 shapes are chosen to exercise every dispatch arm, i.e. they test the GATE,
+  not the population.
+
+### The answer table, and why each arm is the least-wrong one available
+
+Full rationale in the module header of `src/codegen/native-dynamic-instanceof.ts`.
+
+| RHS at runtime                           | answer       | basis                                                                                     |
+| ---------------------------------------- | ------------ | ------------------------------------------------------------------------------------------- |
+| `null` / `undefined`                     | 0            | host dynamic-path parity (`runtime.ts:2353`); keeps `S15.3.5.3_A1_T1…T8` at `false`         |
+| callable, OWNS a `prototype` property    | §7.3.20 full | an own-property read on a real `$Object` is authoritative: present-but-non-object ⇒ 2, else the `$proto` chain walk decides |
+| callable, no modelled `prototype`        | 0            | prototype not modelled — **the documented residual**                                        |
+| anything else, incl. genuine primitives  | 0            | there is no SOUND runtime primitive test in this backend — see "no wrong throws" below      |
+
+Three design points worth keeping:
+
+1. **IsCallable is asked of `__typeof_function`, not of a snapshotted type list.**
+   That native is finalize-corrected (`typeof-natives-finalize.ts`), so it sees
+   every closure root and every branded carrier regardless of where in the module
+   the `instanceof` site lowers. A membership snapshot taken at build time is the
+   order-dependence #4276 documents; this helper cannot inherit it.
+2. **The brand bit is read DIRECTLY** (`$Object.flags & OBJ_FLAG_CALLABLE`) rather
+   than through `buildBuiltinBrandTestArm`, whose emptiness depends on whether any
+   carrier had been branded YET — and the helper is minted at the FIRST dynamic
+   site, which can precede every carrier.
+3. **The `prototype` arm is gated on `__hasOwnProperty`, not on `Get` returning
+   something.** `Get` returning nothing has two causes the spec treats oppositely:
+   the program set `F.prototype = undefined` (§7.3.20 step 5 ⇒ TypeError), or the
+   backend does not model a `prototype` on that carrier (⇒ nothing is known). The
+   own-property probe separates them.
+
+### No wrong throws — the measurement that changed the design mid-flight
+
+The first cut threw (tri-state `2`) whenever the target was not classifiable as an
+object, per §13.10.2 steps 1/4. **That is unsound in this backend.** An unmodelled
+builtin constructor is lowered to a boxed-primitive carrier, so the shared
+classifiers answer **`typeof Int8Array === "boolean"`** (probe-verified on this
+branch) — every "is the target a primitive" predicate built on them mistakes a
+real constructor for a primitive.
+
+Caught by the corpus sweep, not by reasoning:
+`built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`
+went from the host's `false` to `TypeError: Right-hand side of 'instanceof' is not
+callable` at `assert(typedArray instanceof TypedArray)`. A wrong THROW is
+observable in a `catch` and passes/fails tests for the wrong reason; a wrong
+`false` is only a missed conversion. The arm was removed.
+
+**Nothing provable was lost.** A statically-primitive RHS and a provably
+non-callable object RHS both still throw at codegen, one dispatch step earlier
+(`compileHostInstanceOf`'s §13.10.2-step-1 fold and `tryEmitNonCallableRhsThrow`),
+where the evidence is the static TYPE rather than a runtime representation the
+backend gets wrong. Both shapes are pinned in
+`tests/es5-standalone-instanceof.test.ts`, along with the `Int8Array` regression
+pin for the misfire itself.
+
+**Follow-up worth filing separately:** `typeof Int8Array === "boolean"` under
+`--target standalone` is a real bare-value representation gap (the TypedArray
+constructors have no `__builtin_ctor_*` carrier, unlike the #3006/#4223 set). It
+is not caused by this change and is not fixed by it, but any future runtime
+primitive/callable predicate will trip on it exactly as this one did.
+
+Index-space discipline: `mintDefinedFunc` + `pushDefinedFunc` in one call, so the
+handle is stable-regime (shifter-immune) and the body's baked callee indices are
+walked by the ordinary late-import body shifter. **Nothing is minted at finalize**
+(the #4221 hazard).
+
+### SECONDARY acceptance — rows
+
+**+3 conversions, 0 regressions.** The live population is **20 files, not 59** —
+that correction is the last one on this issue and it came from applying the
+provenance habit to my own headline number.
+
+The 59 came from the 2026-08-15 baseline, which records them as `compile_error`
+`host_import_leak`. Compiled on THIS BRANCH'S BASE, only **20 still emit
+`env::__instanceof_check`**; the other 39 are already import-free (stale entries,
+resolved by earlier slices). So 39 of the 59 were never mine to convert.
+
+| the 20 that genuinely leak on base | after |
+| ---------------------------------- | ----: |
+| **pass**                           | **3** |
+| fail                               |    17 |
+
+The three: `built-ins/Promise/prototype/finally/subclass-species-constructor-{reject,resolve}-count`
+and `language/expressions/instanceof/S11.8.6_A2.4_T3`. All three leak on base ⇒
+CI scores them `compile_error` ⇒ pass-after is a genuine conversion.
+
+**`built-ins/Array/fromAsync/this-constructor` is NOT a conversion** and was
+counted as one in the first cut. It does not leak on base, and A/B measurement
+shows it PASSES on base and on branch. It is a stale baseline entry that my
+change cannot touch — the code only fires where the import would have been
+emitted.
+
+Why the first cut got it wrong: I measured the 59 only AFTER, then attributed
+every pass to the change because the baseline said they were all `compile_error`.
+The baseline was the artifact; "all 59 leak" was the figure inherited from it.
+The fix is one extra run — the same corpus on base — and it is the run that turns
+"4 files pass now" into "3 of them pass BECAUSE of this".
+
+**Scope note — the first cut of this table reported 24 `skip` and was NOT
+CI-comparable.** The local runner's DEFAULT scope excludes proposals, so 21
+Temporal files and 3 source-phase-import files came back `skip`. **CI does not
+skip them**: the standalone baseline records all 24 as `compile_error` with the
+`env::__instanceof_check` leak, which is only possible if they ran. Re-measured
+under `TEST262_INCLUDE_PROPOSALS=1` they all `fail` (Temporal is not implemented
+at all — `ReferenceError: Temporal is not defined`), so the conclusion is
+unchanged, but the tally now matches the lane that scores it.
+
+Worth generalising, because it is the same shape as the two other instrument
+traps recorded on this issue: **a `skip` in a local run is a statement about the
+LOCAL scope filter, never evidence that CI skips the file.** Read the baseline's
+recorded status for that file before treating a skip as "not counted". (Same
+trap, different guise: `CLAUDE.md`'s skip list names `top-level-await` as a
+feature skip and `shouldSkip` has no such branch — flagged by the #4433 lane,
+which nearly dismissed four real regressions on it.)
+
+**`language/expressions/instanceof` (43 files).** The before/after *answer* runs
+are **byte-identical** — every one of the 11 previously-refused files produces
+exactly the answer the host `__instanceof_check` produced. That is the
+correctness evidence: the native tri-state reproduces the host's observable
+behaviour on this corpus, it does not merely stop leaking.
+
+(The one diff that DID appear between the two intermediate corpus runs was the
+`%TypedArray%` wrong throw described above, and the fix restored exact host
+parity there too — a single line changed back to `Expected true but got false`.)
+
+Also green on this branch: all **8 equivalence shards**
+(`scripts/equivalence-gate.mjs`, "No new equivalence regressions"), and
+`tests/es5-standalone-instanceof.test.ts` (20),
+`tests/issue-3962-native-user-instanceof.test.ts`,
+`tests/issue-4276-instanceof-object-family.test.ts`, `tests/issue-2994.test.ts`.
+
+### Was the 59-file population itself a hiding filter? Checked — no, but it exposed a stale scale claim
+
+The conversion count came from the **59 sole-leak** files, which is a FILTER: the
+baseline also lists **1,501 files naming `env::__instanceof_check` alongside other
+imports**, excluded on the assumption "they keep leaking the others, so they can't
+convert". That assumption was never measured, and it is derived from the
+baseline's error STRINGS rather than from compiling on this branch's base — so if
+another lane eliminated a co-occurring import after the baseline was captured, the
+file is effectively sole-leak now and this change converts it. That would be a
+conversion the count MISSES.
+
+Measured: 150-file deterministic sample (seed 20260815) of the 1,501, compiled on
+branch and on base.
+
+| | branch | base |
+| --- | ---: | ---: |
+| zero-import | 131 | 131 |
+| still leaking | 19 | 19 |
+| **still emitting `__instanceof_check`** | **0** | **0** |
+
+Output byte-identical between the two trees. **Two findings:**
+
+1. **The filter hid nothing attributable to this change** — zero delta on the
+   sample, so 59 stands as the population this change converts.
+2. **The baseline's co-leak population is materially STALE, and the "1,560 files
+   name it" figure must not be quoted as scale.** Not one sampled file still
+   emits `__instanceof_check` on current main; earlier slices (#2998, #3962,
+   Slice A, #4276) resolve those sites statically now. Corrected in the module
+   header, which had quoted 1,560.
+
+The check was worth running for the second finding alone, and the reasoning that
+would have skipped it — "those files keep leaking anyway, it wouldn't move the
+number" — is exactly the reasoning that keeps an unexamined filter alive.
+
+### The WASI half of the gate, measured rather than inferred
+
+`noJsHost` is `ctx.wasi || ctx.standalone` (`js-errors.ts:29`) — **two** targets,
+and the test262 lane measures only the first. The "cannot regress a passing test"
+argument was therefore verified for standalone (leak guard + baseline) and merely
+INFERRED for WASI ("an unsatisfiable `env::` import cannot instantiate under
+wasmtime"). That inference is sound but it is not a measurement, and a WASI unit
+test can assert compile-time properties without ever instantiating — so the
+inference does not even cover the shape most likely to notice.
+
+Measured instead. All **199 test files that compile with `target: "wasi"`**, run
+on this branch and on base (file-copy revert of `identifiers.ts`), comparing
+sorted failing-test NAMES rather than counts:
+
+| batch          | base | branch | name-set diff |
+| -------------- | ---: | -----: | ------------- |
+| files 1–67     |   49 |     49 | **identical** |
+| files 68–199   |   55 |     55 | **identical** |
+
+104 pre-existing failures (linear-IR families unrelated to this issue), **zero
+delta**. The WASI lane is inert to this change, as measured.
+
+### Deliberately left, with reasons
+
+- **A closure RHS answers `false`, not the spec's `true`/TypeError.** A standalone
+  function value is a WasmGC closure-wrapper struct and its prototype object lives
+  in a per-fnctor module global keyed by the COMPILE-TIME symbol name
+  (`fnctor-prototype.ts`); there is no runtime edge from the value to that global.
+  Probe-verified on this branch: a dynamic `k["prototype"]` read answers
+  `undefined` for a `function` declaration, a `var F = function(){}` and a `class`
+  alike. So `S15.3.5.3_A2_T2/T5/T6` (want a TypeError for a non-object
+  `F.prototype`) and `_A3_T1/T2` (want a chain-walk `true`) keep failing.
+  Answering `2` would assert "F.prototype really is a non-object" and `1` would
+  assert membership — neither is known, and both are worse than a missed
+  conversion. Closing this needs the #2660 M3 closure→prototype substrate.
+- **`@@hasInstance` dispatch** — unchanged, still out of scope
+  (`symbol-hasinstance-*`, 4 files).
+- **`instanceof Object` on a `$Object`** — #4276's lane, deliberately untouched
+  (`S11.8.6_A1`, and `S11.8.6_A6_T4` CHECK#3 which blocks that file regardless).
+- **The §13.10.2 step 1/4 TypeError for a RUNTIME non-object / non-callable RHS**
+  — see "no wrong throws" above. Statically provable cases still throw.
+
+### What is left to close this issue
+
+Slice B's substrate is in place; the issue stays `in-progress` because the
+closure arm is still conservative. **Exactly one dependency remains**: a runtime
+edge from a closure value to its prototype object (#2660 M3). With it, the
+`ownedPrototypeOrdinaryHasInstance` arm applies unchanged to closures and the
+`S15.3.5.3_A2_*` / `_A3_*` family becomes answerable.
+
+> **UPDATE 2026-08-15 — #2660 M3 LANDED; this dependency is CLOSED. The
+> `S15.3.5.3` family is NOT, and the reason is three separate other defects.**
+>
+> `src/codegen/closure-prototype-edge.ts` supplies the edge
+> (`__closure_proto_of`, an identity-keyed match against the
+> `__fn_closure_<name>` / `__class_<Name>` singletons, answering the SAME
+> prototype object the `[[Prototype]]` seeding uses). This module's callable arm
+> now (a) does the own-`prototype` read for a NON-`$Object` callable — a closure,
+> whose own props live in the #3468 bag — and (b) falls through a hasOwn miss to
+> the edge instead of returning 0, and (c) consults the edge on the NOT-callable
+> tail too, because a class value is `typeof "object"` here.
+>
+> Measured, `--target standalone`, whole `language/expressions/instanceof`
+> directory A/B through file-copy reverts: **24 → 26 pass, zero regressions**,
+> every other row byte-identical.
+>
+> | file | result | if still failing, the blocker is |
+> | --- | --- | --- |
+> | `S15.3.5.3_A2_T2` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T6` | **fail → pass** | — |
+> | `S15.3.5.3_A2_T5` | fail | `new <Function(src) value>` evaluates to **null**, so §7.3.20 step 3 returns `false` before the prototype read. Runtime-eval lane (#2928/#4242). |
+> | `S15.3.5.3_A3_T1` | fail | same, plus `FACTORY.prototype.type=1` on a value with no compile-time prototype global. |
+> | `S15.3.5.3_A3_T2` | fail | `Object.prototype.isPrototypeOf({})` is `false` on base AND branch — the plain-object `$proto` → `Object.prototype` link (#4172 slice 2 / #4160). |
+>
+> The own-`prototype` half was verified to work on a `Function(src)` callable in
+> isolation (`hasOwnProperty(FF,"prototype")` is `true` after a write), so the
+> three residual files are not blocked by anything in this module. The
+> "documented residual" paragraph above and in the module header — *a closure RHS
+> answers `false`* — no longer holds for a closure that owns a `prototype` or has
+> a compile-time prototype global; it does still hold for a runtime-eval callable
+> with neither.
+>
+> Full write-up, including the split-brain root cause (one property, two disjoint
+> stores) and the gc/host byte-identity evidence, in
+> `plan/issues/2660-fnctor-instance-dynamic-use-escape-gate.md` § "M3 — the
+> closure → prototype runtime edge".
+
+An earlier revision named the expression-statement elimination as a second
+blocker for that family. It is not — see the correction below.
+
+### Adjacent defect found while measuring — real, but it does NOT gate the A2/A3 family
+
+**A bare `lhs() instanceof rhs();` expression STATEMENT at TOP LEVEL is
+eliminated whole, including both operands' side effects.** Reproduced with a
+builtin RHS (which never reaches this substrate) and on base `identifiers.ts`, so
+it predates Slice B. Filed and fixed as #4433, which found the real scope is much
+broader than `instanceof`: at top level every non-assignment binary operator, the
+conditional operator, array/object literals and parenthesised compositions
+dropped their operands' effects (`a() + b();` → neither call ran).
+
+**CORRECTION — an earlier revision of this section claimed the elimination was a
+*second* reason `S15.3.5.3_A2_T2/T5/T6` cannot pass. That was wrong**, and it is
+worth recording *how* it was wrong because the mistake is cheap to repeat. The
+measurement behind it was taken at TOP LEVEL; the three test files spell the
+operator inside a `try`, and that difference is decisive —
+`collectDeclarations` keeps a top-level `TryStatement` **wholesale** (the
+control-flow arm, `declarations.ts` ~L2131), so its body lowers through the
+ordinary in-function path, which has always compiled operands. Generalising a
+top-level result to an inside-`try` context without re-measuring is the entire
+error.
+
+Re-measured on this branch with the counting probe (`order.length` after
+`lhs() instanceof rhs()`, `lhs`/`rhs` both appending a marker):
+
+| placement                    | operands evaluated |
+| ---------------------------- | -----------------: |
+| bare statement at top level  |                  0 |
+| **inside a top-level `try`** |              **2** |
+| inside a function            |                  2 |
+
+Independently confirmed by the #4433 lane with the exact T2 shape instrumented
+(base = fixed = 101: LHS runs, `instanceof` answers false instead of throwing),
+and T2/T6 fail with the identical `#1.1: O is not an object` message before and
+after that fix.
+
+**So `S15.3.5.3_A2_T2/T5/T6` are blocked by the closure-RHS prototype residual
+ALONE.** One thing to fix, not two.
+
+The order-of-evaluation regression test in
+`tests/es5-standalone-instanceof.test.ts` still binds its result, because it
+probes the bare top-level form deliberately and this branch predates #4433.
+
+### Instrument note for the next measurer
+
+`runTest262File`'s ORIGINAL-HARNESS lane does **not** apply
+`standaloneHostImportError` (the guard has a single call site, in the legacy
+wrapper lane). A leaking module therefore still RUNS locally with the host
+supplying the import, while CI records it as `compile_error`. A local pass/fail on
+a leaking file is an upper bound on the host answer, **not** the verdict CI
+scores. This is what makes the identical before/after answer runs above meaningful
+rather than vacuous — and it is a trap for any "these tests pass locally" claim.
+
+**Every A/B above reverted through `.tmp/identifiers.base.ts`, and that artifact
+was verified byte-identical to base commit `88ff8c4` (`diff` against
+`git show 88ff8c4:…`), not assumed.** One diff validates the whole chain — the
+WASI 199-file run, the 59-file base sweep, the 150-file sample, the gc/host
+shas, and the `%TypedArray%` wrong-throw diagnosis all rest on that one file
+being what it claims to be.
+
+**Operational rule, better than "always measure the before-state": make the
+before-state CHEAP before you start.** Capture the revert copy at the FIRST
+edit, when it costs one `cp` (CLAUDE.md's file-copy A/B pattern). Whether the
+before-run happens turns out to depend less on discipline than on its price at
+the moment you face it: the 11-file directory A/B got run because it was cheap,
+the 59-file one got skipped because it was a corpus compile and the baseline was
+sitting right there claiming to already know the answer.

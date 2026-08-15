@@ -66,6 +66,7 @@
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
+import { closurePrototypeEdgeGetArm } from "./closure-prototype-edge.js"; // (#2660 M3)
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -669,6 +670,9 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   // `undefined` unless the store was reserved, so a flag-clear module keeps
   // this body byte-identical.
   if (isClosureIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
+    // (#2660 M3) Empty for every module with no function-value → prototype edge,
+    // which keeps both the body AND the local list byte-identical there.
+    const protoEdgeArm = closurePrototypeEdgeGetArm(ctx, { recvSlot: 0, keySlot: 1, bagSlot: 2, protoSlot: 3 });
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },
@@ -676,6 +680,14 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          // (#2660 M3) The function-value → prototype-object edge, consulted
+          // BEFORE the bag read but only for the key `prototype`, and only when
+          // the bag holds no OWN entry for it. Precedence is the spec's: an
+          // explicit `f.prototype = …` (which lands in the bag, including
+          // `= undefined`) always wins over the compile-time prototype object.
+          // Emits NOTHING when the module has no edges, so `__closure_prop_get`
+          // stays byte-identical for every module without a user constructor.
+          ...protoEdgeArm,
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: bagLookupIdx },
           { op: "local.tee", index: 2 }, // bag
@@ -695,7 +707,16 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
       },
       ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),
     ];
-    setBody(CLOSURE_PROP_GET, [{ name: "__bag", type: { kind: "externref" } }], body);
+    setBody(
+      CLOSURE_PROP_GET,
+      protoEdgeArm.length === 0
+        ? [{ name: "__bag", type: { kind: "externref" } }]
+        : [
+            { name: "__bag", type: { kind: "externref" } },
+            { name: "__protoEdge", type: { kind: "externref" } },
+          ],
+      body,
+    );
   } else {
     // Deps absent — keep a valid body: always return the undefined sentinel.
     setBody(CLOSURE_PROP_GET, [], [...getMiss()]);

@@ -45,8 +45,9 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
 
 /** `key == "length"` over an externref key (param `keyParam`); i32 on stack. */
@@ -83,6 +84,26 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
   if (strFlattenIdx === undefined || strEqualsIdx === undefined || unboxNumIdx === undefined) return;
+  // §10.4.2.4 step 3 applies ToUint32(ToNumber(value)) — and ToNumber runs
+  // ToPrimitive first, so `arr.length = new Number(1)` / `new String("1")` /
+  // `new Boolean(false)` must unwrap through valueOf before the numeric
+  // validation (test262 S15.4.5.1_A1.3_T1/T2). `__unbox_number` alone only
+  // answers already-primitive boxes, so wrapper-object writes read as invalid
+  // and silently no-oped. `__to_primitive` is a defined function whenever the
+  // standalone object runtime is present; when it is absent (no object support
+  // compiled in), wrapper objects cannot exist either, so the bare unbox is
+  // still complete. Both funcs already exist at finalize — no minting, no
+  // funcidx shift (the #4221 hazard this fill is written around).
+  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  if (toPrimIdx !== undefined) addStringConstantGlobal(ctx, "number");
+  const toNumberInstrs: Instr[] =
+    toPrimIdx !== undefined
+      ? [
+          ...stringConstantExternrefInstrs(ctx, "number"),
+          { op: "call", funcIdx: toPrimIdx },
+          { op: "call", funcIdx: unboxNumIdx },
+        ]
+      : [{ op: "call", funcIdx: unboxNumIdx }];
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
 
@@ -181,9 +202,9 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "empty" },
             then: [
-              // n = ToNumber(value); valid: integral ∧ 0 ≤ n ≤ 2**32-1.
+              // n = ToNumber(ToPrimitive(value)); valid: integral ∧ 0 ≤ n ≤ 2**32-1.
               { op: "local.get", index: 2 },
-              { op: "call", funcIdx: unboxNumIdx },
+              ...toNumberInstrs,
               { op: "local.tee", index: lN },
               { op: "f64.floor" },
               { op: "local.get", index: lN },

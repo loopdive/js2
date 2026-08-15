@@ -23,7 +23,19 @@ name: Auto-refresh BEHIND PR branches with main
 #     forming merge group's membership, which rebuilds it and CANCELS the head's
 #     in-flight merge_group run (project_merge_queue_requeue_cancels_run, #1758);
 #   - skip DIRTY (conflicting) PRs — update-branch 409s on a real conflict; those
-#     need manual resolution.
+#     need manual resolution;
+#   - skip PRs whose current head has CI IN FLIGHT (2026-08-15, the #4520
+#     livelock): refreshing a BEHIND PR restarts its ~10-min PR CI from zero,
+#     and on a busy evening main merges faster than that, so the PR's checks
+#     NEVER complete and it is never enqueueable — #4520 cycled 70+ minutes
+#     this way. Behind-ness does NOT block enqueue (#4094: enqueue-green-prs
+#     derives eligibility from checks + mergeable, and the merge queue builds
+#     the group against main anyway), so the right move for an in-flight head
+#     is to LET ITS CI FINISH. A 2-hour staleness bound keeps a wedged run
+#     from suppressing refresh forever;
+#   - skip PRs whose current head is already ALL-GREEN and quiescent — those are
+#     enqueue-eligible RIGHT NOW (#4094 behind-eligible); a refresh would only
+#     knock them back to pending and reopen the livelock window.
 #
 # TRIGGER: cron only (every 20 min) + manual dispatch — NOT push:main. A per-merge
 # push trigger races the SERIAL merge queue's merge_group formation (the churn
@@ -92,23 +104,64 @@ jobs:
           }
 
           # BEHIND, non-draft, non-hold open PRs. The label filter mirrors
-          # auto-enqueue.yml's HOLD_LABELS set.
+          # auto-enqueue.yml's HOLD_LABELS set. headRefOid rides along so the
+          # in-flight/green-head classification below can query this head's
+          # check runs without a second PR lookup.
           mapfile -t BEHIND < <(gh pr list --state open --limit 200 \
-            --json number,mergeStateStatus,isDraft,labels \
+            --json number,mergeStateStatus,isDraft,labels,headRefOid \
             --jq '.[]
                     | select(.mergeStateStatus == "BEHIND")
                     | select(.isDraft == false)
                     | select([.labels[].name]
                         | any(. == "hold" or . == "do-not-merge" or . == "do not merge" or . == "wip" or . == "blocked")
                         | not)
-                    | .number')
+                    | "\(.number) \(.headRefOid)"')
+
+          # CI-in-flight guard (#4520 livelock): count check runs on this head
+          # that are queued/in_progress AND recent (2h bound so one wedged run
+          # cannot suppress refresh forever). >0 ⇒ let CI finish; the enqueue
+          # sweep takes green PRs even when behind (#4094).
+          active_ci() {
+            # NB: `gh api --jq` takes only an expression — no jq --arg — so the
+            # cutoff is interpolated. ISO-8601 UTC strings compare lexically.
+            local sha="$1"
+            local cutoff; cutoff=$(date -u -d '-2 hours' +%Y-%m-%dT%H:%M:%SZ)
+            gh api "/repos/$GH_REPO/commits/$sha/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select((.status == "queued" or .status == "in_progress")
+                                       and ((.started_at // "1970-01-01T00:00:00Z") > "'"$cutoff"'"))] | length' \
+              2>/dev/null || echo 0
+          }
+          # Green-head guard: a quiescent head with check runs present and zero
+          # non-green conclusions is enqueue-eligible as-is — refreshing it only
+          # restarts CI and reopens the livelock window. success/skipped/neutral
+          # count as green (a SKIPPED required check satisfies the ruleset).
+          green_quiescent() {
+            local sha="$1" total notgreen
+            total=$(gh api "/repos/$GH_REPO/commits/$sha/check-runs?per_page=100" \
+              --jq '.check_runs | length' 2>/dev/null || echo 0)
+            [ "$total" -gt 0 ] || return 1
+            notgreen=$(gh api "/repos/$GH_REPO/commits/$sha/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.status != "completed"
+                       or ((.conclusion // "none") | IN("success","skipped","neutral") | not))] | length' \
+              2>/dev/null || echo 1)
+            [ "$notgreen" -eq 0 ]
+          }
 
           echo "queued=[${QUEUED[*]:-}] behind=[${BEHIND[*]:-}]"
           ok=0; skip=0; fail=0
-          for pr in "${BEHIND[@]:-}"; do
-            [ -n "$pr" ] || continue
+          for entry in "${BEHIND[@]:-}"; do
+            [ -n "$entry" ] || continue
+            pr="${entry%% *}"; sha="${entry##* }"
             if is_queued "$pr"; then
               echo "skip #$pr (already in merge queue)"
+              skip=$((skip+1)); continue
+            fi
+            if [ "$(active_ci "$sha")" -gt 0 ]; then
+              echo "skip #$pr (CI in flight on $sha — let it finish; enqueue takes green-behind PRs, #4094)"
+              skip=$((skip+1)); continue
+            fi
+            if green_quiescent "$sha"; then
+              echo "skip #$pr (head already all-green — enqueue-eligible as-is, refresh would restart CI)"
               skip=$((skip+1)); continue
             fi
             if out=$(gh api --method PUT "/repos/$GH_REPO/pulls/$pr/update-branch" 2>&1); then

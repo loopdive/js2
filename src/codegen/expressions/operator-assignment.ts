@@ -38,6 +38,7 @@ import {
   getCapturedBoxGlobal,
 } from "../property-access.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { patchStructNewForDynamicField } from "./extern.js";
 import {
@@ -1363,10 +1364,7 @@ function compileNativeStringCompoundAssignment(
   } else if (rhsType.kind === "f64" || rhsType.kind === "i32") {
     const rhsTsType = ctx.checker.getTypeAtLocation(expr.right);
     if (isBooleanType(rhsTsType) && rhsType.kind === "i32") {
-      // bool → "true"/"false" string. emitBoolToString returns externref.
-      emitBoolToString(ctx, fctx);
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+      emitBoolToAnyStr(ctx, fctx);
     } else {
       if (rhsType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       const toStr = ctx.funcMap.get("number_toString");
@@ -1384,9 +1382,40 @@ function compileNativeStringCompoundAssignment(
       }
     }
   } else if (rhsType.kind === "externref") {
-    // externref → ref $AnyString: convert + cast (e.g. host charAt result).
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    // externref → ref $AnyString. The value is usually already a native string
+    // (host charAt result), but a STRING-typed RHS can also be a String
+    // WRAPPER OBJECT — `x += new String("1")` types as String while the
+    // runtime value is the $Object wrapper, and the old unconditional
+    // `ref.cast` trapped with `illegal cast` (test262 S11.13.2_A4.4_T1.4).
+    // Test first; on a non-string, run the §7.1.17 walker `__extern_toString`
+    // (ToPrimitive → ToString — unwraps wrappers, stringifies objects).
+    const externToStrIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__extern_toString") : undefined;
+    if (externToStrIdx !== undefined) {
+      const extTmp = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: extTmp });
+      fctx.body.push({ op: "local.get", index: extTmp });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
+        then: [
+          { op: "local.get", index: extTmp },
+          { op: "any.convert_extern" },
+          { op: "ref.cast_null", typeIdx: ctx.anyStrTypeIdx },
+        ],
+        else: [
+          { op: "local.get", index: extTmp },
+          { op: "call", funcIdx: externToStrIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast_null", typeIdx: ctx.anyStrTypeIdx },
+        ],
+      });
+      releaseTempLocal(fctx, extTmp);
+    } else {
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    }
   }
 
   // Call __str_concat — returns ref $AnyString
@@ -1447,9 +1476,7 @@ function compileAndCoerceToAnyStr(ctx: CodegenContext, fctx: FunctionContext, ex
   if (rhsType.kind === "f64" || rhsType.kind === "i32") {
     const rhsTsType = ctx.checker.getTypeAtLocation(expr);
     if (isBooleanType(rhsTsType) && rhsType.kind === "i32") {
-      emitBoolToString(ctx, fctx);
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+      emitBoolToAnyStr(ctx, fctx);
       return anyStrType;
     }
     if (rhsType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
@@ -1692,16 +1719,22 @@ export function compileCompoundAssignment(
   // compileStringCompoundAssignment uses bare local.get/local.tee, which would
   // pass the `(struct (mut externref))` ref cell straight into js-string concat
   // (→ illegal cast / invalid wasm). #1999.
-  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name)) {
-    const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
-    let isStr = isStringType(leftTsType);
-    if (!isStr && (leftTsType.flags & ts.TypeFlags.Any) !== 0) {
+  const plusEqualsUnboxed = op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name);
+  const plusLeftTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.left) : undefined;
+  const plusRightTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.right) : undefined;
+  if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType) {
+    let isStr = isStringType(plusLeftTsType);
+    if (!isStr && (plusLeftTsType.flags & ts.TypeFlags.Any) !== 0) {
       // For `any`-typed variables (e.g. `var __str; __str=""`), check if
       // the variable is ever assigned a string value in the enclosing scope.
       // This handles the common test262 pattern where `var x; x=""` followed
       // by `x += numericVar` should do string concatenation.
       isStr = hasStringAssignment(name, expr);
     }
+    // (#4427) A statically String-typed RHS forces concat on its own (§13.5.3
+    // step 3) — see `rhsStringForcesConcatLane` for why the LHS-only gate above
+    // mis-lowered `x = 1; x += "1"` to `2`, and for the slot restriction.
+    if (!isStr) isStr = rhsStringForcesConcatLane(ctx, fctx, name, plusRightTsType);
     if (isStr) {
       return compileStringCompoundAssignment(ctx, fctx, expr, name);
     }
@@ -1727,9 +1760,9 @@ export function compileCompoundAssignment(
   // FALSE for a runtime STRING — which is how acorn's `message += " (" + …`
   // rendered as the number NaN. Mirrors `emitAnyAdd`'s own `noJsHost` test.
   const anyCompoundAddEligible = ctx.anyValueTypeIdx < 0 || ctx.standalone === true || ctx.wasi === true;
-  if (op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name) && anyCompoundAddEligible) {
-    const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
-    const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
+  if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType && anyCompoundAddEligible) {
+    const leftTsType = plusLeftTsType;
+    const rightTsType = plusRightTsType;
     const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     const isBigInt =

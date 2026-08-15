@@ -360,6 +360,101 @@ function isFunctionBodyBlock(block: ts.Block | ts.SourceFile): boolean {
   );
 }
 
+/**
+ * Nodes at which `var` hoisting stops — the descent boundaries of
+ * `collectVarDeclaredNamesInBlock`, ported verbatim (#4432).
+ */
+function isVarScopeBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  );
+}
+
+/**
+ * A DFS-ordered index of the var-declaration identifiers reachable from one
+ * var-scope root without crossing a `isVarScopeBoundary` node (#4432).
+ *
+ * Parallel arrays rather than objects: the query path only needs positions for
+ * the range filter and touches `names`/`nodes` for the few in-range entries.
+ * `sorted` records whether `poss` is non-decreasing (it is, for a DFS over a
+ * single file); when it is, the range query binary-searches, otherwise it falls
+ * back to a linear scan so DFS emission order is preserved either way.
+ */
+interface VarDeclIndex {
+  names: string[];
+  nodes: ts.Identifier[];
+  poss: number[];
+  ends: number[];
+  sorted: boolean;
+}
+
+const varDeclIndexCache = new WeakMap<ts.Node, VarDeclIndex>();
+
+function buildVarDeclIndex(root: ts.Node): VarDeclIndex {
+  const names: string[] = [];
+  const nodes: ts.Identifier[] = [];
+  const poss: number[] = [];
+  const ends: number[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      const flags = node.declarationList.flags;
+      if ((flags & ts.NodeFlags.Let) === 0 && (flags & ts.NodeFlags.Const) === 0) {
+        for (const decl of node.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) {
+            names.push(decl.name.text);
+            nodes.push(decl.name);
+            poss.push(decl.name.pos);
+            ends.push(decl.name.end);
+          }
+        }
+      }
+      return;
+    }
+    // Don't cross function boundaries (var doesn't hoist past functions)
+    if (isVarScopeBoundary(node)) return;
+    forEachChild(node, visit);
+  };
+  // A boundary root (function-like / class) would stop `visit` immediately, so
+  // descend into its children; a SourceFile root is walked directly.
+  if (isVarScopeBoundary(root)) forEachChild(root, visit);
+  else visit(root);
+  let sorted = true;
+  for (let i = 1; i < poss.length; i++) {
+    if (poss[i]! < poss[i - 1]!) {
+      sorted = false;
+      break;
+    }
+  }
+  return { names, nodes, poss, ends, sorted };
+}
+
+/**
+ * The nearest enclosing var-scope root of `block`, or `null` when the upward
+ * walk hits a VariableStatement first. `collectVarDeclaredNamesInBlock` never
+ * descends into a VariableStatement, so a block underneath one is not reachable
+ * from the root index; that shape cannot occur without an intervening
+ * function/class boundary, but the null result routes it to the direct walk
+ * rather than relying on that argument.
+ */
+function varScopeRootOf(block: ts.Block | ts.SourceFile): ts.Node | null {
+  if (ts.isSourceFile(block)) return block;
+  let current: ts.Node | undefined = block.parent;
+  while (current) {
+    if (ts.isSourceFile(current) || isVarScopeBoundary(current)) return current;
+    if (ts.isVariableStatement(current)) return null;
+    current = current.parent;
+  }
+  return null;
+}
+
 /** Check for var/lexical declaration conflicts in a block or source file. */
 export function checkVarLexicalConflicts(ctx: EarlyErrorContext, block: ts.Block | ts.SourceFile): void {
   // A FunctionDeclaration contributes a lexical binding (that a same-name `var`
@@ -397,7 +492,52 @@ export function checkVarLexicalConflicts(ctx: EarlyErrorContext, block: ts.Block
 
   // Check var declarations against lexical names — including vars in nested blocks
   // (var hoists to the enclosing function/module scope, so `{ let x; { var x; } }` is a conflict)
-  collectVarDeclaredNamesInBlock(ctx, block, lexicalNames);
+  //
+  // #4432: instead of re-walking this block's whole subtree (every nested block
+  // re-walked what its parents already had), index the var-declaration
+  // identifiers ONCE per var-scope root and answer each block by position
+  // range. The index is DFS-ordered, which is exactly the order the direct
+  // walk emitted in, and entries under a nested function are already excluded
+  // from the index (the index walk stops at the same boundaries), so
+  // range-filtering never leaks across scopes.
+  const root = varScopeRootOf(block);
+  if (root === null) {
+    collectVarDeclaredNamesInBlock(ctx, block, lexicalNames);
+    return;
+  }
+  let index = varDeclIndexCache.get(root);
+  if (index === undefined) {
+    index = buildVarDeclIndex(root);
+    varDeclIndexCache.set(root, index);
+  }
+  const { names, nodes, poss, ends, sorted } = index;
+  const count = poss.length;
+  if (count === 0) return;
+  const lo = block.pos;
+  const hi = block.end;
+  let i = 0;
+  if (sorted) {
+    let a = 0;
+    let b = count;
+    while (a < b) {
+      const mid = (a + b) >> 1;
+      if (poss[mid]! < lo) a = mid + 1;
+      else b = mid;
+    }
+    i = a;
+  }
+  for (; i < count; i++) {
+    const pos = poss[i]!;
+    if (pos >= hi) {
+      if (sorted) break;
+      continue;
+    }
+    if (pos < lo || ends[i]! > hi) continue;
+    const name = names[i]!;
+    if (lexicalNames.has(name)) {
+      ctx.addError(nodes[i]!, `Cannot redeclare block-scoped variable '${name}'`);
+    }
+  }
 }
 
 export function collectVarDeclaredNamesInBlock(ctx: EarlyErrorContext, node: ts.Node, lexicalNames: Set<string>): void {

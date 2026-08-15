@@ -63,6 +63,7 @@ import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from ".
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
+import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -4350,6 +4351,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           // (#4196) A `$__bound_fn` is not a `$__ta_ctor`, so the arm above
           // yields null for it. Retry as §10.4.1.2 [[Construct]] on null.
           emitBoundConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
+          // (#4438) …and a runtime-eval callable (a `Function(src)` value) is
+          // neither, so it lands in the null too. Retry as §10.2.2
+          // [[Construct]]. Each retry declines for the other's carrier shape,
+          // so the chain has no ordering hazard.
+          emitRuntimeEvalConstructOnNull(ctx, fctx, expr, taDescLocal, taArgLocals);
           return { kind: "externref" };
         }
       }
