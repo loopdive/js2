@@ -953,6 +953,18 @@ answering `undefined` for `.prototype` (§15.3) with no special case.
 Both arm builders return an EMPTY instruction list when the module has no edges,
 so `__closure_prop_get` keeps its previous body **and local list**.
 
+**Hot-path cost, stated because `__closure_prop_get` is the one hot native here**
+— #4241 measured 39,455 lookups per acorn self-parse. In a module WITH an edge, a
+read of any key other than `prototype` pays exactly four instructions
+(`local.get`, `any.convert_extern`, `ref.test $NativeString`, a not-taken `if`)
+before the arm is skipped; the bag lookup and the `__hasOwnProperty` call are
+inside the `prototype`-key branch. In a module with no edge the cost is zero
+instructions. The ordering — cheap interned-literal key test outermost — is
+deliberate and is the reason the arm could be placed BEFORE the bag read, which
+is where it has to be: the existing bag arm `return`s unconditionally once a bag
+exists, so anything placed after it is unreachable for a closure that carries any
+other own property.
+
 ### Measured (all `--target standalone`, A/B through `.tmp/base-*.ts` revert copies)
 
 `language/expressions/instanceof`, all 43 files, `runTest262File`:
@@ -1023,6 +1035,42 @@ so T5/A3_T1 are not blocked by anything in this module.
   correctly, but `Object.getPrototypeOf(new C())` is not that object on current
   main, so `new C() instanceof K` stays `false` (a missed conversion). Class-side
   `$proto` seeding is #3976's surface.
+
+### Gates, and the wrong-THROW check the class arm needed
+
+`typecheck` · `prettier` · `biome` · `check:loc-budget` · `check:func-budget`
+(both green after the allowances granted in this file's frontmatter;
+`ensureDynamicInstanceOfHelper` was kept UNDER the 300-LOC ceiling by moving its
+new rationale into the module header rather than by taking a grant) ·
+`check:oracle-ratchet` (0 new raw-checker queries — this module asks no type
+questions at all) · `check:coercion-sites` · `check:stack-balance` ·
+`check:pushraw` · `check:any-box-sites` · `check:host-import-policy` ·
+`check:codegen-fallbacks` · `check:ir-fallbacks` · `check:test-vacuity-shapes`
+— all green. `test:equivalence:gate`: **"No new equivalence regressions"**
+(24 failing / 1645 passing / 36 baseline; it also reports 12 stale baseline
+entries that now pass, none related to this change). `check:godfiles` fails
+IDENTICALLY on base (11 pre-existing entries, same list, `compileCallExpression`
+among them) — a stale baseline on `main`, not this change.
+
+Suites: the new 11 · `es5-standalone-instanceof` (20) ·
+`issue-3962-native-user-instanceof` · `issue-4276-instanceof-object-family` ·
+`issue-3468-closure-own-props` · `issue-2660-s2` · `issue-2660-s3` ·
+`issue-2994` — **135 passed**. `tests/instanceof.test.ts`'s 7 failures are the
+pre-existing `Import #0 module="string_constants"` host-harness artifact,
+A/B-verified identical on base.
+
+**The wrong-THROW risk the class arm introduced, and how it was closed.** The
+edge's class arm returns `ctx.protoGlobals[C]`, which is a `$ClassName` STRUCT
+rather than an `$Object` unless `class-proto-object.ts` converted it (it only
+converts a class with ≥1 installable instance method). The §7.3.20 tail throws
+`2` when the prototype is nullish or PROVABLY primitive, and the shared
+classifiers are known to mis-answer for unmodelled carriers — the
+`typeof Int8Array === "boolean"` hazard this module's header already records. A
+mis-answer there would be a wrong, catchable TypeError. Probed on the branch
+across ten shapes (class with a method / without / with only a field; a subclass
+and its parent as RHS; a fnctor whose prototype global is an empty vivified
+object; and number / string / null as LHS): **every one answers `0`, none
+throws.** Class `instanceof` remains a missed conversion, not a wrong answer.
 
 Files: `src/codegen/closure-prototype-edge.ts` (new),
 `src/codegen/native-dynamic-instanceof.ts`, `src/codegen/closure-props.ts`,
