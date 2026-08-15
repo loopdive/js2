@@ -811,14 +811,27 @@ function compileObjectLiteralWithAccessors(
       // Compile spread source and call __object_assign(target, [source])
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        // A spread source whose STATIC type is a closed-shape struct
-        // (`{...typedObj}`) must be materialized into a real open `$Object`
-        // before `__object_assign`.  Reinterpreting the struct with
-        // `extern.convert_any` leaves its GC fields invisible to the dynamic
-        // own-key walk, so inherited fields (notably Marked's rule tables) are
-        // silently lost.  This applies to the JS-host and native providers;
-        // both consume the same open-object representation here.
+        // (#3222 C1) In standalone/WASI, a spread source whose STATIC type is a
+        // closed-shape struct (`{...typedObj}`) would otherwise be reinterpreted
+        // as an externref via `coerceType` and handed to `__object_assign`, whose
+        // native enumeration walks only the open-`$Object` hash — so it copies
+        // NOTHING (the struct fields are invisible to `__object_keys`). Instead
+        // materialize the struct into a real open `$Object` first (own-enumerable
+        // fields only) so `__object_assign` enumerates and copies them correctly.
+        //
+        // The `native-first` gate is LOAD-BEARING and must not be widened to the
+        // host/gc lane. Materializing takes an eager SNAPSHOT of the struct's
+        // fields at spread-source-evaluation time, whereas the host lane's
+        // `extern.convert_any` passes a live REFERENCE that `__object_assign`
+        // walks later. Spread evaluates every source into a local before merging,
+        // so snapshotting breaks the spec-mandated ordering when an earlier
+        // source's getter mutates a later one — `{...cthulhu, ...o}` where
+        // `cthulhu`'s getter deletes `o.a` then observed `o.a` as still present
+        // (test262 `spread-obj-manipulate-outter-obj-in-getter`, 3 files).
+        // Host reflection already reads closed structs, so the host lane needs
+        // no materialization at all.
         const spreadStructIdx =
+          ctx.targetProfile.semanticProviders === "native-first" &&
           (srcType.kind === "ref" || srcType.kind === "ref_null") &&
           typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
           ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)

@@ -420,6 +420,35 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
   return funcIdx;
 }
 
+/**
+ * Can the dispatcher fabricate a value for an OMITTED formal that the callee
+ * will read as "argument absent — evaluate my own default"?
+ *
+ * Only two spellings survive the closed-dispatch ABI:
+ *   - a compile-time **constant** default, passed verbatim, so the callee never
+ *     has to detect absence at all; and
+ *   - an **`f64`** slot, where `defaultValueInstrs` emits the sNaN sentinel
+ *     `0x7FF00000DEADC0DE` that the callee's parameter prologue tests for.
+ *
+ * Every REFERENCE slot degrades to `ref.null` / `ref.null.extern`, which is
+ * indistinguishable from an explicitly-passed `null`. The callee therefore
+ * SKIPS its default initializer and either silently binds null (a simple
+ * parameter — `tokens = []` becomes `null`, so `tokens.length` is `NaN`) or
+ * throws `Cannot destructure 'null' or 'undefined'` (a binding-pattern
+ * parameter such as `method({} = obj)`).
+ *
+ * So a reference-typed omitted formal must stay on the host/dynamic fallback.
+ * Admitting it to the fast path is not a slower-but-correct trade — it is
+ * silently WRONG. Making it correct needs either a reference "absent" sentinel
+ * the callee recognizes, or callee-side default evaluation driven by an arity
+ * flag; neither exists today.
+ */
+function omittedFormalIsRepresentable(want: ValType, opt: OptionalParamInfo | undefined): opt is OptionalParamInfo {
+  if (!opt) return false;
+  if (opt.constantDefault) return true;
+  return want.kind === "f64";
+}
+
 /** One candidate closed struct that carries `<Struct>_<methodName>`. */
 type MethodEntry = {
   typeIdx: number;
@@ -464,13 +493,22 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     const paramTypes = funcType.params.slice(1);
     const optionalParams = ctx.funcOptionalParams.get(fullName) ?? [];
     // A fixed-arity call may under-apply a method only when every omitted
-    // formal has a default/optional marker.  The callee's normal parameter
-    // prologue recognizes the same sentinels as identifier calls; rejecting
-    // this case sends valid calls (e.g. marked's `inline(text)` where the
-    // second parameter defaults to `[]`) to the host fallback instead.
+    // formal can be FABRICATED FAITHFULLY by `buildEntryArm` — see
+    // `omittedFormalIsRepresentable`. Merely carrying a default/optional
+    // marker is NOT sufficient: a reference-typed slot degrades to `ref.null`,
+    // which the callee cannot distinguish from an explicit `null`.
     if (exactArity !== null) {
       if (paramTypes.length < exactArity) continue;
-      if (paramTypes.slice(exactArity).some((_type, i) => !optionalParams.some((o) => o.index === exactArity + i))) {
+      const omitted = paramTypes.slice(exactArity);
+      if (
+        omitted.some(
+          (type, i) =>
+            !omittedFormalIsRepresentable(
+              type,
+              optionalParams.find((o) => o.index === exactArity + i),
+            ),
+        )
+      ) {
         continue;
       }
     }
@@ -546,7 +584,10 @@ function buildEntryArm(
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);
-      if (!opt) return [{ op: "ref.null.extern" }];
+      // Stay in lockstep with `collectMethodEntries`: anything it would refuse
+      // must poison the arm here too, so the two can never disagree about which
+      // under-applied calls the fast path may serve.
+      if (!omittedFormalIsRepresentable(want, opt)) return [{ op: "ref.null.extern" }];
       if (opt.constantDefault) {
         arm.push(
           opt.constantDefault.kind === "f64"
