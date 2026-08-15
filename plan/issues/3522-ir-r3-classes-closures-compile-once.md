@@ -2703,7 +2703,13 @@ at its baseline readiness with `"failures": []` (every entry/terminal-unit/
 emitted/IR-body floor green); `gen-ir-adoption --check` byte-clean after
 refreshing the `ClassDeclaration`, `GetAccessorDeclaration` and
 `SetAccessorDeclaration` rows; `cross-backend-diff` **29/29**; typecheck, lint
-and `format:check` green.
+and `format:check` green. `scripts/equivalence-gate.mjs` — **no new
+equivalence regressions**, 1,661 passing / 24 failing against 36
+known-failures. It additionally reports 12 baseline failures now PASSING
+(`coercion-arithmetic-add` string concatenation ×8, `symbol-basic` ×2,
+`issue-1197`, `math-pow-test262-pattern`); those come from the `origin/main`
+merge, not from this slice, so the baseline ratchet (`--update`) is left to the
+lanes that fixed them rather than folded into this PR.
 
 **Seven failures in the epic's required suite list are NOT caused by this
 slice, and they split into two groups — both attributed by A/B, not assumed.**
