@@ -156,7 +156,16 @@ export function isInvalidAssignmentTarget(node: ts.Expression, allowDestructurin
     if (ts.isArrayLiteralExpression(node)) return false;
   }
   let expr: ts.Node = node;
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // (#4417) `!` is a TYPE-LEVEL assertion that erases at emit, so `o.n! = 1`
+  // and `arr[i]!++` are ordinary property/element assignments and must be
+  // accepted. Unwrapping only parens rejected both — 62 sites across the
+  // compiler's own source, including 16 `fctx.breakStack[i]!++` in
+  // codegen/statements/control-flow.ts.
+  //
+  // Deliberately unwrapped HERE, after the destructuring test above and not
+  // before it: that test must see the un-unwrapped node so `({}) = 1` stays
+  // the SyntaxError it is.
+  while (ts.isParenthesizedExpression(expr) || ts.isNonNullExpression(expr)) expr = expr.expression;
   // Valid: identifiers, property access, element access (parens are
   // transparent for these — `(x) = 1` / `(o.p) = 1` are valid).
   if (ts.isIdentifier(expr)) return false;
