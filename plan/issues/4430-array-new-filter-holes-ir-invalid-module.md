@@ -1,7 +1,8 @@
 ---
 id: 4430
 title: "Bounded sparse `new Array(n)` + filter holes: standalone IR route emits a non-validating module (in-tree #4222 test failing)"
-status: in-progress
+status: done
+completed: 2026-08-15
 sprint: current
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
@@ -65,3 +66,68 @@ the #4426 session's regression sweep).
 - All cases of `tests/es5-array-new-filter-holes.test.ts` pass (the module
   validates).
 - No IR-fallback bucket growth; filter-adjacent suites stay green.
+
+## Resolution (2026-08-15)
+
+**Root cause — the branded carrier is invisible to the IR type system, so the
+CALL to the element-store helper was unrepresentable.**
+
+V8's real message (probe `.tmp/p4430.mts`, `new WebAssembly.Module(binary)`):
+
+```
+Compiling function #50:"test" failed:
+  local.set[0] expected type (ref null 45), found local.tee of type (ref null 2)
+```
+
+with `45 = $__holey_array`, `2 = $__vec_externref`. Reading the WAT:
+
+```wat
+(block (result (ref null 45)) … struct.new 45)   ;; __ir_holey_array_new
+local.tee 0                                      ;; $$ir3 : (ref null 2)  ← erased here
+…
+local.set 2                                      ;; __inl14_p0 : (ref null 45)
+```
+
+`local.tee`'s result type is the LOCAL's type, not the value's, so the holey
+brand is erased at the binding and the (inlined) call to
+`__vec_elem_set_<holeyIdx>` receives the parent type. The inliner only changed
+the wording — the un-inlined `call` was equally invalid.
+
+The binding is typed from the IR's logical `vec<externref>` `IrType`, which
+carries **no brand**: `from-ast.ts` gives `__ir_holey_array_new` the result type
+`irVec(irVal({kind:"externref"}), true)`. Legacy does not have this problem
+because `inferArrayVecType` / `moduleGlobalWasmType` pin the slot to
+`$__holey_array` from `ctx.holeyArrayDeclarations`. Pinning the same carrier in
+the IR is **not** reachable from here: `IrType.vec`'s `layout` is keyed by
+ELEMENT type during Program-ABI preparation, and `attachIrVecLayouts` throws
+`"IR vec type already carries a different prepared layout"` if a site
+pre-attaches a different carrier for the same element.
+
+**Fix (`src/codegen/vec-elem-set.ts`) — take the PARENT carrier in the helper.**
+`$__holey_array` is a `final` subtype of `$__vec_externref`, and BOTH fields
+this helper touches (`length`, `data`) are declared on that parent. So the
+signature and every `struct.get`/`struct.set` now use `vecDef.superTypeIdx` for
+the holey carrier. A holey instance is a valid argument by subtyping, so the
+legacy path (which does type its binding `$__holey_array`) is unaffected, and no
+cast is introduced in either direction. The hole-preserving growth semantics —
+`$Hole`-filled `array.new`, the `[oldLength, idx)` `array.fill` — are untouched
+and still keyed on `isHoleyArrayType`. Same idiom as the #4426 `.length=`
+receiver fix: type the receiver at the level that owns the fields being written.
+
+**Residual (deliberate, filed here, not fixed):** the IR still has no way to
+express "this logical `vec<externref>` is the branded sparse carrier". Nothing
+today needs it — the IR dispatches holes from the AST
+(`isHoleyArrayConstructor` / `isHoleyArrayFilterCall` /
+`isHoleyArrayElementStore`), and the filter helper takes `externref` — but a
+future holey-only WasmGC operation that needs the concrete type at a call
+boundary would hit the same wall. Closing it means keying vec layouts on more
+than the element type.
+
+## Test Results (2026-08-15)
+
+| Check | Before | After |
+| --- | --- | --- |
+| `tests/es5-array-new-filter-holes.test.ts` | 8 pass / 1 fail (`claims the bounded sparse route in standalone IR`: `WebAssembly.validate` false) | 9 pass |
+| `tests/es5-standalone-array-filter.test.ts` | 7 pass | 7 pass |
+| `pnpm run check:ir-fallbacks` | OK | OK — no unintended / post-claim / module-level increases |
+| probe `.tmp/p4430.mts` | `validate false` + the `local.set` message above | `validate true` |
