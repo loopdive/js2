@@ -1804,3 +1804,70 @@ asserts the measured value.
     a time with its own regression sweep. Should be its own issue, not a slice
     of this one.
 - V2-S5 (symbols / instance chain), S6, S7 unchanged.
+
+---
+
+## Implementation Plan — P2: own-property views consult the NativeProto companion (fable, 2026-08-15)
+
+Implements the P2 defect banked in "P1/P2 triage" above (~L1559). P1 (inherited
+accessor `[[Set]]`) is explicitly OUT of this slice — separate site, separate
+plan. Scope base: **P2 ≈ 125 candidates** (`.tmp/p1p2-scope.ts`, regex-scoped
+against the standalone baseline, 2026-08-15 — candidates by source shape, not
+confirmed yields).
+
+### Mechanism (from the triage, confirmed against source)
+
+Entries written by `Object.defineProperty(<Builtin>.prototype, k, d)` live in
+the brand companion and are visible to `__extern_get`/`__extern_has` (#4176)
+but not to the own-property views. Add the same own-layer probe the read path
+uses — `ref.test $NativeProto` → `__protoidx_brand_off` →
+`__protoidx_companion(off, 0)` → `__obj_find` (own-only, **no chain walk**) —
+to both own-property views:
+
+1. **`__hasOwnProperty` / `__object_hasOwn`** — single site: `emitHasOwn`,
+   `src/codegen/object-runtime.ts` ~L3442 (both names registered at ~L3485-86).
+   Insert the companion probe after the existing miss arms, before the final
+   false.
+2. **`__getOwnPropertyDescriptor`** — the dispatch is spread
+   (`builtin-static-gopd.ts` — `tryEmitStandaloneBuiltinStaticGopd` L282,
+   `tryEmitStandaloneStructGopdKeyDispatch` L552; `carrier-bag-visibility.ts` —
+   `buildBagGopdFallback` L225; `class-proto-object.ts`; `dyn-read.ts`). Do
+   NOT patch every module. First run the `.tmp/p5.js` differential under a
+   trace to find **which arm answers `gOPD(dp, "p2")` → undefined today** (dp
+   = flowing `Date.prototype`), and insert the companion probe immediately
+   before that undefined arm. Expected single funnel: the dynamic-receiver
+   fallback (`buildBagGopdFallback` or the dyn-read miss tail) — verify, do
+   not assume. If syntactic `gOPD(Date.prototype, "p2")` routes through a
+   second arm (`tryEmitStandaloneBuiltinStaticGopd`), that arm gets the same
+   probe — two insertions max; more than two means the funnel hypothesis is
+   wrong, stop and record.
+
+### Descriptor synthesis (the part reads don't need)
+
+`__obj_find` yields the value; the descriptor also needs
+writable/enumerable/configurable. `defineProperty`'s companion write path
+stores flags — locate where the companion entry's flags live (same store the
+`"p2" in dp` path ignores) and surface them. If flags are genuinely not stored
+(write path discards the descriptor), record that as a measured finding and
+synthesize `{writable:false, enumerable:false, configurable:false}` ONLY if
+probing real `defineProperty` defaults confirms the stored entries are always
+default-flag; otherwise the flag store is a prerequisite and this plan stops
+at `hasOwnProperty` + a recorded blocker — do NOT ship guessed flags.
+
+### Order/consistency constraint (lane's own, kept)
+
+Both views land in ONE boundary. `hasOwnProperty`=true + `gOPD`=undefined is a
+half-consistent MOP, worse than uniformly false. If gOPD turns out blocked on
+the flag store, hasOwnProperty does NOT land alone either.
+
+### Acceptance
+
+- `.tmp/p5.js` probe: all five views agree (`hasOwnProperty(dp,"p2")` true,
+  `gOPD(dp,"p2")` → `{value:99, writable:false, enumerable:false,
+  configurable:false}` per defineProperty defaults, both receiver forms).
+- Negative controls on the same binary: `gOPD(dp,"nope")` undefined;
+  `hasOwnProperty(dp,"toString")` on a PLAIN object still false for inherited;
+  seeded members (`gOPD(p,"find")` from S3b-2 correction) unchanged.
+- Measure against the 125-candidate list, scoped standalone run; report
+  flips with provenance. No regression in `tests/issue-2175-*.test.ts`,
+  `tests/issue-4447-mg-regressions.test.ts`.
