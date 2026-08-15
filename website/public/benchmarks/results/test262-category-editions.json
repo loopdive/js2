@@ -905,6 +905,14 @@
       "skip": 0
     }
   },
+  "built-ins/AsyncDisposableStack": {
+    "ES2027": {
+      "pass": 75,
+      "fail": 27,
+      "ce": 2,
+      "skip": 0
+    }
+  },
   "annexB/language": {
     "ES5": {
       "pass": 580,
@@ -922,14 +930,6 @@
       "pass": 11,
       "fail": 15,
       "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/AsyncDisposableStack": {
-    "ES2027": {
-      "pass": 75,
-      "fail": 27,
-      "ce": 2,
       "skip": 0
     }
   },
@@ -1037,14 +1037,6 @@
       "skip": 0
     }
   },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/WeakMap": {
     "ES2015": {
       "pass": 85,
@@ -1055,6 +1047,14 @@
     "ES2026": {
       "pass": 30,
       "fail": 9,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1167,6 +1167,14 @@
       "skip": 0
     }
   },
+  "built-ins/WeakSet": {
+    "ES2015": {
+      "pass": 73,
+      "fail": 12,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/Boolean": {
     "ES5": {
       "pass": 4,
@@ -1177,14 +1185,6 @@
     "ES2015": {
       "pass": 4,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/WeakSet": {
-    "ES2015": {
-      "pass": 73,
-      "fail": 12,
       "ce": 0,
       "skip": 0
     }
@@ -1247,14 +1247,6 @@
       "skip": 0
     }
   },
-  "built-ins/ShadowRealm": {
-    "ES2023": {
-      "pass": 0,
-      "fail": 64,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/parseFloat": {
     "ES2015": {
       "pass": 0,
@@ -1271,6 +1263,14 @@
     "ES2021": {
       "pass": 15,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/ShadowRealm": {
+    "ES2023": {
+      "pass": 0,
+      "fail": 64,
       "ce": 0,
       "skip": 0
     }
@@ -1365,14 +1365,6 @@
       "skip": 0
     }
   },
-  "language/computed-property-names": {
-    "ES2015": {
-      "pass": 20,
-      "fail": 21,
-      "ce": 3,
-      "skip": 0
-    }
-  },
   "language/comments": {
     "ES5": {
       "pass": 16,
@@ -1390,6 +1382,14 @@
       "pass": 28,
       "fail": 1,
       "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 20,
+      "fail": 21,
+      "ce": 3,
       "skip": 0
     }
   },
