@@ -113,4 +113,75 @@ test file.
 
 ## Test Results
 
-See `tests/issue-4487.test.ts`.
+Measured shapes, before → after (`.tmp/spread-probe.ts`, `JS2WASM_IR_SHAPE_DIAG=1`;
+`legacy`/`ir` columns are the compiled-and-run values, equal in every row):
+
+| shape | before | after |
+| --- | --- | --- |
+| `[...a]` (const vec) | `expr-arraylit-spread` | **CLAIMED** |
+| `[...a, x]` | `expr-arraylit-spread` | **CLAIMED** |
+| `[x, ...a, y]` | `expr-arraylit-spread` | **CLAIMED** |
+| `[...a, ...b]` | `expr-arraylit-spread` | **CLAIMED** |
+| `[...a, ...a]` | `expr-arraylit-spread` | **CLAIMED** |
+| `[...[1, 2], x]` | `expr-arraylit-spread` | **CLAIMED** |
+| `[...a, true]` (bool vec) | `expr-arraylit-spread` | **CLAIMED** |
+| `[...p]` (parameter) | `expr-arraylit-spread` | `expr-arraylit-spread-dynamic-source` |
+| `[...g()]` (call result) | `expr-arraylit-spread` | `expr-arraylit-spread-dynamic-source` |
+| `[..."ab"]` (string) | `expr-arraylit-spread` | `expr-arraylit-spread-dynamic-source` |
+| `[...a]` with `let a` | `expr-arraylit-spread` | `expr-arraylit-spread-dynamic-source` |
+| `[...a]` with `a` mutated/escaping | `expr-arraylit-spread` | `expr-arraylit-spread-dynamic-source` |
+| `[...a, , x]` (sparse) | `expr-arraylit-spread` | `expr-arraylit-sparse` (more specific) |
+| `[...a, "r"]` (mixed family) | `expr-arraylit-spread` | `expr-arraylit-mixed-primitive-family` |
+| `[1, 2, 3]` (control) | CLAIMED | CLAIMED |
+
+`tests/issue-4487.test.ts` — 46 cases, all green. Positives are claim-backed
+(selector claims AND `irOutcomes` reports `irBodyEmitted`) and each is checked
+against Node running a JS twin as well as legacy codegen.
+
+**Aliasing / copy proof.** `const a = [1,2,3]; const b = [...a]; b[0] = 100;`
+→ `a[0]` is `1` and `b[0]` is `100`, on Node, legacy and IR, with the function
+claim-backed. Two spreads of one source are independent (`b[0] = 50` leaves
+`c[0]` and `a[0]` at `1`). The mirror probe (write the SOURCE, read the copy)
+cannot be claim-backed — a write through the source is exactly what the
+length-invariance analysis refuses — so it is pinned as a negative instead.
+
+**Review finding, fixed before landing.** The first cut searched the whole
+function for a declaration by NAME, which bound
+
+```ts
+const a = [1, 2, 3];
+function f() { { const a = [1, 2]; g(a); } const b = [...a]; }
+```
+
+to the block-local `a` (length 2) while the spread refers to the module-level
+`a` (length 3) — a miscompile. The competing-binding check could not catch it
+(within the function there is exactly one `a`). Fixed by requiring the spread
+to be a descendant of the declaration's own block scope and to follow it in
+source order; both are pinned as unit tests.
+
+**Measured non-issue.** A mixed-type spread cannot reach the pre-existing bare
+`Error` mixed-type throw: `[...a, t]` (f64 vec + bool) and `[...a, x]` (bool
+vec + number) both compile fine, and the annotated `const b: number[] = [...a]`
+over a bool vec fails as an ordinary TypeScript type error, not a compiler
+crash (`.tmp/mixed-hardfail-probe.ts`). The one hard-failure path that WAS
+reachable — a string-carrier source — is fixed via `IrUnsupportedError` and
+pinned by a regression test.
+
+**Gates** (all run locally on this branch):
+
+- `check:ir-fallbacks` — OK, no unintended/post-claim/module-level increases.
+- `gen:ir-adoption --check` — up to date.
+- `check:ir-only` — host lane 37 terminal units / 37 emitted / 37 IR bodies,
+  0 unsupported; standalone lane 17 emitted / 20 unsupported with the
+  per-code breakdown identical to `scripts/ir-only-baseline.json`. Verdict
+  READY, floors unchanged.
+- `check:func-budget`, `check:loc-budget`, `check:oracle-ratchet` (+0/+0),
+  `check:pushraw` (+0), `check:issue-ids --against-main`,
+  `check:issue-spec-coverage`, `check:done-status-integrity`,
+  `check:test-vacuity-shapes`, `update-issues --check`, prettier, biome — all OK.
+- Adjacent suites (`array-capacity`, `fast-arrays`, `issue-3583`,
+  `ir-algorithms-cluster`, `array-methods`): the 7 failures present are
+  **identical on the branch base** (verified by the file-copy A/B: base
+  `793b5c0e` sources restored, same 7 test names fail), so they are
+  pre-existing and untouched by this change.
+- `equivalence-gate.mjs` — full single-fork run.
