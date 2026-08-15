@@ -1,10 +1,11 @@
 ---
 id: 4441
 title: "merge_group shard split — FOURTH ratio re-derivation: 58/44 estimate overshot, measured 1.03 → 52/50"
-status: ready
+status: done
 sprint: current
 created: 2026-08-15
 updated: 2026-08-15
+completed: 2026-08-15
 priority: medium
 horizon: s
 feasibility: easy
@@ -81,3 +82,37 @@ own re-derivation procedure)
 1. Generator emits 52 js-host + 50 standalone entries; shape test green.
 2. Comment block documents the fourth derivation with the run ids + numbers.
 3. Typecheck + quality gates green. No other workflow behavior changed.
+
+## Results (2026-08-15)
+
+- `scripts/gen-test262-mg-matrix.mjs`: `JS_HOST_CHUNKS` 58 -> **52**,
+  `STANDALONE_CHUNKS` 44 -> **50** (total unchanged at 102 =
+  `MERGE_GROUP_RUNNER_CAPACITY` 120 - `MERGE_GROUP_RESERVED_RUNNERS` 18).
+  Added the "FOURTH ratio drift (2026-08-15)" block with the three run ids,
+  per-lane totals/means/maxes, the measured 1.02-1.05 ratio, and the note that
+  the THIRD split was an estimate (x1.4) that overshot while js-host itself
+  fell 29,353 -> ~22.5k rs. Updated the RE-DERIVING paragraph's drift count
+  (twice -> four times, 2.13 -> 1.835 -> 1.31 -> 1.03).
+- Dry run, `node scripts/gen-test262-mg-matrix.mjs --github-output`: 102
+  entries total — **52 js-host + 50 standalone**, single-line `matrix=` output
+  intact. Lane-drop runs unchanged in behavior: host-only 52, standalone-only
+  50, each keeping its own `chunk_total`.
+- `tests/issue-3431-mg-matrix.test.ts`: the only assertion pinning the old
+  numbers was `toBeCloseTo(58 / 44, 2)` -> `toBeCloseTo(52 / 50, 2)`; drift-
+  history comment extended. The `toHaveLength(102)` /
+  `CAPACITY - RESERVED` assertions needed no change. **12/12 tests pass.**
+- `.github/workflows/test262-sharded.yml`: the `test262-shard-mg` header
+  comment still claimed "js-host=66 and standalone=36 ... 1.835:1" (stale since
+  the THIRD drift). Rewritten to cite 52/50 at 1.03:1 and to point at the
+  generator as the single source of truth, so it stops re-staling. Comment
+  only — no workflow behavior touched.
+- Grep found no other consumer of `JS_HOST_CHUNKS`/`STANDALONE_CHUNKS` or of
+  the 58/44 pair; other `102` references (`scripts/set-merge-queue-config.sh`,
+  `docs/ci-policy.md`) are about the unchanged total.
+- Gates: `pnpm run typecheck` clean; `npm run lint` (biome src/tests/scripts)
+  exit 0; `npx prettier --check` clean on all three changed files.
+  `buildMergeGroupMatrix`'s lane-drop behavior untouched.
+- **Follow-up (recurring, not one-off):** spot-check the next few merge_group
+  runs' per-lane `Run shard` means — both should converge on ~430-440 s. The
+  ratio has now drifted four times; re-derive again if one lane's max is
+  consistently >~1 min past the other's.
