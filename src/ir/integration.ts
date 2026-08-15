@@ -4445,7 +4445,19 @@ function makeFromAstResolver(
     // (#4461) The three host-free capabilities the native-`$Map` arms consult.
     // They live here, on the lower/integration side, for the same #2955 reason
     // the box/unbox predicates do: from-ast reads no mode flags of its own.
+    // PURE. Reports the storage type only if the `$Map` struct already exists;
+    // it never registers one. The hot-path callers (every method receiver,
+    // every `new`) use this one. See `ensureNativeMapStorageType` for the twin
+    // and for the 508-file regression that made the split necessary.
     nativeMapStorageType(): IrType | undefined {
+      if (!ctx.nativeStrings || ctx.mapTypeIdx < 0) return undefined;
+      return { kind: "val", val: { kind: "ref_null", typeIdx: ctx.mapTypeIdx } };
+    },
+    // MATERIALIZING. Only for a call site that has already PROVEN it is looking
+    // at a `Map`: `ensureMapHelpers` emits twelve functions and the struct
+    // types, so reaching it speculatively puts the whole collection runtime
+    // into modules that never mention `Map`.
+    ensureNativeMapStorageType(): IrType | undefined {
       if (!ctx.nativeStrings) return undefined;
       ensureMapHelpers(ctx);
       if (ctx.mapTypeIdx < 0) return undefined;
