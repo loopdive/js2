@@ -501,10 +501,7 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     };
     if (exactArity !== null) {
       if (paramTypes.length < exactArity) continue;
-      if (
-        !hostDynamic &&
-        paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))
-      ) {
+      if (!hostDynamic && paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))) {
         continue;
       }
     }
