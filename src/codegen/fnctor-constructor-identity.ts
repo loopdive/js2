@@ -257,8 +257,20 @@ export function emitFnctorConstructorArguments(
     if (capture.hasTdzFlag) emitFnctorCaptureFlagArgument(ctx, fctx, capture);
   }
 
+  // (#4464) An OVER-supplied `new F(a, b)` on a one-parameter `F` used to push
+  // BOTH values, so the `call` consumed the trailing ones and every declared
+  // parameter read the argument to its right: `function __func(arg){this.foo=
+  // arg}` called as `new __func(__FOO, __BAR)` stored `__BAR`
+  // (`S13.2.2_A6_T2`). §10.2.1.3 passes the extra arguments to [[Call]], where
+  // only `arguments` can observe them — but they must still be EVALUATED for
+  // their side effects, in source order, before the call. So compile each one
+  // in place and drop it: order preserved, arity restored.
+  const declaredCount = userParamTypes?.length;
   for (let i = 0; i < args.length; i++) {
     const actual = compileExpression(ctx, fctx, args[i]!, userParamTypes?.[i]);
+    if (declaredCount !== undefined && i >= declaredCount && actual !== null && actual !== undefined) {
+      fctx.body.push({ op: "drop" });
+    }
   }
   for (let i = args.length; i < (userParamTypes?.length ?? 0); i++) {
     pushDefaultValue(fctx, userParamTypes![i]!, ctx);
