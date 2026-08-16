@@ -13,6 +13,13 @@ area: ir
 goal: performance
 related: [3931, 2682, 4505, 4557]
 claimed_by: ttraenkler/fable-lead
+# The fix is a preheader hoist + a condition bypass inside
+# `installCanonicalCharReadProof` / `lowerForStatement`, i.e. inside the
+# recogniser this issue is about. Both live in from-ast.ts; splitting two
+# ~30-line helpers into a new module to dodge the budget would separate the
+# hoist from the loop lowering that consumes it.
+loc-budget-allow:
+  - src/ir/from-ast.ts
 ---
 
 # #4517 — the recognised char-read loop pays two int→float converts + a float compare per iteration
@@ -93,3 +100,95 @@ condition lowering — unrecognised loops keep today's behaviour byte-for-byte.
 5. **Acceptance**: (c) structural proof + (a)(b)(d) green locally; the
    post-merge refresh restoring `string-hash warm` to the ~240 µs band on
    x64 closes the issue (record the refresh commit hash here).
+
+## Implementation (2026-08-16, Opus lane)
+
+Two edits, both scoped to the recognised loop; nothing else changes shape.
+
+- `src/ir/char-read-loop.ts` — `CharReadProof` gains `lenSlot: number | null`.
+- `src/ir/from-ast.ts`
+  - `installCanonicalCharReadProof` calls a new `hoistCharReadLengthI32`
+    after the flatten hoist: `emitStringLen(recv)` → one
+    `i32.trunc_sat_f64_s` → `declareSlot("__cca_len", i32)` → `slot.write`,
+    all in the preheader. Returns `null` (no `lenSlot`) if the length is not
+    obtainable as a scalar, so the caller is unchanged in that case.
+  - `lowerForStatement`'s cond buffer emits
+    `i32.lt_s(slot.read(i), slot.read(__cca_len))` when `lenSlot !== null`
+    AND a new `provenIndexSlotReadI32` confirms `i` lives in an i32 slot.
+    Either piece missing ⇒ the generic `lowerExpr(cond)` runs unchanged.
+
+**Deviation from the plan, deliberate**: `lenSlot` is set ONLY on the
+native-strings (`hoist`) arm. Host-string mode keeps the generic condition —
+its `.length` is an engine call, not a struct field, so hoisting it is a
+different and larger change than the lane this issue measures. Recorded as a
+residual below; asserted by a test so the narrowing is not accidental.
+
+`.data`/`.off` are NOT hoisted, per plan step 3.
+
+## Test Results (2026-08-16)
+
+Box was heavily loaded throughout (1-min load 12–27 on 8 cores); every wall
+time below is inflated and the two timing lanes are reported as A/B pairs
+measured by this lane, not against numbers from another harness.
+
+**(c) STRUCTURAL PROOF — the load-bearing gate. PASS.**
+Landing warm artifact rebuilt exactly as `generate-wasmtime-hot-runtime.mjs`
+builds it (strip metadata → append warm driver → `target: wasi`,
+`nativeStrings`, `optimize: 3` → `wasm-opt --all-features
+--disable-custom-descriptors -O3`), disassembled with `wasm-dis`:
+
+| | hash-loop condition | `f64.lt` in whole module |
+|---|---|---|
+| base (this branch's parent) | `f64.lt(f64.convert_i32_s(i), f64.convert_i32_s(struct.get $2 0 recv))` | 1 |
+| fix | `i32.lt_s(local.get $i, local.get $len)` | **0** |
+
+The length `struct.get` is hoisted to the preheader too
+(`local.set $3 (struct.get $2 0 (local.get $4))` before `loop $label1`), so
+the fix removes **four** instructions per iteration from a ~10-instruction
+loop, not two. `.data`/`.off` `struct.get`s remain inside, as planned.
+
+**(a) node/V8, same wasm artifact, `run(20000)` — PASS on correctness, NO
+measurable timing change.** Result `862771296` on both sides. Median of 25
+in-process calls after 10 warmups: base 48.7 ms (min 14.0), fix 37.3 ms
+(min 17.2) — a 10x min/max spread from box load, so this is noise, which is
+the expected outcome: V8 already folded the f64 round-trip away, which is
+why the regression was invisible on every locally runnable lane.
+(The plan's "≤ ~1.6 ms" came from the Fable lane's own probe, whose harness
+was not on the branch; the number above is this lane's harness on both
+sides, so only the A/B is comparable.)
+
+**(b) wasmtime arm64, `--invoke warm` (min-of-40 per sample), 6 interleaved
+pairs — PASS on the ≤2.5 ms bar, NO arm64 speedup.**
+
+| | min | median | mean |
+|---|---|---|---|
+| base | 1.151 ms | ~1.27 ms | 1.28 ms |
+| fix | 1.174 ms | ~1.23 ms | 1.23 ms |
+
+~4%, inside the noise. This is the predicted result, not a disappointment:
+the issue's own evidence chain says arm64 tolerates the `fcvt`+`fcmp` chain
+and x64 does not. **The arm64 A/B cannot confirm or refute the x64 fix** —
+(c) is the evidence that carries the claim.
+
+**(d) tsc + scoped tests — PASS.** `npx vitest run tests/issue-4517.test.ts
+tests/issue-3931.test.ts tests/issue-2682.test.ts`: **38/38 passed**
+(a first run at the default 35 s timeout had 8 timeouts under load, including
+pre-existing #2682 tests; re-run at 900 s is clean). `npx tsc --noEmit`
+clean.
+
+New `tests/issue-4517.test.ts` asserts, per string mode: `__cca_len` slot
+present, `i32.lt_s` present, `f64.lt` ABSENT (the loop test was the
+function's only float compare) for fast+nativeStrings / nativeStrings /
+standalone / wasi; `__cca_len` ABSENT for host; plus byte-faithful hashes
+across the compare boundary (`""`, `"a"`, `"ab"`, long, high code units) and
+a substring view with a non-zero `.off`.
+
+## Residuals
+
+- **Host-string mode still lowers the condition through f64** (deliberate,
+  above). Worth a follow-up only if a host-lane measurement shows it.
+- **`.data`/`.off` are still re-read every iteration.** Making NativeString's
+  fields immutable so wasm-opt can hoist them itself has type-identity blast
+  radius; file separately if the post-merge x64 refresh still shows a gap.
+- **x64 confirmation is post-merge.** The first landing refresh after this
+  merges answers it; #4505's AC tracks that question.

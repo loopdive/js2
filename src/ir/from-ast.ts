@@ -9313,6 +9313,10 @@ function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): Cha
       indexName: shape.indexName,
       hoist: null,
       trustedFuncName: plan.trustedFuncName,
+      // (#4517) Host strings keep the generic condition: their `.length` is an
+      // engine call, so hoisting it is a different (larger) change than the
+      // native-lane fix this issue measures. Narrowest site.
+      lenSlot: null,
     };
   }
 
@@ -9332,12 +9336,66 @@ function installCanonicalCharReadProof(stmt: ts.ForStatement, cx: LowerCtx): Cha
   // receiver in one. Named after legacy's hoist locals.
   const flatSlot = cx.builder.declareSlot("__cca_flat", carrier);
   cx.builder.emitSlotWrite(flatSlot, flat);
+
+  // (#4517) Second preheader hoist: `recv.length` as an i32 slot, so the loop
+  // CONDITION can be a bare `i32.lt_s` instead of the generic relational's
+  // `f64.lt(f64.convert_i32_s(i), f64.convert_i32_s(len))`. Cranelift does no
+  // LICM and no strength reduction, so on wasmtime/x64 that f64 round-trip is
+  // executed literally every iteration of a ~10-instruction loop — measured at
+  // 5.4x on the landing `string-hash warm` lane (#4557 → #4517). V8 folds it
+  // away, which is why the same artifact looked faster everywhere testable.
+  //
+  // Soundness is the SAME invariance assumption that already licenses the
+  // flatten above: the recogniser pins `recv` for the loop's whole extent (no
+  // assignment, no shadowing, no capturing nested function), so `recv.length`
+  // is loop-invariant. String lengths are u31, so the f64 the length intrinsic
+  // hands back converts exactly — the compare answers identically.
+  //
+  // `.data` / `.off` are deliberately NOT hoisted: they are raw backend refs,
+  // and an IR value typed with one fails the prepared-component ABI gate and
+  // demotes the whole function (the #3931 constraint documented in
+  // `codegen/char-code-at-helpers.ts`). Making those fields immutable so
+  // wasm-opt can hoist the `struct.get`s itself is the follow-up.
+  const lenSlot = hoistCharReadLengthI32(shape.recvIdent, recv, cx);
   return {
     recvName: shape.recvName,
     indexName: shape.indexName,
     hoist: { flatSlot, readFuncName: hoist.readFuncName },
     trustedFuncName: null,
+    lenSlot,
   };
+}
+
+/**
+ * (#4517) Park `recv.length` in a preheader i32 slot, or return `null` if the
+ * length is not obtainable as an i32 here. Refuse-loud: a `null` result leaves
+ * the caller's condition lowering completely untouched rather than emitting a
+ * half-applied one.
+ */
+function hoistCharReadLengthI32(recvIdent: ts.Identifier, recv: IrValueId, cx: LowerCtx): number | null {
+  const rawLen = cx.builder.emitStringLen(recv, inferStringEncoding(recvIdent, cx));
+  const lenKind = asVal(cx.builder.typeOf(rawLen))?.kind;
+  // The length intrinsic is f64-typed on every current carrier; convert ONCE,
+  // in the preheader (exact — a string length is a u31).
+  const lenI32 =
+    lenKind === "i32" ? rawLen : lenKind === "f64" ? cx.builder.emitUnary("i32.trunc_sat_f64_s", rawLen, IR_I32) : null;
+  if (lenI32 === null) return null;
+  const lenSlot = cx.builder.declareSlot("__cca_len", { kind: "i32" });
+  cx.builder.emitSlotWrite(lenSlot, lenI32);
+  return lenSlot;
+}
+
+/**
+ * (#4517) The proven induction variable as a bare i32, WITHOUT the fallback
+ * `lowerCharReadIndexI32` carries: the condition rewrite is only worth doing
+ * when `i` already lives in an i32 slot, which is exactly when the recogniser
+ * matched (`detectI32LoopVar`). Anything else returns `null` and the caller
+ * keeps the generic condition.
+ */
+function provenIndexSlotReadI32(indexName: string, cx: LowerCtx): IrValueId | null {
+  const binding = cx.scope.get(indexName);
+  if (binding === undefined || binding.kind !== "slot" || binding.i32Storage !== true) return null;
+  return cx.builder.emitSlotRead(binding.slotIndex);
 }
 
 function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
@@ -9383,6 +9441,26 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
     const cond = stmt.condition;
     if (!cond) {
       condResult = loopCx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+      return;
+    }
+    // (#4517) The recognised char-read loop's condition is `i < recv.length`
+    // BY SHAPE (the recogniser rejects anything else), and both operands are
+    // already i32 — `i` in its i32 slot, `recv.length` in the preheader slot
+    // hoisted above. Emit the native compare instead of routing through the
+    // generic relational, which promotes both sides to f64. `i32.lt_s` and
+    // `f64.lt` agree bit-for-bit here: `i` is a non-negative i32 counter and a
+    // string length is a u31, so neither operand can reach the range where the
+    // two disagree. If either piece is missing, fall through to the generic
+    // lowering unchanged — never a half-applied condition.
+    const provenIndex =
+      charReadProof && charReadProof.lenSlot !== null ? provenIndexSlotReadI32(charReadProof.indexName, loopCx) : null;
+    if (charReadProof && charReadProof.lenSlot !== null && provenIndex !== null) {
+      condResult = loopCx.builder.emitBinary(
+        "i32.lt_s",
+        provenIndex,
+        loopCx.builder.emitSlotRead(charReadProof.lenSlot),
+        IR_BOOL,
+      );
       return;
     }
     const raw = lowerExpr(cond, loopCx, irVal({ kind: "i32" }));
