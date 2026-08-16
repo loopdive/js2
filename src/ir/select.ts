@@ -69,6 +69,7 @@ import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationList
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
+import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -9144,8 +9145,16 @@ function isStaticSpreadSource(
  * Slice-2 acceptance check for object literals. Accepts only "plain data"
  * literals: PropertyAssignment / ShorthandPropertyAssignment with
  * Identifier / StringLiteral / NumericLiteral keys and Phase-1-claimable
- * initializers. Rejects spread, methods, accessors, computed keys, and
- * duplicate keys (last-write-wins is JS spec; deferred to a later slice).
+ * initializers. Rejects spread, methods, accessors, and duplicate keys
+ * (last-write-wins is JS spec; deferred to a later slice).
+ *
+ * (#4513) A COMPUTED key is accepted when it folds to a static string —
+ * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
+ * is static and a folded key is indistinguishable from a plain one. Keys that
+ * need a value environment (`const k = "a"`, `Symbol.iterator`, template
+ * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
+ * the fold is syntactic, and for the measurement showing a numeric key needs no
+ * canonicalisation step (the scanner has already done it).
  */
 function isPhase1ObjectLiteral(
   expr: ts.ObjectLiteralExpression,
@@ -9221,7 +9230,12 @@ function isPhase1ObjectLiteral(
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      const name = phase1PropertyName(prop.name);
+      // (#4513) Data-property keys resolve through the shared fold, which adds
+      // the statically-foldable COMPUTED keys (`{ ["a"]: v }`, `` { [`a`]: v } ``,
+      // `{ [0]: v }`) to the identifier/string/numeric set. A key that does not
+      // fold keeps this arm — no new reason code, because a non-folding computed
+      // key is the same condition `objectlit-computed-key` already names.
+      const name = objectLiteralDataPropertyName(prop.name);
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
@@ -9308,11 +9322,15 @@ function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
 }
 
 /**
- * Resolve an object literal property name to a string. Identifier and
- * StringLiteral keys produce their text. NumericLiteral keys produce the
- * canonical JS toString of the number. ComputedPropertyName always
- * returns null — slice 2 doesn't see through computed keys, even when
- * the key expression is itself a string literal.
+ * Resolve a property name to a string. Identifier and StringLiteral keys
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
+ * ComputedPropertyName always returns null.
+ *
+ * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
+ * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
+ * function keeps rejecting computed names because its remaining callers are
+ * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a
+ * computed name means something different (see `phase1MemberName`).
  */
 function phase1PropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
