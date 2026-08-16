@@ -473,3 +473,10 @@ The fix is +92 lines across three files, and all three were required:
 Slice A is complete. Both #4500 slices have landed; the residue split recorded
 above (4 rows to #4495, the `#1387` CE gate to the constructible-closure ABI)
 is unchanged by this slice.
+
+**Regression gate (`tests/equivalence`) — Slice A.** Not in Slice A's original
+gate list, but run anyway: Slice A touches `property-access.ts`, the compiler's
+central property-read path, which is *more* core than the `assignment.ts` change
+that Slice B ran this gate for. All 214 files, memory-bounded batches:
+**16 failures across 8 files — byte-for-byte the same 16 A/B-proven pre-existing
+at this base (twice: at the #2867 boundary and again on Slice B). Zero new.**
