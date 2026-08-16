@@ -113,10 +113,54 @@ means "nothing to see" exactly when the analysis cannot see.
 
 ## Test Results
 
-- **Compile-time gate — MEASURED, see the probe result recorded below.**
-- `pnpm run typecheck` equivalent (`node node_modules/typescript/lib/tsc.js
-  --noEmit -p tsconfig.json`, TS 5.9.3) — clean on the guarded tree. NB
-  `pnpm run typecheck` itself cannot run in a worktree today: it invokes
+**The gate was PROVEN by measurement, not assumed** (the issue's step 3). A
+scratch probe member (`IrInstrProbe4070`, `kind: "probe.4070"`) was added to the
+`IrInstr` union in `src/ir/nodes.ts` — i.e. exactly the event this gate exists
+to catch — and the four guarded files were typechecked against the real union
+(TS 5.9.3, `strict: true`, scoped `tsconfig` over the four files + their
+transitive imports; 2m50s vs the full-tree run, which did not finish under a
+load average of 22 on this box). Both arms of the A/B were run:
+
+**WITH the guards (this PR) — 5 errors, each ON its own guard line:**
+
+```
+src/ir/lower.ts(3525,15):                error TS2322: Type 'IrInstrProbe4070' is not assignable to type 'never'.   <- emitInstrTree
+src/ir/lower.ts(3886,13):                error TS2322: ... 'never'.   <- collectIrUses
+src/ir/passes/inline-small.ts(976,13):   error TS2322: ... 'never'.   <- renameInstrOperands
+src/ir/passes/monomorphize.ts(950,13):   error TS2322: ... 'never'.   <- collectUses
+src/ir/verify.ts(1225,13):               error TS2322: ... 'never'.   <- collectUses
+```
+
+**WITHOUT them (`verify.ts` + `lower.ts` reverted to pre-fix, same probe):**
+
+```
+src/ir/lower.ts(3675,41):   error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+src/ir/verify.ts(1027,57):  error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+```
+
+That is the whole finding in two lines of output:
+
+1. The two **value-returning** switches were already caught — but as TS2366 at
+   **column 41 / 57 of the function SIGNATURE line**, not at the switch. The
+   error says "this function might return undefined", never "you forgot a case".
+2. **`emitInstrTree` produced NO diagnostic at all.** It is absent from the
+   pre-fix output entirely. The `void` switch was the genuinely silent one, and
+   it is the one that emits the Wasm.
+3. `checkInstr` produced no diagnostic in either arm, confirming it is
+   deliberately partial rather than accidentally unguarded.
+
+Controls: `src/ir/effects.ts(287)` and `src/ir/nodes.ts(3085/3251/3420)` — the
+four guards that already existed — errored identically in BOTH arms, so the
+probe was live in both and the differences above are attributable to the guards
+under test. The probe was reverted; it is not committed.
+
+- Scoped typecheck of the four guarded files on the committed tree — **clean,
+  exit 0** (this is the positive control for the A/B above: same config, no
+  probe, no errors).
+- The full-tree `pnpm run typecheck` did NOT complete locally and is left to
+  CI's `quality` lane. Two reasons, neither of them a result: the box was at
+  load 22 (two runs were killed at 33 and 52 minutes), and separately
+  `pnpm run typecheck` cannot run in a worktree at all today: it invokes
   `node_modules/typescript7/lib/tsc.js` and the `typescript7` alias is not
   installed in this container (nor in `/workspace`), so the script dies with
   `MODULE_NOT_FOUND` before typechecking anything. CI installs it; local runs
