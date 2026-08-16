@@ -390,6 +390,29 @@ export function recordScriptVarBindingNames(target: Set<string>, sourceFile: ts.
   walk(sourceFile);
 }
 
+/** Per-file memo for {@link scriptVarBindingNames}. */
+const scriptVarBindingNameCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * (#4489) Memoized set form of {@link recordScriptVarBindingNames}, for callers
+ * that need the names rather than a set to accumulate into.
+ *
+ * The `__module_init` `undefined` seed asks for this once per module-init pass
+ * (the body is compiled twice, #2965) and the walk is over the whole top-level
+ * region, so it is memoized per source file. Ambient files answer the empty set:
+ * `collectDeclarations` never gives an ambient declaration a value global, so
+ * there is nothing to seed and a name collected from one would be a phantom
+ * (the #4018 hazard on the TDZ side).
+ */
+export function scriptVarBindingNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = scriptVarBindingNameCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+  const names = new Set<string>();
+  if (!sourceFile.isDeclarationFile) recordScriptVarBindingNames(names, sourceFile);
+  scriptVarBindingNameCache.set(sourceFile, names);
+  return names;
+}
+
 /** Names owned by the declarative half of a Script's GlobalEnvironmentRecord.
  * Only declarations that are direct SourceFile children participate: a
  * block/loop lexical has its own nested environment and must not collide with
