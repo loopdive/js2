@@ -61,6 +61,7 @@ import {
 } from "./expressions/helpers.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
+import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { definedFuncAt } from "./func-space.js";
 import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
@@ -1957,6 +1958,35 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
   const staticReceiver = skipTransparentExpressions(expr.expression);
   if (ts.isIdentifier(staticReceiver)) {
     const objName = staticReceiver.text;
+    if (
+      process.env.DEBUG_MARKED_CODEGEN === "1" &&
+      (objName === "Lexer" ||
+        objName === "Parser" ||
+        propName === "lex" ||
+        propName === "lexInline" ||
+        propName === "parse" ||
+        propName === "parseInline")
+    ) {
+      const construct = objType.getConstructSignatures?.() ?? [];
+      console.error(
+        "[marked-static-read]",
+        objName,
+        "type",
+        objType.getSymbol()?.name,
+        "exact",
+        exactClassExpressionTypeName(ctx, objType),
+        "constructReturn",
+        construct[0]?.getReturnType?.().getSymbol?.()?.name,
+        "constructExact",
+        construct[0] ? exactClassExpressionTypeName(ctx, construct[0].getReturnType()) : undefined,
+        "mapped",
+        ctx.classExprNameMap.get(objName),
+        "classSet",
+        ctx.classSet.has(objName),
+        "moduleGlobal",
+        ctx.moduleGlobals.get(objName),
+      );
+    }
 
     // (#1639) `genFn.prototype` where `genFn` is a `function*` / `async function*`
     // declaration must return the intrinsic `%GeneratorPrototype%` /
@@ -1991,7 +2021,17 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     }
 
     // Resolve class expressions (var C = class {}) through the expr-name map
-    const resolvedClass = ctx.classExprNameMap.get(objName) ?? objName;
+    // Imported/aliased class values are often represented by an externref
+    // module binding, so their bare identifier is not present in
+    // `classExprNameMap`. Recover the declaration-identity synthetic class
+    // from the constructor's instance return type before falling back to the
+    // display name; otherwise `Lexer.lex`/`Parser.parse` are lowered through
+    // the generic dynamic property path and their returned value is lost.
+    const constructReturnType = objType.getConstructSignatures?.()[0]?.getReturnType?.();
+    const resolvedClass =
+      ctx.classExprNameMap.get(objName) ??
+      (constructReturnType ? exactClassExpressionTypeName(ctx, constructReturnType) : undefined) ??
+      objName;
     if (ctx.classSet.has(resolvedClass)) {
       const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
       if (__r !== PA_FALLTHROUGH) return __r;
@@ -2316,7 +2356,23 @@ export function tryPrototypeMethodAndArityReads(
 function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): ValType {
   const closureRootIdx = getFuncRefWrapperRootTypeIdx(ctx);
   ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-  if (closureRootIdx !== undefined) {
+  // (#2175 S3b-3, defect B) The metadata consult used to be ensured ONLY when
+  // the module had a closure root, because it was only ever asked for a closure
+  // receiver. It now answers for `$__ta_ctor` too (ta-ctor-meta.ts), and a
+  // program can reify `Int8Array` while compiling no closure at all — measured:
+  // with a closure present the consult fired and `Int8Array.length` read 3;
+  // without one it stayed 0. So the import is ensured whenever a `$__ta_ctor`
+  // type is registered as well.
+  //
+  // Reading `ctx.taCtorTypeIdx` here is a best-effort widening, not a
+  // correctness dependency: if the type is not registered yet (function
+  // compilation order is not source order) the module simply keeps its previous
+  // behaviour for this site. The consult itself is a call resolved at finalize,
+  // so wherever the import IS present the `$__ta_ctor` arm works regardless of
+  // when the type appeared.
+  const taCtorRegistered = ctx.taCtorTypeIdx !== undefined && ctx.taCtorTypeIdx >= 0;
+  const wantMeta = closureRootIdx !== undefined || taCtorRegistered;
+  if (wantMeta) {
     ensureLateImport(
       ctx,
       "__builtinfn_get_meta",
@@ -2325,8 +2381,7 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
     );
     addStringConstantGlobal(ctx, "length");
   }
-  const metaLengthToI32 =
-    closureRootIdx === undefined ? undefined : coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx);
+  const metaLengthToI32 = wantMeta ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   flushLateImportShifts(ctx, fctx);
 
   const lenFn = ctx.funcMap.get("__extern_length");
@@ -2336,31 +2391,65 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
       ? [{ op: "local.get", index: recvExternLocal }, { op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" }]
       : [{ op: "i32.const", value: 0 }];
   const guardedLength = (recvExternLocal: number): Instr[] => {
-    if (closureRootIdx === undefined || bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
+    if (bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
       return genericLength(recvExternLocal);
     }
     const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
+    // (#2175 S3b-3, defect B) The metadata consult is asked FIRST, for ANY
+    // receiver, instead of only for a closure-root subtype.
+    //
+    // WHY. `__builtinfn_get_meta` answers `length` for more shapes than
+    // closures: `fillTaCtorGetMetaArm` (ta-ctor-meta.ts) splices a `$__ta_ctor`
+    // arm returning 3 per §23.2.5.1. Gating the consult on `ref.test
+    // <closureRoot>` made that arm unreachable from this path, so a reified
+    // TypedArray constructor fell through to `__extern_length`, which has no
+    // notion of a ctor and answered **0**. Measured on `origin/main` @
+    // `9e17d34f3`, standalone: `Int8Array.length` → 0, while `Int8Array["length"]`
+    // → 3 and `gOPD(Int8Array,"length").value` → 3 — i.e. only the
+    // property-access lowering was wrong, which is what the nine
+    // `built-ins/TypedArrayConstructors/<View>/length.js` files assert.
+    //
+    // WHY NOT a `ref.test $__ta_ctor` arm alongside the closure one: this
+    // function runs during BODY compilation, and `$__ta_ctor` is registered
+    // lazily when a TA constructor is first reified. Function compilation order
+    // is not source order, so `ctx.taCtorTypeIdx` can still be unset here even
+    // for a program that does reify one — the same ordering trap that made the
+    // V2-S3b-1 seeder silently skip RegExp. Asking the meta native has no such
+    // dependency: it is a call, resolved at finalize.
+    //
+    // Legacy behaviour is preserved exactly on the miss path: a receiver with no
+    // metadata answers `0` if it is a closure (a plain user closure's arity is
+    // not statically tracked here — the #2580 Cluster-A value) and otherwise
+    // falls to `__extern_length`, which is what each did before.
     return [
       { op: "local.get", index: recvExternLocal },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: closureRootIdx },
+      ...stringConstantExternrefInstrs(ctx, "length"),
+      { op: "call", funcIdx: bfnGetMetaFn },
+      { op: "local.tee", index: metaLocal },
+      { op: "ref.is_null" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "local.get", index: recvExternLocal },
-          ...stringConstantExternrefInstrs(ctx, "length"),
-          { op: "call", funcIdx: bfnGetMetaFn },
-          { op: "local.tee", index: metaLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: 0 }],
-            else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
-          },
-        ],
-        else: genericLength(recvExternLocal),
+        // Miss path, byte-for-byte the previous semantics: a CLOSURE with no
+        // metadata answers 0 (a plain user closure's arity is not tracked here —
+        // the #2580 Cluster-A value); anything else falls to `__extern_length`.
+        // With no closure root in the module there is no closure to test, so the
+        // generic fallback stands alone.
+        then:
+          closureRootIdx === undefined
+            ? genericLength(recvExternLocal)
+            : [
+                { op: "local.get", index: recvExternLocal },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: closureRootIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [{ op: "i32.const", value: 0 }],
+                  else: genericLength(recvExternLocal),
+                },
+              ],
+        else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
       },
     ];
   };
@@ -3998,7 +4087,37 @@ export function finalizeStructAndDynamicMemberGet(
             // BOTH finders, which de-narrows exactly like the cold fix above.
             for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
             for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
-            if (fieldKinds.size === 1) {
+            // (#2864 wave-2 S1) The #2979 generator-sentinel exception, which
+            // every OTHER consumer of this candidate set already carries
+            // (`fillMemberGetDispatch`'s sentinel-aware box, `planGeneric`'s
+            // `generator-sentinel` decline, `planTypedF64` /
+            // `fillTypedMemberGetF64Dispatch` / `member-set-f64`'s
+            // `!isNativeGeneratorResultStruct`), was MISSING here — and this is
+            // the site that actually decides what the read site sees.
+            //
+            // A native generator's IteratorResult `value` is an f64 slot whose
+            // UNDEF_F64 bit pattern MEANS `undefined`. The finalize-filled
+            // `__get_member_value` dispatcher honours that: its arm answers a
+            // null externref (standalone canonical `undefined`) for the
+            // sentinel. The Phase-3 vote then saw a lone `f64` kind, narrowed
+            // `resultWasm` to f64, and coerced the dispatcher's externref back
+            // down through `__unbox_number` — turning the canonical `undefined`
+            // into NaN, which the caller re-boxes as a NUMBER. Measured on the
+            // exact test262 harness shape (`var result; result = iter.next();
+            // assert.sameValue(result.value, undefined)`): `typeof` answered
+            // "number", so every terminal `{value: undefined, done: true}`
+            // assertion failed across language/expressions/yield and the
+            // generators suites, host-free and silently.
+            //
+            // The narrowing is a PERFORMANCE specialization; the sentinel is a
+            // REPRESENTATION fact. Keep the honest externref for these reads —
+            // a numeric consumer re-narrows through its own coercion, paying one
+            // box/unbox only in modules that both register a native generator
+            // and read `.value` off a dynamically-typed receiver.
+            const anyGeneratorSentinelCandidate = structCandidates.some(
+              (c) => c.fieldType.kind === "f64" && isNativeGeneratorResultStruct(ctx, c.structTypeIdx),
+            );
+            if (fieldKinds.size === 1 && !anyGeneratorSentinelCandidate) {
               const k = [...fieldKinds][0];
               if (k === "f64" || k === "i32") {
                 // (#2938) Preserve the #2030/#2785 boolean BRAND through the

@@ -86,6 +86,7 @@ import {
 } from "./callable-bindings.js";
 import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { collectOuterWrites } from "./closure-captures.js";
+import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
 import {
@@ -534,8 +535,36 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * This is the SINGLE predicate that decides the native-map lowering arms, so
    * it is also what the selector's `allowNativeMapStorage` option must agree
    * with — one fact, two readers, no independent mode reads.
+   *
+   * PURE — it never materializes anything. It answers `undefined` until the
+   * `$Map` struct actually exists in this module, which is what makes it safe
+   * to call from a hot path. Use {@link ensureNativeMapStorageType} at the one
+   * site that is genuinely constructing a Map; see that method for why.
    */
   nativeMapStorageType?(): IrType | undefined;
+  /**
+   * The MATERIALIZING twin of {@link nativeMapStorageType}: registers the
+   * `$Map` struct + its runtime helpers if absent, then reports the storage
+   * type.
+   *
+   * The split is load-bearing, not stylistic. #4461 shipped ONE method that
+   * always materialized, and both from-ast call sites asked it BEFORE they knew
+   * they were looking at a Map — `lowerNewExpression` asked on every `new`, and
+   * the module-binding probe on every method receiver. In a native-string or
+   * standalone lane that emitted the entire twelve-function `$Map` runtime
+   * (`__map_new`, `__map_get`, `__map_set`, `__map_has`, `__map_delete`,
+   * `__map_clear`, `__map_size`, the two iterator helpers, `__map_lookup_idx`,
+   * `__hash_anyref`, `__same_value_zero`) plus its struct types into every
+   * module containing a `new` expression. Measured on a two-class module with
+   * no `Map` anywhere: +1,374 bytes, 59 → 71 functions. That is what changed
+   * the wasm hash of 508 test262 files, regressed 297 in
+   * `language/expressions/class/elements`, and failed the standalone
+   * high-water floor.
+   *
+   * So: a QUERY must not emit. Only call this once the construct is PROVEN to
+   * be a `Map`.
+   */
+  ensureNativeMapStorageType?(): IrType | undefined;
   /**
    * (#4461) True when `undefined`-ness of an externref-shaped value is tested
    * by a NATIVE `__extern_is_undefined` function rather than the `env` host
@@ -867,6 +896,12 @@ export interface AstToIrOptions {
    * unsupported storage still demotes.
    */
   readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
+  /**
+   * Host-lane dynamic method names observed while lowering IR. The legacy
+   * finalizer uses this shared set to expose ordinary class-member bridges for
+   * dynamic receivers; standalone/WASI callers may omit it.
+   */
+  readonly hostDynamicClassMethodNames?: Set<string>;
 }
 
 /**
@@ -1233,6 +1268,7 @@ export function lowerFunctionAstToIr(
     numericLocalScalarForDecl: options.numericLocalScalarForDecl,
     allocRegistry: options.allocRegistry,
     moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
+    hostDynamicClassMethodNames: options.hostDynamicClassMethodNames,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
@@ -2255,6 +2291,8 @@ interface LowerCtx {
   readonly latticeParamFacts?: LatticeParamFacts;
   /** See {@link AstToIrOptions.numericLocalScalarForDecl}. */
   readonly numericLocalScalarForDecl?: (decl: ts.VariableDeclaration) => "number" | undefined;
+  /** Host-lane dynamic method names observed while lowering IR. */
+  readonly hostDynamicClassMethodNames?: Set<string>;
   /**
    * #1586: module-global allocation-site registry, threaded so lifted-closure
    * builders mint stable ids on the same registry as the outer function.
@@ -4246,10 +4284,17 @@ function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | null {
  * boxes each element) — this mirrors #2766's prove-then-specialize shape.
  */
 function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: IrType): IrValueId {
-  // Reject spread / sparse — out of scope, keep on legacy.
+  // Elision stays out of scope. Spread is adopted (#4487) only for operands
+  // whose element count is provable at compile time — see
+  // `planArrayLiteralSpread`; a `null` plan means at least one operand needs a
+  // runtime-sized allocation, which `vec.new_fixed` cannot express.
+  const spreadPlan = expr.elements.some((el) => ts.isSpreadElement(el)) ? planArrayLiteralSpread(expr) : null;
   for (const el of expr.elements) {
-    if (ts.isSpreadElement(el) || ts.isOmittedExpression(el)) {
-      throw new Error(`ir/from-ast: array literal with spread/elision not in #1804 scope (${cx.funcName})`);
+    if (ts.isOmittedExpression(el)) {
+      throw new Error(`ir/from-ast: array literal with elision not in #1804 scope (${cx.funcName})`);
+    }
+    if (ts.isSpreadElement(el) && spreadPlan?.has(el) !== true) {
+      throw new Error(`ir/from-ast: array literal spread source has no static length (${cx.funcName})`);
     }
   }
 
@@ -4323,9 +4368,78 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 
   // Lower each element. Use the hint element type as each element's hint when
   // we have one (so e.g. number elements stay f64).
+  const elementHint = hintElemIr ?? irVal({ kind: "f64" });
   const elementIds: IrValueId[] = [];
   for (const el of expr.elements) {
-    elementIds.push(lowerExpr(el as ts.Expression, cx, hintElemIr ?? irVal({ kind: "f64" })));
+    if (ts.isSpreadElement(el)) {
+      const shape = spreadPlan!.get(el)!;
+      if (shape.kind === "inline-literal") {
+        // `[...[a, b], c]` — inline the operand literal's elements verbatim.
+        // The operand is never allocated (same expansion the call-argument
+        // spread already uses), and source order is preserved.
+        for (const inner of shape.elements) elementIds.push(lowerExpr(inner, cx, elementHint));
+        continue;
+      }
+      // `const a = [1, 2]; … [...a, c]` — lower the source ONCE (so any
+      // side effects happen once, in source order), then read each proven
+      // index. Reading rather than re-lowering is what makes the result a
+      // COPY: the `vec.new_fixed` below allocates its own backing array, so a
+      // later `a[0] = …` is not observable through the spread result.
+      const source = lowerExpr(el.expression, cx, hint);
+      const sourceType = cx.builder.typeOf(source);
+      const sourceVec = resolveIrVecType(sourceType, cx);
+      if (!sourceVec) {
+        // Same reasoning as the non-scalar arm below: a shape this expansion
+        // cannot carry is a CAPABILITY gap, so it must demote, not hard-fail.
+        throw new IrUnsupportedError(
+          "array-representation-unsupported",
+          "build",
+          `ir/from-ast: array literal spread source is not a recognisable vec ` +
+            `(${describeIrType(sourceType)}) in ${cx.funcName}`,
+        );
+      }
+      // Only NUMERIC/BOOLEAN sources expand. A string-carrier vec stores
+      // `externref`, so `vec.get` hands back the STORED type while sibling
+      // string literals in the same literal lower as `IrType.string` — the two
+      // cannot share one `vec.new_fixed` element type. Demote through the
+      // unsupported channel (a bare `Error` here reads as an unexpected
+      // internal throw under IR-first and fails the compile instead of
+      // falling back).
+      const sourceElement = asVal(sourceVec.elementType);
+      if (!sourceElement || (sourceElement.kind !== "f64" && sourceElement.kind !== "i32")) {
+        throw new IrUnsupportedError(
+          "array-representation-unsupported",
+          "build",
+          `ir/from-ast: array literal spread of a non-scalar vec ` +
+            `(${describeIrType(sourceVec.elementType)}) is not carried by the fixed-literal ` +
+            `expansion (${cx.funcName})`,
+        );
+      }
+      for (let index = 0; index < shape.length; index++) {
+        const indexId = cx.builder.emitConst({ kind: "i32", value: index }, irVal({ kind: "i32" }));
+        elementIds.push(cx.builder.emitVecGet(source, indexId, sourceVec.elementType));
+      }
+      continue;
+    }
+    elementIds.push(lowerExpr(el as ts.Expression, cx, elementHint));
+  }
+
+  // A literal that is nothing but spreads of EMPTY sources (`[...a]` with
+  // `const a: number[] = []`) expands to zero elements, so there is no element
+  // to infer the vec's element type from and no annotation supplying one.
+  // Measured (#4487 continuation, `.tmp/probe-4487b.ts`): the selector claims
+  // that unit, so a bare `Error` here surfaces under IR-first as
+  // `IR path failed` — a COMPILE FAILURE for a program the branch base
+  // compiled fine (base rejected it at `expr-arraylit-spread` and legacy
+  // handled it). It is a capability gap, not a producer-promise violation, so
+  // it demotes through the typed channel exactly like the string-carrier arm.
+  if (elementIds.length === 0 && !hintElemIr) {
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      `ir/from-ast: spread-only array literal expanded to zero elements and no vec-typed ` +
+        `hint supplies the element type (${cx.funcName})`,
+    );
   }
 
   // Determine the shared element IrType: the hint's element type if present,
@@ -4356,8 +4470,16 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 
   const elemVT = asVal(storedElementType);
   if (!elemVT) {
-    // Non-scalar (object/closure/...) element types are out of scope for this slice.
-    throw new Error(
+    // Non-scalar (nested vec / object / closure / …) element types are out of
+    // scope for this slice. Typed-unsupported rather than a bare `Error`: the
+    // #4487 spread adoption newly CLAIMS units that reach here — `[...[[1],
+    // [2]], [3]]`, or `[...a]` over a `number[][]` const — and under IR-first
+    // a bare throw fails the compile instead of demoting to the perfectly good
+    // legacy body (measured on the branch base: both compiled). This is the
+    // literal-construction twin of the #4486 nested-vec hard error.
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
       `ir/from-ast: array literal element type ${storedElementType.kind} not in #1804 scope (${cx.funcName})`,
     );
   }
@@ -4863,9 +4985,14 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * value list is reordered to match.
  */
 function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
-  if (expr.properties.length === 0) {
-    throw new Error(`ir/from-ast: empty object literal not in slice 2 (${cx.funcName})`);
-  }
+  // #4471 — an empty literal is admitted only when the selector proved it
+  // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
+  // `object.new`. The property loop below is already a no-op at zero
+  // properties, so the empty case needs no arm of its own: it falls through to
+  // `emitObjectNew({ fields: [] }, [])`, which the WasmGC/linear resolvers both
+  // register as an ordinary (fieldless) struct. `lowerOrdinaryToPrimitive-
+  // ObjectLiteral` returns null for a zero-property literal, so the
+  // valueOf/toString path is not entered.
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
   const built: { name: string; type: IrType; value: IrValueId }[] = [];
@@ -6013,11 +6140,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // struct. Intercepted before the extern-class registry, which has no `Map`
   // entry at all in host-free mode — the pre-#4461 behaviour was the
   // `unknown-class-construction` demote at the bottom of this function.
-  const nativeMapStorage = cx.resolver?.nativeMapStorageType?.();
-  if (nativeMapStorage) {
-    const nativeMap = tryLowerNativeMapConstruction(expr, nativeMapStorage, cx);
-    if (nativeMap !== null) return nativeMap;
-  }
+  // The storage type is obtained INSIDE, after the `new Map()` shape is proven
+  // — asking first materialized the whole `$Map` runtime on every `new`.
+  const nativeMap = tryLowerNativeMapConstruction(expr, cx);
+  if (nativeMap !== null) return nativeMap;
   if (!ts.isIdentifier(expr.expression)) {
     throw new Error(`ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`);
   }
@@ -6441,10 +6567,15 @@ function nativeMapModuleBinding(
   cx: LowerCtx,
 ): { readonly binding: ModuleBindingGlobal; readonly name: string } | null {
   if (receiver === undefined) return null;
-  const storageType = cx.resolver?.nativeMapStorageType?.();
-  if (!storageType) return null;
+  // Resolve the binding FIRST: it is the cheap discriminator, and resolving a
+  // genuinely native-map binding is itself what registers the `$Map` struct
+  // (`resolveModuleBindingGlobal`'s `native-map` arm). So by the time the PURE
+  // storage-type query below runs, the struct exists exactly when it should —
+  // and for every other receiver we have emitted nothing at all.
   const binding = cx.resolver?.resolveModuleBinding?.(receiver);
-  if (!binding || !irTypeEquals(binding.type, storageType)) return null;
+  if (!binding) return null;
+  const storageType = cx.resolver?.nativeMapStorageType?.();
+  if (!storageType || !irTypeEquals(binding.type, storageType)) return null;
   return { binding, name: receiver.text };
 }
 
@@ -6513,10 +6644,15 @@ function tryLowerNativeMapMethodCall(
  * the native-map `writeValueMatches` arm), so anything else that reaches here
  * is drift rather than an unsupported source.
  */
-function tryLowerNativeMapConstruction(expr: ts.NewExpression, storageType: IrType, cx: LowerCtx): IrValueId | null {
+function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
+  // Every cheap, PURE rejection first. Only a proven ambient `new Map()` may
+  // reach the materializing resolver call below — see
+  // `ensureNativeMapStorageType` for what asking too early cost.
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Map") return null;
   if ((expr.arguments?.length ?? 0) !== 0) return null;
   if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) return null;
+  const storageType = cx.resolver?.ensureNativeMapStorageType?.();
+  if (!storageType) return null;
   const result = cx.builder.emitCall(irRuntimeFuncRef(IR_NATIVE_MAP_NEW_FN), [], storageType);
   if (result === null) throw new Error(`ir/from-ast: native Map allocator returned void (${cx.funcName})`);
   return result;
@@ -6995,6 +7131,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   if (recvType.kind === "dynamic") {
+    // Preserve the static property name for the host-side ordinary-class
+    // bridge. IR's dynamic runtime helper intentionally accepts an arbitrary
+    // key at execution time, so the finalizer otherwise cannot know which
+    // compiled class methods need `__member_kind_*`/`__call_*` exports.
+    cx.hostDynamicClassMethodNames?.add(methodName);
     const firstArgumentText = expr.arguments[0]?.getText();
     const isNarrowStringReplace =
       methodName === "replace" &&

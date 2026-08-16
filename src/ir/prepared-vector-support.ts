@@ -16,6 +16,7 @@ import { irTypeBindingKey } from "./abi-bindings.js";
 import { sameIrCallableBinding } from "./callable-bindings.js";
 import type { IrVecLowering } from "./lower.js";
 import { asVal, irVal, type IrFuncRef, type IrFunction, type IrType, type IrVecLayoutRef } from "./nodes.js";
+import { IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { attachIrVecLayouts } from "./vec-layout.js";
 
@@ -69,7 +70,27 @@ export function prepareIrVectorSupport<T extends PreparedVectorEntry>(input: {
         if (cached) return cached;
         const element = asVal(type.elementType);
         if (!element || (element.kind !== "f64" && element.kind !== "i32" && element.kind !== "externref")) {
-          throw new Error(`prepared vec element ${input.typeKey(type.elementType)} is not supported`);
+          // (#4486) The physical vec registry carries exactly three element
+          // kinds. Everything else — most visibly a NESTED vec, i.e. the
+          // `vec<vec<externref>>` a `string[][]` param resolves to — is a
+          // CAPABILITY GAP by construction, never a producer-promise
+          // violation: the element allowlist is a property of the backend's
+          // vec layouts, not of anything the selector or the builder promised.
+          //
+          // It threw a plain `Error`, so `classifyIrFailure` bucketed it as
+          // the untyped `unexpected-internal-throw` invariant and the claim
+          // withdrawal became a HARD compile error, with a perfectly good
+          // legacy body already emitted (`legacyBodyEmitted: true`). Measured
+          // on main: `for (const r of rows)` over `string[][]` did not compile
+          // at all, while its `number[][]` / `boolean[][]` siblings took the
+          // soft `type-resolution-unsupported`@resolve path (the #1921
+          // contract) and demoted cleanly. Same class as #3565/#3784/#4035;
+          // typed here so all nestings withdraw the claim identically.
+          throw new IrUnsupportedError(
+            "type-resolution-unsupported",
+            "resolve",
+            `prepared vec element ${input.typeKey(type.elementType)} is not supported`,
+          );
         }
         const vec = input.resolveVecForElement(element);
         if (!vec) throw new Error(`no physical vector layout for ${logicalKey}`);

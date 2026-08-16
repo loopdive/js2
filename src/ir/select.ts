@@ -68,6 +68,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -8975,11 +8976,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         family = elementFamily;
       }
     }
+    const walkElements = flattenPhase1ArrayLiteralElements(expr); // (#4487) spread / elision gate
+    if (walkElements === null) return false;
     const primitiveFamilies = new Set<IrPrimitiveExpressionFamily>();
-    let everyElementPrimitive = expr.elements.length > 0;
-    for (const el of expr.elements) {
-      if (ts.isSpreadElement(el)) return shapeNo("expr-arraylit-spread", el); // out of scope
-      if (ts.isOmittedExpression(el)) return shapeNo("expr-arraylit-sparse", expr); // sparse — out of scope
+    let everyElementPrimitive = walkElements.length > 0;
+    for (const el of walkElements) {
       if (!isPhase1Expr(el, scope, localClasses) || localClassNameForExpression(el, scope) !== null) return false;
       const family =
         currentSelectionOptions?.classifyPrimitiveExpression?.(el) ??
@@ -9027,6 +9028,45 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
 }
 
 /**
+ * (#4487) Flatten an array literal's elements for the Phase-1 shape and
+ * element-family walk, or reject.
+ *
+ * A spread contributes the expressions whose types it forwards — its own
+ * operand elements for an inline literal, the binding's initializer elements
+ * for a fixed const vec — so the mixed-family and string-backend gates keep
+ * seeing the real element types instead of looking through an opaque spread.
+ *
+ * Spreads are adopted only when EVERY operand has a compile-time-provable
+ * element count (`planArrayLiteralSpread`), because those expand element-wise
+ * into the same `vec.new_fixed` #1804 already builds. A dynamic-length operand
+ * (parameter, call result, `let` binding, a `const` array that could be
+ * resized or escape, a string) would need a runtime-sized allocation the IR
+ * has no node for, so it keeps its own reject arm — that residual is the real
+ * remaining gap. Elision is checked FIRST, so a literal that is both sparse
+ * and spread keeps the more specific `sparse` attribution.
+ *
+ * Returns `null` after recording the reject arm; the caller returns `false`.
+ */
+function flattenPhase1ArrayLiteralElements(expr: ts.ArrayLiteralExpression): ts.Expression[] | null {
+  if (expr.elements.some((el) => ts.isOmittedExpression(el))) {
+    shapeNo("expr-arraylit-sparse", expr); // sparse — out of scope
+    return null;
+  }
+  if (!expr.elements.some((el) => ts.isSpreadElement(el))) return [...expr.elements];
+  const plan = planArrayLiteralSpread(expr);
+  if (plan === null) {
+    shapeNo("expr-arraylit-spread-dynamic-source", expr);
+    return null;
+  }
+  const flattened: ts.Expression[] = [];
+  for (const el of expr.elements) {
+    if (ts.isSpreadElement(el)) flattened.push(...plan.get(el)!.elements);
+    else flattened.push(el);
+  }
+  return flattened;
+}
+
+/**
  * Slice 8a (#1169g) — does this expression have a statically-known length
  * suitable for compile-time spread expansion in a call? Restricted to
  * `ArrayLiteralExpression` with no nested SpreadElement: the lowerer
@@ -9063,11 +9103,12 @@ function isPhase1ObjectLiteral(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  // Empty literals get rejected by the codegen side (zero-property
-  // objects don't form a usable IrType.object shape) — but accepting
-  // them at the selector level wouldn't cause a regression: the
-  // overrides pass would skip them when shape resolution failed.
-  if (expr.properties.length === 0) return shapeNo("objectlit-empty", expr);
+  // #4471 — an empty literal lowers to a ZERO-FIELD object shape, which is a
+  // legal struct but can serve NO field access, so only an INERT one is
+  // claimable. See `isInertEmptyObjectLiteral` for the measured boundary.
+  if (expr.properties.length === 0) {
+    return isInertEmptyObjectLiteral(expr) ? true : shapeNo("objectlit-empty", expr);
+  }
 
   // Function-valued data properties still have no general closed-object IR
   // representation. Selector-certified method shorthand, however, is an
@@ -9152,6 +9193,69 @@ function isPhase1ObjectLiteral(
     return shapeNo("objectlit-property-kind", prop);
   }
   return true;
+}
+
+/**
+ * #4471 — is this empty object literal INERT, i.e. can its zero-field value
+ * provably never reach a position that a zero-field shape cannot serve?
+ *
+ * A fieldless `object.new` is itself fine (measured 2026-08-15: it registers as
+ * an ordinary struct, emits, instantiates, and matches legacy). The constraint
+ * is downstream. The measured failing uses are property read/write (incl.
+ * through an `as any` escape), flow into a `dynamic` (`any`) parameter,
+ * `typeof`, array-literal element, conditional-expression test, and a `{}`
+ * return TypeNode (which `IrType.object` cannot express at all). Five of those
+ * six fail IDENTICALLY for the already-claimed non-empty literal, so they are
+ * not empty-specific — but claiming them would still turn clean `unsupported`
+ * rejects into gated post-claim `invariant` demotions, hard errors under the
+ * IR-only policy. Hence a narrow arm.
+ *
+ * The literal must initialize a plain, UN-ANNOTATED local binding. An
+ * annotation is disqualifying on its own: `any` / `object` / `{}` each pick a
+ * different legacy representation for `{}` (an open `$Object` externref built
+ * by `__new_plain_object`, or a struct WIDENED with the fields a later expando
+ * write adds — see `compileWidenedEmptyObject` in codegen/literals.ts), none of
+ * which is a closed fieldless struct. Those shapes are rejected by other gates
+ * today; requiring the un-annotated form keeps this arm from depending on that.
+ *
+ * The binding must then be UNREFERENCED. That rule is the measured one, not a
+ * conservative guess at one: the 2026-08-15 battery tried to admit a whitelist
+ * of "obviously inert" reference forms and every candidate leaked. `if (o)`
+ * lowered and matched legacy, but `if (o) {…} else {…}` demoted with
+ * "if condition must be bool" — the IR has no `ToBoolean` for a ref, so the
+ * no-else form only worked incidentally. The conditional expression `o ? a : b`
+ * demoted too. Truthiness is therefore not a safe category, and neither is an
+ * alias (`const p = o`), whose own uses this arm does not track. With no
+ * reference form surviving measurement, the honest rule is zero references.
+ *
+ * Identifier matching is deliberately by TEXT, not by symbol: a same-named
+ * property key or shadowed binding elsewhere in the function counts as a
+ * reference and rejects the literal. That over-approximates, which is the safe
+ * direction — it can only refuse to claim.
+ */
+function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
+  const decl = expr.parent;
+  if (decl === undefined || !ts.isVariableDeclaration(decl)) return false;
+  if (decl.initializer !== expr) return false;
+  if (decl.type !== undefined) return false;
+  if (!ts.isIdentifier(decl.name)) return false;
+  const owner = enclosingProjectionOwner(expr);
+  if (owner === undefined) return false;
+  const name = decl.name.text;
+  let referenced = false;
+  const visit = (node: ts.Node): void => {
+    if (referenced) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      // The declaration's own name is the binding site, not a reference.
+      if (node !== decl.name) referenced = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  // Walk the WHOLE owner, nested functions included — a capture of the binding
+  // by an inner closure is a reference this arm must see.
+  ts.forEachChild(owner, visit);
+  return !referenced;
 }
 
 /**

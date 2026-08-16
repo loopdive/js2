@@ -3,9 +3,11 @@
 // (a real `$Promise`) observable via `.then` at all.
 //
 // Three coupled fixes, ALL gated on the native-`$Promise` carrier
-// (`isStandalonePromiseActive`, wasi-only today → widens to standalone in lockstep
-// at #2895 slice 1d), so the gc/host lane and the still-host-backed standalone
-// lane are byte-unchanged:
+// (`isStandalonePromiseActive`), so the gc/host lane is byte-unchanged.
+// (#2867 S2 correction, 2026-08-15: this said "wasi-only today → widens to
+// standalone in lockstep at #2895 slice 1d" and called standalone
+// "still-host-backed" — STALE. The widen landed with the #2980 flip on
+// 2026-07-10; standalone is on the carrier, and only gc/host is unchanged.)
 //
 //  1. async-frame.ts — a `throw` in an async body, OR a rejected await, settles the
 //     frame's result `$Promise` REJECTED (was: uncaught Wasm throw → trap / promise
@@ -21,11 +23,57 @@
 //     (#1313/#1727) double-wrapped it in a second `Promise.resolve`, so `.then`/
 //     assignment read NaN / illegal-cast. Skip the wrap for drive-lowered callees.
 //
-// Host-free: instantiate with no imports, drive settlement with the module's own
-// `__drain_microtasks` export. This is exactly the test262 `asyncTest(fn)` shape
-// (`fn().then(verifyFulfill, $DONE)` — inline `.then` on the async call).
+// Host-free: drive settlement with the module's own `__drain_microtasks` export.
+// This is exactly the test262 `asyncTest(fn)` shape (`fn().then(verifyFulfill,
+// $DONE)` — inline `.then` on the async call).
+//
+// (#2867 S2 CI-fix, 2026-08-15) "Host-free" here means **no JS-host carrier
+// import** (`env.Promise_*`, `env.__make_callback`) — it does NOT mean an empty
+// import section. Under `--target wasi` ANY `throw` links the WASI error path
+// (`wasi_snapshot_preview1.fd_write` / `proc_exit`), which is the documented
+// behaviour of that target, and three of these five cases throw on purpose. The
+// old assertion here was `expect(r.imports).toEqual([])` followed by
+// `WebAssembly.instantiate(r.binary, {})`, which:
+//
+//   * PASSED its assertion for the wrong reason — **`r.imports` under-reports**:
+//     for every throwing wasi program it returns `[]` while the binary really
+//     imports fd_write/proc_exit (verified by `WebAssembly.Module.imports`).
+//     That is a live compiler-side defect and it makes `r.imports` unusable as a
+//     host-free oracle anywhere; and
+//   * then FAILED at instantiate with
+//     `Import #0 "wasi_snapshot_preview1": module is not an object or function`.
+//
+// A/B by file copy against the #2867 S2/S2b source changes shows the identical
+// 3 failures on the pre-#2867 base, so this is pre-existing on main and was not
+// introduced by that commit (whose only edit to this file was a comment).
+//
+// The assertions below are therefore made STRONGER, not weaker: the import list
+// is read from the **binary** (immune to the `r.imports` bug), `env.*` carrier
+// imports are still forbidden outright, and the WASI shim asserts it is never
+// actually CALLED — so a throw that escapes to the WASI abort path instead of
+// being routed to a reject handler still fails the test.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+
+/** Minimal `wasi_snapshot_preview1` shim that records any use. */
+function wasiShim() {
+  const calls: string[] = [];
+  return {
+    calls,
+    importObject: {
+      wasi_snapshot_preview1: {
+        fd_write: () => {
+          calls.push("fd_write");
+          return 0;
+        },
+        proc_exit: (code: number) => {
+          calls.push(`proc_exit(${code})`);
+          throw new Error(`unexpected WASI proc_exit(${code})`);
+        },
+      },
+    },
+  };
+}
 
 async function runWasi(body: string, reads: string[]): Promise<Record<string, number>> {
   const src = `
@@ -39,13 +87,22 @@ export function getVal(): number { return val; }
 `;
   const r = await compile(src, { fileName: "t.ts", target: "wasi" });
   expect(r.success, r.success ? "" : `CE: ${r.errors?.[0]?.message}`).toBe(true);
-  // The carrier is host-free under wasi: the module must request no imports.
-  expect((r.imports ?? []).map((i) => `${i.module}.${i.name}`)).toEqual([]);
   expect(WebAssembly.validate(r.binary)).toBe(true);
-  const { instance } = await WebAssembly.instantiate(r.binary, {});
+
+  // Read the truth from the binary — `r.imports` under-reports (see header).
+  const binaryImports = WebAssembly.Module.imports(await WebAssembly.compile(r.binary)).map(
+    (i) => `${i.module}.${i.name}`,
+  );
+  // The carrier must never fall back to a JS host import.
+  expect(binaryImports.filter((n) => !n.startsWith("wasi_snapshot_preview1."))).toEqual([]);
+
+  const shim = wasiShim();
+  const { instance } = await WebAssembly.instantiate(r.binary, shim.importObject);
   const ex = instance.exports as Record<string, CallableFunction>;
   ex.run!();
   ex.__drain_microtasks?.();
+  // A routed rejection must never reach the WASI abort/print path.
+  expect(shim.calls).toEqual([]);
   const out: Record<string, number> = {};
   for (const n of reads) out[n] = ex[n]!() as number;
   return out;

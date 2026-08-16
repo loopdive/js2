@@ -1609,9 +1609,14 @@ export function compileNamespaceStaticCall(
       const methodName = propAccess.name.text;
       // (#2867 Gap 4) Native host-free `Promise.all`/`Promise.race` over an
       // array literal under the native-`$Promise` carrier. Gated on
-      // `isStandalonePromiseActive` (wasi-only today → widens to standalone at
-      // slice 1d), so gc/host + still-host-backed standalone lanes are
-      // byte-unchanged. Literal no-spread arguments unroll at compile time
+      // `isStandalonePromiseActive`, which covers `--target wasi` AND
+      // `--target standalone` since the #2980 flip (2026-07-10) — this comment
+      // said "wasi-only today → widens to standalone at slice 1d" long after
+      // that stopped being true, and that stale claim is what put a nonexistent
+      // "50 CE Promise_all/race leak" work item in the #2867 plan (measured
+      // 2026-08-15: zero host-import CEs across all 729 built-ins/Promise
+      // standalone files). Only gc/host is byte-unchanged. Literal no-spread
+      // arguments unroll at compile time
       // below; array-TYPED non-literal arguments take the (#2919 arm 1)
       // runtime loop after that; Set/Map arguments take the (#2922 arm 3a)
       // compile-time collection projection; everything else except strings,
@@ -2699,7 +2704,13 @@ export function compileNamespaceStaticCall(
             getWasmFuncReturnType(ctx, finalStaticIdx) ?? resolveWasmType(ctx, retType),
           );
         }
-        return VOID_RESULT;
+        // Synthetic calls produced for a conditional callee may not retain a
+        // source parent, so TypeScript can decline to resolve their signature
+        // even though the selected static method has a concrete emitted result.
+        // Returning VOID_RESULT here makes the caller drop that result and
+        // synthesize null. Preserve the actual Wasm signature in that case.
+        if (wasmFuncReturnsVoid(ctx, finalStaticIdx)) return VOID_RESULT;
+        return getWasmFuncReturnType(ctx, finalStaticIdx) ?? { kind: "externref" };
       }
     }
   }

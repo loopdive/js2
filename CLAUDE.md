@@ -18,6 +18,9 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   would do — a real failure, an unverified assumption, work deliberately left
   out — still get stated plainly. Say them once, in the fewest words that keep
   them accurate.
+- **Plain language to the stakeholder.** No jargon, no empty phrases, gist
+  first. Internal codenames, gate names, and spec terms only when the reader
+  needs to act on them — then with a one-line gloss.
 
 ## Running Tests
 
@@ -683,7 +686,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,485 / 43,621 (74.5 %)
+**test262 conformance**: 32,530 / 43,621 (74.6 %)
 
 <!-- AUTO:conformance-end -->
 

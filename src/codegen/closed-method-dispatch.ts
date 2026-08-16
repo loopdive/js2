@@ -236,6 +236,11 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [{ kind: "externref" }],
     );
+    // A dynamic JS call may omit a formal parameter even when the source was
+    // allowJs and TypeScript did not preserve an `?` marker.  The closed
+    // dispatcher must pass the host's real `undefined`, not a null externref,
+    // so the callee's defaulting and null checks see the same value as Node.
+    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
     addUnionImportsViaRegistry(ctx);
   }
   addStringConstantGlobal(ctx, methodName);
@@ -427,6 +432,8 @@ type MethodEntry = {
   paramTypes: ValType[];
   resultType: ValType;
   optionalParams: OptionalParamInfo[];
+  /** Host dynamic calls follow JavaScript's missing-argument semantics. */
+  hostDynamic: boolean;
 };
 
 /**
@@ -457,12 +464,24 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     // the call to the host fallback (`inline is not a function` in marked).
     const fullName = `${structName}_${methodName}`;
     const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexer" || methodName === "parseInline")) {
+      console.error(
+        "[marked-collect-lexer]",
+        structName,
+        fullName,
+        ctx.classMethodSet.has(fullName),
+        funcIdx,
+        funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx)?.typeIdx,
+        ctx.funcOptionalParams.get(fullName),
+      );
+    }
     if (funcIdx === undefined) continue;
     const funcDef = definedFuncAt(ctx, funcIdx);
     const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
     if (!funcType || funcType.kind !== "func") continue;
     const paramTypes = funcType.params.slice(1);
     const optionalParams = ctx.funcOptionalParams.get(fullName) ?? [];
+    const hostDynamic = !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.has(methodName);
     // A fixed-arity call may under-apply a method only when every omitted
     // formal has a default/optional marker AND `buildEntryArm` can faithfully
     // stand in for it. Those are two different questions, and (#4466) treating
@@ -482,13 +501,13 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     };
     if (exactArity !== null) {
       if (paramTypes.length < exactArity) continue;
-      if (paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))) {
+      if (!hostDynamic && paramTypes.slice(exactArity).some((type, i) => !canSynthesizeOmitted(exactArity + i, type))) {
         continue;
       }
     }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
-    entries.push({ typeIdx, funcIdx, paramTypes, resultType, optionalParams });
+    entries.push({ typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic });
   }
   return entries;
 }
@@ -532,7 +551,12 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
 }
 
 /** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
-type CoerceIdxs = { boxNumIdx?: number; unboxNumIdx?: number; unboxBoolIdx?: number };
+type CoerceIdxs = {
+  boxNumIdx?: number;
+  unboxNumIdx?: number;
+  unboxBoolIdx?: number;
+  undefinedIdx?: number;
+};
 
 /**
  * Build one closed-struct call arm: cast recv→`this`, push each declared arg
@@ -558,8 +582,19 @@ function buildEntryArm(
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);
-      if (!opt) return [{ op: "ref.null.extern" }];
-      if (opt.constantDefault) {
+      if (entry.hostDynamic) {
+        if (want.kind === "externref" && ci.undefinedIdx !== undefined) {
+          arm.push({ op: "call", funcIdx: ci.undefinedIdx });
+        } else if (want.kind === "f64") {
+          // The regular parameter prologue uses this NaN payload as its
+          // omitted-argument sentinel for expression defaults.
+          arm.push({ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" });
+        } else {
+          arm.push(...defaultValueInstrs(want));
+        }
+      } else if (!opt) {
+        return [{ op: "ref.null.extern" }];
+      } else if (opt.constantDefault) {
         arm.push(
           opt.constantDefault.kind === "f64"
             ? { op: "f64.const", value: opt.constantDefault.value }
@@ -620,6 +655,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     boxNumIdx: ctx.funcMap.get("__box_number"),
     unboxNumIdx: ctx.funcMap.get("__unbox_number"),
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
+    undefinedIdx: ctx.funcMap.get("__get_undefined"),
   };
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
   const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
@@ -1535,6 +1571,9 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       { op: "local.set", index: anyLocalIdx },
       ...current,
     ];
+    if (process.env.DEBUG_MARKED_CODEGEN === "1" && (methodName === "lexer" || methodName === "parseInline")) {
+      console.error("[marked-fill-lexer]", dispIdx, entries.length, dispFn.body.slice(-5));
+    }
     void (dispFn as WasmFunction);
   }
 

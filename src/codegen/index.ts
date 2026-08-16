@@ -206,6 +206,7 @@ import type {
   ExternClassInfo,
   FunctionContext,
   OptionalParamInfo,
+  RestParamInfo,
 } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
@@ -356,10 +357,17 @@ import {
   registerAddStringImports,
   registerAddUnionImports,
 } from "./shared.js";
-import { stackBalance, getFixupEvents, summarizeFixups, strictBalanceDiagnostics } from "./stack-balance.js";
+import {
+  stackBalance,
+  getFixupEvents,
+  summarizeFixups,
+  strictBalanceDiagnostics,
+  callArgCoercionInstrs,
+} from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
 import {
@@ -6128,21 +6136,62 @@ function addWasiStartExport(ctx: CodegenContext): void {
  *
  * These allow the runtime to invoke WasmGC struct methods that are opaque to JS.
  */
+function supportsHostClassBridgeParam(type: ValType): boolean {
+  return type.kind === "externref" || type.kind === "ref_extern";
+}
+
 function emitIteratorMethodExport(ctx: CodegenContext): void {
-  // Only emit if the iterator imports are registered (i.e., for-of on non-array types)
-  if (!ctx.funcMap.has("__iterator") && !ctx.funcMap.has("__iterator_next")) return;
+  // The iterator protocol and the host-side dynamic class-member bridge share
+  // the same `(externref) -> externref` dispatcher shape.  Keep the old
+  // iterator demand gate, but also enter when a dynamic host call can target a
+  // compiled class method (ordinary classes, not only fnctor subclasses).
+  const needsIterator = ctx.funcMap.has("__iterator") || ctx.funcMap.has("__iterator_next");
+  const needsDynamicClassMembers =
+    !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.size > 0 && ctx.classSet.size > 0;
+  if (!needsIterator && !needsDynamicClassMembers) return;
 
   const mod = ctx.mod;
+  // Rest-parameter class methods need a host bridge adapter: the Wasm ABI
+  // stores `...args` as a typed GC vector while a dynamic JS call supplies an
+  // ordinary argument list. Collect the affected method names up front so the
+  // finalize-created vararg bridge can pack that list before dispatch.
+  const restMethodKeys = new Set<string>();
+  for (const [structName] of ctx.structFields) {
+    for (const key of ctx.hostDynamicClassMethodNames) {
+      const fullName = `${structName}_${key}`;
+      if (ctx.classMethodSet.has(fullName) && ctx.funcRestParams.has(fullName)) restMethodKeys.add(key);
+    }
+  }
+  if (restMethodKeys.size > 0) {
+    ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+    // Use the ordinary property reader for the host argument list.  The
+    // finalized GC host ABI canonicalizes `__extern_get_idx`'s numeric key to
+    // an externref in some modules, while `__extern_get` has the stable
+    // `(externref, externref) -> externref` boundary we need here.
+    ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
+  // A host dynamic call supplies externrefs.  A class bridge may therefore
+  // only target methods whose formal arguments are already externref-shaped;
+  // non-rest unsupported signatures deliberately remain on the existing
+  // fallback path until they have a real adapter.
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_method_type");
 
   // Helper to emit a method dispatch export
-  const emitMethodDispatch = (methodSuffix: string, exportName: string) => {
+  const emitMethodDispatch = (
+    methodSuffix: string,
+    exportName: string,
+    classMember = false,
+    classArity: number | undefined = undefined,
+  ) => {
     const entries: {
       structName: string;
       typeIdx: number;
       funcIdx: number;
-      resultType: ValType;
+      resultType: ValType | undefined;
       extraParams: ValType[];
+      restInfo?: RestParamInfo;
     }[] = [];
 
     for (const [structName] of ctx.structFields) {
@@ -6151,22 +6200,39 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       if (isSyntheticStructName(structName)) continue;
 
       const methodFullName = `${structName}_${methodSuffix}`;
-      const funcIdx = ctx.funcMap.get(methodFullName);
+      // Class members use the collision-safe key and must be instance methods;
+      // iterator protocol entries retain their historical flat funcMap key.
+      if (classMember && !ctx.classMethodSet.has(methodFullName)) {
+        continue;
+      }
+      const funcIdx = classMember
+        ? ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName, "instance"))
+        : ctx.funcMap.get(methodFullName);
       if (funcIdx === undefined) continue;
 
       const funcDef = definedFuncAt(ctx, funcIdx);
       const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
-      const resultType: ValType =
-        funcType && funcType.kind === "func" && funcType.results.length > 0
-          ? funcType.results[0]!
-          : { kind: "externref" };
-      // (#3024) params[0] is the receiver; a user iterator method with a formal
-      // parameter (`next(value)` / `return(value)`) has extra params the
-      // dispatcher must pad — it always represents a protocol call with NO value
-      // argument (its own signature is `(externref) -> externref`), so the pad is
-      // the "missing trailing arg" default per param type. Without it the call is
-      // `not enough arguments on the stack for call (need 2, got 1)` (invalid Wasm).
-      const extraParams: ValType[] = funcType && funcType.kind === "func" ? funcType.params.slice(1) : [];
+      const resultType: ValType | undefined =
+        funcType && funcType.kind === "func" && funcType.results.length > 0 ? funcType.results[0]! : undefined;
+      // params[0] is the receiver. Iterator dispatchers are still invoked with
+      // only that receiver, while host class bridges get one entry point per
+      // declared arity and forward their externref arguments.
+      if (!funcType || funcType.kind !== "func") continue;
+      if (classMember) {
+        if (funcType.params.length < 1) continue;
+        const restInfo = ctx.funcRestParams.get(methodFullName);
+        if (classArity === -1) {
+          if (!restInfo) continue;
+        } else {
+          if (restInfo) continue;
+          if (classArity !== undefined && funcType.params.length - 1 !== classArity) continue;
+          if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
+        }
+        const extraParams = restInfo ? funcType.params.slice(1, 1 + restInfo.restIndex) : funcType.params.slice(1);
+        entries.push({ structName, typeIdx, funcIdx, resultType, extraParams, restInfo });
+        continue;
+      }
+      const extraParams: ValType[] = funcType.params.slice(1);
 
       entries.push({ structName, typeIdx, funcIdx, resultType, extraParams });
     }
@@ -6174,10 +6240,28 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     if (entries.length === 0) return;
 
     const funcIdx = ctx.numImportFuncs + mod.functions.length;
+    const bridgeTypeIdx =
+      classMember && classArity === -1
+        ? addFuncType(
+            ctx,
+            [{ kind: "externref" }, { kind: "externref" }],
+            [{ kind: "externref" }],
+            `$class_call_${methodSuffix}_vararg_type`,
+          )
+        : classMember && classArity !== undefined
+          ? addFuncType(
+              ctx,
+              Array.from({ length: classArity + 1 }, () => ({ kind: "externref" as const })),
+              [{ kind: "externref" }],
+              `$class_call_${methodSuffix}_${classArity}_type`,
+            )
+          : dispatchTypeIdx;
+    const receiverAnyLocal =
+      classMember && classArity === -1 ? 2 : classMember && classArity !== undefined ? classArity + 1 : 1;
     const body: Instr[] = [];
     body.push({ op: "local.get", index: 0 });
     body.push({ op: "any.convert_extern" });
-    body.push({ op: "local.set", index: 1 });
+    body.push({ op: "local.set", index: receiverAnyLocal });
 
     let current: Instr[] = [{ op: "ref.null.extern" }];
 
@@ -6210,15 +6294,175 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
     };
 
+    const appendResultBoxing = (instrs: Instr[], resultType: ValType | undefined): void => {
+      if (resultType === undefined) {
+        const undefinedResultIdx = ctx.funcMap.get("__get_undefined");
+        instrs.push(
+          ...(undefinedResultIdx !== undefined
+            ? ([{ op: "call", funcIdx: undefinedResultIdx }] satisfies Instr[])
+            : ([{ op: "ref.null.extern" }] satisfies Instr[])),
+        );
+      } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
+        instrs.push({ op: "extern.convert_any" });
+      } else if (resultType.kind === "f64") {
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+      } else if (resultType.kind === "i32") {
+        instrs.push({ op: "f64.convert_i32_s" });
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+      } else if (resultType.kind === "i64") {
+        instrs.push({ op: "f64.convert_i64_s" });
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+      } else if (resultType.kind === "f32") {
+        instrs.push({ op: "f64.promote_f32" });
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+      }
+    };
+
+    const appendHostIndex = (instrs: Instr[], value: Instr[]): void => {
+      instrs.push(...value);
+      const boxIdx = ctx.funcMap.get("__box_number");
+      if (boxIdx !== undefined) instrs.push({ op: "call", funcIdx: boxIdx });
+    };
+
     for (const entry of entries) {
       const testAndCall: Instr[] = [
-        { op: "local.get", index: 1 },
+        { op: "local.get", index: receiverAnyLocal },
         { op: "ref.cast", typeIdx: entry.typeIdx },
-        ...entry.extraParams.flatMap(padMissingArg),
-        { op: "call", funcIdx: entry.funcIdx },
       ];
+      if (classMember && classArity === -1 && entry.restInfo) {
+        const restInfo = entry.restInfo;
+        const lengthIdx = ctx.funcMap.get("__extern_length");
+        const getIdxIdx = ctx.funcMap.get("__extern_get");
+        const newSizedIdx = ensureVecNewSized(ctx, restInfo.vecTypeIdx);
+        const elemSetIdx = ensureVecElemSet(ctx, restInfo.vecTypeIdx);
+        if (lengthIdx === undefined || getIdxIdx === undefined || newSizedIdx === null || elemSetIdx === null) {
+          continue;
+        }
+        // Bridge locals: 3=len, 4=rest-count, 5=count-i32, 6=vec(anyref),
+        // 7=loop index. The host runtime passes the ordinary JS argument
+        // array as parameter 1.
+        testAndCall.push(
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: lengthIdx },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "f64.const", value: restInfo.restIndex },
+          { op: "f64.sub" },
+          { op: "f64.const", value: 0 },
+          { op: "f64.max" },
+          { op: "local.tee", index: 4 },
+          { op: "i32.trunc_sat_f64_s" },
+          { op: "local.set", index: 5 },
+          { op: "local.get", index: 4 },
+          { op: "call", funcIdx: newSizedIdx },
+          { op: "local.set", index: 6 },
+          { op: "i32.const", value: 0 },
+          { op: "local.set", index: 7 },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: 7 },
+                  { op: "local.get", index: 5 },
+                  { op: "i32.ge_s" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: 6 },
+                  { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
+                  { op: "local.get", index: 7 },
+                  { op: "local.get", index: 1 },
+                  ...(() => {
+                    const indexInstrs: Instr[] = [
+                      { op: "local.get", index: 7 },
+                      { op: "f64.convert_i32_s" },
+                      { op: "f64.const", value: restInfo.restIndex },
+                      { op: "f64.add" },
+                    ];
+                    appendHostIndex(indexInstrs, []);
+                    return indexInstrs;
+                  })(),
+                  { op: "call", funcIdx: getIdxIdx },
+                  { op: "call", funcIdx: elemSetIdx },
+                  { op: "local.get", index: 7 },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "local.set", index: 7 },
+                  { op: "br", depth: 0 },
+                ],
+              },
+            ],
+          },
+        );
+        // Fixed parameters before the rest slot (rare for this bridge) are
+        // read from the same host argument array. Marked's `use(...args)` has
+        // restIndex 0, so this path is the hot/normal case.
+        const fixedInstrs: Instr[] = [];
+        const boxIdx = ctx.funcMap.get("__box_number");
+        const unboxIdx = ctx.funcMap.get("__unbox_number");
+        for (let arg = 0; arg < restInfo.restIndex; arg++) {
+          const expected = entry.extraParams[arg]!;
+          const coercion = callArgCoercionInstrs({ kind: "externref" }, expected, boxIdx ?? null, unboxIdx ?? null);
+          fixedInstrs.push(
+            { op: "local.get", index: 1 },
+            ...(() => {
+              const indexInstrs: Instr[] = [{ op: "f64.const", value: arg }];
+              appendHostIndex(indexInstrs, []);
+              return indexInstrs;
+            })(),
+            { op: "call", funcIdx: getIdxIdx },
+            ...coercion,
+          );
+        }
+        testAndCall.splice(2, 0, ...fixedInstrs);
+        // The receiver stays on the stack while the argument vector is built.
+        // Reload the vector explicitly before the target call; casting the
+        // receiver itself here leaves only one value for the two-parameter
+        // class method ABI and makes the module fail validation.
+        testAndCall.push({ op: "local.get", index: 6 }, { op: "ref.cast", typeIdx: restInfo.vecTypeIdx });
+      } else if (classMember && classArity !== undefined) {
+        const boxIdx = ctx.funcMap.get("__box_number");
+        const unboxIdx = ctx.funcMap.get("__unbox_number");
+        for (let arg = 0; arg < entry.extraParams.length; arg++) {
+          const expected = entry.extraParams[arg]!;
+          const coercion = callArgCoercionInstrs({ kind: "externref" }, expected, boxIdx ?? null, unboxIdx ?? null);
+          const unsupportedNumeric =
+            (expected.kind === "f64" ||
+              expected.kind === "f32" ||
+              expected.kind === "i32" ||
+              expected.kind === "i64") &&
+            coercion.length === 0;
+          if (unsupportedNumeric) {
+            // A numeric dynamic bridge needs __unbox_number. Do not let an
+            // unavailable helper make the whole module invalid; this arm is
+            // unreachable for the affected signature and the host fallback
+            // remains the semantic path.
+            testAndCall.push({ op: "i32.const", value: 0 });
+          } else {
+            testAndCall.push({ op: "local.get", index: arg + 1 }, ...coercion);
+          }
+        }
+      } else {
+        testAndCall.push(...entry.extraParams.flatMap(padMissingArg));
+      }
+      testAndCall.push({ op: "call", funcIdx: entry.funcIdx });
 
-      if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
+      if (classMember && classArity === -1 && entry.restInfo) {
+        appendResultBoxing(testAndCall, entry.resultType);
+      } else if (entry.resultType === undefined) {
+        const undefinedIdx = ctx.funcMap.get("__get_undefined");
+        testAndCall.push(
+          ...(undefinedIdx !== undefined
+            ? ([{ op: "call", funcIdx: undefinedIdx }] satisfies Instr[])
+            : ([{ op: "ref.null.extern" }] satisfies Instr[])),
+        );
+      } else if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
         testAndCall.push({ op: "extern.convert_any" });
       } else if (entry.resultType.kind === "f64") {
         const boxIdx = ctx.funcMap.get("__box_number");
@@ -6231,11 +6475,19 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
         if (boxIdx !== undefined) {
           testAndCall.push({ op: "call", funcIdx: boxIdx });
         }
+      } else if (entry.resultType.kind === "i64") {
+        testAndCall.push({ op: "f64.convert_i64_s" });
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
+      } else if (entry.resultType.kind === "f32") {
+        testAndCall.push({ op: "f64.promote_f32" });
+        const boxIdx = ctx.funcMap.get("__box_number");
+        if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
       }
       // externref: no conversion needed
 
       current = [
-        { op: "local.get", index: 1 },
+        { op: "local.get", index: receiverAnyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
         {
           op: "if",
@@ -6248,10 +6500,21 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
 
     body.push(...current);
 
+    const bridgeLocals =
+      classMember && classArity === -1
+        ? [
+            { name: "__any", type: { kind: "anyref" } as const },
+            { name: "__len", type: { kind: "f64" } as const },
+            { name: "__count", type: { kind: "f64" } as const },
+            { name: "__count_i32", type: { kind: "i32" } as const },
+            { name: "__vec", type: { kind: "anyref" } as const },
+            { name: "__i", type: { kind: "i32" } as const },
+          ]
+        : [{ name: "__any", type: { kind: "anyref" } as const }];
     mod.functions.push({
       name: exportName,
-      typeIdx: dispatchTypeIdx,
-      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      typeIdx: bridgeTypeIdx,
+      locals: bridgeLocals,
       body,
       exported: true,
     } as WasmFunction);
@@ -6268,9 +6531,11 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     ctx.funcMap.set(exportName, funcIdx);
   };
 
-  emitMethodDispatch("@@iterator", "__call_@@iterator");
-  emitMethodDispatch("next", "__call_next");
-  emitMethodDispatch("return", "__call_return"); // (#3100 S5) IteratorClose §7.4.9 USER-arm dispatcher
+  if (needsIterator) {
+    emitMethodDispatch("@@iterator", "__call_@@iterator");
+    emitMethodDispatch("next", "__call_next");
+    emitMethodDispatch("return", "__call_return"); // (#3100 S5) IteratorClose §7.4.9 USER-arm dispatcher
+  }
 
   // (#3123) Host-side class-member resolution surface for fnctor-subclass
   // instances (`class C extends F`, F a top-level plain function — the test262
@@ -6281,18 +6546,71 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // (the plain-method CALL goes through the existing __call_<key> dispatchers
   // above). Gated on the module actually containing a fnctor subclass so every
   // other module's emitted bytes are IDENTICAL.
-  if (!ctx.standalone && !ctx.wasi && moduleHasFnctorSubclass(ctx)) {
+  if (!ctx.standalone && !ctx.wasi && (moduleHasFnctorSubclass(ctx) || needsDynamicClassMembers)) {
     // The iterator protocol keys plus every instance method / accessor name
     // of the module's fnctor-subclass classes (a widened binding dispatches
     // ALL its member calls dynamically — see fnctorWidenedLocals).
     const keys = new Set<string>(["next", "return"]);
     for (const className of ctx.classParentMap.keys()) {
-      if (fnctorAncestorOfClass(ctx, className) === undefined) continue;
+      if (!needsDynamicClassMembers && fnctorAncestorOfClass(ctx, className) === undefined) continue;
       for (const m of ctx.classMethodNames.get(className) ?? []) keys.add(m);
       const accPrefix = `${className}_`;
       for (const acc of ctx.classAccessorSet) {
         if (acc.startsWith(accPrefix)) keys.add(acc.slice(accPrefix.length));
       }
+    }
+    if (needsDynamicClassMembers) {
+      for (const key of ctx.hostDynamicClassMethodNames) keys.add(key);
+    }
+    const classMethodArities = new Map<string, Set<number>>();
+    const classMethodRestKeys = new Set<string>();
+    for (const [structName] of ctx.structFields) {
+      const typeIdx = ctx.structMap.get(structName);
+      if (typeIdx === undefined || isSyntheticStructName(structName)) continue;
+      for (const key of keys) {
+        const fullName = `${structName}_${key}`;
+        if (process.env.DEBUG_MARKED_CODEGEN === "1" && key === "parseInline") {
+          console.error(
+            "[marked-class-bridge-scan]",
+            structName,
+            fullName,
+            ctx.classMethodSet.has(fullName),
+            ctx.staticMethodSet.has(fullName),
+            ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
+            ctx.funcMap.get(fullName),
+          );
+        }
+        if (!ctx.classMethodSet.has(fullName)) continue;
+        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+        const method = methodIdx === undefined ? undefined : definedFuncAt(ctx, methodIdx);
+        const methodType = method === undefined ? undefined : mod.types[method.typeIdx];
+        if (!methodType || methodType.kind !== "func" || methodType.params.length < 1) continue;
+        if (ctx.funcRestParams.has(fullName)) {
+          classMethodRestKeys.add(key);
+          continue;
+        }
+        if (!ctx.hostDynamicClassMethodNames.has(key) && methodType.params.length !== 1) continue;
+        if (methodType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
+        let arities = classMethodArities.get(key);
+        if (!arities) classMethodArities.set(key, (arities = new Set()));
+        arities.add(methodType.params.length - 1);
+      }
+    }
+    // Emit the class call bridges before the kind discriminators.  Keep the
+    // zero-argument bridge in the class-specific namespace as well: the
+    // ToPrimitive finalizer owns `__call_toString`/`__call_valueOf`, and using
+    // those names here would create duplicate exports when a dynamically
+    // called class has either method.  The host resolver prefers this
+    // class-specific name and falls back to the historical iterator export.
+    for (const key of [...keys].sort()) {
+      for (const arity of [...(classMethodArities.get(key) ?? [])].sort((a, b) => a - b)) {
+        const exportName = `__class_call_${key}_${arity}`;
+        if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, arity);
+      }
+    }
+    for (const key of [...classMethodRestKeys].sort()) {
+      const exportName = `__class_call_${key}_vararg`;
+      if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, -1);
     }
     emitClassMemberKindExports(ctx, dispatchTypeIdx, [...keys].sort());
   }
@@ -6302,36 +6620,62 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
  * (#3123) Emit, per member key, the `__member_kind_<key>` discriminator and
  * (when any struct carries a getter of that name) the `__call_get_<key>`
  * getter dispatcher. Mirrors `emitIteratorMethodExport`'s per-struct
- * ref.test cascade. Only 1-param (self-only) methods/getters are reported —
- * that is what the 0-arg `__call_<key>` / `__call_get_<key>` dispatchers can
- * actually invoke; a parameterized `next(v)` stays unreported (kind 0) so the
- * host falls back instead of emitting an arity-invalid call.
+ * ref.test cascade. Getters remain self-only; methods additionally publish
+ * their declared arity so the host can select an arity-specific bridge.
  */
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
   const skipStruct = isSyntheticStructName;
 
-  type KindEntry = { typeIdx: number; funcIdx: number; resultType: ValType };
+  type KindEntry = {
+    typeIdx: number;
+    funcIdx: number;
+    resultType: ValType | undefined;
+    paramTypes: ValType[];
+    isRest?: boolean;
+  };
   const collect = (nameOf: (structName: string) => string): KindEntry[] => {
     const entries: KindEntry[] = [];
     for (const [structName] of ctx.structFields) {
       const typeIdx = ctx.structMap.get(structName);
       if (typeIdx === undefined || skipStruct(structName)) continue;
       const fullName = nameOf(structName);
-      if (ctx.staticMethodSet.has(fullName)) continue; // instance surface only
-      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+      if (process.env.DEBUG_MARKED_CODEGEN === "1" && fullName.endsWith("_parseInline")) {
+        console.error(
+          "[marked-member-kind-scan]",
+          structName,
+          fullName,
+          ctx.classMethodSet.has(fullName),
+          ctx.staticMethodSet.has(fullName),
+          ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
+          ctx.funcMap.get(fullName),
+        );
+      }
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
       if (funcIdx === undefined) continue;
       const funcDef = definedFuncAt(ctx, funcIdx);
       const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
       if (!funcType || funcType.kind !== "func") continue;
-      if (funcType.params.length !== 1) continue; // self-only (0-arg dispatch)
-      const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
-      entries.push({ typeIdx, funcIdx, resultType });
+      const memberKey = fullName.slice(fullName.lastIndexOf("_") + 1);
+      const isGetter = fullName.includes("_get_");
+      const restInfo = ctx.funcRestParams.get(fullName);
+      if (!isGetter && restInfo) {
+        if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
+        const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
+        entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
+        continue;
+      }
+      if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) continue;
+      if (funcType.params.length < 1) continue;
+      if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
+      const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
+      entries.push({ typeIdx, funcIdx, resultType, paramTypes: funcType.params });
     }
     return entries;
   };
 
   const kindTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$member_kind_type");
+  const arityTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$member_arity_type");
 
   for (const key of keys) {
     if (ctx.funcMap.has(`__member_kind_${key}`)) continue; // idempotent
@@ -6367,6 +6711,36 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       ctx.funcMap.set(exportName, funcIdx);
     }
 
+    // __member_arity_<key>: identify the matching method's declared arity.
+    // The host bridge uses this to choose the correct all-externref dispatcher
+    // even when the JS call omits trailing arguments or supplies extras.
+    if (methodEntries.length > 0 && !ctx.funcMap.has(`__member_arity_${key}`)) {
+      const funcIdx = ctx.numImportFuncs + mod.functions.length;
+      let current: Instr[] = [{ op: "i32.const", value: -1 }];
+      for (const e of methodEntries) {
+        current = [
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: e.typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: e.isRest ? -1 : e.paramTypes.length - 1 }],
+            else: current,
+          },
+        ];
+      }
+      const exportName = `__member_arity_${key}`;
+      mod.functions.push({
+        name: exportName,
+        typeIdx: arityTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
+        exported: true,
+      } as WasmFunction);
+      exportFunc(mod, exportName, funcIdx);
+      ctx.funcMap.set(exportName, funcIdx);
+    }
+
     // __call_get_<key>: run the compiled getter, box-coerce to externref.
     if (getterEntries.length > 0) {
       const funcIdx = ctx.numImportFuncs + mod.functions.length;
@@ -6377,7 +6751,14 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
           { op: "ref.cast", typeIdx: e.typeIdx },
           { op: "call", funcIdx: e.funcIdx },
         ];
-        if (e.resultType.kind === "ref" || e.resultType.kind === "ref_null") {
+        if (e.resultType === undefined) {
+          const undefinedIdx = ctx.funcMap.get("__get_undefined");
+          callArm.push(
+            ...(undefinedIdx !== undefined
+              ? ([{ op: "call", funcIdx: undefinedIdx }] satisfies Instr[])
+              : ([{ op: "ref.null.extern" }] satisfies Instr[])),
+          );
+        } else if (e.resultType.kind === "ref" || e.resultType.kind === "ref_null") {
           callArm.push({ op: "extern.convert_any" });
         } else if (e.resultType.kind === "f64") {
           const boxIdx = ctx.funcMap.get("__box_number");
@@ -7336,6 +7717,26 @@ export function generateMultiModule(
         collectExternDeclarations(ctx, sf);
       }
     });
+
+    // Multi-source projects can import every class declaration from package
+    // files rather than the entry module. Register the host class/prototype
+    // bridges from the whole graph before declarations and bodies are emitted,
+    // matching the single-source path and keeping function indices stable.
+    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf)) && !(ctx.standalone || ctx.wasi)) {
+      const regProtoTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_prototype", { kind: "func", typeIdx: regProtoTypeIdx });
+      const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
+      addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
+      const regStaticMethodTypeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      addImport(ctx, "env", "__register_class_static_method", {
+        kind: "func",
+        typeIdx: regStaticMethodTypeIdx,
+      });
+    }
 
     // WASI target: check for DOM-only globals and emit compile errors
     if (ctx.wasi) {
@@ -9182,7 +9583,7 @@ export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts
 /**
  * Compute a hash key for a list of struct fields (for O(1) structural dedup).
  */
-function fieldsHashKey(fields: FieldDef[]): string {
+export function fieldsHashKey(fields: FieldDef[]): string {
   const parts: string[] = [];
   for (const f of fields) {
     const t = f.type;

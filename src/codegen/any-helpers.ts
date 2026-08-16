@@ -144,6 +144,41 @@ export function undefinedExternInstrs(ctx: CodegenContext): Instr[] | undefined 
 }
 
 /**
+ * (#2864 wave-2 S1) The CANONICAL `undefined` externref for the current lane,
+ * NOT gated on the (default-off) #2106 `undefinedSingleton` regime flag.
+ *
+ * The distinction matters and was measured: `undefinedExternInstrs` above is
+ * flag-gated, so with the flag off it returns `undefined` and callers fall back
+ * to `ref.null.extern`. But the tag-1 `$undefined` singleton is reserved in
+ * EVERY standalone/native-strings module (see `ensureAnyValueType`'s S1.0
+ * reservation), and the rest of the standalone value model already
+ * distinguishes it from `null` regardless of the flag — measured host-free:
+ * `typeof undefined === "undefined"`, `undefined === null` is FALSE,
+ * `typeof null === "object"`, and an unpassed argument compares
+ * `SameValue`-equal to `undefined`. So a slot that fills itself with
+ * `ref.null.extern` produces JS **null**, not `undefined`: the test262 harness
+ * reported `SameValue(«null», «undefined»)` for every boxed-any generator's
+ * terminal `{value: undefined, done: true}`.
+ *
+ * Use this where a value IS semantically `undefined`. Do NOT use it where the
+ * old `ref.null.extern` meant "absent reference" — that is a different fact.
+ */
+export function canonicalUndefinedExternInstrs(ctx: CodegenContext): Instr[] {
+  // Host lane: the real host `undefined` (a null externref surfaces as JS
+  // `null` there). Read-only funcMap lookup — never registers a late import
+  // mid-body, which would shift funcidxs under the caller.
+  if (!(ctx.standalone || ctx.nativeStrings)) {
+    const getUndefIdx = ctx.funcMap.get("__get_undefined");
+    return getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
+  }
+  if (ctx.undefinedGlobalIdx === undefined) {
+    ensureAnyValueType(ctx);
+    if (ctx.undefinedGlobalIdx === undefined) return [{ op: "ref.null.extern" }];
+  }
+  return [{ op: "global.get", index: ctx.undefinedGlobalIdx }, { op: "extern.convert_any" }];
+}
+
+/**
  * (#2106 S1) Build the flagged "is this externref `undefined`?" body for a
  * `(externref) -> i32` native (param 0 = the value, `scratchAnyLocal` = an
  * anyref local). Under the singleton regime the predicate is:
