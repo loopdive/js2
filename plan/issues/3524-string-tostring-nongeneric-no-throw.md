@@ -2,7 +2,7 @@
 id: 3524
 title: "String.prototype.toString non-generic receiver: doesn't throw on non-String (generic ToString), plus concat-tail illegal_cast"
 status: ready
-sprint: Backlog
+sprint: current
 priority: medium
 horizon: m
 feasibility: hard
@@ -76,3 +76,16 @@ The `*-realm.js` variants (`valueOf/non-generic-realm.js`,
 `toString/non-generic-realm.js`) fail for a DIFFERENT reason (cross-realm setup
 → `TypeError: Cannot access property on null or undefined`) and need realm
 support; they are out of scope here.
+
+## 2026-08-16 re-scope: this issue is also the STANDALONE missing-builtin home
+
+The 2026-08-16 standalone ES5 census (575 nonpasses,
+`plan/log/analysis-2026-08-16-es5-standalone-575.md`) shows
+`String.prototype.valueOf is not yet implemented in --target standalone`
+(harness/deepEqual-primitives.js) and the sibling `…toString` refusals with no
+other open owner: #3487 is blocked, and the coverage sweep (2026-08-16) found
+the standalone framing had no home. Scope now includes: implement Wasm-native
+`String.prototype.valueOf`/`toString` (brand-checked, throws TypeError on
+non-String receiver) in `--target standalone`, alongside the original
+host-lane non-generic-receiver-throw defect. Boolean.prototype.valueOf is NOT
+in scope (landed via #4201/#4482).

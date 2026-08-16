@@ -943,5 +943,16 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     // (#2856) early.return — the optional return value is a direct use.
     case "early.return":
       return instr.value !== null ? [instr.value] : [];
+    // (#4070) Exhaustiveness gate — see the twin in src/ir/verify.ts. This
+    // local copy drives the pass's own use counting; a silently-empty result
+    // would make an instruction look dead.
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      // invariant (producer-promise): union/switch agreement, per #4035/#4502.
+      throw new Error(
+        `ir/monomorphize: collectUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }

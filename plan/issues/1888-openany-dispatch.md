@@ -24,6 +24,16 @@ loc-budget-allow:
 ---
 # #1888 — Standalone open-any method dispatch + built-ins-as-static-globals
 
+> **2026-08-16 dispatch note**: the `claimed_by: codex-developer` /
+> `completed:` frontmatter above is stale debris — the authoritative claim
+> ledger (`upstream/issue-assignments`) shows NO live claim, and `status:
+> ready` stands. Fresh standalone ES5 census (575 nonpasses,
+> `plan/log/analysis-2026-08-16-es5-standalone-575.md`): this issue owns the
+> `'X.prototype.Y' is not yet callable as a value in --target standalone` and
+> `'__get_builtin' (dynamic-shape…) Phase B` classes, which dominate the
+> **function-prototype (57)** and part of the **array-prototype (60)**
+> clusters — the second-largest lever in the ES5 standalone gap.
+
 > Architectural sub-issue of **#1472 Phase C**. This is the spec for the
 > single layer that unblocks the largest remaining standalone gap. sd-1472c
 > implements it as the independent slices below. The runtime types/helpers

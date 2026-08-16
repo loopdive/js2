@@ -1,7 +1,9 @@
 ---
 id: 4168
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
-status: ready
+status: wont-fix
+# 2026-08-16 lead sweep: PHANTOM DUPLICATE of #4025 (identical defect), which
+# is `done` since 2026-08-04. Do not dispatch.
 sprint: current
 created: 2026-08-01
 updated: 2026-08-07
