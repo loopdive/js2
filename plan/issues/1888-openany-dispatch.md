@@ -999,3 +999,93 @@ status poller marks it done after merge.
 ## Reopened 2026-07-20 (stale false-done review)
 
 Marked `done` but live test262 shows: BigUint64Array built-in static property value read still unsupported (standalone). Reopened as `ready`. See #3474 (done-status integrity).
+
+## Slice S8 — `Array.isArray` static fast path: LANDED, REVERTED, and how to re-land it (2026-08-16, ttraenkler/opus-es5-b)
+
+**Status: reverted. Do not re-apply the original patch. Re-land per the recipe
+below.** PR #4629 landed and was reverted forward by PR #4634 the same day.
+
+### The defect it fixed (still real, still worth fixing)
+
+`call-builtin-static.ts` has a compile-time fast path for `Array.isArray(x)`
+when the argument's Wasm type is statically known. It decided array-ness as
+`argWasmType.kind === "ref" || argWasmType.kind === "ref_null"` — "any heap
+reference is an Array". Every statically-typed value is a ref, so it answered
+`true` for all of them: a native string, a closed object-literal struct, a class
+instance, `$Date`. It survived because laundering the same value through an
+`any`-typed local takes the *other* branch — externref → the finalize-filled
+native `__extern_is_array` — which is correct. The fast path and the slow path
+were two implementations of one predicate, they disagreed, and only the slow one
+had tests.
+
+Measured before the fix, `built-ins/Array/isArray/` standalone, all 29 files:
+23/29. After: 27/29, no regressions **in that directory**.
+
+### Why it was reverted
+
+The narrowed static predicate answered **FALSE for real arrays** produced by
+carriers it did not enumerate — the rest-binding array from an exhausted
+iterator (~40 destructuring files) and `Object.entries` row arrays (3 files).
+Net **+4 / −42 per lane**. It surfaced only in the `merge_group` re-validation,
+on two unrelated PRs queued behind it (#4631, #4627), because the full-corpus
+check is merge_group-only by design and the in-directory measurement could not
+see it.
+
+### Root cause of the revert, precisely
+
+`fillExternIsArray`'s runtime collector
+(`collectStandaloneArrayCarrierTypeIdxs`, object-runtime.ts) builds its carrier
+set from **three** sources:
+
+1. `ctx.objectRuntimeTypes.objVecTypeIdx`
+2. **every value in `ctx.vecTypeMap`** (keyed by element kind), minus the
+   `NON_ARRAY_BYTE_VEC_ELEM_KINDS`
+3. a scan of `ctx.mod.types` for struct names starting `__vec_` (plus
+   `__template_vec_externref`), minus `__vec_base` and the byte vecs
+
+The static twin `isArrayCarrierTypeIdx` mirrored only **1 and 3**. Any carrier
+registered in `vecTypeMap` under a struct name that does not begin `__vec_` is
+therefore accepted at runtime and rejected statically — which is exactly the
+shape of the two carriers that regressed.
+
+### Re-land recipe
+
+**Derive the static predicate from the collector's own three-source set so they
+cannot diverge by construction** — a static twin maintained by hand next to its
+runtime original is exactly how #4629 happened. Concretely: factor the
+collector's set-building into one function, have the runtime chain and the
+static single-index query both consult it, and add no second spelling of the
+rules.
+
+Validation required **before** merging, both lanes, real runner:
+
+- the ~42-file regressed cluster (exhausted-iterator rest destructuring +
+  `Object.entries` rows) — these must stay `pass`
+- the 29 `built-ins/Array/isArray/` files — the +4 must still flip
+- audit for further carriers beyond those two; the enumeration is the whole
+  fix, so an unenumerated third carrier reproduces the same revert
+
+Pin **both directions per carrier** in the guard-suite test (real arrays of each
+carrier → true; the four non-arrays → false). The reverted test
+(`tests/issue-1888-isarray-static-carrier.test.ts`) had the false side right and
+the true side under-covered — it tested `number[]`/`string[]`/`boolean[]` and an
+array literal, none of which exercise the two carriers that broke.
+
+### Residuals unchanged by any of this
+
+`Array.isArray(arguments)` → `true` (the arguments object genuinely lowers to a
+`__vec_*` carrier; needs a brand bit, same shape as the documented
+`Float64Array` false positive) and revoked-Proxy TypeError (§7.2.2 step 3; no
+Proxy revocation state in standalone). Both defeat the runtime predicate too, so
+neither is reachable from the static path.
+
+### Two instrument findings from this slice, worth keeping
+
+1. **An `: any` annotation on a probe receiver selects a different object
+   lowering.** A probe that adds one to make the code compile has stopped
+   testing the program under test. Several probes reported "spec-correct"
+   against genuinely failing tests this way.
+2. **Accessor descriptors DO work end-to-end in standalone now** — the
+   "#1888 Slice 5 … not reached end-to-end" note earlier in this file is stale.
+   Measured: `Object.defineProperty(o,"x",{get})` invokes the getter, the setter
+   fires, and a `length` getter correctly drives `Array.prototype.filter.call`.
