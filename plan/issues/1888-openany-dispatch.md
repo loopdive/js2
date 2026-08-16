@@ -1,10 +1,11 @@
 ---
 id: 1888
 title: "standalone open-any method dispatch + built-ins-as-static-globals (prototype vtable)"
-status: ready
+status: in-progress
 pr: 1273
 created: 2026-06-05
-updated: 2026-06-11
+updated: 2026-08-16
+assignee: ttraenkler/opus-es5-b
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -16,13 +17,22 @@ goal: host-independence
 sprint: current
 related: [1472, 2177, 1629, 1104, 1539, 1103]
 parent: 1472
-claimed_by: codex-developer
-claimed_at: 2026-06-07T10:22:55.064Z
-completed: 2026-06-11
 loc-budget-allow:
   - src/codegen/array-prototype-borrow.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/expressions/call-builtin-static.ts
 ---
 # #1888 — Standalone open-any method dispatch + built-ins-as-static-globals
+
+> **2026-08-16 dispatch note**: the `claimed_by: codex-developer` /
+> `completed:` frontmatter above is stale debris — the authoritative claim
+> ledger (`upstream/issue-assignments`) shows NO live claim, and `status:
+> ready` stands. Fresh standalone ES5 census (575 nonpasses,
+> `plan/log/analysis-2026-08-16-es5-standalone-575.md`): this issue owns the
+> `'X.prototype.Y' is not yet callable as a value in --target standalone` and
+> `'__get_builtin' (dynamic-shape…) Phase B` classes, which dominate the
+> **function-prototype (57)** and part of the **array-prototype (60)**
+> clusters — the second-largest lever in the ES5 standalone gap.
 
 > Architectural sub-issue of **#1472 Phase C**. This is the spec for the
 > single layer that unblocks the largest remaining standalone gap. sd-1472c
@@ -989,3 +999,53 @@ status poller marks it done after merge.
 ## Reopened 2026-07-20 (stale false-done review)
 
 Marked `done` but live test262 shows: BigUint64Array built-in static property value read still unsupported (standalone). Reopened as `ready`. See #3474 (done-status integrity).
+
+## Slice S8 — `Array.isArray` static fast path (2026-08-16, ttraenkler/opus-es5-b)
+
+Not one of the S0–S7 slices planned above; found while re-measuring this
+issue's assigned error classes and fixed because it is the same "builtin
+resolved statically vs. resolved through the open-any path" fault line, on the
+cheap side of it.
+
+**The defect.** `call-builtin-static.ts` has a compile-time fast path for
+`Array.isArray(x)` when the argument's Wasm type is statically known. It
+decided array-ness as `argWasmType.kind === "ref" || argWasmType.kind ===
+"ref_null"` — "any heap reference is an Array". Every statically-typed value is
+a ref, so it answered `true` for all of them.
+
+**Why it survived.** Laundering the same value through an `any`-typed local
+takes the *other* branch — externref → the finalize-filled native
+`__extern_is_array`, which is correct. The fast path and the slow path
+disagreed, and only the slow path had tests. This is the general hazard in this
+issue's territory: a statically-resolved builtin and its open-any counterpart
+are two implementations of one predicate, and nothing forced them to agree.
+
+**The fix.** `isArrayCarrierTypeIdx` (object-runtime.ts), the static
+single-type-index counterpart of the `ref.test` chain `fillExternIsArray`
+bakes, applying the identical three rules — `$ObjVec`, a `__vec_*` leaf, the
+template vector; abstract `__vec_base` and the packed byte carriers excluded
+per #2047/#3562. Deliberately placed immediately beside
+`collectStandaloneArrayCarrierTypeIdxs` so the two cannot drift apart again.
+
+**Measured** (test262 `built-ins/Array/isArray/`, standalone lane, all 29
+files, local runner): **23/29 → 27/29**, no regressions in the directory. The
++4 are the two `Array.isArray("abc")` string tests, `new Date(0)`, and the
+array-like object literal.
+
+**Residuals, both pre-existing and NOT reachable from the static path** (they
+defeat the runtime predicate too, so this slice could not have fixed them):
+
+| residual | why | shape of the real fix |
+| --- | --- | --- |
+| `Array.isArray(arguments)` → `true` | the arguments object genuinely lowers to a `__vec_*` carrier, so both predicates classify it as an array | a brand bit on the carrier — same shape as the documented `Float64Array` false positive |
+| `Array.isArray(<revoked Proxy>)` must throw TypeError (§7.2.2 step 3) | standalone has no Proxy revocation state to consult | Proxy work, #1355 |
+
+**Host lane.** The same static path serves host mode, where the committed
+baseline shows the identical wrong answers for `new Date(0)`,
+`{0:12,length:2}` and `this`. Not separately measured here; CI's host lane is
+the gate.
+
+Guarded by `tests/issue-1888-isarray-static-carrier.test.ts`, added to
+`tests/guard-suite.json` — it pins both directions (four non-arrays false;
+arrays of every element carrier still true), because a one-directional test
+would let the fast path be re-widened without failing.

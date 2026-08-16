@@ -97,6 +97,7 @@ import {
   ensureObjVecBuilders,
   ensureObjectGroupBy,
   ensureObjectRuntime,
+  isArrayCarrierTypeIdx,
 } from "../object-runtime.js";
 import {
   BUILTIN_CTOR_NAMES,
@@ -269,6 +270,32 @@ function emitObjectCreateDynamicProperties(
     coerceType(ctx, fctx, descType, { kind: "externref" });
   }
   fctx.body.push({ op: "call", funcIdx: dpIdx });
+}
+
+/**
+ * (#1888 slice S8) IsArray (§7.2.2) for an argument whose Wasm type is known at
+ * compile time: true only when the type is a ref to a registered array CARRIER
+ * — a `__vec_*` leaf, the template vector, or `$ObjVec`. Every other ref (a
+ * native string, a closed object-literal / class struct, `$Date`, an
+ * ArrayBuffer's packed byte vec, …) is a non-Array object.
+ *
+ * This existed inline in `compileBuiltinStaticCall` as
+ * `kind === "ref" || kind === "ref_null"` — "any heap reference is an Array" —
+ * so it answered `true` for every value the compiler could type statically.
+ * Measured on a 5-case standalone probe: `Array.isArray("abc")`,
+ * `Array.isArray({0:12,1:9,length:2})` and `Array.isArray(new Date(0))` all
+ * returned `true`; only the genuine array literal was right, by accident.
+ *
+ * It survived because laundering the same value through an `any`-typed local
+ * takes the OTHER branch in the caller (externref → the finalize-filled native
+ * `__extern_is_array`), which is correct. The fast path and the slow path were
+ * two implementations of one predicate, they disagreed, and only the slow one
+ * had tests. `isArrayCarrierTypeIdx` is deliberately the static twin of the
+ * runtime `ref.test` chain so they cannot drift again.
+ */
+function isStaticArrayCarrierRef(ctx: CodegenContext, argWasmType: ValType): boolean {
+  if (argWasmType.kind !== "ref" && argWasmType.kind !== "ref_null") return false;
+  return isArrayCarrierTypeIdx(ctx, argWasmType.typeIdx);
 }
 
 export function compileBuiltinStaticCall(
@@ -632,8 +659,8 @@ export function compileBuiltinStaticCall(
       emitArrayIsArrayExternrefPredicate(ctx, fctx);
       return { kind: "i32" };
     }
-    // If the wasm type is a ref to a vec struct (array), return true; otherwise false
-    const isArr = argWasmType.kind === "ref" || argWasmType.kind === "ref_null";
+    // (#1888 S8) Only a ref to a registered array CARRIER is an Array.
+    const isArr = isStaticArrayCarrierRef(ctx, argWasmType);
     // Still compile the argument for side effects, then drop it
     const argSideType = compileExpression(ctx, fctx, expr.arguments[0]!);
     if (argSideType) fctx.body.push({ op: "drop" });

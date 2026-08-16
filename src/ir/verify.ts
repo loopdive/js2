@@ -1215,6 +1215,24 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     // (#2856) early.return — the optional return value is a direct use.
     case "early.return":
       return instr.value !== null ? [instr.value] : [];
+    // (#4070) Exhaustiveness gate. A new IR instruction kind added without a
+    // case here is a COMPILE error at this line, not a runtime surprise at
+    // claim time. The runtime arm is deliberately a throw rather than `[]`:
+    // under-reporting an instruction's uses makes the verifier silently pass
+    // an instruction it cannot see, which is the unsound direction for a
+    // detector (it would report "nothing wrong" precisely when it cannot look).
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      // invariant (producer-promise): the IrInstr union and this switch are
+      // kept in agreement by the `never` assignment above, so reaching here
+      // means a caller fabricated an instruction outside the union. Per #4035
+      // /#4502 a bare `Error` classifies as `unexpected-internal-throw` (a hard
+      // error), which is correct — this is not a capability gap to demote.
+      throw new Error(
+        `ir/verify: collectUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }
 
