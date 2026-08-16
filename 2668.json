@@ -1,10 +1,11 @@
 {
   "id": "2668",
   "assignee": "ttraenkler/opus-es5-a",
-  "requested_by": "ttraenkler/opus-es5-a",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-2668-defineproperty-fidelity",
   "claimed_at": "2026-08-16T03:52:14Z",
-  "updated_at": "2026-08-16T03:52:14Z",
-  "write_id": "25695-s7rtya6v"
+  "updated_at": "2026-08-16T09:32:07Z",
+  "write_id": "35875-5ugjndua",
+  "released_at": "2026-08-16T09:32:07Z"
 }
