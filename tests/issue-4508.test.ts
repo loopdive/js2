@@ -147,29 +147,23 @@ describe("#4508 reference corpus, standalone lane", () => {
     expect(units.filter((observed) => observed.kind === "invariant")).toEqual([]);
   });
 
-  it("pins the four units that lost compile-once as collateral", async () => {
-    // TRIPWIRE, not an endorsement. These four still EMIT, but they went
-    // compile-once -> compile-twice, which is why the standalone
-    // `legacyBodyEmittedCeiling` moved 22 -> 26.
-    //
-    // The new edge does not touch them. `main` fails to seal on its OWN
-    // `unplanned-abi-binding` providers (`__ir_console_sink_append`,
-    // `__ir_number_to_string_native`, `__ir_string_concat`) independently of
-    // `fibMemo`, so parity withdraws it — and the PRE-EXISTING bidirectional
-    // call closure then drags its callees out through the reverse `callers`
-    // edge. Restoring them needs call-closure refinement (directional
-    // awareness / component splitting); the forward-only shortcut is UNSOUND
-    // (it leaves a direct reader beside a still-prepared component, whose
-    // late-discovered runtime providers break the frozen prepared ABI).
-    //
-    // When that refinement lands these flip to `false` and this test fails —
-    // update it, and drop the standalone ceiling back toward 22.
+  it("restores compile-once for the four units that lost it as collateral (#4514)", async () => {
+    // This assertion was inverted until #4514: the four were pinned
+    // compile-TWICE, as the tripwire for the refinement that would restore
+    // them. `main` fails to seal on its OWN `unplanned-abi-binding` providers
+    // (`__ir_console_sink_append`, `__ir_number_to_string_native`,
+    // `__ir_string_concat`) independently of `fibMemo`, so parity withdraws it
+    // — and the reverse `callers` edge then dragged its whole callee fan-out
+    // out of the component. #4514 refined that edge directionally: an outside
+    // caller withdraws a callee only when the callee's ABI is not certified
+    // against it, and these four are (scalar/vector-of-scalar signatures whose
+    // prepared projection equals their allocated Program ABI slot).
     const units = await standaloneCorpus("website/playground/examples/js/algorithms.ts");
     for (const name of ["fibIter", "binarySearch", "quicksort", "joinNums"]) {
       const observed = unit(units, name);
       expect(observed.kind, `${name}: ${observed.code ?? ""}`).toBe("emitted");
       expect(observed.irBodyEmitted, `${name} lost its IR body`).toBe(true);
-      expect(observed.legacyBodyEmitted, `${name} regained compile-once — see the comment above`).toBe(true);
+      expect(observed.legacyBodyEmitted, `${name} lost compile-once again`).toBe(false);
     }
   });
 });
