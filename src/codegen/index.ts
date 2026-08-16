@@ -4086,6 +4086,10 @@ function planIrFirstBodyRouting(
           claimsByUnitId: plan.functionClaimsByUnitId,
           overridesByUnitId: plan.overrideMapByUnitId,
           hostVoidCallbacks: plan.hostVoidCallbacks,
+          // (#4508) A module-binding reader may only stay a prepared candidate
+          // when the module-init that owns its storage joins the same sealed
+          // transaction.
+          preparedStorageTerminalUnitIds: new Set(preliminaryModuleInit ? [preliminaryModuleInit.unitId] : []),
         })
       : {
           freeFunctionNames: new Set<string>(),

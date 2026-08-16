@@ -162,30 +162,29 @@ describe("#4462 reference corpus, standalone lane", () => {
     expect(outcomes.filter((o) => o.kind === "invariant")).toEqual([]);
   });
 
-  it("claims algorithms.ts::joinNums, and reports main's REAL residual", async () => {
+  it("claims algorithms.ts::joinNums, ::fibMemo and ::main", async () => {
     const outcomes = await standaloneOutcomes("website/playground/examples/js/algorithms.ts");
     expect(outcomeFor(outcomes, "joinNums").kind).toBe("emitted");
-    // Honest residual, re-measured after composing with `main` (#4583 native
-    // `$Map`): `main` is no longer blocked on the console surface, and NOT on
-    // `joinNums` either (the issue predicted that). It is blocked on `fibMemo`
-    // — but `fibMemo`'s own blocker MOVED. Before #4583 it was
-    // `select/body-shape-rejected` (Map-typed body), so `main` cascaded as
-    // `select/call-graph-closure`. #4583 made that body claimable, and with
-    // THIS issue making `main` a claim candidate too, the enlarged prepared
-    // component fails to seal: both demote to
-    // `resolve/late-preparation-unsupported` (`fibMemo`:
+    // FLIPPED by #4508 — this arm was written as a tripwire and it fired.
+    //
+    // Composing `main` into the claim surface (this issue) enlarged the
+    // prepared component until it could not seal, and both `main` and
+    // `fibMemo` demoted to `resolve/late-preparation-unsupported` (`fibMemo`:
     // `source-global-outside-component` on the module-init-owned TDZ/module
-    // bindings plus unplanned Map-runtime ABI callables; `main`:
-    // `foreign-source-unit` on the now-non-candidate `fibMemo`). That is the
-    // parity gap #4494 named as its manifestation 2 and explicitly did NOT
-    // close — see its "Follow-up" section. Pinning the code here so the
-    // partitioning fix has a witness that flips.
-    const main = outcomeFor(outcomes, "main");
-    expect(main.kind).toBe("unsupported");
-    expect(main.kind === "unsupported" ? main.code : "").toBe("late-preparation-unsupported");
-    const fibMemo = outcomeFor(outcomes, "fibMemo");
-    expect(fibMemo.kind).toBe("unsupported");
-    expect(fibMemo.kind === "unsupported" ? fibMemo.code : "").toBe("late-preparation-unsupported");
+    // bindings for `fibCache`; `main`: `foreign-source-unit` on the
+    // now-non-candidate `fibMemo`). That was the parity gap #4494 named as its
+    // manifestation 2 and explicitly did NOT close.
+    //
+    // #4508 fed module-binding storage edges into the same ownership fixpoint,
+    // so `fibMemo` withdraws BEFORE it can claim and both units emit through
+    // the post-direct overlay instead. The residual cost — four sibling units
+    // losing compile-once to the bidirectional call closure — is pinned in
+    // `tests/issue-4508.test.ts`, not here.
+    for (const name of ["fibMemo", "main"]) {
+      const observed = outcomeFor(outcomes, name);
+      expect(observed.kind, `${name}: ${observed.kind === "unsupported" ? observed.code : ""}`).toBe("emitted");
+      expect(observed.kind === "emitted" ? observed.irBodyEmitted : false).toBe(true);
+    }
     expect(outcomes.filter((o) => o.kind === "invariant")).toEqual([]);
   });
 

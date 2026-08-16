@@ -13,18 +13,22 @@
       "invariantCeiling": 0
     },
     "standalone": {
+      "notes": [
+        "(#4508) legacyBodyEmittedCeiling 22 -> 26 and emitted/irBodyEmitted 20 -> 22. Feeding module-binding storage edges into the prepared-owner fixpoint recovered algorithms.ts::fibMemo and algorithms.ts::main (both were resolve/late-preparation-unsupported).",
+        "(#4508) The +4 legacy bodies are algorithms.ts::fibIter, ::binarySearch, ::quicksort and ::joinNums, which lost COMPILE-ONCE (they still emit). The new edge does not touch them: main fails to seal on its own unplanned-abi-binding providers, so parity withdraws it, and the PRE-EXISTING BIDIRECTIONAL CALL CLOSURE in selectR2PreparedOwnerComponents then drags its callees out of the enlarged component via the reverse callers edge.",
+        "(#4508) Restoring their compile-once needs call-closure refinement (directional awareness / component splitting), NOT a revert of the storage edge: the forward-only variant was measured and is unsound - it leaves a direct reader beside a still-prepared component whose late-discovered runtime providers break the frozen prepared ABI. tests/issue-4508.test.ts pins the four units' compile-twice state so the refinement flips a test."
+      ],
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 20,
-      "irBodyEmittedFloor": 20,
-      "legacyBodyEmittedCeiling": 22,
-      "unsupportedCeiling": 17,
+      "emittedFloor": 22,
+      "irBodyEmittedFloor": 22,
+      "legacyBodyEmittedCeiling": 26,
+      "unsupportedCeiling": 15,
       "unsupportedByCode": {
         "select/body-shape-rejected": 3,
         "select/host-surface-unavailable": 4,
         "select/call-graph-closure": 3,
         "select/date-constructor-unsupported": 1,
-        "resolve/late-preparation-unsupported": 2,
         "select/async-function": 4
       },
       "invariantCeiling": 0
