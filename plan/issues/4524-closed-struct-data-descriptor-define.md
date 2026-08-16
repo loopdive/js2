@@ -1,9 +1,11 @@
 ---
 id: 4524
 title: "standalone: Object.defineProperty with a DATA descriptor is silently dropped on a closed-struct object literal"
-status: in-progress
+status: done
 created: 2026-08-16
 updated: 2026-08-16
+completed: 2026-08-16
+pr: 4635
 priority: high
 feasibility: medium
 task_type: fix
@@ -197,17 +199,29 @@ claim is made about the rest of that cluster.
 
 ## Acceptance
 
-- [ ] `Object.defineProperty(o, k, {value})` on a closed-struct literal makes
+- [x] `Object.defineProperty(o, k, {value})` on a closed-struct literal makes
       the property visible, matching the accessor-define and dynamic-write cases.
-- [ ] The five-case matrix above is pinned as a regression test — including the
+      Verified as a real OWN property (`in`, `hasOwnProperty`, `Object.keys`),
+      not merely readable.
+- [x] The five-case matrix above is pinned as a regression test — including the
       three rows that ALREADY pass, since the escape transition is exactly what
-      could break them.
-- [ ] The 11 ES5 filter files + the every/forEach candidates re-measured with
-      the **real runner** in the standalone lane, reported with two
-      denominators (scoped-lane filter, and its edition-5 subset).
-- [ ] No regression in the shapes that currently work — in particular the
-      #1897 class: a literal with an inferred struct type that is NOT a define
-      receiver must keep the closed struct.
+      could break them. `tests/issue-4524-closed-struct-data-define.test.ts`,
+      10 cases, in the required guard suite.
+- [x] The ES5 filter files + the defineProperty sample re-measured with the
+      **real runner** in the standalone lane: **6 flips, 0 regressions**,
+      denominator **25 of 38** measured (13 rows lost to load-induced compile
+      timeouts), and the edition-5 subset of the flip set is **6/6**.
+- [x] No regression in the shapes that currently work — the #1897 class is
+      covered by two of the pinned cases (an in-shape define, and an unrelated
+      literal in the same module, both keeping the struct path); the scoped run
+      showed 0 regressions.
+
+Closed by PR #4635 (merged 2026-08-16). **Not closed by this issue**, and
+tracked elsewhere: the `built-ins/Object` defineProperty-family cluster still
+needs its own root-cause pass — the 25-file sample here produced zero flips with
+10 rows unmeasured, so #4524 must not be read as having addressed it. The ES5
+`every`/`forEach` group (8 files) was not re-measured after this landed and may
+have moved; re-measure before planning it.
 
 ## Instrument notes (read before measuring this issue)
 
