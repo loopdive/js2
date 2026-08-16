@@ -1,7 +1,9 @@
 ---
 id: 4171
 title: "annexB eval-code: `assert is not defined` inside eval'd code — 120 tests, harness bindings not visible to the eval scope"
-status: ready
+status: wont-fix
+# 2026-08-16 lead sweep: DUPLICATE of #4021 (identical title/defect). #4021 is
+# the surviving copy — dispatch that one.
 sprint: current
 created: 2026-08-01
 updated: 2026-08-01
