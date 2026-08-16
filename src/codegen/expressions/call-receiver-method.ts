@@ -128,6 +128,7 @@ import {
 import { sourceDefinesFunctionMember } from "../source-function-members.js";
 import { compileExternMethodCall } from "./extern.js";
 import { tryEmitValueOfFallback } from "./valueof-fallback.js";
+import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   buildThrowJsErrorInstrs,
@@ -429,6 +430,47 @@ function tryCompileLateFnctorPrototypeMethodCall(
   }
   fctx.body.push({ op: "call", funcIdx: dispatchIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#4482) True when the native String-family arm below must DECLINE because the
+ * member being called is provably not on the receiver's own prototype, so it can
+ * only have come from somewhere the arm cannot see:
+ *
+ *  * an OWN slot the program wrote on a primitive-WRAPPER receiver
+ *    (`new String("[a-b]").exec = RegExp.prototype.exec` — the §15.10.6.2
+ *    "is not generic" idiom, `…/exec/S15.10.6.2_A2_T{4,6}`); or
+ *  * an INHERITED slot the program installed on a builtin prototype, reached
+ *    through a PRIMITIVE receiver (`Object.prototype.exec =
+ *    RegExp.prototype.exec; ".".exec(m)` — `…/exec/S15.10.6.2_A2_T8`).
+ *
+ * Either way the per-wrapper native dispatch keys on the receiver's OWN method
+ * table and cannot answer a foreign name; it silently produced `undefined`
+ * where the transferred intrinsic must run its brand check and throw a real
+ * `TypeError`. Declining routes the call past this arm to the stored-member /
+ * proto-inherited closure dispatch (`stored-member-closure-call.ts`), which
+ * reads the slot — own first, then the receiver's implicit chain via
+ * `__extern_method_call` — and applies it with the ORIGINAL receiver as `this`.
+ *
+ * ABSENT-NOT-WRONG, twice over:
+ *  * the TS interfaces (`String`/`Number`/`Boolean`, and `string` itself)
+ *    declare exactly their prototype members, so a `getProperty` HIT keeps the
+ *    existing native arm — only a provable MISS declines;
+ *  * a PRIMITIVE receiver carries no own slot, so its miss is only interesting
+ *    when the module actually wrote a named property onto a builtin prototype.
+ *    That is `ctx.protoNamedDirty`, the #4176 pre-scan flag — a module without
+ *    such a write compiles byte-identically on the primitive path.
+ */
+function declinesToOwnOrInheritedSlot(ctx: CodegenContext, receiverType: ts.Type, method: string): boolean {
+  if (!ctx.standalone) return false;
+  const isWrapper =
+    isStringWrapperType(receiverType) || isNumberWrapperType(receiverType) || isBooleanWrapperType(receiverType);
+  if (!isWrapper && !(isStringType(receiverType) && ctx.protoNamedDirty)) return false;
+  // `toString`/`valueOf` are handled by the dedicated wrapper arms (which
+  // already consult `sourceHasMethodReassignment`); leaving them here would
+  // re-route a working path.
+  if (method === "toString" || method === "valueOf") return false;
+  return receiverType.getProperty(method) === undefined;
 }
 
 function tryCompileDerivedHostSubstringCharCodeAt(
@@ -2689,9 +2731,10 @@ export function compileReceiverMethodCall(
   // `__extern_get`/dynamic path (null standalone). compileNativeStringMethodCall
   // compiles + flattens the receiver, which already yields a $AnyString ref.
   if (
-    isStringType(receiverType) ||
-    receiverIsCaughtErrorStringRead(ctx, propAccess.expression) ||
-    receiverIsNativeStringValType(ctx, fctx, propAccess.expression)
+    (isStringType(receiverType) ||
+      receiverIsCaughtErrorStringRead(ctx, propAccess.expression) ||
+      receiverIsNativeStringValType(ctx, fctx, propAccess.expression)) &&
+    !declinesToOwnOrInheritedSlot(ctx, receiverType, propAccess.name.text)
   ) {
     const method = propAccess.name.text;
 
@@ -3119,7 +3162,23 @@ export function compileReceiverMethodCall(
 
   // Fallback .toString() for any type not already handled above
   // Handles: function.toString(), object.toString(), array.toString(), class instance.toString()
-  if (propAccess.name.text === "toString" && expr.arguments.length === 0) {
+  if (
+    propAccess.name.text === "toString" &&
+    expr.arguments.length === 0 &&
+    // (#4482) …unless the program installed its OWN `toString` on THIS
+    // binding. Everything below answers `Object.prototype.toString` /
+    // `<Builtin>.prototype.toString` from the receiver's static type, which is
+    // right only while no own slot shadows it. §15.7.4.2 requires
+    // `Object.defineProperty(d, "toString", {value: Number.prototype.toString});
+    // d.toString()` on a Date to run the TRANSFERRED intrinsic and throw a
+    // real `TypeError`. Declining routes it to the stored-member closure arm,
+    // whose brand preamble does that (the expando-named half of the same rows,
+    // `d.myToString = …`, already threw before this change).
+    //
+    // Receiver-precise (`sourceOverridesMethodOnReceiver`): a module that does
+    // not override `toString` on this binding compiles byte-identically.
+    !(ctx.standalone && sourceOverridesMethodOnReceiver(propAccess.expression, "toString"))
+  ) {
     // #1463 — `someFn.toString()` where `someFn` is a top-level function
     // declaration → return the captured source text directly. Must happen
     // BEFORE the externref-routes-to-JS fallback below: top-level functions

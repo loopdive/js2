@@ -66,7 +66,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
 import { compileSuperElementMethodCall } from "./new-super.js";
-import { compileCallDispatchTail } from "./stored-member-closure-call.js";
+import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
@@ -1466,6 +1466,20 @@ export function compileTailDispatch(
 
       const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
       if (dynamicHostCall !== undefined) return dynamicHostCall;
+
+      // (#4482) `o["m"](…)` where the module stored a closure in `o.m` — the
+      // bracket twin of the dot-access shape `compileCallDispatchTail` already
+      // narrows. Placed immediately before the local graceful fallback below,
+      // which is the point where "no arm recognised this call" becomes the
+      // silent VALUE `undefined`; the arm is admission-tested on the same
+      // source scan, so a module that never writes `X.m = …` /
+      // `Object.defineProperty(X, "m", …)` reaches the fallback exactly as
+      // before. Measured: `RegExp/prototype/{exec,test}/…_A2_T6`, where the
+      // transferred intrinsic must run its brand check and throw `TypeError`.
+      {
+        const storedElem = tryEmitStoredMemberClosureCall(ctx, fctx, expr);
+        if (storedElem !== undefined) return storedElem;
+      }
 
       {
         const recvType = compileExpression(ctx, fctx, elemAccess.expression);

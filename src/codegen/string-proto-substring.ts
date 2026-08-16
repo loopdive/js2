@@ -4,7 +4,11 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { undefinedSingletonActive } from "./any-helpers.js";
-import { ensureExternrefToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
+import {
+  ensureExternrefToNumberProvider,
+  getToPrimitiveProvider,
+  runtimeToPrimitiveInstrs,
+} from "./coercion-engine.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
@@ -37,7 +41,13 @@ function emitRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionContext, 
 function unboxBoundToI32(ctx: CodegenContext, fctx: FunctionContext, paramIdx: number): number {
   const local = allocLocal(fctx, `__pm_arg_${fctx.locals.length}`, { kind: "i32" });
   const unboxIdx = ensureExternrefToNumberProvider(ctx, fctx);
+  // (#4465) §22.1.3.24 step 3/4 is ToIntegerOrInfinity(ToNumber(bound)), and
+  // ToNumber of an OBJECT runs ToPrimitive(number) — the user's valueOf/toString.
+  // `__unbox_number` alone answers NaN for any object, so S15.5.4.15_A3_T11's
+  // `substring(new Array(), new Boolean(1))` (→ 0, 1 → "f") read 0, 0 → "".
+  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "number");
   fctx.body.push({ op: "local.get", index: paramIdx });
+  if (toPrimitive !== null) fctx.body.push(...toPrimitive);
   if (unboxIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" });
   } else {
