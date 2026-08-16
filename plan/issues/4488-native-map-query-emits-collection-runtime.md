@@ -1,7 +1,8 @@
 ---
 id: 4488
 title: "#4461's native-map capability QUERY emits the $Map runtime, putting it in every module with a `new`"
-status: in-review
+status: done
+completed: 2026-08-16
 sprint: current
 created: 2026-08-15
 assignee: ttraenkler/opus-4462

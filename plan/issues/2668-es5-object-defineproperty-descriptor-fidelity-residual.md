@@ -14,9 +14,20 @@ language_feature: property-descriptors
 goal: es5
 related: [1460, 1462, 929, 3185, 3663, 4008, 4158, 4197, 4222]
 sprint: current
+horizon: l
 ---
 
 # #2668 — ES5 canonical vec-index Object/property MOP residual
+
+## 2026-08-16 standalone census (dispatch context)
+
+Fresh CI baseline (2026-08-16, corpus `b363f29d`): standalone ES5 is
+**8,454 / 9,029 (575 nonpasses)**. The defineProperty family
+(`defineProperty` 49 + `defineProperties` 17 + `create`/`getOwnPropertyNames`/
+`keys`/gOPD ~20) is **86 rows — the largest single-issue cluster**. Per-cluster
+signatures and the full file list:
+`plan/log/analysis-2026-08-16-es5-standalone-575.md` (§defineProperty-family).
+Cluster size is a ceiling, not a flip forecast (#3626 §2.1 method).
 
 ## Decision
 
