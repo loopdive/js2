@@ -88,6 +88,7 @@ import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
+import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
 import {
@@ -5233,7 +5234,10 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      const name = phase1PropertyName(prop.name);
+      // (#4513) Same fold the selector admitted this literal with — one shared
+      // function, so the claim rule and the lowering rule cannot drift into a
+      // post-claim `invariant`.
+      const name = objectLiteralDataPropertyName(prop.name);
       if (name === null) {
         demoteToLegacy(
           "body-shape-rejected",
@@ -5798,11 +5802,16 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
 }
 
 /**
- * Resolve an object literal property name to a string. Identifier and
- * StringLiteral keys produce their text. NumericLiteral keys produce
- * the canonical JS toString of the number. ComputedPropertyName always
- * returns null. Duplicated locally from select.ts to avoid a circular
- * import.
+ * Resolve a property name to a string. Identifier and StringLiteral keys
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
+ * ComputedPropertyName always returns null. Duplicated locally from select.ts
+ * to avoid a circular import.
+ *
+ * (#4513) The object-literal DATA-PROPERTY site uses
+ * `objectLiteralDataPropertyName` (leaf module `property-key-fold.ts`) instead,
+ * so the computed-key fold is a single text shared with the selector rather
+ * than a third copy here. The remaining callers below are method / prepared-
+ * scope naming, which stays computed-name-rejecting.
  */
 function phase1PropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
