@@ -9148,7 +9148,7 @@ function isStaticSpreadSource(
  * initializers. Rejects spread, methods, accessors, and duplicate keys
  * (last-write-wins is JS spec; deferred to a later slice).
  *
- * (#4511) A COMPUTED key is accepted when it folds to a static string —
+ * (#4513) A COMPUTED key is accepted when it folds to a static string —
  * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
  * is static and a folded key is indistinguishable from a plain one. Keys that
  * need a value environment (`const k = "a"`, `Symbol.iterator`, template
@@ -9229,7 +9229,7 @@ function isPhase1ObjectLiteral(
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      // (#4511) Data-property keys resolve through the shared fold, which adds
+      // (#4513) Data-property keys resolve through the shared fold, which adds
       // the statically-foldable COMPUTED keys (`{ ["a"]: v }`, `` { [`a`]: v } ``,
       // `{ [0]: v }`) to the identifier/string/numeric set. A key that does not
       // fold keeps this arm — no new reason code, because a non-folding computed
@@ -9325,7 +9325,7 @@ function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
  * produce their text; NumericLiteral keys produce their raw text.
  * ComputedPropertyName always returns null.
  *
- * (#4511) The object-literal DATA-PROPERTY site no longer calls this — it uses
+ * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
  * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
  * function keeps rejecting computed names because its remaining callers are
  * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a

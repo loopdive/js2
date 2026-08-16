@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #4511 — IR adoption of statically-foldable COMPUTED object keys
+// #4513 — IR adoption of statically-foldable COMPUTED object keys
 // (`{ ["a"]: v }`), measure-first.
 //
 // Before: every `ComputedPropertyName` in an object literal rejected the whole
@@ -124,7 +124,7 @@ async function expectCleanReject(source: string, name: string, args: unknown[], 
   expect(call(ir)).toBe(expected);
 }
 
-describe("#4511 — foldable computed keys are IR-claimed and lowered", () => {
+describe("#4513 — foldable computed keys are IR-claimed and lowered", () => {
   it('a string-literal key `{ ["a"]: n }` no longer drops the function to legacy', async () => {
     await expectIrLegacyParity(
       `export function f(n: number): number { const o = { ["a"]: n }; return o.a; }`,
@@ -239,7 +239,7 @@ describe("#4511 — foldable computed keys are IR-claimed and lowered", () => {
   });
 });
 
-describe("#4511 — numeric computed keys use the scanner's canonical text", () => {
+describe("#4513 — numeric computed keys use the scanner's canonical text", () => {
   // The guard that measurement deleted. `NumericLiteral.text` is ALREADY
   // `String(Number(...))` — `0x10` → "16", `0.50` → "0.5", `1e3` → "1000" — so
   // a computed numeric key is byte-identical to the plain numeric key, and
@@ -294,7 +294,7 @@ describe("#4511 — numeric computed keys use the scanner's canonical text", () 
   });
 });
 
-describe("#4511 — evaluation order is left-to-right, not shape order", () => {
+describe("#4513 — evaluation order is left-to-right, not shape order", () => {
   // The hazard a computed key makes visible: `lowerObjectLiteral` SORTS the
   // field list by name, and it does so only AFTER every initializer has been
   // lowered in `expr.properties` order. If the sort ever moved ahead of the
@@ -330,7 +330,7 @@ describe("#4511 — evaluation order is left-to-right, not shape order", () => {
   });
 });
 
-describe("#4511 — keys that need a value environment still reject cleanly", () => {
+describe("#4513 — keys that need a value environment still reject cleanly", () => {
   it('`const k = "a"` — the selector\'s scope is a name set, not a value environment', async () => {
     await expectCleanReject(
       `export function f(n: number): number { const k = "a"; const o = { [k]: n }; return (o as any).a; }`,
@@ -377,7 +377,7 @@ describe("#4511 — keys that need a value environment still reject cleanly", ()
   });
 });
 
-describe("#4511 — property FORMS that stay rejected, each at its own arm", () => {
+describe("#4513 — property FORMS that stay rejected, each at its own arm", () => {
   it("a computed getter — accessors are unclaimed for plain keys too", async () => {
     await expectCleanReject(
       `export function f(n: number): number { const o = { get ["a"]() { return 1; } }; return (o as any).a + n; }`,
@@ -421,7 +421,7 @@ describe("#4511 — property FORMS that stay rejected, each at its own arm", () 
   });
 });
 
-describe("#4511 — the fold does not widen the non-data-property sites", () => {
+describe("#4513 — the fold does not widen the non-data-property sites", () => {
   it("`objectLiteralDataPropertyName` agrees with the plain path on non-computed names", () => {
     const sf = ts.createSourceFile("t.ts", `const o = { a: 1, "b": 2, 3: 4 };`, ts.ScriptTarget.Latest, true);
     const decl = (sf.statements[0] as ts.VariableStatement).declarationList.declarations[0]!;

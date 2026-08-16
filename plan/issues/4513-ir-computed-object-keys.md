@@ -1,5 +1,5 @@
 ---
-id: 4511
+id: 4513
 title: "IR: adopt statically-foldable computed object keys `{ [expr]: v }`"
 status: done
 completed: 2026-08-16
@@ -30,7 +30,7 @@ Legacy already folds: `resolvePropertyNameText` → `resolveComputedKeyExpressio
 succeeds the literal compiles to the same closed struct as a plain key. Only the
 IR path treats a folded key as unresolvable.
 
-## Measurement — before (base `76e294c7`, `.tmp/4511/probe.mts`)
+## Measurement — before (base `76e294c7`, `.tmp/4513/probe.mts`)
 
 `JS2WASM_IR_SHAPE_DIAG=1`, `trackFallbacks: true`. `selector` is
 `reason/arm`; `legacy | IR` are the runtime values of the exported function on
@@ -218,7 +218,7 @@ keys that need a value environment:
 | `{ ["m"]() {} }` | `objectlit-ordinary-to-primitive-method` | unchanged |
 | `class A { [k]() {} }` | `class-member-unsupported` | unchanged |
 
-Acceptance sweep `.tmp/4511/sweep.mts` — 30 shapes, each of which must be
+Acceptance sweep `.tmp/4513/sweep.mts` — 30 shapes, each of which must be
 claimed-and-emitted with legacy/IR parity or cleanly rejected; a single
 `invariant` fails the adoption. Result: **PASS — 0 bad of 30; 18 claimed**
 (12 claimed before, all baselines).
@@ -227,9 +227,9 @@ claimed-and-emitted with legacy/IR parity or cleanly rejected; a single
 
 | gate | result |
 | ---- | ------ |
-| `tests/issue-4511.test.ts` | 28 passed |
+| `tests/issue-4513.test.ts` | 28 passed |
 | `tests/issue-4471.test.ts`, `tests/issue-4459.test.ts` (neighbours) | 62 passed |
-| `pnpm run check:ir-fallbacks` | OK — no unintended / post-claim / module-level increase. Base run also captured (`.tmp/4511/fallbacks-base.txt`) via the `.tmp/4511/base/` revert copies: identical, so "unchanged" here is a measurement, not an assumption |
+| `pnpm run check:ir-fallbacks` | OK — no unintended / post-claim / module-level increase. Base run also captured (`.tmp/4513/fallbacks-base.txt`) via the `.tmp/4513/base/` revert copies: identical, so "unchanged" here is a measurement, not an assumption |
 | `pnpm run check:ir-only` (+ `--policy=hybrid`) | READY. Base A/B run: host lane 37/37 emitted before and after; standalone lane 19 emitted / 18 unsupported before and after — no floor movement in either direction |
 | `pnpm run check:ir-adoption` | clean after regenerating the `ObjectLiteralExpression` row (`--ignore-all-space` diff touches that row only; the rest is table-column repadding) |
 | `pnpm run typecheck` | 0 errors (base: 0) |
@@ -243,7 +243,7 @@ function it names (`src/codegen/index.ts`, `object-runtime.ts`,
 `array-methods.ts`, `native-strings.ts`) is in a file this change does not
 touch. It is not run by any workflow.
 
-See `tests/issue-4511.test.ts`.
+See `tests/issue-4513.test.ts`.
 
 ## LOC budget
 

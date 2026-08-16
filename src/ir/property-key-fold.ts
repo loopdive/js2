@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4511) The single syntactic fold for object-literal COMPUTED property keys
+ * (#4513) The single syntactic fold for object-literal COMPUTED property keys
  * (`{ [expr]: v }`), shared by the selector (`select.ts`) and the lowerer
  * (`from-ast.ts`).
  *
@@ -34,7 +34,7 @@
  * like it needs a canonicalisation step here, and an earlier draft of this
  * module carried one (`String(Number(text)) === text` or reject).
  *
- * Measured 2026-08-16 (`.tmp/4511/`): **TypeScript's scanner already stores the
+ * Measured 2026-08-16 (`.tmp/4513/`): **TypeScript's scanner already stores the
  * canonical decimal form in `NumericLiteral.text`**, so the guard was dead code
  * that implied a hazard the compiler does not have. All 16 spellings probed —
  * `0x10`→`16`, `0b101`→`5`, `0o17`→`15`, `0.50`→`0.5`, `.5`→`0.5`, `5.`→`5`,
@@ -46,7 +46,7 @@
  * So the numeric arm just returns `expr.text`, which makes a computed numeric
  * key **byte-identical** to the already-shipped plain numeric key
  * (`phase1PropertyName` returns `name.text` too). That identity is the parity
- * property worth having, and `tests/issue-4511.test.ts` asserts it at runtime
+ * property worth having, and `tests/issue-4513.test.ts` asserts it at runtime
  * for `{ [0x10]: v }` / `{ 0x10: v }` / `{ 16: v }` rather than restating the
  * scanner's behaviour as a comment.
  *
@@ -60,7 +60,7 @@
  * sort permutes the `object.new` operand list, never the emission order of the
  * value computations. A computed key is the case that makes that distinction
  * visible, because a folded key's field name need not sort in source position
- * (`{ ["b"]: p(1), a: p(2) }`); tests/issue-4511.test.ts pins it.
+ * (`{ ["b"]: p(1), a: p(2) }`); tests/issue-4513.test.ts pins it.
  */
 
 import { ts } from "../ts-api.js";

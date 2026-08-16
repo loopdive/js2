@@ -5232,7 +5232,7 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      // (#4511) Same fold the selector admitted this literal with — one shared
+      // (#4513) Same fold the selector admitted this literal with — one shared
       // function, so the claim rule and the lowering rule cannot drift into a
       // post-claim `invariant`.
       const name = objectLiteralDataPropertyName(prop.name);
@@ -5805,7 +5805,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
  * ComputedPropertyName always returns null. Duplicated locally from select.ts
  * to avoid a circular import.
  *
- * (#4511) The object-literal DATA-PROPERTY site uses
+ * (#4513) The object-literal DATA-PROPERTY site uses
  * `objectLiteralDataPropertyName` (leaf module `property-key-fold.ts`) instead,
  * so the computed-key fold is a single text shared with the selector rather
  * than a third copy here. The remaining callers below are method / prepared-
