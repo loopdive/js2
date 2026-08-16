@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-15",
+  "generated": "2026-08-16",
   "lanes": {
     "single-host": {
       "entryFloor": 5,
@@ -16,13 +16,15 @@
       "notes": [
         "(#4508) legacyBodyEmittedCeiling 22 -> 26 and emitted/irBodyEmitted 20 -> 22. Feeding module-binding storage edges into the prepared-owner fixpoint recovered algorithms.ts::fibMemo and algorithms.ts::main (both were resolve/late-preparation-unsupported).",
         "(#4508) The +4 legacy bodies are algorithms.ts::fibIter, ::binarySearch, ::quicksort and ::joinNums, which lost COMPILE-ONCE (they still emit). The new edge does not touch them: main fails to seal on its own unplanned-abi-binding providers, so parity withdraws it, and the PRE-EXISTING BIDIRECTIONAL CALL CLOSURE in selectR2PreparedOwnerComponents then drags its callees out of the enlarged component via the reverse callers edge.",
-        "(#4508) Restoring their compile-once needs call-closure refinement (directional awareness / component splitting), NOT a revert of the storage edge: the forward-only variant was measured and is unsound - it leaves a direct reader beside a still-prepared component whose late-discovered runtime providers break the frozen prepared ABI. tests/issue-4508.test.ts pins the four units' compile-twice state so the refinement flips a test."
+        "(#4508) Restoring their compile-once needs call-closure refinement (directional awareness / component splitting), NOT a revert of the storage edge: the forward-only variant was measured and is unsound - it leaves a direct reader beside a still-prepared component whose late-discovered runtime providers break the frozen prepared ABI. tests/issue-4508.test.ts pins the four units' compile-twice state so the refinement flips a test.",
+        "(#4514) legacyBodyEmittedCeiling 26 -> 18; emitted/irBodyEmitted unchanged at 22, unsupported unchanged at 15, invariants 0. The reverse-callers edge is now directional: an outside caller withdraws a callee only when the callee's ABI is not certified against it (every carrier fixed by the declaration AND the prepared projection equal to the allocated Program ABI slot). Instrumented measurement first confirmed the four algorithms.ts units had NO other blocking edge - fibMemo withdraws on storage, main on the callee edge into fibMemo, and those four on the caller edge into main alone.",
+        "(#4514) -8, not the -4 the four named units predict: partial preparation of a source file also stops forcing its remaining units onto a worse route. The naive refinement was fatal exactly as #4508 predicted, but the mechanism is provider planning, not the closure: the first prepared transaction sealed the provider denominator for the WHOLE compilation, so runtime|21:__extern_is_undefined - first observed while lowering fibMemo / main / the module-init on the late route - threw 'callable provider ... discovered after prepared provider planning' and took the entry to success:false with 3 invariants. Late keys are now APPENDED past the sealed prefix, which keeps the property the seal protects (no already-minted ordinal moves) without refusing discovery."
       ],
       "entryFloor": 5,
       "terminalUnitFloor": 37,
       "emittedFloor": 22,
       "irBodyEmittedFloor": 22,
-      "legacyBodyEmittedCeiling": 26,
+      "legacyBodyEmittedCeiling": 18,
       "unsupportedCeiling": 15,
       "unsupportedByCode": {
         "select/body-shape-rejected": 3,
