@@ -194,6 +194,33 @@ file onto a worse route.
   NOT exempted while a `number[]` one is; host lane inert; and the
   provider-discovery regression pin on the real corpus entry.
 
+### The exemption needed one more guard, found only in the merge queue
+
+PR #4627's first merge_group re-validation failed `check for test262
+regressions`: 8 files, one family, all `pass → compile_error` with changed wasm
+hashes — `annexB/language/global-code/*-global-existing-fn-no-init.js`, erroring
+`ABI draft … :function-value-trampoline:… would mutate sealed prepared scope`.
+This is the class of failure PR-level checks cannot see: the heavy shards are
+merge_group-only.
+
+Root cause: the signature proof covers the CALL ABI and says nothing about
+**support bindings drafted for an owner after its component seals**. annexB
+web-compat function hoisting (B.3.3.2 `CanDeclareGlobalFunction`) is exactly
+that shape — a block-scoped `function f` beside a top-level `function f` drafts
+a `function-value-trampoline` on the top-level unit at hoist time.
+
+Isolated by A/B before fixing (the selector change, not the provider change, was
+responsible) and then by four minimal shapes: only "block-scoped function
+redeclaring a same-named top-level function" fails. An ordinary function-value
+reference from a withdrawn caller compiles; a duplicate top-level declaration
+compiles; a nested declaration with a unique name compiles.
+
+Guard: a unit whose name is also declared by any non-top-level function
+declaration in the file is not exempted. Deliberately over-approximate — it only
+ever removes an exemption, so it can cost compile-once on an unusual shape but
+can never admit an unsound one. The standalone measurement is unchanged at 18
+legacy bodies with the guard in place.
+
 ### Note for follow-up
 
 `--update` also wanted to ratchet the **single-host** `legacyBodyEmittedCeiling`

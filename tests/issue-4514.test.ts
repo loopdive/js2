@@ -115,6 +115,27 @@ describe("#4514 outside-caller ABI certification", () => {
     expect(unit(units, "shape").legacyBodyEmitted, "a re-plannable carrier must not inherit the exemption").toBe(true);
   });
 
+  it("does not exempt a name an annexB block-scoped function also declares", async () => {
+    // Caught only by the merge_group re-validation of PR #4627: eight
+    // `annexB/language/global-code/*-global-existing-fn-no-init.js` files went
+    // pass → compile_error with `ABI draft … function-value-trampoline … would
+    // mutate sealed prepared scope`. B.3.3.2 `CanDeclareGlobalFunction` hoisting
+    // drafts a support binding on the top-level unit AFTER its component seals,
+    // and the signature proof says nothing about support bindings. Isolated:
+    // only this shape breaks — an ordinary function-value reference from a
+    // withdrawn caller is fine, and so is a nested declaration with a unique
+    // name (both covered above / below).
+    const { success } = await outcomes(
+      `f();
+       {
+         function f() { return 1; }
+       }
+       function f() { return 2; }`,
+      "gc",
+    );
+    expect(success).toBe(true);
+  });
+
   it("host lane is unchanged — nothing withdraws there to begin with", async () => {
     const { success, units } = await outcomes(
       `let counter = 0;

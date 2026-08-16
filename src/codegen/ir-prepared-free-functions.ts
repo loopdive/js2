@@ -762,6 +762,37 @@ function r2CertifiedAgainstOutsideCallers(
 }
 
 /**
+ * (#4514) Names a NON-top-level function declaration also declares.
+ *
+ * The signature proof above says nothing about support bindings drafted for an
+ * owner AFTER its component seals, and annexB web-compat function hoisting
+ * (B.3.3.2 `CanDeclareGlobalFunction`) is exactly that shape: a block-scoped
+ * `function f` beside a top-level `function f` drafts a
+ * `function-value-trampoline` on the top-level unit at hoist time, which throws
+ * `would mutate sealed prepared scope`. Measured — the eight
+ * `annexB/language/global-code/*-global-existing-fn-no-init.js` regressions in
+ * the #4627 merge_group run were all and only this shape; an ordinary
+ * function-value reference from a withdrawn caller is fine, and so is a nested
+ * declaration whose name is unique.
+ *
+ * Deliberately over-approximate: EVERY non-top-level function-declaration name
+ * is collected, not just the ones that provably redeclare a top-level unit.
+ * This only ever removes an exemption, so an over-approximation costs
+ * compile-once on an unusual shape and can never admit an unsound one.
+ */
+function collectNestedFunctionDeclarationNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && !ts.isSourceFile(node.parent)) {
+      names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return names;
+}
+
+/**
  * The certified Promise-delay owner is the first R3 closure component whose
  * complete derived population is already produced by the IR lowerer. Its
  * source return type is reference-shaped, so keep this ABI proof separate
@@ -1183,10 +1214,16 @@ export function selectR2PreparedOwnerComponents(input: {
   // admission-time override and the already-allocated slot, neither of which
   // the fixed point mutates. Class members are absent by construction — their
   // admission never ran the R2 signature proofs.
+  const nestedFunctionDeclarationNames = collectNestedFunctionDeclarationNames(input.sourceFile);
   const outsideCallerCertifiedUnitIds = new Set<IrUnitId>(
     [...freeFunctionCandidates].filter((unitId) => {
       const override = input.overridesByUnitId.get(unitId);
-      return override !== undefined && r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
+      const claim = input.claimsByUnitId.get(unitId);
+      if (override === undefined || claim === undefined) return false;
+      // Support bindings drafted after the component seals are outside what the
+      // signature proof covers; annexB block-function hoisting is that shape.
+      if (claim.declaration.name && nestedFunctionDeclarationNames.has(claim.declaration.name.text)) return false;
+      return r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
     }),
   );
   for (let changed = true; changed; ) {
