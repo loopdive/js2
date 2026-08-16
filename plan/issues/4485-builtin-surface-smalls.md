@@ -63,3 +63,23 @@ Four bounded surface families, ~25 rows:
 
 - ≥14 rows flip across the four families; zero regressions; residuals with
   owners.
+
+## Recovered findings (first agent's worktree lost to session-limit kill, 2026-08-16 01:50 — reimplement from these, they were MEASURED)
+
+Family C (annexB Date) was completed and verified at **14 → 23 pass (+9, 1
+residual)** before the loss. Three distinct root causes, reported before death:
+
+1. `setYear`/`toGMTString` were missing from the `DATE_PROTO_METHODS` CSV —
+   two of the three gaps are just table entries.
+2. `setYear` tested the RAW f64 argument against the 0..99 window instead of
+   MakeFullYear's truncated value (§B.2.5 ToIntegerOrInfinity first).
+3. `toGMTString` minted its OWN closure singleton instead of aliasing
+   `toUTCString`'s — §B.2.6 requires the SAME function object; the fix used
+   `ensureStandaloneNativeMethodClosure` to alias, which is the correct
+   identity mechanism on any base.
+
+Families A (Error.prototype.toString composition), B (global value props —
+use the #4442 function-intrinsic-carrier template), D (Array surface tail)
+were NOT started. Lead decision on base (recorded 2026-08-16): successors do
+NOT rebase mid-work; base-change staleness costs more than merge-time
+reconciliation.
