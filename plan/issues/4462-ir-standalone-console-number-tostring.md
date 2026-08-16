@@ -1,7 +1,8 @@
 ---
 id: 4462
 title: "IR: standalone console.log sink + native number_toString, so console-using units claim host-free"
-status: in-review
+status: done
+completed: 2026-08-16
 sprint: current
 created: 2026-08-15
 assignee: ttraenkler/opus-4462
