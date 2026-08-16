@@ -928,7 +928,11 @@
           const rowRank = Number.isFinite(row.rank) ? row.rank : Number.MAX_SAFE_INTEGER;
           const isActive = row.edition === activeEdition;
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
-          const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
+          const label = proposalEditionLabels.has(row.edition)
+            ? PROPOSAL_LABEL
+            : row.edition === "ES3 / Core"
+              ? "ES3"
+              : row.edition || row.rawEdition;
 
           // Same conic-gradient ring + glow technique as the big <t262-donut>,
           // just the ring and percentage, no count labels.
