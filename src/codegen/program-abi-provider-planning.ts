@@ -108,6 +108,12 @@ function sameLocator(left: ProviderLocator, right: ProviderLocator): boolean {
 export class ProgramAbiCallableProviderRegistry {
   private readonly observed = new Map<string, ObservedProvider>();
   private observationOrder: readonly string[] | undefined;
+  /**
+   * (#4514) Provider keys first observed AFTER `sealObservationOrder`, in
+   * discovery order. They extend the sealed order at the tail, so no already
+   * minted ordinal can move; see `observe`.
+   */
+  private readonly appendedOrder: string[] = [];
   private readonly plannedByKey = new Map<string, IrBindingId>();
   private plannedValue: ReadonlyMap<string, IrBindingId> | undefined;
 
@@ -155,10 +161,20 @@ export class ProgramAbiCallableProviderRegistry {
     const locator = callableLocatorAt(this.ctx, index);
     const existing = this.observed.get(structuralReferenceKey);
     if (!existing && this.observationOrder) {
-      throw new ProgramAbiInvariantError(
-        "planning-sealed",
-        `callable provider ${structuralReferenceKey} was discovered after prepared provider planning`,
-      );
+      // (#4514) A provider discovered after prepared planning is APPENDED to
+      // the sealed order, never merged into it. What the seal protects is that
+      // an ordinal already minted into an `IrBindingId` / structural order can
+      // never move: ordinals are positions in this array, so re-sorting a late
+      // key into the middle would renumber earlier providers. Appending cannot
+      // — every sealed position keeps its index and the newcomer takes a fresh
+      // one past the end. Refusing late discovery outright made partial
+      // preparation of a source file fatal: the first prepared transaction
+      // sealed the denominator for the WHOLE compilation, so any unit left on
+      // the late route that needed a not-yet-observed runtime helper threw
+      // (measured on `algorithms.ts` standalone: preparing four ABI-certified
+      // owners made `__extern_is_undefined` undiscoverable for `fibMemo`,
+      // `main` and the module-init).
+      this.appendedOrder.push(structuralReferenceKey);
     }
     if (existing && !sameLocator(existing.locator, locator)) {
       throw providerError(
@@ -295,9 +311,16 @@ export class ProgramAbiCallableProviderRegistry {
     return this.plannedValue;
   }
 
+  /**
+   * The sealed prefix, plus (#4514) every key discovered after sealing in
+   * discovery order. The prefix is sorted once and never re-sorted, so a
+   * provider's ordinal is fixed the first time this order is read.
+   */
   private sealObservationOrder(): readonly string[] {
     this.observationOrder ??= Object.freeze([...this.observed.keys()].sort());
-    return this.observationOrder;
+    return this.appendedOrder.length === 0
+      ? this.observationOrder
+      : Object.freeze([...this.observationOrder, ...this.appendedOrder]);
   }
 
   private planProvider(provider: ObservedProvider, ordinal: number): IrBindingId {
