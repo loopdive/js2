@@ -13,6 +13,7 @@ import type { Instr } from "../ir/types.js";
 import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
+import { ensureStandaloneRegExpToStringDyn, standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
 
 /**
  * The reflective `String.prototype` members that take NO arguments and return a
@@ -83,8 +84,51 @@ export function emitStringProtoToStringFlat(
     );
   }
   const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
-  body.push({ op: "local.get", index: paramIdx });
-  if (toPrimitive !== null) body.push(...toPrimitive);
-  body.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
+  const generic: Instr[] = [{ op: "local.get", index: paramIdx }];
+  if (toPrimitive !== null) generic.push(...toPrimitive);
+  generic.push({ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStrIdx }, { op: "call", funcIdx: flattenIdx });
+  body.push(...withRegExpReceiverArm(ctx, paramIdx, flattenIdx, generic));
   for (const instr of body) fctx.body.push(instr);
+}
+
+/**
+ * (#4465) Wrap a generic `ToString(param)` sequence with a runtime
+ * `$__StandaloneRegExp` arm.
+ *
+ * §22.1.3 ToString(thisValue) → ToPrimitive(string) → `RegExp.prototype.toString`
+ * (§22.2.6.14) for a RegExp receiver, which is `"/" + source + "/" + flags`. The
+ * generic runtime walker (`__to_primitive` → `$__any_to_string`) has no RegExp
+ * arm: `__to_primitive` returns the struct unchanged (it is neither `$Object`
+ * nor a class instance with a user `toString`) and `$__any_to_string`'s terminal
+ * for an unrecognized ref is the literal `"[object Object]"`. So the entire
+ * `S15.5.4.1[6789]_A1_T14` family answered `"[object object]"`.
+ *
+ * The arm is emitted ONLY when the module already carries the standalone RegExp
+ * struct AND the runtime renderer could be minted — a module that never mentions
+ * RegExp gets the unchanged `generic` sequence, byte for byte. Both branches
+ * leave one flat `$NativeString` on the stack, so callers are unaffected.
+ */
+function withRegExpReceiverArm(ctx: CodegenContext, paramIdx: number, flattenIdx: number, generic: Instr[]): Instr[] {
+  const structTypeIdx = standaloneRegExpStructTypeIdx(ctx);
+  if (structTypeIdx === undefined) return generic;
+  const toStringIdx = ensureStandaloneRegExpToStringDyn(ctx);
+  if (toStringIdx === undefined) return generic;
+  const flatType = ctx.mod.types[ctx.nativeStrTypeIdx];
+  if (flatType === undefined) return generic;
+  return [
+    { op: "local.get", index: paramIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: structTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.nativeStrTypeIdx } },
+      then: [
+        { op: "local.get", index: paramIdx },
+        { op: "any.convert_extern" },
+        { op: "call", funcIdx: toStringIdx },
+        { op: "call", funcIdx: flattenIdx },
+      ],
+      else: generic,
+    },
+  ];
 }
