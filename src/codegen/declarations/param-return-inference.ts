@@ -181,6 +181,14 @@ function dtsSeedValTypeForArgIdentifier(ctx: CodegenContext, arg: ts.Identifier)
 export interface CallSiteParamInference {
   type: ValType | null;
   sawCallSite: boolean;
+  /**
+   * (#2867 S2) Whether the function's name is also referenced as a **value**
+   * somewhere in the file (`.then(h, h)`, `arr.map(h)`, `x = h`) rather than
+   * only as the direct callee of `h(...)` / `new h(...)`. Such a reference
+   * creates callers this scan cannot see, so a call-site-agreed GC-`ref`
+   * narrowing has no proof behind it. See {@link functionNameEscapesAsValue}.
+   */
+  escapesAsValue: boolean;
 }
 
 /**
@@ -235,6 +243,87 @@ function calleeNameIndex(sourceFile: ts.SourceFile): Map<string, CalleeSite[]> {
   forEachChild(sourceFile, visit);
   callSiteIndexBySourceFile.set(sourceFile, index);
   return index;
+}
+
+/**
+ * (#2867 S2) Names referenced as a VALUE, indexed once per source file.
+ *
+ * `calleeNameIndex` answers "where is `h` called?". It cannot answer "who else
+ * can call `h`?" — and that is the question the parameter narrowing actually
+ * depends on. A function passed as a first-class value (`p.then(h, h)`,
+ * `arr.map(h)`, `cb = h`) acquires callers that are invisible to a call-site
+ * scan, so "every call site I can see passes a string" is not evidence that the
+ * parameter is a string at runtime.
+ *
+ * Measured consequence before this guard (standalone lane, 2026-08-15): the
+ * test262 async harness's `$DONE(error)` is called directly with message
+ * STRINGS (`$DONE('The promise should be rejected…')`) and simultaneously
+ * installed as a reaction via `.then($DONE, $DONE)`. The scan agreed on
+ * "string", so the parameter lowered to a non-nullable native-string `ref`, and
+ * the native `.then` fulfil wrapper's `any.convert_extern` + `ref.cast`
+ * (`pushExternrefLocalAsType`) trapped the moment the microtask drive delivered
+ * anything else — surfacing as
+ * `illegal cast [__then_fulfill_N ← __drain_microtasks]`, the single largest
+ * built-ins/Promise failure bucket.
+ *
+ * Name-keyed and therefore deliberately CONSERVATIVE: a same-named local in
+ * another scope also counts as an escape. Over-detecting only costs a
+ * narrowing; under-detecting costs a runtime trap. Same one-walk-per-file
+ * caching discipline as {@link calleeNameIndex} (#4416) so this stays
+ * O(programSize), not O(functions x params x programSize).
+ */
+const valueRefNameIndexBySourceFile = new WeakMap<ts.SourceFile, Set<string>>();
+
+function valueReferencedNames(sourceFile: ts.SourceFile): Set<string> {
+  const cached = valueRefNameIndexBySourceFile.get(sourceFile);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && !isNonValueIdentifierPosition(node)) names.add(node.text);
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+  valueRefNameIndexBySourceFile.set(sourceFile, names);
+  return names;
+}
+
+/**
+ * Identifier positions that are NOT a first-class read of the binding: the
+ * direct callee of a call/new (that is the case the call-site scan already
+ * models), declaration names, member/property names, and label-like slots.
+ * Everything else is treated as a value read.
+ */
+function isNonValueIdentifierPosition(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (!parent) return true;
+  // `h(...)` / `new h(...)` — the modelled call site.
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) return true;
+  // `obj.h` / `{ h: … }` / `h: …` — a property NAME, not this binding.
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return true;
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return true;
+  if (ts.isMethodDeclaration(parent) && parent.name === node) return true;
+  if (ts.isPropertyDeclaration(parent) && parent.name === node) return true;
+  if (ts.isPropertySignature(parent) && parent.name === node) return true;
+  if (ts.isQualifiedName(parent) && parent.right === node) return true;
+  // Declaration names — `function h(){}`, `var h = …`, `(h) => …`, `class h {}`.
+  if (ts.isFunctionDeclaration(parent) && parent.name === node) return true;
+  if (ts.isFunctionExpression(parent) && parent.name === node) return true;
+  if (ts.isClassDeclaration(parent) && parent.name === node) return true;
+  if (ts.isVariableDeclaration(parent) && parent.name === node) return true;
+  if (ts.isParameter(parent) && parent.name === node) return true;
+  if (ts.isBindingElement(parent) && (parent.name === node || parent.propertyName === node)) return true;
+  if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent)) return true;
+  if (ts.isLabeledStatement(parent) && parent.label === node) return true;
+  if (ts.isBreakOrContinueStatement(parent) && parent.label === node) return true;
+  return false;
+}
+
+/**
+ * (#2867 S2) Does `funcName` appear anywhere in the file other than as the
+ * direct callee of a call/new? See {@link valueReferencedNames}.
+ */
+export function functionNameEscapesAsValue(funcName: string, sourceFile: ts.SourceFile): boolean {
+  return valueReferencedNames(sourceFile).has(funcName);
 }
 
 export function inferParamTypeFromCallSites(
@@ -400,7 +489,19 @@ export function inferParamTypeFromCallSites(
   if (type !== null && type.kind === "ref" && sawUnderApplied) {
     type = { kind: "ref_null", typeIdx: type.typeIdx };
   }
-  return { type, sawCallSite };
+  // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
+  // function ALSO escapes as a value, callers exist that this scan never saw, so
+  // an agreed GC-`ref` narrowing is unproven. Withdraw it — a ref narrowing is
+  // the only outcome whose ABI boundary TRAPS on a violating value
+  // (`any.convert_extern` + `ref.cast`), which is why it is the one withdrawn.
+  // f64 / i32 narrowings coerce instead of trapping and keep their existing
+  // (already-accepted) risk profile, so the blast radius stays confined to the
+  // trapping case.
+  const escapesAsValue = functionNameEscapesAsValue(funcName, sourceFile);
+  if (escapesAsValue && type !== null && (type.kind === "ref" || type.kind === "ref_null")) {
+    type = null;
+  }
+  return { type, sawCallSite, escapesAsValue };
 }
 
 /**
@@ -625,6 +726,12 @@ export function inferImplicitAnyParamType(
     ts.isIdentifier(parameter.name) &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0 &&
+    // (#2867 S2) The scope-resolved string verdict reasons about the definitions
+    // this file can see. An escaping function has callers it cannot see, so the
+    // verdict is not a proof for the parameter's ABI — same withdrawal as the
+    // call-site route above, applied at the second entry point into a native
+    // string `ref`.
+    !callSites.escapesAsValue &&
     ctx.stringLocalVerdict?.(parameter, parameter.name.text) === true
   ) {
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };

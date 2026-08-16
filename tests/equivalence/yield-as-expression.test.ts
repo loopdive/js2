@@ -14,14 +14,23 @@ describe("yield as expression (#763)", () => {
       export function test(): number {
         const iter = gen();
         iter.next();       // start generator, yield produces undefined
-        const result = iter.next(42);  // resume, yield receives 42 (but eager model gets NaN/undefined)
-        // In the eager model, yield returns undefined (NaN for f64),
-        // so arg = NaN, NaN + 1 = NaN. The test just checks compilation succeeds.
-        return typeof result.value === "number" ? 1 : 0;
+        const result = iter.next(42);  // resume; Node binds 42 here, we do not (see below)
+        return result.done ? 1 : 0;
       }
     `);
     // The important thing is that compilation succeeds (no "not enough arguments" error).
-    // The result depends on the generator execution model.
+    //
+    // (#2864 wave-2 S1) This assertion used to be `typeof result.value ===
+    // "number"`, which pinned the UNDEF_F64 SENTINEL's rendering rather than any
+    // real behaviour. Node returns `43` here (`arg` = 42); we do not deliver the
+    // `.next(42)` sent value into a yield in ARGUMENT position, so the value has
+    // always been the undefined sentinel. It merely used to *read back* as the
+    // number NaN, which satisfied a `typeof === "number"` check by accident;
+    // S1 makes an absent value render as `undefined`, as it already was.
+    // #2864's own R1 note says not to pin this residual in tests — so the
+    // assertion now pins `done`, which is true in every model. The real gap
+    // (sent value not bound for an argument-position yield) is unchanged and
+    // untested here by design.
     expect(exports.test()).toBe(1);
   });
 
@@ -74,9 +83,14 @@ describe("yield as expression (#763)", () => {
         const iter = gen();
         iter.next();
         const result = iter.next(5);
-        return typeof result.value === "number" ? 1 : 0;
+        return result.done ? 1 : 0;
       }
     `);
+    // (#2864 wave-2 S1) Same correction as the IIFE case above: Node returns
+    // `5` (the sent value flows through `identity`), we return the undefined
+    // sentinel because an argument-position yield is not bound to `.next(v)`.
+    // The old `typeof result.value === "number"` pinned the sentinel's
+    // rendering, not the behaviour; `done` is the part that is actually stable.
     expect(exports.test()).toBe(1);
   });
 });

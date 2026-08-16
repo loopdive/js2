@@ -185,7 +185,7 @@ import {
 // so `index.ts`s `from "./object-runtime.js"` importer keeps resolving.
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js";
-import { buildLazyNativeProtoGetInstrs, getBuiltinBrand } from "./native-proto.js";
+import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs, guardNullableApplyArguments } from "./apply-closure-args.js";
 import { vecConstructorArmInstrs } from "./vec-constructor-carrier.js"; // (#4220) runtime `<array>.constructor`
 import { registerStringExoticHasOwn, stringExoticHasOwnPrologue } from "./string-exotic-own-props.js"; // (#4232) §10.4.3 own props
@@ -5314,6 +5314,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       }
     }
   }
+
+  // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked
+  // because their proto materialized before `__defineProperty_value` existed
+  // (measured: RegExp does, reached through a plain `RegExp.prototype` value
+  // read). Here — the END of the object runtime, still ordinary body-compilation
+  // time — every helper the seeder bodies call is registered, so nothing has to
+  // mint or register types at finalize. No-op unless the module is
+  // `protoMemberDirty` AND actually materialized a proto.
+  flushPendingNativeProtoSeeders(ctx);
 
   return types;
 }
