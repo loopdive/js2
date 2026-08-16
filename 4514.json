@@ -1,10 +1,11 @@
 {
   "id": "4514",
   "assignee": "ttraenkler/opus-ir-2",
-  "requested_by": "ttraenkler/opus-ir-2",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4514-r2-call-closure-directional",
   "claimed_at": "2026-08-16T03:44:07Z",
-  "updated_at": "2026-08-16T03:44:07Z",
-  "write_id": "15199-ki1nwn25"
+  "updated_at": "2026-08-16T07:53:14Z",
+  "write_id": "4060-hj7d0fu6",
+  "released_at": "2026-08-16T07:53:14Z"
 }
