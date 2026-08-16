@@ -219,12 +219,13 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
   const L_MSG = 4;
 
   const returnName: Instr[] = [{ op: "local.get", index: L_NAME }, { op: "ref.as_non_null" }, { op: "return" }];
+  const returnMsg: Instr[] = [{ op: "local.get", index: L_MSG }, { op: "ref.as_non_null" }, { op: "return" }];
 
   const body: Instr[] = [
     { op: "local.get", index: L_V },
     { op: "ref.cast", typeIdx: errStructIdx },
     { op: "local.set", index: L_E },
-    // name = ($name is a native string) ? it : "Error"
+    // name = ($name is a native string) ? it : "Error"   (steps 3-4)
     { op: "local.get", index: L_E },
     { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 2 }, // $name (externref)
     { op: "any.convert_extern" },
@@ -240,24 +241,42 @@ function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
       else: litStr("Error"),
     },
     { op: "local.set", index: L_NAME },
-    // msg — null / non-string → name alone (steps 4–6; non-string is the
-    // documented construction-time-ToString residual).
+    // msg = ($message is a native string) ? it : ""      (steps 5-6)
+    // (#4485) An absent / non-string message is the EMPTY STRING, not "return
+    // name now". The old early-return conflated steps 5-6 with steps 7-9 and so
+    // could never reach step 7 (`name is "" → return msg`): `new Error()` with
+    // `e.name = ""` answered "Error" instead of "" (test262
+    // .../toString/15.11.4.4-8-2.js). Materialising the empty string here keeps
+    // the two decisions separate and makes the step order the spec's.
+    // A non-string message remains the documented construction-time-ToString
+    // residual — §20.5.1.1 stores ToString(message), our ctor stores the raw arg.
     { op: "local.get", index: L_E },
     { op: "struct.get", typeIdx: errStructIdx, fieldIdx: 1 }, // $message (externref)
     { op: "any.convert_extern" },
     { op: "local.tee", index: L_TMP },
     { op: "ref.test", typeIdx: anyStrTypeIdx },
-    { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnName.map((i) => ({ ...i })) },
-    { op: "local.get", index: L_TMP },
-    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: strRef },
+      then: [
+        { op: "local.get", index: L_TMP },
+        { op: "ref.cast", typeIdx: anyStrTypeIdx },
+      ],
+      else: litStr(""),
+    },
     { op: "local.set", index: L_MSG },
-    // empty message → name alone (§20.5.3.4 step 6)
+    // (#4485) step 7 — empty NAME → the message alone. `new Error("m")` with
+    // `e.name = ""` is `"m"`, not `": m"` (.../toString/15.11.4.4-8-1.js).
+    { op: "local.get", index: L_NAME },
+    { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, // len
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: returnMsg },
+    // step 8 — empty message → name alone
     { op: "local.get", index: L_MSG },
     { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, // len
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: returnName.map((i) => ({ ...i })) },
-    // name + ": " + msg
+    // step 9 — name + ": " + msg
     { op: "local.get", index: L_NAME },
     { op: "ref.as_non_null" },
     ...litStr(": "),

@@ -112,6 +112,7 @@ import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
+import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -3556,6 +3557,16 @@ function compilePropertyAssignment(
   if (!ts.isPrivateIdentifier(target.name)) {
     const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text);
     if (nonWritable !== undefined) return nonWritable;
+  }
+
+  // (#4485) `<errorInstance>.{message,name,stack} = v` → `struct.set` on the
+  // backing `$Error_struct`. Must sit ABOVE the generic member-set arms: the
+  // standalone READ of these three is a hard `struct.get` of that struct, so a
+  // write routed anywhere else is invisible to every later read. Declines
+  // outside standalone/WASI and on any receiver that is not statically Error.
+  {
+    const errField = tryEmitErrorInstanceFieldWrite(ctx, fctx, target, value);
+    if (errField !== undefined) return errField;
   }
 
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor

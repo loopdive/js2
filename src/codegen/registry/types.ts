@@ -753,7 +753,14 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
     fields: [
       { name: "tag", type: { kind: "i32" }, mutable: false },
       { name: "message", type: { kind: "externref" }, mutable: true },
-      { name: "name", type: { kind: "externref" }, mutable: false },
+      // (#4485) Mutable since the §20.5.3.4 own-`name` slice: `err.name = "X"`
+      // is an ordinary writable own-property write (`Error.prototype.name` is
+      // `{writable:true}`), and the standalone `.name` READ is a hard
+      // `struct.get` of this field, so a write that landed anywhere else was
+      // simply invisible — `e.name = ""; e.name` read back `"Error"`. Same
+      // rationale as `stack` below; the field index is unchanged, so no other
+      // reader moves.
+      { name: "name", type: { kind: "externref" }, mutable: true },
       // (#1536) $stack — fieldIdx 3, kept AFTER message(1)/name(2) so their
       // indices stay stable. `error.stack` is non-standard (no normative
       // test262 coverage); materializing a real stack trace needs no Wasm

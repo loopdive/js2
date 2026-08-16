@@ -163,6 +163,23 @@ export interface NativeProtoBuiltinGlue {
    */
   memberParamSlots?: (member: string) => number;
   /**
+   * (#4485) Member-IDENTITY alias. Some spec members are not merely equivalent
+   * to another member, they ARE the same function object: §B.2.4.3 says "the
+   * function object that is the initial value of `Date.prototype.toGMTString`
+   * is the same function object that is the initial value of
+   * `Date.prototype.toUTCString`" — `Date.prototype.toGMTString ===
+   * Date.prototype.toUTCString` must hold. Returning the canonical member name
+   * here routes the whole closure factory (func name, `nativeClosureMeta`, and
+   * the per-(brand, member) meta struct type that gives the value its identity)
+   * to the canonical member, so both reads resolve to ONE singleton.
+   *
+   * Only closure IDENTITY is aliased — the alias name stays its own entry in
+   * `memberCsv`, so `hasOwnProperty` / `getOwnPropertyDescriptor` /
+   * `getOwnPropertyNames` still see it as its own own-property of the proto.
+   * A member with no alias (the default) is unaffected.
+   */
+  memberAliasOf?: (member: string) => string | undefined;
+  /**
    * Emit a method/getter closure BODY into `fctx`, given the externref `this`
    * already bound to closure-param index 1 and any further args at indices
    * 2.. . The implementation runs the brand-recovery prologue (externref `this`
@@ -596,7 +613,7 @@ function makeNativeClosureFctx(
 export function ensureStandaloneNativeMethodClosure(
   ctx: CodegenContext,
   brand: number,
-  member: string,
+  memberIn: string,
   kind: "method" | "getter",
   opts?: {
     /**
@@ -625,6 +642,16 @@ export function ensureStandaloneNativeMethodClosure(
 ): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
   if (!glue) return null;
+
+  // (#4485) Identity alias FIRST, before anything keys off the member name.
+  // `Date.prototype.toGMTString` is not a copy of `toUTCString`, it is the same
+  // function object (§B.2.4.3), so every downstream key — `funcName`,
+  // `nativeClosureMeta`, and above all the `proto:<brand>:<kind>:<member>` meta
+  // struct type that IS the value's identity — must be the canonical member's.
+  // Rewriting here (rather than at each call site) makes the aliasing hold for
+  // every route into the factory: plain value read, gOPD synthesis, reflective
+  // call. `.name` correctly reports the canonical name for an aliased member.
+  const member = glue.memberAliasOf?.(memberIn) ?? memberIn;
 
   // Lifted user params: externref `this`, plus (for methods) externref args.
   // S1 RegExp closures take at most one string arg; over-declaring args is
