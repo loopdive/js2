@@ -1,10 +1,11 @@
 ---
 id: 4070
 title: "Add a `never` exhaustiveness check to `verify.ts` `collectUses` — a new IR kind currently fails at runtime, not compile time"
-status: ready
+status: done
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-16
+completed: 2026-08-16
 priority: medium
 horizon: s
 feasibility: medium
@@ -13,6 +14,24 @@ task_type: bug
 area: ir
 language_feature: n/a
 goal: backend-agnostic-ir
+# (#3102) An exhaustiveness guard has exactly one legal home: the `default` arm
+# of the switch it guards. It cannot be "added to the subsystem module instead"
+# the way the gate's advice assumes — moving it anywhere else stops it from
+# being an exhaustiveness check at all. Both files are god-files at their
+# ceiling; the growth is +28 (lower.ts) and +18 (verify.ts), all of it guard
+# arms and the comments explaining why the runtime arm throws.
+loc-budget-allow:
+  - src/ir/lower.ts
+  - src/ir/verify.ts
+# (#3400) Same reasoning at function granularity. `emitInstrTree` and
+# `renameInstrOperands` ARE the switches being gated, so the guard cannot live
+# anywhere else; `lowerIrFunctionBody` grows only because `emitInstrTree` is
+# nested inside it. Splitting a 78-arm dispatch switch is a real refactor and
+# is out of scope for a guard-only change.
+func-budget-allow:
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/passes/inline-small.ts::renameInstrOperands
 ---
 # Add a `never` exhaustiveness check to `verify.ts` `collectUses` — a new IR kind currently fails at runtime, not compile time
 
@@ -34,3 +53,78 @@ SCOPE:
 3. Confirm `pnpm run typecheck` still passes and that deliberately removing a case now fails to compile (prove the gate actually works; a guard that doesn't fire is worse than none).
 
 ALSO RECORDED (separate, pre-existing, do NOT conflate): `tests/issue-1169n`'s `??` fallback test fails identically on pristine main — a hard `[IR-FALLBACK]` where a demote was expected. Already documented in #2952; not caused by slices 3/4.
+
+## Findings (2026-08-16, implementation)
+
+Measured on `upstream/main` @ `d38224d53`. The survey script used is
+`.tmp/survey-switches.mjs` + `.tmp/kinds.mjs` (scratch, not committed): it
+brace-matches every `switch (<x>.kind)` under `src/ir/` and compares its
+top-level `case` labels against the 78 `kind` literals of the `IrInstr` union.
+
+**67 `*.kind` switches in `src/ir/`; 8 already carried a `never` guard, 26 have
+a deliberate `default:`, 33 were bare.** Restricting to switches whose scrutinee
+is an `IrInstr`, six were bare — and they are NOT one uniform hole. The split
+matters more than the count:
+
+| site | returns | covers | what a NEW kind did before this fix |
+| --- | --- | --- | --- |
+| `src/ir/lower.ts` `emitInstrTree` | **`void`** | 78/78 | **fell through and emitted NOTHING — silent miscompile** |
+| `src/ir/verify.ts` `checkInstr` (type rules) | `void` | **16/78** | deliberately partial — see below |
+| `src/ir/verify.ts` `collectUses` | `readonly IrValueId[]` | 78/78 | `tsc` already errored (TS2366) |
+| `src/ir/lower.ts` `collectIrUses` | `readonly IrValueId[]` | 78/78 | `tsc` already errored (TS2366) |
+| `src/ir/passes/monomorphize.ts` `collectUses` | `readonly IrValueId[]` | 78/78 | `tsc` already errored (TS2366) |
+| `src/ir/passes/inline-small.ts` `renameInstrOperands` | `IrInstr` | 78/78 | `tsc` already errored (TS2366) |
+
+**The issue's premise was half right, and the half it missed was the dangerous
+one.** For the four VALUE-returning switches — including `collectUses`, the one
+this issue is named after — the compiler *already* rejected a missing case:
+`strict: true` implies `strictNullChecks`, so a switch that can fall through to
+an implicit `undefined` violates the declared return type. The failure was never
+purely a runtime one; it was a real compile error whose message
+("Function lacks ending return statement") points at the **function signature**
+rather than at the switch, which is why it reads as a runtime surprise in
+practice. The `never` default moves the diagnostic onto the offending line.
+
+The genuinely unguarded case was **`emitInstrTree` in `src/ir/lower.ts`** — a
+`void` switch, so nothing in the type system ever forced it to be total. A new
+IR kind without a lowering arm fell straight through, emitted zero
+instructions, and produced structurally wrong Wasm (a missing operand on the
+stack) with **no error at any stage**. That is the silent-miscompile shape
+CLAUDE.md warns about, and it was not named in the original scope.
+
+**Deliberately NOT changed: `checkInstr` (`src/ir/verify.ts`, type rules).** It
+covers 16 of 78 kinds by design — it encodes the kinds that HAVE type rules, not
+every kind. Forcing a `never` guard there would mean adding 62 empty cases and
+would convert an opt-in policy switch into an opt-out one. That is a real design
+question (should a new kind be required to declare "no type rules"?), not the
+"make an existing hole loud" change this issue scopes, so it is left alone and
+recorded here instead.
+
+**Runtime arm — a bare `Error`, deliberately.** Each new `default` throws rather
+than returning `[]`/`inst` unchanged. Per #4035/#4502 a bare `Error` from the IR
+path classifies as `unexpected-internal-throw`, which #3341/#3519 **hard-error**
+— it does not demote to legacy. That is the correct classification here: an
+`IrInstr` outside the union is a producer-promise violation, not a capability
+gap, so the sites carry the `// invariant (producer-promise):` marker that
+convention requires. Returning a benign value would be the unsound direction —
+every one of these functions is consulted to decide something (which values are
+live, which need a Wasm local, which ids to rewrite), so a silently-empty answer
+means "nothing to see" exactly when the analysis cannot see.
+
+## Test Results
+
+- **Compile-time gate — MEASURED, see the probe result recorded below.**
+- `pnpm run typecheck` equivalent (`node node_modules/typescript/lib/tsc.js
+  --noEmit -p tsconfig.json`, TS 5.9.3) — clean on the guarded tree. NB
+  `pnpm run typecheck` itself cannot run in a worktree today: it invokes
+  `node_modules/typescript7/lib/tsc.js` and the `typescript7` alias is not
+  installed in this container (nor in `/workspace`), so the script dies with
+  `MODULE_NOT_FOUND` before typechecking anything. CI installs it; local runs
+  must call the TS5 binary by path.
+- `tests/issue-4070.test.ts` — 4/4 pass, including a positive control that a
+  KNOWN kind (`binary`) still renames its operands, so the throw assertions are
+  not passing vacuously.
+- `npx biome lint` + `npx prettier --check` on the four edited files — clean.
+- Diff is **purely additive**: 69 insertions, 0 deletions across 4 source files.
+  No behavior change on any input the type system permits — the new `default`
+  arms are unreachable while the union and the switches agree.
