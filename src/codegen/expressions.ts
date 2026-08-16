@@ -57,6 +57,7 @@ import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid } from "./expressions/help
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
+import { tryEmitNullishReceiverMemberRead } from "./nullish-receiver-coercible.js"; // (#4484 B) §7.3.2
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { emitUnboundThis, thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js"; // (#4190)
 import { buildCurrentThisNonNullArm } from "./explicit-null-receiver.js"; // (#4203)
@@ -1440,6 +1441,15 @@ function compileExpressionInner(
 
   if (ts.isConditionalExpression(expr)) {
     return compileConditionalExpression(ctx, fctx, expr);
+  }
+
+  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+    // (#4484 B) §7.3.2 RequireObjectCoercible on a syntactic `null`/`undefined`
+    // receiver. `null.foo` already threw; `undefined.foo` silently produced a
+    // value. Placed ahead of both access arms so the property and element forms
+    // agree. Declines for every non-syntactic receiver — see the module header.
+    const coercible = tryEmitNullishReceiverMemberRead(ctx, fctx, expr);
+    if (coercible !== undefined) return coercible;
   }
 
   if (ts.isPropertyAccessExpression(expr)) {

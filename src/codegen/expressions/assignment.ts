@@ -143,6 +143,8 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
+import { BUILTIN_CTOR_ARITY } from "../builtin-value-read.js"; // (#4484 C) which names are builtin constructors
+import { isSpecNonWritableBuiltinProp, resolveUnshadowedGlobalIdentifier } from "../builtin-nonwritable-write.js"; // (#4484 C)
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -3558,6 +3560,17 @@ function compilePropertyAssignment(
     if (nonWritable !== undefined) return nonWritable;
   }
 
+  // (#4484 C) The SPEC-declared non-writable own properties of a builtin —
+  // `Math.PI`, `Function.length`. The #3872 arm above mirrors only what the
+  // PROGRAM defined via `Object.defineProperty`, so these never reached it and a
+  // strict write silently did nothing (`11.13.1-4-28gs` / `-29gs` /
+  // `11.13.1-4-6-s`: "no exception was thrown at all"). Sloppy mode keeps its
+  // existing dropped-write lowering, which is what §10.1.9.2 step 2.b says.
+  if (!ts.isPrivateIdentifier(target.name)) {
+    const specNonWritable = tryEmitSpecNonWritableBuiltinWrite(ctx, fctx, target, value, target.name.text);
+    if (specNonWritable !== undefined) return specNonWritable;
+  }
+
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor
   // (standalone): store `rhs` (built as a native `$Object` when a plain literal)
   // into the per-fnctor prototype global, instead of `__extern_set($closure,
@@ -4505,6 +4518,37 @@ export function isNonWritableDataProperty(ctx: CodegenContext, receiver: ts.Expr
   // `Object.defineProperty(arguments,"0",{configurable:false})` — never
   // mentioning `writable` — and then expects `arguments[0] = 2` to LAND.
   return ctx.nonWritableExternKeys.has(key);
+}
+
+/**
+ * (#4484 C) §10.1.9.2 step 2.b for a builtin's SPEC-declared non-writable own
+ * data property (`Math.PI = 20`, `Function.length = 42`). Strict code throws;
+ * sloppy code declines here and keeps the existing dropped-write lowering.
+ *
+ * The table and the shadowing proof live in `builtin-nonwritable-write.ts`; this
+ * is only the emit half. Declines for every receiver that is not the bare,
+ * unshadowed global — see that module's header for why the proof is syntactic.
+ */
+function tryEmitSpecNonWritableBuiltinWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  value: ts.Expression,
+  propName: string,
+): InnerResult | undefined {
+  if (!isStrictContext(target, ctx.inferModuleStrictArguments)) return undefined;
+  const receiver = resolveUnshadowedGlobalIdentifier(ctx, fctx, target.expression);
+  if (receiver === undefined) return undefined;
+  const builtinName = receiver.text;
+  const isConstructorName = BUILTIN_CTOR_ARITY[builtinName] !== undefined;
+  if (!isSpecNonWritableBuiltinProp(builtinName, propName, isConstructorName)) return undefined;
+
+  // §13.15.2 — the RHS is evaluated before Set is attempted.
+  const rhsType = compileExpression(ctx, fctx, value);
+  if (rhsType === null) return null;
+  fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${propName}' of object`);
+  return rhsType;
 }
 
 function tryEmitNonWritablePropertyWrite(

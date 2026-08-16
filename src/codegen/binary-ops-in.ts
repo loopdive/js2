@@ -27,6 +27,7 @@ import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
+import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
 
@@ -169,7 +170,16 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // containing a non-primitive constituent are NOT caught here — they defer to
   // the runtime [[HasProperty]] / `__extern_has` path, which throws for a
   // genuinely-primitive runtime value via the native `key in obj`.
-  if (inRhsIsExclusivelyPrimitive(rightType)) {
+  // (#4484 D) …but only when the static type is EVIDENCE about the value here.
+  // `var NUMBER = 0; (NUMBER = Number, "MAX_VALUE") in NUMBER` widens `NUMBER`
+  // to `number` from its initializer and TS never narrows it back (the write is
+  // a diagnostic that `skipSemanticDiagnostics` suppresses), so the fold threw
+  // for an RHS holding the real `Number` constructor — a WRONG throw, catchable
+  // (`S11.8.7_A2.4_T1`). Identical defect and identical guard as the
+  // `instanceof` §13.10.2 step-1 fold in `compileHostInstanceOf`.
+  const rhsIsReassignedBinding =
+    ts.isIdentifier(expr.right) && identifierIsWrittenTo(expr.right.getSourceFile(), expr.right.text);
+  if (!rhsIsReassignedBinding && inRhsIsExclusivelyPrimitive(rightType)) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt !== null) fctx.body.push({ op: "drop" });
     const rt = compileExpression(ctx, fctx, expr.right);
