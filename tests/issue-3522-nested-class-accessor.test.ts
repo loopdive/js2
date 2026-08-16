@@ -369,11 +369,16 @@ describe("#3522 nested class accessor negative boundaries", () => {
     expectDirect(result, ["run"]);
   });
 
-  it("keeps a nested accessor class with an INITIALIZED instance field direct", async () => {
+  // (#3522) A plain initialized instance field is admitted since the nested
+  // initialized-field slice; the boundary moved to a CALL EDGE inside the
+  // initializer (two owners plan the same call). See
+  // `tests/issue-3522-nested-class-field.test.ts` for the positive family.
+  it("keeps a nested accessor class whose field initializer CALLS a local function direct", async () => {
     const result = await compile(
       `
+      function seed(): number { return 42; }
       export function run(): number {
-        class Box { v: number = 42; get w(): number { return this.v; } }
+        class Box { v: number = seed(); get w(): number { return this.v; } }
         return new Box().w;
       }
       `,
@@ -462,9 +467,12 @@ describe("#3522 nested class accessor negative boundaries", () => {
     try {
       process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_get_w";
       const result = await compile(
+        // A STATIC member keeps this class outside the bounded family, so it
+        // must still reach the direct emitter. An initialized instance field
+        // no longer works as this control — it is now admitted.
         `
         export function run(): number {
-          class Box { v: number = 42; get w(): number { return this.v; } }
+          class Box { static k: number = 1; get w(): number { return 42; } }
           return new Box().w;
         }
         `,

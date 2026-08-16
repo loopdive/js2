@@ -19,9 +19,26 @@ language_feature: property-descriptors
 goal: es5
 related: [1460, 1462, 929, 3185, 3663, 4008, 4158, 4197, 4222]
 sprint: current
+horizon: l
 ---
 
 # #2668 — ES5 canonical vec-index Object/property MOP residual
+
+## 2026-08-16 standalone census (dispatch context)
+
+Fresh CI baseline (2026-08-16, corpus `b363f29d`): standalone ES5 is
+**8,454 / 9,029 (575 nonpasses)**. The defineProperty family
+(`defineProperty` 49 + `defineProperties` 17 + `create`/`getOwnPropertyNames`/
+`keys`/gOPD ~20) is **86 rows — the largest single-issue cluster**. Per-cluster
+signatures and the full file list:
+`plan/log/analysis-2026-08-16-es5-standalone-575.md` (§defineProperty-family).
+Cluster size is a ceiling, not a flip forecast (#3626 §2.1 method).
+
+Of those 86, **39 are array-receiver** rows (this issue's vec-index MOP scope)
+and 47 are not — the largest non-array sub-clusters being mapped-`arguments`
+exotics (~8, explicitly out of scope below) and plain-object accessor
+attributes (~6, owned by #4479's lane). Classified 2026-08-16 by receiver shape
+before any code was touched, so the two lanes do not double-fix.
 
 ## Landed slice — S-set: ordinary indexed set creates all-true data (2026-08-16)
 
@@ -116,6 +133,26 @@ every eval-shaped row reports a manufactured
 not failing. Separately, under box load `harness-flip-probe`'s default 60 s
 timeout turned 20 of 86 rows into `compile_error: compilation timeout (91 s)`;
 pass `--timeout 180000` and avoid concurrent compiles or the arm is noise.
+
+### Merge-queue note — the −42 park on this PR is NOT this change
+
+The first `merge_group` run auto-parked PR #4631 with 42 standalone / 44 host
+regressions. They are **inherited from `main`**, not caused here:
+
+- PR #4627 (`refactor(#4514)`, unrelated code) reports the **same** standalone
+  bucket signature `37d9311a9cb806e4` with the **same 42 files** — the guard's
+  own drift test.
+- The edit is inside `fillVecOverlayHelpers`, which early-returns unless
+  `ctx.standalone`, so it cannot reach host codegen — yet host regressed 44.
+- Every regressed file asserts `Array.isArray` (~40 ×
+  `dstr/dflt-ary-ptrn-rest-id-exhausted`, 3 × `Object/entries/getter-*`), which
+  is the subject of `ef1a41d0d fix(#1888): Array.isArray static fast path
+  claimed every ref is an array`, merged to main after the baseline snapshot.
+
+Useful side-effect: the improvement counts differ by exactly 4 between the two
+parked PRs (8 here, 4 there), which is an **independent full-corpus
+confirmation** of this slice's +4, measured on the same four files as the local
+86-row arm.
 
 ## Decision
 

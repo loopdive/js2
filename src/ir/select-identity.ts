@@ -144,8 +144,9 @@ function selectImplicitConstructorClaim(
   const parentIsLocal = parentName !== null && context.localClasses.has(parentName);
   const topLevelSourceClass =
     !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === declaration.getSourceFile();
+  const boundedNestedSourceClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
   if (
-    topLevelSourceClass &&
+    (topLevelSourceClass || boundedNestedSourceClass) &&
     sameNameCandidateCount === 1 &&
     !projectionGap &&
     exactClassShape !== undefined &&

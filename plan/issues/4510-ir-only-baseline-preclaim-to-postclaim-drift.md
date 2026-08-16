@@ -2,9 +2,9 @@
 id: 4510
 title: "#4605 baseline traded a pre-claim rejection for 2 post-claim resolve-stage demotes — the drift #4462's design notes set out to avoid"
 status: ready
-sprint: Backlog
+sprint: current
 created: 2026-08-16
-priority: low
+priority: medium
 horizon: s
 feasibility: medium
 task_type: hardening

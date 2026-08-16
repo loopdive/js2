@@ -191,7 +191,7 @@ class T262Donut extends HTMLElement {
       { value: fail, color: "rgba(255,255,255,0.2)", label: "Fail" },
       { value: ce, color: "rgba(255,255,255,0.2)", label: "CE" },
       { value: skip, color: "rgba(255,255,255,0.2)", label: "Skipped" },
-    ];
+    ].filter((segment) => segment.value > 0);
 
     // Build the conic-gradient donut
     const totalSafe = Math.max(total, 1);
@@ -216,30 +216,52 @@ class T262Donut extends HTMLElement {
       return { x: centerX + Math.cos(rad) * radius, y: centerY + Math.sin(rad) * radius };
     };
 
-    // Compute label positions, pushing out if they collide with previous labels
-    const minLabelDist = 55; // minimum pixel distance between label centers
+    // Keep every annotation on the same orbit. If labels collide, move their
+    // angles apart instead of changing their distance from the ring.
+    const labelOrbitRadius = 170;
+    // The labels occupy a 100px-wide box and two stacked text lines. Use the
+    // box diagonal plus a small cushion so a long label such as "Compile
+    // Errors" cannot overlap a neighboring label even when their centers are
+    // diagonally separated.
+    const minLabelDist = 112;
+    const minAngularGap = (2 * Math.asin(Math.min(1, minLabelDist / (2 * labelOrbitRadius))) * 180) / Math.PI;
+    const normalizeAngle = (angle) => ((angle % 360) + 360) % 360;
+    const signedAngleDelta = (from, to) => {
+      let delta = normalizeAngle(to - from);
+      if (delta > 180) delta -= 360;
+      return delta;
+    };
     const stats = [
-      { value: pass, label: "Passed", color: "rgba(255,255,255,0.9)", angle: passDeg / 2, radius: 164, id: "pass" },
-      { value: fail, label: "Failed", color: "rgba(255,255,255,0.7)", angle: (passDeg + failDeg) / 2, radius: 170 },
-      { value: ce, label: "Compile Errors", color: "rgba(255,255,255,0.7)", angle: (failDeg + ceDeg) / 2, radius: 164 },
-      { value: skip, label: "Skipped", color: "rgba(255,255,255,0.7)", angle: (ceDeg + 360) / 2, radius: 178 },
-    ];
-    // Compute positions and resolve collisions by extending radius
-    const placed = [];
-    for (const s of stats) {
-      let radius = s.radius;
-      let lp;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        lp = orbitPoint(s.angle, radius);
-        const collides = placed.some((p) => {
-          const dx = p.lp.x - lp.x;
-          const dy = p.lp.y - lp.y;
-          return Math.sqrt(dx * dx + dy * dy) < minLabelDist;
-        });
-        if (!collides) break;
-        radius += 18;
+      { value: pass, label: "Passed", color: "rgba(255,255,255,0.9)", angle: passDeg / 2, id: "pass" },
+      { value: fail, label: "Failed", color: "rgba(255,255,255,0.7)", angle: (passDeg + failDeg) / 2 },
+      { value: ce, label: "Compile Errors", color: "rgba(255,255,255,0.7)", angle: (failDeg + ceDeg) / 2 },
+      { value: skip, label: "Skipped", color: "rgba(255,255,255,0.7)", angle: (ceDeg + 360) / 2 },
+    ].filter((stat) => stat.value > 0);
+
+    // Spread colliding labels symmetrically around the orbit. At this radius,
+    // minAngularGap is the angular separation that produces minLabelDist in
+    // straight-line distance, including across the 0°/360° boundary.
+    const placed = stats.map((stat) => ({ ...stat }));
+    for (let iteration = 0; iteration < 12; iteration++) {
+      let moved = false;
+      for (let i = 0; i < placed.length; i++) {
+        for (let j = i + 1; j < placed.length; j++) {
+          const delta = signedAngleDelta(placed[i].angle, placed[j].angle);
+          const separation = Math.abs(delta);
+          if (separation >= minAngularGap) continue;
+
+          const direction = delta === 0 ? 1 : Math.sign(delta);
+          const adjustment = (minAngularGap - separation) / 2;
+          placed[i].angle -= direction * adjustment;
+          placed[j].angle += direction * adjustment;
+          moved = true;
+        }
       }
-      placed.push({ ...s, radius, lp });
+      if (!moved) break;
+    }
+
+    for (const stat of placed) {
+      stat.lp = orbitPoint(stat.angle, labelOrbitRadius);
     }
 
     // Label positions are expressed as deltas from the orbit's actual center
@@ -311,6 +333,8 @@ class T262Donut extends HTMLElement {
           position: relative;
           display: grid;
           place-items: center;
+          transform: translateZ(0);
+          backface-visibility: hidden;
           margin: 0 auto;
           width: 250px;
           aspect-ratio: 1 / 1;
