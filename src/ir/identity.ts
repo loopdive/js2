@@ -1099,27 +1099,33 @@ class SourceInventoryBuilder {
       );
     }
 
+    const promoteNestedImplicitInitializer =
+      directNestedClass && !hasExecutableConstructor && isBoundedPreparedNestedOrdinaryClass(node);
     if (!hasExecutableConstructor && firstInstanceInitializer) {
-      explicitConstructor = topLevelDeclaration
-        ? this.addTerminalUnit(
-            "class-implicit-constructor",
-            classRecord.id,
-            node,
-            `${displayName}_new`,
-            "class-member",
-            false,
-            undefined,
-            true,
-            compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
-          )
-        : this.addSupportUnit(
-            "class-implicit-constructor",
-            classRecord.id,
-            inheritedTerminalOwnerId,
-            node,
-            `${displayName}_new`,
-            compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
-          );
+      explicitConstructor =
+        topLevelDeclaration || promoteNestedImplicitInitializer
+          ? this.addTerminalUnit(
+              "class-implicit-constructor",
+              classRecord.id,
+              node,
+              promoteNestedImplicitInitializer
+                ? `${displayName}_new@nested:${classRecord.declarationStart}:${node.getStart(this.sourceFile)}`
+                : `${displayName}_new`,
+              "class-member",
+              false,
+              undefined,
+              true,
+              compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
+              promoteNestedImplicitInitializer ? (inheritedTerminalOwnerId ?? undefined) : undefined,
+            )
+          : this.addSupportUnit(
+              "class-implicit-constructor",
+              classRecord.id,
+              inheritedTerminalOwnerId,
+              node,
+              `${displayName}_new`,
+              compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
+            );
     } else if (!hasExecutableConstructor && !hasDeclareModifier(node)) {
       explicitConstructor = this.addSupportUnit(
         "class-implicit-constructor",
@@ -1131,7 +1137,10 @@ class SourceInventoryBuilder {
       );
     }
 
-    const instanceTerminalOwner = topLevelDeclaration ? (explicitConstructor?.id ?? null) : inheritedTerminalOwnerId;
+    const instanceTerminalOwner =
+      topLevelDeclaration || promoteNestedImplicitInitializer
+        ? (explicitConstructor?.id ?? null)
+        : inheritedTerminalOwnerId;
     for (const field of instanceInitializers) {
       const fieldCompilerOrigin = this.compilerOrigin(field) ?? compilerOrigin;
       const unit = this.addSupportUnit(

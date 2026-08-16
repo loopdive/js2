@@ -88,6 +88,7 @@ import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
+import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
 import {
@@ -1850,9 +1851,9 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
   }
   if (ts.isConditionalExpression(expr)) {
     const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
-    const condType = cx.builder.typeOf(rawCond);
-    const cond = condType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawCond) : rawCond;
-    if (condType.kind !== "dynamic" && asVal(condType)?.kind !== "i32") {
+    // (#4512) §7.1.2 ToBoolean — see lowerConditional. Host externref → demote.
+    const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
+    if (cond === null) {
       demoteToLegacy(
         "operand-coercion-unsupported",
         `ir/from-ast: discarded ternary condition must be bool in ${cx.funcName}`,
@@ -2054,10 +2055,12 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
       lowerTail(taken, { ...cx, scope: new Map(cx.scope) });
       return;
     }
-    const cond = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
-    const condType = cx.builder.typeOf(cond);
-    if (asVal(condType)?.kind !== "i32") {
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: if condition must be bool in ${cx.funcName}`);
+    const rawCond = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
+    // (#4512) §7.1.2 ToBoolean — object/string/ref conditions lower to a
+    // branded i32 truthiness; a raw host externref returns null → demote.
+    const cond = lowerToBooleanForCondition(rawCond, stmt.expression, cx);
+    if (cond === null) {
+      demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: if condition must be bool in ${cx.funcName}`);
     }
     // Reserve block IDs for both arms BEFORE terminating the current block.
     // The else ID must be fixed when we emit br_if, even though it opens after
@@ -5231,7 +5234,10 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      const name = phase1PropertyName(prop.name);
+      // (#4513) Same fold the selector admitted this literal with — one shared
+      // function, so the claim rule and the lowering rule cannot drift into a
+      // post-claim `invariant`.
+      const name = objectLiteralDataPropertyName(prop.name);
       if (name === null) {
         demoteToLegacy(
           "body-shape-rejected",
@@ -5796,11 +5802,16 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
 }
 
 /**
- * Resolve an object literal property name to a string. Identifier and
- * StringLiteral keys produce their text. NumericLiteral keys produce
- * the canonical JS toString of the number. ComputedPropertyName always
- * returns null. Duplicated locally from select.ts to avoid a circular
- * import.
+ * Resolve a property name to a string. Identifier and StringLiteral keys
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
+ * ComputedPropertyName always returns null. Duplicated locally from select.ts
+ * to avoid a circular import.
+ *
+ * (#4513) The object-literal DATA-PROPERTY site uses
+ * `objectLiteralDataPropertyName` (leaf module `property-key-fold.ts`) instead,
+ * so the computed-key fold is a single text shared with the selector rather
+ * than a third copy here. The remaining callers below are method / prepared-
+ * scope naming, which stays computed-name-rejecting.
  */
 function phase1PropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
@@ -8931,6 +8942,63 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
  * through `slot.read` / `slot.write` and survive the loop.
  */
 /**
+ * (#4512) §7.1.2 ToBoolean for a value in CONDITION / ternary / `!` position.
+ * Returns an i32 truthiness BRANDED `irBool()` (a proven JS boolean, #4503), or
+ * `null` when the carrier is a raw host `externref` — its value may box a falsy
+ * primitive (`0`/`""`/`false`/`NaN`/`undefined`), so a `ref.is_null` test would
+ * be a WRONG answer; the caller DEMOTES cleanly instead of mis-lowering.
+ *
+ * Per-carrier §7.1.2 (pinned by value in tests/issue-4512.test.ts): i32 passes
+ * through; f64 → `abs(x) > 0` (NaN-safe, #1937); string → `length !== 0`;
+ * object/class/closure/non-null ref → always truthy; nullable wasmgc ref →
+ * `ref.is_null; i32.eqz`; dynamic → `dyn.truthy` (full ToBoolean, D4); host
+ * externref/ref_extern → `null` (demote). MUST be called inside the loop
+ * cond-buffer closure so it re-runs each iteration.
+ */
+function lowerToBooleanForCondition(
+  condValue: IrValueId,
+  conditionExpr: ts.Expression,
+  cx: LowerCtx,
+): IrValueId | null {
+  const irType = cx.builder.typeOf(condValue);
+  if (irType.kind === "dynamic") {
+    // Full JS truthiness on the boxed-any carrier: one ToBoolean engine (D4).
+    return cx.builder.emitDynTruthy(condValue);
+  }
+  const kind = asVal(irType)?.kind;
+  if (kind === "i32") return condValue;
+  if (kind === "f64") {
+    // ToBoolean(f64) = abs(x) > 0  (false for 0, -0, NaN; true otherwise).
+    const absV = cx.builder.emitUnary("f64.abs", condValue, irVal({ kind: "f64" }));
+    const zero = cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+    return cx.builder.emitBinary("f64.gt", absV, zero, IR_BOOL);
+  }
+  if (irType.kind === "string") {
+    const length = cx.builder.emitStringLen(condValue, inferStringEncoding(conditionExpr, cx));
+    const zero = cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+    return cx.builder.emitBinary("f64.gt", length, zero, IR_BOOL);
+  }
+  if (irType.kind === "object" || irType.kind === "class" || irType.kind === "closure" || kind === "ref") {
+    // A statically non-null wasmgc reference is ALWAYS truthy.
+    return cx.builder.emitConst({ kind: "bool", value: true }, IR_BOOL);
+  }
+  if (
+    irType.kind === "callable" ||
+    kind === "ref_null" ||
+    kind === "funcref" ||
+    kind === "eqref" ||
+    kind === "anyref"
+  ) {
+    // Nullable wasmgc reference: truthy iff non-null.
+    const isNull = cx.builder.emitRefIsNull(condValue);
+    return cx.builder.emitUnary("i32.eqz", isNull, IR_BOOL);
+  }
+  // Host external carrier (extern / externref / ref_extern): ToBoolean needs the
+  // JS host and a null test is a WRONG answer — demote (return null) instead.
+  return null;
+}
+
+/**
  * #2136 — coerce a loop condition SSA value to an i32 boolean via ToBoolean.
  *
  * The `{while,for}.loop` lowerer emits `<condValue>; i32.eqz; br_if 1`, which
@@ -8951,49 +9019,10 @@ function coerceLoopCondToBool(
   cx: LowerCtx,
   loopKind: "while" | "for" | "do" | "if",
 ): IrValueId {
-  const irType = cx.builder.typeOf(condValue);
-  // #2949 S5.1 — a boxed-any (dynamic) condition lowers ToBoolean via
-  // `dyn.truthy` (→ `__any_unbox_bool` gc / `__is_truthy` host), the same
-  // JS-truthiness the legacy condition path emits. Emitted INTO the current
-  // (cond) buffer so it re-runs each iteration, exactly like the numeric arm
-  // below. This arm is reachable only once the selector admits a dynamic
-  // condition (S5.P); until then the move-only gate rejects such functions,
-  // so it is exercised only by hand-built-IR unit tests (byte-inert).
-  if (irType.kind === "dynamic") {
-    return cx.builder.emitDynTruthy(condValue);
-  }
-  const kind = asVal(irType)?.kind;
-  if (kind === "i32") return condValue;
-  if (kind === "f64") {
-    // ToBoolean(f64) = abs(x) > 0  (false for 0, -0, NaN; true otherwise).
-    const absV = cx.builder.emitUnary("f64.abs", condValue, irVal({ kind: "f64" }));
-    const zero = cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
-    return cx.builder.emitBinary("f64.gt", absV, zero, irVal({ kind: "i32" }));
-  }
-  if (irType.kind === "string") {
-    const length = cx.builder.emitStringLen(condValue, inferStringEncoding(conditionExpr, cx));
-    const zero = cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
-    return cx.builder.emitBinary("f64.gt", length, zero, irVal({ kind: "i32" }));
-  }
-  if (irType.kind === "object" || irType.kind === "class" || irType.kind === "closure") {
-    return cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-  }
-  if (
-    irType.kind === "extern" ||
-    irType.kind === "callable" ||
-    kind === "ref_null" ||
-    kind === "externref" ||
-    kind === "ref_extern" ||
-    kind === "funcref" ||
-    kind === "eqref" ||
-    kind === "anyref"
-  ) {
-    const isNull = cx.builder.emitRefIsNull(condValue);
-    return cx.builder.emitUnary("i32.eqz", isNull, irVal({ kind: "i32" }));
-  }
-  if (kind === "ref") {
-    return cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-  }
+  // (#4512) Shared §7.1.2 ToBoolean. A raw host externref returns null (no
+  // cheap host-free ToBoolean) — demote rather than emit a wrong truthiness.
+  const result = lowerToBooleanForCondition(condValue, conditionExpr, cx);
+  if (result !== null) return result;
   demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ${loopKind} condition must be bool in ${cx.funcName}`);
 }
 
@@ -10674,13 +10703,11 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
 
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
   const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
-  const condType = cx.builder.typeOf(rawCond);
-  // #2949 S5.1 — a boxed-any (dynamic) ternary condition lowers ToBoolean via
-  // `dyn.truthy`, emitted before the `if` so it evaluates once. Reachable only
-  // when the selector admits a dynamic condition (S5.P); exercised by
-  // hand-built-IR unit tests until then (byte-inert on the corpus).
-  const cond = condType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawCond) : rawCond;
-  if (condType.kind !== "dynamic" && asVal(condType)?.kind !== "i32") {
+  // (#4512) §7.1.2 ToBoolean — dynamic lowers via `dyn.truthy`, object/string/ref
+  // via the shared coercion, a raw host externref returns null → demote. The
+  // coercion is emitted before the `if` so the condition evaluates once.
+  const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
+  if (cond === null) {
     demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
   }
 
@@ -10883,19 +10910,22 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // (the S5.1 primitive — canonical `__any_unbox_bool` gc / `__is_truthy`
       // host) feeds the existing `i32.eqz`. Inherits S5.1's documented gc
       // boxed-NaN-is-truthy byte-parity quirk (host is spec-correct).
-      if (randType.kind === "dynamic") {
-        const t = cx.builder.emitDynTruthy(rand);
-        return cx.builder.emitUnary("i32.eqz", t, IR_BOOL);
+      if (asVal(randType)?.kind === "i32") {
+        // (#4503) `!x` is a JS boolean whatever `x`'s carrier was.
+        return cx.builder.emitUnary("i32.eqz", rand, IR_BOOL);
       }
-      if (asVal(randType)?.kind !== "i32") {
-        const detail = `ir/from-ast: unary '!' expects bool in ${cx.funcName}`;
-        if (checkerProvesUnaryCoercionGap(expr, cx)) {
-          throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
-        }
-        throw new Error(detail);
+      // (#4512) `!ref` = §7.1.2 ToBoolean(ref) then negate (§13.5.7). The shared
+      // coercion handles dynamic (`dyn.truthy`), string, object/class/closure and
+      // nullable wasmgc refs; a raw host externref returns null → demote.
+      const truthy = lowerToBooleanForCondition(rand, expr.operand, cx);
+      if (truthy !== null) {
+        return cx.builder.emitUnary("i32.eqz", truthy, IR_BOOL);
       }
-      // (#4503) `!x` is a JS boolean whatever `x`'s carrier was.
-      return cx.builder.emitUnary("i32.eqz", rand, IR_BOOL);
+      const detail = `ir/from-ast: unary '!' expects bool in ${cx.funcName}`;
+      if (checkerProvesUnaryCoercionGap(expr, cx)) {
+        throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
+      }
+      throw new Error(detail);
     }
     case ts.SyntaxKind.TildeToken: {
       const randType = typeOfValue(rand, cx);
