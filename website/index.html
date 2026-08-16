@@ -264,6 +264,31 @@
         opacity: 0.9;
       }
 
+      .compatibility-report-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 1.25rem;
+      }
+
+      .compatibility-report-label {
+        color: var(--fg-faint);
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+      }
+
+      .compatibility-report-actions .npm-packages-button {
+        gap: 8px;
+      }
+
+      .compatibility-report-actions .npm-packages-button img {
+        width: 36px;
+        height: auto;
+        display: block;
+      }
+
       .hero-actions .btn-solid,
       .hero-actions .btn-outline {
         min-height: 50px;
@@ -1793,12 +1818,14 @@
             TC39's finished-proposals record on every site build; the detailed rows retain examples where the compiler
             has a curated demo.
           </p>
-          <p style="margin-top: 1.25rem">
-            <a class="btn-outline" id="conformance-report-link" href="./benchmarks/report.html">
-              Compatibility Test Report
+          <div class="compatibility-report-actions">
+            <span class="compatibility-report-label">Compatibility Test Report:</span>
+            <a class="btn-outline" id="conformance-report-link" href="./benchmarks/report.html">ECMAScript</a>
+            <a class="btn-outline npm-packages-button" href="./npm-compat.html">
+              <img src="./npm-logo-white.svg" alt="npm" />
+              <span>packages</span>
             </a>
-            <a class="btn-outline" href="./npm-compat.html">Real npm Packages</a>
-          </p>
+          </div>
         </div>
         <!-- <div class="stats-grid">
           <div class="stat-item">
