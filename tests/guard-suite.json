@@ -64,6 +64,11 @@
       "broken_by": "the $__vec_base common-supertype WasmGC refactor silently defeated #2047's leaf-exclusion — collectStandaloneArrayCarrierTypeIdxs matched the abstract $__vec_base via its __vec_* name prefix, so ref.test against it subsumed the byte-vec subtypes → Array.isArray(ArrayBuffer/Uint8Array)===true (regression >2026-07-04, another weeks-old invisible one outside required checks #3008); found+fixed by #3562"
     },
     {
+      "path": "tests/issue-4524-closed-struct-data-define.test.ts",
+      "guards": "standalone: an out-of-shape DATA descriptor define on a closed-struct object literal lands as a real own property (readable, `in`, hasOwnProperty, Object.keys) — and an Object.prototype.<m>.call(o, …) elsewhere in the module does NOT revert the receiver to a closed struct; plus the narrowness side, that an in-shape define and an unrelated literal keep the struct path",
+      "broken_by": "two silent-wrong-answer defects that hid each other: (1) an out-of-shape data define had nowhere to write on a closed struct and was DROPPED with no diagnostic, while the accessor-define and dynamic-write siblings were already covered; (2) the consumer-safety guard read the borrowed idiom `Object.prototype.hasOwnProperty.call(o, …)` as a concrete-struct consumer and UN-POISONED the receiver — action at a distance, a read changing an object's representation — which silently disabled (1) in every harness-linked compile, making the first fix measure as zero. Found+fixed by #4524 (2026-08-16)"
+    },
+    {
       "path": "tests/issue-1539-standalone-regex-replace.test.ts",
       "guards": "standalone/WASI RegExp function replacers fail cleanly at compile time instead of losing their #1539 refusal to speculative rollback; supported standalone string-replacement and $-substitution behavior remains correct, and the default host target still accepts function replacers",
       "broken_by": "#1919 transactional expression rollback treated the RegExp lowering's null refusal result as a speculative miss, erased its fatal diagnostic, and silently emitted a broken fallback binary; found by the #3565 bounded guard audit and fixed by #3567"

@@ -179,7 +179,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1807,
+      "passCount": 1925,
       "totalCount": 3161
     },
     {
