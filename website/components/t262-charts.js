@@ -219,7 +219,11 @@ class T262Donut extends HTMLElement {
     // Keep every annotation on the same orbit. If labels collide, move their
     // angles apart instead of changing their distance from the ring.
     const labelOrbitRadius = 170;
-    const minLabelDist = 55; // minimum pixel distance between label centers
+    // The labels occupy a 100px-wide box and two stacked text lines. Use the
+    // box diagonal plus a small cushion so a long label such as "Compile
+    // Errors" cannot overlap a neighboring label even when their centers are
+    // diagonally separated.
+    const minLabelDist = 112;
     const minAngularGap = (2 * Math.asin(Math.min(1, minLabelDist / (2 * labelOrbitRadius))) * 180) / Math.PI;
     const normalizeAngle = (angle) => ((angle % 360) + 360) % 360;
     const signedAngleDelta = (from, to) => {
@@ -329,6 +333,8 @@ class T262Donut extends HTMLElement {
           position: relative;
           display: grid;
           place-items: center;
+          transform: translateZ(0);
+          backface-visibility: hidden;
           margin: 0 auto;
           width: 250px;
           aspect-ratio: 1 / 1;

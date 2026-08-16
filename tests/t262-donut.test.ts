@@ -103,7 +103,7 @@ describe("t262-donut annotations", () => {
         distances.push(Math.hypot(offsets[i].x - offsets[j].x, offsets[i].y - offsets[j].y));
       }
     }
-    expect(Math.min(...distances)).toBeGreaterThanOrEqual(55 - 0.001);
+    expect(Math.min(...distances)).toBeGreaterThanOrEqual(112 - 0.001);
 
     donut.remove();
   });
