@@ -181,7 +181,10 @@ import {
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
-import { tryEmitFunctionValueConstructorRead } from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`
+import {
+  emitStandaloneFunctionIntrinsicValue,
+  tryEmitFunctionValueConstructorRead,
+} from "./function-intrinsic-carrier.js"; // (#4442) `<fn>.constructor`; (#4484) `<Builtin>.constructor`
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
@@ -1801,6 +1804,21 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
         // globals, so `Array.isArray !== Number.isInteger` still holds.
         fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
         return closure.type;
+      }
+      // (#4484 B) `<Builtin>.constructor` — a builtin constructor is a function
+      // object whose [[Prototype]] is `Function.prototype`, so the INHERITED
+      // `constructor` it finds is `%Function%` (§20.2.3.1). There is no own
+      // `constructor` on any builtin constructor to shadow it. Routed through
+      // the ONE `%Function%` emitter (#4442) so this read cannot disagree with a
+      // bare `Function` read in the same module. Before this arm the pair
+      // refused LOUD — `Object.constructor` / `Boolean.constructor` were the two
+      // remaining `compile_error` rows under
+      // `language/expressions/property-accessors` (`S11.2.1_A4_T2` / `_A4_T6`,
+      // measured compile_error→pass), failing the whole file over a read the
+      // spec answers uniformly.
+      if (propName === "constructor") {
+        const fnIntrinsic = emitStandaloneFunctionIntrinsicValue(ctx, fctx);
+        if (fnIntrinsic !== undefined) return fnIntrinsic;
       }
       reportUnsupportedStandaloneBuiltinValueRead(ctx, builtinName, propName);
       fctx.body.push({ op: "ref.null.extern" });

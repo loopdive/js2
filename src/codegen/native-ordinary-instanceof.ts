@@ -110,6 +110,20 @@ export function tryEmitNonCallableRhsThrow(
 }
 
 /**
+ * (#4484 A) The builtin NAMESPACE objects — the same set `tryNamespaceNonCallable`
+ * (calls-guards.ts) refuses to call. They are ordinary objects with no [[Call]],
+ * so §13.10.2 step 4 makes `x instanceof Math` a TypeError.
+ *
+ * They do not reach `isProvablyNonCallableObjectType`: the oracle classifies each
+ * as `builtin`, which that predicate deliberately declines (it covers `Function`,
+ * a callable with no signature of its own). Naming them explicitly keeps that
+ * conservatism intact while answering the one shape the spec fixes.
+ * `Proxy` is deliberately ABSENT — it has [[Construct]], so it is a valid
+ * `instanceof` RHS even though it cannot be called.
+ */
+const NAMESPACE_NON_CALLABLE_RHS: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect", "Atomics"]);
+
+/**
  * True when `expr`'s static type is an OBJECT type with neither a call nor a
  * construct signature — i.e. provably `IsCallable(…) === false` while still
  * being an object.
@@ -120,6 +134,28 @@ export function tryEmitNonCallableRhsThrow(
  * answer rather than a missed conversion.
  */
 function isProvablyNonCallableObjectType(ctx: CodegenContext, expr: ts.Expression): boolean {
+  // (#4484 A) A bare, unshadowed builtin namespace identifier. Checked before
+  // the oracle facts below, which classify it as `builtin` and decline. Unwrapped
+  // through casts/parens: TypeScript rejects a bare `1 instanceof Math`, so every
+  // TS-lane spelling of this shape carries an `as any`.
+  {
+    let rhs: ts.Expression = expr;
+    while (
+      ts.isParenthesizedExpression(rhs) ||
+      ts.isAsExpression(rhs) ||
+      ts.isNonNullExpression(rhs) ||
+      ts.isTypeAssertionExpression(rhs)
+    ) {
+      rhs = rhs.expression;
+    }
+    if (
+      ts.isIdentifier(rhs) &&
+      NAMESPACE_NON_CALLABLE_RHS.has(rhs.text) &&
+      (ctx.oracle.valueDeclarationOf(rhs)?.getSourceFile().isDeclarationFile ?? true)
+    ) {
+      return true;
+    }
+  }
   // Untyped JS infers `any` for `var o = new F()`, which the flag test below
   // rejects. §13.3.5 EvaluateNew nonetheless guarantees the value is the freshly
   // created ORDINARY object — hence not callable — as long as `F` never returns
