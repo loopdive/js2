@@ -350,6 +350,8 @@ export async function runHarness({ quiet = false } = {}) {
   // duplicate-package guards. Web Test Runner creates them before loading
   // lit; mirror that host bootstrap so the native oracle does not fail while
   // constructing the implementation bundle.
+  const previousLitHtmlVersions = globalThis.litHtmlVersions;
+  const previousLitElementVersions = globalThis.litElementVersions;
   if (!Array.isArray(globalThis.litHtmlVersions)) globalThis.litHtmlVersions = [];
   if (!Array.isArray(globalThis.litElementVersions)) globalThis.litElementVersions = [];
 
@@ -661,6 +663,10 @@ export async function runHarness({ quiet = false } = {}) {
 
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  if (previousLitHtmlVersions === undefined) delete globalThis.litHtmlVersions;
+  else globalThis.litHtmlVersions = previousLitHtmlVersions;
+  if (previousLitElementVersions === undefined) delete globalThis.litElementVersions;
+  else globalThis.litElementVersions = previousLitElementVersions;
   dom.cleanup();
   log(`[dogfood] ${report.summary.headline}`);
   log(`[dogfood] full report → ${REPORT_PATH}`);
