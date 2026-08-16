@@ -241,6 +241,13 @@ capability reject.
 - `prettier --check`, `biome lint`, `check-oracle-ratchet.mjs`,
   `check-coercion-sites.mjs`, `check-issue-ids.mjs --against-main`,
   `update-issues.mjs --check` — clean.
+- **Re-validated on the merged state** after `main` advanced (`51043a65`, which
+  itself moved `src/ir/from-ast.ts`, `select.ts`, `types.ts` and added
+  `array-spread-shape.ts`): tests 63/63 across the three files above,
+  `check:ir-fallbacks` OK, `gen-ir-adoption --check` clean, both budget gates
+  OK, equivalence shards 2 and 7 clean, and the 102-entry digest set is
+  **identical to the pre-merge run** — main's IR work and this brand do not
+  interact on the corpus.
 - `tsc --noEmit`: the known `@types/node` resolution noise under symlinked
   `node_modules`; 33 non-`TS2591`/`TS2304` errors, **none** in any file this
   change touches (same set as on base). CI runs the real typecheck.
