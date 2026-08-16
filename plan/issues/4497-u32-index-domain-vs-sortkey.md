@@ -63,7 +63,15 @@ defineProperties/15.2.3.7-6-a-{150,179}.js
 ```
 
 Values seen: `4294967294` (the LAST legal index — `length` must become
-`4294967295`) and `4255551212`. Measured symptom for `4294967294`: the property
+`4294967295`) and `4255551212`.
+
+**Re-bucketed into this issue from #4491's D-a gate (2026-08-15):**
+`defineProperty/15.2.3.6-4-155.js` and `defineProperties/15.2.3.7-6-a-151.js`.
+Both were counted in #4491's 8-test D-a gate; reading their FIRST failing
+assertion shows both fail on `arr.length === 4294967295`, i.e. they need index
+`4294967294` to be recognised as a legal index — this issue's window, not
+#4491's non-index read path. Candidate count here is therefore **9**, and
+#4491's D-a gate is **6**. Measured symptom for `4294967294`: the property
 IS created (as an ordinary named key, per the approximation), but `length` does
 not extend and the element does not read back.
 

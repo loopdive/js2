@@ -19,9 +19,11 @@ related: [2161, 2158, 2159, 2101, 2100, 1907, 1888, 1914, 1539, 2861, 2885, 2949
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-descriptors.ts
   - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
@@ -1860,6 +1862,106 @@ Both views land in ONE boundary. `hasOwnProperty`=true + `gOPD`=undefined is a
 half-consistent MOP, worse than uniformly false. If gOPD turns out blocked on
 the flag store, hasOwnProperty does NOT land alone either.
 
+### RESULT (claude/es6-team-reflection) — implemented, every acceptance criterion
+### met, and it flips ZERO test262 files. Keep/revert is a judgement call.
+
+**Prerequisite resolved first, as the plan required.** Flags ARE stored: the
+#4176 write arm for `__defineProperty_value` passes the caller's flag word
+straight through to the companion's own `__defineProperty_value` call
+(`proto-index-store.ts` `spliceInto("__defineProperty_value", …)`, `local.get 3`),
+which runs the full normal flag translation into `$PropEntry.$flags`. Nothing
+had to be guessed, so the plan's "do NOT ship guessed flags" branch never
+applied.
+
+**That turned the design into receiver SUBSTITUTION rather than a bespoke
+probe.** New `protoIndexOwnViewSubstituteInstrs` replaces a `$NativeProto`
+receiver with its brand companion `$Object`; each view's existing `$Object` path
+then runs unchanged and builds the descriptor from the real stored entry.
+Own-layer only: `create = 0`, no chain walk, non-`$NativeProto` receivers
+untouched.
+
+**Two insertion sites, as the plan predicted — the funnel hypothesis held.**
+The differential trace found `__getOwnPropertyDescriptor` is a SINGLE native
+(`object-runtime-descriptors.ts`); a `$NativeProto` fails its `ref.test $Object`
+and falls into the non-object arm that answers `undefined`. Sites: `emitHasOwn`
+(`object-runtime.ts`, covers `__hasOwnProperty` + `__object_hasOwn`) and that
+gOPD native. No third site was needed.
+
+**Acceptance — all met:**
+- `.tmp/p5.js`: five views agree, both brands (`Date`/`Object`), both receiver
+  forms (syntactic + flowing). 123 → 345.
+- `.tmp/p6.js` (3725): flags round-trip — absent attributes read
+  `{writable:false, enumerable:false, configurable:false}`, explicit
+  `{writable:true, enumerable:true, configurable:true}` reads back true. A
+  synthesized descriptor could not tell these apart.
+- Negative controls on the same binary: absent key → `undefined`; inherited
+  `toString` on a plain object still NOT own; own key still own; a brand never
+  written to (`Map.prototype`) unaffected.
+- `prove-emit-identity`: **IDENTICAL, all 60**. The scratch local is appended
+  only when the arm emits — appending it unconditionally drifted 6 of 60, which
+  is why it is conditional.
+- Regressions: `issue-2175-v2s3b`, `issue-2175-s3b3`, `issue-2885`,
+  `issue-4160-proto-index-store`, `issue-4447-forof-dstr-standalone`,
+  `issue-2175-{native-proto-brands,typeof-function-arm,v2s2}` all green. The
+  `issue-4176` IR for-in case and the 3 `issue-2175-regexp-proto-readers`
+  getter-dispatch cases fail identically on base (verified earlier this session).
+- New test `tests/issue-2175-p2-own-view-companion.test.ts` (4/4).
+
+**Measurement — 0 flips.** The 125-candidate list: `pass=0 fail=121 ce=4`. A
+refined set (tests that BOTH `defineProperty` a builtin proto AND use an
+own-property view — 38 files): `pass=0 fail=34 ce=4`. Sampled failures are
+unrelated semantics (Array holes, `some`/`lastIndexOf`, frozen-length). **My
+regex scope was a poor proxy for what exercises these views** — that is a
+scoping finding, not a correctness one.
+
+**Recommendation (coordinator's call, not banked as a win):** KEEP. Unlike the
+#4492 candidacy widening I reverted, this is byte-identical for every module
+that does not write a builtin prototype, is unit-tested, closes a real spec gap,
+and satisfies the plan's own "one boundary" constraint — both views land
+together, so the MOP is never half-consistent. But it buys no conformance
+movement today, so if the bar is "must move the number", revert it.
+
+### FOLLOW-UP FIX — the first cut shipped INVALID WASM. Gate-design lesson.
+
+The P2 commit above (`41bbeed43`) failed to instantiate for a real shape:
+
+```
+CompileError: Compiling function #156:"__hasOwnProperty" failed: Invalid types
+for ref.test: any.convert_extern of type anyref has to be in the same reference
+type hierarchy as (ref 59)
+```
+
+Repro `.tmp/p4.js` — `Object.defineProperty(Array.prototype, "acc", {get, set})`
+on an array instance. Isolated by A/B: pre-P2 `3e69b1e34` runs it (`203`); with
+P2 it is a CompileError. Never reached the queue — it existed only in this
+worktree.
+
+**Root cause:** `protoIndexOwnViewSubstituteInstrs` baked
+`ctx.nativeProtoTypeIdx` into a `ref.test` at object-runtime REGISTRATION time.
+A later type registration shifts indices
+(`project_type_index_shift_and_deadelim`), so the baked `(ref 59)` ended up
+naming a type outside the `any` hierarchy. **Every other arm in
+`proto-index-store.ts` resolves that index at FINALIZE** (`fillBrandOffBody`);
+these two sites were the only ones that did not.
+
+**Fix:** the substitution is now a reserved helper `__protoidx_own_recv`
+(`recv -> recv'`) whose stub RETURNS ITS ARGUMENT (an exact no-op) and whose
+real body is written by `fillOwnRecvBody` at finalize. The call sites emit a
+`call` and bake no type index at all — structurally identical to the module's
+other arms, so the split cannot be reintroduced. The scratch locals are gone
+(the helper owns them), which also simplifies the conditional-emission story.
+
+**GATE-DESIGN LESSON — descriptor KIND is a mandatory axis.** Every P2 probe and
+all four original tests used **value** descriptors. The battery covered receiver
+form (syntactic vs flowing), brand (`Date` vs `Object`), and presence (absent
+key, inherited key, unwritten brand) — and still missed an entire arm of the
+feature, because **descriptor kind (value vs accessor) was never varied**. So
+"all acceptance criteria met" was true of the criteria as written; the criteria
+were incomplete. For any companion-consult work the gate battery must vary at
+least: **descriptor kind × receiver form × brand**, with both kinds exercised on
+ONE binary. `tests/issue-2175-p2-own-view-companion.test.ts` now carries that row
+as a permanent regression guard naming the CompileError.
+
 ### Acceptance
 
 - `.tmp/p5.js` probe: all five views agree (`hasOwnProperty(dp,"p2")` true,
@@ -1871,3 +1973,111 @@ the flag store, hasOwnProperty does NOT land alone either.
 - Measure against the 125-candidate list, scoped standalone run; report
   flips with provenance. No regression in `tests/issue-2175-*.test.ts`,
   `tests/issue-4447-mg-regressions.test.ts`.
+
+---
+
+## Implementation Plan — P1 (fable, dictated 2026-08-15) — SUPERSEDED BY #4504
+
+> **SUPERSEDED — see `plan/issues/4504-extern-set-inherited-accessor-chain-walk.md`.**
+> The baseline check at the end of this section disproved the plan's premise: the
+> defect is NOT companion-specific. `[[Set]]` skips inherited accessors on plain
+> prototype chains too, by a deliberate #1888 S5b deferral. #4504 owns the
+> general §9.1.9 proto-chain accessor walk; this companion case is one arm of it.
+> Text kept below as the record of how that was found.
+
+Implements the P1 defect banked in "P1/P2 triage" above: §9.1.9
+OrdinarySetWithOwnDescriptor step 3 — `arr.acc = 7`, where `Array.prototype`
+holds a companion ACCESSOR, must invoke that setter and create **no** own
+property. Today it silently shadows: the setter never runs, an own data
+property appears on the receiver, and the next read stops returning the getter's
+value (`.tmp/p4.js`, measured).
+
+Scope base: ~11 P1 candidates (`.tmp/p1-cands.json`, regex-scoped — candidates
+by source shape, not confirmed yields).
+
+### 1. Localize by TRACE, not assumption
+
+The triage names `__extern_set`'s chain behaviour, but P2 taught this lane that
+the arm that actually answers can differ from the one the mechanism suggests
+(there the gOPD funnel was a single native, not the five modules the grep
+implied). So: compile `.tmp/p4.js`, instrument, and find the arm that performs
+the own-property CREATE on the set-miss path before writing any fix.
+
+### 2. Fix shape
+
+Before creating an own property on a set-miss, walk the receiver's prototype
+chain's companion entries for an accessor **with a setter**; if found, invoke it
+with the original receiver and create nothing. The P2 receiver-substitution
+trick likely reuses here — substitute the proto's companion and let the existing
+accessor-set path fire.
+
+**Critical negative control:** an inherited **data** property must NOT divert.
+Assigning over one still creates an own property on the receiver (§9.1.9 step
+3.b). Only accessors divert.
+
+### 3. Gates
+
+- `prove-emit-identity` all 60, via conditional emission (the P2 pattern: the
+  scratch local is added only when the arm emits).
+- `.tmp/p4.js` flips: setter runs, no own property created, re-read yields the
+  getter's value.
+- Negative controls on ONE binary: inherited data property still shadows; an
+  OWN accessor still works; a plain-object inherited accessor unchanged —
+  **verify the plain-object case on base first** (one probe) so an
+  already-working path is not credited to this change.
+- Scoped run of the ~11 P1 candidates + `tests/issue-2175-*.test.ts` +
+  `tests/issue-4447-forof-dstr-standalone.test.ts`.
+
+### 4. Boundary
+
+One boundary; keep/revert recommendation with the flip count stated plainly.
+**0 flips is an acceptable outcome if the gates hold** — the substrate value is
+the point (this unblocks #4491 step 3, #4490). No git mutations; stop and report
+at the boundary or on any surprise.
+
+### STOPPED AT STEP 3's BASELINE CHECK — the plan's premise is false. No code written.
+
+The plan says the plain-object inherited-accessor path "presumably already
+works — verify base first, one probe". **It does not work**, and that changes
+what P1 is.
+
+`.tmp/q1.js`, a plain prototype chain with NO builtin proto and NO companion
+anywhere — `var proto = {}; defineProperty(proto,"acc",{get,set}); var o =
+Object.create(proto); o.acc = 7`:
+
+| assertion | result |
+| --- | --- |
+| setter runs | **no** |
+| no own property created on `o` | **an own property IS created** |
+| `o.acc` re-reads as 42 (the getter) | **no** |
+| inherited DATA control: `o2.d = 5` creates an own prop, proto unchanged | yes OK |
+
+Verified identical on the pre-P2 commit `3e69b1e34` (both 700), so this is
+pre-existing and nothing to do with P2.
+
+**The source states it explicitly.** `__extern_set` (`object-runtime.ts` ~L2846,
+the #1888 S5b accessor write gate):
+
+> "Inherited-accessor set (proto-chain) is out of scope for this slice;
+> `__obj_find` walks only the own table."
+
+So `[[Set]]` handles **own** accessors only, by design, and the inherited case
+was deliberately deferred. The companion accessor that P1 describes is one
+special case of that general gap — not a companion-specific defect.
+
+**Why this must not be fixed as scoped.** Diverting only the *companion* case
+would make `Array.prototype`'s accessor fire while a plain prototype's accessor
+still silently shadows — a half-consistent `[[Set]]`, the same failure mode the
+"one boundary" rule exists to prevent (and the reason P2 landed both own-views
+together).
+
+**Correct sequencing (recommended):** implement §9.1.9's prototype-chain
+accessor walk in `__extern_set` generally — find the first proto-chain entry for
+the key; if it is an accessor, invoke its setter with the original receiver and
+create nothing; if it is a data property (or absent), fall through to today's
+own-property create. P1's companion case is then ONE arm of that walk (the
+receiver-substitution trick from P2 supplies it), and both land coherently. That
+is a larger, spec-semantics slice than P1-as-written and should be re-planned
+and re-scoped as such — the ~11 P1 candidates are a lower bound on its value,
+since the general defect affects every inherited accessor, not just builtin
+prototypes.
