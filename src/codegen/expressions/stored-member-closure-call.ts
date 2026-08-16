@@ -79,7 +79,7 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
-import { sourceHasMethodReassignment } from "./calls.js";
+import { sourceHasMethodOverride } from "./member-override-scan.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
 /**
@@ -134,7 +134,7 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
  * @returns the result `ValType` when the call was emitted, or `undefined` to
  *          fall through to the graceful fallback.
  */
-function tryEmitStoredMemberClosureCall(
+export function tryEmitStoredMemberClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
@@ -143,22 +143,41 @@ function tryEmitStoredMemberClosureCall(
   if (!ctx.standalone && !ctx.wasi) return undefined;
 
   const callee = expr.expression;
-  if (!ts.isPropertyAccessExpression(callee)) return undefined;
+  // (#4482) `o["exec"](…)` is the SAME shape as `o.exec(…)` — §12.3.2 computes
+  // the property key from a string literal, and the element READ already
+  // resolves the stored closure (`var g = o["exec"]` works). test262 writes the
+  // §15.10.6.2 rows both ways on purpose (`_A2_T5` dot, `_A2_T6` bracket), and
+  // only the dot half reached this arm, so the bracket half fell to the
+  // graceful `ref.null.extern` fallback and answered `undefined` where the
+  // transferred `RegExp.prototype.exec` must throw a real `TypeError`. A
+  // NON-literal key is left alone: the key is then a runtime value and the
+  // source scan below cannot name the member it will resolve to.
+  let memberName: string;
+  let recvExpr: ts.Expression;
+  if (ts.isPropertyAccessExpression(callee)) {
+    if (!ts.isIdentifier(callee.name)) return undefined;
+    memberName = callee.name.text;
+    recvExpr = callee.expression;
+  } else if (ts.isElementAccessExpression(callee)) {
+    const key = callee.argumentExpression;
+    if (key === undefined || !ts.isStringLiteralLike(key)) return undefined;
+    memberName = key.text;
+    recvExpr = callee.expression;
+  } else {
+    return undefined;
+  }
   // Optional chaining has its own short-circuit semantics; not this arm's job.
   if (callee.questionDotToken !== undefined || expr.questionDotToken !== undefined) return undefined;
-  if (!ts.isIdentifier(callee.name)) return undefined;
 
   // Receiver must be a plain identifier: it is read TWICE (once as `this`, once
   // as the base of the member read), so anything with side effects or a
   // non-trivial cost is out of scope.
-  const recvExpr = callee.expression;
   if (!ts.isIdentifier(recvExpr)) return undefined;
   // A builtin namespace/class receiver (`Math.floor`, `JSON.parse`, …) is not a
   // stored-member shape; those have dedicated static arms and must not be
   // re-routed through the dynamic bridge if one of them ever declines.
   if (BUILTIN_CLASS_NAMES.has(recvExpr.text)) return undefined;
 
-  const memberName = callee.name.text;
   if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
 
@@ -182,7 +201,16 @@ function tryEmitStoredMemberClosureCall(
   // member the assignment added is invisible to the checker in this program
   // setup, so a fact-based gate admits nothing at all. The member read is
   // resolved by codegen's own shape registry, not by TS.
-  if (!sourceHasMethodReassignment(ctx, expr, memberName)) return undefined;
+  //
+  // (#4482) …widened to `sourceHasMethodOverride`, which also sees
+  // `Object.defineProperty(X, "<memberName>", …)`. That install route reads
+  // back correctly today (`Object.defineProperty(d,"zz",{value:7}); d.zz === 7`
+  // is TRUE for `any`/`Object`/`Date` receivers) but the CALL was not claimed
+  // by this arm, so `d.zz()` answered the graceful-fallback null instead of
+  // invoking the stored closure — the §15.x.4 rows install the transferred
+  // intrinsic with `defineProperty` in block #1 and by assignment in block #2,
+  // and only block #2 threw.
+  if (!sourceHasMethodOverride(ctx, expr, memberName)) return undefined;
 
   // Register the bridge + the arg-vector builders BEFORE compiling anything, so
   // any import they pull in shifts function indices while the body is still
@@ -313,7 +341,9 @@ function tryEmitProtoInheritedMethodCall(
   if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
 
   const memberName = callee.name.text;
-  if (!sourceHasMethodReassignment(ctx, expr, memberName)) return undefined;
+  // (#4482) `defineProperty`-installed members too — see the note on the
+  // identifier-receiver arm above.
+  if (!sourceHasMethodOverride(ctx, expr, memberName)) return undefined;
 
   // Same reserve-before-compile discipline as the arm above (#1839/#117/#1886).
   reserveApplyClosure(ctx);

@@ -86,6 +86,7 @@ import {
 } from "./callable-bindings.js";
 import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { collectOuterWrites } from "./closure-captures.js";
+import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { fmodRefFor, FMOD_FN } from "./fmod-selection.js";
 import {
@@ -4283,10 +4284,17 @@ function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | null {
  * boxes each element) — this mirrors #2766's prove-then-specialize shape.
  */
 function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: IrType): IrValueId {
-  // Reject spread / sparse — out of scope, keep on legacy.
+  // Elision stays out of scope. Spread is adopted (#4487) only for operands
+  // whose element count is provable at compile time — see
+  // `planArrayLiteralSpread`; a `null` plan means at least one operand needs a
+  // runtime-sized allocation, which `vec.new_fixed` cannot express.
+  const spreadPlan = expr.elements.some((el) => ts.isSpreadElement(el)) ? planArrayLiteralSpread(expr) : null;
   for (const el of expr.elements) {
-    if (ts.isSpreadElement(el) || ts.isOmittedExpression(el)) {
-      throw new Error(`ir/from-ast: array literal with spread/elision not in #1804 scope (${cx.funcName})`);
+    if (ts.isOmittedExpression(el)) {
+      throw new Error(`ir/from-ast: array literal with elision not in #1804 scope (${cx.funcName})`);
+    }
+    if (ts.isSpreadElement(el) && spreadPlan?.has(el) !== true) {
+      throw new Error(`ir/from-ast: array literal spread source has no static length (${cx.funcName})`);
     }
   }
 
@@ -4360,9 +4368,78 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 
   // Lower each element. Use the hint element type as each element's hint when
   // we have one (so e.g. number elements stay f64).
+  const elementHint = hintElemIr ?? irVal({ kind: "f64" });
   const elementIds: IrValueId[] = [];
   for (const el of expr.elements) {
-    elementIds.push(lowerExpr(el as ts.Expression, cx, hintElemIr ?? irVal({ kind: "f64" })));
+    if (ts.isSpreadElement(el)) {
+      const shape = spreadPlan!.get(el)!;
+      if (shape.kind === "inline-literal") {
+        // `[...[a, b], c]` — inline the operand literal's elements verbatim.
+        // The operand is never allocated (same expansion the call-argument
+        // spread already uses), and source order is preserved.
+        for (const inner of shape.elements) elementIds.push(lowerExpr(inner, cx, elementHint));
+        continue;
+      }
+      // `const a = [1, 2]; … [...a, c]` — lower the source ONCE (so any
+      // side effects happen once, in source order), then read each proven
+      // index. Reading rather than re-lowering is what makes the result a
+      // COPY: the `vec.new_fixed` below allocates its own backing array, so a
+      // later `a[0] = …` is not observable through the spread result.
+      const source = lowerExpr(el.expression, cx, hint);
+      const sourceType = cx.builder.typeOf(source);
+      const sourceVec = resolveIrVecType(sourceType, cx);
+      if (!sourceVec) {
+        // Same reasoning as the non-scalar arm below: a shape this expansion
+        // cannot carry is a CAPABILITY gap, so it must demote, not hard-fail.
+        throw new IrUnsupportedError(
+          "array-representation-unsupported",
+          "build",
+          `ir/from-ast: array literal spread source is not a recognisable vec ` +
+            `(${describeIrType(sourceType)}) in ${cx.funcName}`,
+        );
+      }
+      // Only NUMERIC/BOOLEAN sources expand. A string-carrier vec stores
+      // `externref`, so `vec.get` hands back the STORED type while sibling
+      // string literals in the same literal lower as `IrType.string` — the two
+      // cannot share one `vec.new_fixed` element type. Demote through the
+      // unsupported channel (a bare `Error` here reads as an unexpected
+      // internal throw under IR-first and fails the compile instead of
+      // falling back).
+      const sourceElement = asVal(sourceVec.elementType);
+      if (!sourceElement || (sourceElement.kind !== "f64" && sourceElement.kind !== "i32")) {
+        throw new IrUnsupportedError(
+          "array-representation-unsupported",
+          "build",
+          `ir/from-ast: array literal spread of a non-scalar vec ` +
+            `(${describeIrType(sourceVec.elementType)}) is not carried by the fixed-literal ` +
+            `expansion (${cx.funcName})`,
+        );
+      }
+      for (let index = 0; index < shape.length; index++) {
+        const indexId = cx.builder.emitConst({ kind: "i32", value: index }, irVal({ kind: "i32" }));
+        elementIds.push(cx.builder.emitVecGet(source, indexId, sourceVec.elementType));
+      }
+      continue;
+    }
+    elementIds.push(lowerExpr(el as ts.Expression, cx, elementHint));
+  }
+
+  // A literal that is nothing but spreads of EMPTY sources (`[...a]` with
+  // `const a: number[] = []`) expands to zero elements, so there is no element
+  // to infer the vec's element type from and no annotation supplying one.
+  // Measured (#4487 continuation, `.tmp/probe-4487b.ts`): the selector claims
+  // that unit, so a bare `Error` here surfaces under IR-first as
+  // `IR path failed` — a COMPILE FAILURE for a program the branch base
+  // compiled fine (base rejected it at `expr-arraylit-spread` and legacy
+  // handled it). It is a capability gap, not a producer-promise violation, so
+  // it demotes through the typed channel exactly like the string-carrier arm.
+  if (elementIds.length === 0 && !hintElemIr) {
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      `ir/from-ast: spread-only array literal expanded to zero elements and no vec-typed ` +
+        `hint supplies the element type (${cx.funcName})`,
+    );
   }
 
   // Determine the shared element IrType: the hint's element type if present,
@@ -4393,8 +4470,16 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 
   const elemVT = asVal(storedElementType);
   if (!elemVT) {
-    // Non-scalar (object/closure/...) element types are out of scope for this slice.
-    throw new Error(
+    // Non-scalar (nested vec / object / closure / …) element types are out of
+    // scope for this slice. Typed-unsupported rather than a bare `Error`: the
+    // #4487 spread adoption newly CLAIMS units that reach here — `[...[[1],
+    // [2]], [3]]`, or `[...a]` over a `number[][]` const — and under IR-first
+    // a bare throw fails the compile instead of demoting to the perfectly good
+    // legacy body (measured on the branch base: both compiled). This is the
+    // literal-construction twin of the #4486 nested-vec hard error.
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
       `ir/from-ast: array literal element type ${storedElementType.kind} not in #1804 scope (${cx.funcName})`,
     );
   }

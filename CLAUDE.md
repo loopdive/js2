@@ -14,6 +14,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   summaries.
 - **Match the question's size.** A yes/no question gets a yes/no plus the one
   fact that makes it actionable, not a status report.
+- **Introduce terminology with a quick example.** The first time a term of
+  art appears in an answer (demote, claim, merge-queue park, CPS, …), attach a
+  one-line concrete example of what it means — e.g. "the selector _demotes_
+  the function (a `**` operator makes it fall back to the legacy compiler
+  instead of erroring)". A term the reader has to reverse-engineer costs more
+  than the sentence that grounds it.
 - Brevity is about redundancy, not omission. Findings that change what someone
   would do — a real failure, an unverified assumption, work deliberately left
   out — still get stated plainly. Say them once, in the fewest words that keep
