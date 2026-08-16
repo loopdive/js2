@@ -295,32 +295,35 @@
         mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring)), #000 calc(100% - var(--ring)));
       }
       .edition-legend-donut-value {
-        position: absolute;
-        top: 20%;
-        left: 0;
-        right: 0;
-        height: 1.25rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1;
+        position: static;
+        height: auto;
         font-family: var(--mono);
         font-size: 1.25rem;
         font-weight: 700;
+        line-height: 1;
         color: #fff;
       }
-      .edition-legend-donut-name {
+      .edition-legend-donut-center {
         position: absolute;
-        top: 53%;
-        left: 4px;
-        right: 4px;
+        inset: 14% 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.2rem;
         z-index: 1;
+        text-align: center;
+        pointer-events: none;
+      }
+      .edition-legend-donut-name {
+        width: 100%;
         overflow: hidden;
         color: var(--text-muted);
         font-family: var(--mono);
-        font-size: 0.52rem;
+        font-size: 0.56rem;
         font-weight: 700;
         line-height: 1;
+        text-align: center;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
@@ -941,8 +944,14 @@
           donut.style.setProperty("--deg", `${Math.max(0, Math.min(100, row.rate)) * 3.6}deg`);
           donut.appendChild(el("div", { className: "edition-legend-donut-glow" }));
           donut.appendChild(el("div", { className: "edition-legend-donut-ring" }));
-          donut.appendChild(el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`));
-          donut.appendChild(el("div", { className: "edition-legend-donut-name" }, label));
+          donut.appendChild(
+            el(
+              "div",
+              { className: "edition-legend-donut-center" },
+              el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`),
+              el("div", { className: "edition-legend-donut-name" }, label),
+            ),
+          );
 
           const item = el(
             "button",
