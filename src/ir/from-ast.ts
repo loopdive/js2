@@ -5801,7 +5801,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
 
 /**
  * Resolve a property name to a string. Identifier and StringLiteral keys
- * produce their text; NumericLiteral keys produce their raw text.
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
  * ComputedPropertyName always returns null. Duplicated locally from select.ts
  * to avoid a circular import.
  *

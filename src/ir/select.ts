@@ -9153,7 +9153,8 @@ function isStaticSpreadSource(
  * is static and a folded key is indistinguishable from a plain one. Keys that
  * need a value environment (`const k = "a"`, `Symbol.iterator`, template
  * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
- * the fold is syntactic and for the numeric-canonicality guard.
+ * the fold is syntactic, and for the measurement showing a numeric key needs no
+ * canonicalisation step (the scanner has already done it).
  */
 function isPhase1ObjectLiteral(
   expr: ts.ObjectLiteralExpression,
@@ -9322,7 +9323,7 @@ function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
 
 /**
  * Resolve a property name to a string. Identifier and StringLiteral keys
- * produce their text; NumericLiteral keys produce their raw text.
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
  * ComputedPropertyName always returns null.
  *
  * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
