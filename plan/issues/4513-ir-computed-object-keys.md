@@ -230,7 +230,7 @@ claimed-and-emitted with legacy/IR parity or cleanly rejected; a single
 | `tests/issue-4513.test.ts` | 28 passed |
 | `tests/issue-4471.test.ts`, `tests/issue-4459.test.ts` (neighbours) | 62 passed |
 | `pnpm run check:ir-fallbacks` | OK — no unintended / post-claim / module-level increase. Base run also captured (`.tmp/4513/fallbacks-base.txt`) via the `.tmp/4513/base/` revert copies: identical, so "unchanged" here is a measurement, not an assumption |
-| `pnpm run check:ir-only` (+ `--policy=hybrid`) | READY. Base A/B run: host lane 37/37 emitted before and after; standalone lane 19 emitted / 18 unsupported before and after — no floor movement in either direction |
+| `pnpm run check:ir-only` (+ `--policy=hybrid`) | READY. Pre-merge A/B against the `.tmp/4513/base/` revert copies: host lane 37/37 emitted before and after; standalone lane 19 emitted / 18 unsupported before and after — this change moves neither. Re-run on the merged tip reads 22 emitted / 15 unsupported on the standalone lane; that delta is main's, not this branch's, and the A/B is what attributes it |
 | `pnpm run check:ir-adoption` | clean after regenerating the `ObjectLiteralExpression` row (`--ignore-all-space` diff touches that row only; the rest is table-column repadding) |
 | `pnpm run typecheck` | 0 errors (base: 0) |
 | `pnpm run lint`, `format:check` | clean |
@@ -243,11 +243,26 @@ function it names (`src/codegen/index.ts`, `object-runtime.ts`,
 `array-methods.ts`, `native-strings.ts`) is in a file this change does not
 touch. It is not run by any workflow.
 
-See `tests/issue-4513.test.ts`.
+## Issue-id collision (recorded, because the mechanism is the lesson)
+
+This slice was built as **#4511**. `claim-issue.mjs --allocate` reserved that id
+with `pr_scan="degraded"` — `gh` is unavailable in this container, so the
+open-PR id universe was never consulted and the tool said so. While the branch
+was in flight, `1efe399b` landed the session usage-limit monitor on main **as
+#4511**. Renumbered to a freshly reserved **#4513**.
+
+Two things worth keeping:
+
+- The degraded-scan warning was accurate and the collision was the exact one it
+  names. A `pr_scan="degraded"` reservation is a *provisional* id, not a clean
+  one — re-check before pushing, not just before creating the file.
+- `check:issue-ids:against-main` caught it at the pre-push hook, which is where
+  it is supposed to be caught. Left unrenumbered it would have failed the
+  `quality` gate and, past that, wedged the merge queue (#2531).
 
 ## LOC budget
 
 `loc-budget-allow` covers `src/ir/select.ts` and `src/ir/from-ast.ts`. The
-growth is one shared folder plus the measured rationale for its boundary — in
-particular the numeric-canonicality guard, which is the part a future widening
-would otherwise re-derive incorrectly.
+growth is one shared fold plus the measured rationale for its boundary — in
+particular the numeric-key measurement, which is the part a future widening
+would otherwise re-derive incorrectly (as this slice's own first draft did).
