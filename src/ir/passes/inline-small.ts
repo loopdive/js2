@@ -968,6 +968,18 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (v === inst.value) return inst;
       return { ...inst, value: v };
     }
+    // (#4070) Exhaustiveness gate. The runtime arm throws rather than
+    // returning `inst` unchanged: skipping the rename for an unknown kind
+    // would splice callee-scope SSA ids into the caller, which is a silent
+    // miscompile rather than a missed optimisation.
+    default: {
+      const _exhaustive: never = inst;
+      void _exhaustive;
+      // invariant (producer-promise): union/switch agreement, per #4035/#4502.
+      throw new Error(
+        `ir/inline-small: renameInstrOperands has no case for IR instruction kind ${(inst as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }
 
