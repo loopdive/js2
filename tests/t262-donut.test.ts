@@ -71,4 +71,40 @@ describe("t262-donut zero-count annotations", () => {
 
     donut.remove();
   });
+
+  it("keeps colliding annotations on one orbit while separating them", async () => {
+    await chartsReady;
+
+    const donut = dom.window.document.createElement("t262-donut");
+    donut.setAttribute("pass", "97");
+    donut.setAttribute("fail", "1");
+    donut.setAttribute("ce", "1");
+    donut.setAttribute("skip", "1");
+    donut.setAttribute("total", "100");
+    dom.window.document.body.appendChild(donut);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const offsets = [...(donut.shadowRoot?.querySelectorAll(".orbit-stat") ?? [])].map((el) => {
+      const transform = el.getAttribute("style") ?? "";
+      const match = transform.match(/translate\(calc\(-50% \+ ([\d.-]+)px\), calc\(-50% \+ ([\d.-]+)px\)\)/);
+      expect(match).not.toBeNull();
+      return { x: Number(match?.[1]), y: Number(match?.[2]) };
+    });
+
+    expect(offsets).toHaveLength(4);
+    for (const { x, y } of offsets) {
+      expect(Math.hypot(x, y)).toBeCloseTo(170, 5);
+    }
+
+    const distances = [];
+    for (let i = 0; i < offsets.length; i++) {
+      for (let j = i + 1; j < offsets.length; j++) {
+        distances.push(Math.hypot(offsets[i].x - offsets[j].x, offsets[i].y - offsets[j].y));
+      }
+    }
+    expect(Math.min(...distances)).toBeGreaterThanOrEqual(55 - 0.001);
+
+    donut.remove();
+  });
 });
