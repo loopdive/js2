@@ -52,7 +52,7 @@
   "codegen/member-get-dispatch.ts": 3,
   "codegen/native-proto-wrapper-primitive.ts": 1,
   "codegen/native-string-slot-bridge.ts": 1,
-  "codegen/number-format-native.ts": 8,
+  "codegen/number-format-native.ts": 11,
   "codegen/object-ops.ts": 4,
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 6,

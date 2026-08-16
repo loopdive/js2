@@ -46,7 +46,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 941,
+      "passCount": 937,
       "totalCount": 1083
     },
     {
@@ -94,7 +94,7 @@
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 115,
+      "passCount": 120,
       "totalCount": 181
     },
     {
@@ -111,7 +111,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 933,
+      "passCount": 952,
       "totalCount": 1177
     },
     {
@@ -144,19 +144,19 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3954,
+      "passCount": 3980,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1015,
+      "passCount": 1022,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 612,
+      "passCount": 618,
       "totalCount": 667
     },
     {
@@ -179,13 +179,13 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1797,
+      "passCount": 1807,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1599,
+      "passCount": 1605,
       "totalCount": 1896
     },
     {
@@ -197,13 +197,13 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1072,
+      "passCount": 1075,
       "totalCount": 1131
     },
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 364,
+      "passCount": 389,
       "totalCount": 440
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1770,
+      "passCount": 1832,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 783,
+      "passCount": 824,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 384,
+      "passCount": 503,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 528,
+      "passCount": 565,
       "totalCount": 1072
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2643,
+      "passCount": 2654,
       "totalCount": 3812
     },
     {
@@ -372,13 +372,13 @@
     {
       "name": "globalThis",
       "testCategories": ["built-ins/global", "built-ins/globalThis"],
-      "passCount": 96,
+      "passCount": 120,
       "totalCount": 122
     },
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 285,
+      "passCount": 286,
       "totalCount": 1048
     },
     {
@@ -396,7 +396,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3573,
+      "passCount": 3595,
       "totalCount": 4979
     },
     {
@@ -408,7 +408,7 @@
     {
       "name": "Array.at / String.at",
       "testCategories": ["built-ins/Array/prototype/at", "built-ins/String/prototype/at"],
-      "passCount": 16,
+      "passCount": 19,
       "totalCount": 36
     },
     {
@@ -450,7 +450,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 44,
+      "passCount": 54,
       "totalCount": 109
     },
     {
@@ -460,7 +460,7 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 41,
+      "passCount": 49,
       "totalCount": 132
     },
     {
