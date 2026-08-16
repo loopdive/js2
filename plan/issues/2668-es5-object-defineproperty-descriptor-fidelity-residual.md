@@ -1,9 +1,14 @@
 ---
 id: 2668
 title: "ES5: canonical vec-index Object/property MOP residual"
-status: ready
+status: in-progress
+assignee: ttraenkler/opus-es5-a
 created: 2026-06-25
-updated: 2026-08-13
+updated: 2026-08-16
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 priority: high
 feasibility: hard
 reasoning_effort: max
