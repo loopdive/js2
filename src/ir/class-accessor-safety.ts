@@ -123,9 +123,9 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  *
  * The restriction makes ClassDefinitionEvaluation inert: no heritage,
  * decorators, computed keys, or static work can execute in the containing
- * frame. Body capture/type safety remains the structural
- * selector's responsibility, and the identity selector admits the class only
- * when every body-bearing member claims atomically.
+ * frame. Body capture/type safety remains the structural selector's
+ * responsibility, and the identity selector admits the class only when every
+ * body-bearing member claims atomically.
  *
  * #3522 — the constructor may be IMPLICIT. An absent constructor on a class
  * with no heritage and no initialized fields has exactly the same inert
