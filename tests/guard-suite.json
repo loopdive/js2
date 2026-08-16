@@ -64,6 +64,11 @@
       "broken_by": "the $__vec_base common-supertype WasmGC refactor silently defeated #2047's leaf-exclusion — collectStandaloneArrayCarrierTypeIdxs matched the abstract $__vec_base via its __vec_* name prefix, so ref.test against it subsumed the byte-vec subtypes → Array.isArray(ArrayBuffer/Uint8Array)===true (regression >2026-07-04, another weeks-old invisible one outside required checks #3008); found+fixed by #3562"
     },
     {
+      "path": "tests/issue-1888-isarray-static-carrier.test.ts",
+      "guards": "the COMPILE-TIME Array.isArray(x) fast path (call-builtin-static.ts) answers true only for real array carriers — a string literal, an array-LIKE object literal, new Date(0) and a class instance are all false, while number[]/string[]/boolean[] and an array literal stay true, and the static answer agrees with the any-laundered runtime __extern_is_array answer",
+      "broken_by": "the fast path decided array-ness as `kind === 'ref' || kind === 'ref_null'` — i.e. every heap reference is an Array — so it answered true for every statically-typed value; invisible because laundering the same value through an `any` local takes the OTHER branch (the correct native predicate), so only the slow path was ever tested. Found+fixed by #1888 (2026-08-16); test262 built-ins/Array/isArray standalone 23/29 → 27/29"
+    },
+    {
       "path": "tests/issue-1539-standalone-regex-replace.test.ts",
       "guards": "standalone/WASI RegExp function replacers fail cleanly at compile time instead of losing their #1539 refusal to speculative rollback; supported standalone string-replacement and $-substitution behavior remains correct, and the default host target still accepts function replacers",
       "broken_by": "#1919 transactional expression rollback treated the RegExp lowering's null refusal result as a speculative miss, erased its fatal diagnostic, and silently emitted a broken fallback binary; found by the #3565 bounded guard audit and fixed by #3567"
