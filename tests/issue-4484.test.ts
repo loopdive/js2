@@ -53,6 +53,43 @@ describe("#4484 A — instanceof: a non-callable RHS throws before the LHS is in
   });
 });
 
+describe("#4484 A — instanceof: the non-callable throw yields to @@hasInstance", () => {
+  // §13.10.2 consults @@hasInstance at step 2 and reaches the IsCallable throw
+  // only at step 5, so "the RHS is a non-callable object" does not by itself
+  // license a throw. Reordering the step-1 arm ahead of the primitive-LHS fold
+  // (the fix in the describe above) widened it to primitive LHSs and turned
+  // test262 `symbol-hasinstance-to-boolean.js` from a wrong VALUE into a wrong
+  // THROW — invisible to a pass/fail sweep, since the row fails either way, but
+  // catchable and therefore observable. `moduleInstallsCallableHasInstance`
+  // declines the arm for any module that installs a callable handler.
+  it("does NOT throw when the RHS carries a callable @@hasInstance", async () => {
+    expect(
+      await runStandalone(`
+        const F: any = {};
+        F[Symbol.hasInstance] = function () { return true; };
+        try { const r = (0 as any) instanceof F; return r === true ? 1 : 2; }
+        catch (e) { return 3; }
+      `),
+    ).not.toBe(3);
+  });
+
+  // The complement, and the row this issue FLIPS: `GetMethod` maps a `null`
+  // property value to `undefined`, so step 4 is skipped and step 5's TypeError
+  // is exactly right (test262 `symbol-hasinstance-not-callable.js`, measured
+  // fail->pass). A guard that declined on any mention of `Symbol.hasInstance`
+  // would give this row back for no correctness gain.
+  it("still throws TypeError when @@hasInstance is null", async () => {
+    expect(
+      await runStandalone(`
+        const F: any = {};
+        F[Symbol.hasInstance] = null;
+        try { const _r = (0 as any) instanceof F; return 2; }
+        catch (e) { return e instanceof TypeError ? 1 : 3; }
+      `),
+    ).toBe(1);
+  });
+});
+
 describe("#4484 A — instanceof: the static primitive-RHS fold declines on a reassigned binding", () => {
   // `var OBJECT = 0; OBJECT = Object` leaves the DECLARED type `number` while the
   // value is the real constructor. The §13.10.2 step-1 fold used to throw

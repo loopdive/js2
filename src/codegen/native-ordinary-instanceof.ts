@@ -100,6 +100,11 @@ export function tryEmitNonCallableRhsThrow(
   expr: ts.BinaryExpression,
 ): ValType | null {
   if (!noJsHost(ctx)) return null;
+  // (#4484 A) §13.10.2 consults @@hasInstance at step 2 and only reaches the
+  // IsCallable throw at step 5. "Not callable" is therefore NOT sufficient to
+  // throw: a non-callable object carrying a CALLABLE @@hasInstance is a legal
+  // `instanceof` RHS whose handler decides the answer. See the predicate below.
+  if (moduleInstallsCallableHasInstance(expr.getSourceFile())) return null;
   if (!isProvablyNonCallableObjectType(ctx, expr.right)) return null;
   const lt = compileExpression(ctx, fctx, expr.left);
   if (lt) fctx.body.push({ op: "drop" });
@@ -107,6 +112,105 @@ export function tryEmitNonCallableRhsThrow(
   if (rt) fctx.body.push({ op: "drop" });
   emitThrowTypeError(ctx, fctx, "Right-hand side of 'instanceof' is not callable");
   return { kind: "i32" };
+}
+
+/**
+ * (#4484 A) Does this module install a possibly-CALLABLE `@@hasInstance` anywhere?
+ *
+ * ## Why the whole module, and why this gate exists at all
+ *
+ * §13.10.2 InstanceofOperator orders its checks: step 2 does
+ * `GetMethod(C, @@hasInstance)`, step 4 CALLS that handler if it is not
+ * undefined, and only step 5 throws for `IsCallable(C) === false`. So the
+ * static "this RHS is a non-callable object" proof answers the WRONG question
+ * on its own — `var F = {}; F[Symbol.hasInstance] = function () { … };
+ * 0 instanceof F` must call the handler, not throw.
+ *
+ * Measured on this branch (`language/expressions/instanceof/`, standalone):
+ * `symbol-hasinstance-to-boolean.js` went from a wrong VALUE to a wrong THROW
+ * (`TypeError: Right-hand side of 'instanceof' is not callable`) when the
+ * step-1 arm was reordered ahead of the primitive-LHS fold. Both spellings fail
+ * the test, so a pass/fail sweep cannot see the difference — but a wrong throw
+ * is CATCHABLE and therefore observable, which is exactly the failure class the
+ * reassigned-binding guards in this issue exist to prevent. Absent-not-wrong:
+ * decline and let the runtime path answer.
+ *
+ * ## Why module-scope and not the RHS expression
+ *
+ * The handler is installed by MUTATION on an arbitrary object value
+ * (`F[Symbol.hasInstance] = …`), which no static type of the RHS records. There
+ * is no expression-local fact to consult, so the only sound question is whether
+ * the module contains such an installation at all. Modules that never mention
+ * `@@hasInstance` — effectively all of them — keep the arm.
+ *
+ * ## Why a `null`/`undefined` value still throws
+ *
+ * `GetMethod` maps a `null` or `undefined` property value to `undefined`, so
+ * step 4 is skipped and step 5's TypeError is exactly right. That is
+ * `symbol-hasinstance-not-callable.js` (`F[Symbol.hasInstance] = null`), which
+ * this issue flips to pass; excluding it here would give the row back for no
+ * correctness gain. Every other value — a function, an identifier, a call
+ * result — is treated as possibly callable.
+ */
+const HAS_INSTANCE_INSTALL_CACHE = new WeakMap<ts.SourceFile, boolean>();
+
+function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
+  const cached = HAS_INSTANCE_INSTALL_CACHE.get(file);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    // `X[Symbol.hasInstance] = <value>`
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      isSymbolHasInstanceKey(node.left.argumentExpression) &&
+      !isDefinitelyNotCallableValue(node.right)
+    ) {
+      found = true;
+      return;
+    }
+    // `{ [Symbol.hasInstance]: <value> }` and `static [Symbol.hasInstance]() {}`
+    if (
+      (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node) || ts.isPropertyDeclaration(node)) &&
+      ts.isComputedPropertyName(node.name) &&
+      isSymbolHasInstanceKey(node.name.expression)
+    ) {
+      const value = ts.isPropertyAssignment(node)
+        ? node.initializer
+        : ts.isPropertyDeclaration(node)
+          ? node.initializer
+          : undefined;
+      if (value === undefined || !isDefinitelyNotCallableValue(value)) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  HAS_INSTANCE_INSTALL_CACHE.set(file, found);
+  return found;
+}
+
+/** Is `key` the well-known symbol reference `Symbol.hasInstance`? */
+function isSymbolHasInstanceKey(key: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(key) &&
+    ts.isIdentifier(key.expression) &&
+    key.expression.text === "Symbol" &&
+    key.name.text === "hasInstance"
+  );
+}
+
+/**
+ * True only for values `GetMethod` turns into `undefined` — i.e. the handler is
+ * NOT installed and §13.10.2 falls through to the step-5 IsCallable throw.
+ * Everything else declines conservatively.
+ */
+function isDefinitelyNotCallableValue(value: ts.Expression): boolean {
+  return value.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(value) && value.text === "undefined");
 }
 
 /**
