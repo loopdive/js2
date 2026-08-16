@@ -1,5 +1,31 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import type { CompileResult } from "../src/index.js";
+
+/**
+ * (#4507) Instantiate through the compiler's own import object (#1667).
+ *
+ * Each site here previously passed a hand-rolled `{ env: { console_log_* } }`,
+ * which omits the `string_constants` namespace, so every test in this file died
+ * at INSTANTIATION with
+ *   Import #0 module="string_constants": module is not an object or function
+ * before any assertion ran. The console stubs are kept as a *fallback* overlay:
+ * the real host runtime's `env` is spread last so it wins wherever it provides
+ * a binding.
+ */
+async function instantiate(result: CompileResult): Promise<WebAssembly.Instance> {
+  const imports = (result.importObject ?? {}) as WebAssembly.Imports & {
+    __setInstance?: (instance: WebAssembly.Instance) => void;
+  };
+  imports.env = {
+    console_log_number: () => {},
+    console_log_bool: () => {},
+    ...((imports.env ?? {}) as Record<string, unknown>),
+  } as unknown as WebAssembly.ModuleImports;
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.__setInstance?.(instance);
+  return instance;
+}
 
 describe("ClassExpression in various positions (#330)", () => {
   it("class expression in variable initializer with new", async () => {
@@ -22,12 +48,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(42);
   });
@@ -52,12 +73,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(10);
   });
@@ -92,12 +108,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(7);
   });
@@ -122,12 +133,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(55);
   });
@@ -151,12 +157,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(100);
   });
@@ -184,12 +185,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(33);
   });
@@ -211,12 +207,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(5);
   });
@@ -247,12 +238,7 @@ describe("ClassExpression in various positions (#330)", () => {
       true,
     );
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {
-      env: {
-        console_log_number: () => {},
-        console_log_bool: () => {},
-      },
-    });
+    const instance = await instantiate(result);
     const exports = instance.exports as any;
     expect(exports.test()).toBe(42);
   });
