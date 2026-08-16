@@ -701,6 +701,98 @@ function r2SignatureMatchesAllocatedSlot(
 }
 
 /**
+ * (#4514) The narrow value vocabulary whose physical carrier is fixed by the
+ * declaration alone, with no decision the prepared component could re-plan:
+ * `void`, `f64`/`i32` scalars, `string` (one `nativeStrings`-keyed carrier both
+ * front-ends read from the same two context fields), and a vector of those
+ * scalars (one interned vec type). Deliberately EXCLUDES `callable`, `extern`
+ * and the generator-only opaque-externref admission that
+ * `r2StableSignatureType` accepts: those are reference-shaped contracts whose
+ * carrier a prepared component may still re-plan, so they must not inherit an
+ * outside-caller exemption.
+ */
+function r2CarrierFixedByDeclaration(type: IrType | null): boolean {
+  if (type === null || type.kind === "string") return true;
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    return element?.kind === "f64" || element?.kind === "i32";
+  }
+  const val = asVal(type);
+  return val?.kind === "f64" || val?.kind === "i32";
+}
+
+/**
+ * (#4514) May this prepared owner keep its component membership even though a
+ * caller of it stays OUTSIDE the component (withdrawn, or legacy from the
+ * start)?
+ *
+ * The reverse-callers edge in the ownership fixed point guards against
+ * SIGNATURE divergence: an outside caller's `call` is emitted against the
+ * callee's already-allocated Program ABI slot, and preparation must not leave
+ * that slot describing a different function type. This predicate re-proves
+ * exactly that property at the point the exemption is taken, fail-closed:
+ *
+ * 1. every parameter and the return carrier is fixed by the declaration
+ *    (`r2CarrierFixedByDeclaration`), so the prepared component has no carrier
+ *    decision left to re-plan; and
+ * 2. the prepared projection still equals the allocated slot's function type
+ *    (`r2SignatureMatchesAllocatedSlot`, no opaque-externref widening).
+ *
+ * Same proof shape as `hasFullyAnnotatedScalarAbi`
+ * (`src/codegen/ir-legacy-caller-abi.ts`), which already exempts this family
+ * from the select-stage caller-direction closure. It is intentionally narrower
+ * than R2 admission: admission may accept reference contracts this exemption
+ * refuses.
+ *
+ * The other three fixed-point directions are NOT covered by this proof and stay
+ * untouched — the callee edge (a prepared body needs a callable plan for what
+ * it calls), the construction edge (#4494, `new C()` seals an exact unit-bound
+ * dependency) and the storage edge (#4508, a module-binding read pins the
+ * module-init terminal). Those are lowerability/sealing constraints, not
+ * signature ones.
+ */
+function r2CertifiedAgainstOutsideCallers(
+  ctx: CodegenContext,
+  unitId: IrUnitId,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  if (!override.params.every((type) => r2CarrierFixedByDeclaration(type))) return false;
+  if (!r2CarrierFixedByDeclaration(override.returnType)) return false;
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+/**
+ * (#4514) Names a NON-top-level function declaration also declares.
+ *
+ * The signature proof above says nothing about support bindings drafted for an
+ * owner AFTER its component seals, and annexB web-compat function hoisting
+ * (B.3.3.2 `CanDeclareGlobalFunction`) is exactly that shape: a block-scoped
+ * `function f` beside a top-level `function f` drafts a
+ * `function-value-trampoline` on the top-level unit at hoist time, which throws
+ * `would mutate sealed prepared scope`. Measured — the eight
+ * `annexB/language/global-code/*-global-existing-fn-no-init.js` regressions in
+ * the #4627 merge_group run were all and only this shape; an ordinary
+ * function-value reference from a withdrawn caller is fine, and so is a nested
+ * declaration whose name is unique.
+ *
+ * Deliberately over-approximate: EVERY non-top-level function-declaration name
+ * is collected, not just the ones that provably redeclare a top-level unit.
+ * This only ever removes an exemption, so an over-approximation costs
+ * compile-once on an unusual shape and can never admit an unsound one.
+ */
+function collectNestedFunctionDeclarationNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name && !ts.isSourceFile(node.parent)) {
+      names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return names;
+}
+
+/**
  * The certified Promise-delay owner is the first R3 closure component whose
  * complete derived population is already produced by the IR lowerer. Its
  * source return type is reference-shaped, so keep this ABI proof separate
@@ -1117,6 +1209,23 @@ export function selectR2PreparedOwnerComponents(input: {
       callers.set(calleeUnitId, owners);
     }
   }
+  // (#4514) Free-function owners whose ABI an outside caller provably cannot
+  // observe changing. Computed once, before the fixed point: the inputs are the
+  // admission-time override and the already-allocated slot, neither of which
+  // the fixed point mutates. Class members are absent by construction — their
+  // admission never ran the R2 signature proofs.
+  const nestedFunctionDeclarationNames = collectNestedFunctionDeclarationNames(input.sourceFile);
+  const outsideCallerCertifiedUnitIds = new Set<IrUnitId>(
+    [...freeFunctionCandidates].filter((unitId) => {
+      const override = input.overridesByUnitId.get(unitId);
+      const claim = input.claimsByUnitId.get(unitId);
+      if (override === undefined || claim === undefined) return false;
+      // Support bindings drafted after the component seals are outside what the
+      // signature proof covers; annexB block-function hoisting is that shape.
+      if (claim.declaration.name && nestedFunctionDeclarationNames.has(claim.declaration.name.text)) return false;
+      return r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
+    }),
+  );
   for (let changed = true; changed; ) {
     changed = false;
     for (const unitId of [...candidates]) {
@@ -1151,7 +1260,18 @@ export function selectR2PreparedOwnerComponents(input: {
         [...(callEdges.moduleBindingStorageTerminals.get(unitId) ?? [])].some(
           (storageUnitId) => !input.preparedStorageTerminalUnitIds.has(storageUnitId),
         ) ||
-        [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId));
+        // (#4514) Reverse-callers edge, directionally refined. An outside
+        // caller is a SIGNATURE hazard: its `call` is emitted against this
+        // unit's allocated Program ABI slot, so preparation must not re-plan
+        // that slot. `outsideCallerCertifiedUnitIds` proves it cannot for the
+        // declaration-fixed carrier family; every other unit still withdraws.
+        // Without this refinement one withdrawn caller drags its whole callee
+        // fan-out out of the component — #4508's enlarged `algorithms.ts`
+        // component lost compile-once for `fibIter`, `binarySearch`,
+        // `quicksort` and `joinNums` that way, none of which had any other
+        // blocking edge (measured; see the issue file).
+        (!outsideCallerCertifiedUnitIds.has(unitId) &&
+          [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId)));
       if (!crossesOwnership) continue;
       candidates.delete(unitId);
       changed = true;
