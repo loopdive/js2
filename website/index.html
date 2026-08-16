@@ -5192,6 +5192,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         edition === "ES5" ||
         /^ES20\d{2}$/.test(edition);
       const normalizeEditionLabel = (edition) => (edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition);
+      const isLegacyEditionBucket = (edition) =>
+        edition === "Unclassified (legacy)" || edition === "≤ ES3" || edition === "ES3" || edition === "ES3 / Core";
       const PUBLISHED_EDITION_RELEASE_MONTH = 6;
       const latestPublishedEditionYear = (referenceDate = new Date()) => {
         const date =
@@ -5231,11 +5233,19 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 }));
               const proposalBucket =
                 editions.find((edition) => String(edition?.edition || "") === PROPOSAL_LABEL) ?? null;
+              // The static landing-page section is labelled ES3 / Core, but
+              // the current classifier deliberately keeps its old-test
+              // residue off the edition timeline as "Unclassified (legacy)".
+              // Keep the headline population visible on that section without
+              // presenting the metadata residue as a measured timeline stop.
+              const legacyBucket =
+                editions.find((edition) => isLegacyEditionBucket(String(edition?.edition || ""))) ?? null;
 
               return {
                 editionList,
                 editionMap: new Map(editionList.map((edition) => [edition.normalizedEdition, edition])),
                 proposalBucket,
+                legacyBucket,
               };
             })();
             pendingByLane.set(lane, pending);
@@ -6068,7 +6078,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           // per-edition bars show standalone numbers in standalone mode.
           const hostEnabled = hostToggle ? hostToggle.checked : true;
           try {
-            const { editionList, editionMap, proposalBucket } = await loadEditionBuckets(hostEnabled);
+            const { editionList, editionMap, proposalBucket, legacyBucket } = await loadEditionBuckets(hostEnabled);
             const panel = document.querySelector(".feat-panel");
             if (panel instanceof HTMLElement) {
               editionList.forEach((edition) => {
@@ -6083,7 +6093,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               const ensured = ensureEditionLabel(section);
               if (!ensured) return;
               const label = ensured.labelSpan.textContent?.trim() || "";
-              const bucket = label === "Proposals" ? proposalBucket : editionMap.get(label);
+              const bucket =
+                label === "Proposals"
+                  ? proposalBucket
+                  : (editionMap.get(label) ?? (label === "ES3 / Core" ? legacyBucket : null));
               const existingBar = ensured.el.querySelector(".feat-edition-passbar");
 
               if (!bucket) {

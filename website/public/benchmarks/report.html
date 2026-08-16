@@ -259,6 +259,10 @@
            across the clamp() range. */
         --ring: 11px;
         position: relative;
+        display: grid;
+        place-items: center;
+        transform: translateZ(0);
+        backface-visibility: hidden;
         width: clamp(74px, calc(24vw - 4px), 100px);
         aspect-ratio: 1;
         margin: 2px;
@@ -280,6 +284,8 @@
         position: absolute;
         inset: 0;
         border-radius: 50%;
+        transform: translateZ(0);
+        filter: blur(0.2px);
         background: conic-gradient(#fff 0deg, #fff var(--deg), rgba(255, 255, 255, 0.14) var(--deg) 360deg);
         -webkit-mask: radial-gradient(
           farthest-side,
@@ -290,14 +296,33 @@
       }
       .edition-legend-donut-value {
         position: absolute;
-        inset: 0;
+        top: 20%;
+        left: 0;
+        right: 0;
+        height: 1.25rem;
         display: flex;
         align-items: center;
         justify-content: center;
+        z-index: 1;
         font-family: var(--mono);
         font-size: 1.25rem;
         font-weight: 700;
         color: #fff;
+      }
+      .edition-legend-donut-name {
+        position: absolute;
+        top: 53%;
+        left: 4px;
+        right: 4px;
+        z-index: 1;
+        overflow: hidden;
+        color: var(--text-muted);
+        font-family: var(--mono);
+        font-size: 0.52rem;
+        font-weight: 700;
+        line-height: 1;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .edition-legend-item.dimmed .edition-legend-donut-ring {
         background: conic-gradient(
@@ -310,6 +335,9 @@
         display: none;
       }
       .edition-legend-item.dimmed .edition-legend-donut-value {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-name {
         color: rgba(255, 255, 255, 0.5);
       }
       .cat-table {
@@ -900,7 +928,11 @@
           const rowRank = Number.isFinite(row.rank) ? row.rank : Number.MAX_SAFE_INTEGER;
           const isActive = row.edition === activeEdition;
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
-          const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
+          const label = proposalEditionLabels.has(row.edition)
+            ? PROPOSAL_LABEL
+            : row.edition === "ES3 / Core"
+              ? "ES3"
+              : row.edition || row.rawEdition;
 
           // Same conic-gradient ring + glow technique as the big <t262-donut>,
           // just the ring and percentage, no count labels.
@@ -910,6 +942,7 @@
           donut.appendChild(el("div", { className: "edition-legend-donut-glow" }));
           donut.appendChild(el("div", { className: "edition-legend-donut-ring" }));
           donut.appendChild(el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`));
+          donut.appendChild(el("div", { className: "edition-legend-donut-name" }, label));
 
           const item = el(
             "button",
@@ -923,7 +956,6 @@
             el(
               "div",
               { className: "edition-legend-text" },
-              el("div", { className: "edition-legend-name" }, label),
               el(
                 "div",
                 { className: "edition-legend-ratio" },
