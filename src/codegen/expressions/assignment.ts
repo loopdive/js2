@@ -3,6 +3,7 @@
  * Assignment operator compilation: simple assignment, destructuring, compound, logical.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
@@ -3603,6 +3604,34 @@ function compilePropertyAssignment(
   if (!ts.isPrivateIdentifier(target.name)) {
     const nonWritable = tryEmitNonWritablePropertyWrite(ctx, fctx, target, value, target.name.text);
     if (nonWritable !== undefined) return nonWritable;
+  }
+
+  // (#4500 Slice A) `this.p = v` / `globalThis.p = v` where `p` is a
+  // **`var`-declared** script global: write the wasm module global that stores
+  // it, not a property on the realm global object. Symmetric with the read arm
+  // in `property-access.ts` — and the pair MUST land together: fixing only the
+  // read makes `this.p = 2; this.p === 2` regress, because the read would then
+  // consult the module global while the write still updated the object.
+  // (Measured: that exact row flipped to failing with the read arm alone.)
+  //
+  // Placed after the runtime-state checks above (poison, non-writable), so a
+  // genuine descriptor on the global object still decides the write, and before
+  // the struct-shaped lowerings below, which are the ones that mis-route it.
+  if (!ts.isPrivateIdentifier(target.name)) {
+    const name = target.name.text;
+    const globalIdx = ctx.moduleGlobals.get(name);
+    if (globalIdx !== undefined && receiverIsRealmGlobalObject(ctx, fctx, target.expression)) {
+      const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+      const rhsType = compileExpression(ctx, fctx, value, globalType);
+      if (!rhsType) return null;
+      if (globalType && rhsType.kind !== globalType.kind) coerceType(ctx, fctx, rhsType, globalType);
+      const resultLocal = allocLocal(fctx, `__realm_global_write_${fctx.locals.length}`, globalType ?? rhsType);
+      fctx.body.push({ op: "local.tee", index: resultLocal });
+      fctx.body.push({ op: "global.set", index: globalIdx });
+      // An assignment expression evaluates to the assigned value.
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      return globalType ?? rhsType;
+    }
   }
 
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor

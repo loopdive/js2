@@ -92,6 +92,16 @@ converts "my measurement is broken" into "the compiler is broken" costs far more
 than a vacuous assertion, and it will keep doing so to every future lane that
 writes a throw-based oracle.
 
+**Second worked example, same failure mode one layer up (2026-08-15).** During
+#4500 Slice A a probe harness invoked `instance.exports.__module_init?.()`;
+`--target wasi` exports **`_start`**, so the optional call was a silent no-op and
+every wasi row reported "ok" without executing an instruction — producing a false
+"the defect is standalone-only" finding that reached an issue file and a slice
+plan before a contradicting probe exposed it. Different symbol, identical shape:
+**an instrument reporting a state it never observed, with success as the default
+answer.** The lesson generalises past this issue — a probe must make "I did not
+actually run/see it" a hard error, never a pass.
+
 The 60 is an **upper bound, not a confirmed-broken count**: the regex counts a
 `throw` anywhere in the file (including in the test's own assertion helpers), not
 specifically inside compiled source. The precise at-risk set is "asserts empty

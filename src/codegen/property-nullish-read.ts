@@ -7,6 +7,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExternIsUndefinedImport, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A)
 import { compilePropertyAccess, typeErrorThrowInstrs } from "./property-access.js";
 import { coerceType, compileExpression } from "./shared.js";
 
@@ -30,6 +31,19 @@ export function compilePropertyAccessForNullishObservation(
   if (expr.questionDotToken) return compilePropertyAccess(ctx, fctx, expr);
   const externref: ValType = { kind: "externref" };
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
+  // (#4500 Slice A) `this.p` / `globalThis.p` for a `var`-declared global has ONE
+  // source of truth: the wasm module global (see `compilePropertyAccess`). This
+  // path otherwise answers from the global OBJECT via a dynamic `__extern_get`,
+  // which for such a name is always absent — so a nullish COMPARISON contradicted
+  // the ordinary read once that read was fixed:
+  //
+  //   var p1 = 7;  this.p1 === 7           // true   (module global)
+  //   var p1 = 7;  this.p1 === undefined   // ALSO true (this path, object)
+  //
+  // Both were live in one program. Delegate so the module-global arm decides.
+  if (ctx.moduleGlobals.has(propName) && receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) {
+    return compilePropertyAccess(ctx, fctx, expr);
+  }
   const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
   const getIdx =
     getMemberIdx === undefined ? ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]) : undefined;
