@@ -1,7 +1,8 @@
 ---
 id: 4484
 title: "ES5 standalone: operator/coercion smalls — instanceof [[HasInstance]], null/undefined member ToObject throws, strict-assignment throws, `in` on plain maps (~30 rows)"
-status: in-progress
+status: done
+completed: 2026-08-16
 sprint: current
 created: 2026-08-15
 updated: 2026-08-16
@@ -295,3 +296,15 @@ Gates: `typecheck` clean; `check:oracle-ratchet` OK (+0 raw checker usage);
   `get-err`, `invocation` still fail. This issue only stops them being
   answered with a wrong THROW; actually calling the handler needs the runtime
   `GetMethod` path.
+
+## Lead decision (2026-08-16 03:40) — accepted as partial at +9, per the #4480 precedent
+
+The shortfall is structural, not unfinished work: the survey predated the
+#4479/#4480 wave (part already fixed), and the dominant remaining blocker —
+the missing `{}` -> `Object.prototype` [[Prototype]] edge, accounting for
+S11.8.6_A1, A2.4_T1/_T4, in/S8.12.6_A2_T1/_T2, types/object/S8.6.2_A1/_A2 —
+is representation-level and now ROUTED TO #4506 (fnctor instances as
+$Objects / prototype-chain substrate). The @@hasInstance over-throw catch
+(found by error-text diffing on unflipped rows) and the fresh-worktree
+.test262-cache under-measurement finding are recorded in the campaign brief's
+successor lore.
