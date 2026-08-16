@@ -812,6 +812,26 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
     return t && t.kind === "func" ? t : null;
   };
 
+  // (#4483) ES5 §15.3.5.4 caller-poison guard.
+  //
+  // `finalizeFunctionPoisonPillCalls` runs immediately AFTER this pass and
+  // marks each source call with the strictness of the WASM FUNCTION whose body
+  // holds it. Inlining moves a callee's calls into the caller's body, so a
+  // strict callee inlined into a sloppy caller has its calls marked SLOPPY —
+  // and a sloppy function reading its own `.caller` then fails to throw.
+  // Measured on this branch's base: `built-ins/Function/15.3.5.4_2-42gs` (a
+  // strict FunctionDeclaration nested in a sloppy FunctionExpression) inlined
+  // to exactly that, with the strict copy left dead in the module.
+  //
+  // The guard costs nothing in the ordinary case: `callerStrictGlobalIdx` is
+  // only allocated once some function actually reads a legacy `caller`
+  // property (`ensureCallerStrictSnapshot`), so a module that never observes
+  // `.caller` — every real-world program — keeps every inlining decision it
+  // had before.
+  const poisonObserved = ctx.callerStrictGlobalIdx >= 0;
+  const sourceStrictnessOf = (fn: WasmFunction): boolean | undefined =>
+    ctx.sourceFunctionStrictnessByBody.get(fn.body) ?? ctx.sourceFunctionStrictness.get(fn.name);
+
   // --- call graph -----------------------------------------------------------
   const callerCount = new Int32Array(mod.functions.length);
   const addressTaken = new Uint8Array(mod.functions.length);
@@ -937,6 +957,17 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         if (isColdByConstruction(callee.name)) {
           declined(callee.name, "cold-callee");
           continue;
+        }
+        // (#4483) See `poisonObserved` above — never merge two activations that
+        // disagree about strictness while the module observes `.caller`. An
+        // unknown caller strictness (a trampoline / runtime helper) counts as
+        // disagreement: such a body is never instrumented at all.
+        if (poisonObserved) {
+          const calleeStrict = sourceStrictnessOf(callee);
+          if (calleeStrict !== undefined && sourceStrictnessOf(caller) !== calleeStrict) {
+            declined(callee.name, "caller-poison-strictness");
+            continue;
+          }
         }
         const calleeBody = originalOf(cp).body;
         // (#4157 shard-slowdown fix) The four analyses below are functions of
