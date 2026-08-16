@@ -828,6 +828,7 @@ export function collectGrowableObjectLiterals(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
+              markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
             }
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
@@ -848,6 +849,7 @@ export function collectGrowableObjectLiterals(
                   // concrete, but the MOP call is exactly what the `$Object`
                   // rep serves. Only genuine user-typed positions count.
                   !isObjectMopCallArg(node) &&
+                  !isBorrowedMethodThisArg(node) && // #4524 — borrowed `thisArg: any`
                   typeRequiresStruct(checker.getContextualType(node))
                 ) {
                   structConsumer = true;
@@ -1087,6 +1089,52 @@ function isObjectMopCallArg(id: ts.Identifier): boolean {
   );
 }
 
+/**
+ * (#4524) Is `id` the `thisArg` of a BORROWED method call —
+ * `X.prototype.m.call(id, …)` / `.apply(id, …)`?
+ *
+ * Such a position is NEVER a concrete-struct consumer: `Function.prototype.call`
+ * declares `thisArg: any`, so no cast against a nominal struct can be required
+ * there. Without this, the consumer-safety guard read
+ * `Object.prototype.hasOwnProperty.call(o, "a")` as a struct consumer and
+ * UN-POISONED `o`, silently reverting it to a closed struct — which put back
+ * the very defect the poison exists to fix.
+ *
+ * Measured: with the out-of-shape data-define poison in place,
+ *
+ *     var o = { a: 1 };
+ *     Object.defineProperty(o, "b", { value: 42, … });
+ *     var unused = Object.prototype.hasOwnProperty.call(o, "a");  // ← this line
+ *     o.b   // 42 without the line, undefined WITH it
+ *
+ * The un-poisoning was action at a distance: a call elsewhere in the module
+ * changed the representation of an object it only reads. `isObjectMopCallArg`
+ * did not catch it because it matches only the direct `Object.<mop>(o, …)`
+ * form, and the borrowed idiom's callee is `Object.prototype.hasOwnProperty
+ * .call` — a property access whose base is another property access, not the
+ * `Object` identifier.
+ *
+ * Keyed on the `.call`/`.apply` shape rather than on a builtin allow-list,
+ * because the `thisArg: any` argument is what makes the position safe and that
+ * is true of every borrowed method, not just `Object.prototype`'s.
+ */
+function isBorrowedMethodThisArg(id: ts.Identifier): boolean {
+  const call = id.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== id) return false;
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  if (callee.name.text !== "call" && callee.name.text !== "apply") return false;
+  // `<something>.prototype.<m>` as the borrowed function — anything else (a
+  // plain `f.call(o)` on a user function) keeps its existing classification,
+  // since a user function's first parameter CAN be struct-typed.
+  const borrowed = callee.expression;
+  return (
+    ts.isPropertyAccessExpression(borrowed) &&
+    ts.isPropertyAccessExpression(borrowed.expression) &&
+    borrowed.expression.name.text === "prototype"
+  );
+}
+
 /** A direct dot read/write/delete is served by the existing externref MOP. */
 function isOpenObjectPropertyReceiver(id: ts.Identifier): boolean {
   let current: ts.Expression = id;
@@ -1271,6 +1319,119 @@ function descriptorHasAccessorKey(descArg: ts.Expression): boolean {
     }
   }
   return false;
+}
+
+/**
+ * (#4524) The statically-resolvable property key of a `defineProperty` call, or
+ * `undefined` when the key is computed / not a literal. `undefined` is the
+ * "cannot prove it is in shape" answer, and callers must treat it as
+ * out-of-shape — a key we cannot read is exactly the key that might not have a
+ * struct slot.
+ *
+ * Numeric literals are included: `Object.defineProperty(obj, 0, …)` and
+ * `Object.defineProperty(obj, "0", …)` name the same property, and the ES5
+ * array-like test corpus writes both.
+ */
+function staticDefineKey(keyArg: ts.Expression | undefined): string | undefined {
+  if (!keyArg) return undefined;
+  if (ts.isStringLiteral(keyArg) || ts.isNumericLiteral(keyArg)) return keyArg.text;
+  if (ts.isNoSubstitutionTemplateLiteral(keyArg)) return keyArg.text;
+  return undefined;
+}
+
+/**
+ * (#4524, standalone) Poison `varName` when a `Object.defineProperty` /
+ * `Object.defineProperties` call installs a **DATA** descriptor at a key that
+ * is not already in the literal's own shape.
+ *
+ * WHY. A closed WasmGC struct has one slot per shape name and no way to grow.
+ * An out-of-shape data define therefore has nowhere to write, and the write is
+ * **silently dropped** — no trap, no diagnostic, the property simply is not
+ * there afterwards. Measured on main before this fix, standalone:
+ *
+ *     var o = { a: 1 };                                     // closed struct
+ *     Object.defineProperty(o, "b", { value: 42, … });
+ *     o.b   // undefined  ← the define vanished
+ *
+ * The sibling cases were already covered and keep working: an ACCESSOR define
+ * poisons via {@link markStandaloneAccessorDefineTargets}, and a plain dynamic
+ * write (`o.b = 42`) poisons via the #2837 growable pre-pass. The data define
+ * was the one hole in that set, and it is the one real test262 code hits — the
+ * corpus is plain JavaScript, so its objects are never annotated `any` and
+ * always take the closed-struct path.
+ *
+ * Downstream this is what emptied `Array.prototype.filter.call(obj, cb)` in the
+ * ES5 `15.4.4.20-9-b-*` family: those tests install their indices with
+ * `Object.defineProperty(obj, "0", …)`, the indices never landed, and the
+ * per-index HasProperty check then correctly skipped every one of them.
+ *
+ * NARROWNESS is deliberate, in two directions:
+ *   - An **in-shape** key (`Object.defineProperty(o, "a", {value})` where the
+ *     literal already declares `a`) does NOT poison. That slot exists, the
+ *     struct path serves it today, and re-representing those objects would
+ *     re-open the #1897 consumer-cast regression class for no gain.
+ *   - A **non-literal** key poisons, because it cannot be proven in-shape.
+ *
+ * Descriptor ATTRIBUTE fidelity (writable/enumerable/configurable semantics and
+ * redefinition rules) is NOT this function's business — see #4479 / #2668 /
+ * #739. This decides only whether the define can land at all.
+ */
+function markStandaloneOutOfShapeDataDefineTargets(
+  node: ts.Node,
+  varName: string,
+  shapeNames: ReadonlySet<string>,
+  poisonSet: Set<string>,
+): void {
+  const outOfShapeDataDefine = (keyArg: ts.Expression | undefined, descArg: ts.Expression | undefined): boolean => {
+    if (!descArg || descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
+    const key = staticDefineKey(keyArg);
+    return key === undefined || !shapeNames.has(key);
+  };
+
+  const visit = (n: ts.Node): void => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ts.isIdentifier(n.expression.expression) &&
+      n.expression.expression.text === "Object" &&
+      ts.isIdentifier(n.expression.name)
+    ) {
+      const method = n.expression.name.text;
+      const recv = n.arguments[0];
+      if (recv && ts.isIdentifier(recv) && recv.text === varName) {
+        if (method === "defineProperty" && n.arguments.length >= 3) {
+          if (outOfShapeDataDefine(n.arguments[1], n.arguments[2])) poisonSet.add(varName);
+        } else if (method === "defineProperties" && n.arguments.length >= 2) {
+          const props = n.arguments[1]!;
+          if (ts.isObjectLiteralExpression(props)) {
+            for (const p of props.properties) {
+              // A spread / computed / shorthand entry in the descriptor bag is
+              // an unreadable key set — poison, same "cannot prove in-shape"
+              // rule as a computed key above.
+              if (!ts.isPropertyAssignment(p)) {
+                poisonSet.add(varName);
+                break;
+              }
+              const nameNode = p.name;
+              const key =
+                ts.isIdentifier(nameNode) || ts.isStringLiteral(nameNode) || ts.isNumericLiteral(nameNode)
+                  ? nameNode.text
+                  : undefined;
+              if (!descriptorHasAccessorKey(p.initializer) && (key === undefined || !shapeNames.has(key))) {
+                poisonSet.add(varName);
+                break;
+              }
+            }
+          } else {
+            // Non-literal descriptor bag: its keys are unknowable statically.
+            poisonSet.add(varName);
+          }
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
 }
 
 /**
