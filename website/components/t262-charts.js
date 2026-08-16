@@ -191,7 +191,7 @@ class T262Donut extends HTMLElement {
       { value: fail, color: "rgba(255,255,255,0.2)", label: "Fail" },
       { value: ce, color: "rgba(255,255,255,0.2)", label: "CE" },
       { value: skip, color: "rgba(255,255,255,0.2)", label: "Skipped" },
-    ];
+    ].filter((segment) => segment.value > 0);
 
     // Build the conic-gradient donut
     const totalSafe = Math.max(total, 1);
@@ -223,7 +223,7 @@ class T262Donut extends HTMLElement {
       { value: fail, label: "Failed", color: "rgba(255,255,255,0.7)", angle: (passDeg + failDeg) / 2, radius: 170 },
       { value: ce, label: "Compile Errors", color: "rgba(255,255,255,0.7)", angle: (failDeg + ceDeg) / 2, radius: 164 },
       { value: skip, label: "Skipped", color: "rgba(255,255,255,0.7)", angle: (ceDeg + 360) / 2, radius: 178 },
-    ];
+    ].filter((stat) => stat.value > 0);
     // Compute positions and resolve collisions by extending radius
     const placed = [];
     for (const s of stats) {
@@ -276,7 +276,11 @@ class T262Donut extends HTMLElement {
         :host {
           display: block;
           max-width: 100%;
-          overflow: clip;
+          /* The desktop orbit is intentionally wider than a compact host: its
+             pass-count labels can overhang by a few pixels near the 440px
+             breakpoint. Keep those labels and the glow visible; the parent
+             page owns the viewport-level overflow policy. */
+          overflow: visible;
           --_pass: var(--t262-pass, #3fb950);
           --_fail: var(--t262-fail, #f85149);
           --_ce: var(--t262-ce, #d29922);
@@ -433,10 +437,8 @@ class T262Donut extends HTMLElement {
                250px ring is CENTERED in the 300px padding box (height 280 +
                padding-top 20). Centered leaves ~25px above and below the ring —
                enough for the .gauge-glow (inset:-8px + blur(6px), ≈14px bleed)
-               to fully render instead of being clipped at the bottom by
-               :host { overflow: clip }. This override cascades to .gauge-core
-               (a descendant) and is scoped to the media query, so desktop
-               orbit-label overflow protection is unaffected. */
+               to fully render even when an ancestor clips overflow. This
+               override cascades to .gauge-core (a descendant). */
             --_donut-top-inset: 0px;
           }
           .orbit-stat {

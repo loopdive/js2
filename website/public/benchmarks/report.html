@@ -120,6 +120,9 @@
       .summary-donut-panel t262-donut {
         width: 100%;
         justify-self: stretch;
+        /* Orbit annotations can overhang the donut host near the 440px
+           breakpoint; keep the lowest label clear of the filter buttons. */
+        margin-bottom: 1rem;
       }
       .summary-history-panel {
         display: grid;
@@ -261,8 +264,9 @@
       .edition-legend-donut {
         --deg: 0deg;
         position: relative;
-        width: 34px;
-        height: 34px;
+        width: 30px;
+        height: 30px;
+        margin: 2px;
         flex-shrink: 0;
       }
       .edition-legend-donut-glow {
@@ -1535,7 +1539,7 @@
         });
       }
 
-      function renderConformance(view, container, conformanceRuns, editionRuns) {
+      function renderConformance(view, container, conformanceRuns, editionRuns, preservedState = null) {
         const editionTrendSeries = view.mode === "host" ? buildEditionTrendSeries(editionRuns) : null;
         const data = view.report;
         // Point per-file detail/error-pattern lookups at this view's source.
@@ -1545,8 +1549,8 @@
         const legacySummary = scopeSummaries.annex_b || null;
         const fullSummary = data.full_summary || data.summary;
         const scoreState = {
-          includeLegacy: true,
-          editionScope: "overall",
+          includeLegacy: preservedState?.includeLegacy ?? true,
+          editionScope: preservedState?.editionTimeline?.value || "overall",
         };
         let editionDetail = null;
 
@@ -1568,26 +1572,32 @@
         const summary = el("div", { className: "summary" });
         const summaryVisuals = el("div", { className: "summary-visuals" });
         const donutPanel = el("div", { className: "summary-visual-panel summary-donut-panel" });
-        const donutEl = document.createElement("t262-donut");
+        // Reuse the live chart elements when switching between the JS-host and
+        // standalone views. The donut owns its in-flight animation state and
+        // the timeline owns its selected scope; rebuilding either component
+        // would make the report jump back to its initial state.
+        const donutEl = preservedState?.donut || document.createElement("t262-donut");
         donutEl.id = "donut-chart";
         donutEl.style.setProperty("--t262-bg", "#060a14");
         const controlsHost = el("div", { className: "filter-toggles", style: { marginTop: "1rem" } });
         // Strict mode toggle — checked by default, persisted in localStorage
-        const strictToggle = el("label", { className: "filter-toggle" });
-        const strictDefault = localStorage.getItem("t262-strict-only") === "true";
+        const strictToggle = el("label", { className: "filter-toggle", "data-report-toggle": "strict" });
+        const strictDefault = preservedState?.strictOnly ?? localStorage.getItem("t262-strict-only") === "true";
         const strictCheckbox = el("input", { type: "checkbox" });
         if (strictDefault) strictCheckbox.setAttribute("checked", "checked");
         strictCheckbox.checked = strictDefault;
         strictToggle.appendChild(strictCheckbox);
         strictToggle.appendChild(el("span", null, "strict mode"));
-        const legacyToggle = el("label", { className: "filter-toggle" });
-        const legacyCheckbox = el("input", { type: "checkbox", checked: "checked" });
+        const legacyToggle = el("label", { className: "filter-toggle", "data-report-toggle": "legacy" });
+        const legacyCheckbox = el("input", { type: "checkbox" });
+        legacyCheckbox.checked = preservedState?.includeLegacy ?? true;
+        if (legacyCheckbox.checked) legacyCheckbox.setAttribute("checked", "checked");
         legacyToggle.appendChild(legacyCheckbox);
         legacyToggle.appendChild(el("span", null, "legacy (Annex B)"));
         controlsHost.appendChild(strictToggle);
         controlsHost.appendChild(legacyToggle);
         const editionSection = el("div", { className: "edition-section" });
-        const editionTimeline = document.createElement("t262-edition-timeline");
+        const editionTimeline = preservedState?.editionTimeline || document.createElement("t262-edition-timeline");
         editionTimeline.setAttribute("src", view.editionsSrc);
         if (data.timestamp) {
           editionTimeline.setAttribute("reference-timestamp", data.timestamp);
@@ -1704,12 +1714,14 @@
 
         const historyPanel = el("div", { className: "summary-visual-panel summary-history-panel" });
         historyPanel.appendChild(el("h3", { className: "diagram-title" }, "Test Pass Rate Over Time"));
-        const historyChart = el("trend-chart", {
-          className: "summary-history-chart",
-          mode: "step",
-          height: "260",
-          "x-key": "time",
-        });
+        const historyChart =
+          preservedState?.historyChart ||
+          el("trend-chart", {
+            className: "summary-history-chart",
+            mode: "step",
+            height: "260",
+            "x-key": "time",
+          });
         historyPanel.appendChild(historyChart);
         historyPanel.appendChild(
           el(
@@ -1735,7 +1747,7 @@
             ),
           ),
         );
-        configureConformanceHistoryChart(historyChart, conformanceRuns);
+        if (!preservedState?.historyChart) configureConformanceHistoryChart(historyChart, conformanceRuns);
         summaryVisuals.appendChild(historyPanel);
 
         summary.appendChild(summaryVisuals);
@@ -1768,10 +1780,15 @@
         } else {
           editionTimeline.removeAttribute("show-proposals");
         }
-        editionTimeline.addEventListener("edition-change", (event) => {
+        const editionChangeHandler = (event) => {
           applyEditionScope(event.detail);
-        });
-        editionTimeline.setAttribute("value", "overall");
+        };
+        const previousEditionChangeHandler = editionTimeline.__reportEditionChangeHandler;
+        if (previousEditionChangeHandler) {
+          editionTimeline.removeEventListener("edition-change", previousEditionChangeHandler);
+        }
+        editionTimeline.addEventListener("edition-change", editionChangeHandler);
+        editionTimeline.__reportEditionChangeHandler = editionChangeHandler;
 
         // (#1398/#2871) Compute the set of category names that have at least
         // one test in the editions ≤ the slider's selected edition. Returns
@@ -2613,9 +2630,20 @@
           const conformanceHost = el("div");
           let activeMode = standaloneView && localStorage.getItem("t262-mode") === "standalone" ? "standalone" : "host";
           const renderActive = () => {
+            const filterInputs = {
+              strict: conformanceHost.querySelector('[data-report-toggle="strict"] input'),
+              legacy: conformanceHost.querySelector('[data-report-toggle="legacy"] input'),
+            };
+            const preservedState = {
+              donut: conformanceHost.querySelector("t262-donut"),
+              editionTimeline: conformanceHost.querySelector("t262-edition-timeline"),
+              historyChart: conformanceHost.querySelector("trend-chart.summary-history-chart"),
+              strictOnly: filterInputs.strict?.checked,
+              includeLegacy: filterInputs.legacy?.checked,
+            };
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
-            renderConformance(view, conformanceHost, conformanceRuns, editionRuns);
+            renderConformance(view, conformanceHost, conformanceRuns, editionRuns, preservedState);
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });
