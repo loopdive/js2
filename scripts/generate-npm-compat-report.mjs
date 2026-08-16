@@ -72,6 +72,7 @@ import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-
 import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstream-sources.mjs";
 
 import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
+import { setupMarked } from "../tests/dogfood/setup-marked.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
 import { setupCookie } from "../tests/dogfood/setup-cookie.mjs";
 import { setupEslint } from "../tests/dogfood/setup-eslint.mjs";
