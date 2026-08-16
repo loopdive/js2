@@ -95,6 +95,14 @@ function __contains(actual, expected) {
   return false;
 }
 
+function __mockMatchesCalls(mock, expected) {
+  if (!mock || !mock.mock || !mock.mock.calls) return false;
+  for (var i = 0; i < mock.mock.calls.length; i++) {
+    if (__deepEqual(mock.mock.calls[i], expected)) return true;
+  }
+  return false;
+}
+
 function expect(actual) {
   return {
     toBe: function (expected) {
@@ -137,6 +145,24 @@ function expect(actual) {
     toHaveLength: function (expected) {
       __assert(actual !== null && actual !== undefined && actual.length === expected, "expected length");
     },
+    toHaveBeenCalled: function () {
+      __assert(actual && actual.mock && actual.mock.calls && actual.mock.calls.length > 0, "expected mock to be called");
+    },
+    toBeCalled: function () {
+      __assert(actual && actual.mock && actual.mock.calls && actual.mock.calls.length > 0, "expected mock to be called");
+    },
+    toHaveBeenCalledTimes: function (expected) {
+      __assert(actual && actual.mock && actual.mock.calls && actual.mock.calls.length === expected, "expected mock call count");
+    },
+    toBeCalledTimes: function (expected) {
+      __assert(actual && actual.mock && actual.mock.calls && actual.mock.calls.length === expected, "expected mock call count");
+    },
+    toHaveBeenCalledWith: function () {
+      __assert(__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected mock arguments");
+    },
+    toBeCalledWith: function () {
+      __assert(__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected mock arguments");
+    },
     not: {
       toBe: function (expected) {
         __assert(!__objectIs(actual, expected), "expected not.toBe to differ");
@@ -170,6 +196,24 @@ function expect(actual) {
       },
       toHaveLength: function (expected) {
         __assert(!(actual !== null && actual !== undefined && actual.length === expected), "expected other length");
+      },
+      toHaveBeenCalled: function () {
+        __assert(!(actual && actual.mock && actual.mock.calls && actual.mock.calls.length > 0), "expected mock not to be called");
+      },
+      toBeCalled: function () {
+        __assert(!(actual && actual.mock && actual.mock.calls && actual.mock.calls.length > 0), "expected mock not to be called");
+      },
+      toHaveBeenCalledTimes: function (expected) {
+        __assert(!(actual && actual.mock && actual.mock.calls && actual.mock.calls.length === expected), "expected different mock call count");
+      },
+      toBeCalledTimes: function (expected) {
+        __assert(!(actual && actual.mock && actual.mock.calls && actual.mock.calls.length === expected), "expected different mock call count");
+      },
+      toHaveBeenCalledWith: function () {
+        __assert(!__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected different mock arguments");
+      },
+      toBeCalledWith: function () {
+        __assert(!__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected different mock arguments");
       }
     }
   };
@@ -179,6 +223,63 @@ function __recordError(error) {
   __lastError = __messageOf(error);
   return 0;
 }
+
+var __jestSpies = [];
+function __jestFn(implementation) {
+  var impl = typeof implementation === "function" ? implementation : null;
+  function mock() {
+    var args = Array.prototype.slice.call(arguments);
+    mock.mock.calls.push(args);
+    if (impl) return impl.apply(this, args);
+    return undefined;
+  }
+  mock.mock = {calls: []};
+  mock.mockImplementation = function (next) {
+    impl = typeof next === "function" ? next : null;
+    return mock;
+  };
+  mock.mockReturnValue = function (value) {
+    impl = function () { return value; };
+    return mock;
+  };
+  mock.mockClear = function () {
+    mock.mock.calls.length = 0;
+    return mock;
+  };
+  mock.mockReset = function () {
+    mock.mock.calls.length = 0;
+    impl = null;
+    return mock;
+  };
+  mock.mockRestore = function () { return mock; };
+  return mock;
+}
+function __jestSpyOn(target, key) {
+  var original = target[key];
+  var mock = __jestFn(original);
+  mock.mockRestore = function () {
+    target[key] = original;
+    return mock;
+  };
+  target[key] = mock;
+  __jestSpies.push(mock);
+  return mock;
+}
+var jest = {
+  fn: __jestFn,
+  spyOn: __jestSpyOn,
+  resetModules: function () {},
+  mock: function () {},
+  requireActual: function () { return {}; },
+  restoreAllMocks: function () {
+    for (var i = 0; i < __jestSpies.length; i++) __jestSpies[i].mockRestore();
+    __jestSpies.length = 0;
+  },
+  runAllTimers: function () { return Promise.resolve(); },
+  useFakeTimers: function () {},
+  useRealTimers: function () {},
+  advanceTimersByTime: function () {},
+};
 `;
 
 /**

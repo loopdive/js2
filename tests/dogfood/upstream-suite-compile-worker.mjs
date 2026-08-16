@@ -158,8 +158,35 @@ async function main() {
           }
         }
       }
+    } else if (typeof exports.runUpstreamTest === "function") {
+      // Run one callback at a time so Promise-returning upstream tests can be
+      // awaited without putting the whole synchronous suite behind one async
+      // state machine. This keeps the Wasm/native contract aligned while
+      // preserving the original fast path for synchronous callbacks.
+      const count = Number(await exports.upstreamTestCount());
+      statuses = [];
+      errors = [];
+      for (let index = 0; index < count; index++) {
+        let value;
+        let thrown = null;
+        try {
+          value = await exports.runUpstreamTest(index);
+        } catch (error) {
+          thrown = error;
+        }
+        statuses.push(Number(value) === 1);
+        if (Number(value) === 1) errors.push("");
+        else if (thrown) errors.push(errorText(thrown, instance));
+        else {
+          try {
+            errors.push(String(exports.upstreamTestErrors()[index] ?? ""));
+          } catch {
+            errors.push("");
+          }
+        }
+      }
     } else {
-      statuses = Array.from(await exports.runUpstreamTests(), (value) => Number(value) === 1);
+      statuses = Array.from(exports.runUpstreamTests(), (value) => Number(value) === 1);
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
     emit({

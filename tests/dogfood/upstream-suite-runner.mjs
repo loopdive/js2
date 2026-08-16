@@ -11,6 +11,8 @@ import * as ts from "typescript";
 export const UPSTREAM_TEST_SHIM = String.raw`
 const __upstreamTests = [];
 const __upstreamErrors = [];
+let __upstreamSnapshotMatcher = null;
+let __upstreamCurrentTestName = "";
 let __upstreamAssertion = 0;
 function __upstreamFail(message) { throw new Error(String(message || "Assertion failed")); }
 function __upstreamValue(value) {
@@ -70,7 +72,13 @@ function __upstreamExpect(actual) {
     toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
     toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
-    toMatchSnapshot() { __upstreamFail("snapshot assertion requires a package-specific snapshot adapter"); },
+    toMatchSnapshot() {
+      if (typeof __upstreamSnapshotMatcher !== "function") {
+        __upstreamFail("snapshot assertion requires a package-specific snapshot adapter");
+      }
+      const n = ++__upstreamAssertion;
+      if (!__upstreamSnapshotMatcher(actual)) __upstreamFail("snapshot mismatch at assertion " + n);
+    },
     toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
     toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
   };
@@ -159,25 +167,54 @@ export function upstreamTestNames(): string[] {
   for (let i = 0; i < __upstreamTests.length; i++) names.push(__upstreamTests[i].name);
   return names;
 }
+export async function runUpstreamTest(index: number): Promise<number> {
+  __upstreamAssertion = 0;
+  __upstreamCurrentTestName = __upstreamTests[index].name;
+  let result;
+  try {
+    result = __upstreamTests[index].body(__qunitAssert);
+  } catch (error) {
+    __upstreamErrors[index] = error && error.message !== undefined ? String(error.message) : String(error);
+    return 0;
+  }
+  if (result && typeof result.then === "function") {
+    const outcome = await result.then(
+      () => ({ passed: true, error: "" }),
+      (error) => ({
+        passed: false,
+        error: error && error.message !== undefined ? String(error.message) : String(error),
+      }),
+    );
+    __upstreamErrors[index] = outcome.error;
+    return outcome.passed ? 1 : 0;
+  }
+  __upstreamErrors[index] = "";
+  return 1;
+}
 export function runUpstreamTests(): number[] {
   const statuses: number[] = [];
   __upstreamErrors.length = 0;
   for (let i = 0; i < __upstreamTests.length; i++) {
     __upstreamAssertion = 0;
+    __upstreamCurrentTestName = __upstreamTests[i].name;
+    let result;
     try {
-      const result = __upstreamTests[i].body(__qunitAssert);
-      if (result && typeof result.then === "function") {
-        // The synchronous Wasm runner cannot score async callbacks yet. Attach
-        // a rejection sink before classifying the callback so an intentionally
-        // unawaited upstream promise cannot crash the surrounding harness.
-        if (typeof result.catch === "function") result.catch(function() {});
-        throw new Error("async upstream callback is not admitted");
-      }
-      statuses.push(1);
-      __upstreamErrors.push("");
+      result = __upstreamTests[i].body(__qunitAssert);
     } catch (error) {
       statuses.push(0);
       __upstreamErrors.push(error && error.message !== undefined ? String(error.message) : String(error));
+      continue;
+    }
+    if (result && typeof result.then === "function") {
+      // The per-test async entry point above is used by the native oracle and
+      // Wasm worker. Keep this legacy aggregate entry point synchronous for
+      // callers that only admit synchronous callbacks.
+      if (typeof result.catch === "function") result.catch(function() {});
+      statuses.push(0);
+      __upstreamErrors.push("async callback requires the per-test runner");
+    } else {
+      statuses.push(1);
+      __upstreamErrors.push("");
     }
   }
   return statuses;
@@ -207,12 +244,30 @@ async function runNative(generatedPath, source) {
   const nativePath = nativePathFor(generatedPath);
   writeFileSync(nativePath, transpiled.outputText);
   const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
-  const statuses = Array.from(module.runUpstreamTests(), (value) => Number(value) === 1);
+  const count = Number(module.upstreamTestCount());
+  const statuses = [];
+  const errors = [];
+  if (typeof module.runUpstreamTest === "function") {
+    for (let index = 0; index < count; index++) {
+      let value;
+      try {
+        value = await module.runUpstreamTest(index);
+      } catch (error) {
+        value = 0;
+        errors.push(errorText(error));
+      }
+      statuses.push(Number(value) === 1);
+      if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
+    }
+  } else {
+    statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
+    errors.push(...Array.from(module.upstreamTestErrors(), String));
+  }
   return {
-    count: Number(module.upstreamTestCount()),
+    count,
     names: Array.from(module.upstreamTestNames(), String),
     statuses,
-    errors: Array.from(module.upstreamTestErrors(), String),
+    errors,
   };
 }
 
