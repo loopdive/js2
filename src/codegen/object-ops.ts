@@ -4511,32 +4511,6 @@ export function compilePropertyIntrospection(
       fctx.body.push({ op: "i32.or" });
       return { kind: "i32", boolean: true };
     }
-    // (#4491 D-a step 3) A static key that is NOT a canonical array index must
-    // not reach the generic struct-field fold below. A vec struct has no field
-    // named `"4294967295"`, so that fold answers a CONSTANT `i32.const 0` —
-    // measured by disassembly, `a.hasOwnProperty("4294967295")` after
-    // `Object.defineProperty(a, "4294967295", …)` emitted `(if (i32.const 0) …)`
-    // and called no predicate native at all. That is why the property was
-    // invisible here while `Object.hasOwn` — which has no such fold — answered
-    // `true` on the same receiver and key, and why an extra runtime arm in
-    // `fillVecHasOwnHelpers` could never have helped: the two natives are
-    // byte-identical and neither was being called.
-    //
-    // Route these keys to the runtime predicate instead. This is a ROUTING fix,
-    // not new semantics: `__hasOwnProperty` already carries the
-    // `fillVecHasOwnHelpers` prologue that consults the #3251 overlay and then
-    // the #3537 bag, and that prologue is proven correct by `__object_hasOwn`
-    // answering `true` on the identical body.
-    //
-    // Deliberately narrow — canonical INDEX keys keep both existing folds (the
-    // dense-literal `1` and the reference-elem bounds test above), and a
-    // non-static key never reaches here. Only the not-an-index static key, which
-    // today is answered by a fold that cannot see either side table, changes.
-    if (keyArg && staticKey !== null && !_isCanonicalArrayIndexString(staticKey)) {
-      if (emitRuntimePropertyIntrospection(ctx, fctx, propAccess.expression, keyArg, false)) {
-        return { kind: "i32", boolean: true };
-      }
-    }
     // else fall through to the generic struct-field path (legacy behaviour).
   }
 

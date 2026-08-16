@@ -347,7 +347,47 @@ answering `true` on the identical body — so this is a routing fix, not new
 semantics. `object-ops.ts` is untouched by the reflection lane (verified:
 they hold `object-runtime.ts` + `proto-index-store.ts`).
 
-### Step 11 result — LANDED, all gates green
+### Step 12 — step-3 REVERTED after the #4604 park. Do not retry here.
+
+The step-3 arm is **removed from this worktree** (`object-ops.ts` back to base).
+Two reasons, the second of which matters more than the first.
+
+**1. The narrowing fix does not behave as designed, and I cannot explain it.**
+`vecInfo !== null` was added to confine the arm to genuine vec receivers. Three
+states, one script, one probe (`.tmp/three-state.sh`, reproducible):
+
+| probe | base | over-broad arm | narrowed arm |
+| ----- | ---- | -------------- | ------------ |
+| K1 `C.hasOwnProperty('prototype')` | 0 | 0 | **1** |
+| K3 `C.prototype.hasOwnProperty('constructor')` | 1 | 1 | **0** |
+| K7 static own on constructor | 0 | 0 | **1** |
+
+Base and the over-broad arm agree; the NARROWED one differs from both. Adding a
+restriction cannot make an arm fire more often, so something other than the arm
+is moving — an emission-order or late-import side effect of
+`emitRuntimePropertyIntrospection` reaching the generic fold differently, most
+likely. Unexplained is disqualifying for a change that already parked the queue.
+
+**2. This worktree structurally CANNOT validate the fix.** The regression is a
+composition with reflection's **P2**, which I was correctly told not to sync. On
+integrated main P2 makes `C.hasOwnProperty('prototype')` answer `true`; here,
+without P2, K1/K7 are **already wrong at base** (0). So every local class-receiver
+measurement is of a different composition than the one that parked #4604 — a
+local "green" would prove nothing and a local "red" mis-attributes. That is why
+the over-broad arm looked harmless in this worktree (base == broad above) while
+regressing 12 tests in the integrated branch.
+
+**Consequence for whoever retries:** the fold-vs-runtime decision for
+`hasOwnProperty` on a non-vec receiver must be validated **where P2 exists**.
+The receiver-narrowing idea is still the right shape — the #3251 overlay and
+#3537 bag are vec-only, so a non-vec receiver was never in scope — but it needs
+to be measured against the P2 composition, with the 12 regressed
+class-elements paths in the control set, not against this worktree's base.
+
+**D-a (Step 9) is unaffected** — it is a separate commit (3829480e6) in
+`vec-overlay.ts`, and its 3 flips do not depend on step 3.
+
+### Step 11 result — LANDED (superseded by Step 12: reverted)
 
 **Gate (b): 6 upward flips, 0 regressions** — the full D-a gate now stands at
 6/8, and the 2 that remain are the ones correctly re-bucketed to #4497:
