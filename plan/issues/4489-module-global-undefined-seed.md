@@ -1,10 +1,11 @@
 ---
 id: 4489
 title: "standalone: module-scope `var x;` reads before declaration are `ref.null.extern`, indistinguishable from the closure ABI's absent-arg pad — seed with the undefined singleton (full-corpus A/B required)"
-status: ready
+status: done
+completed: 2026-08-16
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 priority: medium
 horizon: m
 feasibility: medium
@@ -16,6 +17,20 @@ language_feature: hoisting
 goal: standalone-gap
 related: [4465, 737]
 origin: "2026-08-15 #4465 R1 finding — 5 measured rows in built-ins/String/prototype alone; the root is module-wide."
+loc-budget-allow:
+  # `emitIsNullishAnyAt` (+51, of which ~30 are the rationale comment) belongs
+  # beside its siblings: `emitIsUndefinedSingletonExternAt`,
+  # `emitUndefinedSingleton`, `undefinedSingletonActive` — the #2106 S1
+  # singleton vocabulary lives in exactly this module, and the new helper is the
+  # anyref-shaped twin of the externref one directly below it. Splitting one
+  # 20-instruction emitter out to a new module would separate it from the type
+  # reservation (`ensureAnyValueType`) and the regime gate it must both call.
+  - src/codegen/any-helpers.ts
+  # +21 at the single consumer (`emitNullCheckThrow`), 16 of them the comment
+  # explaining why the #789 backup guard must test NULLISH rather than null —
+  # the trap this prevented is uncatchable and the reasoning is the expensive
+  # part to re-derive. The emitted logic itself is 4 lines.
+  - src/codegen/property-access.ts
 ---
 
 # #4489 — module globals seed null, not undefined
@@ -61,6 +76,28 @@ ship blind.
 - The 5 R1 rows flip; broad-sweep zero regressions; consumers catalogued in
   the issue file.
 
+### Amended by the session lead, 2026-08-16, against measurement
+
+Both amendments were made after the numbers came in, not to make the numbers
+pass:
+
+1. **Sweep size.** "~2k files" understates the four named directories by ~12x
+   (they are 25,148). At the measured ~5–7 s/file/worker for a PAIRED run, one
+   full pass is ~13 h wall on this shared box. Instrument accepted instead:
+   the same file list in a fixed-seed **stratified** order — stratum 1 = all
+   1,223 `built-ins/String` (must COMPLETE), stratum 2 = the other three dirs
+   shuffled (floor **≥3,000**) — with exact "N of 25,148" coverage reported.
+   Truncating an unbiased order is not the same as choosing a subset.
+2. **"The 5 R1 rows flip" → 2 flip, 3 carry a provenance proof.** Measured:
+   `concat/S15.5.4.6_A4_T1` and `replace/S15.5.4.11_A1_T2` flip to pass. The
+   other three stay red on a SEPARATE pre-existing defect — the reflective
+   String-method arm renders the undefined singleton as `"[object Object]"` —
+   and in all three the seed's own contribution is visibly fixed (their actual
+   strings now carry `undefined` where they carried `null` or nothing). The
+   proof that it is not this issue's defect: an ABSENT ARGUMENT's `undefined`,
+   which the seed cannot reach, renders `"[object Object]"` there on BOTH
+   sides. Filed as the new-issue stub below.
+
 ## Consumer catalogue (step 2 — done BEFORE the seed changed)
 
 The plan's framing ("every consumer that null-tests module globals") has two
@@ -84,7 +121,7 @@ compiled module (`.tmp/p2`–`p6`, standalone lane, this box):
 | Consumer | Site | Before (null) | After (singleton) |
 | --- | --- | --- | --- |
 | Annex B block-fn `typeof` | `typeof-delete.ts:1440` | null arm → `"undefined"` | already singleton-seeded by the #4182 loop; its own comment states the null arm is dead standalone. **No change.** |
-| closure call `f()` on a `var f` slot | `calls-closures.ts:590-604` | `emitGuardedRefCast` → null → `emitNullCheckThrow` TypeError | the singleton fails the same `ref.test`, yields null, throws the same TypeError. **No change.** |
+| ~~closure call `f()` on a `var f` slot~~ — **WRONG, this row was the regression**; see `## Fix` | `calls-closures.ts:590-604` | `emitGuardedRefCast` → null → `emitNullCheckThrow` TypeError | claimed "the singleton fails the same `ref.test`, yields null, throws the same TypeError. No change." Measured: it does NOT throw — `emitNullCheckThrow`'s #789 backup guard only throws when the PRE-cast value was `ref.is_null`, and the singleton is non-null, so the caller's `struct.get` TRAPS. Fixed by widening that guard. |
 | slot-type queries (`inferExpressionWasmType`, `compoundSlotValType`, the `subarray`/HOF receiver probes) | `array-methods.ts:955/1473/1578`, `string-compound-lane.ts:36`, `index.ts:10788` | read `global.type`, never the value | **No change.** |
 | sloppy `this` substitution | `helpers/sloppy-this-global.ts:159` warns the singleton IS non-null and defeats a callee's `ref.is_null` §10.4.3 fallback | probed: `f.call(x)`, `f.call(undefined)` and `f()` already agree (all three leave `this === undefined` true), so the fallback is not live in this shape | **No change** — and the singleton arm is the one that matches `f.call(undefined)`. |
 | `x === undefined` / `x === null` | strict-eq dispatch | `false` / `true` — **both wrong** | `true` / `false` — **both fixed.** |
@@ -204,6 +241,46 @@ Three scope decisions, each load-bearing:
 Standalone/WASI only: in host mode `undefined` IS the null extern, and the
 singleton would surface to host helpers as an object (#4264's grounds).
 
+### The consumer fix the corpus A/B forced (second half of the shipped delta)
+
+The seed ALONE regressed one corpus row, and the sweep is the only instrument
+that could have found it — the emission-site reading had this exact consumer
+catalogued as "No change".
+
+**`language/statements/function/S13_A17_T1.js`, pass → fail.** Calling
+`__func()` before `var __func = function(){…}` must throw a CATCHABLE TypeError.
+Before the seed the slot held null and the compiler threw one; with the
+singleton it emitted an uncatchable wasm TRAP — `dereferencing a null pointer in
+__module_init` — so the test's own `catch` never ran and the module died.
+
+Root cause: `emitNullCheckThrow` (`src/codegen/property-access.ts`) carries the
+#789 *guarded-cast backup* guard — when a `ref.cast` to the closure struct
+fails, throw TypeError only if the ORIGINAL pre-cast value was `ref.is_null`,
+otherwise assume "wrong struct type" and fall through. That is precisely a
+nullness-means-UNSET consumer, and the singleton is a NON-null reference: the
+guard read a genuine `undefined` as "some other struct", declined to throw, and
+the caller's `struct.get` on the null cast result trapped.
+
+Fix: `emitIsNullishAnyAt` (`src/codegen/any-helpers.ts`) — the
+`is_null ∨ tag-1-singleton` widening the #2106 S1 sweep applied to every other
+nullish-intent consumer, in the anyref shape this guard needs (the guarded-cast
+backup is saved as anyref) — consumed by `emitNullCheckThrow`. Gated on
+`undefinedSingletonActive`, so host/gc-lane modules keep the plain
+`ref.is_null` and stay byte-identical.
+
+**The same trap was already reachable at FUNCTION scope and this repairs it
+too**: `function g(){ … f2(); var f2 = function(){}; }` traps identically on
+BOTH sides of the seed-only A/B, because the #737 local hoister has seeded
+`undefined` there for years. So the defect is a latent pre-existing one that
+the module-scope seed merely routed into code test262 exercises — which is the
+evidence that the fix belongs in the consumer, not in the seed.
+
+Deliberately NOT widened: the second backup-guard site in the same file (the
+member-get multi-struct dispatch, ~L1500). It has a real fallback rather than a
+trap, so it is a wrong-ANSWER residual (`undefined.foo` does not throw) and not
+a crash; widening it changes every member access on every undefined value in
+the corpus. Residual #5, its own issue.
+
 ## Residuals
 
 1. **Reflective String-method ToString renders the undefined singleton as
@@ -255,3 +332,111 @@ merge time.)*
   `residual: reflective String.replace renders undefined as "[object Object]"`
   in `tests/issue-4489.test.ts`, which carries the absent-arg control.
 - **Repro**: `.tmp/probe-reflective-tostring.mts` (see #4489's record).
+
+## Test Results
+
+Every number below is from a run I executed on this box. Sizing note first,
+because it changes how the acceptance instrument had to be built: the four
+named directories are **25,148 files**, not the "~2k" the plan estimated
+(`built-ins/String` 1,223 · `built-ins/Object` 3,411 · `language/statements`
+9,350 · `language/expressions` 11,164). Measured paired cost is ~5–7 s/file/
+worker (compile dominates; the assembled test262 module carries the ~1,200-line
+harness prefix, and a passing test compiles twice for the strict rerun), i.e.
+~13 h wall for one full pass at the parallelism this shared box allows. The
+session lead approved the instrument below in place of a full pass.
+
+**Instrument.** `.tmp/ab-worker.mts`: for each file the standalone lane runs the
+PRE-fix emission and then the POST-fix emission **back to back in one process**,
+with `JS2WASM_4489_AB=base` selecting the pre-fix arm at emit time. Both sides
+therefore see the same machine, the same load, and the same provider-cache key —
+a missing artifact can make a row insensitive but can never manufacture a flip.
+File order is a **fixed-seed (4489) stratified shuffle**: stratum 1 = all of
+`built-ins/String`, stratum 2 = the other three dirs, so any prefix is an
+unbiased sample of its stratum and coverage is reported as an exact fraction.
+Every flip was re-confirmed in a **fresh process** (`.tmp/run-one-isolated.mts`).
+
+### Phase 1 — seed only. This is the run that found the regression.
+
+4,310 paired rows (stratum 1 **1,223/1,223 complete**, stratum 2 3,087/23,925):
+
+| transition | rows |
+| --- | --- |
+| pass → pass | 3,428 |
+| fail → fail | 715 |
+| compile_error → compile_error | 129 |
+| skip → skip | 31 |
+| **fail → pass (fixes)** | **3** |
+| **pass → fail (regression)** | **1** |
+| compile_error → fail (flake) | 3 |
+
+- Fixes: `built-ins/String/prototype/concat/S15.5.4.6_A4_T1.js`,
+  `built-ins/String/prototype/replace/S15.5.4.11_A1_T2.js` (the two R1 rows) and
+  `language/statements/variable/S14_A1.js`.
+- Regression: `language/statements/function/S13_A17_T1.js` — the uncatchable
+  trap described under `## Fix`. **This is why the corpus A/B is the acceptance
+  instrument**: the consumer it broke was catalogued "No change" from reading
+  the emission site.
+- The 3 `compile_error → fail` rows are base-side 15 s compile TIMEOUTS under
+  load, not differences: each re-run in isolation with a 45–60 s ceiling gives
+  the SAME status on both sides.
+- Environment correction mid-phase: my worktree's quickjs adapter cache key is
+  derived from the compiler source, so the A/B edit invalidated it and
+  eval-linked rows failed identically on both sides for an environment reason.
+  Rebuilt (`npx tsx scripts/build-quickjs-eval-provider.mjs` — plain `node`
+  refuses with "no usable compiler … run under tsx") and **re-ran all 91
+  already-swept eval-linked rows: 0 differences**, 55 of them passing on both
+  sides once the provider was present.
+
+### Phase 2 — the shipped delta (seed + nullish guard), re-run from scratch
+
+Same order, same instrument, `JS2WASM_4489_AB=base` now reverting BOTH changes
+together so the A/B unit is what actually ships. **6,310 paired rows — 25.1 % of
+the 25,148-file corpus** (stratum 1 **1,223/1,223 complete**, stratum 2
+5,087/23,925 = 21 %, i.e. 1.7x the agreed floor):
+
+| transition | rows |
+| --- | --- |
+| pass → pass | 5,036 |
+| fail → fail | 1,012 |
+| compile_error → compile_error | 204 |
+| skip → skip | 55 |
+| **fail → pass (fixes)** | **3** |
+| **pass → fail (regressions)** | **0** |
+| any other flip | 0 |
+
+The same 3 fixes, **zero regressions**, and — unlike phase 1 — zero timeout
+flakes (the quickjs adapter was cached by then and the box was quieter). The
+dispositive row: `language/statements/function/S13_A17_T1.js`, which read
+`pass → fail` in phase 1, reads **`pass → pass`** in phase 2.
+
+### Pins
+
+- `tests/issue-4489.test.ts` — **15 pass** (13 behavioural + 2 `it.fails`
+  residual pins). Includes the module-init-shape pins the plan asked for (the
+  exported-function shape cannot fail — the #737 local hoister already seeds
+  those), the truthiness / numeric-coercion matrices, the §9.1.1.4.18
+  non-clobber pin, and the regression pin (`call before initializer throws a
+  CATCHABLE TypeError`) plus its function-scope twin.
+- Re-run green on this tree: `tests/issue-4465.test.ts` (20),
+  `tests/issue-789.test.ts` (the guard's own issue), `tests/issue-2931.test.ts`
+  + `tests/issue-737.test.ts` (17), `tests/es5-standalone-with-carrier.test.ts`
+  (8, the #4264 seed this subsumes), `tests/es5-standalone-with.test.ts` (24),
+  `tests/es5-standalone-this-and-construct.test.ts` (22),
+  `tests/es5-standalone-replace-fn.test.ts` (23).
+- `pnpm run check:stack-balance` — OK, no fixup-bucket increases.
+- **Not mine, but observed here**: `tests/es5-standalone-harness-selftests.test.ts`
+  fails 3 ratchet assertions ("FIXED: … now PASSES. Flip its EXPECTED entry") for
+  `sta.js`, `assert-throws-custom-typeerror.js`, `compare-array-samevalue.js`.
+  All three pass under the PRE-#4489 emission too — the improvement came in from
+  `main` and an earlier PR landed without flipping the entries. Left untouched
+  deliberately; the session lead owns the flip.
+
+### What this sweep can and cannot say
+
+It says: across 6,310 paired rows including the complete `built-ins/String`
+directory and an unbiased 21 % prefix of the other three, the shipped delta
+regresses nothing and fixes three rows. It does NOT say the remaining 79 % of
+stratum 2 is clean — that would need the full 13 h pass. The strongest
+mitigation is not the sample size but the shape of the one regression found:
+it was a *nullness-means-unset consumer*, the exact class the issue predicted,
+and the fix repairs that class at the consumer rather than per call site.

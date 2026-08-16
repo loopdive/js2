@@ -234,6 +234,53 @@ describe("#4489 module-scope `var` seeds the undefined singleton", () => {
     expect(bits).toBe(1 + 2 + 4 + 8);
   });
 
+  // ── The regression the corpus A/B caught, and its fix ──────────────
+  //
+  // `language/statements/function/S13_A17_T1.js` went pass -> fail on the
+  // seed-only tree: calling a `var f = function(){}` BEFORE the initializer
+  // must throw a CATCHABLE TypeError, and the seeded singleton made it emit an
+  // uncatchable wasm trap instead ("dereferencing a null pointer"). Cause:
+  // `emitNullCheckThrow`'s #789 guarded-cast backup guard threw only when the
+  // pre-cast value was `ref.is_null`, and the singleton is a NON-null
+  // reference, so the guard declined to throw and the caller's `struct.get` on
+  // the failed cast trapped. Fixed by widening that guard to
+  // `is_null ∨ is-singleton` (`emitIsNullishAnyAt`).
+  //
+  // A trap is not merely a wrong answer: it is unobservable to the program, so
+  // the test's own `catch` never runs. That is why this pin asserts the
+  // TypeError is CAUGHT, not just that the call fails.
+
+  it("calling a module `var f = function(){}` before its initializer throws a CATCHABLE TypeError", async () => {
+    const bits = await runModuleInit(`
+      var viaInitializer = 0, viaAssignment = 0;
+      try { var r1 = f(); viaInitializer = 0; } catch (e) { viaInitializer = (e instanceof TypeError) ? 1 : 0; }
+      var f = function () { return "ONE"; };
+      try { var r2 = g(); viaAssignment = 0; } catch (e) { viaAssignment = (e instanceof TypeError) ? 1 : 0; }
+      var g;
+      g = function () { return "TWO"; };
+      export function test() { return viaInitializer + 2 * viaAssignment; }
+    `);
+    expect(bits).toBe(1 + 2);
+  });
+
+  it("the same shape at FUNCTION scope also throws (the years-latent #737 twin)", async () => {
+    // The local hoister has seeded `undefined` for function-scope `var` since
+    // #737, so this shape trapped identically LONG BEFORE #4489 — measured on
+    // both sides of the seed-only A/B. The widened guard repairs it too, which
+    // is the evidence that the fix sits at the right level (the consumer, not
+    // the seed).
+    const bits = await runModuleInit(`
+      var out = 0;
+      function scope() {
+        try { var r = inner(); return 0; } catch (e) { return (e instanceof TypeError) ? 1 : 0; }
+        var inner = function () { return "ONE"; };
+      }
+      out = scope();
+      export function test() { return out; }
+    `);
+    expect(bits).toBe(1);
+  });
+
   // MEASURED RESIDUAL (pre-existing, NOT introduced here — it is what keeps 3
   // of #4465's 5 R1 rows red). The REFLECTIVE String-method arm (an object
   // `searchValue`, or a detached `String.prototype.replace.call`) stringifies
