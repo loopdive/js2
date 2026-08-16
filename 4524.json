@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/opus-es5-b",
   "requested_by": "ttraenkler/opus-es5-b",
   "status": "in-progress",
-  "branch": "issue-NNNN-closed-struct-data-descriptor-define",
-  "reserved_at": "2026-08-16T07:22:55Z",
-  "claimed_at": "2026-08-16T07:22:55Z",
-  "updated_at": "2026-08-16T07:22:55Z",
-  "write_id": "62186-4r12e94n",
-  "pr_scan": "ok"
+  "branch": "issue-4524-closed-struct-data-descriptor-define",
+  "claimed_at": "2026-08-16T07:24:07Z",
+  "updated_at": "2026-08-16T07:24:07Z",
+  "write_id": "75339-llntqdnb"
 }
