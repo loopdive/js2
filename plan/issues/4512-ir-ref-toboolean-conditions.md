@@ -112,6 +112,37 @@ No `select.ts` change: the selector already admits object/string conditions
 5. No `check:ir-fallbacks` unintended/post-claim growth; `gen:ir-adoption
    --check` clean; `check:ir-only` floors held.
 
+## Finding: pre-existing legacy `nativeStrings` empty-string bug (IR is correct)
+
+Measured: in the `nativeStrings` lane, LEGACY treats an empty native string as
+TRUTHY — `if ("")` / `"" ? a : b` / `!""` take the wrong branch (host and
+standalone legacy are correct). The IR path length-tests correctly, so IR and
+legacy DIVERGE there — IR is MORE correct. Legacy↔IR parity is therefore pinned
+on the host lane (legacy spec-correct); IR-vs-JS is pinned on all three lanes.
+(A separate legacy-nativeStrings fix is out of scope here.)
+
 ## Test Results
 
-(to be filled after gates)
+- `tests/issue-4512.test.ts` — **54/54 pass**. Per lane (host/nativeStrings/
+  standalone): CLAIM + `irBodyEmitted` non-vacuity for object/string/number
+  `if`/ternary/`!`/`while`; BY-VALUE `IR == JS` for string (`""`→falsy,
+  `"x"`→truthy) and number (`0`/`NaN` falsy) conditions incl. `!`; host-lane
+  legacy↔IR parity; and the `unknown` (host externref) negative boundary
+  rejecting `unsupported` (not `invariant`), `irBodyEmitted === false`, in all
+  three lanes.
+- `tests/issue-2136.test.ts` + `tests/issue-1980.test.ts` — **10/10 pass** (loop
+  condition path unchanged by the `coerceLoopCondToBool` → shared-helper
+  refactor).
+- `tests/issue-4503.test.ts` (29) + `tests/issue-4467.test.ts` (16) — pass (the
+  brand and template consumers untouched).
+- `pnpm run check:ir-fallbacks` — OK, no unintended/post-claim/module-level
+  growth.
+- `node scripts/gen-ir-adoption.mjs --check` — up to date (no row change).
+- `pnpm run check:ir-only` — verdict READY; floors held; unsupported codes all
+  pre-existing families (host-surface-unavailable / body-shape-rejected /
+  call-graph-closure / date-constructor / async-function) — none ToBoolean.
+- `scripts/check-loc-budget.mjs` — OK (+21 in `from-ast.ts`, granted by this
+  issue's `loc-budget-allow`); `scripts/check-func-budget.mjs` — OK (no
+  allowance needed).
+- `tsc --noEmit` — no NEW errors in touched files (the pre-existing
+  `@types/node` symlink noise only; CI runs the real typecheck).
