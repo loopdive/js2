@@ -171,4 +171,88 @@ describe("#4489 module-scope `var` seeds the undefined singleton", () => {
     `);
     expect(bits).toBe(1);
   });
+
+  // ── The two families the first catalogue pass omitted ───────────────
+  //
+  // Both were measured base-vs-new on the compiled module before being pinned.
+  // They matter more than the families that were catalogued, because a wrong
+  // answer here is not "still wrong, differently" — it would be a REGRESSION
+  // from a right answer: `null` and `undefined` are both falsy, so truthiness
+  // was already correct before the seed and had to STAY correct, while numeric
+  // coercion was the one family where the two values disagree in a way test262
+  // scores (`Number(null)` is 0, `Number(undefined)` is NaN).
+
+  it("stays FALSY in every truthiness position (unchanged by the seed — must not regress)", async () => {
+    const bits = await runModuleInit(`
+      var viaIf = 0, viaNot = 0, viaCond = 0, viaBoolean = 0, viaWhile = 0, viaOr = 0, viaAnd = 0;
+      if (x) { viaIf = 0; } else { viaIf = 1; }
+      viaNot = (!x) ? 1 : 0;
+      viaCond = (x ? 0 : 1);
+      viaBoolean = Boolean(x) ? 0 : 1;
+      viaWhile = 1; while (x) { viaWhile = 0; break; }
+      viaOr = ((x || 7) === 7) ? 1 : 0;
+      viaAnd = ((x && 7) === undefined) ? 1 : 0;
+      export function test() {
+        return viaIf + 2 * viaNot + 4 * viaCond + 8 * viaBoolean + 16 * viaWhile + 32 * viaOr + 64 * viaAnd;
+      }
+      var x;
+    `);
+    expect(bits).toBe(1 + 2 + 4 + 8 + 16 + 32 + 64);
+  });
+
+  it("coerces NUMERICALLY as undefined (NaN), not as null (0)", async () => {
+    // The one family where the two representations give different ANSWERS
+    // rather than the same answer by two routes. Measured before the seed:
+    // every row below read the null answer (`Number(null)` 0, `null + 1` 1,
+    // `null < 1` true).
+    const bits = await runModuleInit(`
+      var viaNumber = 0, viaPlus = 0, viaUnary = 0, viaLess = 0;
+      viaNumber = isNaN(Number(x)) ? 1 : 0;
+      viaPlus = isNaN(x + 1) ? 1 : 0;
+      viaUnary = isNaN(+x) ? 1 : 0;
+      viaLess = (x < 1) ? 0 : 1;
+      export function test() { return viaNumber + 2 * viaPlus + 4 * viaUnary + 8 * viaLess; }
+      var x;
+    `);
+    expect(bits).toBe(1 + 2 + 4 + 8);
+  });
+
+  it("does not clobber a global that the `var` merely re-declares (§9.1.1.4.18)", async () => {
+    // CreateGlobalVarBinding creates the binding with `undefined` ONLY when the
+    // name is not already a property of the global object — so `var Math;` must
+    // leave `Math` alone. This is the "seeded a slot that meant something else"
+    // hazard the issue flagged as the reason a one-line fix needed a corpus A/B.
+    const bits = await runModuleInit(`
+      var viaMath = 0, viaArray = 0, viaJson = 0, viaObject = 0;
+      viaMath = (Math.max(1, 2) === 2) ? 1 : 0;
+      viaArray = Array.isArray([]) ? 1 : 0;
+      viaJson = (JSON.stringify({}) === "{}") ? 1 : 0;
+      viaObject = (Object.keys({ a: 1 }).length === 1) ? 1 : 0;
+      export function test() { return viaMath + 2 * viaArray + 4 * viaJson + 8 * viaObject; }
+      var Math, Array, JSON, Object;
+    `);
+    expect(bits).toBe(1 + 2 + 4 + 8);
+  });
+
+  // MEASURED RESIDUAL (pre-existing, NOT introduced here — it is what keeps 3
+  // of #4465's 5 R1 rows red). The REFLECTIVE String-method arm (an object
+  // `searchValue`, or a detached `String.prototype.replace.call`) stringifies
+  // the undefined singleton as "[object Object]" instead of "undefined". The
+  // provenance does not matter, which is the proof it is not this issue's:
+  // an ABSENT ARGUMENT's undefined — a value the seed cannot reach — renders
+  // "[object Object]" there both before and after the seed. The direct arm
+  // (string `searchValue`) is correct. Owner: standalone-gap, filed against the
+  // reflective String dispatch; see `## Residuals` in plan/issues/4489-*.md.
+  it.fails('residual: reflective String.replace renders undefined as "[object Object]"', async () => {
+    const bits = await runModuleInit(`
+      var viaModuleVar = 0, viaAbsentArg = 0;
+      var pattern = { toString: function () { return "AB"; } };
+      function absent(p) { return p; }
+      viaModuleVar = ("ABBABABAB".replace(pattern, function () { return x; }) === "undefinedBABABAB") ? 1 : 0;
+      viaAbsentArg = ("ABBABABAB".replace(pattern, function () { return absent(); }) === "undefinedBABABAB") ? 1 : 0;
+      export function test() { return viaModuleVar + 2 * viaAbsentArg; }
+      var x;
+    `);
+    expect(bits).toBe(1 + 2);
+  });
 });
