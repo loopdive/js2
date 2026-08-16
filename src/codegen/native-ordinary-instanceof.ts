@@ -100,6 +100,11 @@ export function tryEmitNonCallableRhsThrow(
   expr: ts.BinaryExpression,
 ): ValType | null {
   if (!noJsHost(ctx)) return null;
+  // (#4484 A) §13.10.2 consults @@hasInstance at step 2 and only reaches the
+  // IsCallable throw at step 5. "Not callable" is therefore NOT sufficient to
+  // throw: a non-callable object carrying a CALLABLE @@hasInstance is a legal
+  // `instanceof` RHS whose handler decides the answer. See the predicate below.
+  if (moduleInstallsCallableHasInstance(expr.getSourceFile())) return null;
   if (!isProvablyNonCallableObjectType(ctx, expr.right)) return null;
   const lt = compileExpression(ctx, fctx, expr.left);
   if (lt) fctx.body.push({ op: "drop" });
@@ -108,6 +113,119 @@ export function tryEmitNonCallableRhsThrow(
   emitThrowTypeError(ctx, fctx, "Right-hand side of 'instanceof' is not callable");
   return { kind: "i32" };
 }
+
+/**
+ * (#4484 A) Does this module install a possibly-CALLABLE `@@hasInstance` anywhere?
+ *
+ * ## Why the whole module, and why this gate exists at all
+ *
+ * §13.10.2 InstanceofOperator orders its checks: step 2 does
+ * `GetMethod(C, @@hasInstance)`, step 4 CALLS that handler if it is not
+ * undefined, and only step 5 throws for `IsCallable(C) === false`. So the
+ * static "this RHS is a non-callable object" proof answers the WRONG question
+ * on its own — `var F = {}; F[Symbol.hasInstance] = function () { … };
+ * 0 instanceof F` must call the handler, not throw.
+ *
+ * Measured on this branch (`language/expressions/instanceof/`, standalone):
+ * `symbol-hasinstance-to-boolean.js` went from a wrong VALUE to a wrong THROW
+ * (`TypeError: Right-hand side of 'instanceof' is not callable`) when the
+ * step-1 arm was reordered ahead of the primitive-LHS fold. Both spellings fail
+ * the test, so a pass/fail sweep cannot see the difference — but a wrong throw
+ * is CATCHABLE and therefore observable, which is exactly the failure class the
+ * reassigned-binding guards in this issue exist to prevent. Absent-not-wrong:
+ * decline and let the runtime path answer.
+ *
+ * ## Why module-scope and not the RHS expression
+ *
+ * The handler is installed by MUTATION on an arbitrary object value
+ * (`F[Symbol.hasInstance] = …`), which no static type of the RHS records. There
+ * is no expression-local fact to consult, so the only sound question is whether
+ * the module contains such an installation at all. Modules that never mention
+ * `@@hasInstance` — effectively all of them — keep the arm.
+ *
+ * ## Why a `null`/`undefined` value still throws
+ *
+ * `GetMethod` maps a `null` or `undefined` property value to `undefined`, so
+ * step 4 is skipped and step 5's TypeError is exactly right. That is
+ * `symbol-hasinstance-not-callable.js` (`F[Symbol.hasInstance] = null`), which
+ * this issue flips to pass; excluding it here would give the row back for no
+ * correctness gain. Every other value — a function, an identifier, a call
+ * result — is treated as possibly callable.
+ */
+const HAS_INSTANCE_INSTALL_CACHE = new WeakMap<ts.SourceFile, boolean>();
+
+function moduleInstallsCallableHasInstance(file: ts.SourceFile): boolean {
+  const cached = HAS_INSTANCE_INSTALL_CACHE.get(file);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    // `X[Symbol.hasInstance] = <value>`
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      isSymbolHasInstanceKey(node.left.argumentExpression) &&
+      !isDefinitelyNotCallableValue(node.right)
+    ) {
+      found = true;
+      return;
+    }
+    // `{ [Symbol.hasInstance]: <value> }` and `static [Symbol.hasInstance]() {}`
+    if (
+      (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node) || ts.isPropertyDeclaration(node)) &&
+      ts.isComputedPropertyName(node.name) &&
+      isSymbolHasInstanceKey(node.name.expression)
+    ) {
+      const value = ts.isPropertyAssignment(node)
+        ? node.initializer
+        : ts.isPropertyDeclaration(node)
+          ? node.initializer
+          : undefined;
+      if (value === undefined || !isDefinitelyNotCallableValue(value)) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  HAS_INSTANCE_INSTALL_CACHE.set(file, found);
+  return found;
+}
+
+/** Is `key` the well-known symbol reference `Symbol.hasInstance`? */
+function isSymbolHasInstanceKey(key: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(key) &&
+    ts.isIdentifier(key.expression) &&
+    key.expression.text === "Symbol" &&
+    key.name.text === "hasInstance"
+  );
+}
+
+/**
+ * True only for values `GetMethod` turns into `undefined` — i.e. the handler is
+ * NOT installed and §13.10.2 falls through to the step-5 IsCallable throw.
+ * Everything else declines conservatively.
+ */
+function isDefinitelyNotCallableValue(value: ts.Expression): boolean {
+  return value.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(value) && value.text === "undefined");
+}
+
+/**
+ * (#4484 A) The builtin NAMESPACE objects — the same set `tryNamespaceNonCallable`
+ * (calls-guards.ts) refuses to call. They are ordinary objects with no [[Call]],
+ * so §13.10.2 step 4 makes `x instanceof Math` a TypeError.
+ *
+ * They do not reach `isProvablyNonCallableObjectType`: the oracle classifies each
+ * as `builtin`, which that predicate deliberately declines (it covers `Function`,
+ * a callable with no signature of its own). Naming them explicitly keeps that
+ * conservatism intact while answering the one shape the spec fixes.
+ * `Proxy` is deliberately ABSENT — it has [[Construct]], so it is a valid
+ * `instanceof` RHS even though it cannot be called.
+ */
+const NAMESPACE_NON_CALLABLE_RHS: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect", "Atomics"]);
 
 /**
  * True when `expr`'s static type is an OBJECT type with neither a call nor a
@@ -120,6 +238,28 @@ export function tryEmitNonCallableRhsThrow(
  * answer rather than a missed conversion.
  */
 function isProvablyNonCallableObjectType(ctx: CodegenContext, expr: ts.Expression): boolean {
+  // (#4484 A) A bare, unshadowed builtin namespace identifier. Checked before
+  // the oracle facts below, which classify it as `builtin` and decline. Unwrapped
+  // through casts/parens: TypeScript rejects a bare `1 instanceof Math`, so every
+  // TS-lane spelling of this shape carries an `as any`.
+  {
+    let rhs: ts.Expression = expr;
+    while (
+      ts.isParenthesizedExpression(rhs) ||
+      ts.isAsExpression(rhs) ||
+      ts.isNonNullExpression(rhs) ||
+      ts.isTypeAssertionExpression(rhs)
+    ) {
+      rhs = rhs.expression;
+    }
+    if (
+      ts.isIdentifier(rhs) &&
+      NAMESPACE_NON_CALLABLE_RHS.has(rhs.text) &&
+      (ctx.oracle.valueDeclarationOf(rhs)?.getSourceFile().isDeclarationFile ?? true)
+    ) {
+      return true;
+    }
+  }
   // Untyped JS infers `any` for `var o = new F()`, which the flag test below
   // rejects. §13.3.5 EvaluateNew nonetheless guarantees the value is the freshly
   // created ORDINARY object — hence not callable — as long as `F` never returns

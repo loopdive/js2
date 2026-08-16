@@ -113,6 +113,7 @@ import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
+import { tryEmitErrorInstanceFieldWrite } from "../error-instance-field-write.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -144,6 +145,8 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
+import { BUILTIN_CTOR_ARITY } from "../builtin-value-read.js"; // (#4484 C) which names are builtin constructors
+import { isSpecNonWritableBuiltinProp, resolveUnshadowedGlobalIdentifier } from "../builtin-nonwritable-write.js"; // (#4484 C)
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
@@ -3606,6 +3609,29 @@ function compilePropertyAssignment(
     if (nonWritable !== undefined) return nonWritable;
   }
 
+  // (#4484 C) The SPEC-declared non-writable own properties of a builtin —
+  // `Math.PI`, `Function.length`. The #3872 arm above mirrors only what the
+  // PROGRAM defined via `Object.defineProperty`, so these never reached it and a
+  // strict write silently did nothing (`11.13.1-4-28gs` / `-29gs` /
+  // `11.13.1-4-6-s`: "no exception was thrown at all"). Sloppy mode keeps its
+  // existing dropped-write lowering, which is what §10.1.9.2 step 2.b says.
+  if (!ts.isPrivateIdentifier(target.name)) {
+    const specNonWritable = tryEmitSpecNonWritableBuiltinWrite(ctx, fctx, target, value, target.name.text);
+    if (specNonWritable !== undefined) return specNonWritable;
+  }
+
+  // (#4485) `<errorInstance>.{message,name,stack} = v` → `struct.set` on the
+  // backing `$Error_struct`. Must sit ABOVE the generic member-set arms: the
+  // standalone READ of these three is a hard `struct.get` of that struct, so a
+  // write routed anywhere else is invisible to every later read. Declines
+  // outside standalone/WASI and on any receiver that is not statically Error.
+  // (Order vs the #4484 arm above is immaterial: that arm keys on builtin
+  // NAMESPACE receivers, this one on statically-Error instances — disjoint.)
+  {
+    const errField = tryEmitErrorInstanceFieldWrite(ctx, fctx, target, value);
+    if (errField !== undefined) return errField;
+  }
+
   // (#4500 Slice A) `this.p = v` / `globalThis.p = v` where `p` is a
   // **`var`-declared** script global: write the wasm module global that stores
   // it, not a property on the realm global object. Symmetric with the read arm
@@ -3617,6 +3643,8 @@ function compilePropertyAssignment(
   // Placed after the runtime-state checks above (poison, non-writable), so a
   // genuine descriptor on the global object still decides the write, and before
   // the struct-shaped lowerings below, which are the ones that mis-route it.
+  // (Merge note: the #4484/#4485 arms above and this one key on disjoint
+  // receivers — builtin namespaces, Error instances, the realm global object.)
   if (!ts.isPrivateIdentifier(target.name)) {
     const name = target.name.text;
     const globalIdx = ctx.moduleGlobals.get(name);
@@ -4581,6 +4609,37 @@ export function isNonWritableDataProperty(ctx: CodegenContext, receiver: ts.Expr
   // `Object.defineProperty(arguments,"0",{configurable:false})` — never
   // mentioning `writable` — and then expects `arguments[0] = 2` to LAND.
   return ctx.nonWritableExternKeys.has(key);
+}
+
+/**
+ * (#4484 C) §10.1.9.2 step 2.b for a builtin's SPEC-declared non-writable own
+ * data property (`Math.PI = 20`, `Function.length = 42`). Strict code throws;
+ * sloppy code declines here and keeps the existing dropped-write lowering.
+ *
+ * The table and the shadowing proof live in `builtin-nonwritable-write.ts`; this
+ * is only the emit half. Declines for every receiver that is not the bare,
+ * unshadowed global — see that module's header for why the proof is syntactic.
+ */
+function tryEmitSpecNonWritableBuiltinWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  value: ts.Expression,
+  propName: string,
+): InnerResult | undefined {
+  if (!isStrictContext(target, ctx.inferModuleStrictArguments)) return undefined;
+  const receiver = resolveUnshadowedGlobalIdentifier(ctx, fctx, target.expression);
+  if (receiver === undefined) return undefined;
+  const builtinName = receiver.text;
+  const isConstructorName = BUILTIN_CTOR_ARITY[builtinName] !== undefined;
+  if (!isSpecNonWritableBuiltinProp(builtinName, propName, isConstructorName)) return undefined;
+
+  // §13.15.2 — the RHS is evaluated before Set is attempted.
+  const rhsType = compileExpression(ctx, fctx, value);
+  if (rhsType === null) return null;
+  fctx.body.push({ op: "drop" });
+  emitThrowTypeError(ctx, fctx, `Cannot assign to read only property '${propName}' of object`);
+  return rhsType;
 }
 
 function tryEmitNonWritablePropertyWrite(

@@ -241,6 +241,57 @@ export function buildIsUndefinedExternBody(
 }
 
 /**
+ * (#4489) Emit `1` when the ANYREF in `anyLocalIdx` is NULLISH — either a null
+ * reference or the tag-1 `$undefined` singleton — leaving an i32 on the stack.
+ *
+ * This is the `is_null ∨ is-singleton` widening the #2106 S1 sweep applied to
+ * every nullish-INTENT consumer, in the shape the guarded-cast backup guard
+ * needs (an anyref local, not an externref one — `emitGuardedRefCast` saves its
+ * pre-cast value as anyref).
+ *
+ * Why it exists: once module-scope `var` slots hold the singleton instead of
+ * `ref.null.extern` (#4489), a consumer that reads nullness as "unset" sees a
+ * NON-null value where it used to see null. `emitNullCheckThrow`'s #789 backup
+ * guard is exactly such a consumer, and there the difference is not a wrong
+ * answer but an UNCATCHABLE one: it declines to throw, and the caller's
+ * `struct.get` on the failed cast traps instead
+ * (`language/statements/function/S13_A17_T1.js`, measured).
+ *
+ * Returns false (emitting nothing) when the singleton regime is inactive, so
+ * host/gc-lane modules keep the plain `ref.is_null` and stay byte-identical.
+ */
+export function emitIsNullishAnyAt(ctx: CodegenContext, fctx: FunctionContext, anyLocalIdx: number): boolean {
+  if (!undefinedSingletonActive(ctx)) return false;
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  if (ctx.anyValueTypeIdx < 0) return false;
+  const t = ctx.anyValueTypeIdx;
+  fctx.body.push({ op: "local.get", index: anyLocalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [{ op: "i32.const", value: 1 }],
+    else: [
+      { op: "local.get", index: anyLocalIdx },
+      { op: "ref.test", typeIdx: t },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: anyLocalIdx },
+          { op: "ref.cast", typeIdx: t },
+          { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+          { op: "i32.const", value: 1 },
+          { op: "i32.eq" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ],
+  });
+  return true;
+}
+
+/**
  * (#2106 S1) Emit a test that the externref in local `externLocalIdx` is a
  * tag-1 `$AnyValue` box (the `$undefined` singleton shape) — leaving an i32.
  * Deliberately does NOT include the #2979 UNDEF_F64 `$BoxedNumber` arm: this

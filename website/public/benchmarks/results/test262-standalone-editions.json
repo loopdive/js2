@@ -1,9 +1,9 @@
 [
   {
     "edition": "ES5",
-    "pass": 8454,
-    "fail": 535,
-    "ce": 40,
+    "pass": 8495,
+    "fail": 506,
+    "ce": 28,
     "skip": 0,
     "total": 9029,
     "pct": 94,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 8091,
-    "fail": 3023,
+    "pass": 8103,
+    "fail": 3011,
     "ce": 589,
     "skip": 1,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 287,
-        "fail": 297,
+        "pass": 289,
+        "fail": 295,
         "ce": 25,
         "skip": 0,
         "total": 609,
@@ -111,12 +111,12 @@
       },
       {
         "name": "arrow-function",
-        "pass": 389,
-        "fail": 43,
+        "pass": 392,
+        "fail": 40,
         "ce": 8,
         "skip": 0,
         "total": 440,
-        "pct": 88
+        "pct": 89
       },
       {
         "name": "Proxy",
@@ -129,17 +129,17 @@
       },
       {
         "name": "Reflect.construct",
-        "pass": 349,
-        "fail": 44,
+        "pass": 352,
+        "fail": 41,
         "ce": 22,
         "skip": 0,
         "total": 415,
-        "pct": 84
+        "pct": 85
       },
       {
         "name": "class",
-        "pass": 295,
-        "fail": 91,
+        "pass": 296,
+        "fail": 90,
         "ce": 24,
         "skip": 0,
         "total": 410,
@@ -192,12 +192,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 7,
-        "fail": 76,
+        "pass": 9,
+        "fail": 74,
         "ce": 0,
         "skip": 0,
         "total": 83,
-        "pct": 8
+        "pct": 11
       },
       {
         "name": "let",
@@ -444,12 +444,12 @@
       },
       {
         "name": "Symbol.hasInstance",
-        "pass": 0,
-        "fail": 17,
+        "pass": 2,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 17,
-        "pct": 0
+        "pct": 12
       },
       {
         "name": "symbols-as-weakmap-keys",
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 3991,
-    "fail": 1350,
+    "pass": 3998,
+    "fail": 1343,
     "ce": 104,
     "skip": 0,
     "total": 5445,

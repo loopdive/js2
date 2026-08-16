@@ -83,8 +83,8 @@ const EXPECTED: ReadonlyArray<{ file: string; status: "pass" | "fail"; note: str
   // ── sta.js: the harness's own identity contract ────────────────────────────
   {
     file: "sta.js",
-    status: "fail",
-    note: "#4251 RC2 — `Test262Error.prototype.toString` reads undefined: a user function's .prototype object is not materialised unless the ctor is new'd through the fnctor path. (`typeof Test262Error === 'function'` IS true.)",
+    status: "pass",
+    note: "FIXED by #4480 S1 (every ordinary function now owns a materialised .prototype); was #4251 RC2. Flipped 2026-08-16 per the ratchet's own instruction.",
   },
 
   // ── negative property helpers: must THROW, and the throw must be identifiable
@@ -166,15 +166,15 @@ const EXPECTED: ReadonlyArray<{ file: string; status: "pass" | "fail"; note: str
   },
   {
     file: "assert-throws-custom-typeerror.js",
-    status: "fail",
-    note: "#4251 RC1 — a user constructor NAMED TypeError shadowing the builtin; the shadow is lost.",
+    status: "pass",
+    note: "FIXED upstream (shadow-yield family, #4482-era); was #4251 RC1. Flipped 2026-08-16 per the ratchet's own instruction.",
   },
 
   // ── compareArray / verifyProperty representative entries ──────────────────
   {
     file: "compare-array-samevalue.js",
-    status: "fail",
-    note: "#4251 — `expectedErrorConstructor.name` renders as undefined (RC1) inside assert.compareArray's own error path.",
+    status: "pass",
+    note: "FIXED upstream (function .name/.prototype substrate, #4437/#4480-era); was #4251 RC1. Flipped 2026-08-16 per the ratchet's own instruction.",
   },
   {
     file: "verifyProperty-restore.js",

@@ -38,6 +38,14 @@ but the representation wall remains and blocks, measured:
 - #4455 R3 (static accessors need the class OBJECT as $Object) is the class
   twin of this fnctor problem.
 
+## Additional blocked rows routed here (from #4484, 2026-08-16)
+
+The missing `{}` -> `Object.prototype` [[Prototype]] edge alone blocks:
+`instanceof/S11.8.6_A1`, `A2.4_T1/_T4`, `in/S8.12.6_A2_T1/_T2`,
+`types/object/S8.6.2_A1/_A2` — #4484's family-D `in` guard lands but flips
+nothing until this edge exists. Object-literal chain linkage is in scope
+here alongside the fnctor conversion.
+
 ## Direction (read #4480's Design section + #3976's record first)
 
 #3976 already converted CLASS elements to own-property installs while
