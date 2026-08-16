@@ -27,6 +27,7 @@ ${UPSTREAM_TEST_EXPORTS}`;
       try {
         result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 60_000 });
       } finally {
+        // biome-ignore lint/performance/noDelete: `process.env.X = undefined` sets the string "undefined" instead of unsetting the var
         if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
         else process.env.NODE_OPTIONS = previousNodeOptions;
       }
