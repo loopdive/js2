@@ -385,7 +385,7 @@ const BUCKETS = {
   ],
   "host-surface-unavailable": [
     "deferred",
-    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+    "Ambient host surface (`document`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. DOM is permanent here: legacy's own standalone body for those units leaks `env.Document_createElement` past the #2961 gate, so there is nothing host-free to lower to. `console.*` was the fixable member and LEFT this bucket in #4462, which gave it its own capability row (`consoleSurfaceCapability`) over the host-free `__stdout_append` sink (#3469); a console call still lands here when the sink is absent or the call shape is outside the lowered slice (multi-arg, expression position, a method the IR does not lower)",
   ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],

@@ -142,10 +142,12 @@ import {
   assertNotDeferred,
   binaryOpCapability,
   collectStringLiteralLens,
+  consoleSurfaceCapability,
   hostExternCapability,
   prefixOpCapability,
   stringIndexProvenBelow,
 } from "./capability.js";
+import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -430,6 +432,25 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * floor.
    */
   hasHostNumberToString?(): boolean;
+  /**
+   * (#4462) The widening `hasHostNumberToString` deferred: does this lane own a
+   * HOST-FREE `Number::toString` whose result is already the IR string carrier?
+   * True in the native-string lanes (standalone / WASI / explicit
+   * `--nativeStrings`), where #3912 made legacy's own `(n).toString()` native.
+   * The provider is resolver-selected (`IR_NUMBER_TO_STRING_NATIVE_FN`), so
+   * from-ast never learns which lane it is in. Disjoint from
+   * `hasHostNumberToString` by construction — one is `!nativeStrings`, the other
+   * `nativeStrings` — so the two arms can never both claim one call.
+   */
+  nativeNumberToStringAvailable?(): boolean;
+  /**
+   * (#4462) Does this lane have the host-free console sink (#3469's
+   * `__stdout_append`)? Consulted by the console capability row
+   * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
+   * standalone module that never minted the sink defers rather than claiming a
+   * call with nothing to lower to.
+   */
+  standaloneConsoleSinkAvailable?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -6752,11 +6773,83 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
  * error, letting the function fall back to legacy.
  */
 /**
- * (#2856) Console methods the IR lowers (single-arg statement calls). Mirrors
- * the CONSOLE_METHODS list in the legacy `collectConsoleImports` scan — a
- * method outside this set was never import-registered, so the IR must demote.
+ * (#4462) `<f64>.toString()` through the lane's HOST-FREE formatter.
+ *
+ * #2955 slice 4 deferred exactly this as "a native number formatter returning
+ * the `(ref $AnyString)` carrier"; #3912 built the formatter for legacy, so the
+ * only missing piece was an IR-visible callable whose ABI is that carrier rather
+ * than the host import's externref. The resolver owns both the availability
+ * question (`nativeNumberToStringAvailable`) and the provider
+ * (`IR_NUMBER_TO_STRING_NATIVE_FN` → the unwrap adapter), so this reads no mode
+ * flag and the result is `IrType.string` with no fix-up at this layer.
+ *
+ * Disjoint from the host-import arm by construction — that one is gated on
+ * `!nativeStrings`, this one on `nativeStrings` — so a single call can never be
+ * claimed twice.
  */
-const IR_CONSOLE_METHODS: ReadonlySet<string> = new Set(["log", "warn", "error", "info", "debug"]);
+function lowerNativeNumberToString(value: IrValueId, funcName: string, cx: LowerCtx): IrValueId {
+  const r = cx.builder.emitCall(irRuntimeFuncRef(IR_NUMBER_TO_STRING_NATIVE_FN), [value], { kind: "string" });
+  if (r === null) throw new Error(`ir/from-ast: native number_toString produced no result in ${funcName}`);
+  return r;
+}
+
+/**
+ * (#4462) Render one already-lowered `console.<m>` argument to `IrType.string`
+ * for the host-free sink.
+ *
+ * Dispatch is on the LOWERED IR type, not the checker type — deliberately, and
+ * for the same reason `emitStandaloneStdoutAppendValue` dispatches on the
+ * compiled ValType (#3469): the static type of a `console.log` argument can be
+ * `any` while the value that actually arrives is a native string. Carriers with
+ * no host-free rendering demote through the typed UNSUPPORTED channel rather
+ * than silently printing nothing.
+ */
+function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName: string): IrValueId {
+  const valueType = cx.builder.typeOf(value);
+  if (valueType.kind === "string") return value;
+  if (valueType.kind === "val" && valueType.val.kind === "f64") {
+    if (cx.resolver?.nativeNumberToStringAvailable?.() !== true) {
+      throw new IrUnsupportedError(
+        "primitive-method-unsupported",
+        "build",
+        `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
+      );
+    }
+    return lowerNativeNumberToString(value, cx.funcName, cx);
+  }
+  // A number that propagation narrowed to i32 is still a number; widen and use
+  // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
+  // `boolean: true` is excluded — a boolean prints "true"/"false", not "1"/"0",
+  // and that rendering is not in this slice.
+  if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
+    const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+    return lowerHostFreeConsoleArgument(widened, cx, methodName);
+  }
+  throw new IrUnsupportedError(
+    "method-call-unsupported",
+    "build",
+    `ir/from-ast: console.${methodName} argument of type ${describeIrType(valueType)} has no host-free rendering (${cx.funcName})`,
+  );
+}
+
+/**
+ * (#4462) `console.<m>(arg)` with NO JS host: render the argument to the native
+ * string carrier and append it to the in-module `__stdout_acc` rope — #3469's
+ * sink, the one legacy already uses at `--target standalone`, kept host-free so
+ * #2961's import-leak gate stays green.
+ *
+ * The trailing newline is CONCATENATED rather than appended by a second call, so
+ * one console call produces one rope node. Output is identical to legacy's
+ * append-arg-then-append-"\n" either way; this just costs one call instead of
+ * two. Statement-position only, so there is no value to return.
+ */
+function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
+  const argVal = lowerExpr(argExpr, cx, { kind: "string" });
+  const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
+  const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
+  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+  return null;
+}
 
 /**
  * (#680) Typed UNSUPPORTED throw for a method call the IR method-call lowering
@@ -7266,11 +7359,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     cx.scope.get("console") === undefined &&
     cx.resolver?.consoleArgVariant !== undefined
   ) {
-    assertNotDeferred(
-      hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
-      `console.${methodName}`,
-      cx.funcName,
-    );
+    const jsHost = cx.resolver?.jsHostExterns?.() === true;
+    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+    assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -7289,6 +7380,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         `ir/from-ast: console.${methodName} with ${expr.arguments.length} args not in slice (${cx.funcName})`,
       );
     }
+    // (#4462) Host-free lane first — the two capabilities are disjoint, and the
+    // sink only exists where there is no host to import from.
+    if (!jsHost && hostFreeSink) return lowerHostFreeConsoleCall(expr.arguments[0]!, cx, methodName);
     const argExpr = expr.arguments[0]!;
     const variant = cx.resolver.consoleArgVariant(argExpr);
     const importName = `console_${methodName}_${variant}`;
@@ -7552,6 +7646,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
     return r;
+  }
+
+  // (#4462) The same call in a HOST-FREE lane — see `lowerNativeNumberToString`.
+  if (
+    methodName === "toString" &&
+    expr.arguments.length === 0 &&
+    recvType.kind === "val" &&
+    recvType.val.kind === "f64" &&
+    cx.resolver?.nativeNumberToStringAvailable?.() === true
+  ) {
+    return lowerNativeNumberToString(recv, cx.funcName, cx);
   }
 
   // #2856 builtins slice — a bounded literal fraction-digits argument needs

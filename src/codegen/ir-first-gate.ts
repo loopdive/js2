@@ -324,6 +324,86 @@ export interface IrIdentityLocalCallEdges {
    * today.
    */
   readonly constructionCallees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+  /**
+   * (#4508) Module-binding storage edges: an owner that references a top-level
+   * `var`/`let`/`const` reads a Program ABI source global whose storage
+   * terminal is the module-init unit. `recordGlobalReference` fails that read
+   * closed with `source-global-outside-component` whenever the storage terminal
+   * is not itself inside the sealed transaction — which on the standalone /
+   * WASI / fast / native-strings lanes it never is, because
+   * `preparedExactLexicalModuleInit` refuses those lanes outright.
+   *
+   * Like `constructionCallees` this is ONE-DIRECTIONAL, and for a second
+   * reason: a reader needs its storage terminal prepared, but the module-init
+   * does not need its readers prepared — it lowers its own stores either way.
+   */
+  readonly moduleBindingStorageTerminals: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+}
+
+/**
+ * (#4508) Names bound by the module-init population — exactly the top-level
+ * declarations whose Program ABI storage terminal is the module-init unit.
+ */
+function moduleInitBindingNames(population: readonly ts.Statement[]): ReadonlySet<string> {
+  const names = new Set<string>();
+  const record = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      names.add(name.text);
+      return;
+    }
+    for (const element of name.elements) if (ts.isBindingElement(element)) record(element.name);
+  };
+  for (const statement of population) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) record(declaration.name);
+  }
+  return names;
+}
+
+/** A value-position identifier — not a member name, property key, or type reference. */
+function isValuePositionIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (!parent) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if (ts.isQualifiedName(parent) && parent.right === node) return false;
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+  if (ts.isBindingElement(parent) && parent.propertyName === node) return false;
+  return !ts.isPropertySignature(parent) && !ts.isTypeReferenceNode(parent);
+}
+
+/**
+ * (#4508) True iff `declaration`'s subtree reads a module-init-owned binding
+ * that nothing inside the subtree re-declares.
+ *
+ * Shadowing resolves by the checker-free UNDER-approximation "a name declared
+ * anywhere inside this owner shadows it everywhere inside this owner". The bias
+ * is deliberate: under-recording only preserves the status quo (the owner stays
+ * a prepared candidate and seals or fails exactly as it does today), whereas
+ * over-recording would withdraw an owner that prepares fine.
+ */
+function readsModuleInitBinding(declaration: ts.FunctionDeclaration, moduleBindingNames: ReadonlySet<string>): boolean {
+  if (moduleBindingNames.size === 0) return false;
+  const shadowed = new Set<string>();
+  const referenced = new Set<string>();
+  const shadow = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      shadowed.add(name.text);
+      return;
+    }
+    for (const element of name.elements) if (ts.isBindingElement(element)) shadow(element.name);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) shadow(node.name);
+    else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+      if (node.name) shadowed.add(node.name.text);
+    } else if (ts.isIdentifier(node) && moduleBindingNames.has(node.text) && isValuePositionIdentifier(node)) {
+      referenced.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const parameter of declaration.parameters) visit(parameter);
+  if (declaration.body) visit(declaration.body);
+  return [...referenced].some((name) => !shadowed.has(name));
 }
 
 /**
@@ -552,6 +632,23 @@ export function collectLocalCallEdgesByIdentity(
     }
     for (const unitId of chain) targets.add(unitId);
   };
+  // (#4508) Module-binding storage edges. Attribution is the whole top-level
+  // function subtree: a nested arrow's global read seals against the same
+  // terminal owner, so the subtree is the attribution the failure itself uses.
+  // Class members are deliberately excluded — `recordGlobalReference` carries
+  // sanctioned writeback exemptions for accessor-owned module globals
+  // (`class-setter-writeback-global` / `…-tdz-global`) that seal today.
+  const moduleBindingStorageTerminals = new Map<IrUnitId, Set<IrUnitId>>();
+  if (moduleInitId) {
+    const moduleBindingNames = moduleInitBindingNames(modulePopulation);
+    for (const unitId of activeTopLevelFunctionIds) {
+      const declaration = identityContext.declarationByUnitId.get(unitId);
+      if (!declaration || !ts.isFunctionDeclaration(declaration)) continue;
+      if (readsModuleInitBinding(declaration, moduleBindingNames)) {
+        moduleBindingStorageTerminals.set(unitId, new Set<IrUnitId>([moduleInitId]));
+      }
+    }
+  }
   const walk = (node: ts.Node, inheritedOwner: IrUnitId | null): void => {
     const boundaryOwner = ownerByBoundary.get(node);
     const owner = boundaryOwner === undefined ? inheritedOwner : boundaryOwner;
@@ -561,5 +658,5 @@ export function collectLocalCallEdgesByIdentity(
   };
   walk(sourceFile, null);
 
-  return Object.freeze({ callees, calleesFromUnownedCallers, constructionCallees });
+  return Object.freeze({ callees, calleesFromUnownedCallers, constructionCallees, moduleBindingStorageTerminals });
 }
