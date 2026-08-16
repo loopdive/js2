@@ -1,10 +1,11 @@
 {
   "id": "4524",
   "assignee": "ttraenkler/opus-es5-b",
-  "requested_by": "ttraenkler/opus-es5-b",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4524-closed-struct-data-descriptor-define",
   "claimed_at": "2026-08-16T07:24:07Z",
-  "updated_at": "2026-08-16T07:24:07Z",
-  "write_id": "75339-llntqdnb"
+  "updated_at": "2026-08-16T10:58:52Z",
+  "write_id": "88626-hug7uh24",
+  "released_at": "2026-08-16T10:58:52Z"
 }
