@@ -3515,6 +3515,23 @@ export function lowerIrFunctionBody<S, Slot>(
         });
         return;
       }
+      // (#4070) Exhaustiveness gate — the highest-severity one in the IR.
+      // This switch returns `void`, so nothing in the type system forced it to
+      // be total: a new IR instruction kind without a case here used to fall
+      // straight through and emit NO instructions, silently producing wrong
+      // Wasm (a missing operand on the stack) rather than any error at all.
+      // The `never` assignment turns that into a compile error at this line.
+      default: {
+        const _exhaustive: never = instr;
+        void _exhaustive;
+        // invariant (producer-promise): every IrInstr the selector claims must
+        // have a lowering arm. Per #4035/#4502 a bare `Error` is the deliberate
+        // hard-error classification — an un-lowerable kind is a broken promise
+        // between the union and the emitter, not a capability gap to demote.
+        throw new Error(
+          `ir/lower: emitInstrTree has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+        );
+      }
     }
   };
 
@@ -3862,6 +3879,17 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     // (#2856) Early return — the optional return value is a direct use.
     case "early.return":
       return instr.value !== null ? [instr.value] : [];
+    // (#4070) Exhaustiveness gate. Under-reporting an instruction's uses would
+    // corrupt the lowerer's use accounting (which decides what gets a Wasm
+    // local), so the runtime arm throws rather than returning `[]`.
+    default: {
+      const _exhaustive: never = instr;
+      void _exhaustive;
+      // invariant (producer-promise): see emitInstrTree's twin above.
+      throw new Error(
+        `ir/lower: collectIrUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
+      );
+    }
   }
 }
 
