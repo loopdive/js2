@@ -24,12 +24,12 @@
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
 
-import { compile, compileMulti } from "../src/index.ts";
+import { compile, compileMulti, compileProject } from "../src/index.ts";
 import { buildStringConstants, buildStringConstants16, jsString, wrapExports } from "../src/runtime.ts";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
@@ -74,7 +74,12 @@ import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstrea
 import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
 import { setupCookie } from "../tests/dogfood/setup-cookie.mjs";
+import { setupEslint } from "../tests/dogfood/setup-eslint.mjs";
+import { setupPrettier } from "../tests/dogfood/setup-prettier.mjs";
+import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
+import { setupNpmCompatCatalogPackage } from "../tests/dogfood/npm-compat-catalog.mjs";
+import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "../tests/dogfood/npm-compat-perf-specs.mjs";
 import {
   failedPerfLane,
   measureJsHostPerf,
@@ -220,11 +225,8 @@ const runJsHostLane = selectedLane === "both" || selectedLane === "js-host";
 const runStandaloneLane =
   selectedLane === "both" || selectedLane === "standalone" || selectedLane === "standalone-static";
 const runStandaloneDynamicLane = selectedLane === "both" || selectedLane === "standalone-dynamic";
-if (
-  perfOnly &&
-  (selectedPackages.size !== 1 || !["acorn", "clsx", "cookie", "lit"].some((name) => selectedPackages.has(name)))
-) {
-  throw new Error("--perf-only requires exactly one of --only acorn, --only clsx, --only cookie, or --only lit");
+if (perfOnly && selectedPackages.size !== 1) {
+  throw new Error("--perf-only requires exactly one package via --only");
 }
 if ((diagnosticsOnly || inspectBoundaries) && !runJsHostLane) {
   throw new Error("--diagnostics-only and --inspect-boundaries require --lane js-host or --lane both");
@@ -1445,6 +1447,391 @@ async function perfLit() {
 }
 
 // ---------------------------------------------------------------------------
+// Generic npm-package performance probes
+// ---------------------------------------------------------------------------
+// The older Acorn/clsx/cookie probes intentionally retain their package
+// specific diagnostics.  Every other package uses the same project compiler
+// path here: the generated driver is placed next to the extracted package so
+// its real dependency graph is resolved, and each lane gets a separate driver
+// so a static lane cannot be contaminated by the dynamic export.
+const GENERIC_PERF_RUNTIME_SEED = 4381;
+
+function reportCompileDiagnostic(report) {
+  return (
+    report?.compile?.error ??
+    report?.compile?.errors?.[0]?.message ??
+    report?.compile?.diagnostics?.[0]?.messageText ??
+    report?.validation?.error ??
+    "package entry did not produce a runnable Wasm module"
+  );
+}
+
+function packagePerfFailure(spec, diagnostic, status = "compile-error") {
+  const jsHost = runJsHostLane ? failedPerfLane("js-host", status, diagnostic) : skippedPerfLane("js-host");
+  const standalone = runStandaloneLane
+    ? failedPerfLane("standalone", status, diagnostic)
+    : skippedPerfLane("standalone");
+  const standaloneDynamic = runStandaloneDynamicLane
+    ? failedPerfLane("standalone", status, diagnostic, { inputMode: "runtime-dynamic" })
+    : skippedPerfLane("standalone", "runtime-dynamic");
+  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { standaloneDynamic });
+}
+
+function packageSpecifierFor(setup) {
+  const entry = relative(setup.root, setup.entryModulePath).split("\\").join("/");
+  return `./${entry.replace(/^\.\//, "")}`;
+}
+
+async function compileNpmCompatPerfLane({ setup, spec, lane, compileOptions }) {
+  const target = lane === "js-host" ? "gc" : "standalone";
+  const driverPath = join(setup.root, `.js2-npm-compat-perf-${lane}.mjs`);
+  const packageSpecifier = packageSpecifierFor(setup);
+  writeFileSync(driverPath, buildNpmCompatPerfDriver(spec, packageSpecifier, lane));
+  const compileStarted = performance.now();
+  let result;
+  try {
+    result = await compileProject(driverPath, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      optimize: 4,
+      target,
+      // Project graphs can initialize package singletons while they are being
+      // instantiated.  Defer that start work until the generated import
+      // object has wired the instance, for both host and standalone lanes.
+      deferTopLevelInit: true,
+      ...(target === "gc" ? { platform: "node" } : {}),
+      ...(compileOptions ?? {}),
+      preserveDebugNames,
+    });
+  } catch (error) {
+    return {
+      failure: failedPerfLane(
+        lane === "js-host" ? "js-host" : "standalone",
+        "compile-error",
+        error instanceof Error ? error.message : String(error),
+        lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {},
+      ),
+    };
+  }
+  const compileDurationMs = performance.now() - compileStarted;
+  if (!result.success || !result.binary?.length) {
+    return {
+      failure: failedPerfLane(
+        lane === "js-host" ? "js-host" : "standalone",
+        "compile-error",
+        firstCompileDiagnostic(result),
+        {
+          ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),
+          compileDurationMs,
+        },
+      ),
+    };
+  }
+
+  let module;
+  const moduleCompileStarted = performance.now();
+  try {
+    module = await WebAssembly.compile(result.binary);
+  } catch (error) {
+    return {
+      failure: failedPerfLane(
+        lane === "js-host" ? "js-host" : "standalone",
+        "validation-error",
+        error instanceof Error ? error.message : String(error),
+        {
+          ...(lane === "standalone-dynamic" ? { inputMode: "runtime-dynamic" } : {}),
+          compileDurationMs,
+          binaryBytes: result.binary.length,
+        },
+      ),
+    };
+  }
+  const moduleCompileDurationMs = performance.now() - moduleCompileStarted;
+  const moduleImports = WebAssembly.Module.imports(module).map(
+    ({ module: namespace, name, kind }) => `${namespace}.${name}:${kind}`,
+  );
+  if (target === "standalone" && moduleImports.length > 0) {
+    return {
+      failure: failedPerfLane(
+        "standalone",
+        "host-import-error",
+        `standalone binary retained ${moduleImports.length} host import(s)`,
+        {
+          inputMode: lane === "standalone-dynamic" ? "runtime-dynamic" : "compile-time-static",
+          compileDurationMs,
+          moduleCompileDurationMs,
+          binaryBytes: result.binary.length,
+          ...moduleImportMetadata(moduleImports),
+        },
+      ),
+    };
+  }
+
+  let instance;
+  const instantiateStarted = performance.now();
+  try {
+    const importObject = target === "standalone" ? {} : (result.importObject ?? {});
+    instance = await WebAssembly.instantiate(module, importObject);
+    importObject.__setInstance?.(instance);
+    const init = instance.exports.__module_init;
+    if (typeof init === "function") init();
+  } catch (error) {
+    return {
+      failure: failedPerfLane(
+        lane === "js-host" ? "js-host" : "standalone",
+        "runtime-error",
+        renderHarnessThrownText(error, instance),
+        {
+          inputMode:
+            lane === "standalone-dynamic"
+              ? "runtime-dynamic"
+              : lane === "js-host"
+                ? "runtime-dynamic"
+                : "compile-time-static",
+          phase: instance ? "module-init" : "instantiate",
+          compileDurationMs,
+          moduleCompileDurationMs,
+          binaryBytes: result.binary.length,
+          ...moduleImportMetadata(moduleImports),
+        },
+      ),
+    };
+  }
+  const exports =
+    target === "standalone" ? instance.exports : wrapExports(instance, { signatures: result.exportSignatures });
+  return {
+    result,
+    exports,
+    moduleImports,
+    compileDurationMs,
+    moduleCompileDurationMs,
+    instantiateDurationMs: performance.now() - instantiateStarted,
+  };
+}
+
+async function perfNpmCompatPackage(name, { setupFactory, report, compileOptions } = {}) {
+  const spec = getNpmCompatPerfSpec(name);
+  if (report && (report.compile?.success === false || report.validation?.validates === false)) {
+    return packagePerfFailure(spec, reportCompileDiagnostic(report));
+  }
+
+  let setup;
+  try {
+    setup = setupFactory();
+  } catch (error) {
+    return packagePerfFailure(spec, error instanceof Error ? error.message : String(error));
+  }
+  let nativeModule;
+  try {
+    nativeModule = await import(pathToFileURL(setup.entryModulePath).href);
+  } catch (error) {
+    return packagePerfFailure(
+      spec,
+      `native package import failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const runHost = async () => {
+    const compiled = await compileNpmCompatPerfLane({ setup, spec, lane: "js-host", compileOptions });
+    if (compiled.failure) return compiled.failure;
+    const input = spec.dynamicInput(spec.staticInput, GENERIC_PERF_RUNTIME_SEED, 0);
+    let expectedChecksum;
+    let actualChecksum;
+    try {
+      expectedChecksum = spec.nativeOperation(nativeModule, input);
+      actualChecksum = compiled.exports.__npmCompatPerf(input);
+    } catch (error) {
+      return failedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
+        phase: "checksum",
+        inputMode: "runtime-dynamic",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    if (!Object.is(actualChecksum, expectedChecksum)) {
+      return failedPerfLane(
+        "js-host",
+        "result-mismatch",
+        `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
+        { expectedChecksum, actualChecksum },
+      );
+    }
+    let wasmIndex = 0;
+    let nodeIndex = 0;
+    let measured;
+    try {
+      measured = measureJsHostPerf(
+        spec.sampleOp,
+        () =>
+          compiled.exports.__npmCompatPerf(spec.dynamicInput(spec.staticInput, GENERIC_PERF_RUNTIME_SEED, wasmIndex++)),
+        () =>
+          spec.nativeOperation(
+            nativeModule,
+            spec.dynamicInput(spec.staticInput, GENERIC_PERF_RUNTIME_SEED, nodeIndex++),
+          ),
+      );
+    } catch (error) {
+      return failedPerfLane("js-host", "runtime-error", renderHarnessThrownText(error), {
+        phase: "measure",
+        inputMode: "runtime-dynamic",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    return {
+      ...measured,
+      compileDurationMs: compiled.compileDurationMs,
+      moduleCompileDurationMs: compiled.moduleCompileDurationMs,
+      instantiateDurationMs: compiled.instantiateDurationMs,
+      binaryBytes: compiled.result.binary.length,
+      ...moduleImportMetadata(compiled.moduleImports),
+      expectedChecksum,
+      actualChecksum,
+      testCompiledToWasm: false,
+      target: "js-host",
+    };
+  };
+
+  const runStatic = async () => {
+    const compiled = await compileNpmCompatPerfLane({ setup, spec, lane: "standalone-static", compileOptions });
+    if (compiled.failure) return compiled.failure;
+    let expectedChecksum;
+    let actualChecksum;
+    try {
+      expectedChecksum = spec.nativeOperation(nativeModule, spec.staticInput);
+      actualChecksum = compiled.exports.__npmCompatStandaloneBenchmark(1);
+    } catch (error) {
+      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+        phase: "checksum",
+        inputMode: "compile-time-static",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    if (!Object.is(actualChecksum, expectedChecksum)) {
+      return failedPerfLane(
+        "standalone",
+        "result-mismatch",
+        `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
+        { expectedChecksum, actualChecksum },
+      );
+    }
+    let measured;
+    try {
+      measured = measureStandalonePerf(
+        spec.sampleOp,
+        (iterations) => compiled.exports.__npmCompatStandaloneBenchmark(iterations),
+        (iterations) => {
+          let checksum = 0;
+          for (let index = 0; index < iterations; index++) {
+            checksum += spec.nativeOperation(nativeModule, spec.staticInput);
+          }
+          return checksum;
+        },
+      );
+    } catch (error) {
+      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+        phase: "measure",
+        inputMode: "compile-time-static",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    return {
+      ...measured,
+      compileDurationMs: compiled.compileDurationMs,
+      moduleCompileDurationMs: compiled.moduleCompileDurationMs,
+      instantiateDurationMs: compiled.instantiateDurationMs,
+      binaryBytes: compiled.result.binary.length,
+      ...moduleImportMetadata(compiled.moduleImports),
+      expectedChecksum,
+      actualChecksum,
+      testCompiledToWasm: true,
+      benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
+      irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
+      target: "standalone",
+    };
+  };
+
+  const runDynamic = async () => {
+    const compiled = await compileNpmCompatPerfLane({ setup, spec, lane: "standalone-dynamic", compileOptions });
+    if (compiled.failure) return compiled.failure;
+    const seed = GENERIC_PERF_RUNTIME_SEED;
+    let expectedChecksum;
+    let actualChecksum;
+    try {
+      expectedChecksum = spec.nativeOperation(nativeModule, spec.dynamicInput(spec.staticInput, seed, 0));
+      actualChecksum = compiled.exports.__npmCompatStandaloneDynamic(1, seed);
+    } catch (error) {
+      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+        phase: "checksum",
+        inputMode: "runtime-dynamic",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    if (!Object.is(actualChecksum, expectedChecksum)) {
+      return failedPerfLane(
+        "standalone",
+        "result-mismatch",
+        `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
+        { expectedChecksum, actualChecksum },
+      );
+    }
+    let measured;
+    try {
+      measured = measureStandalonePerf(
+        spec.sampleOp,
+        (iterations) => compiled.exports.__npmCompatStandaloneDynamic(iterations, seed),
+        (iterations) => {
+          let checksum = 0;
+          for (let index = 0; index < iterations; index++) {
+            checksum += spec.nativeOperation(nativeModule, spec.dynamicInput(spec.staticInput, seed, index));
+          }
+          return checksum;
+        },
+        { inputMode: "runtime-dynamic" },
+      );
+    } catch (error) {
+      return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, compiled.exports), {
+        phase: "measure",
+        inputMode: "runtime-dynamic",
+        compileDurationMs: compiled.compileDurationMs,
+        binaryBytes: compiled.result.binary.length,
+        ...moduleImportMetadata(compiled.moduleImports),
+      });
+    }
+    return {
+      ...measured,
+      compileDurationMs: compiled.compileDurationMs,
+      moduleCompileDurationMs: compiled.moduleCompileDurationMs,
+      instantiateDurationMs: compiled.instantiateDurationMs,
+      binaryBytes: compiled.result.binary.length,
+      ...moduleImportMetadata(compiled.moduleImports),
+      expectedChecksum,
+      actualChecksum,
+      testCompiledToWasm: true,
+      benchmarkUsesIr: compiled.result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
+      irCompiledFunctions: compiled.result.irCompiledFuncs ?? [],
+      target: "standalone",
+      runtimeArgumentSuppliedAfterCompile: true,
+    };
+  };
+
+  const jsHost = runJsHostLane ? await runHost() : skippedPerfLane("js-host");
+  const standalone = runStandaloneLane ? await runStatic() : skippedPerfLane("standalone");
+  const standaloneDynamic = runStandaloneDynamicLane
+    ? await runDynamic()
+    : skippedPerfLane("standalone", "runtime-dynamic");
+  return packagePerfRecord(spec.sampleOp, jsHost, standalone, { standaloneDynamic });
+}
+
+// ---------------------------------------------------------------------------
 // Assemble
 // ---------------------------------------------------------------------------
 function knownBugsFor(name) {
@@ -1479,6 +1866,21 @@ function knownBugsFor(name) {
   return map[name] ?? [];
 }
 
+// Upstream adapters deliberately keep tests that require browser, DOM, Jest,
+// or other host facilities out of the compiler score. Preserve the original
+// `harnessIncompatible` field for compatibility, but expose the user-facing
+// meaning explicitly so the card can distinguish unavailable infrastructure
+// from compiler-quarantined or invalid-module tests.
+function annotateUnavailableInfra(tests) {
+  if (!tests || typeof tests !== "object") return tests;
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
+    ? tests.unavailableInfra
+    : Number.isFinite(tests.harnessIncompatible)
+      ? tests.harnessIncompatible
+      : null;
+  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+}
+
 async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
   return {
     name,
@@ -1494,7 +1896,7 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // barrel rather than the package's code. Consumers must not present that
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
-    tests,
+    tests: annotateUnavailableInfra(tests),
     // (#4127) The correctness axis, kept separate from compile/validation so a
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
@@ -1515,7 +1917,68 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
 
 const packages = [];
 
-if (selectedPackages.has("acorn")) {
+if (perfOnly) {
+  const name = [...selectedPackages][0];
+  const catalogEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === name);
+  let setupFactory;
+  let perf;
+  let setup;
+  let entryFile;
+  let version;
+  let shape;
+  let issue = catalogEntry?.issue ?? null;
+
+  if (name === "acorn") {
+    setupFactory = setupAcorn;
+    setup = setupFactory();
+    perf = await perfAcorn();
+    issue = 1710;
+    shape = "esm-direct";
+  } else if (name === "clsx") {
+    setupFactory = setupClsx;
+    setup = setupFactory();
+    perf = await perfClsx();
+    issue = 3748;
+    shape = "esm-driver-epilogue";
+  } else if (name === "cookie") {
+    setupFactory = setupCookie;
+    setup = setupFactory();
+    perf = await perfCookie();
+    issue = 3751;
+    shape = "esm-direct";
+  } else if (name === "lit") {
+    const litEntry = catalogEntry;
+    perf = await perfLit();
+    version = litEntry.version;
+    entryFile = litEntry.entryModule.replace(/^package\//, "");
+    shape = litEntry.shape;
+    issue = 3977;
+  } else {
+    if (name === "marked") setupFactory = setupMarked;
+    else if (name === "eslint") setupFactory = setupEslint;
+    else if (name === "prettier") setupFactory = setupPrettier;
+    else if (name === "react") setupFactory = setupReact;
+    else setupFactory = () => setupNpmCompatCatalogPackage(name);
+    perf = await perfNpmCompatPackage(name, {
+      setupFactory,
+      compileOptions: catalogEntry?.compileOptions,
+    });
+    setup = setupFactory();
+    version = setup.version;
+    entryFile = relative(setup.root, setup.entryModulePath).replace(/\\/g, "/");
+    shape = catalogEntry?.shape ?? "esm-project";
+  }
+
+  if (setup) {
+    version ??= setup.version;
+    entryFile ??= relative(setup.root, setup.entryModulePath).replace(/\\/g, "/");
+  }
+  version ??= catalogEntry?.version ?? "unknown";
+  entryFile ??= catalogEntry?.entryModule?.replace(/^package\//, "") ?? "unknown";
+  packages.push({ name, version, issue, entryFile, shape, perf, knownBugs: knownBugsFor(name) });
+}
+
+if (!perfOnly && selectedPackages.has("acorn")) {
   if (perfOnly) {
     console.log("[npm-compat] acorn — perf only (correctness and official suite skipped)...");
     const { version, pin } = setupAcorn();
@@ -1554,7 +2017,7 @@ if (selectedPackages.has("acorn")) {
   }
 }
 
-if (selectedPackages.has("marked")) {
+if (!perfOnly && selectedPackages.has("marked")) {
   console.log("[npm-compat] marked — package entry + selected original upstream unit tests...");
   const markedReport = await runMarked({ quiet: true });
   const markedSuite = await runConfiguredUpstreamSuite("marked", { quiet: true });
@@ -1593,12 +2056,15 @@ if (selectedPackages.has("marked")) {
           commit: markedSuite.upstreamSuite?.commit ?? null,
         },
       },
-      perf: null,
+      perf: await perfNpmCompatPackage("marked", {
+        setupFactory: setupMarked,
+        report: markedReport,
+      }),
     }),
   );
 }
 
-if (selectedPackages.has("clsx")) {
+if (!perfOnly && selectedPackages.has("clsx")) {
   if (perfOnly) {
     console.log("[npm-compat] clsx — perf only (correctness harness skipped)...");
     const { version, pin } = setupClsx();
@@ -1654,7 +2120,7 @@ if (selectedPackages.has("clsx")) {
   }
 }
 
-if (selectedPackages.has("cookie")) {
+if (!perfOnly && selectedPackages.has("cookie")) {
   if (perfOnly) {
     console.log("[npm-compat] cookie — perf only (correctness harness skipped)...");
     const { version, pin } = setupCookie();
@@ -1710,7 +2176,7 @@ if (selectedPackages.has("cookie")) {
   }
 }
 
-if (selectedPackages.has("eslint")) {
+if (!perfOnly && selectedPackages.has("eslint")) {
   console.log("[npm-compat] eslint — bounded package entry + selected original upstream unit...");
   const eslintReport = await runEslint({ quiet: true });
   const eslintSuite = await runConfiguredUpstreamSuite("eslint", { quiet: true });
@@ -1751,12 +2217,15 @@ if (selectedPackages.has("eslint")) {
       shape: "cjs-project",
       report: eslintReport,
       tests: eslintTests,
-      perf: null,
+      perf: await perfNpmCompatPackage("eslint", {
+        setupFactory: setupEslint,
+        report: eslintReport,
+      }),
     }),
   );
 }
 
-if (selectedPackages.has("prettier")) {
+if (!perfOnly && selectedPackages.has("prettier")) {
   console.log("[npm-compat] prettier — package entry + selected original upstream unit tests...");
   const prettierReport = await runPrettier({ quiet: true });
   const prettierSuite = await runConfiguredUpstreamSuite("prettier", { quiet: true });
@@ -1787,12 +2256,15 @@ if (selectedPackages.has("prettier")) {
           commit: prettierSuite.upstreamSuite?.commit ?? null,
         },
       },
-      perf: null,
+      perf: await perfNpmCompatPackage("prettier", {
+        setupFactory: setupPrettier,
+        report: prettierReport,
+      }),
     }),
   );
 }
 
-if (selectedPackages.has("react")) {
+if (!perfOnly && selectedPackages.has("react")) {
   console.log("[npm-compat] react — package entry + React's own upstream unit tests...");
   const reactReport = await runReact({ quiet: true });
   const reactSuite = await runConfiguredUpstreamSuite("react", { quiet: true });
@@ -1823,12 +2295,15 @@ if (selectedPackages.has("react")) {
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
-      perf: null,
+      perf: await perfNpmCompatPackage("react", {
+        setupFactory: setupReact,
+        report: reactReport,
+      }),
     }),
   );
 }
 
-if (selectedPackages.has("lit")) {
+if (!perfOnly && selectedPackages.has("lit")) {
   const litEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "lit");
   if (perfOnly) {
     console.log("[npm-compat] lit — perf only (correctness and upstream suite skipped)...");
@@ -1882,7 +2357,7 @@ if (selectedPackages.has("lit")) {
   }
 }
 
-if (selectedPackages.has("react-dom")) {
+if (!perfOnly && selectedPackages.has("react-dom")) {
   console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
@@ -1939,12 +2414,16 @@ if (selectedPackages.has("react-dom")) {
         implementationError: reactDomSuite.summary?.implementationError ?? null,
         sourceIssue: 3982,
       },
-      perf: null,
+      perf: await perfNpmCompatPackage("react-dom", {
+        setupFactory: () => setupNpmCompatCatalogPackage("react-dom"),
+        report: reactDomImplementationReport,
+      }),
     }),
   );
 }
 
 for (const entry of NPM_COMPAT_CATALOG) {
+  if (perfOnly) continue;
   if (!selectedPackages.has(entry.name)) continue;
   // Handled above with its own upstream suite rather than as a bare
   if (entry.name === "lit") continue;
@@ -2036,7 +2515,11 @@ for (const entry of NPM_COMPAT_CATALOG) {
       shape: entry.shape,
       report,
       tests,
-      perf: null,
+      perf: await perfNpmCompatPackage(entry.name, {
+        setupFactory: () => setupNpmCompatCatalogPackage(entry.name),
+        report,
+        compileOptions: entry.compileOptions,
+      }),
     }),
   );
 }
