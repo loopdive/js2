@@ -23,6 +23,100 @@ sprint: current
 
 # #2668 — ES5 canonical vec-index Object/property MOP residual
 
+## Landed slice — S-set: ordinary indexed set creates all-true data (2026-08-16)
+
+PR: `fix(#2668): standalone ordinary indexed set must create an all-true data
+property`. Branch `issue-2668-defineproperty-fidelity`, lane
+`ttraenkler/opus-es5-a`.
+
+**This slice is NOT M1 and does not consume it.** M1 (the four-state classifier,
+absence ranges, IR seam) is untouched and still the approved next big step. What
+landed is a one-constant defect found while grounding M1 against current main —
+it sits *underneath* M1's contract, so fixing it first removes noise from every
+later M1 measurement.
+
+### What was wrong
+
+`__extern_set`'s vec prologue routes an indexed write on an `any`/externref
+array receiver to `__vec_dp_value` with flags `HOST_HAS_VALUE` (`1 << 7`) —
+`hasValue` and nothing else. When the index did **not** already exist,
+CompletePropertyDescriptor filled the three omitted attributes with `false`, so
+every ordinary `a[i] = v` that grew the array minted a
+non-writable/-enumerable/-configurable own property. The follow-on legal
+redefine then threw and aborted the module.
+
+Control reaches that site only with **no** companion entry for the key (every
+non-null-entry arm above returns), so the index is either an implicit dense
+element (effective W/E/C all true, which `__vec_dp_value`'s seed materialises)
+or brand new (CreateDataProperty ⇒ all true). All-true is right in both cases,
+so the fix is `SEED_FLAGS` in place of `HOST_HAS_VALUE`.
+
+### Why the M1 spec did not name it
+
+The spec's root-cause section correctly names the *host* pre-growth /
+first-definition workaround and the standalone `buildRealElementSeed`
+`index < length` over-seed. Both are real. This defect is their mirror image on
+the **write** side and in the opposite direction — an under-specified descriptor
+on the create path — and it is invisible to every probe that presizes, uses a
+literal, uses `push`, or uses a typed `number[]`, because each of those makes
+the index backed before the write and the seed then supplies the true bits.
+Four independent "works fine" readings is why it survived.
+
+### Measured
+
+**Test262, real runner, same population and matched settings.**
+`scripts/harness-flip-probe.ts --files <the 86-row family> --target standalone
+--timeout 180000`, both arms run back-to-back on the same box, differing only in
+`src/codegen/vec-overlay.ts` (base = `d38224d53`, the branch point; head = the
+same tree with the flag constant changed):
+
+```
+before : {"fail":86}            after : {"fail":82,"pass":4}
+union 86 · partition verified 86 == 86
+fail -> pass 4 · pass -> fail 0 · other status change 0 · unchanged 82
+NET +4
+```
+
+The four: `defineProperty/15.2.3.6-4-210`, `defineProperty/15.2.3.6-4-212`,
+`defineProperties/15.2.3.7-6-a-206`, `defineProperties/15.2.3.7-6-a-208` — the
+dense-default-element sub-cluster exactly, which is what the mechanism predicts.
+No claim is made beyond this partition.
+
+**Unit A/B (mechanism only, not conformance).** 11 rows per lane through
+`compile()`:
+
+- standalone **5 fixed, 0 regressed** — grow-from-`[]`, grow-from-`new Array`,
+  presized-then-write (all `0` → `111` packed W/E/C), same-value redefine
+  (threw → clean), empty redefine (`0` → `111`).
+- host **byte-identical on all 11**; the change is inside a `ctx.standalone`
+  branch. Five host rows are wrong in *both* arms (pre-existing host gaps, named
+  in the test's `HOST_SKIP`).
+
+### Still open, measured on current main, standalone (not in this slice)
+
+- `Object.keys` / `getOwnPropertyNames` enumerate the **unbacked tail**:
+  `[0,1,2]` with `length = 6` reports 6 keys and 7 names (expected 3 and 4).
+  This is the enumeration half of the four-state contract — M1 §4.
+- Array `length` above `2^31-1`: `defineProperty(a, "length", {value:
+  4294967294})` leaves `length` at `0` (6 rows: `15.2.3.6-4-154/-155/-183`,
+  `15.2.3.7-6-a-150/-151/-179`). The vec length field is a signed i32, so this
+  needs a uint32 length representation, not a validation fix.
+- `delete` on a vec returned by `Object.keys`/`getOwnPropertyNames` is not
+  observed by the reader (`15.2.3.14-5-a-4`, `15.2.3.4-4-b-6`).
+- Host `_vecDefineOwnProperty`'s first-definition workaround (host reports
+  all-false after an empty redefine) — unchanged, host-side.
+
+### Instrument note for the next lane
+
+`node scripts/build-quickjs-eval-provider.mjs` **cannot build in this
+container** (no `clang-18`, no `cmake`) and no prebuilt artifact is cached, so
+every eval-shaped row reports a manufactured
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` failure.
+`15.2.3.6-4-594` in this family is one of those — treat it as **unmeasured**,
+not failing. Separately, under box load `harness-flip-probe`'s default 60 s
+timeout turned 20 of 86 rows into `compile_error: compilation timeout (91 s)`;
+pass `--timeout 180000` and avoid concurrent compiles or the arm is noise.
+
 ## Decision
 
 The next approved slice is **2668-M1: IR-first canonical vec own-index MOP**.
