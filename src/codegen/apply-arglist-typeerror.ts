@@ -21,11 +21,23 @@
  *
  * ## Narrowing (absent-not-wrong)
  *
- * The oracle must PROVE the argument is a primitive other than null/undefined.
- * `any`, unions, objects, arrays, `arguments` and everything unresolvable
- * DECLINE — a wrong throw here would break working programs, and the existing
- * lowerings stay in charge of every shape this file does not claim. A boxed
- * `new Number(1)` is an object type and never matches.
+ * TWO independent facts must both be proven, and either one failing DECLINES.
+ *
+ * 1. **The RECEIVER is callable.** `x.apply` is only
+ *    `Function.prototype.apply` when `x` is a function; on any other value it
+ *    is an ordinary member named `apply` with no spec meaning here. Without
+ *    this half the arm fires on a plain object that happens to own an `apply`
+ *    method — measured on this branch before the guard
+ *    (`.tmp/probes/p20-user-apply.mts`):
+ *    `({ apply: function (a, b) { return b + 1; } }).apply(null, 6)` threw a
+ *    TypeError instead of answering `7`. That is exactly the "a wrong answer in
+ *    a fold is worse than no fold" failure the campaign brief forbids, so the
+ *    receiver check is not a refinement — it is what makes the arm correct.
+ *    The same narrowing is why the `bind` lowering a few lines up in
+ *    `calls.ts` tests for call signatures before claiming its shape.
+ * 2. **The argument is a primitive other than null/undefined.** `any`, unions,
+ *    objects, arrays, `arguments` and everything unresolvable DECLINE. A boxed
+ *    `new Number(1)` is an object type and never matches.
  *
  * Evaluation order follows the spec: the receiver and both arguments are
  * evaluated (for their side effects) before the throw.
@@ -52,6 +64,21 @@ function isThrowingArgArrayFact(fact: TypeFact): boolean {
 }
 
 /**
+ * Is this receiver provably a function, i.e. is its `.apply` really
+ * `Function.prototype.apply`? A `Function`-typed receiver (the `Function(…)`
+ * product) counts; `any`, unions and plain objects do not.
+ */
+function isCallableReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  let inner: ts.Expression = receiver;
+  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isNonNullExpression(inner)) {
+    inner = inner.expression;
+  }
+  const fact = ctx.oracle.typeFactOf(inner);
+  if (fact.kind === "function") return true;
+  return fact.kind === "builtin" && fact.name === "Function";
+}
+
+/**
  * Emit the §20.2.3.1 step-4 TypeError for `f.apply(thisArg, <primitive>)`, or
  * return undefined to leave the call to the existing lowerings.
  */
@@ -63,6 +90,9 @@ export function tryEmitApplyArgArrayTypeError(
 ): ValType | undefined {
   if (propAccess.name.text !== "apply") return undefined;
   if (expr.arguments.length !== 2) return undefined;
+  // The receiver must be a FUNCTION — see narrowing note 1 above. A plain
+  // object owning an `apply` member reaches this same dispatch site.
+  if (!isCallableReceiver(ctx, propAccess.expression)) return undefined;
   const argArray = expr.arguments[1]!;
   if (!isThrowingArgArrayFact(ctx.oracle.typeFactOf(argArray))) return undefined;
 

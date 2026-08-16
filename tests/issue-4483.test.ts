@@ -293,6 +293,24 @@ describe("#4483 F5 — `f.apply(thisArg, <primitive>)` is a TypeError", () => {
                          return (add as any).apply(null, [3, 4]);`),
     ).toBe(7);
   });
+
+  // NEGATIVE CONTROL — RECEIVER narrowing. `x.apply` is only
+  // `Function.prototype.apply` when `x` is a function; a plain object that owns
+  // an `apply` member reaches the very same dispatch site in `calls.ts`. The
+  // first cut of this arm keyed only on the method NAME and the argument type,
+  // so this program threw a TypeError instead of answering 7 — measured on this
+  // branch (`.tmp/probes/p20-user-apply.mts`: `-1`, i.e. it threw), and measured
+  // as `7` both on base and after adding the `isCallableReceiver` guard. A
+  // wrong throw is worse than no fold, so this control is the one that keeps
+  // the arm honest.
+  it("does NOT fire on a user object that owns an `apply` method", async () => {
+    expect(
+      await runHostFree(
+        `var obj = { apply: function (a: any, b: number): number { return b + 1; } };
+         return obj.apply(null, 6);`,
+      ),
+    ).toBe(7);
+  });
 });
 
 describe("#4483 F6 — a `class` constructor called without `new` is a TypeError", () => {

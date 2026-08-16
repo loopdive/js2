@@ -38,12 +38,14 @@ func-budget-allow:
   # compileCallExpression +29: the three dispatch lines above, in the function
   # that IS the call dispatcher — a new call-shape decision has nowhere else to
   # be made, and the arms it calls are already extracted.
-  # inlineUserFunctions +27 (crosses 300): the caller-poison strictness guard
-  # must sit inside the per-call-site admission loop, next to the other
-  # `declined(...)` reasons, because it is one more admission rule; hoisting it
-  # out would need the loop's callee/caller pair passed to a helper for a
-  # two-line comparison. The bulk of the +27 is the comment that records the
-  # measurement and why the guard is free when no `.caller` is read.
+  # inlineUserFunctions +31, 296 → 327 (crosses 300): the caller-poison
+  # strictness guard must sit inside the per-call-site admission loop, next to
+  # the other `declined(...)` reasons, because it is one more admission rule;
+  # hoisting it out would need the loop's callee/caller pair passed to a helper
+  # for a two-line comparison. The bulk of the +31 is the comment that records
+  # the measurement and why the guard is free when no `.caller` is read.
+  # (Both deltas here are quoted from `npm run check:func-budget` as run on the
+  # shipped diff, which prints each granted entry and its measured delta.)
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/ir-inline.ts::inlineUserFunctions
 related: [4442, 4437, 4440, 4480, 4157, 1472]
@@ -106,6 +108,10 @@ files under `built-ins/Function` (3-way sharded, one process per shard):
 | state | pass | fail | compile_error |
 | ----- | ---- | ---- | ------------- |
 | base  | 363  | 132  | 14            |
+
+This base row was independently re-measured after the session that wrote it was
+killed — same three numbers, on a base that had since advanced past the
+#4479/#4480 wave. See `## Sweep`.
 
 Three corrections that changed what was worth doing:
 
@@ -180,26 +186,112 @@ Four new modules + four dispatch sites; every arm DECLINES rather than guessing.
 | `src/codegen/primitive-absent-property.ts` | R2 — `undefined` for a provably-absent property of a `number`/`boolean` primitive. Declines for any wrapper-chain member, for a module that extends `Number`/`Boolean`/`Object.prototype`, and for write/delete targets. Dispatched LAST, immediately before the legacy tail, so no existing arm loses its claim. |
 | `src/codegen/ir-inline.ts` (guard) | R3 — decline to inline across a strictness boundary, **only** when `ctx.callerStrictGlobalIdx >= 0` (i.e. some function really reads a legacy `caller`). A module that never observes `.caller` — every real program — keeps every inlining decision it had. |
 | `src/codegen/expressions/non-constructable.ts` (arm) | R4 — the `.call`/`.apply`/`.bind` READ is `"provable"`, narrowed to a receiver the oracle types as `function` (or the `Function` builtin). |
-| `src/codegen/apply-arglist-typeerror.ts` | R5a — §20.2.3.1 step 4 TypeError for a provably-primitive argArray. `null`/`undefined` deliberately do NOT throw (step 3). |
+| `src/codegen/apply-arglist-typeerror.ts` | R5a — §20.2.3.1 step 4 TypeError for a provably-primitive argArray, **and only when the RECEIVER is provably callable**. `null`/`undefined` deliberately do NOT throw (step 3). See the over-application note below — the receiver half is what makes this arm correct, not a refinement of it. |
 | `src/codegen/class-call-without-new.ts` | R5b — §10.2.1 step 2 TypeError. Declines for ambient (`.d.ts`) classes, which is how the callable builtins (`Number(1)`, `String(x)`) are modelled — that exclusion is the whole correctness story. |
 
 All type queries go through `ctx.oracle`; `npm run check:oracle-ratchet` reports
 `getTypeAtLocation +0, ctx.checker +0` across the 9 changed files.
 
+### One over-application found and fixed while verifying (R5a)
+
+The first cut of the R5a arm keyed only on the METHOD NAME (`apply`) and the
+argument's type. But `x.apply(…)` reaches that dispatch site for **any** `x`,
+so a plain object owning its own `apply` member was claimed by it. Measured
+here on the pre-guard tree with `.tmp/probes/p20-user-apply.mts`:
+
+| tree | `({ apply: function (a, b) { return b + 1; } }).apply(null, 6)` |
+| ---- | -------------------------------------------------------------- |
+| base (five source files reverted) | `7` |
+| snapshot, before the guard | **threw TypeError** (probe returned `-1`) |
+| shipped (with `isCallableReceiver`) | `7` |
+
+That is a wrong answer where base was right — the "a wrong answer in a fold is
+worse than no fold" failure the campaign brief forbids — so `tryEmitApplyArgArrayTypeError`
+now requires the oracle to type the receiver as `function` (or the `Function`
+builtin) before it claims the shape, the same narrowing the neighbouring `bind`
+lowering already applies. `tests/issue-4483.test.ts` pins it as an F5 negative
+control. The whole-directory sweep below was run on the GUARDED tree; the
+unguarded tree was never measured past this probe.
+
 ## Test Results
 
-See `## Sweep` below for the final before/after over the whole directory, and
-`tests/issue-4483.test.ts` for the per-family pins (each positive pin has a
-negative control, because every family's failure mode is over-application).
+Every number below is from a run executed in this worktree; nothing is carried
+over from the pre-kill snapshot, whose own sweep results did not survive.
+
+| what | result |
+| ---- | ------ |
+| Scoped standalone sweep, `built-ins/Function`, 509 files, base vs shipped | **+15 flips, 0 regressions, net +15** — see `## Sweep` |
+| `tests/issue-4483.test.ts` (default QuickJS provider) | 30 passed |
+| `tests/issue-4483.test.ts` under `JS2WASM_EVAL_ENGINE=interpreter` (refusal provider, CI's changed-root tier) | 30 passed — so no tier arm is needed; every `Function(…)` in the pins has a constant body and is folded AOT |
+| Fn-family control pins `tests/issue-{4436,4437,4440}.test.ts` | 56 passed |
+| Fn-family control pins `tests/issue-{4442,4456,4460,4464}.test.ts` | 72 passed |
+| `npm run typecheck` | clean |
+| `check:loc-budget` / `check:func-budget` / `check:coercion-sites` / `check:dead-exports` / `check:oracle-ratchet` | all OK; the two LOC and two func entries granted here are each consumed and named by the gate output |
+
+`tests/equivalence/` was NOT run: it cannot run in one vitest invocation in this
+container, and the campaign brief scopes it to per-file loops over files the
+diff plausibly touches. The fn-family pins above are the equivalent control for
+this diff's surface.
+
+## Sweep — `built-ins/Function`, standalone, 509 files
+
+A/B run by this agent with `runTest262File(…, "standalone")`, 3 shards, one
+process per shard (`.tmp/sweep.mts`). "base" is this branch's first parent with
+the five modified source files reverted byte-for-byte from `HEAD^1`
+(`git diff --stat HEAD^1 -- <the five>` empty at measurement time); "after" is
+the shipped tree including the R5a receiver guard.
+
+| state | pass | fail | compile_error |
+| ----- | ---- | ---- | ------------- |
+| base | 363 | 132 | 14 |
+| after | **378** | 125 | 6 |
+
+**+15 pass · 0 regressions · net +15** — meets the ≥15 acceptance bar exactly.
+
+Flip list (all 15, base status → pass):
+
+| file | was |
+| ---- | --- |
+| `S15.3_A2_T1` | compile_error |
+| `S15.3_A2_T2` | compile_error |
+| `S15.3_A3_T1` | compile_error |
+| `S15.3_A3_T2` | compile_error |
+| `15.3.5.4_2-20gs` | fail |
+| `15.3.5.4_2-42gs` | fail |
+| `15.3.5.4_2-45gs` | fail |
+| `internals/Call/class-ctor` | fail |
+| `prototype/apply/argarray-not-object` | fail |
+| `prototype/apply/S15.3.4.3_A5_T1` | fail |
+| `prototype/apply/S15.3.4.3_A5_T2` | fail |
+| `prototype/apply/S15.3.4.3_A8_T5` | fail |
+| `prototype/call/S15.3.4.4_A5_T1` | fail |
+| `prototype/call/S15.3.4.4_A5_T2` | fail |
+| `prototype/call/S15.3.4.4_A7_T5` | fail |
+
+Four further rows moved `compile_error → fail` — `S15.3_A3_T3/T4/T5/T6`. They
+are **not** regressions and not counted above: the R1 reshape removed their
+`__get_builtin` refusal, so they now compile and run, and they stop on the
+eval-provider global-binding residual already recorded below
+(`f() returns undefined … SameValue(«null», «undefined»)`). They are the
+clearest available evidence for that residual's owner.
+
+Non-pass rows remaining after the fix: 131, by directory —
+`prototype/toString` 39 · `built-ins/Function` (top level) 26 ·
+`prototype/bind` 19 · `prototype/Symbol.hasInstance` 11 · `prototype/apply` 11 ·
+`prototype/call` 10 · `prototype` 7 · `internals/Construct` 5 · three
+single-row directories. Six compile errors remain, none of them the
+`__get_builtin` shape this issue removed except one unrelated bind row
+(`bind/15.3.4.5-2-7`, #1472 Phase B); four are the #3371 `Reflect.construct`
+NewTarget refusal and one is the #1907 builtin-static-value read.
 
 ## Residuals — measured here, NOT fixed
 
 | residual | rows | evidence | owner |
 | -------- | ---- | -------- | ----- |
-| Bound function has no `length` / `name` | `bind/instance-length-remaining-args`, `instance-length-prop-desc`, `instance-name{,-chained,-non-string}`, `instance-length-default-value` (~6) | `.tmp/probes/p12-bind-meta.js` on this branch: `bar.bind(null).length` is **NaN**, `bar.bind(null).name` is **undefined**; spec 2 / `"bound bar"`. The carrier (`$__bound_fn`) has target/thisArg/boundArgs/bag and no metadata fields. `it.fails` pins in `tests/issue-4483.test.ts`. | unclaimed — successor to #4483, family B |
-| Eval-provider global bindings read wrong | `S15.3_A3_T3/T4/T5/T6`, `S15.3.2.1_A1_T10`, `S15.3.2.1_A3_T15` (6) | `S15.3_A3_T*` now COMPILE (was CE) and fail at `f()` returning `null` where a hoisted-but-unassigned global var must read `undefined`. NOT a boundary-marshalling bug: `.tmp/probes/p10-eval-undef.js` shows `undefined`/`null`/`42` all cross correctly. `.tmp/probes/p11-eval-global.js` shows the same read answering `0`/`NaN` in a differently-shaped module, so the value depends on the module's binding layout. | unclaimed — runtime-eval lane |
-| `arguments` object arrives as null across the provider | `prototype/call/S15.3.4.4_A6_T5/T6/T9` (3) | "cannot read property 'length' of null" inside a `Function(…)` body handed `arguments` via `.call`. | unclaimed — runtime-eval lane |
-| `Function(…)` product used as a mutable thisArg | `prototype/{apply,call}/S15.3.4.{3,4}_A5_T8` (2) | `obj = Function(); Function("this.touched=true").apply(obj)` leaves `obj.touched` unset — the provider's function object is not the same mutable object on both sides. | unclaimed — runtime-eval lane |
-| `Function.prototype.toString` source text | `prototype/toString/*` (~25, 11 of them Proxy) | "Conforms to NativeFunction Syntax" — the whole cluster is out of this issue's families and is the largest remaining one in the directory. | unclaimed — needs its own issue |
+| Bound function has no `length` / `name` | **9** measured here: `bind/instance-length-{prop-desc,default-value,remaining-args,exceeds-int32,tointeger}`, `bind/instance-name{,-chained,-non-string,-error}` (of 19 non-pass rows under `prototype/bind`) | The two `it.fails` pins in `tests/issue-4483.test.ts` reproduce it directly and are green as `it.fails` in both engine tiers: `bar.bind(null).length` is not 2 and `bar.bind(null).name` is not `"bound bar"`. The carrier (`$__bound_fn`) has target/thisArg/boundArgs/bag and no metadata fields. | unclaimed — successor to #4483, family B |
+| Eval-provider global bindings read wrong | **6, each confirmed in this sweep**: `S15.3_A3_T3/T4/T5/T6`, `S15.3.2.1_A1_T10`, `S15.3.2.1_A3_T15` | All six fail with the identical signature `f() returns undefined … SameValue(«null», «undefined»)` — a hoisted-but-unassigned global var reads `null` where it must read `undefined`. The four `S15.3_A3_T*` rows are the ones this issue moved `compile_error → fail`, so they are newly-visible instances rather than new breakage. (The pre-kill draft additionally attributed this to module binding LAYOUT on the strength of two probes, `p10-eval-undef` / `p11-eval-global`, whose files did not survive that session — that narrowing is NOT re-measured here and should be re-derived by whoever takes this.) | unclaimed — runtime-eval lane |
+| `arguments` object arrives as null across the provider | `prototype/call/S15.3.4.4_A6_T5/T6/T9` (3, confirmed in this sweep) | "cannot read property 'length' of null" inside a `Function(…)` body handed `arguments` via `.call`. | unclaimed — runtime-eval lane |
+| `Function(…)` product used as a mutable thisArg | `prototype/{apply,call}/S15.3.4.{3,4}_A5_T8` (2, confirmed in this sweep) | `obj = Function(); Function("this.touched=true").apply(obj)` leaves `obj.touched` unset — the provider's function object is not the same mutable object on both sides. | unclaimed — runtime-eval lane |
+| `Function.prototype.toString` source text | `prototype/toString/*` — **39** non-pass measured in this sweep (11 of them Proxy), not the ~25 the pre-kill draft carried | "Conforms to NativeFunction Syntax" — the whole cluster is out of this issue's families and is by a wide margin the largest remaining one in the directory (39 of the 131 residual rows). | unclaimed — needs its own issue |
 | Realm / Proxy `__module_init` null-deref | 14 rows (`*-realm.js`, `Symbol.hasInstance/*`) | `$262.createRealm` / revoked-proxy shapes. | unclaimed — not ES≤5 |
-| `Function.call/apply` in a plain ES-MODULE lane | 0 (no test262 row) | In `export function test(){ var f = Function.call(…) }` the shape is claimed by an earlier eval-boundary arm and yields a non-function. **Verified identical on base** by reverting `calls.ts` alone, so this change did not move it; the reshape only ever adds behaviour where base refused to compile. `runRunnerLike` in the pin file documents the seam. | unclaimed — runtime-eval lane |
+| `Function.call/apply` in a plain ES-MODULE lane | 0 (no test262 row) | In `export function test(){ var f = Function.call(…) }` the shape is claimed by an earlier eval-boundary arm and yields a non-function, so the F1 pins use the runner's own option set (`runRunnerLike`, which documents the seam). The pre-kill session recorded verifying this identical on base by reverting `calls.ts` alone; that specific A/B was not re-run here. What IS re-measured here is the stronger claim it was offered for — the full-directory sweep shows **0 regressions**, so nothing this change did moved a passing row in either lane. | unclaimed — runtime-eval lane |
