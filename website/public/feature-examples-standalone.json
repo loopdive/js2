@@ -52,7 +52,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 43,
+      "passCount": 45,
       "totalCount": 59
     },
     {
@@ -76,7 +76,7 @@
     {
       "name": "for-in",
       "testCategories": ["language/statements/for-in"],
-      "passCount": 102,
+      "passCount": 104,
       "totalCount": 119
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 537,
+      "passCount": 538,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 952,
+      "passCount": 970,
       "totalCount": 1177
     },
     {
@@ -144,13 +144,13 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3980,
+      "passCount": 3981,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1022,
+      "passCount": 1024,
       "totalCount": 1230
     },
     {
@@ -173,7 +173,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 86,
+      "passCount": 90,
       "totalCount": 234
     },
     {
@@ -185,13 +185,13 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1605,
+      "passCount": 1606,
       "totalCount": 1896
     },
     {
       "name": "Property accessors (get / set)",
       "testCategories": ["language/expressions/property-accessors"],
-      "passCount": 15,
+      "passCount": 19,
       "totalCount": 21
     },
     {
@@ -203,7 +203,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 389,
+      "passCount": 392,
       "totalCount": 440
     },
     {
@@ -263,7 +263,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 321,
+      "passCount": 322,
       "totalCount": 461
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 824,
+      "passCount": 828,
       "totalCount": 1955
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 565,
+      "passCount": 568,
       "totalCount": 1072
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 161,
+      "passCount": 162,
       "totalCount": 178
     },
     {
