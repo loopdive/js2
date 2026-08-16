@@ -1,8 +1,7 @@
 ---
 id: 2668
 title: "ES5: canonical vec-index Object/property MOP residual"
-status: in-progress
-assignee: ttraenkler/opus-es5-a
+status: ready
 created: 2026-06-25
 updated: 2026-08-16
 loc-budget-allow:
@@ -44,7 +43,8 @@ before any code was touched, so the two lanes do not double-fix.
 
 PR: `fix(#2668): standalone ordinary indexed set must create an all-true data
 property`. Branch `issue-2668-defineproperty-fidelity`, lane
-`ttraenkler/opus-es5-a`.
+`ttraenkler/opus-es5-a` (stood down after this slice; claim released, so the
+issue is back at `status: ready` and **unassigned** — it is NOT done).
 
 **This slice is NOT M1 and does not consume it.** M1 (the four-state classifier,
 absence ranges, IR seam) is untouched and still the approved next big step. What
