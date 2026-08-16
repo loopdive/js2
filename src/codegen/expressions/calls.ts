@@ -21,8 +21,12 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
+import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
+import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
+import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
+import { tryEmitClassConstructorCallWithoutNew } from "../class-call-without-new.js"; // (#4483) §10.2.1 step 2
 import { buildClosureResultBoxing } from "../closures/result-boxing.js"; // (#4082) the single closure-result→externref decision
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from; (#3149) native Map.groupBy
 import { isCollectionReflectiveCallShape, tryCompileCollectionReflectiveCall } from "../collections-brand.js"; // (#2604/#3171) {Map,Set,WeakMap,WeakSet}.prototype.METHOD.call brand-check
@@ -6191,6 +6195,16 @@ function compileCallExpression(
     return compileOptionalCallExpression(ctx, fctx, expr);
   }
 
+  // (#4484 B) §7.3.2 RequireObjectCoercible — `undefined.toString()` /
+  // `null["toString"]()`. Runs BEFORE every builtin-method interception below:
+  // those dispatch on the METHOD name and never ask whether the receiver can
+  // carry a method, so all four nullish call forms returned without throwing.
+  // Syntactic receivers only (see the module header).
+  {
+    const r = tryEmitNullishReceiverCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
   {
     const r = tryRuntimeEvalApplyCallableIntrinsic(ctx, fctx, expr);
     if (r !== undefined) return r;
@@ -6213,6 +6227,16 @@ function compileCallExpression(
   // to the last-resort arm's silent `undefined`. Extracted to calls-guards.ts.
   {
     const r = tryNonCallableValueCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+
+  // (#4483) §10.2.1 [[Call]] step 2 — a `class` constructor invoked without
+  // `new` throws TypeError. Sits beside the #4221 primitive guard because it
+  // answers the same question for the one callable-looking value the checker
+  // types as constructable. Declines for ambient (`.d.ts`) classes, which is
+  // how the callable builtins (`Number(1)`, `Error(m)`) are modelled.
+  {
+    const r = tryEmitClassConstructorCallWithoutNew(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -6866,6 +6890,25 @@ function compileCallExpression(
       const compileOneArg = (a: ts.Expression) => compileExpression(ctx, fctx, a);
       const invalidThis = tryBorrowedPrototypeNullishThisThrow(ctx, fctx, expr, innerExpr, compileOneArg, expectedType);
       if (invalidThis !== undefined) return invalidThis;
+
+      // (#4483) `Function.call(thisArg, …body)` / `Function.apply(thisArg, [body])`
+      // are reflective spellings of the Function CONSTRUCTOR, whose [[Call]]
+      // discards `this` (§15.3.1). Reshape to `Function(…body)` so the ordinary
+      // constructor route runs; otherwise `Function.call` is a dynamic builtin
+      // member read that standalone refuses at compile time via `__get_builtin`.
+      {
+        const ctorReshape = reshapeFunctionCtorReflectiveCall(ctx.oracle, expr, propAccess);
+        if (ctorReshape !== undefined) return compileCallExpression(ctx, fctx, ctorReshape, expectedType);
+      }
+
+      // (#4483) §20.2.3.1 step 4 → CreateListFromArrayLike step 2: an argArray
+      // that is provably a non-null primitive is a TypeError, before the callee
+      // runs. Declines for null/undefined (step 3: empty list) and for anything
+      // the oracle cannot prove primitive.
+      {
+        const badArgArray = tryEmitApplyArgArrayTypeError(ctx, fctx, expr, propAccess);
+        if (badArgArray !== undefined) return badArgArray;
+      }
 
       // (#4246) §10.2.1.2 step 5.b — a SLOPPY callee binds `ToObject(thisArg)`
       // for a primitive receiver. Rewrite the receiver to `new <Wrapper>(…)`

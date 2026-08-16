@@ -27,6 +27,12 @@ export const STANDALONE_ES5_GLOBAL_FUNCTION_NAMES = [
   "isFinite",
   "decodeURI",
   "decodeURIComponent",
+  // (#4485) `encodeURI` was the ONE §19.2 global function missing from this
+  // list — its direct CALL had a native lowering all along, so only the VALUE
+  // read was broken, and it read as `null` while its three siblings read as
+  // functions (measured: `built-ins/encodeURI/{name,not-a-constructor,prop-desc}`
+  // failed while every `decodeURI*`/`encodeURIComponent` twin passed).
+  "encodeURI",
   "encodeURIComponent",
 ] as const;
 
@@ -39,6 +45,7 @@ const GLOBAL_FUNCTION_ARITY: Readonly<Record<StandaloneEs5GlobalFunctionName, nu
   isFinite: 1,
   decodeURI: 1,
   decodeURIComponent: 1,
+  encodeURI: 1,
   encodeURIComponent: 1,
 });
 
@@ -166,7 +173,11 @@ export function ensureStandaloneGlobalFunctionClosure(
       // helpers then receive the same native-string carrier as direct calls.
       const toStringIdx = ctx.funcMap.get("__extern_toString");
       if (toStringIdx === undefined) return null;
-      const mask = name === "encodeURIComponent" ? URI_ENCODE_MASK[name] : URI_DECODE_MASK[name];
+      // (#4485) Pick the mask TABLE by helper family, not by a single name —
+      // with `encodeURI` added, a `name === "encodeURIComponent"` test would
+      // silently look `encodeURI` up in the DECODE table and get `undefined`.
+      const isEncode = name === "encodeURI" || name === "encodeURIComponent";
+      const mask = isEncode ? URI_ENCODE_MASK[name] : URI_DECODE_MASK[name];
       closureFctx.body.push(
         { op: "local.get", index: 1 },
         { op: "call", funcIdx: toStringIdx },
