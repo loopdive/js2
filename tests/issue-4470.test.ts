@@ -12,8 +12,11 @@
 //   1. `resolvePositionType` (src/codegen/index.ts ~L989) throws on a
 //      `number[]` element (it resolves to `irVec`, which matches no arm).
 //   2. `prepared-vector-support.ts` L70 accepts element ValTypes f64 / i32 /
-//      externref only, so a `vec<vec<externref>>` (`string[][]`) dies there as
-//      an `invariant` — a HARD compile error, not a demote.
+//      externref only, so a `vec<vec<externref>>` (`string[][]`) is refused
+//      there. That refusal was an untyped `invariant` — a HARD compile error —
+//      until #4486 typed it as the same `type-resolution-unsupported`@resolve
+//      withdrawal the `number[][]` sibling takes. The CARRIER is still
+//      unrepresentable at both layers; only the blast radius changed.
 //
 // Measured with the arm lifted: two of five working `string[][]` programs
 // became compile errors. So this file does NOT test an adoption. It pins the
@@ -303,19 +306,24 @@ describe("#4470 C — a vec whose element is a vec has no IR representation", ()
     expect(outcome).toMatchObject({ kind: "emitted", irBodyEmitted: true, legacyBodyEmitted: false });
   });
 
-  it("KNOWN DEFECT: a plain for-of over a string[][] param is a HARD compile error on main", async () => {
-    // Layer 2, and this one is NOT hypothetical and NOT caused by #4470 — it
-    // reproduces with a plain IDENTIFIER head and no selector change at all.
-    // `string[][]` gets past layer 1 (its inner `string[]` resolves to a
-    // `ref_null $vec_externref`, a `val`), so the function IS claimed; the
-    // logical type is then `vec<vec<externref>>`, which
-    // prepared-vector-support.ts refuses — as an `invariant`, which hard-fails
-    // the build instead of demoting to the working legacy body.
+  it("a plain for-of over a string[][] param DEMOTES cleanly (#4486 — was a hard error)", async () => {
+    // Layer 2, and this one is NOT caused by #4470 — it reproduces with a
+    // plain IDENTIFIER head and no selector change at all. `string[][]` gets
+    // past layer 1 (its inner `string[]` resolves to a `ref_null
+    // $vec_externref`, a `val`), so the function IS claimed; the logical type
+    // is then `vec<vec<externref>>`, which prepared-vector-support.ts refuses.
     //
-    // Pinned deliberately so a fix is NOTICED rather than silently absorbed.
-    // When this assertion flips to success, delete the pin and see #4470's
-    // unblock section: the same fix is what makes the destructuring head
-    // adoptable.
+    // Until #4486 that refusal was an untyped `invariant`, which HARD-FAILED
+    // the build instead of demoting to the working legacy body. It is now the
+    // same typed `unsupported` / `type-resolution-unsupported`@resolve
+    // withdrawal the `number[][]` sibling above already took — the carrier is
+    // still unrepresentable (`irBodyEmitted: false`), it just no longer takes
+    // the program down with it.
+    //
+    // The assertion that flips NEXT is `irBodyEmitted`: when someone adopts
+    // nested-vec carriers, this unit stops demoting and emits. See #4470's
+    // unblock section — that is the same fix that makes the destructuring
+    // head adoptable.
     const { result, outcome } = await outcomeForF(`
       function f(rows: string[][]): number {
         let n = 0;
@@ -324,8 +332,14 @@ describe("#4470 C — a vec whose element is a vec has no IR representation", ()
       }
       export function main(): number { return 0; }
     `);
-    expect(result.success).toBe(false);
-    expect(outcome).toMatchObject({ kind: "invariant", stage: "resolve" });
+    expect(result.success).toBe(true);
+    expect(outcome).toMatchObject({
+      kind: "unsupported",
+      code: "type-resolution-unsupported",
+      stage: "resolve",
+      irBodyEmitted: false,
+      legacyBodyEmitted: true,
+    });
     expect(String((outcome as { detail?: string }).detail)).toContain("prepared vec element");
   });
 });

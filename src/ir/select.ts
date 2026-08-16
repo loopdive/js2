@@ -68,6 +68,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
+import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -9014,11 +9015,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         family = elementFamily;
       }
     }
+    const walkElements = flattenPhase1ArrayLiteralElements(expr); // (#4487) spread / elision gate
+    if (walkElements === null) return false;
     const primitiveFamilies = new Set<IrPrimitiveExpressionFamily>();
-    let everyElementPrimitive = expr.elements.length > 0;
-    for (const el of expr.elements) {
-      if (ts.isSpreadElement(el)) return shapeNo("expr-arraylit-spread", el); // out of scope
-      if (ts.isOmittedExpression(el)) return shapeNo("expr-arraylit-sparse", expr); // sparse — out of scope
+    let everyElementPrimitive = walkElements.length > 0;
+    for (const el of walkElements) {
       if (!isPhase1Expr(el, scope, localClasses) || localClassNameForExpression(el, scope) !== null) return false;
       const family =
         currentSelectionOptions?.classifyPrimitiveExpression?.(el) ??
@@ -9063,6 +9064,45 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // (#2856) Unhandled expression KIND — closures (Arrow/FunctionExpression),
   // await, spread outside the accepted sites, etc. The node kind discriminates.
   return shapeNo("expr-unhandled", expr);
+}
+
+/**
+ * (#4487) Flatten an array literal's elements for the Phase-1 shape and
+ * element-family walk, or reject.
+ *
+ * A spread contributes the expressions whose types it forwards — its own
+ * operand elements for an inline literal, the binding's initializer elements
+ * for a fixed const vec — so the mixed-family and string-backend gates keep
+ * seeing the real element types instead of looking through an opaque spread.
+ *
+ * Spreads are adopted only when EVERY operand has a compile-time-provable
+ * element count (`planArrayLiteralSpread`), because those expand element-wise
+ * into the same `vec.new_fixed` #1804 already builds. A dynamic-length operand
+ * (parameter, call result, `let` binding, a `const` array that could be
+ * resized or escape, a string) would need a runtime-sized allocation the IR
+ * has no node for, so it keeps its own reject arm — that residual is the real
+ * remaining gap. Elision is checked FIRST, so a literal that is both sparse
+ * and spread keeps the more specific `sparse` attribution.
+ *
+ * Returns `null` after recording the reject arm; the caller returns `false`.
+ */
+function flattenPhase1ArrayLiteralElements(expr: ts.ArrayLiteralExpression): ts.Expression[] | null {
+  if (expr.elements.some((el) => ts.isOmittedExpression(el))) {
+    shapeNo("expr-arraylit-sparse", expr); // sparse — out of scope
+    return null;
+  }
+  if (!expr.elements.some((el) => ts.isSpreadElement(el))) return [...expr.elements];
+  const plan = planArrayLiteralSpread(expr);
+  if (plan === null) {
+    shapeNo("expr-arraylit-spread-dynamic-source", expr);
+    return null;
+  }
+  const flattened: ts.Expression[] = [];
+  for (const el of expr.elements) {
+    if (ts.isSpreadElement(el)) flattened.push(...plan.get(el)!.elements);
+    else flattened.push(el);
+  }
+  return flattened;
 }
 
 /**

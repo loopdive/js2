@@ -421,7 +421,8 @@ export function splitBodyAtAwait(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsP
 // (`emitAsyncStateMachine`) and `asyncFnNeedsCps` gate on; it is intentionally
 // left UNCHANGED so the host/gc lanes stay byte-identical. `planLinearAwaits`
 // is the generalization used ONLY by the host-free drive layer (`async-frame.ts`,
-// carrier-gated on `isStandalonePromiseActive`, wasi-only today): it splits a
+// carrier-gated on `isStandalonePromiseActive` — `--target wasi` AND `--target
+// standalone` since the #2980 flip, 2026-07-10; NOT wasi-only): it splits a
 // LINEAR async body (no try/catch/finally-across-await, no await inside loops or
 // other control flow) into an ordered list of suspend segments, one per await,
 // which the general `br`-table-style resume machine drives.
@@ -3382,10 +3383,21 @@ export function isBoundedAsyncGenBody(
 /**
  * (#2865) True when `fn` is a bounded async-generator body that is ALSO
  * await-free (`yield <plain>` / `yield;` only — no `yield await P`). This is
- * the shape drivable under `--target standalone` while the native-`$Promise`
- * CARRIER gate is still wasi-only (#2980): with the carrier off, an awaited
- * operand does not lower to a native `$Promise`, so a `yield await P` would
- * deliver the un-awaited promise OBJECT (wrong value). An await-free body is
+ * the shape drivable under `--target standalone` when the native-`$Promise`
+ * carrier is OFF for the module: with the carrier off, an awaited operand does
+ * not lower to a native `$Promise`, so a `yield await P` would deliver the
+ * un-awaited promise OBJECT (wrong value).
+ *
+ * NOTE (#2867 S2, 2026-08-15): this used to read "while the CARRIER gate is
+ * still wasi-only (#2980)", which is FALSE — #2980 is the flip that widened the
+ * gate to `--target standalone` on 2026-07-10. Standalone is carrier-ON by
+ * default now; the carrier is off for a module only via
+ * `widenAsyncGenFallback` (`moduleHasNonDrivableAsyncGen`). The predicate's
+ * conservatism is therefore still reachable and the code is left UNCHANGED —
+ * only the false premise in the prose is corrected. Whether this narrowing is
+ * still the right shape under a carrier-ON standalone module has NOT been
+ * re-measured; treat that as an open question, not as settled by this comment.
+ * An await-free body is
  * carrier-independent — every promise the machine touches is minted by its own
  * `__async_gen_next_<name>` driver.
  *

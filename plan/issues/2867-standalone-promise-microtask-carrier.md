@@ -13,6 +13,13 @@ goal: standalone
 sprint: current
 horizon: l
 related: [2860, 1326]
+loc-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/async-cps.ts
+  - src/codegen/expressions/call-namespace-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 umbrella: 2860
 architect_spec: candidate
 ---
@@ -276,38 +283,132 @@ and the measured slice-1d gate-widen (`isStandalonePromiseActive` +
 `isStandaloneThenChainNativeActive` → standalone), plus the deferred
 `allSettled`/`any`/generic-iterable follow-ups above.
 
-## Wave-2 adoption + plan refresh (fable, 2026-08-15, #4444 session)
+## S2/S2b measured slice + THREE PLAN CORRECTIONS (claude/es6-team-promise, 2026-08-15)
 
-Stale-lane adoption per project-lead direction (no lane active; claim taken by
-`claude/es6-team-promise` on origin/issue-assignments). Current ES2015-bucket
-standalone taxonomy for the Promise cluster (~233 non-pass, measured from the
-2026-08-15 baseline via `.tmp/es6-standalone-clusters.ts` — re-measure on
-current main before starting, the #4444 wave did not touch these paths):
+Worked from the "Wave-2 adoption + plan refresh" slice order. Two of its four
+slices had **no target on the current tree**; the corrections are recorded here
+so the next lane does not re-derive them.
 
-| ~Tests | Symptom | Owning gap |
-|---|---|---|
-| 50 | CE `standalone target emitted host imports: env::Promise_all/Promise_race (+__js_array_new/push)` | **Gap 4 combinators are LANDED natively (PR #2403) but the gate is not widened** — this is the "slice-1d gate-widen" already named Still open above |
-| 44 | `async continuation threw before completion: illegal cast [__then_fulfill_N ← __drain_microtasks]` | then-chain value carrier mis-cast on the drive layer |
-| 13 | `Promise.resolve is not yet implemented in --target standalone` (+ similar statics) | missing native statics routing |
-| ~35 | AsyncTestFailure / completion-marker | drive-layer semantics; triage after the above |
-| rest | reflection-style (`length`/`prop-desc` etc.) | #2175's lane — skip |
+### Correction 1 — S-1d "gate-widen" is ALREADY LANDED. Do not staff it.
 
-### Slice order (each independently validatable)
+Both carrier gates already cover `--target standalone`
+(`src/codegen/async-scheduler.ts:4686` and `:4743`):
 
-1. **S-1d gate-widen (highest value/effort ratio)**: find the
-   `isStandalonePromiseActive` / `isStandaloneThenChainNativeActive` gates and
-   widen to `--target standalone`; the native combinators + then-chain already
-   exist for the wasi lane. Measure `built-ins/Promise` scoped before/after —
-   expect the 50 CEs to flip to run (some to pass, some to new taxonomy).
-2. **`__then_fulfill` illegal cast (44)**: reproduce one (`built-ins/Promise/all/*`),
-   inspect the fulfill-callback value ABI on the microtask drive; likely an
-   externref/struct mismatch on resolve-value delivery through `__drain_microtasks`.
-3. **Native `Promise.resolve`/statics (13)**: route through the landed carrier
-   (`Promise.resolve` = new-promise + ResolvePromise; check what Gap 1
-   assimilation already provides).
-4. Re-measure and re-taxonomize the ~35 semantic residuals; fix bounded
-   sub-buckets; leave `allSettled`/`any` follow-ups documented if out of reach.
+```ts
+ctx.targetProfile.semanticProviders === "native-first" ||
+ctx.wasi === true ||
+(ctx.standalone === true && !widenAsyncGenFallback(ctx))   // <- widened
+```
 
-Validation per slice: `TEST262_TARGET=standalone TEST262_PATH_FILTER="built-ins/Promise" pnpm run test:262`
-(baseline ~233 non-pass in ES6 bucket; full Promise dir is larger) + gc lane
-control on the same filter + targeted unit tests per slice.
+The widen landed with the **#2980 flip on 2026-07-10** — `async-scheduler.ts:4718`
+says so directly ("the measured on-arm IS now the production behaviour of both
+carrier gates"). Every "wasi-only today / inert until the widen" comment
+predates it. Those stale comments are what produced this plan's phantom
+**"50 CE `env::Promise_all`/`Promise_race` leak"** item.
+
+**That bucket measures ZERO**, two independent ways:
+1. all 729 `built-ins/Promise` files at `--target standalone`: **0** results
+   whose error mentions emitted host imports;
+2. a direct compile probe of 8 combinator shapes (array literal, array var,
+   `race`, `resolve`, `new Promise`, ctor-input, `all([])`, `any`-typed arg) —
+   every one returns `imports=[]`.
+
+The stale comments are corrected in this slice (`promise-combinators.ts`,
+`call-namespace-static.ts`, `async-cps.ts` x2, `issue-2867-gap2/gap4` and
+`issue-2895-drain-hook` test headers).
+
+### Correction 2 — S-3 "13x Promise.resolve not yet implemented" does not exist either.
+
+No such bucket in the measured corpus. The actual compile-error taxonomy at
+`--target standalone` is: **62** `__get_builtin` dynamic-shape (that is #2175's
+reflection lane, not this one), **31** `Promise.allKeyed`/`allSettledKeyed`
+static-read refusals (proposal combinators with no implementation — making them
+compile converts a CE into a runtime fail, not a pass), and 2 `Reflect.construct`.
+**Recommend S-3 be re-scoped or dropped.**
+
+### Correction 3 — the real #1 bucket was never in the plan, and it is not an ABI mismatch.
+
+The plan attributed the `illegal cast [__then_fulfill_N <- __drain_microtasks]`
+bucket to a "fulfill-value ABI mismatch on the microtask drive" and sized it at
+44. It is **114**, and it is two unrelated defects, neither of them an ABI
+mismatch. Both are now fixed and measured.
+
+**S2 — value-escape parameter inference** (`declarations/param-return-inference.ts`).
+`inferParamTypeFromCallSites` narrows an untyped JS parameter when every call
+site it can see agrees, and it models exactly one caller shape: `h(...)` /
+`new h(...)`. A function that also escapes **as a value** (`p.then(h, h)`,
+`arr.map(h)`) has callers the scan never sees, so the agreement is not evidence.
+test262's harness is exactly this shape — `$DONE` is called directly with message
+STRINGS *and* installed via `.then($DONE, $DONE)` — so the parameter lowered to a
+non-nullable native-string `ref` and the then-wrapper's `any.convert_extern` +
+`ref.cast` (`async-scheduler.ts:1677`) trapped on the first `undefined`/Error the
+drive delivered. Fix: a cached, one-walk-per-file value-reference index;
+withdraw a **GC-`ref`** narrowing when the name escapes (only ref narrowings
+trap — f64/i32 coerce, so they keep their existing risk profile). Same shape as
+the #3548 under-application rule two lines above it. Isolated to a 6-line repro:
+`h` used only as a handler is fine; adding `h('str')` anywhere makes it trap;
+`h(7)` and `h({})` do not. `Promise.resolve(1).then(...)` reproduces it — never a
+combinator bug.
+
+**S2b — zero-argument `.then()`** (`expressions/call-receiver-method.ts`).
+The Promise instance-method block was gated on `expr.arguments.length >= 1`, so
+`.then()` fell through to the generic member-call path and emitted a reflective
+`__call_m_then_0` trampoline over a native `$Promise`. Proved by diffing compiled
+function tables: the failing module carries exactly **one extra function,
+`__call_m_then_0`**, versus the `.then(undefined, undefined)` spelling that
+already worked (300 vs 299 named functions, all else identical). Fix: admit
+zero-arg `.then()` when the native lowering will consume it — the same predicate
+shape and justification as the zero-arg `.finally()` admission (#2903) six lines
+above. Adds no machinery; reuses `emitStandalonePromiseThen(..., null, null)`.
+
+### Measured result
+
+`built-ins/Promise`, `--target standalone`, all 729 files, base `9e17d34f3`:
+
+| metric | base | branch | delta |
+|---|---|---|---|
+| pass | 206 | **252** | **+46** |
+| fail | 427 | 381 | -46 |
+| compile_error | 96 | 96 | 0 |
+| `illegal cast` | 114 | **13** | -101 |
+| pass->fail | — | **0** | |
+
+Most retired casts do not become passes — the trap was **masking** the test's real
+semantic failure, which now surfaces in another bucket. That is why +46 < 101.
+
+Controls, all A/B by file copy, all identical base vs branch: 8 promise/async unit
+suites (5 pre-existing failures both sides) · full `tests/equivalence` 214
+files/~1436 tests (16 pre-existing failures both sides, A/B'd file-by-file) · a
+standalone corpus control OUTSIDE Promise, `built-ins/Array/prototype/map` 216
+files (128/87/1 both sides, **0 changed** — the important one, since
+`param-return-inference.ts` is lane-independent and changes ABIs corpus-wide) ·
+typecheck + biome clean. New pinning test
+`tests/issue-2867-s2-value-escape-inference.test.ts` covers both fixes on both
+carrier lanes plus a gc control: **4 of its 6 cases fail on base, all 6 pass on
+branch.**
+
+### Still open after this slice, in size order
+
+1. **75** `Promise resolve or reject function is not callable` — the
+   capability-executor cohort (`Promise.all.call(customCtor, …)`,
+   `capability-executor-*`, `call-resolve-element*`, `new-resolve-function`,
+   `resolve-before-loop-exit*`). Subclass capability-ctor receivers deliberately
+   fall through to the host path, and standalone has none. **#2671-slice work —
+   this is the real next lever.**
+2. **84** `AsyncTestFailure: [object Object]` — drive-layer semantics, needs its
+   own triage pass.
+3. **13** residual `illegal cast` — all combinator-over-**string**
+   (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`).
+   Explicitly deferred in the Gap-4 note; the smallest bounded item left. Needs
+   `__combinator_to_vec` to iterate a string's code points; the exclusion is
+   explicit at `calls.ts:8959` and `:8973`.
+4. **Unrelated defect found while investigating, needs its own issue:**
+   `__drain_microtasks()` in an otherwise-EMPTY module emits an **invalid
+   binary** on BOTH carrier lanes — `Compiling function #17:"__str_ws_start"
+   failed: array.get_u[0] expected type (ref null 3), found local.get of type
+   (ref null 2)`. `export function run(): void { }` alone is valid; adding only
+   the drain call makes it invalid. A/B'd — identical on base and branch, so not
+   caused by this slice. This is the real reason
+   `tests/issue-2895-drain-hook.test.ts`'s second case was red; that case has
+   been re-pointed at the post-widen truth (standalone drives to 41, same as
+   wasi) with the defect preserved as a documented `it.skip`.

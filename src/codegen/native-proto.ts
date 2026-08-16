@@ -34,7 +34,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
+import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js"; // (#2984) refusal-body fallback
@@ -52,7 +53,7 @@ import { allocLocal } from "./context/locals.js";
 // scanForArrayHoles PRE-SCAN and proto-index-store can read it without pulling
 // this module's codegen imports into an ESM cycle. Re-exported here so every
 // existing importer keeps working; the append-only contract lives there now.
-import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
+import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 
 export {
   BUILTIN_BRAND_BASE,
@@ -249,6 +250,15 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   initBody.push({ op: "extern.convert_any" });
   initBody.push({ op: "global.set", index: globalIdx });
 
+  // (#2175 V2-S3b-1) This proto can now FLOW as a runtime value, so make its
+  // own members visible to the dynamic reader by registering a seeder for the
+  // brand's proto-index companion. Emits nothing into `initBody` — the seeder
+  // is a separate function invoked from `__protoidx_companion` when that
+  // companion is first minted — so the instruction sequence returned below is
+  // byte-identical to before this slice. Self-gated (see its doc): a module
+  // that is not `protoMemberDirty` gets `undefined` and pays nothing.
+  ensureNativeProtoCompanionSeeder(ctx, brand);
+
   return [
     { op: "global.get", index: globalIdx },
     { op: "ref.is_null" },
@@ -262,6 +272,255 @@ export function emitLazyNativeProtoGet(ctx: CodegenContext, fctx: FunctionContex
   if (!instrs) return false;
   fctx.body.push(...instrs);
   return true;
+}
+
+// ── (#2175 V2-S3b-1) Brand-companion seeding — the RUNTIME-visible own-member
+// ── table for a builtin prototype object
+//
+// WHY THIS EXISTS. Everything above is compile-time SYNTACTIC: it answers
+// `RegExp.prototype.exec` when the compiler can see both halves at the call
+// site. The moment a proto object FLOWS as a runtime value the syntactic layer
+// is blind, and the dynamic reader (`__extern_get`) gates on `ref.test $Object`
+// and answers `undefined` for a `$NativeProto` receiver. That single read is
+// the whole of #4444 row 3 — measured 2026-08-15 on HEAD 9e17d34f3:
+// `harness/testTypedArray.js:64` does `var TypedArray = Object.getPrototypeOf(
+// Int8Array)`, then `TypedArray.prototype.find` misses, and 121 ES2015
+// reflection tests fail on that one `undefined`.
+//
+// WHY NOT the v2 spec's `$props` field + `__nativeproto_ensure_props` + a
+// step-3 arm in each of 7 reader natives. Since that spec was written, #4160/
+// #4176 landed `proto-index-store.ts`, which ALREADY provides the per-brand
+// `$Object` COMPANION table, a `$NativeProto`-aware receiver-brand classifier
+// (`__protoidx_brand_off`, generic over the whole brand band) and the
+// receiver-aware consults spliced into `__extern_get`/`__extern_has`. Verified
+// live before writing this: a write+read round-trip through a FLOWING
+// `%TypedArray%.prototype` already works. The companion is simply minted
+// EMPTY — nothing ever put the builtin's own members in it.
+//
+// So this is population, not a new MOP: one seeder function per brand that
+// installs the glue's members into the brand companion the first time that
+// companion is minted. `$NativeProto`'s layout is UNCHANGED (the v2 D2 `$props`
+// field is not added), which keeps `buildLazyNativeProtoGetInstrs` — and hence
+// every module that only reads a proto as a value — byte-identical.
+
+/** brand → the name of its `__nativeproto_seed_<brand>` function in `ctx.funcMap`. */
+function nativeProtoSeederRegistry(ctx: CodegenContext): Map<number, string> {
+  const slot = ctx as unknown as { __nativeProtoSeeders?: Map<number, string> };
+  if (!slot.__nativeProtoSeeders) slot.__nativeProtoSeeders = new Map();
+  return slot.__nativeProtoSeeders;
+}
+
+/** Brands materialized before the object runtime existed — see the ordering note. */
+function pendingNativeProtoSeeds(ctx: CodegenContext): Set<number> {
+  const slot = ctx as unknown as { __nativeProtoPendingSeeds?: Set<number> };
+  if (!slot.__nativeProtoPendingSeeds) slot.__nativeProtoPendingSeeds = new Set();
+  return slot.__nativeProtoPendingSeeds;
+}
+
+/**
+ * (#2175 V2-S3b-1) Build the seeders for every brand whose `$NativeProto` was
+ * materialized before `__defineProperty_value` existed. Called once at the end
+ * of `ensureObjectRuntime` — ordinary body-compilation time, so minting and
+ * type registration stay in the normal regime. Idempotent and self-clearing.
+ */
+export function flushPendingNativeProtoSeeders(ctx: CodegenContext): void {
+  const pending = pendingNativeProtoSeeds(ctx);
+  if (pending.size === 0) return;
+  const brands = [...pending];
+  pending.clear();
+  for (const brand of brands) ensureNativeProtoCompanionSeeder(ctx, brand);
+}
+
+/**
+ * (#2175 V2-S3b-1) The registered seeders, keyed by brand OFFSET (the 0-based
+ * slot in the builtin brand band, which is what `__protoidx_companion` indexes
+ * by). Read at FINALIZE by `fillCompanionBody` to build its dispatch; every
+ * entry resolves its funcIdx by NAME at that point, so a late-import shift
+ * between minting and fill cannot stale it (#2043 class).
+ */
+export function nativeProtoSeedersByBrandOffset(ctx: CodegenContext): ReadonlyMap<number, string> {
+  const out = new Map<number, string>();
+  for (const [brand, name] of nativeProtoSeederRegistry(ctx)) out.set(brand - BUILTIN_BRAND_BASE, name);
+  return out;
+}
+
+/**
+ * §17 attributes for a builtin prototype METHOD, in the
+ * `__defineProperty_value` host flag encoding: `{writable: true, enumerable:
+ * false, configurable: true}` — value bits `0b101` + all three "specified"
+ * bits + hasValue. This is the exact constant `emitBuiltinNamespaceObject`
+ * (builtin-static-globals.ts) uses for builtin statics; kept as one shared
+ * spelling rather than re-derived, since the two tables describe the same
+ * §17 rule.
+ */
+const PROTO_METHOD_DEFINE_FLAGS = 0xbd;
+
+// (Deferred, for the accessor tier — see the `kind === "getter"` skip below for
+// why it is not this slice.) When accessors are seeded they must use
+// `__defineProperty_accessor`'s SEPARATE `computeRuntimeFlags` word, not the
+// value encoding above: `(1<<4)|(1<<5)|(1<<2)` = enumerable/configurable
+// SPECIFIED + configurable true, i.e. `{enumerable:false, configurable:true}`
+// (§15.7.14 / §17). Same constant as `ACCESSOR_FLAGS` in class-proto-accessors.ts.
+
+/**
+ * (#2175 V2-S3b-1) Ensure a `__nativeproto_seed_<brand>(externref companion)`
+ * function exists for `brand`, populating the brand's proto-index COMPANION
+ * with the glue's own members. Returns its name, or `undefined` when the brand
+ * has no glue, the module is not armed, or the object runtime is absent.
+ *
+ * Demand-gating, in two independent layers — both must hold, so a module that
+ * does not reflect emits ZERO of this:
+ *   1. `ctx.protoMemberDirty` — the pre-scan saw a builtin `.prototype` that
+ *      can reach the dynamic reader as a value (or an `Object.getPrototypeOf`
+ *      call). A polyfill-only module (`String.prototype.foo = …`) reserves the
+ *      store but is NOT member-dirty, so it seeds nothing and keeps its bytes.
+ *   2. the brand's `$NativeProto` is actually materialized — this is called
+ *      from `buildLazyNativeProtoGetInstrs`, so a brand nobody reads never
+ *      pays for its ~15-30 member closures.
+ *
+ * Symbol-keyed members (`@@<id>` CSV sentinels) are SKIPPED here: the store's
+ * key normalizer (`__protoidx_norm_key`) deliberately refuses symbol keys so no
+ * user `toString` runs twice, so a symbol entry in the companion would be
+ * unreachable. They stay with the syntactic surface; V2-S5 owns the symbol
+ * dispatch tier.
+ *
+ * A member whose glue body REFUSES is skipped rather than failing the seeder —
+ * the companion is a best-effort own-member view, and a partially populated
+ * table is strictly better than none (the missing member reads `undefined`,
+ * exactly as today).
+ */
+export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
+  if (!ctx.standalone || ctx.protoMemberDirty !== true) return undefined;
+  const registry = nativeProtoSeederRegistry(ctx);
+  const existing = registry.get(brand);
+  if (existing !== undefined) return existing;
+
+  const glue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!glue) return undefined;
+
+  // ORDERING (measured, not assumed). A proto can be materialized BEFORE the
+  // object runtime exists, and then `__defineProperty_value` — which the seeder
+  // body must call — is not in `funcMap` yet. Traced on
+  // `var q = opaque(RegExp.prototype)`: RegExp (brand offset 1) materialized with
+  // `__defineProperty_value === undefined`, while `Array` (offset 2), reached
+  // later, saw it registered. Building the seeder eagerly therefore silently
+  // skipped RegExp and left `q.exec` reading `undefined` — the exact defect this
+  // slice exists to fix, reintroduced for a subset of brands.
+  //
+  // So: park the brand and build it at the end of `ensureObjectRuntime`
+  // (`flushPendingNativeProtoSeeders`), which is still ordinary body-compilation
+  // time — NOT finalize. That keeps all func minting and closure/meta TYPE
+  // registration in the normal regime, rather than gambling on late type
+  // additions being safe. A brand parked with no `ensureObjectRuntime` ever
+  // running is correctly dropped: without the object runtime there is no dynamic
+  // reader to serve.
+  if (ctx.funcMap.get("__defineProperty_value") === undefined) {
+    pendingNativeProtoSeeds(ctx).add(brand);
+    return undefined;
+  }
+  // The brand must sit in the reserved band — `__protoidx_companion` indexes a
+  // fixed-size array by `brand - BUILTIN_BRAND_BASE`, so an out-of-band brand
+  // (a user-class tag) would be an OOB slot. Registered glue always is in-band;
+  // this is the assertion, not a fallback.
+  const brandOffset = brand - BUILTIN_BRAND_BASE;
+  if (brandOffset < 0 || brandOffset >= BUILTIN_BRAND_COUNT) return undefined;
+
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineValueIdx === undefined) return undefined;
+
+  const funcName = `__nativeproto_seed_${brand}`;
+  // Mark BEFORE emitting: a member body may itself materialize this brand's
+  // proto (the #2885 identity arm calls `emitLazyNativeProtoGet`), which would
+  // re-enter here and recurse without this guard.
+  registry.set(brand, funcName);
+
+  const seedFctx = makeNativeClosureFctx(funcName, { kind: "externref" }, [], null);
+  // `makeNativeClosureFctx` shapes params as [self, ...user]; here the single
+  // param IS the companion `$Object` (as externref), at index 0.
+  seedFctx.params = [{ name: "__companion", type: { kind: "externref" } }];
+  seedFctx.localMap = new Map([["__companion", 0]]);
+
+  let installed = 0;
+  for (const rawMember of glue.memberCsv.split(",")) {
+    const member = rawMember.trim();
+    if (member.length === 0) continue;
+    if (member.startsWith("@@")) continue; // symbol keys do not participate (see doc)
+    const kind = glue.memberKind(member);
+    // ACCESSORS ARE DELIBERATELY NOT SEEDED IN THIS SLICE.
+    //
+    // WHAT IS MEASURED. Seeding getters as accessor entries (via
+    // `__defineProperty_accessor`, flags `(1<<4)|(1<<5)|(1<<2)` = §17
+    // `{enumerable:false, configurable:true}`) flips `tests/issue-2885.test.ts`
+    // "plain read RegExp.prototype.global is undefined (Site 3 invokes the
+    // getter)" from pass to FAIL. That test passes on unmodified
+    // `origin/main` @ 9e17d34f3, so this is a genuine regression, not a
+    // pre-existing failure. §22.2.6 requires the legacy accessor read with
+    // `SameValue(this, %RegExp.prototype%)` to answer `undefined`.
+    //
+    // WHAT IS NOT KNOWN — do not repeat my first guess. I initially wrote that
+    // the cause was `__extern_get`'s accessor branch binding the wrong `this`,
+    // and that is NOT established: with seeding ON, the same read bound through
+    // a local (`const g: any = (RegExp.prototype as any).global; g === undefined`)
+    // still answers `undefined` correctly, while the INLINE form the test uses
+    // does not. So the divergence is between the inline and materialized read
+    // paths — the same CLASS of defect as the #2984 path-dependent `typeof`
+    // that V2-S1 fixed — but the mechanism is unidentified. Whoever takes the
+    // accessor tier should start from that inline/bound split, not from a
+    // receiver-binding theory.
+    //
+    // Data methods, which are the entire measured win here (121 TypedArray
+    // reflection files, all `find`/`map`/`of`/… members), have no §22.2.6-style
+    // identity rule and are unaffected.
+    //
+    // Gate for the accessor tier when it lands: the four
+    // `%TypedArray%.prototype.{buffer,byteLength,byteOffset,length}/prop-desc.js`
+    // files, which fail identically before and after this slice — so nothing is
+    // lost by deferring.
+    if (kind === "getter") continue;
+
+    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, kind, {
+      // Reify un-wired members as throwing function VALUES (#2984 Phase 2 /
+      // #3250). The companion is a REFLECTION surface: `typeof p.m ===
+      // "function"`, `p.m.name`, `p.m.length` and `isConstructor(p.m) ===
+      // false` are exactly what the length/name/not-a-constructor files read,
+      // and they must answer for every own member — including ones whose
+      // engine body does not exist yet. Invoking such a value throws a
+      // catchable TypeError, which is also what `invoked-as-func.js` expects
+      // for a receiver-less call.
+      refusalBodyFallback: true,
+    });
+    if (!closure) continue;
+
+    const body = seedFctx.body;
+    body.push({ op: "local.get", index: 0 });
+    addStringConstantGlobal(ctx, member);
+    for (const instr of stringConstantExternrefInstrs(ctx, member)) body.push(instr);
+
+    // [obj, key, value, flags] → §17 data entry.
+    for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, closure)) body.push(instr);
+    body.push({ op: "extern.convert_any" });
+    body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+    body.push({ op: "call", funcIdx: defineValueIdx });
+    body.push({ op: "drop" }); // the helper returns the target
+    installed++;
+  }
+
+  if (installed === 0) {
+    registry.delete(brand);
+    return undefined;
+  }
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [], `$${funcName}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: funcName,
+    typeIdx,
+    locals: seedFctx.locals,
+    body: seedFctx.body,
+    exported: false,
+  });
+  ctx.funcMap.set(funcName, funcIdx);
+  return funcName;
 }
 
 /**
