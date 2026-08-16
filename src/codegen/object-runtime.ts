@@ -6794,6 +6794,39 @@ function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
 }
 
 /**
+ * (#1888) Is `typeIdx` one of the WasmGC struct types that IsArray (§7.2.2)
+ * answers `true` for — i.e. a compiler-emitted array carrier?
+ *
+ * This is the STATIC (compile-time, single type index) counterpart of the
+ * runtime `ref.test` chain `fillExternIsArray` bakes, and it applies exactly
+ * the same three rules so the two answers cannot diverge: the `$ObjVec`
+ * dynamic-array carrier, any concrete `__vec_*` leaf, and the template vector.
+ * The abstract `__vec_base` supertype and the exclusively-non-array packed byte
+ * carriers (`i32_byte` ArrayBuffer/DataView, `i32_elem` Int32/Uint32Array,
+ * `i8_byte` Uint8Array) are excluded, per #2047/#3562.
+ *
+ * WHY IT EXISTS. The `Array.isArray(<arg>)` call site in
+ * `call-builtin-static.ts` has a compile-time fast path for arguments whose
+ * Wasm type is statically known. That path answered `true` for **every**
+ * `ref`/`ref_null` type — so `Array.isArray("abc")`, `Array.isArray({0:12,
+ * length:2})` and `Array.isArray(new Date(0))` all returned `true` in
+ * standalone (measured 2026-08-16 on a 5-case probe: 4 of 5 wrong). Only when
+ * the argument was laundered through an `any`-typed local did it reach the
+ * externref branch and the correct native predicate. A fast path that accepts
+ * input it cannot classify is worse than one that declines, so the fast path
+ * now uses this predicate and declines (`false`) for any non-carrier ref.
+ */
+export function isArrayCarrierTypeIdx(ctx: CodegenContext, typeIdx: number): boolean {
+  if (ctx.objectRuntimeTypes?.objVecTypeIdx === typeIdx) return true;
+  const typeDef = ctx.mod.types[typeIdx];
+  if (typeDef?.kind !== "struct") return false;
+  const name = typeDef.name ?? "";
+  if (isNonArrayByteVecName(name)) return false;
+  if (name === "__vec_base") return false;
+  return name.startsWith("__vec_") || name === "__template_vec_externref";
+}
+
+/**
  * (#1904) Fill the standalone native `__extern_is_array` predicate after all
  * user functions and late runtime helpers have registered their WasmGC carrier
  * types. Implements the non-Proxy subset of ES §7.2.2 IsArray that can exist in
