@@ -117,6 +117,7 @@ import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
+import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -2013,6 +2014,11 @@ export function compileBuiltinStaticCall(
       const fpType = emitFunctionPrototypeObjectSingleton(ctx, fctx);
       if (fpType) return fpType;
     }
+
+    // (#4480 S2) A `new F()` instance reports the object `F.prototype` reads.
+    // Ordering is load-bearing — see fnctor-instance-prototype.ts.
+    const fnctorInstanceProto = tryCompileFnctorInstanceGetPrototypeOf(ctx, fctx, arg0);
+    if (fnctorInstanceProto) return fnctorInstanceProto;
 
     const argTsType = ctx.checker.getTypeAtLocation(arg0);
 
