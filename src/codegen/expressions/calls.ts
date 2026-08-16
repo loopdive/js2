@@ -21,6 +21,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
+import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
@@ -6192,6 +6193,16 @@ function compileCallExpression(
   // route to the short-circuiting path.
   if (ts.isOptionalChain(expr) && ts.isPropertyAccessExpression(expr.expression)) {
     return compileOptionalCallExpression(ctx, fctx, expr);
+  }
+
+  // (#4484 B) §7.3.2 RequireObjectCoercible — `undefined.toString()` /
+  // `null["toString"]()`. Runs BEFORE every builtin-method interception below:
+  // those dispatch on the METHOD name and never ask whether the receiver can
+  // carry a method, so all four nullish call forms returned without throwing.
+  // Syntactic receivers only (see the module header).
+  {
+    const r = tryEmitNullishReceiverCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
   }
 
   {
