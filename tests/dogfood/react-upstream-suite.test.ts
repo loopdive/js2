@@ -32,6 +32,7 @@ describe("react upstream suite", () => {
     try {
       expect(document.createElement("div").ownerDocument).toBe(document);
       expect(typeof window.requestAnimationFrame).toBe("function");
+      expect(typeof customElements.define).toBe("function");
       expect((globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT).toBe(
         true,
       );

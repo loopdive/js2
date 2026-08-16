@@ -50,6 +50,7 @@ import { wrapExports } from "../../src/runtime.ts";
 import { setupLitImplementation, setupLitUpstreamSuite } from "./setup-lit-upstream-suite.mjs";
 import { extractLitUpstreamTests } from "./lit-upstream-extract.mjs";
 import { LIT_ASSERT_SHIM, LAST_ERROR_EXPORT, buildTestFunction } from "./lit-upstream-shim.mjs";
+import { installReactTestEnvironment } from "./react-test-environment.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "lit-upstream-suite.json");
@@ -79,6 +80,13 @@ const STUB_SOURCE =
   "  },\n" +
   '  apply: function () { throw new Error("lit-dogfood: called a module the published tarballs do not ship"); },\n' +
   "});\n";
+
+const LIT_TESTING_STUB_SOURCE =
+  "module.exports = {\n" +
+  "  stripExpressionComments: function (html) { return String(html).replace(/<!--\\?lit\\$[0-9]+\\$-->|<!--\\??-->/g, ''); },\n" +
+  "  stripExpressionMarkers: function (html) { return String(html).replace(/<!--\\?lit\\$[0-9]+\\$-->|<!--\\??-->|lit\\$[0-9]+\\$/g, ''); },\n" +
+  "  nextFrame: function () { return new Promise(function (resolve) { requestAnimationFrame(resolve); }); },\n" +
+  "};\n";
 
 /**
  * Bundles one upstream test file's imports into a single module exposing every
@@ -156,7 +164,10 @@ async function bundleImports(fileRecord, { nodeModules, resolveDir }) {
             path: args.path,
             namespace: "lit-stub",
           }));
-          build.onLoad({ filter: /.*/, namespace: "lit-stub" }, () => ({ contents: STUB_SOURCE, loader: "js" }));
+          build.onLoad({ filter: /.*/, namespace: "lit-stub" }, (args) => ({
+            contents: args.path.endsWith("@lit-labs/testing") ? LIT_TESTING_STUB_SOURCE : STUB_SOURCE,
+            loader: "js",
+          }));
         },
       },
     ],
@@ -330,6 +341,17 @@ function quarantineFromErrors(moduleSource, tests, errors) {
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
+  // Lit's upstream tests run under Web Test Runner in a browser. Install the
+  // same explicit jsdom globals for the native oracle and the compiled lane;
+  // without this, every DOM/custom-elements test is mislabeled as unavailable
+  // infrastructure before lit itself gets a chance to run.
+  const dom = installReactTestEnvironment();
+  // Lit's published bundles use these version registries as process-global
+  // duplicate-package guards. Web Test Runner creates them before loading
+  // lit; mirror that host bootstrap so the native oracle does not fail while
+  // constructing the implementation bundle.
+  if (!Array.isArray(globalThis.litHtmlVersions)) globalThis.litHtmlVersions = [];
+  if (!Array.isArray(globalThis.litElementVersions)) globalThis.litElementVersions = [];
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const implementation = setupLitImplementation();
@@ -639,6 +661,7 @@ export async function runHarness({ quiet = false } = {}) {
 
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  dom.cleanup();
   log(`[dogfood] ${report.summary.headline}`);
   log(`[dogfood] full report → ${REPORT_PATH}`);
   return report;
