@@ -67,6 +67,12 @@ const SUPPORTED_MATCHERS = new Set([
   "toBeFalsy",
   "toBeInstanceOf",
   "toHaveLength",
+  "toHaveBeenCalled",
+  "toBeCalled",
+  "toHaveBeenCalledTimes",
+  "toBeCalledTimes",
+  "toHaveBeenCalledWith",
+  "toBeCalledWith",
 ]);
 
 function transpileJsx(source, fileName) {

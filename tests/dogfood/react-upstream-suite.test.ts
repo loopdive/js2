@@ -17,7 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // Regression floor, not a target. Raise it whenever a compiler fix moves the
 // number up; never lower it to make a red run green.
 const PASS_FLOOR = 64;
-const SCORED_FLOOR = 64;
+const SCORED_FLOOR = 77;
 // Every upstream test that upstream itself does not `.skip` must be admitted.
 // Execution is guarded separately because a compile-quarantined test did not run.
 const ADMITTED_FLOOR = 270;
@@ -68,6 +68,15 @@ describe("react upstream suite", () => {
     // source compiled into Wasm would still throw `__DEV__ is not defined`.
     // eslint-disable-next-line no-new-func
     expect(new Function(`${REACT_EXPECT_SHIM}\nreturn __DEV__;`)()).toBe(false);
+  });
+
+  it("provides the Jest mock surface used by the admitted upstream tests", () => {
+    // eslint-disable-next-line no-new-func
+    const calls = new Function(`${REACT_EXPECT_SHIM}
+      const mock = jest.fn().mockImplementation((value) => value);
+      mock("value");
+      return [mock.mock.calls, expect(mock).toHaveBeenCalledTimes(1), expect(mock).toHaveBeenCalledWith("value")];`)();
+    expect(calls[0]).toEqual([["value"]]);
   });
 
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
