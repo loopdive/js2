@@ -138,7 +138,7 @@ const SECTIONS = [
       [
         "`TemplateExpression`",
         "mixed",
-        "STRING and NUMERIC substitutions claim in all three lanes — host, `nativeStrings`, standalone — and lower through the `IR_NUMBER_TO_STRING_FN` provider (#4467, measured 2026-08-15; special values `-0`/`NaN`/`±Infinity`/`1e21`/`1e-7` pinned against node). BOOLEAN substitutions still reject at `template-substitution-unsupported`: a boolean shares IR's `i32` carrier with a native-annotated number, so the lowerer cannot tell `${true}` from `${1}` once the checker family is gone — that needs an IR boolean brand, not a formatter. Re-owned from #1374 (`done`).",
+        'STRING, NUMERIC and BOOLEAN substitutions claim in all three lanes — host, `nativeStrings`, standalone. Numeric lowers through the `IR_NUMBER_TO_STRING_FN` provider (#4467, measured 2026-08-15; special values `-0`/`NaN`/`±Infinity`/`1e21`/`1e-7` pinned against node); boolean lowers to the §7.1.17 `"true"`/`"false"` spellings, distinguished from an i32-carried number by the IR boolean BRAND (#4503, measured 2026-08-15 — the brand, not a formatter, was the unblocker, and an unbranded i32 the checker proves boolean demotes rather than printing a number). Still `mixed`: object/`any` substitutions reject at `template-substitution-unsupported` pending a ToPrimitive walk the IR does not own. Re-owned from #1374 (`done`).',
         "#3518",
       ],
       ["`TrueKeyword` / `FalseKeyword`", "ir-owned", "—", "—"],
@@ -385,7 +385,7 @@ const BUCKETS = {
   ],
   "host-surface-unavailable": [
     "deferred",
-    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+    "Ambient host surface (`document`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. DOM is permanent here: legacy's own standalone body for those units leaks `env.Document_createElement` past the #2961 gate, so there is nothing host-free to lower to. `console.*` was the fixable member and LEFT this bucket in #4462, which gave it its own capability row (`consoleSurfaceCapability`) over the host-free `__stdout_append` sink (#3469); a console call still lands here when the sink is absent or the call shape is outside the lowered slice (multi-arg, expression position, a method the IR does not lower)",
   ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],

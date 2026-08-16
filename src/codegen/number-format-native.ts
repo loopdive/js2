@@ -403,6 +403,82 @@ export function usesNativeNumberFormat(ctx: CodegenContext): boolean {
 }
 
 /**
+ * (#4462) IR-facing symbol for the native `Number::toString` in the string
+ * carrier the IR actually types. The IR's `<number>.toString()` result is
+ * `IrType.string`, which `resolveString()` lowers to `(ref $AnyString)` in every
+ * native-string lane — but the native formatter keeps the host-import-compatible
+ * `(f64) -> externref` ABI (see this module's header), so calling it directly
+ * from the IR would put an `externref` in a `(ref $AnyString)` slot.
+ *
+ * This is a callable-provider *symbol*, resolved to the adapter below by
+ * `resolveAndObserveCallableProvider` — the same shape as
+ * `stringFromCharCodePlan`'s per-lane helper name, so the lane question is
+ * answered once, by the resolver, and never re-asked in `from-ast`.
+ */
+export const IR_NATIVE_NUMBER_TO_STRING_FN = "__ir_number_toString_native";
+
+/**
+ * (#4462) `__ir_number_toString_native(n: f64) -> (ref $AnyString)` — the native
+ * `number_toString` plus the `any.convert_extern` + `ref.cast $AnyString` unwrap
+ * that legacy's `(n).toString()` arm performs inline (`unwrapToNative`,
+ * call-receiver-method.ts, #3912). Minted once, lazily, at IR callable-provider
+ * resolution; `mintDefinedFunc`/`pushDefinedFunc` keep the baked inner index in
+ * the late-import shift set.
+ *
+ * Returns null when the lane cannot supply it (no native strings, no
+ * `$AnyString` type, or the source scan never registered a formatter) — the
+ * caller must treat that as "capability absent" and never claim.
+ */
+export function ensureIrNativeNumberToString(ctx: CodegenContext): number | null {
+  const existing = ctx.funcMap.get(IR_NATIVE_NUMBER_TO_STRING_FN);
+  if (existing !== undefined) return existing;
+  if (!irNativeNumberToStringAvailable(ctx)) return null;
+  // The formatter itself may not exist yet: `emitNativeNumberFormat` is driven
+  // by the legacy source scan (`state.primitiveNeeded`), which only fires on a
+  // spelled-out `.toString()`. `console.log(<number>)` needs it without any such
+  // spelling, so mint on demand — the same lazy call the legacy coercion engine,
+  // template compiler and `String(n)` arm already make.
+  if (!ctx.funcMap.has("number_toString")) emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+  const inner = ctx.funcMap.get("number_toString");
+  if (inner === undefined || anyStrTypeIdx < 0) return null;
+
+  const sigIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "ref", typeIdx: anyStrTypeIdx }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: inner },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: anyStrTypeIdx },
+  ];
+  pushDefinedFunc(ctx, funcIdx, {
+    name: IR_NATIVE_NUMBER_TO_STRING_FN,
+    typeIdx: sigIdx,
+    locals: [],
+    body,
+    exported: false,
+  } as WasmFunction);
+  ctx.funcMap.set(IR_NATIVE_NUMBER_TO_STRING_FN, funcIdx);
+  return funcIdx;
+}
+
+/**
+ * (#4462) Is the native `Number::toString` available to the IR in this lane?
+ * Read at BOTH the selector boundary (`supportsNumberToString`) and the builder
+ * (`nativeNumberToStringAvailable`) so claim and lowering cannot disagree.
+ *
+ * Deliberately a LANE question, not a `funcMap` lookup. Keying it on "has the
+ * formatter been emitted yet" made the claim depend on the legacy source scan
+ * having seen a spelled-out `.toString()` somewhere in the file — so
+ * `console.log(<number>)` in a file with no other `.toString()` claimed at
+ * selection (which does not consult this) and then demoted post-claim at build.
+ * Both lanes that answer true here can mint the formatter on demand.
+ */
+export function irNativeNumberToStringAvailable(ctx: CodegenContext): boolean {
+  return ctx.nativeStrings && usesNativeNumberFormat(ctx);
+}
+
+/**
  * Emit native number-format functions and register them in `ctx.funcMap`.
  * `which` is a subset of {number_toString, number_toString_radix,
  * number_toFixed, number_toPrecision, number_toExponential}. Must run before

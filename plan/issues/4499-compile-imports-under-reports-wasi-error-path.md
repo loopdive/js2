@@ -82,6 +82,26 @@ was not introduced by that commit.
 | …of the 213, asserting on a `wasi`/`standalone` target | 195 |
 | …of those 195, whose file also contains a `throw` (**upper bound** on at-risk) | **60** |
 
+**It breaks measurement TOOLING, not just tests — which is the stronger priority
+argument.** Measured 2026-08-15 during #4500 Slice B: an ad-hoc probe harness
+that signals "wrong value" by `throw`ing had **every single row** die at
+`WebAssembly.instantiate` under `--target wasi`, because the throw linked
+`fd_write`/`proc_exit` and `r.imports` reported `[]` so the harness built no
+shim. The rows were not failing — the instrument was. A defect that silently
+converts "my measurement is broken" into "the compiler is broken" costs far more
+than a vacuous assertion, and it will keep doing so to every future lane that
+writes a throw-based oracle.
+
+**Second worked example, same failure mode one layer up (2026-08-15).** During
+#4500 Slice A a probe harness invoked `instance.exports.__module_init?.()`;
+`--target wasi` exports **`_start`**, so the optional call was a silent no-op and
+every wasi row reported "ok" without executing an instruction — producing a false
+"the defect is standalone-only" finding that reached an issue file and a slice
+plan before a contradicting probe exposed it. Different symbol, identical shape:
+**an instrument reporting a state it never observed, with success as the default
+answer.** The lesson generalises past this issue — a probe must make "I did not
+actually run/see it" a hard error, never a pass.
+
 The 60 is an **upper bound, not a confirmed-broken count**: the regex counts a
 `throw` anywhere in the file (including in the test's own assertion helpers), not
 specifically inside compiled source. The precise at-risk set is "asserts empty

@@ -85,6 +85,7 @@ import {
   sameIrCallableBinding,
 } from "./callable-bindings.js";
 import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
+import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
@@ -143,10 +144,12 @@ import {
   assertNotDeferred,
   binaryOpCapability,
   collectStringLiteralLens,
+  consoleSurfaceCapability,
   hostExternCapability,
   prefixOpCapability,
   stringIndexProvenBelow,
 } from "./capability.js";
+import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -431,6 +434,25 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * floor.
    */
   hasHostNumberToString?(): boolean;
+  /**
+   * (#4462) The widening `hasHostNumberToString` deferred: does this lane own a
+   * HOST-FREE `Number::toString` whose result is already the IR string carrier?
+   * True in the native-string lanes (standalone / WASI / explicit
+   * `--nativeStrings`), where #3912 made legacy's own `(n).toString()` native.
+   * The provider is resolver-selected (`IR_NUMBER_TO_STRING_NATIVE_FN`), so
+   * from-ast never learns which lane it is in. Disjoint from
+   * `hasHostNumberToString` by construction — one is `!nativeStrings`, the other
+   * `nativeStrings` — so the two arms can never both claim one call.
+   */
+  nativeNumberToStringAvailable?(): boolean;
+  /**
+   * (#4462) Does this lane have the host-free console sink (#3469's
+   * `__stdout_append`)? Consulted by the console capability row
+   * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
+   * standalone module that never minted the sink defers rather than claiming a
+   * call with nothing to lower to.
+   */
+  standaloneConsoleSinkAvailable?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -2858,6 +2880,15 @@ function isEmptyStringLiteral(expression: ts.Expression): boolean {
 const IR_I32: IrType = irVal({ kind: "i32" });
 const IR_F64: IrType = irVal({ kind: "f64" });
 const IR_I64: IrType = irVal({ kind: "i64" });
+/**
+ * (#4503) The boolean-branded `i32` (see `boolean-brand.ts`). Every site that
+ * produces a JS `boolean` — literal, comparison, `!`, the equality folds —
+ * types its value with this instead of the bare {@link IR_I32}, so a consumer
+ * can tell `${true}` from `${1}` once the checker family is gone. The brand is
+ * erasable under `irTypeEquals`, so branding a producer changes nothing about
+ * what joins or verifies — only what a brand-reading consumer may claim.
+ */
+const IR_BOOL: IrType = irBool();
 const LEGACY_EXPRESSION_DEFAULT_F64_SENTINEL_BITS = 0x7ff00000deadc0den;
 
 /** `cx`-bound "is this name an i32-promoted slot right now?" predicate. */
@@ -3169,7 +3200,8 @@ function tryLowerFusedI32Binary(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx
   //     NOT Q-WRAP: a wrapped `a + b` has a different VALUE than the f64 sum,
   //     which would change the comparison — legacy's #2055 rule). Both sides
   //     are exact integers, so `i32.lt_s` and `f64.lt` agree bit-for-bit, and
-  //     the result type (i32 bool) is unchanged.
+  //     the result type (i32 bool, boolean-branded since #4503 — same as the
+  //     unfused arm in `lowerBinary`) is unchanged.
   const cmp = I32_COMPARE_BINOPS[op as keyof typeof I32_COMPARE_BINOPS];
   if (cmp !== undefined && isCanonI32Lowerable(expr.left, promoted) && isCanonI32Lowerable(expr.right, promoted)) {
     // Require at least one side to be a promoted slot read; otherwise this is
@@ -3178,7 +3210,7 @@ function tryLowerFusedI32Binary(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx
     if (referencesPromotedI32Slot(expr.left, promoted) || referencesPromotedI32Slot(expr.right, promoted)) {
       const lhs = lowerAsI32(expr.left, cx, "canon");
       const rhs = lowerAsI32(expr.right, cx, "canon");
-      return cx.builder.emitBinary(cmp, lhs, rhs, IR_I32);
+      return cx.builder.emitBinary(cmp, lhs, rhs, IR_BOOL);
     }
   }
 
@@ -3927,10 +3959,10 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     return cx.builder.emitConst({ kind: "f64", value: Number(expr.text) }, irVal({ kind: "f64" }));
   }
   if (expr.kind === ts.SyntaxKind.TrueKeyword) {
-    return cx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+    return cx.builder.emitConst({ kind: "bool", value: true }, IR_BOOL);
   }
   if (expr.kind === ts.SyntaxKind.FalseKeyword) {
-    return cx.builder.emitConst({ kind: "bool", value: false }, irVal({ kind: "i32" }));
+    return cx.builder.emitConst({ kind: "bool", value: false }, IR_BOOL);
   }
   // Slice 1 (#1169a) — strings, templates, typeof, .length, null-keyword.
   if (ts.isStringLiteral(expr) || expr.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
@@ -4661,9 +4693,11 @@ function parseRegExpLiteralText(text: string): { pattern: string; flags: string 
  * Lower a template literal with substitutions. Slice 1 (#1169a) admitted only
  * substitutions that lower to `IrType.string`; #4467 adds the NUMERIC family,
  * routed through the `IR_NUMBER_TO_STRING_FN` provider (§7.1.17
- * `Number::toString(value, 10)`) before it joins the same concat chain. The
- * remaining families still reject in the selector — see the
- * `ts.isTemplateExpression` arm of `isPhase1Expr`.
+ * `Number::toString(value, 10)`) before it joins the same concat chain; #4503
+ * adds the BOOLEAN family, distinguished from a numeric `i32` purely by the
+ * `irBool()` brand and lowered to the `"true"`/`"false"` spellings of §7.1.17
+ * ToString(Boolean). The remaining families still reject in the selector — see
+ * the `ts.isTemplateExpression` arm of `isPhase1Expr`.
  *
  * Even when the head text is empty (`${x}rest`) we emit a `string.const ""`
  * to give the chain a consistent left operand for the first concat — same
@@ -4674,11 +4708,19 @@ function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrV
   let acc = cx.builder.emitStringConst(expr.head.text);
   for (const span of expr.templateSpans) {
     // The expected type stays `string`: a string-family substitution lowers
-    // directly into the carrier, and a numeric one ignores the hint and hands
-    // back its scalar, which the conversion below picks up.
+    // directly into the carrier, and a numeric/boolean one ignores the hint and
+    // hands back its scalar, which the conversions below pick up.
     const sub = lowerExpr(span.expression, cx, { kind: "string" });
     const subType = cx.builder.typeOf(sub);
-    const asString = subType.kind === "string" ? sub : lowerNumericSubstitutionToString(sub, subType, cx);
+    // (#4503) BRAND FIRST, and only then the numeric conversion — a boolean and
+    // a native-annotated number share the `i32` carrier, so asking the brand
+    // before the carrier is what keeps `${true}` from lowering as `${1}`.
+    const asString =
+      subType.kind === "string"
+        ? sub
+        : irTypeIsBoolean(subType)
+          ? lowerBooleanToString(cx.builder, sub)
+          : lowerNumericSubstitutionToString(sub, subType, span.expression, cx);
     acc = cx.builder.emitStringConcat(acc, asString);
     if (span.literal.text) {
       const lit = cx.builder.emitStringConst(span.literal.text);
@@ -4702,9 +4744,31 @@ function lowerTemplateExpression(expr: ts.TemplateExpression, cx: LowerCtx): IrV
  * A carrier the selector's family proof did not anticipate (a boxed/dynamic
  * value, say) demotes with the SAME reason the selector uses, keeping the
  * claim⇔lowering boundary reported under one bucket.
+ *
+ * (#4503) UNBRANDED-`i32` GUARD. The selector now also admits the boolean
+ * family, so an `i32` reaching here is numeric only if it is NOT a boolean some
+ * producer failed to brand — and that gap would print `${true}` as `"1"`. An
+ * `i32` whose source the checker proves boolean therefore demotes instead, at
+ * the selector's own reason. The brand is the fast path (no checker query for
+ * the branded case); this is the backstop for a producer the brand has not
+ * reached, and absent a checker it answers "not proven boolean", which is only
+ * reachable in bare-selector configurations whose boolean admission is the
+ * syntactic set the brand does cover (`!x`, comparisons, `true`/`false`).
  */
-function lowerNumericSubstitutionToString(value: IrValueId, type: IrType, cx: LowerCtx): IrValueId {
+function lowerNumericSubstitutionToString(
+  value: IrValueId,
+  type: IrType,
+  source: ts.Expression,
+  cx: LowerCtx,
+): IrValueId {
   const scalar = type.kind === "val" ? type.val.kind : undefined;
+  if (scalar === "i32" && checkerOperandFamily(source, cx) === "boolean") {
+    throw new IrUnsupportedError(
+      "template-substitution-unsupported",
+      "build",
+      `ir/from-ast: boolean template substitution reached the numeric conversion unbranded (${cx.funcName})`,
+    );
+  }
   const asF64 =
     scalar === "f64"
       ? value
@@ -6761,11 +6825,83 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
  * error, letting the function fall back to legacy.
  */
 /**
- * (#2856) Console methods the IR lowers (single-arg statement calls). Mirrors
- * the CONSOLE_METHODS list in the legacy `collectConsoleImports` scan — a
- * method outside this set was never import-registered, so the IR must demote.
+ * (#4462) `<f64>.toString()` through the lane's HOST-FREE formatter.
+ *
+ * #2955 slice 4 deferred exactly this as "a native number formatter returning
+ * the `(ref $AnyString)` carrier"; #3912 built the formatter for legacy, so the
+ * only missing piece was an IR-visible callable whose ABI is that carrier rather
+ * than the host import's externref. The resolver owns both the availability
+ * question (`nativeNumberToStringAvailable`) and the provider
+ * (`IR_NUMBER_TO_STRING_NATIVE_FN` → the unwrap adapter), so this reads no mode
+ * flag and the result is `IrType.string` with no fix-up at this layer.
+ *
+ * Disjoint from the host-import arm by construction — that one is gated on
+ * `!nativeStrings`, this one on `nativeStrings` — so a single call can never be
+ * claimed twice.
  */
-const IR_CONSOLE_METHODS: ReadonlySet<string> = new Set(["log", "warn", "error", "info", "debug"]);
+function lowerNativeNumberToString(value: IrValueId, funcName: string, cx: LowerCtx): IrValueId {
+  const r = cx.builder.emitCall(irRuntimeFuncRef(IR_NUMBER_TO_STRING_NATIVE_FN), [value], { kind: "string" });
+  if (r === null) throw new Error(`ir/from-ast: native number_toString produced no result in ${funcName}`);
+  return r;
+}
+
+/**
+ * (#4462) Render one already-lowered `console.<m>` argument to `IrType.string`
+ * for the host-free sink.
+ *
+ * Dispatch is on the LOWERED IR type, not the checker type — deliberately, and
+ * for the same reason `emitStandaloneStdoutAppendValue` dispatches on the
+ * compiled ValType (#3469): the static type of a `console.log` argument can be
+ * `any` while the value that actually arrives is a native string. Carriers with
+ * no host-free rendering demote through the typed UNSUPPORTED channel rather
+ * than silently printing nothing.
+ */
+function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName: string): IrValueId {
+  const valueType = cx.builder.typeOf(value);
+  if (valueType.kind === "string") return value;
+  if (valueType.kind === "val" && valueType.val.kind === "f64") {
+    if (cx.resolver?.nativeNumberToStringAvailable?.() !== true) {
+      throw new IrUnsupportedError(
+        "primitive-method-unsupported",
+        "build",
+        `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
+      );
+    }
+    return lowerNativeNumberToString(value, cx.funcName, cx);
+  }
+  // A number that propagation narrowed to i32 is still a number; widen and use
+  // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
+  // `boolean: true` is excluded — a boolean prints "true"/"false", not "1"/"0",
+  // and that rendering is not in this slice.
+  if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
+    const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+    return lowerHostFreeConsoleArgument(widened, cx, methodName);
+  }
+  throw new IrUnsupportedError(
+    "method-call-unsupported",
+    "build",
+    `ir/from-ast: console.${methodName} argument of type ${describeIrType(valueType)} has no host-free rendering (${cx.funcName})`,
+  );
+}
+
+/**
+ * (#4462) `console.<m>(arg)` with NO JS host: render the argument to the native
+ * string carrier and append it to the in-module `__stdout_acc` rope — #3469's
+ * sink, the one legacy already uses at `--target standalone`, kept host-free so
+ * #2961's import-leak gate stays green.
+ *
+ * The trailing newline is CONCATENATED rather than appended by a second call, so
+ * one console call produces one rope node. Output is identical to legacy's
+ * append-arg-then-append-"\n" either way; this just costs one call instead of
+ * two. Statement-position only, so there is no value to return.
+ */
+function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
+  const argVal = lowerExpr(argExpr, cx, { kind: "string" });
+  const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
+  const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
+  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+  return null;
+}
 
 /**
  * (#680) Typed UNSUPPORTED throw for a method call the IR method-call lowering
@@ -7275,11 +7411,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     cx.scope.get("console") === undefined &&
     cx.resolver?.consoleArgVariant !== undefined
   ) {
-    assertNotDeferred(
-      hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
-      `console.${methodName}`,
-      cx.funcName,
-    );
+    const jsHost = cx.resolver?.jsHostExterns?.() === true;
+    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+    assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -7298,6 +7432,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         `ir/from-ast: console.${methodName} with ${expr.arguments.length} args not in slice (${cx.funcName})`,
       );
     }
+    // (#4462) Host-free lane first — the two capabilities are disjoint, and the
+    // sink only exists where there is no host to import from.
+    if (!jsHost && hostFreeSink) return lowerHostFreeConsoleCall(expr.arguments[0]!, cx, methodName);
     const argExpr = expr.arguments[0]!;
     const variant = cx.resolver.consoleArgVariant(argExpr);
     const importName = `console_${methodName}_${variant}`;
@@ -7561,6 +7698,17 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
     return r;
+  }
+
+  // (#4462) The same call in a HOST-FREE lane — see `lowerNativeNumberToString`.
+  if (
+    methodName === "toString" &&
+    expr.arguments.length === 0 &&
+    recvType.kind === "val" &&
+    recvType.val.kind === "f64" &&
+    cx.resolver?.nativeNumberToStringAvailable?.() === true
+  ) {
+    return lowerNativeNumberToString(recv, cx.funcName, cx);
   }
 
   // #2856 builtins slice — a bounded literal fraction-digits argument needs
@@ -10746,7 +10894,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // boxed-NaN-is-truthy byte-parity quirk (host is spec-correct).
       if (randType.kind === "dynamic") {
         const t = cx.builder.emitDynTruthy(rand);
-        return cx.builder.emitUnary("i32.eqz", t, irVal({ kind: "i32" }));
+        return cx.builder.emitUnary("i32.eqz", t, IR_BOOL);
       }
       if (asVal(randType)?.kind !== "i32") {
         const detail = `ir/from-ast: unary '!' expects bool in ${cx.funcName}`;
@@ -10755,7 +10903,8 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
         }
         throw new Error(detail);
       }
-      return cx.builder.emitUnary("i32.eqz", rand, irVal({ kind: "i32" }));
+      // (#4503) `!x` is a JS boolean whatever `x`'s carrier was.
+      return cx.builder.emitUnary("i32.eqz", rand, IR_BOOL);
     }
     case ts.SyntaxKind.TildeToken: {
       const randType = typeOfValue(rand, cx);
@@ -11609,26 +11758,26 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // #1126 Stage 3 — magnitude compares accept f64 OR i32 operands.
     // i32 operands emit native `i32.{lt,le,gt,ge}_{s,u}` based on
     // signedness; f64 keeps the legacy `f64.lt` etc. The result is
-    // always i32 (bool).
+    // always i32 (bool), boolean-BRANDED since #4503 (`${x > 0}` vs `${1}`).
     case ts.SyntaxKind.LessThanToken:
       if (!isF64 && !isI32) requireF64(isF64, "<", cx.funcName);
       binop = isF64 ? "f64.lt" : i32Unsigned ? "i32.lt_u" : "i32.lt_s";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     case ts.SyntaxKind.LessThanEqualsToken:
       if (!isF64 && !isI32) requireF64(isF64, "<=", cx.funcName);
       binop = isF64 ? "f64.le" : i32Unsigned ? "i32.le_u" : "i32.le_s";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     case ts.SyntaxKind.GreaterThanToken:
       if (!isF64 && !isI32) requireF64(isF64, ">", cx.funcName);
       binop = isF64 ? "f64.gt" : i32Unsigned ? "i32.gt_u" : "i32.gt_s";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     case ts.SyntaxKind.GreaterThanEqualsToken:
       if (!isF64 && !isI32) requireF64(isF64, ">=", cx.funcName);
       binop = isF64 ? "f64.ge" : i32Unsigned ? "i32.ge_u" : "i32.ge_s";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     case ts.SyntaxKind.EqualsEqualsEqualsToken:
     case ts.SyntaxKind.EqualsEqualsToken:
@@ -11643,7 +11792,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
         );
       }
       binop = isF64 ? "f64.eq" : "i32.eq";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     case ts.SyntaxKind.ExclamationEqualsEqualsToken:
     case ts.SyntaxKind.ExclamationEqualsToken:
@@ -11655,7 +11804,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
         );
       }
       binop = isF64 ? "f64.ne" : "i32.ne";
-      resultType = irVal({ kind: "i32" });
+      resultType = IR_BOOL;
       break;
     // `&&` / `||` are intercepted at the top of `lowerBinary` (#1820) and
     // lowered to a short-circuiting `IrInstrIf` before the eager operand
@@ -11939,7 +12088,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   if (!leftU && !rightU) return null;
   if (leftU && rightU) {
     // `undefined === undefined` → true / `!==` → false.
-    return cx.builder.emitConst({ kind: "bool", value: isStrictEq }, irVal({ kind: "i32" }));
+    return cx.builder.emitConst({ kind: "bool", value: isStrictEq }, IR_BOOL);
   }
   const other = leftU ? expr.right : expr.left;
   // A typed array index has a non-undefined TypeScript element type even when
@@ -11962,7 +12111,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // helper). Only strict ops reach here (`isStrictEq`/`isStrictNeq` gate).
   if (t.kind === "dynamic") {
     const flag = cx.builder.emitTagTest(v, JsTag.Undefined);
-    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
+    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   const tv = asVal(t);
   // (#2955 slice 3) The string arm asks the resolver-owned rep predicate
@@ -11991,7 +12140,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
       throw new Error(`ir/from-ast: __extern_is_undefined produced no result in ${cx.funcName}`);
     }
-    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
+    return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   // Never-undefined representations: fold — but ONLY when the operand's TS
   // static type proves the VALUE cannot be `undefined`. The Wasm-level rep
@@ -12016,7 +12165,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "closure" ||
     t.kind === "string"; // native-strings mode only (host mode took the branch above)
   if (neverUndefinedRep && !staticTypeMayBeUndefined()) {
-    return cx.builder.emitConst({ kind: "bool", value: isStrictNeq }, irVal({ kind: "i32" }));
+    return cx.builder.emitConst({ kind: "bool", value: isStrictNeq }, IR_BOOL);
   }
   throw new IrUnsupportedError(
     "nullish-value-unsupported",
@@ -12061,7 +12210,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   if (otherType.kind === "dynamic") {
     if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
       const flag = cx.builder.emitTagTest(v, JsTag.Null);
-      return isNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
+      return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
     }
     return null;
   }
@@ -12078,7 +12227,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
       return null;
     }
     const flag = cx.builder.emitRefIsNull(v);
-    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
+    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   // #1981 / #3214: `class`, `object`, `closure`, and boundary `callable`
   // IrTypes are reference-shaped. A class/object/closure/callable value can
@@ -12114,13 +12263,13 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
       return null;
     }
     const flag = cx.builder.emitRefIsNull(v);
-    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
+    return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   if (otherVal?.kind === "ref_null") {
     return null;
   }
 
-  return cx.builder.emitConst({ kind: "bool", value: isNeq }, irVal({ kind: "i32" }));
+  return cx.builder.emitConst({ kind: "bool", value: isNeq }, IR_BOOL);
 }
 
 /**

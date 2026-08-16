@@ -1,9 +1,10 @@
 ---
 id: 4462
 title: "IR: standalone console.log sink + native number_toString, so console-using units claim host-free"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-15
+assignee: ttraenkler/opus-4462
 priority: medium
 horizon: l
 feasibility: medium
@@ -12,6 +13,49 @@ task_type: refactor
 area: ir
 goal: ir-full-coverage
 related: [4457, 3518, 2856, 3469, 3912]
+loc-budget-allow:
+  # The console capability row + the host-free lowering arm and its argument
+  # renderer. Both sit in the existing console/method-call dispatch in
+  # from-ast; splitting the arm out would separate it from the host arm it is
+  # explicitly disjoint with (`jsHost` vs `!jsHost && sink`), which is the one
+  # invariant a reader needs to check.
+  - src/ir/from-ast.ts
+  # Two callable-provider arms + two resolver capabilities, in the file that
+  # already owns every other provider arm and every other resolver capability.
+  - src/ir/integration.ts
+  # `standaloneConsoleSinkAvailable` next to `ensureStandaloneStdoutSink`, the
+  # sink it reports on — the #2135 one-table rule (claim and lowering read one
+  # fact) requires the predicate to live with the thing it measures.
+  - src/codegen/native-strings.ts
+  # The two host-free capability signals threaded into the wasmgc lane's
+  # selection options, at the single site that builds them.
+  - src/codegen/index.ts
+  # `namesHostFreeConsoleSurface` — the selector half of the same one table.
+  - src/ir/select.ts
+coercion-sites-allow:
+  # +3 `number_toString` mentions, none of them a coercion: a `funcMap` lookup,
+  # the on-demand `emitNativeNumberFormat` call the other lazy consumers already
+  # make, and one doc reference. The adapter hand-rolls NO ToString matrix — it
+  # calls the existing formatter and applies the SAME two-op ABI unwrap legacy
+  # already performs at `call-receiver-method.ts::unwrapToNative` (#3912). It
+  # lives here because this file owns `number_toString`'s emission and its
+  # `(f64) -> externref` ABI; putting the adapter anywhere else would separate
+  # the ABI from the code that chooses it.
+  - src/codegen/number-format-native.ts
+func-budget-allow:
+  # +12: one host-free arm in the console dispatch and one in the toString
+  # dispatch, each three lines of condition delegating to a named helper. The
+  # arms must live beside the host arms they are disjoint with.
+  - src/ir/from-ast.ts::lowerMethodCall
+  # +13: two capability methods, in the object that holds every other one.
+  - src/ir/integration.ts::makeFromAstResolver
+  # +5: one callable-provider arm per new host-free symbol.
+  - src/ir/integration.ts::compileIrPathFunctions
+  # +6: the two capabilities threaded into the wasmgc selection options.
+  - src/codegen/index.ts::planIrOverlay
+  # +4: the console narrowing of the host-surface reject arm (#4457 already
+  # holds a grant here for the arm this one narrows).
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #4462 — IR knows only the host-import form of `console.*` and number `.toString()`
@@ -137,3 +181,144 @@ Order matters; each step is separately verifiable.
 5. **Ratchet** `scripts/ir-only-baseline.json` standalone-lane-only
    (`host-surface-unavailable` 6 → 4, `emittedFloor`/`irBodyEmittedFloor` +1),
    and re-run `node scripts/gen-ir-adoption.mjs --check`.
+
+## Test Results
+
+### `pnpm run check:ir-only` — standalone lane (host lane unchanged, 37/37 READY)
+
+Two runs are recorded. The **branch-alone** column is the slice measured against
+its own base (`main` before #4583 landed native `$Map`). The **composed** column
+is the same gate re-run on this branch merged with `main` at `fe8ab310`
+(#4583 native `$Map` + #4592 query-purity + #4599 #4494 construction edges);
+it is the column the committed baseline is ratcheted from.
+
+| metric                             | base (pre-branch) | branch alone | composed with `main@fe8ab310` |
+| ---------------------------------- | ----------------: | -----------: | ----------------------------: |
+| emitted / IR bodies                |                17 |           19 |                        **20** |
+| legacy bodies                      |                27 |           26 |                        **22** |
+| unsupported                        |                20 |           18 |                        **17** |
+| invariants                         |                 0 |            0 |                         **0** |
+| `select/host-surface-unavailable`  |                 6 |            4 |                         **4** |
+| `select/primitive-method-unsupported` |              1 |            0 |                         **0** |
+| `select/body-shape-rejected`       |                 5 |            5 |                         **3** |
+| `select/call-graph-closure`        |                 3 |            4 |                         **3** |
+| `resolve/late-preparation-unsupported` |             0 |            0 |                         **2** |
+
+`main@fe8ab310` alone measures emitted 19 / unsupported 18 / legacy 27
+(its committed `scripts/ir-only-baseline.json` before this merge).
+
+### Composition table — the five units this issue and #4583 touch
+
+Measured on the merged tree by dumping every `IrObservedOutcome` from
+`observeStandaloneLane()`:
+
+| unit | `main@fe8ab310` alone | branch alone | **composed** |
+| ---- | --------------------- | ------------ | ------------ |
+| `classes.ts::main`               | `select/host-surface-unavailable` | emitted | **emitted** |
+| `algorithms.ts::joinNums`        | `select/primitive-method-unsupported` | emitted | **emitted** |
+| `algorithms.ts::<module-init>`   | emitted | emitted | **emitted** |
+| `algorithms.ts::fibMemo`         | **emitted** (#4583's win) | `select/body-shape-rejected` | **`resolve/late-preparation-unsupported`** |
+| `algorithms.ts::main`            | `select/host-surface-unavailable` | `select/call-graph-closure` | **`resolve/late-preparation-unsupported`** |
+
+Net: **19 → 20 emitted**. Composition gains `classes.ts::main` and
+`joinNums` (+2, this issue) and loses `fibMemo` (−1) relative to `main` alone.
+`algorithms.ts::main` is unsupported in all three columns; only its *code*
+moves.
+
+#### The one composed loss, precisely
+
+`fibMemo` emits on `main` alone and demotes to
+`resolve/late-preparation-unsupported` once **this** issue makes
+`algorithms.ts::main` a claim candidate. Verbatim dependency codes from
+`irPostClaimErrors`:
+
+- **`fibMemo`** — `source-global-outside-component`: the module TDZ global
+  (`module-tdz:0`) and the module binding (`module-binding:0`) "belong to
+  non-candidate storage terminal … `root:module-init:0`"; plus
+  `unplanned-abi-binding` for `__new_ReferenceError`, `__ir_map_get_num`,
+  `__ir_map_set_num`, `__unbox_number`, `__extern_is_undefined`, and
+  `implicit-support-reference-unavailable` for `ref_null:65`.
+- **`algorithms.ts::main`** — cascade: `foreign-source-unit` on the
+  now-non-candidate `fibMemo`, plus `unplanned-abi-binding` for this issue's
+  own `__ir_console_sink_append` / `__ir_number_to_string_native` and
+  `__ir_string_concat`.
+
+This is **not new and not this issue's to fix**: #4494 measured exactly this
+composition as its *manifestation 2*, recorded it as
+"**not fixed by this slice, and not regressed**", and named the general
+statement — *a unit may only claim if its component seals* — as its
+**Follow-up**, still unenforced for `source-global-outside-component`,
+module-binding readers and host-provider bindings. #4599 landed #4494's
+construction edge, which is a different edge kind and does not apply here
+(`new Map(...)` is module-level and extern). The evidence above is the witness
+that follow-up needs; `tests/issue-4462.test.ts` pins both codes so the fix
+flips a test rather than going unnoticed.
+
+The baseline is ratcheted to the **true composed** numbers — including the new
+`resolve/late-preparation-unsupported: 2` bucket. Every aggregate improves
+(emitted floor 19 → 20, legacy ceiling 27 → 22, unsupported ceiling 18 → 17);
+the new bucket is the honest record of the one unit that moved backwards.
+
+`pnpm run check:ir-fallbacks`: OK — no unintended / post-claim / module-level
+growth. `node scripts/gen-ir-adoption.mjs --check`: up to date.
+`scripts/ir-only-baseline.json` ratcheted standalone-lane-only; `single-host`
+untouched and still 37/37 READY with 0 unsupported.
+
+### Pins
+
+`tests/issue-4462.test.ts` 15/15, `tests/issue-4461.test.ts` 5/5,
+`tests/issue-4494.test.ts` 6/6 (26/26) on the merged tree. One 4462 assertion
+was updated by the composition: `algorithms.ts::main`'s residual code moved
+from `call-graph-closure` to `late-preparation-unsupported` per the table
+above, and the test now also pins `fibMemo`'s code.
+
+### Runtime parity (acceptance criterion 4)
+
+`classes.ts` and `algorithms.ts` compiled `--target standalone`, instantiated,
+`main()` run, output drained through `__stdout_prepare`/`__stdout_char`. Both
+byte-identical to `node`, both binaries with **ZERO imports**.
+
+Note for anyone reproducing this: the readout exports are stripped by #4035's
+export-policy sink unless `hostBridge: "always"` is passed, so a bare
+`compile(src, { target: "standalone" })` exposes only `main` and the output is
+unobservable. That is by design (exports are GC roots), not a missing sink.
+
+### The `classes.ts::main` internal throw — diagnosis
+
+Root cause: exactly what `assertNotDeferred` says, and nothing behind it. The
+probe that produced it opened the SELECTOR arm while the capability table still
+read `hostExternCapability(jsHost=false) === "defer"` and no host-free lowering
+existed — a selector↔table disagreement by construction. With the row split out
+(`consoleSurfaceCapability`) and the lowering in place, the disagreement cannot
+arise: `classes.ts::main` now emits with zero `irPostClaimErrors` and zero
+`invariant` outcomes (asserted in `tests/issue-4462.test.ts`). There was no
+second, hidden failure behind it.
+
+### Residuals, stated honestly
+
+- **`algorithms.ts::main` is blocked on `fibMemo`, not on `joinNums`.** The
+  issue predicted `joinNums` (`call-graph-closure` via the array `.join()`
+  surface); measurement disagrees. `joinNums`' blocker was
+  `primitive-method-unsupported` — `arr[i].toString()` — which this issue's
+  native formatter fixed, so `joinNums` now CLAIMS. `main`'s remaining unclaimed
+  callee is `fibMemo`. It never touched the array `.join()` surface at all.
+  On the branch alone `fibMemo` was `body-shape-rejected` (`Map`-typed body) and
+  `main` cascaded as `call-graph-closure`; **composed with `main@fe8ab310` both
+  are `resolve/late-preparation-unsupported`** — see the composition table
+  above. #4583 made `fibMemo`'s body claimable, and this issue making
+  `algorithms.ts::main` a candidate enlarges the prepared component past what
+  can seal. That is #4494's open Follow-up, not this slice.
+- **Numeric `console.log` arguments printed NOTHING in standalone before this**
+  and print correctly after. Legacy's `emitStandaloneStdoutAppendValue` drops a
+  bare scalar ("best-effort, never a marker", #3469), so `console.log(42)`
+  silently produced empty output on the legacy path. The IR arm renders it. The
+  legacy path is unchanged and still drops.
+- **Legacy hijacks a shadowed `console` (pre-existing, out of scope).**
+  `calls.ts` dispatches `console.<m>` on identifier TEXT with no shadow guard,
+  so `const console = {...}; console.log(x)` still reaches the sink in a
+  legacy-compiled body. The IR side is shadow-safe (checker-backed resolver);
+  fixing legacy belongs to the #2855 retirement, not here.
+- **Booleans have no host-free console rendering yet.** `console.log(flag)`
+  demotes through the typed UNSUPPORTED channel rather than printing `1`/`0`.
+  `"true"`/`"false"` needs a value-position string select the slice does not
+  build; numbers and strings are covered.
