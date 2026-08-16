@@ -211,21 +211,36 @@ capability reject.
 - `tests/issue-4467.test.ts` — **16/16 pass**, with its AC#4 boolean case
   flipped from "still rejects" to "claims since #4503" (that assertion WAS the
   residual; leaving it would have pinned the bug). Its numeric ACs are untouched.
-- `pnpm run check:ir-fallbacks` — OK, no unintended/post-claim/module-level
-  increases.
-- `node scripts/gen-ir-adoption.mjs --check` — clean.
-- `pnpm run check:ir-only` — verdict READY; host 37/37 emitted, standalone
-  floors at baseline.
+- `pnpm run check:ir-fallbacks` — OK; unintended, post-claim and module-level
+  buckets all empty, unchanged vs. baseline.
+- `node scripts/gen-ir-adoption.mjs --check` — clean, after regenerating the
+  `TemplateExpression` row (the row TEXT lives in `scripts/gen-ir-adoption.mjs`,
+  not in the .md — editing the .md alone would have been silently overwritten).
+- `pnpm run check:ir-only` — verdict READY. Host lane 37/37 emitted, 0
+  unsupported, 0 invariants. Standalone lane 19 emitted / 18 unsupported / 0
+  invariants, with the unsupported codes all pre-existing families
+  (`host-surface-unavailable` 6, `body-shape-rejected` 3, `call-graph-closure`
+  3, `async-function` 4, `date-constructor-unsupported` 1,
+  `primitive-method-unsupported` 1) — none template- or boolean-related.
 - `pnpm exec vitest run tests/issue-3765-numeric-locals.test.ts` — 18/18 (the
   pre-push gate for exactly this change's regression risk: the direct/IR numeric
   carrier contract).
-- `scripts/check-loc-budget.mjs` / `check-func-budget.mjs` — OK under the
-  allowances granted in this frontmatter. The brand + its ToString lowering were
-  extracted to `src/ir/boolean-brand.ts` first, which took `nodes.ts` growth to
-  zero and halved from-ast's.
-- `scripts/equivalence-gate.mjs`, all 8 shards — no new regressions.
+- `scripts/check-loc-budget.mjs` (OK under the two allowances in this
+  frontmatter) / `check-func-budget.mjs` (OK, **no** allowance needed). The
+  brand + its ToString lowering were extracted to `src/ir/boolean-brand.ts`
+  first, which took `nodes.ts` growth to zero and roughly halved from-ast's;
+  `lowerBinary` needed one comment line trimmed to stay under its function
+  budget rather than being granted one.
+- `scripts/equivalence-gate.mjs`, **all 8 shards — no new regressions.** Shards
+  2/4/6/7 additionally report baseline known-failures as `fixed`
+  (`coercion/arithmetic-add`, `Math.pow`, the #1197 i32 peephole,
+  `symbol-basic`). That is baseline staleness, and it is MEASURED rather than
+  inherited from #4467's identical note: re-running shard 7 with the pre-edit
+  `from-ast.ts`/`select.ts` swapped back in (`.tmp/base-4503/`) reports the SAME
+  two `symbol-basic` entries as fixed.
 - `prettier --check`, `biome lint`, `check-oracle-ratchet.mjs`,
-  `check-coercion-sites.mjs`, `check-issue-ids.mjs --against-main` — clean.
+  `check-coercion-sites.mjs`, `check-issue-ids.mjs --against-main`,
+  `update-issues.mjs --check` — clean.
 - `tsc --noEmit`: the known `@types/node` resolution noise under symlinked
   `node_modules`; 33 non-`TS2591`/`TS2304` errors, **none** in any file this
   change touches (same set as on base). CI runs the real typecheck.
