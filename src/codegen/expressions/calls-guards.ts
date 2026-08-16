@@ -68,7 +68,11 @@ export const NEVER_CALLABLE_FACT_KINDS = new Set([
  * `function f(){}`. The primitive-callee guard runs before call IR selection,
  * so it must leave those live globals to the native IsCallable dispatcher.
  */
-function runtimeEvalMayReplaceCallee(ctx: CodegenContext, fctx: FunctionContext, callee: ts.Expression): boolean {
+export function runtimeEvalMayReplaceCallee(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callee: ts.Expression,
+): boolean {
   if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
   const name = callee.text;
   if (fctx.localMap.has(name)) return false;

@@ -223,6 +223,7 @@ export {
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -3446,6 +3447,15 @@ export function compilePropertyAccess(
   {
     const __r = tryStringLengthIteratorAndExternClassReads(ctx, fctx, expr, propName, objType);
     if (__r !== PA_FALLTHROUGH) return __r;
+  }
+
+  // (#4483) LAST arm before the legacy tail: a provably-absent property of a
+  // `number`/`boolean` primitive is `undefined` (§9.1 + §10.5), not the tail's
+  // `ref.null.extern` placeholder. Placed here so every arm above keeps its
+  // claim on the shapes it already handles; declines for every other receiver.
+  {
+    const __r = tryEmitPrimitiveAbsentPropertyRead(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
   }
 
   return finalizeStructAndDynamicMemberGet(ctx, fctx, expr, propName, objType);
