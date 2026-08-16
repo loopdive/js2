@@ -385,7 +385,7 @@ const BUCKETS = {
   ],
   "host-surface-unavailable": [
     "deferred",
-    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+    "Ambient host surface (`document`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. DOM is permanent here: legacy's own standalone body for those units leaks `env.Document_createElement` past the #2961 gate, so there is nothing host-free to lower to. `console.*` was the fixable member and LEFT this bucket in #4462, which gave it its own capability row (`consoleSurfaceCapability`) over the host-free `__stdout_append` sink (#3469); a console call still lands here when the sink is absent or the call shape is outside the lowered slice (multi-arg, expression position, a method the IR does not lower)",
   ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],
@@ -473,7 +473,44 @@ const POSTCLAIM = {
   ],
   "array-representation-unsupported": [
     "capability gap",
-    "Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering.",
+    "Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering. #4502 added 19 more from-ast arms (array/vec literal, pattern, for-of carrier).",
+  ],
+  // --- #4502: codes that GAINED live post-claim throw sites in the from-ast
+  // bare-`Error` sweep. Each is a capability gap by construction: the arm names
+  // a source shape the IR lowering does not cover yet, and the legacy body
+  // lowers it. None restates a predicate the selector already evaluated, so
+  // none is a promotion candidate.
+  "call-arity-unsupported": [
+    "capability gap",
+    "#4502 — JS permits under/over-application, so a call whose arity the IR arm cannot lower is legal source.",
+  ],
+  "call-graph-closure": [
+    "capability gap",
+    '#4502 — `direct call to "f" has no exact AST-site plan`: the callee is not a claimed unit, so there is no IR call target (the #3518 measurement).',
+  ],
+  "call-resolution-unsupported": [
+    "capability gap",
+    "#4502 — a callee/argument shape the IR call lowering does not yet resolve (spread sources, capture shapes, arg carriers).",
+  ],
+  "destructuring-param-complex": [
+    "capability gap",
+    "#4502 — object binding-pattern shapes outside slice 8a (rest, defaults, nested, computed keys) reached from a claimed body.",
+  ],
+  "logical-value-unsupported": [
+    "capability gap",
+    "#4502 — `&&`/`||` operands that are not the i32 bool carrier; ordinary untyped JS reaches this.",
+  ],
+  "param-shape-rejected": [
+    "capability gap",
+    "#4502 — a parameter shape outside the IR param slice, plus the non-f64 expression-default sentinel carrier.",
+  ],
+  "property-access-unsupported": [
+    "capability gap",
+    "#4502 — the READ sibling of `property-write-unsupported`; a `.p` access on a receiver/property shape not yet in the IR slice. The only new code the sweep added.",
+  ],
+  "type-resolution-unsupported": [
+    "capability gap",
+    "#4502 gave it build-stage arms too (typeNodeToIr / resolveIrType / closureParameterTypeToIr); previously resolve-stage only. Same #1921 contract: a type the IR cannot represent is a gap, and hard-failing it regresses real programs.",
   ],
   "body-shape-rejected": [
     "capability gap",

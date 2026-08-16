@@ -76,6 +76,12 @@ export interface IrOnlyBaselineLane {
   readonly unsupportedCeiling: number;
   readonly unsupportedByCode: Readonly<Record<string, number>>;
   readonly invariantCeiling: 0;
+  /**
+   * (#4508) Why a floor/ceiling sits where it does. JSON has no comments and a
+   * ratchet number with no rationale is unreviewable; `baselineFrom` carries
+   * these across `--update` so a reseed cannot silently drop them.
+   */
+  readonly notes?: readonly string[];
 }
 
 export interface IrOnlyBaseline {
@@ -384,10 +390,12 @@ export function evaluateIrOnlyReport(
   return { policy, ready: failures.length === 0, lanes: summaries, failures: [...new Set(failures)] };
 }
 
-export function baselineFrom(lanes: readonly IrOnlyLaneObservation[]): IrOnlyBaseline {
+export function baselineFrom(lanes: readonly IrOnlyLaneObservation[], previous?: IrOnlyBaseline): IrOnlyBaseline {
   const baselineLanes: Record<string, IrOnlyBaselineLane> = {};
   for (const summary of lanes.map(summarizeLane)) {
+    const notes = previous?.lanes[summary.name]?.notes;
     baselineLanes[summary.name] = {
+      ...(notes && notes.length > 0 ? { notes } : {}),
       entryFloor: summary.entries,
       terminalUnitFloor: summary.terminalUnits,
       emittedFloor: summary.emitted,
@@ -444,7 +452,7 @@ async function main(): Promise<void> {
   if (update && policy !== "hybrid") throw new Error("--update requires --policy=hybrid");
 
   const lanes = [await observeSingleHostLane(), await observeStandaloneLane()];
-  const activeBaseline = update ? baselineFrom(lanes) : loadBaseline();
+  const activeBaseline = update ? baselineFrom(lanes, loadBaseline()) : loadBaseline();
   const verdict = evaluateIrOnlyReport(lanes, activeBaseline, policy);
   if (update && verdict.ready) {
     writeFileSync(BASELINE_PATH, `${JSON.stringify(activeBaseline, null, 2)}\n`, "utf8");

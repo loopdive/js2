@@ -17,7 +17,7 @@ import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
 import type { IrVecLowering } from "./lower.js";
 import { asVal, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
-import { IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
 
@@ -310,13 +310,15 @@ export function annotatedArrayElementValType(
 ): ValType {
   const type = declaration.type;
   if (!type || !ts.isArrayTypeNode(type)) {
+    // invariant (producer-promise): the carrier the producer promised was dropped — #4502.
     throw new Error(`ir/from-ast: annotated array '${declaration.name.getText()}' lost its array type`);
   }
   if (type.elementType.kind === ts.SyntaxKind.NumberKeyword) {
     return emptyLiteralElementValType(declaration.initializer!, host);
   }
   if (host.resolver?.preparedAsyncPromiseVectorLocal?.(declaration) === true) return { kind: "externref" };
-  throw new Error(
+  demoteToLegacy(
+    "array-representation-unsupported",
     `ir/from-ast: array annotation on '${declaration.name.getText()}' must be number[] or a certified async vector`,
   );
 }
@@ -391,7 +393,8 @@ export function tryLowerVecPush(
     return undefined;
   }
   if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
-    throw new Error(
+    demoteToLegacy(
+      "method-call-unsupported",
       `ir/from-ast: .push with ${expr.arguments.length} args / spread not in IR scope (single plain arg only) (${host.funcName})`,
     );
   }
@@ -399,7 +402,10 @@ export function tryLowerVecPush(
   const elem = vec.elementValType;
   const narrowedI32 = isNarrowedI32Vec(vec, receiverExpression, host);
   if (!narrowedI32 && elem.kind !== "f64" && elem.kind !== "externref") {
-    throw new Error(`ir/from-ast: .push into '${elem.kind}' vec not in IR scope (${host.funcName})`);
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: .push into '${elem.kind}' vec not in IR scope (${host.funcName})`,
+    );
   }
   const lenF64 =
     scalarVecReceiver && host.emptyArrayInference.isResolvedVectorExpression(receiverExpression)
@@ -414,7 +420,8 @@ export function tryLowerVecPush(
     const raw = ops.lowerExpr(expr.arguments[0]!, irVal(elem));
     if (elem.kind === "f64") {
       if (asVal(host.builder.typeOf(raw))?.kind !== "f64") {
-        throw new Error(
+        demoteToLegacy(
+          "method-call-unsupported",
           `ir/from-ast: .push value ${ops.describeType(host.builder.typeOf(raw))} into f64 vec ` +
             `not in IR scope (${host.funcName})`,
         );
@@ -447,6 +454,7 @@ export function emitForwardingAwareLinearVecLen(
 ): IrValueId {
   const lenI32 = host.builder.emitCall(irIntrinsicFuncRef("__arr_len"), [recv], irVal({ kind: "i32" }));
   if (lenI32 === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: forwarding-aware vec length produced no value (${host.funcName})`);
   }
   return host.builder.emitUnary("f64.convert_i32_s", lenI32, IR_F64);
@@ -512,7 +520,8 @@ export function emitSafeVecGet(
         makeOobDefault = () => host.builder.emitConst({ kind: "null", ty: elemIr }, elemIr);
         break;
       default:
-        throw new Error(
+        demoteToLegacy(
+          "array-representation-unsupported",
           `ir/from-ast: SAFE OOB vec read for element kind '${elemValType.kind}' needs legacy ` +
             `(no in-arm default without a result-type widen) in ${host.funcName}`,
         );

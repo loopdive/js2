@@ -87,6 +87,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
@@ -171,18 +172,20 @@ export type IrFallbackReason =
   // bucketing them as *unintended* overstated what shape work could fix by 6
   // of 11 units on the #3518 standalone reference corpus.
   //
-  // The bucket deliberately holds two kinds of member — do not read it as
-  // uniformly permanent:
+  // The bucket held two kinds of member. One has since been retired:
   //   - PERMANENT here: DOM (`document.*`). Legacy's own `--target standalone`
   //     body for those units still leaks `env.Document_createElement`,
   //     `env.Node_appendChild` & co. past the #2961 import-leak gate, so there
   //     is genuinely nothing host-free to lower to.
-  //   - DEFERRED-BUT-FIXABLE: `console.*`. Standalone DOES have a host-free
-  //     sink (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that
-  //     legacy uses; the IR's console arm only knows the host-import form
-  //     (`irImportFuncRef("env", "console_log_<variant>")`). Retiring that is
-  //     tracked separately — see the standalone console + native
-  //     `number_toString` follow-up filed alongside #4457.
+  //   - RETIRED (#4462): `console.*`. Standalone always had a host-free sink
+  //     (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that legacy
+  //     uses; the IR's console arm knew only the host-import form. It now has
+  //     its own capability row (`consoleSurfaceCapability`) and a host-free
+  //     lowering, so a `console.*` unit is claimed rather than bucketed here.
+  //     A console call STILL lands here when this target has no sink at all, or
+  //     when the call shape is outside the lowered slice (multi-arg, expression
+  //     position, a method the IR does not lower) — a pre-claim rejection, which
+  //     is the point: the alternative is a post-claim demote.
   | "host-surface-unavailable"
   | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -486,6 +489,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly supportsSymbolicMathHelpers?: boolean;
   /** Backend owns a no-radix f64 → abstract-string formatter. */
   readonly supportsNumberToString?: boolean;
+  /**
+   * (#4462) The active backend has the HOST-FREE console sink (#3469's
+   * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
+   * something to lower to without a JS host. Read together with
+   * {@link isHostFreeConsoleCallReceiver} — availability alone is not a claim
+   * licence; the call shape must also be one the builder lowers.
+   */
+  readonly supportsStandaloneConsoleSink?: boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -1417,6 +1428,30 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
     !localClasses.has(expr.text) &&
     currentDeferredHostGlobalResolver(expr) !== undefined
   );
+}
+
+/**
+ * (#4462) Does this identifier name the ambient `console` in a host-free lane
+ * that CAN service it, in a call shape the builder lowers?
+ *
+ * This is the narrowing of `host-surface-unavailable` the reason's own union
+ * comment flagged as fixable. The bucket stays correct for `document` & co.
+ * (nothing host-free to lower to) and stops catching `console`, which standalone
+ * has always been able to print through the #3469 sink — legacy does it today.
+ *
+ * Three conjuncts, each load-bearing:
+ *   1. the backend actually minted the sink (`supportsStandaloneConsoleSink`) —
+ *      a standalone module without native strings has no sink and must defer;
+ *   2. the identifier really is the ambient global, per the same checker-backed
+ *      resolver + `localClasses` shadow rule the ACCEPT arm above uses;
+ *   3. the call shape is the one the builder lowers, so the claim cannot become
+ *      a post-claim demote.
+ */
+function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
+  if (currentSelectionOptions?.supportsStandaloneConsoleSink !== true) return false;
+  if (expr.text !== "console" || localClasses.has("console")) return false;
+  if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
+  return isHostFreeConsoleCallReceiver(expr);
 }
 let currentModuleBindingResolver: IrModuleBindingResolver | IrLegacyModuleBindingResolver | null = null;
 // C3's Map.get result is deliberately carried as externref until a strict
@@ -8077,6 +8112,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return true;
     }
+    // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
+    // call shape the builder lowers. Checked before the reject arm below, which
+    // would otherwise bucket it as target-unserviceable.
+    if (namesHostFreeConsoleSurface(expr, localClasses)) return true;
     // (#4457) "Names a host global this target cannot service" is owned by the
     // target's capability policy, not by IR shape coverage — see the reason's
     // union comment.

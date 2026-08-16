@@ -26,6 +26,15 @@ export type IrUnsupportedCode =
   // demotes to the legacy path as a warning; it must NOT fall into the untyped
   // `unexpected-internal-throw` invariant (which #3341/#3519 hard-error).
   | "method-call-unsupported"
+  // (#4502) The READ sibling of `property-write-unsupported`: a `.p` access on
+  // a receiver/property shape the IR property-access lowering does not yet
+  // cover (a receiver IrType outside slice 2, an object/class shape with no
+  // such field, an extern class with no registered property). The write side
+  // and the method-call side each already had a code; the read side did not,
+  // so its arms threw a bare `Error` and hard-failed a CLAIMED unit. The ONLY
+  // new code added by the #4502 sweep — every other converted arm reuses an
+  // existing sibling code.
+  | "property-access-unsupported"
   // (#3565) Three DESIGNED demote-to-legacy sites that #3341/#3519 silently
   // promoted to hard `invariant` compile errors, contradicting their own
   // documented "clean throw → legacy" / "demotes the function to legacy"
@@ -173,6 +182,20 @@ export class IrInvariantError extends Error {
  * the documented "clean throw → legacy" contract silently became a compile
  * failure. Always use this rather than a bare `Error` for a not-yet-adopted
  * construct.
+ *
+ * (#4502) That advice used to be enforced only site by site, and the same bug
+ * was rediscovered every time an adoption WIDENED the selector's claim set:
+ * an arm that had never been reachable on a claimed unit suddenly was, and its
+ * bare `Error` took the whole function down instead of demoting. It fired four
+ * times on 2026-08-15 alone (#4578 string slice-1 arms, #4486 prepared-vec
+ * allowlist, #4487's three `lowerArrayLiteral` shapes, plus two more observed
+ * sites). #4502 therefore swept `src/ir/from-ast.ts` and the build-stage
+ * lowering helpers it dispatches into wholesale: every arm was classified
+ * CAPABILITY GAP (legit JS the IR cannot lower yet -> `demoteToLegacy`) or
+ * PRODUCER PROMISE (a plan/helper/selector contract violation -> stays a bare
+ * `Error`, i.e. `invariant`, and now carries an `// invariant
+ * (producer-promise):` comment naming the promise). A new bare `Error` in
+ * those files is therefore a deliberate invariant claim, not an oversight.
  */
 export function demoteToLegacy(code: IrUnsupportedCode, detail: string): never {
   throw new IrUnsupportedError(code, "build", detail);

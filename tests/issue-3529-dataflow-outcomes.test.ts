@@ -116,6 +116,56 @@ function expectLowerInvariant(
   expect(evaluateIrOutcomePolicy([observed], "ir-only").ready).toBe(false);
 }
 
+/**
+ * Sibling of {@link expectLowerInvariant} for an arm whose own contract is a
+ * DEMOTE, not the invariant backstop — the typed `unsupported` outcome keeps a
+ * working legacy body, so `hybrid` stays ready and only `ir-only` blocks.
+ */
+function expectLowerTypedDemote(
+  source: string,
+  calleeTypes: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>,
+  code: IrUnsupportedCode,
+  resolver?: IrFromAstResolver,
+): void {
+  const ast = analyzeSource(source, "producer-seam-demote.ts");
+  const declaration = ast.sourceFile.statements.find(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "test",
+  );
+  expect(declaration).toBeDefined();
+  const ownerIdentity = irIdentities.next("test");
+  const directCalls = collectIrDirectCallLoweringPlans(
+    declaration!,
+    ownerIdentity.unitId,
+    new Map(
+      [...calleeTypes].map(([calleeName, signature]) => [
+        calleeName,
+        { target: irUnitFuncRef(irIdentities.next(`callee:${calleeName}`)), signature },
+      ]),
+    ),
+  );
+
+  let thrown: unknown;
+  try {
+    lowerFunctionAstToIr(declaration!, {
+      ownerUnitId: ownerIdentity.unitId,
+      exported: true,
+      checker: ast.checker,
+      directCalls,
+      resolver,
+    });
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(Error);
+  expect(classifyIrFailure(thrown, "build")).toMatchObject({
+    kind: "unsupported",
+    code,
+    stage: "build",
+  });
+}
+
 describe("#3529 P2 — typed dataflow outcomes", () => {
   it.each([
     {
@@ -227,13 +277,23 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
     expect((instance.exports.test as () => number)()).toBe(3);
   });
 
-  it("keeps a checker-string carrier contradiction invariant at the mixed-string gate", () => {
-    expectLowerInvariant(
+  // (#4502) This one reaches the MIXED string/non-string gate, whose own
+  // comment reads "Always a clean demote, never the invariant backstop: one
+  // operand is statically string-kinded here, so this is a slice-1 capability
+  // gap by construction." It has produced a typed `operand-coercion-unsupported`
+  // since that arm was written; the assertion here still said
+  // `unexpected-internal-throw` and was RED on main (verified on fce375e5,
+  // independently of #4502's sweep). Corrected to the contract the site states.
+  // The sibling boolean/unary contradictions below are the real
+  // producer-contract cases and still assert `invariant`.
+  it("demotes cleanly at the mixed-string gate (its own stated contract)", () => {
+    expectLowerTypedDemote(
       `
         function text(): string { return "value"; }
         export function test(): number { return "value" == text() ? 1 : 0; }
       `,
       new Map([["text", { params: [], returnType: F64 }]]),
+      "operand-coercion-unsupported",
     );
   });
 
@@ -352,10 +412,18 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect(thrown).not.toBeInstanceOf(TypeError);
+    // The load-bearing assertion: the inherited signature must NOT be treated
+    // as a method-table entry, so lowering rejects rather than silently
+    // resolving it.
     expect((thrown as Error).message).toContain(`method call .${methodName}(...) on string not in slice 4`);
+    // (#4502) `.m(...) on <type> not in slice 4` is the exact message shape
+    // `method-call-unsupported` was introduced for (#680) — "a not-yet-adopted
+    // construct, NOT a bug, so it demotes". This has produced the typed code
+    // since then; the assertion still said `unexpected-internal-throw` and was
+    // RED on main (verified on fce375e5, independently of #4502's sweep).
     expect(classifyIrFailure(thrown, "build")).toMatchObject({
-      kind: "invariant",
-      code: "unexpected-internal-throw",
+      kind: "unsupported",
+      code: "method-call-unsupported",
       stage: "build",
     });
   });
