@@ -2047,7 +2047,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                     { op: "local.get", index: 0 },
                     { op: "local.get", index: keyLocal },
                     { op: "local.get", index: 2 },
-                    { op: "f64.const", value: HOST_HAS_VALUE },
+                    // (#2668) SEED_FLAGS, not HOST_HAS_VALUE. This is an ORDINARY set and
+                    // every non-null-entry arm above returns, so the index is either brand
+                    // new (§10.1.6.3 CreateDataProperty ⇒ all-true W/E/C) or an implicit
+                    // dense element (already all-true). HOST_HAS_VALUE specifies none of the
+                    // three, so `var a = []; a[0] = 101` defaulted them FALSE. See
+                    // tests/issue-2668-vec-ordinary-set-creates-default-data.test.ts.
+                    { op: "f64.const", value: SEED_FLAGS },
                     { op: "call", funcIdx: vecDpValueIdx },
                     { op: "drop" },
                     { op: "return" },

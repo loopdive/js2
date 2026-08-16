@@ -51,6 +51,17 @@ from `src/index.js`; `emitWat:true` to read WAT. All probes live in `.tmp/`.
    `node scripts/build-runtime-eval-provider.mjs --refusal-only` and run the
    pin under `JS2WASM_EVAL_ENGINE=interpreter` before calling it done.
 
+## Environment trap: fresh worktrees have NO .test262-cache (#4484 finding)
+
+A fresh agent worktree lacks `.test262-cache/`, so eval-dependent rows fail
+as "quickjs provider is not built" on BOTH sides of an A/B — a silently
+under-measured sweep (21 rows misread in one measured case). Before any
+sweep: copy the main checkout's `.test262-cache/` artifacts in, or build the
+provider (`npx tsx scripts/build-quickjs-eval-provider.mjs`, falling back to
+`node scripts/build-runtime-eval-provider.mjs --refusal-only` +
+`JS2WASM_EVAL_ENGINE=interpreter`), and confirm a known eval-dependent row
+runs before trusting the numbers.
+
 ## Verification floor (every issue, before `status: done`)
 
 - Scoped standalone sweep over the issue's directory before AND after, from

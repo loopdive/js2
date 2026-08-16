@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7649,
-    "fail": 1361,
+    "pass": 7657,
+    "fail": 1353,
     "ce": 19,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9087,
-    "fail": 2511,
+    "pass": 9090,
+    "fail": 2508,
     "ce": 105,
     "skip": 1,
     "total": 11704,
@@ -138,8 +138,8 @@
       },
       {
         "name": "class",
-        "pass": 292,
-        "fail": 104,
+        "pass": 293,
+        "fail": 103,
         "ce": 14,
         "skip": 0,
         "total": 410,
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3500,
-    "fail": 1286,
-    "ce": 37,
+    "fail": 1285,
+    "ce": 38,
     "skip": 0,
     "total": 4823,
     "pct": 73,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2574,
-        "fail": 1204,
-        "ce": 32,
+        "fail": 1203,
+        "ce": 33,
         "skip": 0,
         "total": 3810,
         "pct": 68
@@ -4268,8 +4268,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4141,
-    "fail": 1222,
+    "pass": 4143,
+    "fail": 1220,
     "ce": 82,
     "skip": 0,
     "total": 5445,

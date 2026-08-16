@@ -173,7 +173,9 @@ const DATE_PROTO_METHODS = [
   "setUTCMinutes",
   "setUTCMonth",
   "setUTCSeconds",
+  "setYear", // (#4485) Annex B §B.2.4.2 legacy setter
   "toDateString",
+  "toGMTString", // (#4485) Annex B §B.2.4.3 — same function object as toUTCString
   "toISOString",
   "toJSON",
   "toLocaleDateString",
@@ -570,6 +572,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     toISOString: 0,
     toTimeString: 0,
     toUTCString: 0,
+    // (#4485) Annex B §B.2.4.3 `toGMTString` IS `toUTCString` (same function
+    // object), so it must report the same 0 arity.
+    toGMTString: 0,
     // (#3174) Date.prototype.toLocale{Date,Time}String take only OPTIONAL
     // (reserved locales/options) params — spec `.length` is 0 (§21.4.4.39/40).
     // `toLocaleString` (also 0) is already in the shared table above.
@@ -1738,6 +1743,12 @@ function makeGlue(
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
     memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
+    // toUTCString` (one function object, asserted by test262 annexB
+    // .../toGMTString/value.js). Alias the closure identity, not the member
+    // set: `toGMTString` stays in `DATE_PROTO_METHODS` so it is still an own
+    // property for hasOwnProperty/gOPD. No other family has an identity alias.
+    memberAliasOf: (member) => (name === "Date" && member === "toGMTString" ? "toUTCString" : undefined),
     // (#2193 PR-B) Array.prototype.slice is now a real native closure body;
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.

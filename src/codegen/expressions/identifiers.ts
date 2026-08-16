@@ -46,7 +46,11 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
-import { resolveBuiltinCtorAliasName, tryEmitNonCallableRhsThrow } from "../native-ordinary-instanceof.js";
+import {
+  identifierIsWrittenTo,
+  resolveBuiltinCtorAliasName,
+  tryEmitNonCallableRhsThrow,
+} from "../native-ordinary-instanceof.js";
 import { tryEmitNativeDynamicInstanceOf } from "../native-dynamic-instanceof.js";
 import { isObjectFamilyCtorName, tryEmitNativeObjectFamilyInstanceOf } from "../native-object-family-instanceof.js";
 import { emitTaCtorValue } from "../dataview-native.js";
@@ -1704,6 +1708,18 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // (`1 instanceof <runtime-non-object>`), so that lane is left byte-identical.
   // The object-LHS dynamic path (a real proto-chain-walk membership test) is
   // deferred to the #2916 Slice B substrate.
+  // (#2916) §7.3.20 step 1, host-free: a provably non-callable OBJECT RHS
+  // throws. Declines (null) in gc/host mode — see native-ordinary-instanceof.ts.
+  //
+  // (#4484 A) Ordered BEFORE the #2998 primitive-LHS fold below, which is the
+  // spec order: OrdinaryHasInstance checks `IsCallable(C)` in step 1 and
+  // `Type(V) is Object` only in step 3, so a non-callable RHS throws even for a
+  // primitive LHS. With the fold first, `1 instanceof Math` answered `false`
+  // (`S11.8.6_A6_T2`, measured fail→pass). Both arms compile both operands and
+  // return, so the swap is a precedence change only.
+  const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
+  if (nonCallableThrow) return nonCallableThrow;
+
   if (noJsHost(ctx) && isExclusivelyPrimitiveType(ctx.checker.getTypeAtLocation(expr.left))) {
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
@@ -1712,11 +1728,6 @@ function emitDynamicInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
-
-  // (#2916) §7.3.20 step 1, host-free: a provably non-callable OBJECT RHS
-  // throws. Declines (null) in gc/host mode — see native-ordinary-instanceof.ts.
-  const nonCallableThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
-  if (nonCallableThrow) return nonCallableThrow;
 
   // (#2916 Slice B) Host-free §13.10.2 + §7.3.20 for the fully-dynamic RHS.
   // Returns the SAME 0/1/2 tri-state `__instanceof_check` did, so the throw
@@ -1996,7 +2007,19 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
       ts.TypeFlags.Unknown |
       ts.TypeFlags.TypeParameter |
       ts.TypeFlags.NonPrimitive;
-    if ((rhsType.flags & PRIMITIVE_RHS) !== 0 && (rhsType.flags & NON_PRIMITIVE) === 0) {
+    // (#4484 A) …but the STATIC type of a REASSIGNED binding is not evidence
+    // about its value at this site. `var OBJECT = 0; (OBJECT = Object, {})
+    // instanceof OBJECT` widens `OBJECT` to `number` from its initializer, and
+    // TS never narrows it back (the write is a type error that
+    // `skipSemanticDiagnostics` suppresses). The fold then threw
+    // "Right-hand side of 'instanceof' is not an object" for an RHS that holds
+    // the real `Object` constructor at runtime — a WRONG throw, observable in a
+    // `catch` (`S11.8.6_A2.4_T1`, measured fail→pass). Any write to the name
+    // anywhere in the file disqualifies the static claim; the site then routes
+    // to the runtime tri-state helper, which decides from the VALUE.
+    const rhsIsReassignedBinding =
+      ts.isIdentifier(expr.right) && identifierIsWrittenTo(expr.right.getSourceFile(), expr.right.text);
+    if (!rhsIsReassignedBinding && (rhsType.flags & PRIMITIVE_RHS) !== 0 && (rhsType.flags & NON_PRIMITIVE) === 0) {
       // Evaluate LHS then RHS for side effects, discard both, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
       if (lt) fctx.body.push({ op: "drop" });
@@ -2005,6 +2028,17 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
       emitThrowTypeError(ctx, fctx, "Right-hand side of 'instanceof' is not an object");
       return { kind: "i32" };
     }
+  }
+
+  // (#4484 A) §7.3.20 step 1 — a bare builtin NAMESPACE RHS (`Math`, `JSON`,
+  // `Reflect`, `Atomics`) has no [[Call]], so the operator throws whatever the
+  // LHS is. Placed here, ahead of `ctorName` resolution: `Math` resolves to a
+  // name the builtin dispatch below folds statically (to `false`), so the
+  // non-callable arm inside `emitDynamicInstanceOf` was never reached
+  // (`S11.8.6_A6_T2`, measured fail→pass).
+  {
+    const namespaceThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
+    if (namespaceThrow) return namespaceThrow;
   }
 
   // Resolve constructor name from the RHS expression (simple identifiers only)

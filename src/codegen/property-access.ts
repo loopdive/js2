@@ -54,7 +54,12 @@ import {
 } from "./expressions/helpers.js";
 // (#4157) provably-dead null guards
 import { type ReceiverProofHint, emitReceiverNullGuard, receiverProofHolds } from "./nonnull-proof.js";
-import { ensureAnyFromExternHelper, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
+import {
+  emitIsNullishAnyAt,
+  ensureAnyFromExternHelper,
+  undefinedExternInstrs,
+  undefinedSingletonActive,
+} from "./any-helpers.js";
 import {
   emitUndefined,
   ensureExternIsUndefinedImport,
@@ -224,6 +229,7 @@ export {
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
 import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import { isFnctorLayoutStructName } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts
+import { tryEmitPrimitiveAbsentPropertyRead } from "./primitive-absent-property.js"; // (#4483) absent prop of a number/boolean primitive → undefined
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -1184,13 +1190,29 @@ export function emitNullCheckThrow(
   if (backupLocal !== undefined) {
     // A guarded cast backup exists: the null might be from a failed ref.cast
     // (wrong struct type), not from a genuinely null value.  Only throw
-    // TypeError when the ORIGINAL pre-cast value was also null (#789).
+    // TypeError when the ORIGINAL pre-cast value was also NULLISH (#789).
+    //
+    // (#4489) "Nullish", not "null": under the #2106 S1 regime `undefined` is a
+    // tag-1 `$AnyValue` singleton, which is a NON-null reference. Testing only
+    // `ref.is_null` here reads a real `undefined` as "some other struct type —
+    // don't throw", and the caller's `struct.get` on the null cast result then
+    // TRAPS. A wasm trap is not catchable by wasm exception handling, so
+    // `try { f(); } catch (e) { e instanceof TypeError }` — the shape of
+    // `language/statements/function/S13_A17_T1.js` — dies instead of passing.
+    // This was already reachable for FUNCTION-scope `var f = function(){}`
+    // called before its initializer (the #737 hoister has seeded `undefined`
+    // there for years, measured trapping on both sides of #4489's A/B); seeding
+    // module globals made module scope reach it too, which is how the corpus
+    // sweep caught it.
+    const savedForNullish = pushBody(fctx);
+    const widened = emitIsNullishAnyAt(ctx, fctx, backupLocal);
+    const nullishTest: Instr[] = widened ? fctx.body : [{ op: "local.get", index: backupLocal }, { op: "ref.is_null" }];
+    popBody(fctx, savedForNullish);
     fctx.body.push({
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: backupLocal },
-        { op: "ref.is_null" },
+        ...nullishTest,
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -3495,6 +3517,15 @@ export function compilePropertyAccess(
   {
     const __r = tryStringLengthIteratorAndExternClassReads(ctx, fctx, expr, propName, objType);
     if (__r !== PA_FALLTHROUGH) return __r;
+  }
+
+  // (#4483) LAST arm before the legacy tail: a provably-absent property of a
+  // `number`/`boolean` primitive is `undefined` (§9.1 + §10.5), not the tail's
+  // `ref.null.extern` placeholder. Placed here so every arm above keeps its
+  // claim on the shapes it already handles; declines for every other receiver.
+  {
+    const __r = tryEmitPrimitiveAbsentPropertyRead(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
   }
 
   return finalizeStructAndDynamicMemberGet(ctx, fctx, expr, propName, objType);
