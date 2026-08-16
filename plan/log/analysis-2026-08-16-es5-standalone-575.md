@@ -836,3 +836,27 @@ language-misc list above):
 
 These are hypotheses from signatures — verify per-file before sizing (the #3626
 method warnings apply: signature = where the test stopped, not which defect).
+
+## Coverage map (2026-08-16 sweep vs issue inventory + claim ledger)
+
+Live claims (2026-08-15, DO NOT DISPATCH): `ttraenkler/claude-es5-standalone`
+holds #4465/#4479/#4483/#4484/#4485 (String generic-methods, plain-object
+descriptor attrs, Function residual, instanceof, builtin-surface smalls);
+`claude/es5-team-with` holds #4206 (with). Reserved-only (id taken, nobody
+working): #4491, #4492, #4500.
+
+| cluster | owner issue(s) | dispatchable now |
+|---|---|---|
+| with-statement (44) | #4206 (live claim), #671, #4231 | route around |
+| defineProperty-family (86) | #4479 (live), #4491 (reserved), **#2668 (unclaimed)**, #3475 (stale) | #2668 |
+| array-prototype (60) | fragmented: #4119 (stale), #4492 (reserved), #4366/#3531 (near-dups), #4160, #2036, #3446 (array-too-large) | consolidate first — no owner |
+| function-prototype (57) | #4483 (live), #4043, #3544 (stale), #4196 (stale), #4265; substrate: **#1888 (unclaimed)** | #1888 substrate; avoid #4483's ~30-file bucket |
+| string-prototype (43) | #4465 (live), **#4056 (unclaimed)**, #4095 (easy/S, unclaimed), #4005 | #4056/#4095 with care vs #4465 |
+| annexB-b33 (8) | #2552/#2200 (June claims, stale; #2552 carries a −1180 regression warning — re-ground before touching) | cautious |
+| toString/valueOf standalone (≈18) | Number: **#3175 (unclaimed)**; Object: #4119; String: **#3524 (re-scoped today)** | #3175, #3524 |
+| scope-chain (27) | #4206 + #4232 (folded into with/10.4.3 lanes) | route around |
+| harness-files (11) | #4251 (standalone cohort, in-progress) — asyncHelpers + verifyProperty-restore-accessor added to its scope via #4516 note | extend #4251 |
+| annexB date/escape/unescape (10) | #4485 §C (live) owns getYear/setYear; escape/unescape had NO open issue → #4516 | #4516 (escape/unescape only) |
+
+Duplicates cleaned this pass: #4168 → wont-fix (≡ #4025, done);
+#4171 → wont-fix (≡ #4021). Both edits in this PR.

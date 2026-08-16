@@ -30,7 +30,7 @@ individually too small to file:
 | annexB-escape-unescape | 4 | own-property descriptor + argument ToString coercion |
 | annexB-other | 5 | see file list |
 | annexB-regexp | 3 | legacy accessor residue in ES5 bucket |
-| harness-files | 11 | harness/*.js self-tests: asyncHelpers-asyncTest-* (3× AsyncTestFailure), deepEqual-*, verifyProperty-restore-accessor, compare-array-symbol — these are harness-infrastructure fails that can mask real coverage; diagnose root cause, may split out |
+| harness-files | 11 | harness/*.js self-tests: asyncHelpers-asyncTest-* (3× AsyncTestFailure), deepEqual-*, verifyProperty-restore-accessor, compare-array-symbol. **#4251 owns the standalone harness self-test cohort (72/116 fail, in-progress)** — extend #4251's scope to asyncHelpers-* and verifyProperty-restore-accessor (which appear in no issue) rather than fixing here; only fix under this bundle if #4251's owner agrees or the claim is stale. `String.prototype.valueOf` row belongs to #3524 (re-scoped 2026-08-16) |
 | compile-timeout | 4 | `timeout (10s)`: language/comments/S7.4_A5.js, language/statements/for ×2 + 1 more — likely pathological-input compile perf; relates to the #4423 quadratic-compile fix, re-verify on current main first |
 | residue | 6 | unclustered — verify individually |
 
