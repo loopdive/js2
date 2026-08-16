@@ -1,0 +1,12 @@
+{
+  "id": "4517",
+  "assignee": "ttraenkler/fable-lead",
+  "requested_by": "ttraenkler/fable-lead",
+  "status": "in-progress",
+  "branch": "fix-stringhash-x64",
+  "reserved_at": "2026-08-16T04:59:34Z",
+  "claimed_at": "2026-08-16T04:59:35Z",
+  "updated_at": "2026-08-16T04:59:35Z",
+  "write_id": "80672-lvypqtsn",
+  "pr_scan": "ok"
+}
