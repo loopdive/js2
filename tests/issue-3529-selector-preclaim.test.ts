@@ -83,10 +83,11 @@ const PRECLAIM_CASES: ReadonlyArray<{
   {
     name: "template coercion",
     code: "template-substitution-unsupported",
-    // #4467 adopted NUMERIC substitutions, so this case now uses a BOOLEAN
-    // one — deliberately still rejecting (boolean shares the i32 carrier
-    // with native-annotated numbers; needs an IR boolean brand first).
-    source: "export function test(flag: boolean): string { return `flag=${flag}`; }",
+    // #4467 adopted NUMERIC substitutions and #4503 adopted BOOLEAN ones, so
+    // this case now uses an ARRAY substitution — deliberately still rejecting
+    // (`${xs}` needs Array.prototype.join/toString semantics, which the IR
+    // does not lower; the vec param itself claims fine).
+    source: "export function test(xs: number[]): string { return `xs=${xs}`; }",
   },
   {
     name: "ambient Error constructor",

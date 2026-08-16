@@ -3,6 +3,7 @@
  * Assignment operator compilation: simple assignment, destructuring, compound, logical.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
@@ -677,6 +678,53 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     // splitting them is how the strict half stayed missing.
     const unresolvable = tryCompileUnresolvableIdentifierAssign(ctx, fctx, expr.left, expr.right);
     if (unresolvable !== NOT_UNRESOLVABLE) return unresolvable;
+
+    // (#4500 Slice B) A name the pre-scan classified as a property of the realm
+    // global object (`this.p1 = 1`, or a top-level implicit `p1 = 1`) has REAL
+    // storage — the global object — and `emitImplicitGlobalRead` reads it from
+    // there. It must be WRITTEN there too. This is the same rule the #4231 RC-F
+    // arm applies on the `with`-cascade write path
+    // (`emitIdentifierWriteFromLocal`), but this is the ORDINARY identifier
+    // write path, which had no such arm: `tryCompileUnresolvableIdentifierAssign`
+    // declines (the name IS resolvable to the checker — `this.p1 = 1` gave it a
+    // symbol), so the write fell into the auto-local fallback below.
+    //
+    // Diagnosed by instrumenting every write arm and compiling the #4500 row-1
+    // probe: none of the four arms the plan suspected fired — this final
+    // fallback did, in BOTH the failing and the "passing" case. The auto-local
+    // makes the write FUNCTION-LOCAL, so:
+    //
+    //   this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2   // f's local; outer reads the object ⇒ 1
+    //   this.p1 = 1; p1 = 2; this.p1 === 2                          // module_init's local; `this.p1` reads the object ⇒ 1
+    //
+    // The straight-line bare-read case only *looked* correct because the write
+    // and the read shared one function and therefore one local — the global
+    // object was never updated in either case.
+    if (ctx.sloppyImplicitGlobals?.has(name)) {
+      const resultType = compileExpression(ctx, fctx, expr.right);
+      if (!resultType) return null;
+      const rhsTmp = allocLocal(fctx, `__implicit_global_write_${fctx.locals.length}`, resultType);
+      fctx.body.push({ op: "local.set", index: rhsTmp });
+      if (emitGlobalEnvironmentObject(ctx, fctx)) {
+        const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+        if (setIdx !== undefined) {
+          emitGlobalEnvironmentKey(ctx, fctx, name);
+          fctx.body.push({ op: "local.get", index: rhsTmp });
+          if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: setIdx });
+          // The assignment expression evaluates to the RHS value.
+          fctx.body.push({ op: "local.get", index: rhsTmp });
+          return resultType;
+        }
+        // Setter unavailable — drop the receiver we just pushed and fall
+        // through to the auto-local so the write is not lost.
+        fctx.body.push({ op: "drop" });
+      }
+      // Global-environment object unavailable: preserve the pre-#4500 shape.
+      const fallbackIdx = allocLocal(fctx, name, resultType);
+      fctx.body.push({ op: "local.get", index: rhsTmp }, { op: "local.tee", index: fallbackIdx });
+      return resultType;
+    }
 
     // Graceful fallback for other unresolved identifiers: auto-allocate a
     // local so compilation can continue. This handles class/object method
@@ -3582,6 +3630,36 @@ function compilePropertyAssignment(
   {
     const errField = tryEmitErrorInstanceFieldWrite(ctx, fctx, target, value);
     if (errField !== undefined) return errField;
+  }
+
+  // (#4500 Slice A) `this.p = v` / `globalThis.p = v` where `p` is a
+  // **`var`-declared** script global: write the wasm module global that stores
+  // it, not a property on the realm global object. Symmetric with the read arm
+  // in `property-access.ts` — and the pair MUST land together: fixing only the
+  // read makes `this.p = 2; this.p === 2` regress, because the read would then
+  // consult the module global while the write still updated the object.
+  // (Measured: that exact row flipped to failing with the read arm alone.)
+  //
+  // Placed after the runtime-state checks above (poison, non-writable), so a
+  // genuine descriptor on the global object still decides the write, and before
+  // the struct-shaped lowerings below, which are the ones that mis-route it.
+  // (Merge note: the #4484/#4485 arms above and this one key on disjoint
+  // receivers — builtin namespaces, Error instances, the realm global object.)
+  if (!ts.isPrivateIdentifier(target.name)) {
+    const name = target.name.text;
+    const globalIdx = ctx.moduleGlobals.get(name);
+    if (globalIdx !== undefined && receiverIsRealmGlobalObject(ctx, fctx, target.expression)) {
+      const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+      const rhsType = compileExpression(ctx, fctx, value, globalType);
+      if (!rhsType) return null;
+      if (globalType && rhsType.kind !== globalType.kind) coerceType(ctx, fctx, rhsType, globalType);
+      const resultLocal = allocLocal(fctx, `__realm_global_write_${fctx.locals.length}`, globalType ?? rhsType);
+      fctx.body.push({ op: "local.tee", index: resultLocal });
+      fctx.body.push({ op: "global.set", index: globalIdx });
+      // An assignment expression evaluates to the assigned value.
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      return globalType ?? rhsType;
+    }
   }
 
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor

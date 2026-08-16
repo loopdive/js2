@@ -2219,6 +2219,26 @@ export function emitExceptionRenderExports(ctx: CodegenContext): void {
  * Idempotent (guarded by `ctx.stdoutAccGlobalIdx >= 0`). No-op unless
  * standalone + native strings + `__str_concat` available.
  */
+/**
+ * (#3469) Name of the standalone stdout sink's append helper, as registered in
+ * `ctx.funcMap`. Exported so the IR (#4462) resolves the SAME symbol the legacy
+ * call site bakes, instead of re-spelling the string in a second place.
+ */
+export const STANDALONE_STDOUT_APPEND_FN = "__stdout_append";
+
+/**
+ * (#4462) Is the host-free console sink available in this lane? True only when
+ * standalone native strings actually minted `__stdout_append`, which the pre-body
+ * window does exactly when the source uses `console.*` (see
+ * `ctx.usesStandaloneConsoleSink`). Read by BOTH the IR selector (may this unit
+ * claim a `console.*` call?) and the IR builder (which lowering to emit), so the
+ * claim and the lowering read one fact — the #2135 one-table rule applied to the
+ * console surface.
+ */
+export function standaloneConsoleSinkAvailable(ctx: CodegenContext): boolean {
+  return ctx.standalone && ctx.nativeStrings && ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) !== undefined;
+}
+
 export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
   if (!ctx.nativeStrings) return;

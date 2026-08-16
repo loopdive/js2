@@ -153,6 +153,27 @@ export function hostExternCapability(jsHost: boolean): IrOpCapability {
   return jsHost ? "claim-partial" : "defer";
 }
 
+// ── The console sub-surface (#4462) ────────────────────────────────────────
+//
+// `hostExternCapability` above is a flat `jsHost ? claim-partial : defer`
+// because, when it was written, EVERY member of the ambient host surface was
+// import-serviced. That is no longer true: `console` has a host-free lowering
+// in standalone (the #3469 `__stdout_append` sink that legacy already uses),
+// while `document` does not — legacy's own standalone body for a DOM unit still
+// leaks `env.Document_createElement` past the #2961 import-leak gate. One
+// boolean can no longer speak for the whole surface, so the console member gets
+// its own row.
+//
+// The second parameter is NOT a mode flag — it is "did the backend actually
+// mint the sink", answered by the resolver from `funcMap`. That keeps the
+// question a *capability* one (is there something to lower to?) rather than a
+// target-name one, so a standalone module compiled without native strings, where
+// the sink genuinely does not exist, correctly defers.
+export function consoleSurfaceCapability(jsHost: boolean, hostFreeSink: boolean): IrOpCapability {
+  if (jsHost) return "claim-partial"; // per-arg-variant `console_<m>_<variant>` imports
+  return hostFreeSink ? "claim-partial" : "defer";
+}
+
 /** Capability of a BinaryExpression operator token. Unknown ops → "defer". */
 export function binaryOpCapability(op: ts.SyntaxKind): IrOpCapability {
   return BINARY_OP_CAPABILITY.get(op) ?? "defer";

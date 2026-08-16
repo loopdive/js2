@@ -69,6 +69,7 @@ import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationList
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
+import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -87,6 +88,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
@@ -171,18 +173,20 @@ export type IrFallbackReason =
   // bucketing them as *unintended* overstated what shape work could fix by 6
   // of 11 units on the #3518 standalone reference corpus.
   //
-  // The bucket deliberately holds two kinds of member — do not read it as
-  // uniformly permanent:
+  // The bucket held two kinds of member. One has since been retired:
   //   - PERMANENT here: DOM (`document.*`). Legacy's own `--target standalone`
   //     body for those units still leaks `env.Document_createElement`,
   //     `env.Node_appendChild` & co. past the #2961 import-leak gate, so there
   //     is genuinely nothing host-free to lower to.
-  //   - DEFERRED-BUT-FIXABLE: `console.*`. Standalone DOES have a host-free
-  //     sink (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that
-  //     legacy uses; the IR's console arm only knows the host-import form
-  //     (`irImportFuncRef("env", "console_log_<variant>")`). Retiring that is
-  //     tracked separately — see the standalone console + native
-  //     `number_toString` follow-up filed alongside #4457.
+  //   - RETIRED (#4462): `console.*`. Standalone always had a host-free sink
+  //     (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that legacy
+  //     uses; the IR's console arm knew only the host-import form. It now has
+  //     its own capability row (`consoleSurfaceCapability`) and a host-free
+  //     lowering, so a `console.*` unit is claimed rather than bucketed here.
+  //     A console call STILL lands here when this target has no sink at all, or
+  //     when the call shape is outside the lowered slice (multi-arg, expression
+  //     position, a method the IR does not lower) — a pre-claim rejection, which
+  //     is the point: the alternative is a post-claim demote.
   | "host-surface-unavailable"
   | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -486,6 +490,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly supportsSymbolicMathHelpers?: boolean;
   /** Backend owns a no-radix f64 → abstract-string formatter. */
   readonly supportsNumberToString?: boolean;
+  /**
+   * (#4462) The active backend has the HOST-FREE console sink (#3469's
+   * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
+   * something to lower to without a JS host. Read together with
+   * {@link isHostFreeConsoleCallReceiver} — availability alone is not a claim
+   * licence; the call shape must also be one the builder lowers.
+   */
+  readonly supportsStandaloneConsoleSink?: boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -1417,6 +1429,30 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
     !localClasses.has(expr.text) &&
     currentDeferredHostGlobalResolver(expr) !== undefined
   );
+}
+
+/**
+ * (#4462) Does this identifier name the ambient `console` in a host-free lane
+ * that CAN service it, in a call shape the builder lowers?
+ *
+ * This is the narrowing of `host-surface-unavailable` the reason's own union
+ * comment flagged as fixable. The bucket stays correct for `document` & co.
+ * (nothing host-free to lower to) and stops catching `console`, which standalone
+ * has always been able to print through the #3469 sink — legacy does it today.
+ *
+ * Three conjuncts, each load-bearing:
+ *   1. the backend actually minted the sink (`supportsStandaloneConsoleSink`) —
+ *      a standalone module without native strings has no sink and must defer;
+ *   2. the identifier really is the ambient global, per the same checker-backed
+ *      resolver + `localClasses` shadow rule the ACCEPT arm above uses;
+ *   3. the call shape is the one the builder lowers, so the claim cannot become
+ *      a post-claim demote.
+ */
+function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
+  if (currentSelectionOptions?.supportsStandaloneConsoleSink !== true) return false;
+  if (expr.text !== "console" || localClasses.has("console")) return false;
+  if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
+  return isHostFreeConsoleCallReceiver(expr);
 }
 let currentModuleBindingResolver: IrModuleBindingResolver | IrLegacyModuleBindingResolver | null = null;
 // C3's Map.get result is deliberately carried as externref until a strict
@@ -7848,25 +7884,34 @@ function obviousSelectorValueFamily(
 }
 
 /**
- * (#4467) Which template-substitution families does the lowerer produce a
- * string for? Exactly two: `string` (passes straight into the concat chain)
- * and `number` (through the `IR_NUMBER_TO_STRING_FN` provider). `undefined`
- * means the selector must reject — keeping claim and lowering on one set.
+ * (#4467, #4503) Which template-substitution families does the lowerer produce
+ * a string for? Three: `string` (passes straight into the concat chain),
+ * `number` (through the `IR_NUMBER_TO_STRING_FN` provider) and `boolean` (two
+ * `string.const`s selected by the value). `undefined` means the selector must
+ * reject — keeping claim and lowering on one set.
  *
- * `boolean` is deliberately NOT admitted even though the legacy path handles
- * it: booleans share IR's `i32` carrier with a native-annotated number, so
- * once the checker family is gone the lowerer could not tell `${true}` →
- * `"true"` from `${1}` → `"1"`. Everything else (objects, `any`, primitive
- * unions, …) needs a ToPrimitive walk the IR does not own.
+ * `boolean` was NOT admitted before #4503, and the reason is worth keeping:
+ * booleans share IR's `i32` carrier with a native-annotated number, so with the
+ * checker family gone the lowerer could not tell `${true}` → `"true"` from
+ * `${1}` → `"1"` — the one failure mode that is WRONG OUTPUT rather than a
+ * demote. #4503 gives the IR type layer that distinction (the `irBool()` brand
+ * on the `i32` carrier), and the lowerer dispatches on it; a boolean that
+ * arrives unbranded demotes at THIS code rather than being printed as a number.
+ * Everything else (objects, `any`, primitive unions, …) still needs a
+ * ToPrimitive walk the IR does not own.
  *
- * The capability read is fail-CLOSED: bare selector callers and the linear
- * driver pass no `supportsBackendCapability`, and they have no number→string
- * provider bound, so they must keep rejecting.
+ * `boolean` needs no `supportsBackendCapability` read: unlike the numeric arm
+ * it binds no provider — `"true"`/`"false"` are string constants every lane
+ * already emits.
+ *
+ * The numeric capability read is fail-CLOSED: bare selector callers and the
+ * linear driver pass no `supportsBackendCapability`, and they have no
+ * number→string provider bound, so they must keep rejecting.
  */
 function templateSubstitutionFamily(
   expression: ts.Expression,
   scope: ReadonlySet<string>,
-): "string" | "number" | undefined {
+): "string" | "number" | "boolean" | undefined {
   if (declaredExpressionHasExactFamily(expression, "string", scope)) return "string";
   if (
     declaredExpressionHasExactFamily(expression, "number", scope) &&
@@ -7874,6 +7919,7 @@ function templateSubstitutionFamily(
   ) {
     return "number";
   }
+  if (declaredExpressionHasExactFamily(expression, "boolean", scope)) return "boolean";
   return undefined;
 }
 
@@ -8077,6 +8123,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return true;
     }
+    // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
+    // call shape the builder lowers. Checked before the reject arm below, which
+    // would otherwise bucket it as target-unserviceable.
+    if (namesHostFreeConsoleSurface(expr, localClasses)) return true;
     // (#4457) "Names a host global this target cannot service" is owned by the
     // target's capability policy, not by IR shape coverage — see the reason's
     // union comment.
@@ -9095,8 +9145,16 @@ function isStaticSpreadSource(
  * Slice-2 acceptance check for object literals. Accepts only "plain data"
  * literals: PropertyAssignment / ShorthandPropertyAssignment with
  * Identifier / StringLiteral / NumericLiteral keys and Phase-1-claimable
- * initializers. Rejects spread, methods, accessors, computed keys, and
- * duplicate keys (last-write-wins is JS spec; deferred to a later slice).
+ * initializers. Rejects spread, methods, accessors, and duplicate keys
+ * (last-write-wins is JS spec; deferred to a later slice).
+ *
+ * (#4513) A COMPUTED key is accepted when it folds to a static string —
+ * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
+ * is static and a folded key is indistinguishable from a plain one. Keys that
+ * need a value environment (`const k = "a"`, `Symbol.iterator`, template
+ * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
+ * the fold is syntactic, and for the measurement showing a numeric key needs no
+ * canonicalisation step (the scanner has already done it).
  */
 function isPhase1ObjectLiteral(
   expr: ts.ObjectLiteralExpression,
@@ -9172,7 +9230,12 @@ function isPhase1ObjectLiteral(
   const seen = new Set<string>();
   for (const prop of expr.properties) {
     if (ts.isPropertyAssignment(prop)) {
-      const name = phase1PropertyName(prop.name);
+      // (#4513) Data-property keys resolve through the shared fold, which adds
+      // the statically-foldable COMPUTED keys (`{ ["a"]: v }`, `` { [`a`]: v } ``,
+      // `{ [0]: v }`) to the identifier/string/numeric set. A key that does not
+      // fold keeps this arm — no new reason code, because a non-folding computed
+      // key is the same condition `objectlit-computed-key` already names.
+      const name = objectLiteralDataPropertyName(prop.name);
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
@@ -9259,11 +9322,15 @@ function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
 }
 
 /**
- * Resolve an object literal property name to a string. Identifier and
- * StringLiteral keys produce their text. NumericLiteral keys produce the
- * canonical JS toString of the number. ComputedPropertyName always
- * returns null — slice 2 doesn't see through computed keys, even when
- * the key expression is itself a string literal.
+ * Resolve a property name to a string. Identifier and StringLiteral keys
+ * produce their text; NumericLiteral keys produce `.text`, already canonical.
+ * ComputedPropertyName always returns null.
+ *
+ * (#4513) The object-literal DATA-PROPERTY site no longer calls this — it uses
+ * `objectLiteralDataPropertyName`, which adds the computed-key fold. This
+ * function keeps rejecting computed names because its remaining callers are
+ * class-member / OrdinaryToPrimitive / prepared-scope method naming, where a
+ * computed name means something different (see `phase1MemberName`).
  */
 function phase1PropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;

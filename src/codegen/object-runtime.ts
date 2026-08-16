@@ -130,6 +130,7 @@ import {
   protoIndexForInPushInstrs,
   protoIndexGetIdxMissInstrs,
   protoIndexHasIdxInstrs,
+  protoIndexOwnViewSubstituteInstrs,
   protoIndexRecvGetMissInstrs,
   protoIndexRecvHasMissInstrs,
   reserveProtoIndexStore,
@@ -2793,6 +2794,123 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // body bakes its `call`; body filled in finalize (fillAccessorDrivers) once
     // `__call_fn_method_1` exists.
     const callAccessorSetIdx = reserveAccessorSetDriver(ctx);
+    // (#4504) §9.1.9 OrdinarySetWithOwnDescriptor step 3 — the PROTOTYPE-CHAIN
+    // accessor walk. #1888 S5b implemented only the OWN-accessor branch and said
+    // so ("Inherited-accessor set (proto-chain) is out of scope for this slice;
+    // __obj_find walks only the own table"), so assigning to a property whose
+    // nearest definition is an inherited ACCESSOR silently created an own data
+    // property and shadowed it — measured on a plain `Object.create` chain with
+    // no builtin prototype involved (`.tmp/q1.js`: setter never ran, own prop
+    // created, re-read stopped yielding the getter).
+    //
+    // Mirrors `__extern_get`'s walk exactly (same start point, same order, same
+    // `$proto` cursor) — a get/set traversal divergence would itself be a bug:
+    //   accessor + setter  → invoke with the ORIGINAL receiver, create nothing
+    //   accessor, no setter→ what the OWN path does (measured: catchable
+    //                        TypeError, accessor intact) — mirrored, not invented
+    //   DATA, or absent    → break out; today's own-create runs untouched, which
+    //                        is step 3.b (assigning over an inherited DATA
+    //                        property DOES create an own property)
+    const protoCursorLocal = 10;
+    const protoEntryLocal = 11;
+    //
+    // GATED on `ctx.vecAccessorDescriptorDirty` — the #4159 PRE-SCAN flag for
+    // "a descriptor that is not provably data-only may exist in this module".
+    // No non-data descriptor anywhere ⇒ no accessor can be installed ⇒ no
+    // inherited accessor can exist ⇒ this walk is dead code. Being a pre-scan
+    // flag (set before any body compiles) it cannot desync mid-compile, and it
+    // keeps accessor-free modules byte-identical: emitting the walk
+    // unconditionally drifted 6 of the 60 emit-identity corpus entries.
+    const inheritedAccessorArm: Instr[] = ((): Instr[] => {
+      if (!ctx.vecAccessorDescriptorDirty) return [];
+      const setterOnlyThrow: Instr[] = buildThrowJsErrorInstrs(
+        ctx,
+        "TypeError",
+        "Cannot set property which has only a getter",
+        { forceInModuleCtor: true },
+      );
+      return [
+        // Only when there is NO own entry — an own entry (accessor or data) was
+        // already fully handled above.
+        { op: "local.get", index: 8 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 3 },
+            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 }, // $proto
+            { op: "local.set", index: protoCursorLocal },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "local.get", index: protoCursorLocal },
+                    { op: "ref.is_null" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: protoCursorLocal },
+                    { op: "ref.as_non_null" },
+                    { op: "local.get", index: 1 },
+                    { op: "call", funcIdx: objFindIdx },
+                    { op: "local.tee", index: protoEntryLocal },
+                    { op: "ref.is_null" },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: protoEntryLocal },
+                        { op: "ref.as_non_null" },
+                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                        { op: "i32.const", value: FLAG_ACCESSOR },
+                        { op: "i32.and" },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: protoEntryLocal },
+                            { op: "ref.as_non_null" },
+                            { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 }, // $set
+                            { op: "extern.convert_any" },
+                            { op: "local.tee", index: 9 },
+                            { op: "ref.is_null" },
+                            { op: "i32.eqz" },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: 0 }, // ORIGINAL receiver as `this`
+                                { op: "local.get", index: 9 },
+                                { op: "local.get", index: 2 },
+                                { op: "call", funcIdx: callAccessorSetIdx },
+                                { op: "return" },
+                              ],
+                            },
+                            // getter-only: mirror the measured own-path behaviour
+                            ...setterOnlyThrow,
+                          ],
+                        },
+                        // DATA on the chain → stop walking; own-create proceeds.
+                        { op: "br", depth: 2 },
+                      ],
+                    },
+                    { op: "local.get", index: protoCursorLocal },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+                    { op: "local.set", index: protoCursorLocal },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ];
+    })();
     const body: Instr[] = [
       // any = any.convert_extern(obj)
       { op: "local.get", index: 0 },
@@ -2910,6 +3028,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           },
         ],
       },
+      // (#4504) No own entry ⇒ §9.1.9 step 3 consults the prototype chain before
+      // creating one. Runs AFTER the own-entry block (which returns for every
+      // own case) and BEFORE the frozen gate + own-create below.
+      ...inheritedAccessorArm,
       // #1472 Phase B Blocker A Half 2 — FROZEN write gate. A frozen object
       // refuses ALL data writes (update AND new key) per ES §10.4.7 / the
       // [[Set]] invariant on non-writable own data properties. Sloppy-mode
@@ -3001,6 +3123,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "seq", type: { kind: "i32" } },
         { name: "accEntry", type: entryRefNull }, // (#1888 S5b) own entry for accessor probe
         { name: "setter", type: { kind: "externref" } }, // (#1888 S5b) accessor $set
+        // (#4504) inherited-accessor proto walk — appended LAST so no
+        // already-baked local index moves, and only when the arm emits.
+        ...(inheritedAccessorArm.length > 0
+          ? ([
+              { name: "protoCursor", type: objRefNull },
+              { name: "protoEntry", type: entryRefNull },
+            ] as { name: string; type: ValType }[])
+          : []),
       ],
       body,
     );
@@ -3439,8 +3569,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propEntryTypeIdx,
     objFindIdx,
   });
+  // (#2175 P2) A `$NativeProto` receiver is substituted by its brand COMPANION,
+  // where `defineProperty(<Builtin>.prototype, …)` actually stored the entry
+  // (#4176 write arms). Own-layer only, no chain walk, no-op for every other
+  // receiver. EMPTY when the proto-index store is unreserved, so a module that
+  // never writes a builtin prototype stays byte-identical. The substitution is
+  // a CALL to a finalize-filled helper — it bakes no type index here, which is
+  // what makes it safe against later type registrations (see the reserve site).
+  const hasOwnNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0);
   const emitHasOwn = (name: string): void => {
     const body: Instr[] = [
+      ...hasOwnNpcArm,
       ...stringExoticHasOwnPrologue(strExoticHasOwnIdx),
       // (#2896) Builtin-fn metadata arm: name/length are OWN properties of a
       // builtin function value (until deleted). get_meta returns non-null
@@ -6652,6 +6791,39 @@ function collectStandaloneArrayCarrierTypeIdxs(ctx: CodegenContext): number[] {
     if (name.startsWith("__vec_") || name === "__template_vec_externref") carriers.add(typeIdx);
   }
   return Array.from(carriers).sort((a, b) => a - b);
+}
+
+/**
+ * (#1888) Is `typeIdx` one of the WasmGC struct types that IsArray (§7.2.2)
+ * answers `true` for — i.e. a compiler-emitted array carrier?
+ *
+ * This is the STATIC (compile-time, single type index) counterpart of the
+ * runtime `ref.test` chain `fillExternIsArray` bakes, and it applies exactly
+ * the same three rules so the two answers cannot diverge: the `$ObjVec`
+ * dynamic-array carrier, any concrete `__vec_*` leaf, and the template vector.
+ * The abstract `__vec_base` supertype and the exclusively-non-array packed byte
+ * carriers (`i32_byte` ArrayBuffer/DataView, `i32_elem` Int32/Uint32Array,
+ * `i8_byte` Uint8Array) are excluded, per #2047/#3562.
+ *
+ * WHY IT EXISTS. The `Array.isArray(<arg>)` call site in
+ * `call-builtin-static.ts` has a compile-time fast path for arguments whose
+ * Wasm type is statically known. That path answered `true` for **every**
+ * `ref`/`ref_null` type — so `Array.isArray("abc")`, `Array.isArray({0:12,
+ * length:2})` and `Array.isArray(new Date(0))` all returned `true` in
+ * standalone (measured 2026-08-16 on a 5-case probe: 4 of 5 wrong). Only when
+ * the argument was laundered through an `any`-typed local did it reach the
+ * externref branch and the correct native predicate. A fast path that accepts
+ * input it cannot classify is worse than one that declines, so the fast path
+ * now uses this predicate and declines (`false`) for any non-carrier ref.
+ */
+export function isArrayCarrierTypeIdx(ctx: CodegenContext, typeIdx: number): boolean {
+  if (ctx.objectRuntimeTypes?.objVecTypeIdx === typeIdx) return true;
+  const typeDef = ctx.mod.types[typeIdx];
+  if (typeDef?.kind !== "struct") return false;
+  const name = typeDef.name ?? "";
+  if (isNonArrayByteVecName(name)) return false;
+  if (name === "__vec_base") return false;
+  return name.startsWith("__vec_") || name === "__template_vec_externref";
 }
 
 /**

@@ -555,6 +555,15 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 
 ### Merge protocol (PR + CI, devs self-merge)
 
+**PR bodies link issues to the WEBSITE issue page, never bare `#NNNN`**
+(project-lead order, 2026-08-16). A bare `#NNNN` in a PR body autolinks to
+GitHub's PR/issue numbering — which shares one sequence with PR numbers, so it
+points at an unrelated PR, not the plan-file issue. Write
+`[#NNNN](https://js2wasm.loopdive.com/dashboard/issue.html?slug=<file-basename-without-.md>)`
+(e.g. `?slug=4491-es5-defineproperty-mop-residual`) for every issue reference.
+Commit messages keep plain `#NNNN` (tooling greps them); this rule is for PR
+bodies and PR-visible comments.
+
 **ALWAYS open a PR on `loopdive/js2wasm` when a task is done — do not wait to be
 asked** (project-lead decision, 2026-08-01). Finished work that sits on a pushed
 branch with no PR is invisible: it is not in the merge queue, `auto-enqueue`
@@ -692,7 +701,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,530 / 43,621 (74.6 %)
+**test262 conformance**: 32,602 / 43,621 (74.7 %)
 
 <!-- AUTO:conformance-end -->
 

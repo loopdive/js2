@@ -148,6 +148,7 @@ import {
   localGlobalIdx,
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
+import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
   getArrTypeIdxFromVec,
@@ -3315,6 +3316,43 @@ function emitExternRecvNullGuard(
   );
 }
 
+/**
+ * (#4500 Slice A) `this.p` / `globalThis.p` where `p` is a **`var`-declared**
+ * script global — read the wasm module global that actually stores it.
+ *
+ * A `var` global lives in `ctx.moduleGlobals` (a wasm global), while the realm
+ * global OBJECT is separate storage. The checker types `this`/`globalThis` as
+ * `typeof globalThis`, which resolves to the static global-interface struct, so
+ * every member fast path answers from that struct's declared fields — and a
+ * `var` global has no field there. Measured 2026-08-15, script form, identical
+ * on `--target standalone`, `--target wasi` AND gc:
+ *
+ *     var p1 = 7;  this.p1 === 7           // FALSE — reads `undefined`
+ *     var p1 = 7;  typeof this.p1          // 'number'  (!)
+ *
+ * The `typeof` disagreeing with the value is the tell: `typeof` answers from the
+ * struct's declared field TYPE while the value read falls to the struct's
+ * missing-field fallback. Both must come from the module global instead — which
+ * is what this arm does, so the two agree by construction.
+ *
+ * Returns `undefined` (fall through, byte-identical) unless the receiver
+ * provably IS the realm global object AND the name is a `var`-declared module
+ * global. `receiverIsRealmGlobalObject` already refuses module sources, shadowed
+ * `globalThis`, and non-top-level `this`.
+ */
+function tryEmitRealmGlobalModuleGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+): ValType | undefined {
+  const globalIdx = ctx.moduleGlobals.get(propName);
+  if (globalIdx === undefined) return undefined;
+  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3364,6 +3402,17 @@ export function compilePropertyAccess(
       const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
       if (runtimeResult !== null) return runtimeResult;
     }
+  }
+
+  // (#4500 Slice A) `this.p` / `globalThis.p` for a `var`-declared global reads
+  // the module global that stores it. Placed AFTER the runtime
+  // accessor-descriptor and sidecar checks above, so genuine runtime state on
+  // the global object still wins (e.g. a `defineProperty` accessor installed
+  // over the name), and before the struct-shaped fast paths below, which are
+  // exactly the ones that answer `undefined` from the global-interface struct.
+  {
+    const __r = tryEmitRealmGlobalModuleGlobalRead(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
   }
 
   {
