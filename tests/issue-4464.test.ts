@@ -238,15 +238,19 @@ describe("#4464 — dead-binding elision no longer deletes early errors with the
 });
 
 describe("#4464 residuals — measured, NOT fixed here", () => {
-  // F3. `fn.prototype` needs every function value to own a prototype OBJECT
-  // whose `constructor` points back at the function, AND `new F()` to link its
-  // instances to that object (`S13.2.2_A1_T1/T2` assert
-  // `__PROTO.isPrototypeOf(new F())`). In standalone a fnctor instance is a
-  // nominal struct with no prototype link, so the family needs the #3976
-  // class-object conversion, not a second prototype substrate bolted on here.
-  // Residual files: S13.2_A1_T1/T2, S13.2_A4_T1/T2, S13.2.2_A1_T1/T2,
-  // 13.2-17-1, 13.2-18-1.
-  it.fails("F3 — a function does not yet own a `.prototype` object", async () => {
+  // F3 is FIXED, by #4480 S1 — flipped from `it.fails` to `it` there rather
+  // than deleted, so this file keeps recording which successor closed it.
+  // #4480 gives every ordinary function a stable lazily-minted `.prototype`
+  // `$Object` in a per-fnctor global, with the §13.2 step 10 `constructor`
+  // back-ref installed at the single mint point. Measured by #4480's own run
+  // of `language/statements/function/S13.2*`: `S13.2_A1_T1`, `S13.2_A1_T2` and
+  // `S13.2_A4_T1` flipped fail → pass, zero regressions in that family.
+  //
+  // Still residual, and now owned by #4480's Residuals section rather than by
+  // this file: `S13.2.2_A1_T1/T2` (`__PROTO.isPrototypeOf(new F())`), which
+  // needs a FUNCTION-valued prototype the `(ref null $Object)` `$proto` field
+  // cannot hold; and `S13.2_A4_T2` (the `var F = function(){}` back-ref).
+  it("F3 — a function owns a `.prototype` object (fixed by #4480 S1)", async () => {
     expect(await runHostFree(`function F(){}; return (F as any).prototype === undefined ? 0 : 1;`)).toBe(1);
   });
 

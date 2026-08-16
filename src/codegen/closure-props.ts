@@ -673,6 +673,42 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // (#2660 M3) Empty for every module with no function-value → prototype edge,
     // which keeps both the body AND the local list byte-identical there.
     const protoEdgeArm = closurePrototypeEdgeGetArm(ctx, { recvSlot: 0, keySlot: 1, bagSlot: 2, protoSlot: 3 });
+    // (#4479) ACCESSOR `this` on a carrier own-property. The bag is an internal
+    // `$Object` standing in for the carrier's own-property table, so a plain
+    // `__extern_get(bag, key)` invoked a stored getter with `this` = **the
+    // bag** — an object the program can never name. §6.2.5.5 Get binds the
+    // ORIGINAL receiver, and `__extern_get` already honours an explicit one
+    // through the `__reflect_get_receiver(target, key, receiver)` wrapper
+    // (§28.1.5), which saves/restores the receiver globals around the call.
+    // Route the bag read through it with the carrier as receiver.
+    //
+    // Measured on this branch's base with `.tmp/run-src.mts` (real
+    // `runTest262File`, `--target standalone`):
+    //   `props = new Date(0)` + `defineProperty(props,"prop",{get(){seen=this}})`
+    //   + `Object.create({}, props)`  →  base: `seen !== props`; after: equal.
+    // The plain-`{}` Properties spelling never had the bug (it is a `$Object`,
+    // so it never reaches this helper), which is exactly the asymmetry the
+    // §15.2.3.5-4-* / §15.2.3.7-5-* "Properties is a <builtin> object" rows
+    // assert with `result = this instanceof Date`.
+    //
+    // DATA properties are unaffected: the receiver override is consumed by
+    // `__extern_get` only on the accessor arm. When `__reflect_get_receiver`
+    // is absent (host/gc lanes register it too, but a stripped module may not)
+    // the emitted body stays byte-identical to the pre-#4479 one.
+    const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
+    const bagRead: Instr[] =
+      reflectGetReceiverIdx !== undefined
+        ? [
+            { op: "local.get", index: 2 }, // bag (target)
+            { op: "local.get", index: 1 }, // key
+            { op: "local.get", index: 0 }, // receiver = the carrier itself
+            { op: "call", funcIdx: reflectGetReceiverIdx },
+          ]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: externGetIdx },
+          ];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },
@@ -696,12 +732,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 }, // bag
-              { op: "local.get", index: 1 }, // key
-              { op: "call", funcIdx: externGetIdx },
-              { op: "return" },
-            ],
+            then: [...bagRead, { op: "return" }],
           },
         ],
       },

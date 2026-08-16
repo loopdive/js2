@@ -220,6 +220,23 @@ export function tryEmitStaticOrNativeIsPrototypeOf(
   flushLateImportShifts(ctx, fctx);
   if (protoIdx === undefined) return null;
 
+  // (#4480 S2, NOT taken — recorded because the absence is the finding) A
+  // `F.prototype` receiver could additionally admit the BESPOKE-STRUCT
+  // representation of `F`'s instances via `ref.test (ref $__fnctor_F)`, which
+  // is what makes `x instanceof F` work in native-user-instanceof.ts and is
+  // invisible to the `$Object.$proto` walk below (its opening
+  // `ref.test (ref $Object)` fails on that struct, so the loop exits before its
+  // first iteration and the walk answers 0). That arm was implemented and
+  // MEASURED to be unreachable on this branch: writing `F.prototype.isPrototypeOf(i)`
+  // is itself a dynamic method use on `F`'s prototype, so the #2660 escape gate
+  // demotes `F` out of the approved set and `resolveUserFnctorName` — the
+  // precondition that keeps the answer consistent with what `F.prototype`
+  // READS — declines. Instrumented compile of
+  // `function F(){this.x=1}; var i = new F(); F.prototype.isPrototypeOf(i)`
+  // reports `struct=108 resolve=undefined`, versus `struct=17 resolve=F` for
+  // the same module with `Object.getPrototypeOf(i)`. So the blocker for this
+  // read point is the escape gate, not the walk; see the issue file's
+  // Residuals section.
   const recvType = compileExpression(ctx, fctx, receiver);
   if (recvType && recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
   else if (!recvType) fctx.body.push({ op: "ref.null.extern" });

@@ -2033,13 +2033,22 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       ...keyRef(key),
       { op: "call", funcIdx: hasOwnIdx },
     ];
-    const getField = (key: string): Instr[] => [
+    const getField = (key: string, nullishToNull = true): Instr[] => [
       { op: "local.get", index: L_DESC },
       ...keyRef(key),
       { op: "call", funcIdx: externGetIdx },
       // (#2106 S1) normalize missing/undefined descriptor fields back to the
       // legacy null convention so downstream null-keyed logic is unchanged.
-      ...(ctx.funcMap.has("__nullish_to_null")
+      // (#4479) `value` opts OUT, exactly as the `__defineProperties` twin
+      // already does since #3991 — for [[Value]] `undefined` is a REAL value
+      // and null is not it. Collapsing it stored `ref.null`, so a descriptor
+      // whose `value` field read back undefined defined a property holding
+      // NULL: `typeof newObj.prop` answered "object" instead of "undefined"
+      // (`built-ins/Object/create/15.2.3.5-4-162..165`, and the same shape
+      // through `Object.defineProperty(o, k, descVar)`). The plural and
+      // singular appliers must agree — this was the ONLY field read where
+      // they disagreed.
+      ...(nullishToNull && ctx.funcMap.has("__nullish_to_null")
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
@@ -2228,7 +2237,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           { op: "i32.const", value: 1 },
           { op: "local.set", index: L_HAS_DATA },
           ...setFlag(HOST_HAS_VALUE),
-          ...getField("value"),
+          ...getField("value", false),
           { op: "local.set", index: L_VALUE },
         ],
       },
