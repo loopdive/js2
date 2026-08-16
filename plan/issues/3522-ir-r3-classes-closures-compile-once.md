@@ -2739,3 +2739,129 @@ initialized fields on nested classes (each needs its ordered
 definition-evaluation contract represented), computed member names, nested
 heritage, and then top-level class expressions with their module-global binding
 ABI.
+
+### Slice record — nested class INITIALIZED INSTANCE FIELDS (2026-08-16)
+
+The next family in the order above, taking the initialized-field half. Statics
+are **not** in this slice: measured, they hit a hard sealing-order invariant
+(below), which is a materially larger transaction than a member-shape gate.
+
+Measured on `origin/main` `49df493a` before any change, through the production
+`compile` seam with `experimentalIR: true, trackIrOutcomes: true`, and again
+after. Every row is identical on `gc` and `standalone`, and every `run=` value
+was cross-checked against the same program in node.
+
+| Fixture                                                | Before        | After         | run |
+| ------------------------------------------------------ | ------------- | ------------- | --- |
+| nested decl, IMPLICIT ctor, `p: number = 40`           | legacy=1 ir=0 | legacy=0 ir=3 | 42  |
+| nested decl, EXPLICIT ctor, field + ctor-body ordering | legacy=1 ir=0 | legacy=0 ir=3 | 40100 |
+| nested class EXPRESSION, implicit ctor, field          | legacy=1 ir=0 | legacy=0 ir=3 | 42  |
+| nested decl, TWO initialized fields                    | legacy=1 ir=0 | legacy=0 ir=3 | 12  |
+| nested decl, STRING-carrier field                      | legacy=1 ir=0 | legacy=0 ir=3 | 3   |
+
+The gain is the whole enclosing function plus every member: before the slice
+the owner read `body-shape-rejected@select` and the members were never
+inventoried at all.
+
+Three source edits, each isolated by bisection against the measured barrier:
+
+1. `isBoundedPreparedNestedOrdinaryClass` (`src/ir/class-accessor-safety.ts`)
+   rejected any property with an initializer. It now admits one whose
+   initializer carries no CALL EDGE (`boundedPreparedInstanceFieldInitializer`:
+   no call, `new`, tagged template, nested executable, or `super`). STATIC
+   fields stay rejected — their initializer runs at class-definition time IN
+   the containing frame, which is exactly the inertness the predicate asserts,
+   so they are a different ordered contract.
+2. `identity.ts` promotes a nested implicit constructor **with** initialized
+   fields to a TERMINAL `class-implicit-constructor` unit, as top level already
+   does since #4402, and gives the field-initializer support units that
+   terminal as their owner. Relaxing gate 1 alone was **not** enough and was
+   worse than the base: the member claimed while the owner failed
+   `late-preparation-unsupported@resolve` — a split-ownership state R3 exists
+   to prevent. A nested implicit constructor with NO initialized fields is
+   untouched and stays a support unit (#4576).
+3. `selectImplicitConstructorClaim` (`src/ir/select-identity.ts`) required
+   `topLevelSourceClass`; it now also accepts a bounded nested source class.
+
+**The call-edge gate is load-bearing, not conservatism.** A nested class's
+field-initializer support unit is attributed to the containing executable while
+the constructor terminal that ultimately runs the initializer is attributed to
+the class, so a call inside the initializer is planned twice under two
+different owner units. Measured without the gate, `class Box { p: number =
+seed(); … }` inside a function is a **hard compile failure** — `ok=false`,
+`selection-preparation-mismatch@resolve`, "direct-call plan … disagrees with
+exact integration identity" — not a demotion. With the gate every call-bearing
+initializer returns exactly to its base `body-shape-rejected`. Owning that
+attribution is a later slice.
+
+Exact initializer-shape boundary, measured one shape at a time:
+
+| Initializer                   | Verdict                              |
+| ----------------------------- | ------------------------------------ |
+| literal / arithmetic / string | claims                               |
+| template literal              | claims                               |
+| conditional expression        | claims                               |
+| array literal                 | demotes cleanly (`body-shape-rejected`) |
+| enclosing-frame capture       | demotes cleanly (`class-member-unsupported`) |
+| local free-function call      | rejected by the gate → base behaviour |
+| `Math.floor(…)`               | rejected by the gate → base behaviour |
+| `new Other()`                 | rejected by the gate → base behaviour |
+
+The last two claim correctly when admitted, but are rejected with the rest of
+the callable forms: over-rejecting costs exactly the base behaviour, while
+under-rejecting costs a compile failure, so the predicate fails closed on the
+whole class of shapes rather than on the one that was observed to break.
+
+**Static methods on nested classes were measured and deliberately deferred.**
+Relaxing the predicate for them produces `ok=false` with an
+`unexpected-internal-throw@lower` invariant: "ABI draft
+`…class-implicit-constructor…:body` would mutate sealed prepared scope
+`prepared-component:…class-instance-method + …class-static-method + …`". The
+implicit-constructor support binding is planned after the static component
+seals. That is a sealing-order transaction, not a member-shape gate, and it is
+the next slice in this family.
+
+Coverage is `tests/issue-3522-nested-class-field.test.ts`, **24/24** on `gc`
+and `standalone`: direct class/function body poison on every expected body,
+exact terminal outcomes, one shared prepared component across owner + ctor +
+member, Wasm validation, runtime results cross-checked against node, WAT proof
+that the prepared owner carries no `externref`, boxing, `call_ref`,
+`call_indirect`, `ref.test` or `__call_m_*` traffic and that the initializer
+lands as a typed `struct.set`, dual-run legacy↔IR equality on four fixtures,
+and a field-ORDER chain checked against the DIRECT path rather than a
+hard-coded constant. Nine negative boundaries are verified rather than assumed:
+the call-edge residual, a constructing initializer, a static field, heritage
+(the explicit #4448/#4575 guard — the predicate still rejects heritage, so no
+shadow-identity inheritance surface moves by construction), an enclosing-frame
+capture, a `let`-bound class expression, name shadowing, and a positive control
+proving the direct class-body emitter is still reached.
+
+Two of those fixtures assert direct↔IR parity instead of the node value,
+because the node value is not what either path produces: a field initializer
+reading an enclosing `const` yields **2**, not 42, and an inner field class
+shadowing an outer one yields **82**, not 42. Both were A/B'd as identical on
+this branch and on unmodified `origin/main`, and identical on the direct and IR
+paths — pre-existing defects this slice neither introduces nor hides.
+
+Two negative-boundary tests in the accessor and implicit-constructor suites
+pinned "an initialized instance field keeps the owner direct". That boundary
+MOVED, so they now pin the call-edge residual, and the two poison-seam positive
+controls that used an initialized-field class as their "unadmitted" example
+switch to a static member.
+
+Gates: focused nested/accessor/class-expression suites **54/54**; the new field
+suite **24/24**; `check:ir-fallbacks --verbose` OK, no unintended, post-claim or
+module-level increases (only the two unchanged deferred string-builder
+candidates); `check:ir-only` **READY** — single-host **37/37 terminal units, 37
+IR-emitted, 0 legacy bodies, 0 Unsupported, 0 Invariants**, standalone lane at
+its baseline (22 emitted / 15 typed unsupported / 0 invariants) with every floor
+green; `gen-ir-adoption --check` byte-clean after refreshing the
+`ClassDeclaration` row; typecheck **508 errors on base and 508 on this branch**
+(all pre-existing `@types/node` noise under symlinked `node_modules`) — no new
+errors; lint and `format:check` green on every changed file.
+
+Remaining nested class-family boundaries, in the order their surfaces grow:
+STATIC members on nested classes (the sealing-order transaction above), field
+initializers carrying call edges (the attribution transaction above), computed
+member names, nested heritage, and then top-level class expressions with their
+module-global binding ABI.

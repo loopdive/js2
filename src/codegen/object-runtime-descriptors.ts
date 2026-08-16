@@ -48,6 +48,7 @@ import {
 // (#4230) VEC `Properties` maps — a complete own-key source built from the
 // #3537 bag ∪ the #3251 overlay companion.
 import { reserveVecPropsKeySource, vecPropertiesKeySourceArm } from "./vec-props-key-source.js";
+import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js"; // (#2175 P2) own-view companion substitution
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -2032,13 +2033,22 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       ...keyRef(key),
       { op: "call", funcIdx: hasOwnIdx },
     ];
-    const getField = (key: string): Instr[] => [
+    const getField = (key: string, nullishToNull = true): Instr[] => [
       { op: "local.get", index: L_DESC },
       ...keyRef(key),
       { op: "call", funcIdx: externGetIdx },
       // (#2106 S1) normalize missing/undefined descriptor fields back to the
       // legacy null convention so downstream null-keyed logic is unchanged.
-      ...(ctx.funcMap.has("__nullish_to_null")
+      // (#4479) `value` opts OUT, exactly as the `__defineProperties` twin
+      // already does since #3991 — for [[Value]] `undefined` is a REAL value
+      // and null is not it. Collapsing it stored `ref.null`, so a descriptor
+      // whose `value` field read back undefined defined a property holding
+      // NULL: `typeof newObj.prop` answered "object" instead of "undefined"
+      // (`built-ins/Object/create/15.2.3.5-4-162..165`, and the same shape
+      // through `Object.defineProperty(o, k, descVar)`). The plural and
+      // singular appliers must agree — this was the ONLY field read where
+      // they disagreed.
+      ...(nullishToNull && ctx.funcMap.has("__nullish_to_null")
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
@@ -2227,7 +2237,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           { op: "i32.const", value: 1 },
           { op: "local.set", index: L_HAS_DATA },
           ...setFlag(HOST_HAS_VALUE),
-          ...getField("value"),
+          ...getField("value", false),
           { op: "local.set", index: L_VALUE },
         ],
       },
@@ -2446,6 +2456,14 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "local.get", index: 6 },
       { op: "return" },
     ];
+    // (#2175 P2) Index of the companion scratch appended LAST to this native's
+    // local vector. Fixed locals are any=2, o=3, e=4, fl=5, desc=6; the six
+    // `strExotic` locals (7..12) are present only when that arm is active.
+    // Empty when the proto-index store is unreserved, keeping modules that never
+    // write a builtin prototype byte-identical. The substitution is a CALL to a
+    // finalize-filled helper and bakes no type index here — see its reserve site
+    // in proto-index-store.ts for why that matters.
+    const gopdNpcArm = protoIndexOwnViewSubstituteInstrs(ctx, 0);
     const stringExoticArm: Instr[] = strExotic
       ? [
           // key must be a string property key (else no exotic own property).
@@ -2697,6 +2715,15 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         : []),
       // any = any.convert_extern(obj) ; if !$Object → vec receivers consult
       // the #3251 overlay (companion entry / implicit element descriptor),
+      // (#2175 P2) Substitute a `$NativeProto` receiver by its brand COMPANION
+      // before the `$Object` test below, so an entry written by
+      // `defineProperty(<Builtin>.prototype, …)` is described by the ordinary
+      // path — including its REAL flag bits, which the #4176 write arm already
+      // stored on the companion's `$PropEntry`. Without this the receiver failed
+      // `ref.test $Object` and fell into the non-object arm, answering
+      // `undefined` while a plain read of the same key returned its value.
+      // Own-layer only, no chain walk; inert for every other receiver.
+      ...gopdNpcArm,
       // then the primitive-receiver arm (#2984: nullish → TypeError, string →
       // §10.4.3 exotic, else undefined — where "undefined" is the #3319
       // singleton-aware miss return).

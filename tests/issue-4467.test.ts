@@ -144,20 +144,20 @@ export function mcode(a: number, b: number, i: number): number { return mixed("a
       }
     });
 
-    it("AC#4: a BOOLEAN substitution still rejects at template-substitution-unsupported", async () => {
-      // Not an oversight: a boolean shares IR's `i32` carrier with a
-      // native-annotated number, so admitting it would make `${true}` and
-      // `${1}` indistinguishable to the lowerer. Claim and lowering stay on
-      // one set instead — see `templateSubstitutionFamily` in select.ts.
+    it("AC#4: a BOOLEAN substitution claims since #4503 (this issue's residual, now retired)", async () => {
+      // #4467 deliberately rejected this: a boolean shares IR's `i32` carrier
+      // with a native-annotated number, so admitting it would have made
+      // `${true}` and `${1}` indistinguishable to the lowerer — WRONG OUTPUT,
+      // not a demote. #4503 added the IR boolean BRAND on that carrier, so the
+      // lowerer can now tell them apart and the residual is retired. The
+      // numeric arm this issue owns is unchanged: `${1}` still prints "1".
       const src = `
 function b(v: boolean): string { return \`v=\${v}!\`; }
 export function blen(v: number): number { return b(v > 0).length; }
 `;
       const result = await compileLane(src, laneOptions, true);
       expect(result.success).toBe(true);
-      const outcome = outcomeOf(result, "b");
-      expect(outcome?.kind).toBe("unsupported");
-      expect(outcome?.code).toBe("template-substitution-unsupported");
+      expect(outcomeOf(result, "b")?.kind).toBe("emitted");
     });
   });
 

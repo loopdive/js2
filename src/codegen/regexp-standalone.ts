@@ -4291,6 +4291,86 @@ export function ensureStandaloneRegExpCarrierTestHelper(ctx: CodegenContext): nu
   return funcIdx;
 }
 
+/** (#4465) Name of the RUNTIME `$__StandaloneRegExp` → `$AnyString` helper. */
+const STANDALONE_REGEXP_TO_STRING_DYN = "__regexp_to_string_dyn";
+
+/**
+ * (#4465) `__regexp_to_string_dyn(anyref) -> ref $AnyString` — the §22.2.6.14
+ * rendering `"/" ++ source ++ "/" ++ flags` for a receiver whose RegExp-ness is
+ * only known at RUNTIME.
+ *
+ * `emitStandaloneRegExpToStringFromExpr` (above) answers the same question from
+ * a static receiver EXPRESSION, which is why `String(re)` and `` `${re}` ``
+ * already work. The generic `String.prototype.<m>` reflective bodies have no
+ * expression to consult — their receiver arrives as a bare externref closure
+ * param — so `ToString(this)` fell through to `$__any_to_string`, whose terminal
+ * for an unrecognized ref is the literal `"[object Object]"`. That is what made
+ * the whole `S15.5.4.1[6789]_A1_T14` family
+ * (`__reg.toLowerCase = String.prototype.toLowerCase; __reg.toLowerCase()`)
+ * answer `"[object object]"` instead of `"/abc/"`.
+ *
+ * The caller is responsible for the `ref.test` — this body assumes the cast
+ * succeeds and is only ever reached from a guarded arm.
+ *
+ * Returns `undefined` when the module has no standalone RegExp struct or no
+ * native-string representation, so a module that never mentions RegExp emits
+ * byte-identical output.
+ */
+export function ensureStandaloneRegExpToStringDyn(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(STANDALONE_REGEXP_TO_STRING_DYN);
+  if (existing !== undefined) return existing;
+  if (!usesNativeRegExpProvider(ctx)) return undefined;
+  const structTypeIdx = ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  if (structTypeIdx === undefined) return undefined;
+  const repr = nativeStringRepr(ctx);
+  if (repr === undefined || ctx.anyStrTypeIdx < 0) return undefined;
+
+  ensureNativeStringHelpers(ctx);
+  const flagsStrIdx = ensureRegexFlagsStr(ctx);
+
+  const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  const typeIdx = addFuncType(ctx, [{ kind: "anyref" }], [anyStrRef], "$regexp_to_string_dyn_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(STANDALONE_REGEXP_TO_STRING_DYN, funcIdx);
+
+  const RE = 1; // local: the recovered struct ref
+  const srcInstrs: Instr[] = [
+    { op: "local.get", index: RE },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE },
+  ];
+  const flagsInstrs: Instr[] = [
+    { op: "local.get", index: RE },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+    { op: "call", funcIdx: flagsStrIdx },
+  ];
+  let acc = repr.concat(repr.literal("/"), srcInstrs);
+  acc = repr.concat(acc, repr.literal("/"));
+  acc = repr.concat(acc, flagsInstrs);
+
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: structTypeIdx },
+    { op: "local.set", index: RE },
+    ...acc,
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+  ];
+
+  pushDefinedFunc(ctx, funcIdx, {
+    name: STANDALONE_REGEXP_TO_STRING_DYN,
+    typeIdx,
+    // Non-null ref local, set-before-get (the `ensureRegexFlagsStr` pattern).
+    locals: [{ name: "re", type: { kind: "ref", typeIdx: structTypeIdx } }],
+    body,
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** (#4465) The `$__StandaloneRegExp` struct type index, when the module has one. */
+export function standaloneRegExpStructTypeIdx(ctx: CodegenContext): number | undefined {
+  return ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+}
+
 // ── #2175 S1: RegExp builtin-prototype glue ───────────────────────────────────
 //
 // The contract `native-proto.ts` consumes for RegExp: a brand, a member CSV (the

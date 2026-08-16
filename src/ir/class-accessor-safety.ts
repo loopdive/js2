@@ -61,6 +61,51 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
   return ts.canHaveModifiers(node) && (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
 }
 
+/**
+ * (#3522) Exact instance field initializers a bounded nested ordinary class may
+ * carry.
+ *
+ * The initializer runs inside the class's own constructor `_init`, not in the
+ * containing frame, so ClassDefinitionEvaluation stays inert and the ordered
+ * source-owned field plan established by the 2026-08-12 initialized
+ * instance-field checkpoint owns it unchanged.
+ *
+ * What is rejected here is CALL EDGES, not expression complexity. A nested
+ * class's field-initializer support unit is attributed to the containing
+ * executable, while the constructor terminal that ultimately runs the
+ * initializer is attributed to the class. A call inside the initializer is
+ * therefore planned twice with two different owner units, which the integration
+ * call planner correctly refuses (`selection-preparation-mismatch`,
+ * "direct-call plan … disagrees with exact integration identity") — measured on
+ * `class Box { p: number = seed(); … }` inside a function, a hard compile
+ * failure rather than a demotion. Owning that attribution is a later slice; the
+ * predicate fails closed on every callable form until then, so no admitted
+ * shape can reach it. Nested executables and `super` are rejected for the same
+ * reason they are in an accessor body: they would move ownership out of the
+ * class.
+ */
+function boundedPreparedInstanceFieldInitializer(initializer: ts.Expression): boolean {
+  let bounded = true;
+  const visit = (node: ts.Node): void => {
+    if (!bounded) return;
+    if (
+      ts.isCallExpression(node) ||
+      ts.isNewExpression(node) ||
+      ts.isTaggedTemplateExpression(node) ||
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      node.kind === ts.SyntaxKind.SuperKeyword
+    ) {
+      bounded = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(initializer);
+  return bounded;
+}
+
 function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration[]): boolean {
   return parameters.every(
     (parameter) =>
@@ -77,10 +122,10 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * be prepared independently of a still-direct containing executable.
  *
  * The restriction makes ClassDefinitionEvaluation inert: no heritage,
- * decorators, computed keys, static work, or field initializers can execute in
- * the containing frame. Body capture/type safety remains the structural
- * selector's responsibility, and the identity selector admits the class only
- * when every body-bearing member claims atomically.
+ * decorators, computed keys, or static work can execute in the containing
+ * frame. Body capture/type safety remains the structural selector's
+ * responsibility, and the identity selector admits the class only when every
+ * body-bearing member claims atomically.
  *
  * #3522 — the constructor may be IMPLICIT. An absent constructor on a class
  * with no heritage and no initialized fields has exactly the same inert
@@ -107,6 +152,16 @@ function hasFixedPreparedParameters(parameters: readonly ts.ParameterDeclaration
  * descriptor mismatches are NOT this predicate's contract: the identity
  * selector re-derives each accessor's exact descriptor and withdraws the whole
  * bounded class when any of them is ambiguous.
+ *
+ * #3522 — INITIALIZED instance fields are ordinary members of this family, so
+ * long as their initializer carries no call edge
+ * (`boundedPreparedInstanceFieldInitializer`). The initializer executes in the
+ * class's own constructor `_init`, in source order, under the plan the
+ * 2026-08-12 initialized instance-field checkpoint already owns at top level;
+ * nothing about it runs in the containing frame. STATIC fields are a different
+ * contract and stay rejected above: their initializer runs at class-definition
+ * time IN the containing frame, which is exactly the inertness this predicate
+ * asserts.
  */
 export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (declaration.heritageClauses?.length || hasDecorators(declaration) || declaration.members.length === 0) {
@@ -115,13 +170,19 @@ export function isBoundedPreparedNestedOrdinaryClass(declaration: ts.ClassDeclar
   let constructorCount = 0;
   let callableMemberCount = 0;
   for (const member of declaration.members) {
-    if (hasDecorators(member) || hasModifier(member, ts.SyntaxKind.StaticKeyword)) return false;
+    if (hasDecorators(member)) return false;
+    const isStatic = hasModifier(member, ts.SyntaxKind.StaticKeyword);
     if (ts.isPropertyDeclaration(member)) {
-      if (member.initializer !== undefined || (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name))) {
+      if (isStatic) return false;
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) {
+        return false;
+      }
+      if (member.initializer !== undefined && !boundedPreparedInstanceFieldInitializer(member.initializer)) {
         return false;
       }
       continue;
     }
+    if (isStatic) return false;
     if (ts.isConstructorDeclaration(member)) {
       if (!member.body) continue; // Type-only overload signature.
       constructorCount++;

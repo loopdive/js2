@@ -287,15 +287,23 @@ describe("#3522 nested implicit-constructor negative boundaries", () => {
     expectDirect(result, ["run"]);
   });
 
-  it("keeps a nested class with an initialized instance field direct", async () => {
+  // (#3522) A plain initialized instance field is no longer a boundary — the
+  // nested initialized-field slice admits it, and
+  // `tests/issue-3522-nested-class-field.test.ts` owns that positive family.
+  // The boundary MOVED to the call edge inside the initializer: the field's
+  // support unit belongs to the containing executable while the constructor
+  // terminal that runs it belongs to the class, so a call is planned under two
+  // owners. It must stay direct rather than reach that disagreement.
+  it("keeps a nested class whose field initializer CALLS a local function direct", async () => {
     const result = await compile(
       `
+      function seed(): number { return 42; }
       export function run(): number {
-        class Box { v: number = 42; get(): number { return this.v; } }
+        class Box { v: number = seed(); get(): number { return this.v; } }
         return new Box().get();
       }
       `,
-      { fileName: "nested-implicit-field.ts", experimentalIR: true, trackIrOutcomes: true },
+      { fileName: "nested-implicit-field-call.ts", experimentalIR: true, trackIrOutcomes: true },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect((await instantiate(result)).run!()).toBe(42);
@@ -357,9 +365,13 @@ describe("#3522 nested implicit-constructor negative boundaries", () => {
     try {
       process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Box_new";
       const result = await compile(
+        // A STATIC member is still outside the bounded family (its definition
+        // evaluation is not inert in the containing frame), so this class must
+        // still reach the direct emitter. An initialized instance field no
+        // longer works as this control — it is now admitted.
         `
         export function run(): number {
-          class Box { v: number = 42; get(): number { return this.v; } }
+          class Box { static k: number = 1; get(): number { return 42; } }
           return new Box().get();
         }
         `,

@@ -1561,6 +1561,32 @@ export interface CodegenContext {
    */
   protoNamedDirty: boolean;
   /**
+   * (#2175 V2-S3b-1) Set by the same pre-scan when a branded builtin's
+   * `.prototype` can reach the DYNAMIC reader as a runtime value — i.e. a
+   * `<Builtin>.prototype` read in VALUE position (bound to a variable, passed
+   * as an argument, returned, …) or any `Object.getPrototypeOf(…)` call (the
+   * `harness/testTypedArray.js:64` idiom `var TypedArray =
+   * Object.getPrototypeOf(Int8Array)`, which is how ~121 ES2015 reflection
+   * tests reach `%TypedArray%.prototype`).
+   *
+   * Consumers, both reserve-only:
+   *  1. `reserveProtoIndexStore` — a purely reflective READER never writes a
+   *     builtin proto, so neither `protoIndexDirty` nor `protoNamedDirty`
+   *     fires and the whole `__protoidx_*` consult substrate stays unreserved.
+   *     This flag arms it for the read-only case.
+   *  2. `ensureNativeProtoCompanionSeeder` (native-proto.ts) — gates whether a
+   *     materialized `$NativeProto` also emits a seeder that populates its
+   *     brand companion with the glue's own members.
+   *
+   * Deliberately SEPARATE from the two write flags for the same reason those
+   * are separate from each other: it must not disable the HOF hole visit-skip
+   * or the typed element fast lanes, which key on `protoIndexDirty`. A module
+   * that never reads a builtin proto as a value keeps every byte it has today
+   * (the seeder is additionally gated on the brand's proto actually being
+   * materialized, so a clean module emits nothing).
+   */
+  protoMemberDirty: boolean;
+  /**
    * (#4159) A descriptor that is not provably data-only may exist somewhere in
    * the module. Consumers: the TYPED element read/write lanes only — #3251's
    * value write-back keeps `array.get` coherent for DATA descriptors, but an

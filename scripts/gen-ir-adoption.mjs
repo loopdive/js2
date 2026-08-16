@@ -120,7 +120,7 @@ const SECTIONS = [
       [
         "`ClassDeclaration`",
         "mixed",
-        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Re-measured 2026-08-15 on 793b5c0e (#3522): instance GET/SET ACCESSORS are now ordinary members of that family, so a nested class with a method + getter, a getter/setter pair reading and writing `this`, or an explicit ctor + getter over a field all claim the whole owner; previously ONE accessor withdrew the enclosing function plus every member. Residual nested rejects are per-class member SHAPE, not cardinality: a static member or static accessor, a computed accessor name, an initialized instance field, heritage, no callable member, a `let`-bound class expression, or a member capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
+        "Supported top-level constructors/methods/accessors prepare once; wider nested/class-expression families remain incremental. Measured 2026-08-15 (#3583): a class with a ctor + instance method + getter + setter claims end-to-end. NESTED classes measured 2026-08-15 (#3522): a bounded ordinary class inside a function claims with an explicit OR an implicit constructor, in both the declaration and the exact `const C = class {…}` expression form, and any number of them per function (two and three both claim). Re-measured 2026-08-15 on 793b5c0e (#3522): instance GET/SET ACCESSORS are now ordinary members of that family, so a nested class with a method + getter, a getter/setter pair reading and writing `this`, or an explicit ctor + getter over a field all claim the whole owner; previously ONE accessor withdrew the enclosing function plus every member. Re-measured 2026-08-16 on 49df493a (#3522): INITIALIZED instance fields are now ordinary members of that family too, with an explicit OR an implicit constructor and in both the declaration and `const C = class {…}` expression forms, so a nested class carrying `p: number = 40` claims the whole owner (`legacy=1 ir=0` before, `legacy=0 ir=3` after, identical on gc and standalone); the field initializer runs in the class's own `_init` in source order, before the constructor body. Residual nested rejects are per-class member SHAPE, not cardinality: a static member, a static accessor, a STATIC field (its initializer runs at class-definition time in the containing frame), a computed accessor name, a field initializer carrying a CALL EDGE (the field's support unit and the constructor terminal that runs it have different owners, so the call is planned twice), heritage, no callable member, a `let`-bound class expression, or a member capturing the enclosing frame each keep the whole owner direct at `body-shape-rejected`. Top-level class EXPRESSIONS still reject at `expr-new-module-binding-callee` (module-global binding ABI, deferred). Re-owned from #1370 (`done`) to #3522, which carries the remaining class-family scope.",
         "#3522",
       ],
       ["`ImportDeclaration`", "deferred", "Module-level concern, not function-body.", "—"],
@@ -138,7 +138,7 @@ const SECTIONS = [
       [
         "`TemplateExpression`",
         "mixed",
-        "STRING and NUMERIC substitutions claim in all three lanes — host, `nativeStrings`, standalone — and lower through the `IR_NUMBER_TO_STRING_FN` provider (#4467, measured 2026-08-15; special values `-0`/`NaN`/`±Infinity`/`1e21`/`1e-7` pinned against node). BOOLEAN substitutions still reject at `template-substitution-unsupported`: a boolean shares IR's `i32` carrier with a native-annotated number, so the lowerer cannot tell `${true}` from `${1}` once the checker family is gone — that needs an IR boolean brand, not a formatter. Re-owned from #1374 (`done`).",
+        'STRING, NUMERIC and BOOLEAN substitutions claim in all three lanes — host, `nativeStrings`, standalone. Numeric lowers through the `IR_NUMBER_TO_STRING_FN` provider (#4467, measured 2026-08-15; special values `-0`/`NaN`/`±Infinity`/`1e21`/`1e-7` pinned against node); boolean lowers to the §7.1.17 `"true"`/`"false"` spellings, distinguished from an i32-carried number by the IR boolean BRAND (#4503, measured 2026-08-15 — the brand, not a formatter, was the unblocker, and an unbranded i32 the checker proves boolean demotes rather than printing a number). Still `mixed`: object/`any` substitutions reject at `template-substitution-unsupported` pending a ToPrimitive walk the IR does not own. Re-owned from #1374 (`done`).',
         "#3518",
       ],
       ["`TrueKeyword` / `FalseKeyword`", "ir-owned", "—", "—"],
@@ -197,19 +197,19 @@ const SECTIONS = [
       [
         "`ObjectLiteralExpression`",
         "mixed",
-        "Non-empty `{ key: val, … }` and SHORTHAND `{ a }` lower (measured 2026-08-15, #3583). Empty `{}` claims only when INERT — an un-annotated local binding that is never referenced (#4471). A fieldless `object.new` lowers fine; what fails is any USE, since a zero-field shape serves no field access. The failing uses (property read/write, flow into a `dynamic` param, `typeof`, array element, `?:` test) fail identically for the non-empty claim, so they are the shared closed-object boundary, not an empty-specific one; the one empty-specific gap is a `{}` TypeNode, which `IrType.object` cannot express. Annotated `{}` bindings stay out — legacy gives those an open `$Object` or an expando-WIDENED struct. Computed keys still reject at `objectlit-computed-key`. Re-owned from wont-fix #1131.",
+        'Non-empty `{ key: val, … }` and SHORTHAND `{ a }` lower (measured 2026-08-15, #3583). Empty `{}` claims only when INERT — an un-annotated local binding that is never referenced (#4471). A fieldless `object.new` lowers fine; what fails is any USE, since a zero-field shape serves no field access. The failing uses (property read/write, flow into a `dynamic` param, `typeof`, array element, `?:` test) fail identically for the non-empty claim, so they are the shared closed-object boundary, not an empty-specific one; the one empty-specific gap is a `{}` TypeNode, which `IrType.object` cannot express. Annotated `{}` bindings stay out — legacy gives those an open `$Object` or an expando-WIDENED struct. COMPUTED keys claim when they fold syntactically to a string — `{ ["a"]: v }`, ``{ [`a`]: v }``, `{ [0]: v }` and parenthesised wrappers (#4513, shared fold in `src/ir/property-key-fold.ts` so the selector and lowerer cannot drift). Keys needing a value environment still reject at `objectlit-computed-key`: `const k = "a"`, `Symbol.iterator`, template substitution, arithmetic — the selector takes a bare `SourceFile` and its scope is a name set, so it cannot reproduce legacy\'s `resolveConstantExpression`. Re-owned from wont-fix #1131.',
         "#3518",
       ],
       [
         "`ArrayLiteralExpression`",
         "mixed",
-        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`; the EMPTY literal `[]` also claims (measured 2026-08-15, #3583). Spread/sparse/mixed-type partial. Re-owned from #1804 (`done`).",
+        "Slice 12 + #1804 — fixed-length same-typed literals constructed via `vec.new_fixed`; the EMPTY literal `[]` also claims (measured 2026-08-15, #3583). Spread claims for statically-provable source lengths (#4487, see the `SpreadElement` row); sparse (`expr-arraylit-sparse`) and mixed-type (`expr-arraylit-mixed-primitive-family`) still reject. Re-owned from #1804 (`done`).",
         "#3518",
       ],
       [
         "`SpreadElement`",
         "mixed",
-        "Spread rejects in both measured positions (2026-08-15, #3583): in an array literal at `expr-arraylit-spread`, and in a call at the surrounding argument/receiver gate. Re-owned from wont-fix #1131.",
+        "ARRAY-LITERAL spread now claims when every operand's element count is provable at compile time (#4487): an inline dense literal (`[...[1, 2], x]`) or a function-local `const` bound to a dense literal whose length is provably invariant. Those expand element-wise into #1804's `vec.new_fixed`, which is also what makes the result a COPY. Residual, under its own arm `expr-arraylit-spread-dynamic-source`: any RUNTIME-length source (parameter, call result, `let`, string/iterator protocol, an escaping or resized `const`) — `vec.new_fixed` takes a compile-time count and the IR has no dynamically-sized allocation node. Spread in a CALL still rejects at the surrounding argument/receiver gate (measured 2026-08-15, #3583). Re-owned from wont-fix #1131.",
         "#3518",
       ],
       [
@@ -385,7 +385,7 @@ const BUCKETS = {
   ],
   "host-surface-unavailable": [
     "deferred",
-    "Ambient host surface (`document`/`console`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. Mixed bucket by design: DOM is permanent (legacy's own standalone body leaks `env.Document_createElement` past the #2961 gate), `console.*` is fixable via the host-free `__stdout_append` sink (#3469) and is tracked separately (#4457)",
+    "Ambient host surface (`document`/…) referenced in a host-free target (standalone/wasi) — `hostExternCapability` defers, so IR *shape* coverage can never close it. DOM is permanent here: legacy's own standalone body for those units leaks `env.Document_createElement` past the #2961 gate, so there is nothing host-free to lower to. `console.*` was the fixable member and LEFT this bucket in #4462, which gave it its own capability row (`consoleSurfaceCapability`) over the host-free `__stdout_append` sink (#3469); a console call still lands here when the sink is absent or the call shape is outside the lowered slice (multi-arg, expression position, a method the IR does not lower)",
   ],
   "async-function": ["deferred", "Async bodies — CPS lowering tracked separately (#1373/#1796)"],
   "async-generator": ["deferred", "Out of scope long-term"],
@@ -473,7 +473,44 @@ const POSTCLAIM = {
   ],
   "array-representation-unsupported": [
     "capability gap",
-    "Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering.",
+    "Three arms mirror the selector's holey-Array gate, but the fourth (widening/heterogeneous sink) is a deliberate demote to the safe boxed lowering. #4502 added 19 more from-ast arms (array/vec literal, pattern, for-of carrier).",
+  ],
+  // --- #4502: codes that GAINED live post-claim throw sites in the from-ast
+  // bare-`Error` sweep. Each is a capability gap by construction: the arm names
+  // a source shape the IR lowering does not cover yet, and the legacy body
+  // lowers it. None restates a predicate the selector already evaluated, so
+  // none is a promotion candidate.
+  "call-arity-unsupported": [
+    "capability gap",
+    "#4502 — JS permits under/over-application, so a call whose arity the IR arm cannot lower is legal source.",
+  ],
+  "call-graph-closure": [
+    "capability gap",
+    '#4502 — `direct call to "f" has no exact AST-site plan`: the callee is not a claimed unit, so there is no IR call target (the #3518 measurement).',
+  ],
+  "call-resolution-unsupported": [
+    "capability gap",
+    "#4502 — a callee/argument shape the IR call lowering does not yet resolve (spread sources, capture shapes, arg carriers).",
+  ],
+  "destructuring-param-complex": [
+    "capability gap",
+    "#4502 — object binding-pattern shapes outside slice 8a (rest, defaults, nested, computed keys) reached from a claimed body.",
+  ],
+  "logical-value-unsupported": [
+    "capability gap",
+    "#4502 — `&&`/`||` operands that are not the i32 bool carrier; ordinary untyped JS reaches this.",
+  ],
+  "param-shape-rejected": [
+    "capability gap",
+    "#4502 — a parameter shape outside the IR param slice, plus the non-f64 expression-default sentinel carrier.",
+  ],
+  "property-access-unsupported": [
+    "capability gap",
+    "#4502 — the READ sibling of `property-write-unsupported`; a `.p` access on a receiver/property shape not yet in the IR slice. The only new code the sweep added.",
+  ],
+  "type-resolution-unsupported": [
+    "capability gap",
+    "#4502 gave it build-stage arms too (typeNodeToIr / resolveIrType / closureParameterTypeToIr); previously resolve-stage only. Same #1921 contract: a type the IR cannot represent is a gap, and hard-failing it regresses real programs.",
   ],
   "body-shape-rejected": [
     "capability gap",

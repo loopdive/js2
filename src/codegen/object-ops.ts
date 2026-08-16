@@ -49,6 +49,9 @@ import {
 import { emitHasOwnPresence } from "./closed-struct-presence.js"; // (#3920) per-instance own-presence
 import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
 import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
+// (#4479) the `Properties` MAP half of Object.defineProperties — key naming and
+// `$Object` materialization. Reasoning lives in that module's header.
+import { compileDescriptorMapAsDynamicObject, staticDescriptorMapKey } from "./define-properties-map.js";
 import { isDescriptorTranscribableStruct } from "./property-descriptor-shape.js"; // (#4180) #2372 transcription gate
 import {
   descriptorFieldName,
@@ -3269,6 +3272,13 @@ export function compileObjectDefineProperties(
     let allWellFormed = true;
     for (const prop of descsArg.properties) {
       if (!ts.isPropertyAssignment(prop)) continue;
+      // (#4479) A key the expansion cannot name DECLINES the whole call; the
+      // old per-entry `propName === undefined ⇒ continue` silently dropped it
+      // (`define-properties-map.ts`, defect 1).
+      if (staticDescriptorMapKey(prop.name) === undefined) {
+        allWellFormed = false;
+        break;
+      }
       if (!isStaticDescWellFormed(prop.initializer)) {
         allWellFormed = false;
         break;
@@ -3285,11 +3295,8 @@ export function compileObjectDefineProperties(
 
       for (const prop of descsArg.properties) {
         if (!ts.isPropertyAssignment(prop)) continue;
-        const propName = ts.isIdentifier(prop.name)
-          ? prop.name.text
-          : ts.isStringLiteral(prop.name)
-            ? prop.name.text
-            : undefined;
+        // (#4479) unnameable keys can no longer reach here (pre-scan declined).
+        const propName = staticDescriptorMapKey(prop.name);
         if (propName === undefined) continue;
 
         // (#3984) Removed here: a synthetic `Object.defineProperty(...)` call node
@@ -3857,7 +3864,13 @@ export function compileObjectDefineProperties(
   } else if (objType.kind !== "externref") {
     coerceType(ctx, fctx, objType, { kind: "externref" });
   }
-  const descsType = compileExpression(ctx, fctx, descsArg, { kind: "externref" });
+  // (#4479) Standalone: the literal `Properties` map must reach the native as a
+  // real `$Object`, not the closed struct its `PropertyDescriptorMap` contextual
+  // type produces — a struct answers no `__desc_has_own`/`__extern_get`, so every
+  // field read missed. Declines (emits nothing) elsewhere: define-properties-map.ts.
+  const descsType =
+    compileDescriptorMapAsDynamicObject(ctx, fctx, descsArg) ??
+    compileExpression(ctx, fctx, descsArg, { kind: "externref" });
   if (!descsType) {
     return { kind: "externref" };
   }

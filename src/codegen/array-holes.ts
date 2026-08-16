@@ -63,6 +63,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.usesArrayHoles &&
       ctx.protoIndexDirty &&
       ctx.protoNamedDirty &&
+      ctx.protoMemberDirty &&
       ctx.vecAccessorDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
@@ -84,6 +85,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
       ctx.protoNamedDirty = true;
     }
+    if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
+      ctx.protoMemberDirty = true;
+    }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
     }
@@ -103,6 +107,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.dynamicCodeDirty = true;
       ctx.protoIndexDirty = true;
       ctx.protoNamedDirty = true;
+      ctx.protoMemberDirty = true;
       ctx.vecAccessorDescriptorDirty = true;
       ctx.vecIndexDeleteDirty = true;
       ctx.vecOwnKeysDirty = true;
@@ -410,6 +415,82 @@ function isProtoNamedWrite(node: ts.Node): boolean {
     }
   }
   return false;
+}
+
+/**
+ * (#2175 V2-S3b-1) Can a branded builtin's `.prototype` reach the DYNAMIC
+ * reader as a runtime value in this module? Two shapes:
+ *
+ *  - `<BrandedBuiltin>.prototype` in VALUE position — anything OTHER than
+ *    being the object of a further property/element access (`X.prototype.m`
+ *    and `X.prototype[k]` both resolve syntactically today and are unaffected
+ *    by the store). `var p = RegExp.prototype`, `f(Array.prototype)`,
+ *    `return Map.prototype`, `[String.prototype]` all qualify.
+ *  - ANY `Object.getPrototypeOf(…)` call. This is deliberately
+ *    receiver-agnostic: the dominant idiom is
+ *    `var TypedArray = Object.getPrototypeOf(Int8Array)` followed by
+ *    `TypedArray.prototype.<member>` (harness/testTypedArray.js:64), where the
+ *    proto never appears syntactically at all. Narrowing this to a
+ *    branded-ctor argument would miss every alias of that harness variable, and
+ *    the flag only RESERVES helpers — the real per-brand cost is separately
+ *    gated on that brand's `$NativeProto` actually being materialized.
+ *
+ * Read-only by construction, so it is disjoint from `isProtoIndexWrite` /
+ * `isProtoNamedWrite`; it never sets `protoIndexDirty` and therefore never
+ * disables the HOF hole visit-skip or the typed element lanes.
+ */
+function isProtoMemberValueUse(node: ts.Node): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "getPrototypeOf" &&
+      ts.isIdentifier(callee.expression) &&
+      (callee.expression.text === "Object" || callee.expression.text === "Reflect")
+    ) {
+      return true;
+    }
+  }
+  if (!isBrandedBuiltinPrototypeExpr(node)) return false;
+  const parent: ts.Node | undefined = node.parent;
+  if (parent === undefined) return true;
+  // Object-of-a-member-access ⇒ the syntactic path handles it; not a value use.
+  if (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    unwrapExpr(parent.expression) === unwrapExpr(node)
+  ) {
+    return false;
+  }
+  // `Object.defineProperty(X.prototype, …)` / `defineProperties` /
+  // `Reflect.defineProperty` — the proto is a WRITE TARGET here, not a value
+  // being read reflectively. `isProtoNamedWrite` already covers this exact
+  // shape by setting `protoNamedDirty`, which reserves the same store; letting
+  // it ALSO set `protoMemberDirty` would seed member closures into a plain
+  // polyfill module that never reads a proto dynamically — wasted bytes, and
+  // the seeder's extra functions can perturb IR eligibility (#2855 ratchet).
+  // NO measurement is claimed for this rule: it was first written citing
+  // `tests/issue-4176.test.ts` "prepared IR for-in shares prototype-companion
+  // enumeration", which in fact fails on unmodified `origin/main` @ 9e17d34f3
+  // as well (1 failed / 12 passed), so that test is NOT evidence here and was
+  // not caused by this flag. Deliberately narrow: `getOwnPropertyDescriptor(
+  // X.prototype, k)` and every other call-argument position still counts as a
+  // value use, because those genuinely hand the proto to a dynamic reader.
+  if (
+    ts.isCallExpression(parent) &&
+    parent.arguments.length > 0 &&
+    unwrapExpr(parent.arguments[0]!) === unwrapExpr(node)
+  ) {
+    const callee = parent.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+      (callee.name.text === "defineProperty" || callee.name.text === "defineProperties")
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isProtoIndexWrite(node: ts.Node): boolean {

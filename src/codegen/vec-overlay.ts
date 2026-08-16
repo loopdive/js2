@@ -2267,8 +2267,29 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   // Answers accessor + companion-value + named-expando keys on vec receivers;
   // plain index-keyed data entries fall through to the #3183 numeric arm (the
   // vec is authoritative there). Runs BEFORE the #3183 arm (spliced after it).
-  {
-    const fn = findFn("__extern_get");
+  // (#4491 D-a) The SAME prologue is spliced into `__vec_prop_get`.
+  //
+  // Standalone does not route a non-index named read on an array through
+  // `__extern_get`: `resolveNamedPropHelper` (array-nonindex-key.ts) returns
+  // `VEC_PROP_GET`, deliberately, because the `__extern_*` vec prologue would
+  // otherwise swallow the key as an element. So `__vec_prop_get` is the
+  // standalone twin of this lane — and it never got the overlay prologue,
+  // while `__extern_get` (the gc/host lane) has had it since #3251. That
+  // asymmetry IS the bug: measured standalone, `Object.defineProperty(a,
+  // "4294967295", {value:7})` then `a[4294967295]` answered `undefined`, while
+  // `gOPD` / `gOPN` / `in` / `Object.hasOwn` all found it — they span both the
+  // #3537 bag and the #3251 companion, and only the element read did not.
+  //
+  // Spliced by ITERATION rather than copied so the two lanes cannot drift: a
+  // future fix to one is a fix to both by construction. `findFn` returning
+  // undefined (the native was never reserved) skips that lane, so a module
+  // without the substrate is byte-identical.
+  //
+  // NOT wired at `__vec_prop_get`'s build site: `__vec_overlay_lookup` does not
+  // exist yet there (measured — `overlayLookup=undefined`), which is precisely
+  // why the overlay read prologues are FINALIZE-time splices in the first place.
+  for (const overlayGetLane of ["__extern_get", "__vec_prop_get"]) {
+    const fn = findFn(overlayGetLane);
     if (fn) {
       const base = 2 + fn.locals.length;
       const gAny = base;

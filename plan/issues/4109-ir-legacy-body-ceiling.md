@@ -1,7 +1,8 @@
 ---
 id: 4109
 title: "Bank hybrid legacy-body emission reductions"
-status: ready
+status: done
+completed: 2026-08-16
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02

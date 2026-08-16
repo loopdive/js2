@@ -1,8 +1,8 @@
 // (#2867 Gap 4) Native, host-free `Promise.all` / `Promise.race` combinators.
 //
-// Under the native-`$Promise` carrier (`isStandalonePromiseActive`, today
-// `--target wasi`; widens to `--target standalone` at the #2895 slice-1d gate),
-// `Promise.all([...])` / `Promise.race([...])` must NOT leak the `Promise_all` /
+// Under the native-`$Promise` carrier (`isStandalonePromiseActive` — `--target
+// wasi` AND `--target standalone`; see the widen note at the bottom of this
+// header), `Promise.all([...])` / `Promise.race([...])` must NOT leak the `Promise_all` /
 // `Promise_race` host imports (unsatisfiable with no JS host). This module emits
 // the combinators directly on the existing carrier substrate
 // (`async-scheduler.ts`): the `$Promise` struct, the `$PromiseCallback` reaction
@@ -29,12 +29,24 @@
 // generator-state arguments still fall through to the existing host path
 // (follow-ups).
 //
-// **Inert until the widen.** Every emission site is gated on
-// `isStandalonePromiseActive(ctx)`, which is `ctx.wasi`-only today, so the
-// default gc/host lane AND the still-host-backed `--target standalone` lane are
-// byte-identical. The combinator becomes live for standalone only when slice 1d
-// widens the carrier gate (together with all other carrier gaps), never piecemeal
-// (the AG0 −31 / #2367-graveyard lesson).
+// **THE WIDEN HAS LANDED — this module is LIVE on `--target standalone`.**
+// (#2867 S2 correction, 2026-08-15.) This header said "inert until the widen …
+// `ctx.wasi`-only today" for a long time after it stopped being true: slice 1d
+// landed with the **#2980 flip on 2026-07-10**, and `isStandalonePromiseActive`
+// has read `ctx.standalone === true && !widenAsyncGenFallback(ctx)` ever since
+// (`async-scheduler.ts:4686`; `isStandaloneThenChainNativeActive` at `:4743` is
+// identical). Only the default **gc/host** lane is still byte-identical.
+//
+// The stale claim was load-bearing in the wrong direction: it was re-copied into
+// the #2867 plan as a "50 CE `env::Promise_all`/`Promise_race` leak, gate not
+// widened" work item that **does not exist**. Measured 2026-08-15 on all 729
+// `built-ins/Promise` files at `--target standalone`: **zero** results whose
+// error mentions emitted host imports, and a direct compile probe of eight
+// combinator shapes (array literal, array var, `race`, `resolve`,
+// `new Promise`, ctor-input, `all([])`, `any`-typed arg) returns `imports=[]`.
+// The one genuine remaining host-route is a **string** argument
+// (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`),
+// which is the separately-documented deferred case in the Scope note above.
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";

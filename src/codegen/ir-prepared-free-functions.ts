@@ -1043,6 +1043,12 @@ export function selectR2PreparedOwnerComponents(input: {
     { readonly params: readonly IrType[]; readonly returnType: IrType | null }
   >;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
+  /**
+   * (#4508) Storage terminals this transaction actually prepares — today the
+   * module-init unit, and only when `preparedExactLexicalModuleInit` admitted
+   * it. Empty on every lane that refuses a prepared module-init.
+   */
+  readonly preparedStorageTerminalUnitIds: ReadonlySet<IrUnitId>;
 }): {
   readonly freeFunctionNames: ReadonlySet<string>;
   readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
@@ -1128,6 +1134,22 @@ export function selectR2PreparedOwnerComponents(input: {
         // constructing callers co-prepared.
         [...(callEdges.constructionCallees.get(unitId) ?? [])].some(
           (constructedUnitId) => !candidates.has(constructedUnitId),
+        ) ||
+        // (#4508) The second parity edge #4494's follow-up named. Reading a
+        // top-level binding pins the module-init storage terminal, and
+        // `recordGlobalReference` fails that read closed with
+        // `source-global-outside-component` whenever the module-init is outside
+        // the transaction. Resolved against the prepared STORAGE terminals, not
+        // `candidates`: the module-init is never a member of the free/class
+        // candidate population, so testing `candidates` would withdraw every
+        // reader unconditionally. Only this direction is checked — the
+        // module-init does not need its readers co-prepared. A forward-only
+        // SECOND closure was measured instead and is UNSOUND: it leaves a direct
+        // reader beside a still-prepared component, whose late-discovered
+        // runtime providers then break the frozen prepared ABI
+        // (`callable provider … discovered after prepared provider planning`).
+        [...(callEdges.moduleBindingStorageTerminals.get(unitId) ?? [])].some(
+          (storageUnitId) => !input.preparedStorageTerminalUnitIds.has(storageUnitId),
         ) ||
         [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId));
       if (!crossesOwnership) continue;

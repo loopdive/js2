@@ -14,6 +14,12 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   summaries.
 - **Match the question's size.** A yes/no question gets a yes/no plus the one
   fact that makes it actionable, not a status report.
+- **Introduce terminology with a quick example.** The first time a term of
+  art appears in an answer (demote, claim, merge-queue park, CPS, …), attach a
+  one-line concrete example of what it means — e.g. "the selector _demotes_
+  the function (a `**` operator makes it fall back to the legacy compiler
+  instead of erroring)". A term the reader has to reverse-engineer costs more
+  than the sentence that grounds it.
 - Brevity is about redundancy, not omission. Findings that change what someone
   would do — a real failure, an unverified assumption, work deliberately left
   out — still get stated plainly. Say them once, in the fewest words that keep
@@ -549,6 +555,15 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 
 ### Merge protocol (PR + CI, devs self-merge)
 
+**PR bodies link issues to the WEBSITE issue page, never bare `#NNNN`**
+(project-lead order, 2026-08-16). A bare `#NNNN` in a PR body autolinks to
+GitHub's PR/issue numbering — which shares one sequence with PR numbers, so it
+points at an unrelated PR, not the plan-file issue. Write
+`[#NNNN](https://js2wasm.loopdive.com/dashboard/issue.html?slug=<file-basename-without-.md>)`
+(e.g. `?slug=4491-es5-defineproperty-mop-residual`) for every issue reference.
+Commit messages keep plain `#NNNN` (tooling greps them); this rule is for PR
+bodies and PR-visible comments.
+
 **ALWAYS open a PR on `loopdive/js2wasm` when a task is done — do not wait to be
 asked** (project-lead decision, 2026-08-01). Finished work that sits on a pushed
 branch with no PR is invisible: it is not in the merge queue, `auto-enqueue`
@@ -686,7 +701,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,530 / 43,621 (74.6 %)
+**test262 conformance**: 32,602 / 43,621 (74.7 %)
 
 <!-- AUTO:conformance-end -->
 
