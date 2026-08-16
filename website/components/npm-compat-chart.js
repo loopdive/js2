@@ -408,9 +408,11 @@ class NpmCompatChart extends HTMLElement {
         executed,
         upstreamTestsSeen,
         harnessIncompatible,
+        unavailableInfra,
         quarantined,
         implementationInvalidTests,
       } = pkg.tests;
+      const unavailableInfraCount = Number.isFinite(unavailableInfra) ? unavailableInfra : harnessIncompatible;
       const label =
         kind === "official-suite"
           ? "own test suite"
@@ -428,9 +430,9 @@ class NpmCompatChart extends HTMLElement {
       // tests must not be described as run.
       const slice = upstreamTestsSeen
         ? ` <span class="muted">${executed ?? admitted} of ${upstreamTestsSeen} executed${
-            harnessIncompatible ? `, ${harnessIncompatible} need unavailable infra` : ""
+            unavailableInfraCount > 0 ? `, ${unavailableInfraCount} skipped (unavailable infra)` : ""
           }${quarantined ? `, ${quarantined} compile-quarantined` : ""}${
-            // Not the same thing as "needs unavailable infra": these tests were
+            // Not the same thing as "unavailable infra": these tests were
             // blocked by the COMPILER — the package's own implementation does
             // not produce a valid module (#3978) — so hiding them inside the
             // infra count would read as the harness's limitation rather than
@@ -441,7 +443,11 @@ class NpmCompatChart extends HTMLElement {
       if (status && status !== "measured") {
         tests = this._row(
           "tests",
-          `<span class="muted">n/a — ${this._esc(reason ?? status)}</span> <span class="tag">${this._esc(label)}</span>`,
+          `<span class="muted">n/a — ${this._esc(reason ?? status)}</span>${
+            unavailableInfraCount > 0
+              ? ` <span class="muted">${unavailableInfraCount} skipped (unavailable infra)</span>`
+              : ""
+          } <span class="tag">${this._esc(label)}</span>`,
         );
       } else {
         const pct = passRatePct != null ? passRatePct : total ? ((passed / total) * 100).toFixed(1) : null;

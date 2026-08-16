@@ -1866,6 +1866,21 @@ function knownBugsFor(name) {
   return map[name] ?? [];
 }
 
+// Upstream adapters deliberately keep tests that require browser, DOM, Jest,
+// or other host facilities out of the compiler score. Preserve the original
+// `harnessIncompatible` field for compatibility, but expose the user-facing
+// meaning explicitly so the card can distinguish unavailable infrastructure
+// from compiler-quarantined or invalid-module tests.
+function annotateUnavailableInfra(tests) {
+  if (!tests || typeof tests !== "object") return tests;
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
+    ? tests.unavailableInfra
+    : Number.isFinite(tests.harnessIncompatible)
+      ? tests.harnessIncompatible
+      : null;
+  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+}
+
 async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
   return {
     name,
@@ -1881,7 +1896,7 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // barrel rather than the package's code. Consumers must not present that
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
-    tests,
+    tests: annotateUnavailableInfra(tests),
     // (#4127) The correctness axis, kept separate from compile/validation so a
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
