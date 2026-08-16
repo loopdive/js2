@@ -120,6 +120,8 @@ const PROTOIDX_BRAND_OFF = "__protoidx_brand_off";
 const PROTOIDX_FORIN_PUSH = "__protoidx_forin_push";
 const PROTOIDX_HAS_R = "__protoidx_has_r";
 const PROTOIDX_GET_R = "__protoidx_get_r";
+/** (#2175 P2) own-view receiver substitution: `$NativeProto` → its companion. */
+const PROTOIDX_OWN_RECV = "__protoidx_own_recv";
 
 /** Static brand OFFSETS (0-based slots in the brand band — native-proto.ts). */
 const OBJ_OFF = builtinBrandOffsetOf("Object")!;
@@ -230,6 +232,19 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // (#4176) receiver-aware consults for the non-$Object miss chokepoints.
   reserve(PROTOIDX_HAS_R, [ext, ext], [i32], zero);
   reserve(PROTOIDX_GET_R, [ext, ext], [ext], nullExt);
+  // (#2175 P2) `recv -> recv'` for the OWN-property views: a `$NativeProto`
+  // receiver becomes its brand companion, everything else passes through.
+  // Reserved as a stub that RETURNS ITS ARGUMENT, so an unfilled body is an
+  // exact no-op; the real body is filled at FINALIZE, where
+  // `ctx.nativeProtoTypeIdx` is final. Baking that type index at registration
+  // time is what shipped invalid Wasm in the first cut of P2 — a later type
+  // registration shifted indices and the `ref.test` ended up naming a type
+  // outside the `any` hierarchy (`CompileError: … has to be in the same
+  // reference type hierarchy as (ref 59)`, reproduced on an accessor
+  // descriptor over `Array.prototype`). Every other arm in this module already
+  // resolves that index at fill time; this one now matches them structurally so
+  // the split cannot be reintroduced.
+  reserve(PROTOIDX_OWN_RECV, [ext], [ext], () => [{ op: "local.get", index: 0 }]);
 }
 
 /**
@@ -273,6 +288,90 @@ export function protoIndexRecvGetMissInstrs(
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: keyLocal },
     { op: "call", funcIdx: getRIdx },
+  ];
+}
+
+/**
+ * (#2175 P2) OWN-LAYER receiver substitution for the own-property views.
+ *
+ * An entry written by `Object.defineProperty(<Builtin>.prototype, k, d)` lives
+ * in the brand COMPANION (the write arms below re-target and recurse), and
+ * #4176 wired the companion into `__extern_get` / `__extern_has` only. So a
+ * read and `in` see it while `hasOwnProperty` and `getOwnPropertyDescriptor`
+ * answer false/undefined — measured on `Date.prototype` and `Object.prototype`
+ * alike (`.tmp/p5.js`), for both syntactic and flowing receivers.
+ *
+ * This rewrites `recvParam` IN PLACE: when the receiver is a `$NativeProto`
+ * whose companion exists, the param is replaced by the companion `$Object`, and
+ * the caller's existing `$Object` path then runs unchanged. Substitution rather
+ * than a bespoke probe is what makes the descriptor correct for free — the
+ * companion entry is an ordinary `$PropEntry` whose flags the write arm already
+ * populated (`__defineProperty_value` recursion passes the caller's flag word
+ * straight through), so gOPD reads real writable/enumerable/configurable bits
+ * instead of synthesized ones.
+ *
+ * OWN-ONLY, deliberately: `__protoidx_brand_off` answers a `$NativeProto`'s OWN
+ * brand, and this uses `create = 0` and performs **no chain walk**. An ordinary
+ * object is left untouched (the `ref.test` fails), so `hasOwnProperty` cannot
+ * start reporting inherited keys.
+ *
+ * Emits nothing when the store is unreserved — callers keep their exact bytes.
+ */
+export function protoIndexOwnViewSubstituteInstrs(ctx: CodegenContext, recvParam: number): Instr[] {
+  const ownRecvIdx = ctx.funcMap.get(PROTOIDX_OWN_RECV);
+  if (ownRecvIdx === undefined) return [];
+  // NO type index is baked here: the helper owns the `ref.test`, and its body is
+  // written at FINALIZE. That is the whole point — see the reserve site. It also
+  // means the caller needs no scratch local.
+  return [
+    { op: "local.get", index: recvParam },
+    { op: "call", funcIdx: ownRecvIdx },
+    { op: "local.set", index: recvParam },
+  ];
+}
+
+/**
+ * FINALIZE — fill `__protoidx_own_recv`. `ctx.nativeProtoTypeIdx` is read HERE,
+ * where it is final, exactly as `fillBrandOffBody` does. Leaving the reserved
+ * identity stub in place is a correct no-op, so a module without the
+ * `$NativeProto` type or the companion helpers simply keeps pass-through
+ * behaviour.
+ */
+function fillOwnRecvBody(ctx: CodegenContext): void {
+  const fn = findFn(ctx, PROTOIDX_OWN_RECV);
+  if (!fn) return;
+  const npTypeIdx = ctx.nativeProtoTypeIdx;
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  const companionIdx = ctx.funcMap.get(PROTOIDX_COMPANION);
+  if (npTypeIdx === undefined || brandOffIdx === undefined || companionIdx === undefined) return;
+  // params: 0=recv ; locals: 1=companion
+  fn.locals = [{ name: "c", type: { kind: "externref" } }];
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: npTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: brandOffIdx },
+        { op: "i32.const", value: 0 }, // own-layer probe: never mint here
+        { op: "call", funcIdx: companionIdx },
+        { op: "local.tee", index: 1 },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          // Substitute ONLY when a companion exists. A brand nobody ever wrote
+          // to has none (create = 0 above), and the receiver must pass through
+          // so the caller's existing arms behave exactly as before.
+          then: [{ op: "local.get", index: 1 }, { op: "return" }],
+        },
+      ],
+    },
+    { op: "local.get", index: 0 },
   ];
 }
 
@@ -410,6 +509,7 @@ export function fillProtoIndexStore(ctx: CodegenContext): void {
   fillBrandOffBody(ctx);
   fillForInPushBody(ctx, deps);
   fillRecvConsultBodies(ctx);
+  fillOwnRecvBody(ctx); // (#2175 P2) own-view substitution — type idx resolved HERE
   spliceNativeProtoWriteArms(ctx);
   spliceNativeProtoDirectReadArms(ctx);
 }

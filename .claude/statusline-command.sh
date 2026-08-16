@@ -137,14 +137,16 @@ if [ -n "$resets_at" ]; then
   fi
 fi
 
-# Budget cache for budget-aware sprint scheduling (#2751): standalone scripts
-# (budget-status.mjs / freeze-sprint.mjs) can't see this stdin JSON, so expose the
-# weekly (seven_day) usage% + reset timestamp to them via a small cache file the
-# statusline keeps fresh on every render.
-if [ -n "$weekly" ] || [ -n "$resets_at" ]; then
+# Budget cache for budget-aware sprint scheduling (#2751) and the usage-limit
+# monitor (#4511): standalone scripts (budget-status.mjs / freeze-sprint.mjs /
+# usage-limit-monitor.sh) can't see this stdin JSON, so expose the weekly
+# (seven_day) AND 5-hour usage% + reset timestamps to them via a small cache
+# file the statusline keeps fresh on every render.
+if [ -n "$weekly" ] || [ -n "$resets_at" ] || [ -n "$five_hour" ]; then
   _budget_dir="${CLAUDE_HOME:-$HOME/.claude}"
-  printf '{"seven_day_used_pct":%s,"resets_at":%s,"written_at":%s}\n' \
-    "${weekly:-null}" "${resets_at:-null}" "$(date +%s)" \
+  _five_hour_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+  printf '{"seven_day_used_pct":%s,"resets_at":%s,"five_hour_used_pct":%s,"five_hour_resets_at":%s,"written_at":%s}\n' \
+    "${weekly:-null}" "${resets_at:-null}" "${five_hour:-null}" "${_five_hour_resets:-null}" "$(date +%s)" \
     > "$_budget_dir/js2wasm-budget.json" 2>/dev/null || true
 fi
 

@@ -54,6 +54,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/ensure-sshd.sh 2>/dev/null || true",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-/workspace}\"/scripts/usage-limit-monitor.sh 2>/dev/null || true",
+            "timeout": 10
           }
         ]
       }
@@ -180,6 +185,16 @@
             "type": "command",
             "command": "\"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/pre-agent-spawn.sh",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "S=\"${CLAUDE_HOME:-$HOME/.claude}/usage-limit-suspend.json\"; if [ -f \"$S\" ]; then R=$(jq -r '.resets_at // 0' \"$S\" 2>/dev/null || echo 0); N=$(date +%s); if [ \"${R%.*}\" -gt \"$N\" ] 2>/dev/null; then W=$(jq -r '.window // \"unknown\"' \"$S\"); P=$(jq -r '.used_pct // \"?\"' \"$S\"); T=$(date -u -d @\"${R%.*}\" +%H:%MZ 2>/dev/null || echo soon); jq -cn --arg m \"usage-limit-monitor: $W window at $P% \u2014 SUSPEND the team now (push-safe checkpoints, no new spawns) and schedule ONE wakeup at $T, per feedback_5h_window_pause_resume\" '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:$m}}'; fi; fi; exit 0",
+            "timeout": 10
           }
         ]
       }
