@@ -4,7 +4,7 @@ title: "Standalone: `this.p` and bare `p` are different storage — global-bindi
 status: ready
 sprint: Backlog
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 priority: high
 horizon: l
 feasibility: hard
@@ -13,6 +13,13 @@ area: codegen
 goal: standalone
 related: [4206, 4495, 4205]
 architect_spec: required
+loc-budget-allow:
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access.ts
+  - src/codegen/property-nullish-read.ts
+func-budget-allow:
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
 ---
 
 # Global-binding unification: `this.p` and bare `p` never reconcile
@@ -50,19 +57,83 @@ And the cases that do **not** fail, which localise it:
 | case | result |
 |---|---|
 | `this.p1 = 1; p1 === 1` (bare read of a `this.`-assigned global) | ok |
-| `this.p1 = 1; p1 = 'x1'; p1 === 'x1'` (straight-line write then read) | ok |
+| ~~`this.p1 = 1; p1 = 'x1'; p1 === 'x1'` (straight-line write then read)~~ | ~~ok~~ **PASSES FOR THE WRONG REASON — see below** |
+
+> **FALSIFIED (Slice B diagnosis, 2026-08-15).** The struck row was recorded as
+> evidence that the straight-line *write* path works. It is not. The write
+> compiled to an **auto-allocated Wasm local**, and the read in the same function
+> resolved to that same local — so the row passed without the global object ever
+> being updated. The one-line disproof, measured on the same base:
+>
+> ```js
+> this.p1 = 1; p1 = 2; this.p1 === 2   // FAILS — the object still holds 1
+> ```
+>
+> Kept visible rather than deleted because it was evidence for a *wrong model*:
+> "the write path is fine, only closures break it". The real statement is that
+> the write never reached the global object in ANY of these rows; a same-function
+> read merely hid it. Slice B fixes the write itself, which is why it also flips
+> the `this.`-read row above.
 
 ## What the evidence says
 
-- The split is **not** observable on a straight-line write-then-read, and **not**
-  on a plain bare read of a `this.`-assigned global. Both work.
+- ~~The split is not observable on a straight-line write-then-read.~~ **Wrong —
+  see the falsification above.** It IS broken there too; a same-function bare
+  read hides it by sharing the auto-local.
+- The split is **not** observable on a plain bare read of a `this.`-assigned
+  global (that path genuinely works — `emitImplicitGlobalRead`).
 - It becomes observable across a **closure boundary** (`f(){ p1 = 2 }` called
-  from the same scope) or across a **`this.`/bare direction change**.
+  from the same scope), across a **`this.`/bare direction change**, or on any
+  read that does not share the writer's function.
 - It is **independent of value type** — numeric-throughout and
   string-throughout both fail identically.
 - A `var`-declared global with the identical closure shape is **correct**, so the
   closure-capture machinery itself is fine; what differs is the storage chosen
   for a `this.`-assigned global.
+- ~~**Slice A's defect is STANDALONE-ONLY.** … rows 2 and 3 pass on `--target
+  wasi` and fail only on `--target standalone`. That halves Slice A's search
+  space…~~
+  > **RETRACTED 2026-08-15, same day — this was a MEASUREMENT ARTIFACT, not a
+  > fact.** The probe harness (`.tmp/sliceb-verify.mts`) invoked
+  > `instance.exports.__module_init?.()`. `--target wasi` exports **`_start`**,
+  > not `__module_init`, so the optional call was a **silent no-op** and every
+  > wasi row reported `ok` **without executing anything**. The whole wasi column
+  > was vacuous.
+  >
+  > Re-measured with a harness that REQUIRES the entry point and selects it per
+  > target (`.tmp/slicea-probe2.mts`): rows 2, 3 and the pure-read row **fail
+  > identically on `--target standalone`, `--target wasi` AND the default gc
+  > lane**. There is **no wasi/standalone divergence to localize**, and Slice A's
+  > search space is not halved.
+  >
+  > Independent confirmation via a value probe that reads the result through an
+  > export instead of a throw (`.tmp/slicea-value.mts`): `this.p1` for a
+  > `var`-declared global is **wrong on all three targets**.
+  >
+  > **Second instrument lesson (2026-08-15):** that probe reported the value as
+  > `null`. It is actually **`undefined`** — the probe used
+  > `export function getCode()`, which makes the file a **MODULE**, and top-level
+  > `this` in a module is not the realm global object (`thisReceiverIsGlobalObject`
+  > explicitly requires `!ctx.sourceIsModule`). So it measured module semantics,
+  > not the script defect. Re-measured in **script** form with a per-hypothesis
+  > binary oracle (`.tmp/slicea-value2.mts`): the value is `undefined`, while
+  > `typeof this.p1` answers `'number'`. Adding an `export` to a probe silently
+  > changes the language semantics under test — the same class of hazard as the
+  > `__module_init?.()` no-op, and the reason a fix aimed at `null` would have
+  > hunted the wrong bug.
+- **Slice A's defect is UNIVERSAL — standalone, wasi and gc.** Because it also
+  affects the **default gc lane**, gc is *not* a clean control for Slice A: it
+  will gain rows too, so the gate is "zero pass→fail on every lane", not "gc
+  unchanged".
+- **The pure READ is already broken**, which is simpler than rows 2/3 and is
+  likely the root: `var p1 = 7; this.p1 === 7` fails, with `this.p1` reading
+  `null`. Rows 2 and 3 are downstream of that single read/write routing gap.
+- **Latent inconsistency worth a look while in here:** `typeof this.p1 ===
+  'number'` **passes** for a `var` global while the value read yields `null`
+  (`typeof null` is `'object'`). So the `typeof` path answers from the static
+  type while the value path answers from the env object — two different sources
+  for the same expression. Not chased; recorded because a Slice A fix should
+  make both agree rather than only fixing the value path.
 
 That combination points at the *binding resolution* for globals introduced via
 `this.<name>` rather than at closure capture or at slot typing.
@@ -121,8 +192,10 @@ implementation off this file alone.
 ## Acceptance criteria
 
 1. Every row in the type-held-constant table above is `ok`.
-2. The two currently-passing localisation rows stay `ok` (no regression on the
-   straight-line and bare-read paths).
+2. The bare-read localisation row stays `ok`. (The straight-line
+   write-then-read row is NOT a valid control — it passed for the wrong reason;
+   see the falsification note. Use `this.p1 = 1; p1 = 2; this.p1 === 2` instead,
+   which is a genuine write-path assertion and must flip to `ok`.)
 3. The `var`-global control stays `ok`, with a measured check that the
    `var`-global path did not regress.
 4. Measured, two-sided A/B on `language/statements/with` standalone against the
@@ -195,7 +268,13 @@ non-configurable) — add a probe row for it.
 
 ### Slice B — closure bare-write of an implicit global (probe row 1)
 
-`this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2` fails, yet the
+> **SUPERSEDED by the measured diagnosis below (2026-08-15).** The
+> four-candidate list in the original text is kept for the record, but **none of
+> those four arms fires**. Do not use it as a starting point.
+
+**Original hypothesis (all four candidates FALSIFIED):**
+
+~~`this.p1 = 1; var f = function(){ p1 = 2; }; f(); p1 === 2` fails, yet the
 write path at assignment.ts ~L885 already consults `sloppyImplicitGlobals`.
 So EITHER the closure's write compiles through a different arm (the
 auto-local at ~L899, or an unresolvable-assign arm that allocated a local
@@ -203,10 +282,41 @@ before the set was consulted), OR the pre-scan runs after the closure body
 compiles, OR the checker resolves `p1` inside the closure to something
 else entirely. Diagnose FIRST: instrument all four candidate arms
 (assignment.ts L885/L899, unresolvable-assign.ts L181/L246) and compile the
-row-1 probe; record which arm fires. Then fix that arm to route through the
-env-object write. The auto-local arm's own comment (#4231 RC-F) documents
-why minting a local is destructive — whatever the diagnosis, the fix must
-not introduce a new local for a name in `sloppyImplicitGlobals`.
+row-1 probe; record which arm fires.~~
+
+**Measured diagnosis** (instrumented all four candidates plus the identifier
+dispatch and `ensureGlobalEnvironmentOperation`, then compiled the row-1 probe):
+
+- **assignment.ts L885 / L899 never fire.** Both live in
+  `emitIdentifierWriteFromLocal`, which is only reachable from the **`with`**
+  cascade write paths. The row-1 probe contains no `with`, so they were never
+  candidates for it.
+- **unresolvable-assign.ts L181 / L246 never fire.** `isUnresolvableIdent` is
+  **false** for `p1` — `this.p1 = 1` gives the name a checker symbol — so
+  `tryCompileUnresolvableIdentifierAssign` returns `NOT_UNRESOLVABLE` and the
+  module is never entered.
+- **The pre-scan is HEALTHY.** The dispatch trace shows `sloppyImplicit=true`
+  for `p1` inside the closure. `ctx.sloppyImplicitGlobals` has the name; nothing
+  on this path consults it. (So the "pre-scan ordering" hypothesis is also
+  falsified, and **Slice A's baseline is unaffected**.)
+- **The arm that fires is the FINAL auto-local fallback** at the end of
+  `compileAssignment`'s identifier branch (base `assignment.ts` ~L678-690, the
+  "graceful fallback for other unresolved identifiers"). It mints a Wasm local
+  for the name.
+- **That same arm fires for the case the probe table recorded as WORKING.** The
+  auto-local makes the write function-local, so a same-function read shares it
+  and looks correct while the global object is never updated — see the
+  falsification note in the evidence section above.
+
+**Fix (implemented):** in that final fallback, when
+`ctx.sloppyImplicitGlobals.has(name)`, compile the RHS to a temp and write it
+through the global-environment object (`emitGlobalEnvironmentObject` +
+`emitGlobalEnvironmentKey` + `__extern_set`), leaving the RHS value as the
+expression result — instead of minting a local. This is the ordinary-identifier
+counterpart of the #4231 RC-F arm, which applies the same rule on the
+`with`-cascade path and whose comment documents why minting a local is
+destructive. If the env object or setter is unavailable the arm falls through to
+the unchanged auto-local, so no program loses its write.
 
 ### Order
 
@@ -232,3 +342,141 @@ baseline — re-measure between slices.
    and diff the binaries — byte-identical expected (Slice A only adds arms
    behind a `receiverIsRealmGlobalObject && moduleGlobals.has` test that such
    programs never take; Slice B is behind `sloppyImplicitGlobals`).
+
+## Slice B — measured result (2026-08-15)
+
+**Provenance:** base = the tree at `0670015b3` with `assignment.ts` reverted by
+file copy; branch = the same tree with the Slice B arm. Same in-process
+`runTest262File` driver both arms, back-to-back, quickjs eval provider built per
+the Instrument warning. Artifacts `.tmp/sb-{base,branch}-{standalone,gc}.jsonl`.
+
+Buckets: `language/statements/with` (181) + `language/eval-code` (347) +
+`language/global-code` (42) = **570 files per arm per lane**.
+
+| lane | base pass | branch pass | fail→pass | **pass→fail** |
+|---|---:|---:|---:|---:|
+| standalone | 442 | **445** | 3 | **0** |
+| gc | 277 | **283** | 6 | **0** |
+
+`with`-bucket only, standalone: **113 → 116** pass (fail 55 → 52, CE 13
+unchanged) — the 113 matches the #4206 authoritative baseline exactly, which
+cross-checks the instrument.
+
+Every flipped row is a `p1 === "x1"` row, i.e. precisely the cluster this issue
+predicted — no incidental flips:
+
+- standalone (3): `S12.10_A3.11_T1/T2/T4`
+- gc (6): `S12.10_A1.11_T1/T2/T4` + `S12.10_A3.11_T1/T2/T4`
+
+**The gc lane gains more than standalone (6 vs 3).** The `A1.11_*` rows still
+fail on standalone after Slice B; they are gated behind the standalone-only
+Slice A defect and/or #4495, consistent with the residue split recorded above.
+
+Probe table (`.tmp/sliceb-verify.mts`): row 1, the string-throughout row and the
+`this.`-read row all flip to `ok`; all six control rows stay `ok`. Rows 2 and 3
+remain WRONG — Slice A's rows, by the plan's own split.
+
+> **Correction to this table's coverage (2026-08-15).** Its **wasi column was
+> vacuous** — the harness called `__module_init?.()`, which does not exist on
+> `--target wasi` (that target exports `_start`), so no wasi row executed. The
+> **standalone column was real**, and the two decisive Slice B arms — the
+> 570-file test262 A/B (standalone + gc) and the byte-identity check — were
+> never affected, so **Slice B's measured result stands unchanged**. Only the
+> claim "verified on both targets" was overstated.
+>
+> Re-verified afterwards with a corrected harness (`.tmp/slicea-probe2.mts`,
+> entry point required and target-selected): **Slice B's row-1 fix passes on
+> standalone, wasi AND gc**, and the var-global control passes on all three. So
+> the fix is now genuinely confirmed on all three lanes rather than assumed.
+
+Byte-identity (measurement arm 4): 4 var-global-only / no-global samples ×
+{standalone, wasi, gc} = 12 binaries, **all byte-identical** base vs branch. The
+`var`-global fast path is untouched, as designed — the new arm sits behind
+`sloppyImplicitGlobals`, which such programs never populate.
+
+**Caveat on the gc numbers:** the in-process driver runs many test262 files in
+one process, so gc absolute counts are depressed by cross-test global pollution
+(the `pnpm run test:262` pool isolates per file). Both arms use the identical
+driver back-to-back, so the **delta** is sound; treat the gc absolutes as a floor,
+not a conformance figure.
+
+**Regression gate (`tests/equivalence`, the sanctioned gc gate):** all 214 files
+run in memory-bounded batches. **16 failures across 8 files — byte-for-byte the
+same 16 that were A/B-proven pre-existing at this base during the #2867 boundary**
+(`arguments-nested-and-loops`, `array-inline-return`, `delete-sentinel`,
+`logical-conditional-identity` ×3, `optional-direct-closure-call` ×2,
+`reflect-api`, `tdz-reference-error` ×6, `yield-as-expression`). **Zero new
+failures.** `npm run typecheck` and `biome lint` clean.
+
+### Slice B status
+
+Slice B is **complete and measured**. Slice A (probe rows 2 and 3) is untouched
+and remains open — and per the standalone-only finding above, its search space is
+now narrowed to the standalone lane's realm-global member-access path.
+
+## Slice A — measured result (2026-08-15/16)
+
+**Provenance:** base = this tree with the three Slice A files reverted by file
+copy (i.e. `f652b3c4f`, Slice B landed); branch = the same tree with Slice A.
+Same in-process driver both arms, back-to-back, quickjs eval provider per the
+Instrument warning. **Note the base is two `main`s behind** (PR #4595 merged
+during this work) — the A/B is internally consistent, but the absolutes are not
+comparable to a current-main run. Artifacts `.tmp/sa-{base,branch}-{standalone,gc}.jsonl`.
+
+Buckets: `language/statements/with` + `language/eval-code` + `language/global-code`
+= 570 files per arm per lane.
+
+| lane | base pass | branch pass | fail→pass | **pass→fail** |
+|---|---:|---:|---:|---:|
+| standalone | 445 | **446** | 1 | **0** |
+| gc | 283 | **284** | 1 | **0** |
+
+The single flip on both lanes is the same test: **`language/global-code/S10.4.1_A1_T1.js`**
+— a *global-code* row, not a `with` row. That is the expected shape: Slice A is a
+**correctness/consistency** fix to `this.p` ⇄ module-global routing, not a volume
+lever (the six `p1 === "x1"` rows were Slice B's). It also vindicates adding
+`global-code`/`eval-code` to the measurement buckets — a `with`-only scope would
+have scored this slice at zero and hidden the one real gain.
+
+### Gates
+
+- **Probe table**: all 8 rows pass on **standalone, wasi AND gc**, including
+  `delete this.p → false` and Slice B's row-1.
+- **typeof/value agreement (acceptance criterion)**: met, and it was the gate
+  that did the work — it exposed a THIRD read path (see below). Value `7`,
+  `typeof` `'number'`, and nullish comparisons all agree with the
+  bare-identifier path.
+- **Functional identity** (replacing byte-identity, which Slice A necessarily
+  breaks for var-globals): 5 samples × {standalone, wasi, gc} = 15 runs, all
+  correct — including a var-global round-tripped through `this.`.
+- `npm run typecheck` and `biome lint` clean.
+
+### Three read paths, not one
+
+The fix is +92 lines across three files, and all three were required:
+
+1. `property-access.ts` — the main read arm
+   (`receiverIsRealmGlobalObject && moduleGlobals.has(name)` → `global.get`).
+2. `expressions/assignment.ts` — the symmetric write arm. **Not optional**: with
+   the read alone, `this.p = 2; this.p === 2` REGRESSED, because the read
+   consulted the module global while the write still updated the object. Caught
+   mid-slice by the probe table; the pair must land together.
+3. `property-nullish-read.ts` — nullish comparisons (`=== undefined`, `== null`)
+   never reach `compilePropertyAccess`; they route through
+   `compileNullishObservedExpression` to a **second function with the same name**
+   (`compilePropertyAccessForNullishObservation` exists in BOTH
+   `property-access.ts` and `property-nullish-read.ts`). With 1+2 fixed this left
+   a live contradiction in one program — `this.p1 === 7` true AND
+   `this.p1 === undefined` true. Patching the wrong copy first, and seeing the
+   trace not move, is how the duplicate was found.
+
+Slice A is complete. Both #4500 slices have landed; the residue split recorded
+above (4 rows to #4495, the `#1387` CE gate to the constructible-closure ABI)
+is unchanged by this slice.
+
+**Regression gate (`tests/equivalence`) — Slice A.** Not in Slice A's original
+gate list, but run anyway: Slice A touches `property-access.ts`, the compiler's
+central property-read path, which is *more* core than the `assignment.ts` change
+that Slice B ran this gate for. All 214 files, memory-bounded batches:
+**16 failures across 8 files — byte-for-byte the same 16 A/B-proven pre-existing
+at this base (twice: at the #2867 boundary and again on Slice B). Zero new.**
