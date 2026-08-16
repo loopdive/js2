@@ -19,6 +19,16 @@ lane: ir-retirement
 parent: 3518
 related: [4508, 4494, 3521, 3518]
 origin: "tech-lead dispatch 2026-08-16, from the #4508 baseline notes"
+loc-budget-allow:
+  # +83 lines in the R2 prepared-owner selector, ~60 of them the recorded
+  # rationale for a subtle soundness boundary (which fixed-point direction the
+  # exemption covers and why the other three must not inherit it). The natural
+  # subsystem home for the predicate is src/codegen/ir-legacy-caller-abi.ts,
+  # which already owns the same proof shape, but it cannot reach
+  # r2SignatureMatchesAllocatedSlot without exporting the selector's Program ABI
+  # slot comparison; that move is worth doing on its own, not inside a
+  # behavioural change.
+  - src/codegen/ir-prepared-free-functions.ts
 files:
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/program-abi-provider-planning.ts
