@@ -117,6 +117,7 @@ import {
 import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-widening.js";
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
+import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
 import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
@@ -3151,24 +3152,11 @@ export function compileDeclarations(
     };
     ctx.currentFunc = initFctx;
 
-    // (#4264) §10.2.11: a `var` hoisted out of a `with` body is instantiated at
-    // script entry with the value `undefined`. A module global's constant init
-    // can only be `ref.null.extern`, which the standalone lane does NOT read as
-    // `undefined` — so seed the tag-1 singleton here, exactly as the #4182
-    // Annex B block-function binding below does, and for the same reason. Host
-    // mode is excluded on the same grounds: there `undefined` IS the null
-    // extern, and the singleton would surface to host helpers as an object.
-    if (ctx.standalone || ctx.wasi) {
-      const seededWithVars = new Set<number>();
-      for (const withVarName of withBodyHoistedModuleVarNames(sourceFile)) {
-        const withVarGlobalIdx = ctx.moduleGlobals.get(withVarName);
-        if (withVarGlobalIdx === undefined || seededWithVars.has(withVarGlobalIdx)) continue;
-        if (ctx.mod.globals[localGlobalIdx(ctx, withVarGlobalIdx)]?.type.kind !== "externref") continue;
-        if (!emitUndefinedExtern(ctx, initFctx)) continue;
-        initFctx.body.push({ op: "global.set", index: withVarGlobalIdx });
-        seededWithVars.add(withVarGlobalIdx);
-      }
-    }
+    // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
+    // module-scope `var` reads as `undefined` before its declaration. Must stay
+    // AHEAD of the function-binding seeds below — rationale, scope and the
+    // measured before/after in `declarations/module-var-undefined-seed.ts`.
+    emitModuleVarUndefinedSeeds(ctx, sourceFile, initFctx);
 
     // (#2931) Seed each reassigned-function live-binding global with the
     // function's closure BEFORE any user init statement runs, so a read of the
