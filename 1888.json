@@ -1,10 +1,11 @@
 {
   "id": "1888",
   "assignee": "ttraenkler/opus-es5-b",
-  "requested_by": "ttraenkler/opus-es5-b",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-1888-openany-dispatch",
   "claimed_at": "2026-08-16T03:52:02Z",
-  "updated_at": "2026-08-16T03:52:02Z",
-  "write_id": "24064-iqi60n86"
+  "updated_at": "2026-08-16T07:44:24Z",
+  "write_id": "49678-ldf09sqm",
+  "released_at": "2026-08-16T07:44:24Z"
 }
