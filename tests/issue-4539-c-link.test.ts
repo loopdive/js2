@@ -90,4 +90,89 @@ describe("#4539 — linking against a real C-compiled module", () => {
     expect(view.getInt32(addr, true)).toBe(0xabcd);
     expect((ours.instance.exports as { add?: unknown }).add).toBeTypeOf("function");
   });
+
+  it("compiled TypeScript CALLS a C function and gets its result", async () => {
+    const peer = await WebAssembly.instantiate(peerBytes(), {});
+    const px = peer.instance.exports as {
+      memory: WebAssembly.Memory;
+      c_double: (x: number) => number;
+    };
+
+    // Nested calls on purpose: the result of one extern call feeds the next,
+    // so the outbound and inbound boundary conversions must compose.
+    const result = await compile(
+      `declare function c_double(x: number): number;
+export function quadruple(n: number): number { return c_double(c_double(n)); }`,
+      {
+        target: "linear",
+        linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
+        linearExternImports: [
+          { module: "cpeer", name: "c_double", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+        ],
+      } as never,
+    );
+    expect(result.errors ?? []).toEqual([]);
+
+    const ours = await WebAssembly.instantiate(result.binary, {
+      cpeer: { memory: px.memory, c_double: px.c_double },
+    });
+    const quadruple = (ours.instance.exports as { quadruple?: (n: number) => number }).quadruple;
+    expect(quadruple?.(5)).toBe(20);
+    expect(quadruple?.(0)).toBe(0);
+    expect(quadruple?.(-3)).toBe(-12);
+  });
+
+  it("a two-argument C call from compiled code writes into the shared memory", async () => {
+    const peer = await WebAssembly.instantiate(peerBytes(), {});
+    const px = peer.instance.exports as {
+      memory: WebAssembly.Memory;
+      c_poke: (addr: number, value: number) => number;
+    };
+
+    const result = await compile(
+      `declare function c_poke(addr: number, value: number): number;
+export function poke(addr: number, value: number): number { return c_poke(addr, value); }`,
+      {
+        target: "linear",
+        linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
+        linearExternImports: [
+          {
+            module: "cpeer",
+            name: "c_poke",
+            params: [{ kind: "i32" }, { kind: "i32" }],
+            results: [{ kind: "i32" }],
+          },
+        ],
+      } as never,
+    );
+    expect(result.errors ?? []).toEqual([]);
+
+    const ours = await WebAssembly.instantiate(result.binary, {
+      cpeer: { memory: px.memory, c_poke: px.c_poke },
+    });
+    const poke = (ours.instance.exports as { poke?: (a: number, v: number) => number }).poke;
+
+    // Compiled code -> C -> linear memory, observed from the host. Argument
+    // order surviving is the point: a reversed marshal would write the value
+    // as an address and trap or corrupt.
+    const addr = px.memory.buffer.byteLength - 16;
+    expect(poke?.(addr, 0x1234)).toBe(0x1234);
+    expect(new DataView(px.memory.buffer).getInt32(addr, true)).toBe(0x1234);
+  });
+
+  it("an arity mismatch is a compile error that names the function", async () => {
+    const result = await compile(
+      `declare function c_double(x: number): number;
+export function bad(n: number): number { return c_double(n, n); }`,
+      {
+        target: "linear",
+        linearExternImports: [
+          { module: "cpeer", name: "c_double", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+        ],
+      } as never,
+    );
+    const messages = (result.errors ?? []).map((e) => e.message).join(" | ");
+    expect(messages).toContain("c_double");
+    expect(messages).toContain("fixed-arity");
+  });
 });

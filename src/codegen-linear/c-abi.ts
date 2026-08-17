@@ -494,3 +494,60 @@ export function declareImportedMemory(mod: WasmModule, module: string, name: str
 export function hasImportedMemory(mod: WasmModule): boolean {
   return mod.imports.some((imp) => imp.desc.kind === "memory");
 }
+
+/**
+ * Boundary marshalling for a call to an extern-C import (#4539).
+ *
+ * This backend compiles a TS `number` to **f64**, while a C signature is
+ * whatever it declares — typically `i32` for handles and sizes. So each
+ * argument is converted into the declared parameter type on the way in, and
+ * the result back into the f64 domain on the way out.
+ *
+ * KNOWN LIMITATION, stated rather than hidden: the conversion assumes the
+ * argument expression produced f64, which holds for ordinary `number`
+ * expressions but NOT for values already in i32 form via native type
+ * annotations (`type i32 = number`). Mixing those with extern calls is
+ * therefore not yet supported; it needs the expression-level type tracking
+ * the direct backend does not have. Emitting a wrong conversion silently is
+ * the failure this comment exists to prevent someone from causing.
+ */
+export function emitExternCBoundaryArg(out: Instr[], declared: ValType): void {
+  switch (declared.kind) {
+    case "f64":
+      return; // already the backend's domain
+    case "i32":
+      out.push({ op: "i32.trunc_f64_s" });
+      return;
+    case "i64":
+      out.push({ op: "i64.trunc_f64_s" });
+      return;
+    case "f32":
+      out.push({ op: "f32.demote_f64" });
+      return;
+    default:
+      throw new Error(
+        `extern-C import parameter type '${declared.kind}' is not supported yet. ` +
+          "Supported: f64, i32, i64, f32 — the scalar C ABI. A reference type " +
+          "cannot cross this boundary by value.",
+      );
+  }
+}
+
+/** Convert an extern-C result back into the backend's f64 value domain. */
+export function emitExternCBoundaryResult(out: Instr[], declared: ValType): void {
+  switch (declared.kind) {
+    case "f64":
+      return;
+    case "i32":
+      out.push({ op: "f64.convert_i32_s" });
+      return;
+    case "i64":
+      out.push({ op: "f64.convert_i64_s" });
+      return;
+    case "f32":
+      out.push({ op: "f64.promote_f32" });
+      return;
+    default:
+      throw new Error(`extern-C import result type '${declared.kind}' is not supported yet.`);
+  }
+}

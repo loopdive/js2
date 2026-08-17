@@ -17,6 +17,15 @@ export interface LinearContext {
   funcMap: Map<string, number>;
   /** Number of imported functions */
   numImportFuncs: number;
+  /**
+   * Declared signatures of extern-C imports, by import field name (#4539).
+   *
+   * Present only for names declared via `LinearOptions.externImports`. The
+   * call path uses it to marshal at the boundary: this backend compiles a TS
+   * `number` to f64, so an import declaring `i32` needs an explicit
+   * conversion in each direction. Absent name ⇒ an ordinary internal call.
+   */
+  externImportSigs?: Map<string, { index: number; params: ValType[]; results: ValType[] }>;
   /** Current function context (set during function compilation) */
   currentFunc: LinearFuncContext | null;
   /** Errors accumulated during codegen */
