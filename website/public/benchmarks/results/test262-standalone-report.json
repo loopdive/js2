@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-16T16:53:17.761Z",
-  "baseline_generated_at": "2026-08-16T16:53:17.761Z",
-  "baseline_sha": "1edb95d70b7ed1b0d7d5ed61c197a3971f836e19",
+  "timestamp": "2026-08-17T02:06:37.723Z",
+  "baseline_generated_at": "2026-08-17T02:06:37.723Z",
+  "baseline_sha": "2c220c31466c0f35f818fe2aef81971df523189c",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1250,8 +1250,8 @@
           "test/language/expressions/dynamic-import/catch/nested-async-function-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-defer-script-code-valid.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js"
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js",
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1288,8 +1288,8 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/negative-infinity-throws-rangeerror.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
           "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/bubble-time-unit.js",
           "test/built-ins/Temporal/PlainYearMonth/prototype/since/roundingmode-floor.js"
         ],
@@ -1657,8 +1657,8 @@
         "error_categories": {
           "other": 97,
           "assertion_fail": 157,
-          "runtime_error": 10,
           "null_deref": 16,
+          "runtime_error": 10,
           "type_error": 19,
           "illegal_cast": 4,
           "host_import_leak": 2
@@ -1677,15 +1677,15 @@
         "sample_files": [
           "test/built-ins/Promise/allSettledKeyed/resolve-not-callable-reject-with-typeerror.js",
           "test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js",
-          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
           "test/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js",
+          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
           "test/built-ins/Proxy/revocable/revoke-consecutive-call-returns-undefined.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "assertion_fail:Test262Error: target has the custom set prototype Expected SameValue(«[object Object]», «[object Object]») to be true",
-          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
           "null_deref:dereferencing a null pointer [in __closure_65() ← __closure_59 ← __call_fn_method_3 ← __apply_closure]",
+          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
           "assertion_fail:Test262Error: Expected SameValue(«null», «undefined») to be true"
         ]
       },
@@ -1774,15 +1774,15 @@
           "ES2020": 2
         },
         "sample_files": [
-          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-no-sc-line-method-rs-static-async-generator-method-privatename-identifier.js",
+          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-sc-line-gen-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/same-line-async-gen-literal-names.js",
           "test/language/expressions/class/dstr/private-gen-meth-static-obj-ptrn-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
+          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_set_return, env::__get_caught_exception (##)"
@@ -2117,8 +2117,8 @@
         },
         "by_edition": {
           "ES2021": 20,
-          "ES2020": 5,
           "ES2024": 6,
+          "ES2020": 5,
           "ES5": 35,
           "Unclassified (untagged)": 23,
           "ES2015": 44,
@@ -2128,15 +2128,15 @@
         },
         "sample_files": [
           "test/built-ins/String/prototype/replaceAll/searchValue-replacer-method-abrupt.js",
-          "test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
           "test/built-ins/String/prototype/isWellFormed/return-abrupt-from-this.js",
+          "test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
           "test/built-ins/String/S15.5.2.1_A1_T19.js",
           "test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: custom abrupt Expected a Test262Error but got a [object Object]",
-          "assertion_fail:Test262Error: ToNumber throws when argument is BigInt, and String.fromCharCode must propagate it. Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: ToNumber throws when argument is BigInt, and String.fromCharCode must propagate it. Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: ##: __str = new String(new Array(#,#,#)); __str ==\"#,#,#\". Actual: __str ==[object Object]",
           "assertion_fail:Test262Error: ##: Exception === 'intostring'. Actual: exception ===[object Object]"
         ]
