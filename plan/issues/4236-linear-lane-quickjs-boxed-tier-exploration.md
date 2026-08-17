@@ -26,7 +26,7 @@ task_type: feature
 area: codegen-linear
 language_feature: eval
 goal: backend-agnostic-ir
-related: [1527, 1584, 2928, 3288, 3927, 4157, 4229]
+related: [1527, 1584, 2928, 3288, 3927, 4157, 4229, 4538]
 # id 4236 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-08; equivalent open-PR scan via the GitHub MCP found ZERO open PRs
 # at reservation time. The id coincides with a merged PR number — PR numbers
@@ -1216,3 +1216,34 @@ directly (the lre-only artifact recorded above is the same class of build),
 the linear lane's core imports it, and non-regex users load neither. The
 builtin-routing "delegate RegExp to QuickJS" row therefore does not force
 regex bytes into every deployment.
+
+## Slice-2 program (2026-08-17) — issues filed, decision promoted to an ADR
+
+The project-lead goal was restated as **standalone native binaries**, which
+makes the slice-2 handoff above schedulable work rather than exploration. Two
+things changed on 2026-08-17:
+
+1. **The 2026-08-08 adoption decision is now an ADR** —
+   [ADR-0020](../../docs/adr/0020-linear-dynamic-tier-quickjs-jsvalue.md). It
+   had lived only in this issue's "Decision" section, which is the wrong home
+   for a decision that amends ADR-0017's deferred-reclamation position and
+   carves a scoped exception to the backend-agnostic-IR non-goal (#3299).
+2. **The handoff table is now six filed issues** under umbrella **#4538**:
+
+   | handoff item | issue |
+   | --- | --- |
+   | 1–3 import direction, emit imports, import the memory | #4539 |
+   | 4–5 arena relocation, passive data segments | #4540 |
+   | representation + tag fast paths + strings + cycles | #4541 |
+   | 6 refcount / handle-scope pass | #4542 |
+   | object frontier A/B (was an open acceptance box here) | #4543 |
+   | native binary emission, size baseline, tier elision | #4544 |
+
+This issue stays the **exploration record** — the benchmark triangle, spike
+rungs, build recipe, ABI decisions, and design Q&A live here and are cited by
+the slices rather than copied into them. Its remaining open acceptance boxes
+are now owned as follows: the object-frontier A/B by #4543, the string story
+and cross-heap cycle policy by #4541, and the split-brain builtins audit by
+#4543 (prototype identity at the frontier). The version pin is recorded above;
+**the upgrade policy for the pinned engine is still unowned** and should be
+filed separately if it is not folded into #4539's ABI table work.
