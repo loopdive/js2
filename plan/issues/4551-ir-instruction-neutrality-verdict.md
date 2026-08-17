@@ -13,7 +13,7 @@ language_feature: compiler-internals
 goal: backend-agnostic-ir
 sprint: Backlog
 parent: 3954
-blocked_by: fable-architect-review
+blocked_by: 4552
 horizon: m
 model: fable
 related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
@@ -22,14 +22,15 @@ related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
 # open-PR scan via the GitHub MCP at reservation time: the only open PRs were
 # 4639 (ci/npm-compat-refresh, artifact-only) and 4643 (#4539 linear link
 # topology), neither of which adds an issue file. Ids 4552/4553 were reserved
-# in the same batch and deliberately NOT used — the work they were drafted for
-# duplicates #3954 phases 2 and 3.
+# in the same batch for a second-language proof that was dropped as duplicating
+# #3954 phase 3; 4552 was later reused for the Fable-lane review issue, 4553
+# remains reserved and unused.
 ---
 # #4551 — A per-kind neutrality verdict for #3954 phase 2
 
 **Review gate:** needs an architect review from the **Fable lane** (Lane B owns
-`backend-agnostic-ir`, `plan/method/lane-partition.md`) before dispatch.
-`status: blocked` until then. It may well be folded into #3954 outright rather
+`backend-agnostic-ir`, `plan/method/lane-partition.md`) before dispatch. That
+review is tracked as **#4552**. `status: blocked` until it lands. It may well be folded into #3954 outright rather
 than run separately; that is the reviewer's call.
 
 **This is a sub-issue of #3954** ("Name the IR's ambient ECMAScript
@@ -172,7 +173,8 @@ Measurement and enforcement only. **No source change, zero conformance delta.**
   writing a producer, and that argument is better than the alternative: it is
   cheaper, it fails faster, and it does not create a language nobody owns. Two
   issue ids (4552/4553) were reserved on 2026-08-17 for a second-language proof
-  before #3954 was found; they were deliberately left unused.
+  before #3954 was found; 4552 was reused for #4552 (the Fable-lane review),
+  4553 is still unused.
 
 ## Status update (2026-08-17)
 

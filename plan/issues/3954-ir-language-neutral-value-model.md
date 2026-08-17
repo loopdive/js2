@@ -172,6 +172,12 @@ a hunch.
 Phase 1 (the `TagDomain` seam) is untouched and still the larger correctness
 win; its surface is 58 `JsTag` references across 24 files.
 
+**This slice was implemented by the Opus lane, not by this issue's owning
+lane.** `backend-agnostic-ir` is Lane B (fable) per
+`plan/method/lane-partition.md`; the cross-lane implementation was directed by
+the project lead. **#4552** tracks the Fable-lane architect review of it, and
+PR #4644 is deliberately held as a draft until that review lands.
+
 ## Non-goals
 
 - **Not** a Python front-end, and **not justified by one**. This issue adds no
