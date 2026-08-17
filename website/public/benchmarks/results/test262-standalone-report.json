@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-17T02:06:37.723Z",
-  "baseline_generated_at": "2026-08-17T02:06:37.723Z",
-  "baseline_sha": "2c220c31466c0f35f818fe2aef81971df523189c",
+  "timestamp": "2026-08-17T09:11:56.439Z",
+  "baseline_generated_at": "2026-08-17T09:11:56.439Z",
+  "baseline_sha": "9c1504edaf94ae7730085059c5a847bda8915e23",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1250,8 +1250,8 @@
           "test/language/expressions/dynamic-import/catch/nested-async-function-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js"
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1288,8 +1288,8 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/negative-infinity-throws-rangeerror.js",
-          "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
+          "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/bubble-time-unit.js",
           "test/built-ins/Temporal/PlainYearMonth/prototype/since/roundingmode-floor.js"
         ],
@@ -1336,8 +1336,8 @@
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_defer, env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: true Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: [object Object] should be an own property",
-          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all"
+          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: [object Object] should be an own property"
         ]
       },
       {
@@ -1584,15 +1584,15 @@
         "sample_files": [
           "test/annexB/built-ins/RegExp/prototype/compile/flags-undefined.js",
           "test/annexB/built-ins/RegExp/legacy-accessors/lastParen/this-subclass-constructor.js",
-          "test/annexB/built-ins/RegExp/legacy-accessors/lastParen/prop-desc.js",
           "test/annexB/built-ins/RegExp/legacy-accessors/leftContext/this-subclass-constructor.js",
+          "test/annexB/built-ins/RegExp/legacy-accessors/lastParen/prop-desc.js",
           "test/built-ins/RegExp/prototype/dotAll/cross-realm.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: method return value (unspecified) Expected SameValue(«undefined», «[object Object]») to be true",
           "assertion_fail:Test262Error: RegExp.lastParen getter throws for subclass receiver Expected a TypeError to be thrown but no exception was thrown at all",
-          "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "assertion_fail:Test262Error: RegExp.leftContext getter throws for subclass receiver Expected a TypeError to be thrown but no exception was thrown at all",
+          "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "null_deref:dereferencing a null pointer [in __module_init()]"
         ]
       },
@@ -1724,15 +1724,15 @@
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js",
           "test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js",
-          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js",
+          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Reflect.defineProperty(sample, \"#\", {value: 8n, configurable: true, enumerable: true, writable: true}) must return true Expected SameValue(«false», «true») to be true (Testing with BigInt64Array and makeArray.)",
           "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
-          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true",
+          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Reflect.set(sample, \"Symbol(\\\"#\\\")\", #) must return false Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)"
         ]
       },
@@ -1979,15 +1979,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js",
           "test/built-ins/TypedArray/Symbol.species/length.js",
-          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
+          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-begin.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: called custom ctor get accessor once Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
+          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: false (Testing with BigInt64Array and makeArray.)"
         ]
       },
@@ -2454,23 +2454,23 @@
           "null_deref": 6
         },
         "by_edition": {
-          "ES2026": 23,
           "ES2015": 52,
+          "ES2026": 23,
           "ES2025": 31,
           "ES2021": 2,
           "ES2020": 2,
           "ES2024": 2
         },
         "sample_files": [
-          "test/built-ins/Map/prototype/getOrInsert/not-a-constructor.js",
           "test/built-ins/Map/prototype/clear/length.js",
+          "test/built-ins/Map/prototype/getOrInsert/not-a-constructor.js",
           "test/built-ins/WeakSet/prototype/add/throw-when-value-cannot-be-held-weakly.js",
           "test/built-ins/WeakSet/iterable-with-symbol-values.js",
           "test/built-ins/Set/prototype/symmetricDifference/set-like-class-order.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: length descriptor value should be #; length value should be #",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Actual [] and expected [[object Object], [object Object], [object Object]] should have the same contents. add() was called # times, on the two unregistered and one well-known symbols in order",
           "type_error:TypeError: TypeError: invalid size for a set-like argument (NaN)",
           "syntax_error:SyntaxError: Cannot convert string to a BigInt in standalone mode"
@@ -2605,8 +2605,8 @@
           "test/language/expressions/division/bigint-wrapped-values.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
           "test/built-ins/Atomics/notify/bigint/bad-range.js",
-          "test/built-ins/Atomics/waitAsync/bigint/non-bigint64-typedarray-throws.js",
-          "test/built-ins/Atomics/load/bigint/bad-range.js"
+          "test/built-ins/Atomics/load/bigint/bad-range.js",
+          "test/built-ins/Atomics/waitAsync/bigint/non-bigint64-typedarray-throws.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__new_BigInt (##)",
@@ -2686,8 +2686,8 @@
           "other": 167,
           "type_error": 88,
           "host_import_leak": 145,
-          "promise_error": 30,
           "assertion_fail": 24,
+          "promise_error": 30,
           "null_deref": 3,
           "wasm_compile": 4,
           "runtime_error": 5,
@@ -2709,8 +2709,8 @@
         "sample_files": [
           "test/built-ins/Promise/any/iter-step-err-no-close.js",
           "test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js",
-          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/built-ins/Promise/any/iter-returns-true-reject.js",
+          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/language/expressions/object/method-definition/async-gen-yield-star-next-then-non-callable-string-fulfillpromise.js"
         ],
         "sample_signatures": [
