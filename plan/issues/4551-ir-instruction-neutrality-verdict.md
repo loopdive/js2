@@ -173,3 +173,31 @@ Measurement and enforcement only. **No source change, zero conformance delta.**
   cheaper, it fails faster, and it does not create a language nobody owns. Two
   issue ids (4552/4553) were reserved on 2026-08-17 for a second-language proof
   before #3954 was found; they were deliberately left unused.
+
+## Status update (2026-08-17)
+
+**#3954 phase 2's first slice has landed**, sequenced ahead of the
+`ir-full-coverage` push by project-lead decision on the cost-of-delay series
+above. `src/ir/dialect/js.ts` now holds the 23 **uncontested** ECMAScript kinds
+(`dyn.*`, `iter.*` + `forof.iter`, `gen.*`, `await`/`async.*`, `extern.*`),
+behind `scripts/check-ir-dialect.mjs`.
+
+That makes this issue's deliverable **narrower and more urgent, not obsolete**:
+the contested families are exactly what is left, and every one of them is
+sitting in core by default until this verdict exists.
+
+Still unplaced, in rough order of how much the answer matters:
+
+| family | why it is contested |
+| --- | --- |
+| `vec.*` (5) | array holes live in `src/codegen/array-holes.ts`, above the IR — the IR op may be a plain typed-array access |
+| `class.*` (8) | single-inheritance prototype flavour, but shared with Java/Kotlin/Dart |
+| `string.*` (6) | already parameterized by `IrStringEncoding`; the residual JS shape is the operation set, not the encoding |
+| `object.*` (3) | open-map semantics vs a declared record layout |
+| `box`/`unbox`/`tag.test` (3) | belongs with phase 1's `TagDomain`, not with the dialect split |
+| `forof.vec`, `forof.string` (2) | JS statement forms over otherwise-neutral aggregates |
+| `coerce.to_externref` (1) | host-boundary concern rather than a language one |
+
+The default is now explicit and safe — unresolved means core — so nothing is
+mis-placed while this is open. What it costs is that the dialect is smaller
+than it should be.

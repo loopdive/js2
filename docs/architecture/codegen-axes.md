@@ -4,6 +4,18 @@
 > or `src/ir/`. It should take ~10 minutes. If it takes longer, file an issue
 > against this doc.
 
+> **A third axis — the producer axis — is being drawn (#3954).** The two axes
+> below are about *lowering*; the producer axis is about *which source language
+> an instruction's semantics come from*. Its first slice has landed: the 23
+> uncontested ECMAScript instruction kinds now live in `src/ir/dialect/js.ts`,
+> behind the `scripts/check-ir-dialect.mjs` gate. See
+> [The producer axis](#the-producer-axis) below.
+>
+> **A C++ front-end is an explicit non-goal** — value semantics, RAII
+> scope-exit lifetimes, pointer arithmetic and precise ABI layout are outside
+> what `IrType`'s GC-managed `object`/`class`/`boxed` kinds can express. That
+> should target LLVM. Do not design for it.
+
 ## TL;DR
 
 There are **two orthogonal axes** in the compiler back-half. They are not a
@@ -143,6 +155,42 @@ today it lives in `src/codegen/` directly; end-state it is the
 intent (whose linear implementation compares pointers/handles). The IR node
 says "compare object identity" — it never names `ref.eq`. What IR must not
 carry is a node whose _semantics_ only exist on one backend.
+
+## The producer axis
+
+The two axes above are both about **lowering** — which Wasm shape, from which
+front-end representation. The producer axis is a different question:
+
+> **Does this instruction's meaning come from a language specification, or from
+> compilation in general?**
+
+`dyn.truthy` is ECMA-262 §7.1.2. `iter.next` is the JS iterator protocol.
+`await` is JS async semantics. None of them means anything to a source language
+that is not JavaScript. Those live in **`src/ir/dialect/js.ts`**. The neutral
+core — control flow, calls, closures, refcells, slots, arithmetic, try/throw —
+stays in `src/ir/nodes.ts`.
+
+The boundary is enforced, not conventional (`scripts/check-ir-dialect.mjs`, in
+`quality`): only `nodes.ts` may import a dialect (it assembles the `IrInstr`
+union and re-exports the names), and it must re-export every name a dialect
+declares. The split is a declaration move — all 54 importers of `nodes.js` are
+unaffected.
+
+**Unsettled kinds stay in core.** `vec.*`, `class.*`, `object.*`, `string.*`,
+`box`/`unbox`/`tag.test`, `forof.vec`/`forof.string` and `coerce.to_externref`
+are *not* in the dialect, because whether they are neutral is genuinely open —
+`vec.*` array holes turn out to live in `src/codegen/array-holes.ts`, above the
+IR, and `string.*` is already parameterized by `IrStringEncoding` rather than
+hardcoding UTF-16. #4551 owns the per-kind verdict. Placing a kind on a hunch
+gives a guess the authority of a lint rule.
+
+Why this axis was drawn before the `ir-full-coverage` push rather than after:
+the work is O(instruction kinds), and kinds went 51 → 78 in the three months to
+2026-08-01. Doing it later costs proportionally more, and `ir-full-coverage` is
+expected to add roughly 40 more.
+
+Full design: #3954 (four phases — tag-domain seam, this dialect split,
+synthetic-tag-domain falsification, out-of-tree producer).
 
 ## When NOT to use IR yet
 
