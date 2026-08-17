@@ -59,6 +59,40 @@ entirely (`layout.ts` is a static fat-slot model over planned records).
   precisely, implement the weak-wrapper mitigation, and record what remains
   accepted rather than leaving it as a footnote.
 
+## A context is already a region — bound the leak class with scope, not analysis
+
+The engine gives us grouped deallocation natively: **a `JSContext` /
+`JSRuntime` is a region**, and `JS_FreeRuntime` releases everything in it at
+once. For a *scoped* use — evaluate a snippet, extract a value, discard — a
+per-eval context makes the whole group's teardown O(1) and requires **no
+lifetime analysis at all**, only that the result is copied or upgraded out
+first.
+
+That matters directly for the leak class above: **a cross-heap cycle that
+cannot be collected is still reclaimed when its context is torn down.** So the
+residual leak this slice must document is bounded by context lifetime, not by
+process lifetime — state it that way, because "leaks forever" and "leaks until
+this eval scope ends" are different severities and only the second is
+acceptable.
+
+Two limits decide how far the idea scales down, and both should be recorded so
+a later reader does not try to push it further:
+
+- **The allocator hook cannot segregate by purpose.** `JSMallocFunctions`
+  (see #4540) sees one undifferentiated stream: transient object allocations
+  interleaved with interned atoms, shapes and bytecode that have *runtime*
+  lifetime. So a region rewind cannot be nested *inside* a live runtime — it
+  would take the atom table with it. Grouping is available at context/runtime
+  granularity, not below.
+- **Rewinding under live engine references is a use-after-free inside the
+  engine** — worse than one in our own code, because it corrupts a component we
+  do not debug. A rewind point must be provable; at context granularity the
+  proof is trivial (tear down, having extracted the result), which is exactly
+  why that is the granularity to use.
+
+Long-lived shared state within one runtime stays refcounted. This is a
+complement to the mechanism, not a replacement for it.
+
 ## Amendments this slice must record
 
 - **#1852 §1** fixes the linear lane's dynamic residue as a parallel
@@ -107,6 +141,9 @@ still-unowned "version pin + upgrade policy" box lands here.
 - [ ] The string decision is recorded **with the measurement that decided it**.
 - [ ] The residual cycle-leak class is documented and covered by a test that
       demonstrates the mitigation working on the solvable cases.
+- [ ] The documented leak class states its **bound** — reclaimed at context
+      teardown, not process exit — and a test tears down a context holding an
+      uncollectable cross-heap cycle and asserts the memory is returned.
 
 ## Validation
 
