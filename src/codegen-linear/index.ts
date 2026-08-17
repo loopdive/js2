@@ -3,6 +3,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
+import { countImportedFuncs, declareExternCImports, declareImportedMemory, type ExternCImportSpec } from "./c-abi.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import * as linearIr from "../ir/backend/linear-integration.js";
@@ -99,6 +100,16 @@ export interface LinearOptions {
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
   irInventoryOptions?: BuildIrUnitInventoryOptions;
+  /**
+   * External C functions this module calls (#4539). Declared before any
+   * defined function so indices are stable; see `declareExternCImports`.
+   */
+  externImports?: readonly ExternCImportSpec[];
+  /**
+   * Import linear memory from another module instead of defining one — the
+   * ADR-0020 link topology, where the engine artifact owns the memory.
+   */
+  importMemory?: { module: string; name: string; min: number; max?: number };
 }
 
 /**
@@ -107,6 +118,15 @@ export interface LinearOptions {
  */
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
+  // #4539 — imports FIRST, before any runtime function exists. A function's
+  // index is `numImportFuncs + position`, so a later import would shift every
+  // index; `declareExternCImports` throws rather than allow that. With no
+  // imports requested this is a no-op and emitted output is unchanged.
+  if (opts.importMemory) {
+    const { module, name, min, max } = opts.importMemory;
+    declareImportedMemory(mod, module, name, min, max);
+  }
+  declareExternCImports(mod, opts.externImports ?? []);
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
   const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
 
@@ -144,7 +164,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     mod,
     checker: ast.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),
@@ -311,7 +333,9 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     mod,
     checker: multiAst.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),

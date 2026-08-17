@@ -159,6 +159,8 @@ export interface ImportDescriptor {
 }
 
 export type { ExportBoundaryKind, ExportSignature, TypedArrayKind } from "./ir/types.js";
+import type { ExternCImportSpec as LinearExternCImportSpec } from "./codegen-linear/c-abi.js";
+export type { LinearExternCImportSpec };
 export type {
   HostImportInventoryEntry,
   HostImportInventorySummary,
@@ -898,6 +900,24 @@ export interface CompileOptions {
    * lifetime to the host GC and have no linear allocator.
    */
   allocator?: "bump" | "arena-reset" | "analysis-stack";
+  /**
+   * External C functions the emitted linear module imports (#4539).
+   *
+   * Linking against a C library — e.g. the pinned engine artifact of ADR-0020
+   * — requires the module to declare the functions it calls. Declared before
+   * any defined function so indices stay stable; omitting this leaves the
+   * emitted binary byte-identical.
+   *
+   * `linear` target only.
+   */
+  linearExternImports?: readonly LinearExternCImportSpec[];
+  /**
+   * Import linear memory from another module instead of defining one (#4539).
+   *
+   * Required when linking against an artifact that EXPORTS memory: both sides
+   * must address one memory and only one may own it. `linear` target only.
+   */
+  linearImportMemory?: { module: string; name: string; min: number; max?: number };
 }
 
 import * as path from "path";

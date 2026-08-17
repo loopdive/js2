@@ -386,3 +386,111 @@ export function inferSemantic(wasmType: ValType, tsTypeText: string | undefined)
   if (cleaned === "void") return "number_f64"; // shouldn't occur for params
   return "object";
 }
+
+// ── Import direction (#4539) ─────────────────────────────────────────
+//
+// Everything above marshals the EXPORT direction: TS functions surfaced to a C
+// caller. This section is the inverse — declaring external C functions that the
+// linear module CALLS, which is what linking against a C library (e.g. the
+// pinned engine artifact of ADR-0020) requires.
+//
+// Ordering is load-bearing. A function's index is `numImportFuncs + position`,
+// so every import must be declared BEFORE any defined function is added.
+// Declaring one afterwards would shift every existing index — the failure mode
+// the WasmGC lane works around with late `addUnionImports` shifting, which this
+// backend deliberately does not replicate. `declareExternCImports` therefore
+// REFUSES rather than silently corrupting indices.
+
+/** An external C function this module calls. */
+export interface ExternCImportSpec {
+  /** Wasm import module name, e.g. `"qjs"`. */
+  module: string;
+  /** Wasm import field name, e.g. `"qjs_eval"`. */
+  name: string;
+  params: ValType[];
+  results: ValType[];
+  /**
+   * Whether the callee takes ownership of handle-typed arguments.
+   *
+   * Declared here rather than inferred because the callee is foreign code the
+   * analysis cannot see — it is a hand-written summary. The refcount /
+   * handle-scope pass (#4542) consumes this; that issue requires every import
+   * to carry one, so the field is intentionally not optional-with-a-default:
+   * a wrong default is a leak or a double-free, and "unset" must stay
+   * distinguishable from "borrows".
+   */
+  ownership?: "borrows" | "consumes";
+}
+
+/** Count the function imports already declared on a module. */
+export function countImportedFuncs(mod: WasmModule): number {
+  let n = 0;
+  for (const imp of mod.imports) if (imp.desc.kind === "func") n++;
+  return n;
+}
+
+/** Find an existing structurally-identical func type, or append one. */
+function internFuncType(mod: WasmModule, params: ValType[], results: ValType[]): number {
+  const same = (a: ValType[], b: ValType[]): boolean =>
+    a.length === b.length && a.every((t, i) => t.kind === b[i].kind);
+  for (let i = 0; i < mod.types.length; i++) {
+    const t = mod.types[i];
+    if (t.kind === "func" && same(t.params, params) && same(t.results, results)) return i;
+  }
+  const typeIdx = mod.types.length;
+  const def: FuncTypeDef = { kind: "func", params, results };
+  mod.types.push(def);
+  return typeIdx;
+}
+
+/**
+ * Declare external C functions this module imports, in order.
+ *
+ * MUST run before any defined function exists on `mod`; throws otherwise, so
+ * an index-shifting mistake is a loud failure at build time rather than a
+ * miscompile. Returns `name → function index`; imports occupy `[0, n)`.
+ */
+export function declareExternCImports(mod: WasmModule, specs: readonly ExternCImportSpec[]): Map<string, number> {
+  const indices = new Map<string, number>();
+  if (specs.length === 0) return indices;
+  if (mod.functions.length > 0) {
+    throw new Error(
+      `declareExternCImports: ${mod.functions.length} function(s) already defined. ` +
+        "Imports must be declared before any function is added — adding one later shifts every " +
+        "function index. Move the call earlier in generateLinearModule.",
+    );
+  }
+  for (const spec of specs) {
+    const existing = indices.get(`${spec.module}.${spec.name}`);
+    if (existing !== undefined) continue;
+    const typeIdx = internFuncType(mod, spec.params, spec.results);
+    const funcIdx = countImportedFuncs(mod);
+    mod.imports.push({ module: spec.module, name: spec.name, desc: { kind: "func", typeIdx } });
+    indices.set(`${spec.module}.${spec.name}`, funcIdx);
+    indices.set(spec.name, funcIdx);
+  }
+  return indices;
+}
+
+/**
+ * Import the module's linear memory instead of defining it.
+ *
+ * Required when linking against an artifact that EXPORTS memory (the ADR-0020
+ * topology): both sides must address one memory, and only one may own it.
+ * `addRuntime` skips defining memory when an import is present.
+ */
+export function declareImportedMemory(mod: WasmModule, module: string, name: string, min: number, max?: number): void {
+  if (mod.memories.length > 0) {
+    throw new Error(
+      "declareImportedMemory: this module already DEFINES a memory. A module may not both " +
+        "define and import one; declare the import before the runtime is added.",
+    );
+  }
+  if (hasImportedMemory(mod)) return;
+  mod.imports.push({ module, name, desc: { kind: "memory", min, max } });
+}
+
+/** Whether the module imports its linear memory rather than defining one. */
+export function hasImportedMemory(mod: WasmModule): boolean {
+  return mod.imports.some((imp) => imp.desc.kind === "memory");
+}
