@@ -1,6 +1,6 @@
 ---
 id: 4545
-title: "Agent commits are permanently Unverified: the commit-author rule and the harness verification rule are mutually unsatisfiable, and the signing key is unprovisioned"
+title: "The stop-hook's Unverified check is unsound: it flags correctly-signed commits, and its prescribed remedy is rejected by our own commit-author hook (and rewrites history)"
 status: ready
 sprint: Backlog
 created: 2026-08-17
@@ -16,34 +16,54 @@ related: [4538]
 # 2026-08-17 (gh CLI offline in this container; pr_scan=degraded). Equivalent
 # open-PR scan via the GitHub MCP at reservation time: ZERO open PRs, so the
 # id space was clear.
+#
+# 2026-08-17 REWRITTEN. The first draft diagnosed this as "signing is
+# configured but unprovisioned, so commits are unsigned", based on
+# `git log --format=%G?` returning N. That was WRONG, and wrong in exactly the
+# way `.claude/memory/reference_commit_signing_in_this_container.md` already
+# warns: %G? = N is a LOCAL-verification artifact of an unset
+# gpg.ssh.allowedSignersFile, not an unsigned commit. Verified by effect —
+# `git cat-file commit <sha> | grep -c 'BEGIN SSH SIGNATURE'` returns 1 for
+# every commit on this branch. The diagnosis below is the corrected one.
 ---
 
-# #4545 — Agent commits cannot be Verified: two rules, no overlap
+# #4545 — The Unverified check flags signed commits, and its fix is forbidden here
 
-## Problem
+## What is actually true (verified by effect, 2026-08-17)
 
-Every commit an agent makes in the Claude-Code-on-the-web container is shown by
-GitHub as **Unverified**, and the situation is currently unresolvable from
-inside the container. Three constraints intersect:
+- Every agent commit on `claude/linear-memory-quickjs-backend-gkhszu` **is
+  SSH-signed**: `git cat-file commit <sha> | grep -c 'BEGIN SSH SIGNATURE'`
+  returns `1` for all four.
+- `git log --format=%G?` reports `N` for those same commits, because
+  `gpg.ssh.allowedSignersFile` is unset, so git cannot verify locally. **`%G?`
+  answers "can I verify this?", not "is this signed?"** — the distinction this
+  issue exists to stop people re-learning.
+- GitHub attributes author and committer to the real account (`ttraenkler`).
+- The container's default git identity is nonetheless
+  `Claude <noreply@anthropic.com>`, so every commit needs explicit
+  `-c user.name` / `-c user.email` overrides to satisfy the repo's author rule.
 
-1. **The repo requires the author to be the human user.** `.husky/commit-msg`
-   rejects any commit whose author matches `claude|anthropic`; Claude belongs
-   only in a `Co-Authored-By:` trailer (project-lead order 2026-08-09,
-   `feedback_commit_author_is_user_not_agent_role`). A `PreToolUse` hook
-   (`.claude/hooks/check-commit-author.sh`) now enforces the same rule earlier.
-2. **The harness stop-hook requires the opposite.** It flags every commit whose
-   committer email is not `noreply@anthropic.com` and is unsigned, and
-   instructs the agent to run
-   `git config user.email noreply@anthropic.com && git commit --amend --reset-author`.
-3. **Signing — the one option that would satisfy both — is configured but not
-   provisioned.** `/root/.gitconfig` sets `commit.gpgsign=true` and
-   `gpg.format=ssh`, with `user.signingkey` pointing at
-   `/home/claude/.ssh/commit_signing_key.pub`, which is a **0-byte file**, with
-   no private key beside it. Commits therefore come out `sig=N`.
+## The actual defects
 
-So the stop-hook's prescribed remedy is blocked by the repo's own hook —
-verified directly on 2026-08-17, when a commit run under the container's
-default identity was rejected with:
+**1. The stop-hook's check cannot distinguish "signed by a non-Anthropic
+identity" from "unsigned".** Its message — *"missing signature, or committer
+email is not noreply@anthropic.com"* — collapses two independent conditions
+into one verdict, so a correctly-signed commit authored by the human user (i.e.
+exactly what this repo's convention mandates) is reported as a problem on every
+turn. A detector that reports the same thing whether or not it can see the
+signature is unsound; cf. the "A DETECTOR MUST BE ABLE TO SAY I DON'T KNOW"
+rule in `.claude/memory/MEMORY.md`.
+
+**2. Its prescribed remedy is rejected by our own gate.** The hook instructs:
+
+```
+git config user.email noreply@anthropic.com && git config user.name Claude
+git commit --amend --no-edit --reset-author
+```
+
+`.husky/commit-msg` rejects exactly that author (project-lead order
+2026-08-09, `feedback_commit_author_is_user_not_agent_role`), and a `PreToolUse`
+hook now blocks it earlier. Verified in session:
 
 ```
 commit-msg: BLOCKED — commit author is 'Claude <noreply@anthropic.com>'.
@@ -51,58 +71,60 @@ commit-msg: BLOCKED — commit author is 'Claude <noreply@anthropic.com>'.
   'Co-Authored-By:' trailer (project convention, CLAUDE.md).
 ```
 
-## Why it is worth fixing rather than tolerating
+So an agent that follows the instruction loses a commit cycle; one that does
+not gets nagged every turn. Both happened repeatedly in one session.
 
-- **The nag is unbounded.** The stop hook fires on every turn with an unpushed
-  or unverified commit. An agent either burns a turn re-explaining the conflict
-  or — worse — complies, hits the husky gate, and loses a commit cycle. Both
-  happened repeatedly in one session.
-- **It trains the wrong reflex.** The stop hook's remedy is a `--reset-author`
-  and, in the multi-commit form, a `git rebase --exec` across the branch.
-  Rebasing published history is forbidden here (public `main` is append-only),
-  so an agent that follows the instruction on a pushed branch does real damage.
-- **Unverified is not cosmetic if the repo ever gates on it.** It does not
-  today, which is why this is `medium` and not higher.
+**3. The multi-commit form of the remedy rewrites history.** It prescribes
 
-## Options (pick one; they are mutually exclusive in effect)
+```
+git rebase --exec "git commit --amend --no-edit --reset-author" <sha>^
+```
 
-1. **Provision the signing key** — put a real SSH signing key for
-   `git@thomas.traenkler.com` in the container and register its public half on
-   the GitHub account as a *signing* key. Commits stay authored by the user,
-   satisfy the repo rule, and show Verified. **Recommended**: it is the only
-   option where both rules hold simultaneously and nothing is relaxed.
-2. **Silence the stop hook for this repo** — teach
-   `~/.claude/stop-hook-git-check.sh` that a repo enforcing its own author
-   convention is exempt. Cheapest, but leaves commits Unverified.
-3. **Relax the repo author rule** — allow a Claude-authored commit. Not
-   recommended: the rule is recent, deliberate, and now doubly enforced; its
-   purpose (attribution to the human, agent as co-author) is unrelated to
-   signature verification.
+On a branch that is already pushed — as this one is, under PR #4640 — that is a
+history rewrite, which this project forbids (`main` is append-only, and
+force-pushing a PR branch under review is its own hazard). The instruction is
+not merely useless here; it is actively dangerous later in a branch's life.
 
-Options 1 and 2 are independent and could both be taken; 3 conflicts with 1.
+## What still needs establishing
+
+Whether GitHub renders these commits **Verified** depends on the signing public
+key being registered as a *signing* key on the account. That was not readable
+from inside the container (the commit API response surfaced no `verification`
+field via the MCP tool). Check PR #4640's commit list; if they show Verified,
+defect 1 is the whole story and nothing about signing needs changing.
+
+## Options
+
+1. **Fix the stop-hook check** — report the two conditions separately, and
+   treat "signed, author is the repo's required identity" as success.
+   Recommended: it is the only option that addresses the unsound detector
+   rather than working around it.
+2. **Scope an exemption** for repos that enforce their own author convention.
+   Cheaper, but leaves the conflated message in place for everyone else.
+3. **Register the signing key on the account** (if PR #4640 shows Unverified) —
+   independent of 1 and 2, and worth doing regardless.
+
+Not an option: relaxing the repo's author rule. It is recent, deliberate,
+doubly enforced, and unrelated to signature verification.
 
 ## Acceptance criteria
 
 - [ ] An agent commit made in the web container ends the turn with **no**
       stop-hook complaint and **no** husky rejection.
-- [ ] Whichever option is taken is recorded where an agent will actually read
-      it — `CLAUDE.md` and/or the memory entry — so the next session does not
-      re-derive this conflict from scratch.
-- [ ] If option 1: the key is provisioned such that `git log --format=%G?`
-      reports a good signature, and the setup is documented for future
-      containers (an ephemeral container loses it otherwise).
-- [ ] If option 2: the exemption is scoped to repos that enforce an author
-      convention, not a blanket disable.
+- [ ] The stop-hook's message distinguishes "unsigned" from "signed by an
+      identity I did not expect", and never prescribes `--reset-author` for a
+      repo whose gate rejects that author.
+- [ ] No remedy it prescribes rewrites already-pushed history.
+- [ ] The `%G?`-is-not-signedness trap is cross-referenced from wherever the
+      next agent will hit it, so this is not re-diagnosed a third time.
 
 ## Notes
 
-- The container's git identity defaults to `Claude <noreply@anthropic.com>`, so
-  every commit needs explicit `-c user.name`/`-c user.email` overrides. Folding
-  the correct identity into the container image would remove a recurring
-  failure step independently of which option above is chosen.
-- `.claude/hooks/check-cwd.sh` has an adjacent environment mismatch worth
-  noting while someone is in this code: it resolves the shared-checkout root
-  from `CLAUDE_PROJECT_DIR`, which in the web container equals the agent's own
-  clone, so it treats ordinary solo work as a forbidden commit into the shared
+- Folding the correct git identity into the container image would remove a
+  recurring failure step independently of the above.
+- Adjacent, worth fixing while someone is in this code:
+  `.claude/hooks/check-cwd.sh` resolves the shared-checkout root from
+  `CLAUDE_PROJECT_DIR`, which in the web container equals the agent's own
+  clone — so it treats ordinary solo work as a forbidden commit into the shared
   `/workspace` tree. Its `cd`-elsewhere escape makes this survivable, but the
   guard is not doing what it was written to do in this environment.

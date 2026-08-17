@@ -70,6 +70,38 @@ per cross-module call.
   the C API. Planned and typed data keeps our own layouts, which is what that
   non-goal exists to protect.
 
+## Alternatives rejected (recorded because they resurface)
+
+**Implement our own refcounting or GC over the engine's objects**, sharing only
+its layout and allocator. Rejected on two independent grounds. First, the
+engine's own compiled code adjusts refcounts as it runs — every property read,
+builtin and bytecode op — so our scheme and its scheme would write the same
+header field and disagree about when it reaches zero; the failure is a
+premature free *inside* the engine, unfixable from our side. Second, a
+collector must traverse, which means knowing per object class (Array, Map,
+closure, Promise, TypedArray, Proxy) where the child references live — exactly
+the internals this ADR declines to couple to, and they would rot silently at
+the next version bump. It would also not achieve its usual motivation: we link
+the engine for the object model, builtins and `eval`, so replacing its
+collector removes nothing from the link.
+
+What *is* available without any of that: the allocator, via the documented
+`JS_NewRuntime2` / `JSMallocFunctions` hook, and collection **policy**, via
+`JS_SetGCThreshold` / `JS_RunGC`. Mechanism stays the engine's; allocation and
+policy are ours. That split is consistent with ADR-0017's refusal to build a
+pluggable GC.
+
+**Adapt the engine to use WasmGC.** Not possible by adaptation: there is no
+C→WasmGC compiler, and the memory models are incompatible — WasmGC structs are
+not addressable, references are opaque and carry no integer value, so NaN
+boxing (the engine's core value representation) is undefined rather than merely
+hard. "The engine on WasmGC" would be a rewrite of its object model, i.e. a new
+engine — and the WasmGC lane already has the native equivalent in its own
+dynamic family plus the self-hosted interpreter. The adjacent option, bridging
+a linear-memory engine to WasmGC objects, is recorded as **rejected** in
+`docs/architecture/runtime-eval-interpreter.md` (strategy 2c: handle table,
+identity broken).
+
 ## Consequences
 
 - The linear lane gains a finished runtime — builtins, RegExp, `eval`, and a
