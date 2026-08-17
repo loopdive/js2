@@ -285,3 +285,115 @@ flag indefinitely; default remains WasmGC.
 - **#1199** — proves linear-memory allocator infrastructure.
 - **#1535/#1536** — native bigint / externref-free runtime;
   prerequisites for full standalone ARC.
+
+## Measurement record (2026-08-17) — what the shipping analysis actually proves
+
+Three measurements, run to decide whether this issue is worth scheduling. The
+short version: **the analysis is not the blocker; the allocation-kind and
+constant-size policy filters are, and on real code they exclude nearly
+everything worth promoting.**
+
+Method: `planLinearMemory` runs `analyzeOwnership`, `analyzeEscape` and
+`findStackAllocCandidates` itself, so compiling with
+`{ target: "linear", allocator: "analysis-stack" }` and reading
+`getLastLinearIrReport()?.memoryPlan.allocations` measures the analysis **as it
+ships**, not a reimplementation. Probes lived in `.tmp/` (gitignored); every
+load-bearing number is restated here.
+
+### 1. Playground corpus — no denominator
+
+13 files under `website/playground/examples`, all compiled, all produced a
+linear IR report. The linear IR path claimed **6 of 49 functions** (43
+rejected), and those 6 contain **0 allocation sites**.
+
+So the corpus fraction is **0/0 — undefined, not 0 %**. The allocating
+functions are among the 43 rejections.
+
+> A first version of this probe reported a bare "0 sites" and would have been
+> read as "nothing is stack-allocatable". It could not distinguish *no report*
+> from *report with no sites*. Positive controls were added and are what makes
+> the numbers above meaningful — a control allocating a non-escaping object
+> yields exactly one site, `owned` / `local` / `stack`.
+
+### 2. Pattern capability profile — 7 of 9 observed sites promoted
+
+Ten hand-written patterns; 3 rejected outright by the linear IR path, 7
+produced sites (9 sites, 7 promoted). **This is a capability profile, not a
+population estimate** — the patterns were chosen by the author.
+
+| pattern | escape | promoted |
+| --- | --- | --- |
+| temp object, fields read | `local` | **stack** |
+| temp object, mutated then read | `local` | **stack** |
+| object allocated in a loop | `local` | **stack** |
+| two objects, aliased values | `local` | **stack** ×2 |
+| object stored into another object | `local` | **stack** ×2 |
+| object **conditionally** allocated | `opaque` | arena |
+| **array** literal, non-escaping | `local` | arena |
+| object returned | — | rejected at IR build |
+| object passed to a local callee | — | rejected at IR build |
+| closure capturing a local | — | `select:body-shape-rejected` |
+
+Two things the analysis handles better than expected: **mutation does not kill
+promotion**, and an object **stored into another local object** still proves
+`local` (both promoted). Two systematic gaps: **conditional allocation
+degrades to `opaque`** (the drop-flag case, now confirmed rather than
+predicted), and **arrays prove `local` but are excluded by policy** —
+`SMALL_ALLOC_KINDS` in `stack-alloc.ts` is `{object, refcell, box}`.
+
+### 3. `cookie@2.0.1` — a real package, read by hand
+
+The tool claims **0 of 9** functions in `cookie`'s `dist/index.js`, so it
+contributes no data; the following is a manual reading of the source.
+
+**Module level (7 sites):** six RegExp literals plus `NullObject`. Allocated
+once at init, program lifetime — static/global, and irrelevant to per-call
+cost either way.
+
+**Per call:**
+
+| function | site | verdict |
+| --- | --- | --- |
+| `parseCookie` | `new NullObject()` | returned → **escapes** |
+| `parseCookie` | key / value strings from `valueSlice`, `dec(...)` | stored into the returned object → **escapes** |
+| `stringifyCookie` | `Object.keys(cookie)` | **local**, never escapes — but **dynamically sized** |
+| `stringifyCookie` | `str += …` temporaries | **local, transient**, dynamically sized |
+| `stringifySetCookie` | ~10 sequential `str += "; X=" + v` temporaries | **local, transient** — the dominant allocation |
+| `stringifySetCookie` | `priority/sameSite.toLowerCase()`, `expires.toUTCString()` | **local, transient**; the first two are conditional |
+| `parseSetCookie` | `setCookie` object literal (ternary, two arms) | conditional **and** returned → **escapes** |
+| `parseSetCookie` | `attr`, `attr.toLowerCase()` | **local, transient** |
+| `parseSetCookie` | `val`, `new Date(val)`, `val.toLowerCase()` | **conditionally** stored → must be treated as escaping |
+| all | error-path template literals + `new TypeError` | escape via `throw`; cold |
+
+**The finding.** Every genuinely promotable allocation in `cookie` is a
+**string temporary** or **one array** — precisely the kinds `SMALL_ALLOC_KINDS`
+excludes — and nearly all are **dynamically sized**, which
+`ANALYSIS_STACK_ARENA_POLICY` also excludes via
+`facts.layout.size.kind === "constant"`. Meanwhile the allocations that *are* of
+a promotable kind — the `NullObject` instance, the `setCookie` literal — are
+exactly the ones that escape by construction, because they are the return
+values.
+
+So on this package the current Phase-1 policy would promote **zero** sites even
+with perfect IR coverage and a perfect escape analysis. Not because locality
+cannot be proven, but because the two policy filters exclude what real
+string-processing code allocates.
+
+### Consequences for this issue
+
+1. **Extending the kind filter beats extending coverage.** Arrays already prove
+   `local` and are dropped by policy alone; strings are the dominant population
+   in real code. Both are cheaper to enable than more selector coverage.
+2. **Fixed-size scalar replacement is the wrong mechanism for this workload.**
+   The wins are dynamically sized and die at function exit.
+3. **A per-call arena rewind is the better-fitting primitive.** ADR-0017 already
+   ships an O(1) `__arena_reset`; a *per-call* variant would capture nearly all
+   of `cookie`'s transient traffic, and it needs only "nothing escapes this
+   call" — strictly weaker than per-object promotion, and it sidesteps both the
+   conditional-allocation and dynamic-size problems at once.
+4. **Re-run measurement 1 once linear-lane coverage rises** (#4539, #4541). Until
+   then any corpus fraction measures the selector, not the lifetime analysis.
+
+Caveat on scope: this reads `cookie`'s JS semantics. How our compiler actually
+lowers `+=` on strings (rope, builder, or fresh allocation per concat) was not
+inspected, and it changes the size — though not the direction — of point 3.
