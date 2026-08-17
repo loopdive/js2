@@ -147,6 +147,17 @@
       },
       {
         "matcher": "Bash",
+        "if": "Bash(*git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/check-commit-author.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
         "if": "Bash(git merge*)",
         "hooks": [
           {
