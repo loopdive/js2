@@ -75,6 +75,7 @@ import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
 import { setupCookie } from "../tests/dogfood/setup-cookie.mjs";
 import { setupEslint } from "../tests/dogfood/setup-eslint.mjs";
+import { setupMarked } from "../tests/dogfood/setup-marked.mjs";
 import { setupPrettier } from "../tests/dogfood/setup-prettier.mjs";
 import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
