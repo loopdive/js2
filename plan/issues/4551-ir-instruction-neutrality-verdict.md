@@ -50,11 +50,22 @@ on 2026-08-01:
 
 > `IrInstr` kinds: **78** · language-neutral **~40** · encode ECMAScript **~35**
 
-Two problems with using that as the input to a dependency-lint boundary:
+**The 78 is exact and has not drifted** — measured across `origin/main`
+history, the `IrInstr` union has had 78 arms on 2026-08-01, 2026-08-10 and
+2026-08-18 alike. An earlier draft of this issue claimed it had drifted to 82;
+that was a **counting error**, and reproducing it is the cheapest available
+illustration of why this issue exists. Grepping `readonly kind:` in
+`src/ir/nodes.ts` yields **85**, which is 78 union arms **+ 3 declaration kinds
+(`func`/`global`/`type`) + 4 terminators (`br`/`br_if`/`return`/`unreachable`,
+which are `IrBranch`/terminator members, not `IrInstr` arms)**. Two plausible
+denominators, no tool to settle which is meant.
 
-1. **It has already drifted.** Measured on `main` at 2026-08-17: **82**
-   instruction kinds (excluding the `func`/`global`/`type` declaration
-   members). Four kinds in sixteen days, with nothing counting them.
+That is the actual problem, and it is worse than a stale number:
+
+1. **The population itself is not mechanically defined.** Two counts of the
+   same thing, made hours apart in one session, disagreed by four — because
+   "instruction kind" is currently a grep, not a definition. Any per-kind
+   boundary needs the denominator pinned first.
 2. **The middle of the distribution is unresolved, and it is where the
    boundary actually falls.** A first re-classification attempt on 2026-08-17
    produced 31 neutral / 25 "neutral name, JS-defined spec" / 26 JS-only — but
@@ -78,6 +89,30 @@ Two problems with using that as the input to a dependency-lint boundary:
    re-deriving it from scratch, and a boundary drawn from an unverified
    classification will put kinds on the wrong side of a lint rule that is then
    expensive to move.
+
+### Cost of delay, measured
+
+`IrInstr` union arms across `origin/main`:
+
+| date | arms |
+| --- | --- |
+| 2026-05-01 | 51 |
+| 2026-06-01 | 57 |
+| 2026-07-01 | 58 |
+| 2026-07-15 | 71 |
+| 2026-08-01 | 78 |
+| 2026-08-18 | 78 |
+
+**+53 % in three months, then flat for 17 days.** Phase 2's work is O(kinds),
+so its cost tracks this curve directly — and the growth is lumpy (+13 in the
+first half of July alone), which means "it has been quiet lately" is not
+evidence of anything at 17 days' resolution.
+
+Phase 1's surface is much smaller and is not growing the same way: **58 `JsTag`
+references across 24 files** today. That asymmetry is worth knowing when
+sequencing — deferring the tag seam is cheap; deferring the dialect split is
+what compounds, particularly against `ir-full-coverage`, which #3954 expects to
+add roughly 40 more kinds.
 
 ### One correction to the record, in the other direction
 
@@ -118,7 +153,9 @@ Measurement and enforcement only. **No source change, zero conformance delta.**
 
 ## Acceptance criteria
 
-- Every one of the 82 kinds carries a verdict (`neutral` / `js` /
+- The population is pinned by a stated rule (which of `IrInstr` arms,
+  terminators and declaration kinds are in scope), not by a grep.
+- Every kind in that population carries a verdict (`neutral` / `js` /
   `unresolved`) with cited evidence.
 - Adding a kind without a verdict fails `quality`, naming the kind.
 - The `unresolved` set is small enough to be phase 2's actual agenda, and each
