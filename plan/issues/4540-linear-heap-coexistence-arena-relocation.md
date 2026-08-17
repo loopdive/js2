@@ -103,6 +103,81 @@ straight at the engine's `malloc` (simplest, one allocator, but typed data
 loses the bump path and pays dlmalloc per allocation — which is exactly what
 ADR-0017 chose the arena to avoid).
 
+## The alternative this slice does not currently consider: two memories
+
+Everything above assumes **one** linear memory and then works to make two
+allocators coexist inside it. Multi-memory removes that problem rather than
+solving it: the engine keeps memory 0, our arena moves to memory 1, and there
+are two address spaces, so a collision cannot occur by construction and the
+arena keeps ADR-0017's zero-metadata bump path untouched.
+
+This is worth costing before the single-memory design is built, because the two
+options trade opposite things.
+
+**Why it fits this codebase better than it looks.** ADR-0020 already requires
+that `JSValue` be **opaque** and that all manipulation go through the C API.
+That *is* the accessor discipline — we never dereference engine memory
+directly, so almost nothing we do needs to see memory 0. And the arena is
+precisely the data that never needs to be visible to the engine: it holds our
+compiled program's typed, statically-planned values.
+
+**What it costs.** Payloads that genuinely cross — a string handed to
+`JS_NewStringLen`, an array we ask the engine to wrap — must live in the memory
+the engine can read. Under one memory we can build them in the arena and pass
+the pointer; under two we must allocate from the engine's `malloc` and copy
+into it. So multi-memory removes the coexistence hazard and reintroduces a copy
+at exactly the boundary where data crosses. The single-memory design has the
+mirror-image tradeoff. Neither is free, and which is cheaper is an empirical
+question about how much data actually crosses the seam in real workloads.
+
+**The security argument, which this issue does not currently weigh.** One
+shared memory means the engine can read and write our arena, and vice versa.
+That matters more here than in a generic two-module link, because the engine's
+whole purpose in ADR-0020 is to execute **`eval`** — attacker-controlled input
+by design. Under one memory, an exploited engine bug reaches our compiled
+program's data; under two, it does not. #4539's `declareImportedMemory` gives
+up the inter-module sandbox deliberately, and that is a defensible trade for a
+trusted peer — it is a different trade when the peer is running untrusted
+source.
+
+**Prior art, with the discussion.** This is the design in
+[WebAssembly/component-model#626](https://github.com/WebAssembly/component-model/issues/626)
+("intra-module sandboxing"): after a multi-memory merge, an accessor exported
+by one module carries the other's memory index as a **static immediate**, so
+post-merge inlining reduces it to a direct load — the boundary is enforced
+pre-merge and erased by inlining, at no runtime cost. Two findings from that
+thread bear directly on this slice:
+
+- **Bounds checking is not optional.** lukewagner's objection: an accessor
+  taking a raw `i32` and loading indiscriminately lets the caller read anywhere
+  in the callee's memory, which is "roughly equivalent to importing its linear
+  memory" — the sandbox is nominal. A region must carry its length and the
+  accessor must check, statically for fixed-size regions and dynamically
+  otherwise. He argues handles-plus-call-scoped-lifetimes converges on lazy
+  lowering; cfallin (Cranelift) disagrees explicitly, holding that an
+  unforgeable resource handle with primitive-wise accessors is "not covered by
+  lazy lowering" and fills a niche no other zero-copy mechanism does — the same
+  shape Wasmtime's compile-time builtins target. That disagreement is unresolved
+  upstream; we do not need to resolve it, but we should not assume either
+  answer.
+- **The bulk-data gap is the known weak point**, and it is the same one we hit
+  above: per-element accessors lose to a single `memory.copy`. The upstream
+  answers are explicit bulk methods, region borrows
+  ([#568](https://github.com/WebAssembly/component-model/issues/568)'s
+  `mappableref`, [#383](https://github.com/WebAssembly/component-model/issues/383)
+  lazy lowering), or optimizer recovery of sequential accessor loops.
+
+**What would need building here**: multi-memory emission in
+`src/codegen-linear/` (today `declareImportedMemory` asserts the module defines
+no memory, and the emitter assumes a single one), memory-index immediates in
+our own arena accesses, and a measured comparison of the cross-boundary copy
+against the single-memory design. Engine/runtime multi-memory support on our
+target matrix needs verifying rather than assuming.
+
+**This is recorded as an option, not a recommendation.** The single-memory
+allocator-unification design above may well still win on the numbers. What it
+should not do is win by default because the alternative was never written down.
+
 ## Acceptance criteria
 
 - [ ] A linked module allocates, writes, and reads without touching any byte it
@@ -123,6 +198,11 @@ ADR-0017 chose the arena to avoid).
       allocation directly at the engine's `malloc`, and the choice is recorded
       with both numbers — ADR-0017's zero-metadata bump path is the thing
       being traded, so the trade needs a figure.
+- [ ] The **two-memory** alternative is explicitly decided, not defaulted past:
+      record whether it was rejected on the cross-boundary copy cost, on
+      toolchain/runtime support, or on measurement — and state the security
+      consequence accepted by staying on one memory, given the engine executes
+      `eval` input.
 
 ## Validation
 
