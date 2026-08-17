@@ -175,4 +175,68 @@ export function bad(n: number): number { return c_double(n, n); }`,
     expect(messages).toContain("c_double");
     expect(messages).toContain("fixed-arity");
   });
+
+  it("an address KIND resolves to the target width and links (#4554)", async () => {
+    const peer = await WebAssembly.instantiate(peerBytes(), {});
+    const px = peer.instance.exports as {
+      memory: WebAssembly.Memory;
+      c_double: (x: number) => number;
+    };
+
+    // Declared by ROLE, not width. On wasm32 `handle` is i32, so this must
+    // produce the byte-identical import a literal i32 would — the point being
+    // that a memory64 target changes one model, not every call site.
+    const result = await compile(
+      `declare function c_double(x: number): number;
+export function twice(n: number): number { return c_double(n); }`,
+      {
+        target: "linear",
+        linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
+        linearExternImports: [
+          {
+            module: "cpeer",
+            name: "c_double",
+            params: [{ address: "handle" }],
+            results: [{ address: "handle" }],
+          },
+        ],
+      } as never,
+    );
+    expect(result.errors ?? []).toEqual([]);
+
+    const ours = await WebAssembly.instantiate(result.binary, {
+      cpeer: { memory: px.memory, c_double: px.c_double },
+    });
+    const twice = (ours.instance.exports as { twice?: (n: number) => number }).twice;
+    expect(twice?.(21)).toBe(42);
+  });
+
+  it("an address kind emits the same bytes as the literal it resolves to", async () => {
+    const opts = (params: unknown) =>
+      ({
+        target: "linear",
+        linearExternImports: [{ module: "cpeer", name: "c_double", params, results: params }],
+      }) as never;
+    const viaLiteral = await compile(SRC, opts([{ kind: "i32" }]));
+    const viaRole = await compile(SRC, opts([{ address: "handle" }]));
+    expect(Buffer.from(viaRole.binary).equals(Buffer.from(viaLiteral.binary))).toBe(true);
+  });
+
+  it("refuses a memory64 index type instead of emitting 32-bit limits (#4554)", async () => {
+    // Accepting `i64` and ignoring it would produce a module that instantiates
+    // and then addresses the wrong memory — the failure this refusal exists to
+    // prevent. Loud beats silently-wrong.
+    //
+    // It surfaces as a compile DIAGNOSTIC rather than a thrown exception, which
+    // is the better shape: the caller gets `success: false` and a message
+    // naming the limitation, in the same channel as every other codegen error.
+    const result = await compile(SRC, {
+      target: "linear",
+      linearImportMemory: { module: "cpeer", name: "memory", min: 2, indexType: "i64" },
+    } as never);
+    expect(result.success).toBe(false);
+    const messages = (result.errors ?? []).map((e) => e.message).join(" | ");
+    expect(messages).toMatch(/memory64/i);
+    expect(messages).toContain("#4554");
+  });
 });

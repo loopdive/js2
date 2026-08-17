@@ -917,7 +917,19 @@ export interface CompileOptions {
    * Required when linking against an artifact that EXPORTS memory: both sides
    * must address one memory and only one may own it. `linear` target only.
    */
-  linearImportMemory?: { module: string; name: string; min: number; max?: number };
+  linearImportMemory?: {
+    module: string;
+    name: string;
+    min: number;
+    max?: number;
+    /**
+     * memory64 index type (#4554). The field exists so a 64-bit caller has
+     * somewhere to say so; `"i64"` is currently **refused** rather than
+     * accepted and ignored, which would emit 32-bit limits for a 64-bit
+     * memory.
+     */
+    indexType?: "i32" | "i64";
+  };
 }
 
 import * as path from "path";

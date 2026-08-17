@@ -10,6 +10,7 @@ import {
   emitExternCBoundaryArg,
   emitExternCBoundaryResult,
   type ExternCImportSpec,
+  resolveExternCValType,
 } from "./c-abi.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
@@ -116,7 +117,14 @@ export interface LinearOptions {
    * Import linear memory from another module instead of defining one — the
    * ADR-0020 link topology, where the engine artifact owns the memory.
    */
-  importMemory?: { module: string; name: string; min: number; max?: number };
+  importMemory?: {
+    module: string;
+    name: string;
+    min: number;
+    max?: number;
+    /** memory64 index type (#4554). Refused for now; see declareImportedMemory. */
+    indexType?: "i32" | "i64";
+  };
 }
 
 /**
@@ -130,8 +138,8 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   // index; `declareExternCImports` throws rather than allow that. With no
   // imports requested this is a no-op and emitted output is unchanged.
   if (opts.importMemory) {
-    const { module, name, min, max } = opts.importMemory;
-    declareImportedMemory(mod, module, name, min, max);
+    const { module, name, min, max, indexType } = opts.importMemory;
+    declareImportedMemory(mod, module, name, min, max, indexType);
   }
   const externImportIndices = declareExternCImports(mod, opts.externImports ?? []);
   // The index lives here rather than only in funcMap because an ambient
@@ -139,11 +147,18 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   // function and would overwrite the funcMap entry — silently retargeting the
   // call at a body-less local slot with a TS-derived (f64) signature. Keeping
   // the extern binding in its own map makes it authoritative.
+  // Types are RESOLVED through the address model here (#4554) so every later
+  // consumer — the call site's boundary marshalling included — sees concrete
+  // Wasm types and never has to re-decide how wide a handle is.
   const externImportSigs = new Map<string, { index: number; params: ValType[]; results: ValType[] }>();
   for (const spec of opts.externImports ?? []) {
     const index = externImportIndices.get(spec.name);
     if (index === undefined) continue;
-    externImportSigs.set(spec.name, { index, params: [...spec.params], results: [...spec.results] });
+    externImportSigs.set(spec.name, {
+      index,
+      params: spec.params.map((t) => resolveExternCValType(t)),
+      results: spec.results.map((t) => resolveExternCValType(t)),
+    });
   }
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
   const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);

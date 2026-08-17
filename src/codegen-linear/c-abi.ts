@@ -401,14 +401,63 @@ export function inferSemantic(wasmType: ValType, tsTypeText: string | undefined)
 // backend deliberately does not replicate. `declareExternCImports` therefore
 // REFUSES rather than silently corrupting indices.
 
+// ── Address domain (#4554) ───────────────────────────────────────────
+//
+// Pointers, sizes and handles are `i32` because the TARGET is wasm32, not
+// because they are inherently 32-bit; under memory64 they become `i64`. Naming
+// the role instead of the width keeps that a one-line change here rather than
+// a hunt through every declaration site.
+//
+// This is deliberately NOT an adoption of memory64, which is often slower on
+// today's engines (64-bit bounds checks cannot use the 4 GiB guard-page trick)
+// and costs cache through wider pointers. It only stops foreclosing it.
+
+/** The role a scalar plays, when its width is a property of the target. */
+export type AddressKind = "ptr" | "size" | "handle";
+
+/** A param/result type: an exact Wasm type, or a role resolved per target. */
+export type ExternCValType = ValType | { address: AddressKind };
+
+/** Which Wasm type each address role lowers to on a given target. */
+export interface LinearAddressModel {
+  readonly pointer: ValType;
+  readonly size: ValType;
+  readonly handle: ValType;
+}
+
+/** wasm32: every address role is an `i32`. The status quo, stated once. */
+export const WASM32_ADDRESS_MODEL: LinearAddressModel = {
+  pointer: { kind: "i32" },
+  size: { kind: "i32" },
+  handle: { kind: "i32" },
+};
+
+/** Resolve a declared extern type against the target's address model. */
+export function resolveExternCValType(t: ExternCValType, model: LinearAddressModel = WASM32_ADDRESS_MODEL): ValType {
+  if (!("address" in t)) return t;
+  switch (t.address) {
+    case "ptr":
+      return model.pointer;
+    case "size":
+      return model.size;
+    case "handle":
+      return model.handle;
+  }
+}
+
 /** An external C function this module calls. */
 export interface ExternCImportSpec {
   /** Wasm import module name, e.g. `"qjs"`. */
   module: string;
   /** Wasm import field name, e.g. `"qjs_eval"`. */
   name: string;
-  params: ValType[];
-  results: ValType[];
+  /**
+   * Parameter types. Prefer an {@link AddressKind} — `{ address: "handle" }` —
+   * over a literal `i32` wherever the value is an address rather than a number
+   * that happens to be 32 bits wide.
+   */
+  params: ExternCValType[];
+  results: ExternCValType[];
   /**
    * Whether the callee takes ownership of handle-typed arguments.
    *
@@ -450,7 +499,11 @@ function internFuncType(mod: WasmModule, params: ValType[], results: ValType[]):
  * an index-shifting mistake is a loud failure at build time rather than a
  * miscompile. Returns `name → function index`; imports occupy `[0, n)`.
  */
-export function declareExternCImports(mod: WasmModule, specs: readonly ExternCImportSpec[]): Map<string, number> {
+export function declareExternCImports(
+  mod: WasmModule,
+  specs: readonly ExternCImportSpec[],
+  model: LinearAddressModel = WASM32_ADDRESS_MODEL,
+): Map<string, number> {
   const indices = new Map<string, number>();
   if (specs.length === 0) return indices;
   if (mod.functions.length > 0) {
@@ -463,7 +516,11 @@ export function declareExternCImports(mod: WasmModule, specs: readonly ExternCIm
   for (const spec of specs) {
     const existing = indices.get(`${spec.module}.${spec.name}`);
     if (existing !== undefined) continue;
-    const typeIdx = internFuncType(mod, spec.params, spec.results);
+    const typeIdx = internFuncType(
+      mod,
+      spec.params.map((t) => resolveExternCValType(t, model)),
+      spec.results.map((t) => resolveExternCValType(t, model)),
+    );
     const funcIdx = countImportedFuncs(mod);
     mod.imports.push({ module: spec.module, name: spec.name, desc: { kind: "func", typeIdx } });
     indices.set(`${spec.module}.${spec.name}`, funcIdx);
@@ -479,11 +536,30 @@ export function declareExternCImports(mod: WasmModule, specs: readonly ExternCIm
  * topology): both sides must address one memory, and only one may own it.
  * `addRuntime` skips defining memory when an import is present.
  */
-export function declareImportedMemory(mod: WasmModule, module: string, name: string, min: number, max?: number): void {
+export function declareImportedMemory(
+  mod: WasmModule,
+  module: string,
+  name: string,
+  min: number,
+  max?: number,
+  indexType: "i32" | "i64" = "i32",
+): void {
   if (mod.memories.length > 0) {
     throw new Error(
       "declareImportedMemory: this module already DEFINES a memory. A module may not both " +
         "define and import one; declare the import before the runtime is added.",
+    );
+  }
+  // #4554 — the parameter exists so a memory64 caller has somewhere to say so,
+  // and is REFUSED rather than accepted-and-ignored. Accepting it would emit
+  // wasm32 limits for a 64-bit memory: a module that instantiates and then
+  // addresses the wrong bytes. A loud refusal is the only honest answer until
+  // the emitter can encode 64-bit limits.
+  if (indexType === "i64") {
+    throw new Error(
+      "declareImportedMemory: memory64 (i64 index type) is not supported yet — the emitter " +
+        "cannot encode 64-bit limits, and emitting 32-bit ones for a 64-bit memory would " +
+        "silently address the wrong memory. See #4554.",
     );
   }
   if (hasImportedMemory(mod)) return;
