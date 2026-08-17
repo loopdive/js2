@@ -1,10 +1,10 @@
 {
-  "generated": "2026-08-16",
+  "generated": "2026-08-17",
   "threshold": 1500,
-  "totalCeiling": 647434,
+  "totalCeiling": 647974,
   "files": {
-    "src/codegen-linear/index.ts": 5574,
-    "src/codegen-linear/runtime.ts": 4292,
+    "src/codegen-linear/index.ts": 5697,
+    "src/codegen-linear/runtime.ts": 4299,
     "src/codegen/any-helpers.ts": 2144,
     "src/codegen/array-methods.ts": 8881,
     "src/codegen/array-object-proto.ts": 2739,
@@ -83,7 +83,7 @@
     "src/ir/integration.ts": 7389,
     "src/ir/lower.ts": 4323,
     "src/ir/module-bindings.ts": 2502,
-    "src/ir/nodes.ts": 3440,
+    "src/ir/nodes.ts": 2983,
     "src/ir/prepared-component-dependencies.ts": 1790,
     "src/ir/propagate.ts": 1599,
     "src/ir/select.ts": 9951,
