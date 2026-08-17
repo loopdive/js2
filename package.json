@@ -110,6 +110,7 @@
     "baseline:fetch": "node scripts/fetch-baseline-jsonl.mjs",
     "detect:vacuity": "npx tsx scripts/detect-vacuity.ts",
     "check:test-vacuity-shapes": "npx tsx scripts/check-test-vacuity-shapes.ts",
+    "check:ir-dialect": "node scripts/check-ir-dialect.mjs",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
     "check:host-import-policy": "node --import tsx scripts/check-host-import-policy.ts",
     "check:ir-only": "npx tsx scripts/check-ir-only.ts",

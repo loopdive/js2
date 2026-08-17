@@ -152,6 +152,10 @@ jobs:
             exit 1
           fi
 
+      - name: IR core/dialect boundary gate (#3954 phase 2)
+        if: steps.npm_compat.outputs.only != 'true'
+        run: pnpm run check:ir-dialect
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks

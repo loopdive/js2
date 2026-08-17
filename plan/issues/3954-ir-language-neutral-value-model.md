@@ -1,10 +1,11 @@
 ---
 id: 3954
 title: "Name the IR's ambient ECMAScript assumptions: factor the JS value model behind a tag-domain seam"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-17
+assignee: "ttraenkler/claude-js-ir-generalization"
 priority: high
 horizon: l
 feasibility: hard
@@ -140,6 +141,42 @@ nobody picks this up expecting a bigger prize than there is:
 
 **A C++ front-end is not on this axis at all** and is a hard non-goal — see
 Non-goals.
+
+## Progress
+
+**Phase 2, first slice — LANDED 2026-08-17** (sequenced ahead of phase 1 by
+project-lead decision, on the cost-of-delay measurement in #4551: phase 2 is
+O(instruction kinds), and kinds went 51 -> 78 in the three months to
+2026-08-01, with `ir-full-coverage` expected to add ~40 more).
+
+- `src/ir/dialect/js.ts` holds the **23 uncontested** ECMAScript kinds:
+  `dyn.*` (5), `iter.*` + `forof.iter` (6), `gen.*` (4), `await`/`async.*` (3),
+  `extern.*` incl. RegExp (5). `nodes.ts` 3,441 -> 3,032 lines.
+- Declaration moves and re-exports only. All 54 importers of `nodes.js`
+  unchanged; `import type` throughout, so the core<->dialect cycle has no
+  runtime edge.
+- `scripts/check-ir-dialect.mjs` enforces both rules (single core->dialect
+  edge; every dialect name re-exported), wired into `quality`. Both rules were
+  negative-tested against deliberate violations before being wired in.
+- Verified: repo typecheck clean; `tests/ir-*.test.ts` run serially shows the
+  same 2 failures as base (`ir-bytecode-proof` OP.CALL, `ir-scaffold` selector
+  shape) -- both pre-existing on `main`, neither touched by this change.
+
+**Deliberately NOT moved**: `vec.*`, `class.*`, `object.*`, `string.*`,
+`box`/`unbox`/`tag.test`, `forof.vec`/`forof.string`, `coerce.to_externref`.
+Whether those are neutral is genuinely unsettled -- spot-checks reversed the
+intuitive reading more often than they confirmed it. **#4551** owns the
+per-kind verdict; an unresolved kind stays in core rather than being placed on
+a hunch.
+
+Phase 1 (the `TagDomain` seam) is untouched and still the larger correctness
+win; its surface is 58 `JsTag` references across 24 files.
+
+**This slice was implemented by the Opus lane, not by this issue's owning
+lane.** `backend-agnostic-ir` is Lane B (fable) per
+`plan/method/lane-partition.md`; the cross-lane implementation was directed by
+the project lead. **#4552** tracks the Fable-lane architect review of it, and
+PR #4644 is deliberately held as a draft until that review lands.
 
 ## Non-goals
 
