@@ -28,6 +28,23 @@ related: [1852, 4236, 4245]
 Slice 3 of #4538. Lands the core of
 [ADR-0020](../../docs/adr/0020-linear-dynamic-tier-quickjs-jsvalue.md).
 
+## This lands behind the `BackendEmitter` trait — not in direct `codegen-linear`
+
+**Load-bearing constraint, not a style preference.** The boxed tier is a
+backend lowering of an IR-level concept, so it belongs behind the emitter seam:
+**#1713 — "IR backend-trait: audit WasmGC bias in lower.ts + define
+BackendEmitter seam"** and **#1714 — "Lower one IR node kind through the
+BackendEmitter trait to BOTH WasmGC and linear"** are both `done`, and
+**#1852 — "Make dynamic-value representation explicitly per-backend…"** already
+specifies this work as its slice G4 (`emitBox` / `emitUnbox` / `emitTagLoad` /
+`emitTagTest` implemented in `LinearEmitter`).
+
+Writing it as a direct AST→Wasm path in `src/codegen-linear/` because it is
+urgent would grow exactly the legacy front-end the IR migration is retiring —
+the "wrong answer" `docs/architecture/codegen-axes.md` names explicitly. ADR-0020
+supersedes #1852's *representation* for this target; it does **not** supersede
+#1852's *mechanism*, and the two must not be conflated.
+
 ## Scope
 
 Give the linear lane a dynamic value representation, which it currently lacks
@@ -139,6 +156,9 @@ still-unowned "version pin + upgrade policy" box lands here.
 - [ ] Number box/unbox uses extracted tag constants; a test fails if the
       constants are hardcoded rather than read from the pinned build.
 - [ ] The string decision is recorded **with the measurement that decided it**.
+- [ ] Box / unbox / tag-test are emitted through `BackendEmitter` primitives
+      implemented in `LinearEmitter` — **not** via a direct `codegen-linear`
+      path. A `pushRaw`-style inline emission of these ops fails review.
 - [ ] The residual cycle-leak class is documented and covered by a test that
       demonstrates the mitigation working on the solvable cases.
 - [ ] The documented leak class states its **bound** — reclaimed at context
