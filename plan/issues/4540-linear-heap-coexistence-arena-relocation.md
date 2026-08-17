@@ -63,6 +63,46 @@ it can reach are ones it got from `malloc`.
 - Audit the linear lane for any other absolute-address assumption (globals,
   stack-like scratch regions, string literal placement).
 
+## The engine has a documented allocator hook — prefer one heap over two placed apart
+
+Verified against the pinned header (quickjs-ng v0.16.1 / `954dc53`) on
+2026-08-17: the engine takes embedder-supplied allocation functions via
+
+```c
+JSRuntime *JS_NewRuntime2(const JSMallocFunctions *mf, void *opaque);
+typedef struct JSMallocFunctions {
+  void *(*js_calloc)(void *opaque, size_t count, size_t size);
+  void *(*js_malloc)(void *opaque, size_t size);
+  void  (*js_free)(void *opaque, void *ptr);
+  void *(*js_realloc)(void *opaque, void *ptr, size_t size);
+  size_t (*js_malloc_usable_size)(const void *ptr);
+} JSMallocFunctions;
+```
+
+alongside `JS_SetMemoryLimit`, `JS_SetGCThreshold`, and `JS_RunGC`. Our shim
+currently calls plain `JS_NewRuntime()`, so we are on the engine's default
+allocator (libc `malloc` → `dlmalloc`, per `-DMALLOC=dlmalloc` in
+`build.sh`).
+
+This reframes the slice: **the goal is one grower, not two growers placed
+carefully.** Spacing two independent allocators apart is a truce that a heap
+growth breaks; unifying removes the failure mode instead of postponing it.
+
+Direction matters, and only one direction works. Our bump arena **cannot**
+serve as the engine's allocator — `JSMallocFunctions` requires real `free`,
+`realloc`, and `usable_size`, and the arena by design never frees (ADR-0017).
+So unify the other way, and keep the arena's benefit:
+
+> Carve the native arena's region **from** the engine's allocator — one (or a
+> few) large blocks — and keep bump-allocating typed data inside it. One
+> grower owns the address space; typed allocation keeps its ~135-byte
+> zero-metadata fast path; the collision cannot recur by construction.
+
+The alternative worth measuring against it is routing typed allocation
+straight at the engine's `malloc` (simplest, one allocator, but typed data
+loses the bump path and pays dlmalloc per allocation — which is exactly what
+ADR-0017 chose the arena to avoid).
+
 ## Acceptance criteria
 
 - [ ] A linked module allocates, writes, and reads without touching any byte it
@@ -76,6 +116,13 @@ it can reach are ones it got from `malloc`.
 - [ ] The refused alternatives (fixed `--global-base`, spacing the arenas
       apart) are recorded with their failure mode in the issue or ADR, not just
       in a commit message.
+- [ ] Exactly **one** component grows linear memory, established by
+      construction rather than by convention, and asserted by a test that
+      grows both workloads past their initial pages.
+- [ ] The arena-carved-from-`malloc` design is measured against routing typed
+      allocation directly at the engine's `malloc`, and the choice is recorded
+      with both numbers — ADR-0017's zero-metadata bump path is the thing
+      being traded, so the trade needs a figure.
 
 ## Validation
 

@@ -72,10 +72,34 @@ entirely (`layout.ts` is a static fat-slot model over planned records).
   #4245 this subsumes **for the linear lane**, so the two are not built twice.
   The WasmGC lane's membrane need is unaffected.
 
+## The extracted ABI is a version lock — stamp it, or it miscompiles silently
+
+Inline fast paths make the emitted binary **coupled to one engine build**.
+`scripts/quickjs-artifact/extract-abi.mjs` reads the encoding out of the
+artifact you linked (`qjs_abi_tag_*`, `tagOffset`, `payloadOffset`,
+`float64TagAddend`, `nanBoxing`, `jsValueSize`), which is what keeps the
+constants honest — but nothing yet enforces that the artifact you *link* is the
+artifact you *extracted from*. Link a different build and every inline tag test
+and number unbox is quietly wrong: no crash, no diagnostic, just wrong values.
+That is the worst failure shape available here, and it is the exact hazard the
+extraction design exists to prevent — left unenforced, extraction only moves the
+hardcoding one step away.
+
+The mechanism already exists: the shim exports `qjs_abi_version`. What is
+missing is the policy. This slice owns closing that, and it is why #4236's
+still-unowned "version pin + upgrade policy" box lands here.
+
 ## Acceptance criteria
 
 - [ ] A program with a genuine dynamic residue (heterogeneous values, dynamic
       property access) compiles and runs under `--target linear`, linked.
+- [ ] The ABI stamp the module was compiled against is **embedded in the
+      module** and **checked against the linked artifact** at link or
+      instantiate time. A mismatch fails loudly, naming both versions; it must
+      never degrade to a warning or a silent continue.
+- [ ] A negative test links a module against an artifact reporting a different
+      `qjs_abi_version` and asserts the failure fires — proving the check can
+      see the bug class it exists to catch.
 - [ ] Typed numeric kernels emit an **unchanged** instruction count — the
       typed-mainline-unboxed invariant from #1852 §3, asserted on this PR.
 - [ ] Number box/unbox uses extracted tag constants; a test fails if the
