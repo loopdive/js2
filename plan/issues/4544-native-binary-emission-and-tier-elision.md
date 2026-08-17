@@ -15,8 +15,12 @@ area: codegen-linear
 language_feature: compiler-internals
 goal: standalone-mode
 parent: 4538
-depends_on: [4541]
-related: [2776, 4236]
+# Part B (tier elision) depends on 4541; Part A (AOT an existing linear module
+# and record size/startup) depends on NOTHING and is the evidence gate for
+# ADR-0021. The blanket depends_on was wrong and would have parked the one
+# measurement that should run first — corrected 2026-08-17.
+depends_on: []
+related: [2776, 4236, 4541]
 # id 4544 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-17 (gh CLI offline in this container; pr_scan=degraded). Equivalent
 # open-PR scan via the GitHub MCP at reservation time: the sole open PR was
@@ -27,6 +31,15 @@ related: [2776, 4236]
 
 Slice 6 of #4538. Delivers the actual goal — a binary — and the property that
 keeps the tier from taxing programs that never touch it.
+
+## Sequencing — Part A is unblocked, Part B is not
+
+**Part A can start today.** AOT-compiling an existing linear-target module and
+recording size/startup depends on no other slice, and it is the evidence gate
+for [ADR-0021](../../docs/adr/0021-native-backend-targets-c.md): if these
+numbers are adequate, the direct C backend stays deferred indefinitely, which
+is worth learning before anyone invests in it. Part B (tier elision) genuinely
+needs #4541.
 
 ## Part A — native binary emission
 
