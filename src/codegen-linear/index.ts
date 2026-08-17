@@ -3,6 +3,15 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
+import {
+  countImportedFuncs,
+  declareExternCImports,
+  declareImportedMemory,
+  emitExternCBoundaryArg,
+  emitExternCBoundaryResult,
+  type ExternCImportSpec,
+  resolveExternCValType,
+} from "./c-abi.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import * as linearIr from "../ir/backend/linear-integration.js";
@@ -99,6 +108,23 @@ export interface LinearOptions {
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
   irInventoryOptions?: BuildIrUnitInventoryOptions;
+  /**
+   * External C functions this module calls (#4539). Declared before any
+   * defined function so indices are stable; see `declareExternCImports`.
+   */
+  externImports?: readonly ExternCImportSpec[];
+  /**
+   * Import linear memory from another module instead of defining one — the
+   * ADR-0020 link topology, where the engine artifact owns the memory.
+   */
+  importMemory?: {
+    module: string;
+    name: string;
+    min: number;
+    max?: number;
+    /** memory64 index type (#4554). Refused for now; see declareImportedMemory. */
+    indexType?: "i32" | "i64";
+  };
 }
 
 /**
@@ -107,6 +133,33 @@ export interface LinearOptions {
  */
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
+  // #4539 — imports FIRST, before any runtime function exists. A function's
+  // index is `numImportFuncs + position`, so a later import would shift every
+  // index; `declareExternCImports` throws rather than allow that. With no
+  // imports requested this is a no-op and emitted output is unchanged.
+  if (opts.importMemory) {
+    const { module, name, min, max, indexType } = opts.importMemory;
+    declareImportedMemory(mod, module, name, min, max, indexType);
+  }
+  const externImportIndices = declareExternCImports(mod, opts.externImports ?? []);
+  // The index lives here rather than only in funcMap because an ambient
+  // `declare function` of the same name is later registered as a user
+  // function and would overwrite the funcMap entry — silently retargeting the
+  // call at a body-less local slot with a TS-derived (f64) signature. Keeping
+  // the extern binding in its own map makes it authoritative.
+  // Types are RESOLVED through the address model here (#4554) so every later
+  // consumer — the call site's boundary marshalling included — sees concrete
+  // Wasm types and never has to re-decide how wide a handle is.
+  const externImportSigs = new Map<string, { index: number; params: ValType[]; results: ValType[] }>();
+  for (const spec of opts.externImports ?? []) {
+    const index = externImportIndices.get(spec.name);
+    if (index === undefined) continue;
+    externImportSigs.set(spec.name, {
+      index,
+      params: spec.params.map((t) => resolveExternCValType(t)),
+      results: spec.results.map((t) => resolveExternCValType(t)),
+    });
+  }
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
   const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
 
@@ -144,7 +197,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     mod,
     checker: ast.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),
@@ -155,7 +210,16 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     closureEnvGlobalIdx,
     moduleGlobals: new Map(),
     moduleCollectionTypes: new Map(),
+    externImportSigs: externImportSigs.size > 0 ? externImportSigs : undefined,
   };
+
+  // #4539 — extern imports are callable by name. They occupy indices [0, n),
+  // so registering them here lets the ordinary call path resolve them; the
+  // signature map drives boundary marshalling at each call site.
+  for (const spec of opts.externImports ?? []) {
+    const idx = externImportIndices.get(spec.name);
+    if (idx !== undefined) ctx.funcMap.set(spec.name, idx);
+  }
 
   // Register runtime functions in funcMap
   for (let i = 0; i < mod.functions.length; i++) {
@@ -311,7 +375,9 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     mod,
     checker: multiAst.checker,
     funcMap: new Map(),
-    numImportFuncs: 0,
+    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
+    // output is unchanged for every existing caller.
+    numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
     classLayouts: new Map(),
@@ -1809,8 +1875,18 @@ export function compileExpression(ctx: LinearContext, fctx: LinearFuncContext, e
           fctx.body.push({ op: "local.get", index: localIdx }); // table index
           fctx.body.push({ op: "call_indirect", typeIdx: cbTypeIdx, tableIdx: 0 });
         } else {
+          // #4539 — an extern-C binding wins over any same-named local slot.
+          // A `declare function` is registered as a user function too, so
+          // consulting funcMap first would retarget the call at a body-less
+          // slot carrying a TS-derived signature.
+          const externSig = ctx.externImportSigs?.get(funcName);
           const funcIdx = ctx.funcMap.get(funcName);
-          if (funcIdx !== undefined) {
+          if (externSig !== undefined) {
+            // The declared C signature is authoritative and this backend's
+            // `number` is f64, so arguments and result convert at the
+            // boundary rather than being assumed to match.
+            emitExternCCall(ctx, fctx, expr, funcName, externSig.index, externSig);
+          } else if (funcIdx !== undefined) {
             for (const arg of expr.arguments) {
               compileCallArg(ctx, fctx, arg);
             }
@@ -5571,4 +5647,51 @@ function emitClosureSetup(
 
   // Push the table index as the i32 argument value
   fctx.body.push({ op: "i32.const", value: tableIdx });
+}
+
+/**
+ * Emit a call to an extern-C import, marshalling at the boundary (#4539).
+ *
+ * Arity is validated here rather than left to Wasm validation: a C callee is
+ * fixed-arity, and a mismatch caught at the call site names the function and
+ * the source location, where a validation failure would surface as an opaque
+ * "type mismatch" against a whole module.
+ */
+function emitExternCCall(
+  ctx: LinearContext,
+  fctx: LinearFuncContext,
+  expr: ts.CallExpression,
+  funcName: string,
+  funcIdx: number,
+  sig: { params: ValType[]; results: ValType[] },
+): void {
+  if (expr.arguments.length !== sig.params.length) {
+    ctx.errors.push({
+      message:
+        `extern-C import '${funcName}' takes ${sig.params.length} argument(s), ` +
+        `called with ${expr.arguments.length}. C imports are fixed-arity — ` +
+        "there are no defaults to fill in.",
+      ...nodeLoc(expr),
+    });
+    fctx.body.push({ op: "f64.const", value: 0 });
+    return;
+  }
+  try {
+    for (let i = 0; i < expr.arguments.length; i++) {
+      compileCallArg(ctx, fctx, expr.arguments[i]);
+      emitExternCBoundaryArg(fctx.body, sig.params[i]);
+    }
+    fctx.body.push({ op: "call", funcIdx });
+    // A void C function leaves nothing on the stack; the linear backend's
+    // expression positions always expect a value, so push the same `f64.const
+    // 0` the rest of the backend uses for a void result.
+    if (sig.results.length === 0) {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    } else {
+      emitExternCBoundaryResult(fctx.body, sig.results[0]);
+    }
+  } catch (error) {
+    ctx.errors.push({ message: (error as Error).message, ...nodeLoc(expr) });
+    fctx.body.push({ op: "f64.const", value: 0 });
+  }
 }

@@ -1,8 +1,18 @@
 ---
 id: 4539
 title: "Linear lane link topology: extern-C import declarations, emit imports at all, import the memory instead of defining it"
-status: ready
+status: in-progress
 sprint: Backlog
+# The substantive code lands in c-abi.ts (not a god-file). What remains is
+# wiring that can only live where the module is constructed: +24 in
+# codegen-linear/index.ts (the two LinearOptions fields and the
+# declare-imports-first calls, which MUST precede any runtime function) and +7
+# in runtime.ts (the `skip defining memory when one is imported` guard inside
+# addRuntime). Neither can move to a subsystem module without indirecting the
+# construction order the gate exists to keep legible.
+loc-budget-allow:
+  - src/codegen-linear/index.ts
+  - src/codegen-linear/runtime.ts
 created: 2026-08-17
 updated: 2026-08-17
 priority: high

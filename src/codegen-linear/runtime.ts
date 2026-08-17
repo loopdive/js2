@@ -5,6 +5,7 @@ import {
   LINEAR_STRING_PAYLOAD_PREFIX_BYTES,
   LINEAR_STRING_PAYLOAD_SIZE_OFFSET,
 } from "../ir/analysis/linear-memory-plan.js";
+import { hasImportedMemory } from "./c-abi.js";
 import { hashProbeAdvanceInstrs, hashProbeInitInstrs } from "./emit-idioms.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
 
@@ -83,8 +84,14 @@ export interface ArenaOptions {
  */
 export function addRuntime(mod: WasmModule, opts: ArenaOptions = {}): void {
   const heapStart = opts.heapStart ?? HEAP_START;
-  // Add memory (1 page = 64 KiB, growable to 256 pages = 16 MiB)
-  if (mod.memories.length === 0) {
+  // Add memory (1 page = 64 KiB, growable to 256 pages = 16 MiB).
+  //
+  // #4539: skip this entirely when the module IMPORTS its memory. A module may
+  // not both define and import one, and when linking against an artifact that
+  // exports memory (the ADR-0020 topology) the artifact owns it. Re-exporting
+  // an imported memory is legal but deliberately not done here: the owner
+  // already exports it, and a second export invites two names for one memory.
+  if (mod.memories.length === 0 && !hasImportedMemory(mod)) {
     mod.memories.push({ min: 1, max: 256 });
     // Export memory so tests can inspect it
     mod.exports.push({
