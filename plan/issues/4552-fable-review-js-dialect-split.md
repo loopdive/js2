@@ -47,9 +47,20 @@ The reviewer this needs is the one who did **not** write it.
 
 ## What to review
 
-PR #4644, three commits on `claude/js-ir-generalization-9v7m8j`. All CI green
-(41/41), `mergeable_state: clean`, **left as a draft on purpose** so this review
-happens before it can be enqueued.
+PR #4644 on `claude/js-ir-generalization-9v7m8j`. All CI green,
+`mergeable_state: clean`.
+
+**This review is POST-MERGE, by project-lead decision (2026-08-17).** The PR was
+held as a draft to gate on this review; the lead's call was to mark it ready
+once it was a working checkpoint, which it is: the slice is self-contained,
+behaviour-neutral by construction, and depends on neither #4551 nor phase 1.
+Holding a green, finished checkpoint out of `main` to wait on a review costs
+merge-conflict risk and blocks nothing else, so the review moves after the
+merge rather than in front of it.
+
+That changes the outcome options, not the questions. Everything below still
+needs an owner's verdict — the difference is that "reject" now means a
+follow-up or revert PR rather than closing an unmerged draft.
 
 ### 1. The boundary rule (the load-bearing decision)
 
@@ -112,19 +123,58 @@ corrected; confirm the corrections rather than the originals.
 
 One of:
 
-- **Accept** → mark PR #4644 ready for review so `auto-enqueue` takes it, and
-  set this issue `done`.
-- **Accept with changes** → list them here; the Opus lane applies them on the
-  same branch, or Lane B takes the branch over.
-- **Reject the sequencing** → say what should land first; #4644 stays a draft
-  or is closed, and the dialect split is re-planned under #3954's original
-  phase order.
+- **Accept** → set this issue `done`. Nothing else to do; the code is already
+  on `main`.
+- **Accept with changes** → list them here; they land as a follow-up PR, on
+  this branch name or one Lane B opens. Cheap while the dialect is one file
+  and 23 kinds.
+- **Reject the boundary or the sequencing** → say what should have landed
+  first. The remedy is a revert PR (public `main` is append-only — fix
+  forward, never rewrite), then re-plan under #3954's original phase order.
+  The split is 23 declaration moves plus a gate, so a revert is mechanical.
+
+The reviewer should also say whether the **schema** half is theirs or #3030's
+(see "Two schema questions" below).
 
 Also inherited: **#4551 is `status: blocked` on this same review.** It owns the
 per-kind verdict for the families deliberately left in core (`vec.*`,
 `class.*`, `object.*`, `string.*`, `box`/`unbox`/`tag.test`,
 `forof.vec`/`forof.string`, `coerce.to_externref`). Unblocking or folding it
 into #3954 is part of this review's outcome.
+
+## Two schema questions with a clock on them
+
+Surfaced while answering a follow-up on the MLIR shape; recorded here because
+they expire in a way the in-tree questions do not.
+
+`docs/ir/ir-module.schema.json` defines `instrKind` as a **closed enum of 60
+entries, 19 of them JS ops**. An out-of-tree producer (#3954 phase 4, and
+#3030's stated purpose) cannot emit an op outside that enum, so whether a
+non-JS producer is possible at all is decided by the schema's namespace shape
+— not by the in-tree union.
+
+1. **Should `instrKind` become an open namespace?**
+   `anyOf: [ {enum: [...60 known...]}, {type: "string", pattern:
+   "^[a-z][a-z0-9]*\\.[a-z_][a-z0-9_]*$"} ]`. Known ops still validate against
+   the enum, so docs and tooling keep the list; a foreign dialect can emit
+   `py.getattr` without a spec revision. Op names are already `dialect.op`-shaped
+   by convention, so only the closed-vs-open half is at stake.
+2. **Should `IrInstr` gain an open arm in-tree?**
+   `interface IrInstrForeign { kind: \`${string}.${string}\`; operands: IrValueId[] }`.
+   **Measured, not assumed:** this KEEPS exhaustiveness over the closed arms —
+   a new unhandled closed arm still fails to compile (`TS2322: Type
+   'InstrForeign | InstrVecGet' is not assignable to type 'InstrForeign'`).
+   The costs are elsewhere: a second, weaker instruction shape alongside the
+   bespoke typed fields; a declared foreign behaviour in every pass (`effects.ts`
+   conservative, `legality.ts` illegal-by-default); and #1924's re-derive
+   guarantee weakening exactly where the op is least known.
+
+Recommendation on the record, for the reviewer to accept or overrule: **do (1)
+now, defer (2)**. (1) is one schema edit plus a version bump while consumer
+count is plausibly zero — `IR_FORMAT_VERSION` is already at 5.1 with five bumps
+behind it, and #3030 is still `status: ready`. (2) should wait for a producer
+that actually needs it; the dialect split makes adding it later a contained
+change rather than a refactor.
 
 ## Not in scope
 
