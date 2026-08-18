@@ -2,9 +2,9 @@
 id: 4503
 title: "IR: a BOOLEAN BRAND so booleans are distinguishable from i32-carried numbers"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: m

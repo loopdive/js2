@@ -4,9 +4,9 @@ title: "Identifier-head for-of over string[][] hard-fails: prepared-vector regis
 status: done
 completed: 2026-08-15
 assignee: ttraenkler/opus-4486
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

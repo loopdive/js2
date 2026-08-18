@@ -2,9 +2,9 @@
 id: 4460
 title: "Static member read off a class EXPRESSION yields null at runtime while typeof/length fold to the function"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 assignee: ttraenkler/dev-4460-class-expr-static
 priority: high

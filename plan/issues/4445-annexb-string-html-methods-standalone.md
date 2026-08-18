@@ -3,9 +3,9 @@ id: 4445
 title: "annexB String.prototype HTML methods (anchor/big/…/sup) return undefined in standalone — implement CreateHTML natively"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 assignee: claude/es6-standalone-session
 priority: high
 horizon: s

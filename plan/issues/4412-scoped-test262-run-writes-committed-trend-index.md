@@ -2,9 +2,9 @@
 id: 4412
 title: "A scoped local test262 run silently writes the committed trend index"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18
 completed: 2026-08-14
 priority: medium
 horizon: s

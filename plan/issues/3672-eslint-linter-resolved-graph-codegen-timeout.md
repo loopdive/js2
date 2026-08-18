@@ -4,7 +4,7 @@ id: 3672
 title: "ESLint linter.js: resolved 149-file graph exhausts a 2 GB compiler heap"
 status: done
 created: 2026-07-26
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 assignee: ttraenkler/dev-eslint-ir
 priority: critical
@@ -14,7 +14,7 @@ task_type: performance
 area: compiler, codegen, observability
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1400, 2693]
 es_edition: n/a
 related: [824, 1282, 1400, 1573, 1942, 3654, 3655, 3656, 3657]

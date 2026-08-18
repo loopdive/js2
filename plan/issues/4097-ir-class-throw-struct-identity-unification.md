@@ -3,9 +3,9 @@ id: 4097
 title: "Lift the IR class-instance-throw demote: unify IR class-allocation struct identity with legacy collectClassDeclaration"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-15
+updated: 2026-08-18
 loc-budget-allow:
   # +26 lines: the user-class render arm must be built in the SAME
   # index-shift-safe window as the #4394 fnctor arms it mirrors (every helper

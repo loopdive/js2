@@ -2,9 +2,9 @@
 id: 4453
 title: "TDZ early-error false positive: nested-block shadowing — 'Cannot access X before initialization' on correct code"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: s

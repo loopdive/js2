@@ -2,9 +2,9 @@
 id: 4122
 title: "perf regression: `bindingHasMixedAssignmentCarrier` treats an UNRESOLVABLE assignment as a cross-domain one, boxing every numeric accumulator fed by a dynamic call — `method` axis 1.56x → 5.26x"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: m

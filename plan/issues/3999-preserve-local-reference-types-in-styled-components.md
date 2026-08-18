@@ -3,7 +3,7 @@ id: 3999
 title: "wasm emission: preserve local and call operand types in styled-components"
 status: done
 created: 2026-07-30
-updated: 2026-08-11
+updated: 2026-08-18
 completed: 2026-08-11
 priority: medium
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: n/a
 goal: dogfood
-sprint: current
+sprint: 78
 horizon: m
 related: [3995]
 loc-budget-allow:

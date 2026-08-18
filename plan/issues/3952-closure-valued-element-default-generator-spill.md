@@ -3,9 +3,9 @@ id: 3952
 title: "Standalone: closure-valued binding-element defaults bail the native generator plan — the round-trip proof #3386 asked for, run; arrow/fn-expr admitted, generator-fn-expr and class-expr measured broken and kept bailed"
 status: done
 completed: 2026-08-01
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: m
 complexity: M

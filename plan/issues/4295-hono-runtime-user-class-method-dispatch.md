@@ -1,7 +1,7 @@
 ---
 id: 4295
 title: "codegen: dispatch untyped user-class methods by runtime identity"
-status: in_progress
+status: in-progress
 sprint: current
 created: 2026-08-09
 updated: 2026-08-09

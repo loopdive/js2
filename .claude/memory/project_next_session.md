@@ -1,11 +1,64 @@
 ---
 name: project_next_session
-description: RESOLVED 2026-07-24 — fable-tier backlog UNBLOCKED by Opus 5 (frontier tier), dispatched in sprint 77. This file remains the authoritative fable-tier backlog + priority order; the "suspended" framing below is historical.
+description: Sprint 78 closed 2026-08-18 (see the handoff section at the top). RESOLVED 2026-07-24 — fable-tier backlog UNBLOCKED by Opus 5 (frontier tier), dispatched in sprint 77. This file remains the authoritative fable-tier backlog + priority order; the "suspended" framing below is historical.
 metadata: 
   node_type: memory
   type: project
-  modified: 2026-07-24T18:28:57.374Z
+  modified: 2026-08-18T19:20:00.000Z
   originSessionId: a3d6eeff-28b8-4096-ad2f-4e98df2f82bf
+---
+
+# SPRINT 78 HANDOFF — 2026-08-18
+
+**Git**: window frozen at `1e6deeefe` (branch `claude/pull-from-origin-un3eun`,
+draft PR loopdive/js2wasm#4647). Main tip at freeze: `9896af5d7`.
+
+**test262**: 32,615 / 43,621 (74.8%), from `benchmarks/results/test262-current.json`.
+**No window delta is on record** — the wrap-up ran in a shallow clone
+(2026-08-15 → 2026-08-18) and the window opened 2026-07-30, so the start value
+was unreachable. Do not synthesise one; take it from a full clone if needed.
+
+**Window**: 293 done, 490 rolled forward as `sprint: current`. Nineteen days
+against sprint 77's 79 completed.
+
+## Still open after this wrap-up
+
+- **`sprint/78` tag is NOT pushed.** It exists locally at `1e6deeefe`. The push
+  is rejected **HTTP 403** — not the egress proxy (`recentRelayFailures: []`),
+  so this session's credentials permit branch pushes but not tag creation.
+  `wrap_checklist.end_tag_pushed` is `false` and accurate. Needs someone with
+  tag permission.
+- **PR #4647 is a DRAFT**, and `auto-refresh-prs` skips drafts while
+  `auto-enqueue` never takes them — it will not reach the merge queue until it
+  is marked ready for review.
+- **#3764 is still `complete`, not `done`**, deliberately. Its suite fails 2/3
+  on main; one failure is real (standalone `importObject` is not `{}` — it
+  carries `env` plus a populated `string_constants`). Either fix it or demote
+  the issue, but do not promote it on the status token.
+- **The freeze-script frontmatter bug is only patched, not fixed.**
+  `freeze-sprint.mjs` writes sprint docs with no frontmatter, so the next window
+  reintroduces `isClosed=false`. Sprint 78's doc got `status: closed` by hand.
+
+## Key learnings
+
+- **`complete` is not a status any tool understands.** `build-data.js`
+  normalises `in_progress`, but nothing normalises `complete`, and
+  `freeze-sprint.mjs` matches `status === "done"` exactly — so a finished issue
+  spelled `complete` rolls forward as unfinished, every window, invisibly.
+  Five were found this window; four were verified and promoted.
+- **Three separate defects, one absence:** nothing validates issue or sprint
+  frontmatter against `SCHEMA.md`. CI already walks every issue file for
+  `check:issue-ids:against-main`. Reconcile the schema first — it lists
+  `review` while practice and 17 live issues use `in-review`, and `suspended`
+  is unlisted.
+- **`sync-sprint-issue-tables.mjs` has no owner.** It rewrote 16 docs (+752
+  lines) of accumulated drift. No workflow calls it, so unlike the test262
+  baseline or `npm-compat.json` it never self-heals.
+- **The budget trigger cannot fire off-host.** `freeze-sprint.mjs` reads the
+  statusline's weekly cache, which does not exist in a remote container, so it
+  always reports a fresh window and always refuses. Any off-host freeze is a
+  `--force` judgement call — worth an elapsed-time trigger alongside it.
+
 ---
 
 # FABLE-TIER WORK — UNBLOCKED 2026-07-24 (sprint 77, Opus 5)

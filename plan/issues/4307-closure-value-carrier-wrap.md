@@ -3,9 +3,9 @@ id: 4307
 title: "Closure VALUES are not carrier-wrapped for the eval seam — `var f = function(){}` crosses as a non-callable membrane wrapper"
 status: done
 assignee: ttraenkler/opus-senior
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 horizon: m

@@ -4,9 +4,9 @@ title: "Object.prototype.propertyIsEnumerable returns true for a non-enumerable 
 status: done
 completed: 2026-07-31
 assignee: ttraenkler/dev-enumerable
-sprint: current
+sprint: 78
 created: 2026-07-26
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

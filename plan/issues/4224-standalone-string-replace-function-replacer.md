@@ -2,7 +2,7 @@
 id: 4224
 title: "standalone String.prototype.replace: function replacers and non-string replacement values"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-08
 completed: 2026-08-08
 priority: high

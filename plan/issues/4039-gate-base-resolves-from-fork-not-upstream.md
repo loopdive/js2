@@ -2,9 +2,9 @@
 id: 4039
 title: "Gates resolve their diff base from `origin/main` — which is the FORK's stale main, so they blame files the branch never touched"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: s

@@ -2,9 +2,9 @@
 id: 4507
 title: "tests: class-family suites instantiate without `string_constants` — 84 tests dead at instantiation"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 assignee: ttraenkler/opus-4507h
 priority: medium

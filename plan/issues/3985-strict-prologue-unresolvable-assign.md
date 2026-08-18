@@ -2,7 +2,7 @@
 id: 3985
 title: "'use strict' prologue inside a function body does not take effect for unresolvable assignment"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

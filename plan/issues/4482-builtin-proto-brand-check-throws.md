@@ -3,9 +3,9 @@ id: 4482
 title: "ES5 standalone: builtin prototype-method brand checks — wrong-receiver calls must throw real TypeErrors (RegExp 6 + Number 6 + Date/Boolean tail, ~16 rows)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

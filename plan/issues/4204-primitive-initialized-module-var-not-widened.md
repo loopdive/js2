@@ -4,9 +4,9 @@ title: "standalone: a primitive-initialized module `var` reassigned to another J
 status: done
 assignee: ttraenkler/W24
 completed: 2026-08-07
-sprint: current
+sprint: 78
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

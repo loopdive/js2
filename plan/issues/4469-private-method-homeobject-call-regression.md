@@ -2,7 +2,7 @@
 id: 4469
 title: "Private method + super HomeObject traps when .call()ed with a foreign receiver"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
 completed: 2026-08-15
 priority: high

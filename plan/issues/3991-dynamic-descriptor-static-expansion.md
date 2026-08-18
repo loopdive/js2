@@ -1,7 +1,7 @@
 ---
 id: 3991
 title: "Object.defineProperties/create static expansion silently defines `undefined` for a non-literal descriptor"
-sprint: current
+sprint: 78
 status: done
 completed: 2026-08-01
 priority: high

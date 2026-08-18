@@ -2,10 +2,10 @@
 id: 3992
 title: "Transferred native-proto methods lost their receiver slot — one shape rule was being cloned per member"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
 completed: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

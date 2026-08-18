@@ -3,9 +3,9 @@ id: 4481
 title: "ES5 standalone: prototype-method VALUE identity — `x.toString === X.prototype.toString` family across Object/Array/Number literals (~20 rows)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 loc-budget-allow:
   # +6 lines (one import + a 4-line dispatch arm) in the property-access
   # dispatcher. The subsystem itself is a NEW module

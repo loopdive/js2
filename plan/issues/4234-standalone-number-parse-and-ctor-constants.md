@@ -3,9 +3,9 @@ id: 4234
 title: "Standalone: StringToNumber drifts up to 10 ulp, and `Number`'s §15.7.3 constants are missing from the ctor carrier"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

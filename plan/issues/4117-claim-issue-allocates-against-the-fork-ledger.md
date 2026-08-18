@@ -5,9 +5,9 @@ status: done
 completed: 2026-08-03
 assignee: ttraenkler/senior-4096-elision
 superseded_by: 4045
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

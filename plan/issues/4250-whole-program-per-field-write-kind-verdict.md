@@ -9,7 +9,7 @@ priority: high
 horizon: l
 feasibility: hard
 goal: performance
-sprint: current
+sprint: 78
 related: [743, 3683, 3753, 4155, 4157, 4246]
 loc-budget-allow:
   # +16 (1935 → 1951): the literal-arm veto in `recordThisField` — the ONE place

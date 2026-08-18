@@ -2,9 +2,9 @@
 id: 4416
 title: "Call-site param inference is quadratic — 4.35x on a 512-function module"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18
 completed: 2026-08-14
 priority: high
 horizon: s

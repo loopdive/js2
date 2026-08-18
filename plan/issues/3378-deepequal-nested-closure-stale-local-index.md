@@ -4,7 +4,7 @@ title: "deepEqual.js fails to compile — stale LOCAL index in deeply-nested for
 status: done
 completed: 2026-07-24
 assignee: sendev-3378
-sprint: current
+sprint: 78
 created: 2026-07-17
 priority: high
 feasibility: hard

@@ -2,9 +2,9 @@
 id: 4381
 title: "Object arrays with equal keys reuse an incompatible nested-field carrier"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-18
 completed: 2026-08-12
 priority: high
 horizon: s

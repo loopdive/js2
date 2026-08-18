@@ -2,9 +2,9 @@
 id: 4167
 title: "Async test failures surface the rejection reason as `[object WebAssembly.Exception]` — 1,380 host-lane fails carry no diagnosable error"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 horizon: l

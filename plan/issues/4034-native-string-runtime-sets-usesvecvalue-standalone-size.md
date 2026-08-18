@@ -2,9 +2,9 @@
 id: 4034
 title: "the native-string runtime sets usesVecValue, cascading into 21 kB of unstrippable exports for standalone modules with no arrays"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: m

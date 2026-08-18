@@ -2,7 +2,7 @@
 id: 4414
 title: "devirtualized prototype-method call returns a boolean as a number — live standalone miscompile"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
 completed: 2026-08-14
 priority: high

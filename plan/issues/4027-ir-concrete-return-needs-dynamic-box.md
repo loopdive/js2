@@ -4,7 +4,7 @@ id: 4027
 title: "ESLint frontier: ir/from-ast 'concrete return needs a dynamic box' aborts the compile"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: bug
 area: codegen, ir
 language_feature: type-mapping
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1282, 2855, 3672, 4001, 4018, 4019]

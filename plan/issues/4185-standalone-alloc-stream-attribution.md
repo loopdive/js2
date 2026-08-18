@@ -3,9 +3,9 @@ id: 4185
 title: "perf: attribute standalone acorn's 607k-allocation stream; kill the top elidable stream (dead $ObjVec pairs on dynamic closure .call)"
 status: done
 assignee: "ttraenkler/claude-fable-7"
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

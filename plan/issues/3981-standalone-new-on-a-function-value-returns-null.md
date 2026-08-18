@@ -2,9 +2,9 @@
 id: 3981
 title: "Standalone `new` on a first-class function VALUE silently returns null — this is the cookie runtime-dynamic lane trap"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: l

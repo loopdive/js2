@@ -2,7 +2,7 @@
 id: 4190
 title: "ES5 10.4.3 — unbound-receiver `this` is `undefined` in sloppy code, and an inlined IIFE inherits __module_init's `this`"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

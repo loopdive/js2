@@ -4,7 +4,7 @@ id: 4028
 title: "ESLint frontier: 'imported target MurmurHash3 has no exact structural unit identity'"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: bug
 area: codegen
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1282, 3520, 3672, 4001, 4018, 4019]

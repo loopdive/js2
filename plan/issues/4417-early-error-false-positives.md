@@ -2,9 +2,9 @@
 id: 4417
 title: "Three ES early-error checks reject valid TypeScript — 130 false positives across our own source"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18
 completed: 2026-08-14
 priority: high
 horizon: s

@@ -4,9 +4,9 @@ title: "A direct call on an assignment-STORED function member lowers to `ref.nul
 status: done
 completed: 2026-08-02
 assignee: ttraenkler/senior-4096-elision
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

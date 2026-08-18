@@ -3,9 +3,9 @@ id: 4249
 title: "Standalone ES5 wave 4: the eval-spliced accessor compiler crash, `catch{break} finally{continue}` at module scope, and the RegExp/exec remainder"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

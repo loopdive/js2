@@ -3,7 +3,7 @@ id: 4378
 title: "Deno primordials cannot capture the array-iterator prototype from Array.prototype"
 status: done
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-18
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, standalone, deno
 language_feature: array-iterator, builtin-prototypes
 goal: deno-runtime
-sprint: current
+sprint: 78
 es_edition: ES2015
 assignee: ttraenkler/codex-v8x-js2wasm
 related: [1320, 2193, 3013, 4376]

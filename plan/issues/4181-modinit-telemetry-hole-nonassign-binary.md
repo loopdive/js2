@@ -4,7 +4,7 @@ title: "module-init collection: non-assign binary statements skip the #3623 drop
 status: done
 completed: 2026-08-06
 assignee: ttraenkler/W6-dynamic-scope
-sprint: current
+sprint: 78
 created: 2026-08-06
 priority: medium
 horizon: s

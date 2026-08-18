@@ -3,9 +3,9 @@ id: 3611
 title: "promote-baseline skips on the per-SHA-reuse path, so the #2097 standalone high-water never re-raises on queue merges — the floor drifts permissively, silently"
 status: done
 completed: 2026-08-01
-sprint: current
+sprint: 78
 created: 2026-07-25
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

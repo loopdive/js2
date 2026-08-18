@@ -4,9 +4,9 @@ title: "`claim-issue.mjs` reservation ledger is split-brain — it writes the FO
 status: done
 completed: 2026-08-03
 assignee: ttraenkler/senior-4096-elision
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-03
+updated: 2026-08-18
 related: [4117, 3598, 2531, 3880]
 priority: high
 horizon: s

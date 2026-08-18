@@ -3,9 +3,9 @@ id: 4112
 title: "REFUTED — LEVER 3: the `Function` constructor path IS wired to the runtime-eval provider; the blocker is the unpublished interpreter tier, and it sits INSIDE the ex-dynamic-code exclusion set"
 status: done
 completed: 2026-08-02
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 assignee: ttraenkler/dev-lever3
 priority: medium
 horizon: s

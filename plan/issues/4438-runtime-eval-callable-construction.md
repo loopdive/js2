@@ -2,9 +2,9 @@
 id: 4438
 title: "`new <runtime-eval callable>` evaluates to null in standalone — §10.2.2 [[Construct]] through a `Function(src)` value"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: m

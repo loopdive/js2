@@ -2,9 +2,9 @@
 id: 4140
 title: "npm-compat promotion STILL fails: the commit was opted out of husky but the PUSH was not, and the retry loop reports every push failure as a mid-promotion race"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: s

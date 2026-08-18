@@ -1,7 +1,7 @@
 ---
 id: 4383
 title: "UUID original suite exposes vector, crypto, exception, and callback ABI gaps"
-status: in_progress
+status: in-progress
 sprint: current
 created: 2026-08-12
 updated: 2026-08-13

@@ -4,9 +4,9 @@ title: "perf: boxed strict-eq / truthiness helpers are 7.1% of the standalone ac
 status: done
 completed: 2026-08-06
 assignee: ttraenkler/claude-fable-4
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

@@ -3,7 +3,7 @@ id: 4201
 title: "Standalone: <primitive wrapper>.valueOf() returns the WRAPPER, not [[PrimitiveValue]] — Number/String/Boolean all affected; it is the residual blocker on 11 of #4196's 13 construct-through-bind files"
 status: done
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-18
 completed: 2026-08-07
 assignee: ttraenkler/W20
 priority: high
@@ -12,7 +12,7 @@ area: codegen
 goal: es5
 feasibility: medium
 reasoning_effort: high
-sprint: current
+sprint: 78
 horizon: m
 related: [4196, 1910, 2374, 3118, 344]
 origin: "W19, 2026-08-07 — fell out of #4196 slice 1; probes .tmp/p2..p4 in worktree agent-ac1fc06e358fa787f"

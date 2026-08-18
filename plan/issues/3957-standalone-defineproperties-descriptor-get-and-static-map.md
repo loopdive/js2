@@ -2,9 +2,9 @@
 id: 3957
 title: "standalone Object.defineProperties: descriptor read must be [[Get]], and a statically-shaped Properties map must expand"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: m

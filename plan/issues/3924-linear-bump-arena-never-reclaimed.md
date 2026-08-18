@@ -3,7 +3,7 @@ id: 3924
 title: "linear backend: the bump arena is never reclaimed across calls — 4 benchmarks trap with memory access out of bounds; all 4 pass with allocator: arena-reset"
 status: done
 created: 2026-07-31
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bug
 area: codegen-linear
 language_feature: memory-management
 goal: performance
-sprint: current
+sprint: 78
 horizon: m
 es_edition: n/a
 related: [3908, 3935, 3904]

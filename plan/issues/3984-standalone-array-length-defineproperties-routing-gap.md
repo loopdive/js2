@@ -2,10 +2,10 @@
 id: 3984
 title: "Standalone: `Object.defineProperties(arr, {length: {...}})` never reaches ArraySetLength — the array length is silently left unchanged"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
 completed: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 assignee: ttraenkler/g-arraylen
 priority: high
 horizon: m

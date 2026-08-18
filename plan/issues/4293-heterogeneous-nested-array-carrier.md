@@ -3,7 +3,7 @@ id: 4293
 title: "Array literal: nested heterogeneous element carriers are coerced to the first inner vec"
 status: done
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: arrays, undefined
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1400]
 es_edition: ES2015
 related: [1021, 2021, 3244, 4289]

@@ -2,9 +2,9 @@
 id: 4413
 title: "The unit suite runs strictly serially — maxForks=1 with no describe.concurrent to compensate"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18
 completed: 2026-08-14
 priority: medium
 horizon: s

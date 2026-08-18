@@ -3,7 +3,7 @@ id: 4156
 title: "perf: the host-import wrapper allocated a rest-args array on every call — and the wasm→JS crossing, not the wrapper, is what makes the host-call lane 4–14x slower than js"
 status: done
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-18
 completed: 2026-08-04
 priority: medium
 feasibility: easy
@@ -12,7 +12,7 @@ task_type: performance
 area: runtime
 language_feature: n/a
 goal: performance
-sprint: current
+sprint: 78
 horizon: s
 es_edition: n/a
 related: [3898, 3922, 3924]
