@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-17T16:57:15.090Z",
-  "baseline_generated_at": "2026-08-17T16:57:15.090Z",
-  "baseline_sha": "ecccbbf78d62eee194a380d1b5559de5c4d20356",
+  "timestamp": "2026-08-18T02:02:09.321Z",
+  "baseline_generated_at": "2026-08-18T02:02:09.321Z",
+  "baseline_sha": "5b5f644d08ac0574a1a7f0712d9b324c2b90fe7a",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -12,8 +12,8 @@
     "total": 43621,
     "pass": 31247,
     "fail": 8945,
-    "compile_error": 3403,
-    "compile_timeout": 7,
+    "compile_error": 3402,
+    "compile_timeout": 8,
     "skip": 19,
     "compilable": 40192,
     "host_free_pass": 31247,
@@ -23,8 +23,8 @@
         "total": 42535,
         "pass": 30276,
         "fail": 8851,
-        "compile_error": 3382,
-        "compile_timeout": 7,
+        "compile_error": 3381,
+        "compile_timeout": 8,
         "skip": 19,
         "compilable": 39127,
         "host_free_pass": 30276,
@@ -59,8 +59,8 @@
         "total": 43621,
         "pass": 31247,
         "fail": 8945,
-        "compile_error": 3403,
-        "compile_timeout": 7,
+        "compile_error": 3402,
+        "compile_timeout": 8,
         "skip": 19,
         "compilable": 40192,
         "host_free_pass": 31247,
@@ -71,8 +71,8 @@
         "total": 48735,
         "pass": 31614,
         "fail": 11469,
-        "compile_error": 5530,
-        "compile_timeout": 7,
+        "compile_error": 5529,
+        "compile_timeout": 8,
         "skip": 115,
         "compilable": 43083,
         "host_free_pass": 31614,
@@ -85,8 +85,8 @@
     "total": 43621,
     "pass": 31247,
     "fail": 8945,
-    "compile_error": 3403,
-    "compile_timeout": 7,
+    "compile_error": 3402,
+    "compile_timeout": 8,
     "skip": 19,
     "compilable": 40192,
     "host_free_pass": 31247,
@@ -96,8 +96,8 @@
     "total": 48735,
     "pass": 31614,
     "fail": 11469,
-    "compile_error": 5530,
-    "compile_timeout": 7,
+    "compile_error": 5529,
+    "compile_timeout": 8,
     "skip": 115,
     "compilable": 43083,
     "host_free_pass": 31614,
@@ -107,8 +107,8 @@
     "total": 41110,
     "pass": 29168,
     "fail": 8638,
-    "compile_error": 3280,
-    "compile_timeout": 5,
+    "compile_error": 3279,
+    "compile_timeout": 6,
     "skip": 19,
     "compilable": 37806,
     "host_free_pass": 29168,
@@ -141,8 +141,8 @@
       "total": 42535,
       "pass": 30276,
       "fail": 8851,
-      "compile_error": 3382,
-      "compile_timeout": 7,
+      "compile_error": 3381,
+      "compile_timeout": 8,
       "skip": 19,
       "compilable": 39127,
       "host_free_pass": 30276,
@@ -199,8 +199,8 @@
       "path": "built-ins/Array",
       "pass": 1881,
       "fail": 1067,
-      "compile_error": 131,
-      "compile_timeout": 3,
+      "compile_error": 130,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 1881
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 7308,
+    "assertion_fail": 7307,
     "host_import_leak": 3971,
     "illegal_cast": 123,
     "negative_test_fail": 14,
@@ -1250,8 +1250,8 @@
           "test/language/expressions/dynamic-import/catch/nested-async-function-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js"
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1336,8 +1336,8 @@
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_defer, env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: true Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all",
-          "assertion_fail:Test262Error: [object Object] should be an own property"
+          "assertion_fail:Test262Error: [object Object] should be an own property",
+          "assertion_fail:Test262Error: null Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -1657,8 +1657,8 @@
         "error_categories": {
           "other": 97,
           "assertion_fail": 157,
-          "runtime_error": 10,
           "null_deref": 16,
+          "runtime_error": 10,
           "type_error": 19,
           "illegal_cast": 4,
           "host_import_leak": 2
@@ -1677,15 +1677,15 @@
         "sample_files": [
           "test/built-ins/Promise/allSettledKeyed/resolve-not-callable-reject-with-typeerror.js",
           "test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js",
-          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
           "test/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js",
+          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
           "test/built-ins/Proxy/revocable/revoke-consecutive-call-returns-undefined.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "assertion_fail:Test262Error: target has the custom set prototype Expected SameValue(«[object Object]», «[object Object]») to be true",
-          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
           "null_deref:dereferencing a null pointer [in __closure_65() ← __closure_59 ← __call_fn_method_3 ← __apply_closure]",
+          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
           "assertion_fail:Test262Error: Expected SameValue(«null», «undefined») to be true"
         ]
       },
@@ -1774,15 +1774,15 @@
           "ES2020": 2
         },
         "sample_files": [
-          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-no-sc-line-method-rs-static-async-generator-method-privatename-identifier.js",
+          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-sc-line-gen-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/same-line-async-gen-literal-names.js",
           "test/language/expressions/class/dstr/private-gen-meth-static-obj-ptrn-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
+          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_set_return, env::__get_caught_exception (##)"
@@ -1944,14 +1944,14 @@
         "statuses": {
           "pass": 0,
           "fail": 2667,
-          "compile_error": 318,
-          "compile_timeout": 3,
+          "compile_error": 317,
+          "compile_timeout": 4,
           "skip": 0,
           "total": 2988,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 2146,
+          "assertion_fail": 2145,
           "type_error": 359,
           "host_import_leak": 263,
           "null_deref": 67,
@@ -2709,8 +2709,8 @@
         "sample_files": [
           "test/built-ins/Promise/any/iter-step-err-no-close.js",
           "test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js",
-          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/built-ins/Promise/any/iter-returns-true-reject.js",
+          "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
           "test/language/expressions/object/method-definition/async-gen-yield-star-next-then-non-callable-string-fulfillpromise.js"
         ],
         "sample_signatures": [
