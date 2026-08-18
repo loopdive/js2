@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-18T02:02:09.321Z",
-  "baseline_generated_at": "2026-08-18T02:02:09.321Z",
-  "baseline_sha": "5b5f644d08ac0574a1a7f0712d9b324c2b90fe7a",
+  "timestamp": "2026-08-18T09:05:09.655Z",
+  "baseline_generated_at": "2026-08-18T09:05:09.655Z",
+  "baseline_sha": "c832861726fa625333d5bdb6ffb43da2831aa5f7",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8945,
-    "compile_error": 3402,
+    "fail": 8944,
+    "compile_error": 3403,
     "compile_timeout": 8,
     "skip": 19,
-    "compilable": 40192,
+    "compilable": 40191,
     "host_free_pass": 31247,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
         "pass": 30276,
-        "fail": 8851,
-        "compile_error": 3381,
+        "fail": 8850,
+        "compile_error": 3382,
         "compile_timeout": 8,
         "skip": 19,
-        "compilable": 39127,
+        "compilable": 39126,
         "host_free_pass": 30276,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 43621,
         "pass": 31247,
-        "fail": 8945,
-        "compile_error": 3402,
+        "fail": 8944,
+        "compile_error": 3403,
         "compile_timeout": 8,
         "skip": 19,
-        "compilable": 40192,
+        "compilable": 40191,
         "host_free_pass": 31247,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 31614,
-        "fail": 11469,
-        "compile_error": 5529,
+        "fail": 11468,
+        "compile_error": 5530,
         "compile_timeout": 8,
         "skip": 115,
-        "compilable": 43083,
+        "compilable": 43082,
         "host_free_pass": 31614,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,33 +84,33 @@
   "official_summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8945,
-    "compile_error": 3402,
+    "fail": 8944,
+    "compile_error": 3403,
     "compile_timeout": 8,
     "skip": 19,
-    "compilable": 40192,
+    "compilable": 40191,
     "host_free_pass": 31247,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 31614,
-    "fail": 11469,
-    "compile_error": 5529,
+    "fail": 11468,
+    "compile_error": 5530,
     "compile_timeout": 8,
     "skip": 115,
-    "compilable": 43083,
+    "compilable": 43082,
     "host_free_pass": 31614,
     "stale": 0
   },
   "strict_summary": {
     "total": 41110,
     "pass": 29168,
-    "fail": 8638,
-    "compile_error": 3279,
+    "fail": 8637,
+    "compile_error": 3280,
     "compile_timeout": 6,
     "skip": 19,
-    "compilable": 37806,
+    "compilable": 37805,
     "host_free_pass": 29168,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 42535,
       "pass": 30276,
-      "fail": 8851,
-      "compile_error": 3381,
+      "fail": 8850,
+      "compile_error": 3382,
       "compile_timeout": 8,
       "skip": 19,
-      "compilable": 39127,
+      "compilable": 39126,
       "host_free_pass": 30276,
       "stale": 0
     }
@@ -198,8 +198,8 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 1881,
-      "fail": 1067,
-      "compile_error": 130,
+      "fail": 1066,
+      "compile_error": 131,
       "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
@@ -1250,8 +1250,8 @@
           "test/language/expressions/dynamic-import/catch/nested-async-function-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js"
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js",
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1774,15 +1774,15 @@
           "ES2020": 2
         },
         "sample_files": [
-          "test/language/expressions/class/elements/new-no-sc-line-method-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
+          "test/language/expressions/class/elements/new-no-sc-line-method-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/new-sc-line-gen-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/same-line-async-gen-literal-names.js",
           "test/language/expressions/class/dstr/private-gen-meth-static-obj-ptrn-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
+          "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_set_return, env::__get_caught_exception (##)"
@@ -1943,8 +1943,8 @@
         "count": 2988,
         "statuses": {
           "pass": 0,
-          "fail": 2667,
-          "compile_error": 317,
+          "fail": 2666,
+          "compile_error": 318,
           "compile_timeout": 4,
           "skip": 0,
           "total": 2988,
@@ -2117,8 +2117,8 @@
         },
         "by_edition": {
           "ES2021": 20,
-          "ES2024": 6,
           "ES2020": 5,
+          "ES2024": 6,
           "ES5": 35,
           "Unclassified (untagged)": 23,
           "ES2015": 44,
@@ -2128,15 +2128,15 @@
         },
         "sample_files": [
           "test/built-ins/String/prototype/replaceAll/searchValue-replacer-method-abrupt.js",
-          "test/built-ins/String/prototype/isWellFormed/return-abrupt-from-this.js",
           "test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
+          "test/built-ins/String/prototype/isWellFormed/return-abrupt-from-this.js",
           "test/built-ins/String/S15.5.2.1_A1_T19.js",
           "test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: custom abrupt Expected a Test262Error but got a [object Object]",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: ToNumber throws when argument is BigInt, and String.fromCharCode must propagate it. Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: ##: __str = new String(new Array(#,#,#)); __str ==\"#,#,#\". Actual: __str ==[object Object]",
           "assertion_fail:Test262Error: ##: Exception === 'intostring'. Actual: exception ===[object Object]"
         ]
@@ -2454,23 +2454,23 @@
           "null_deref": 6
         },
         "by_edition": {
-          "ES2026": 23,
           "ES2015": 52,
+          "ES2026": 23,
           "ES2025": 31,
           "ES2021": 2,
           "ES2020": 2,
           "ES2024": 2
         },
         "sample_files": [
-          "test/built-ins/Map/prototype/getOrInsert/not-a-constructor.js",
           "test/built-ins/Map/prototype/clear/length.js",
+          "test/built-ins/Map/prototype/getOrInsert/not-a-constructor.js",
           "test/built-ins/WeakSet/prototype/add/throw-when-value-cannot-be-held-weakly.js",
           "test/built-ins/WeakSet/iterable-with-symbol-values.js",
           "test/built-ins/Set/prototype/symmetricDifference/set-like-class-order.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: length descriptor value should be #; length value should be #",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Actual [] and expected [[object Object], [object Object], [object Object]] should have the same contents. add() was called # times, on the two unregistered and one well-known symbols in order",
           "type_error:TypeError: TypeError: invalid size for a set-like argument (NaN)",
           "syntax_error:SyntaxError: Cannot convert string to a BigInt in standalone mode"
