@@ -53,7 +53,9 @@ it can reach are ones it got from `malloc`.
 - **Fix heap ownership, not just the base address.** The boxed tier allocates
   from the engine's `malloc`; the native arena must sit above the artifact's
   `__heap_base` or be dynamically placed. Moving `HEAP_START` to a different
-  constant is not a fix — the engine's heap grows.
+  constant is not a fix — the engine's heap grows. **Superseded in part** — see
+  the Decision below: the engine allocates through *our* allocator, so placement
+  becomes ours to answer rather than the artifact's to dictate.
 - **Passive data segments + `memory.init` into a `malloc`'d pointer** for all
   literal data in linked mode. Preference order recorded in #4236:
   (a) passive segments — local to codegen, no link-time negotiation;
@@ -102,6 +104,61 @@ The alternative worth measuring against it is routing typed allocation
 straight at the engine's `malloc` (simplest, one allocator, but typed data
 loses the bump path and pays dlmalloc per allocation — which is exactly what
 ADR-0017 chose the arena to avoid).
+
+## Decision (2026-08-18): write our own allocator and install it via the hook
+
+Project-lead decision. The section above rejects supplying `JSMallocFunctions`
+because the **bump arena** cannot serve — it never frees, so `free`, `realloc`
+and `usable_size` have no honest implementation. That reasoning is correct and
+stands. It rules out *the arena as the engine's allocator*; it does not rule out
+**an allocator we write**, which is a fourth option this issue did not
+previously consider. The direction is now:
+
+> Implement a real allocator — `malloc`, `calloc`, `free`, `realloc`,
+> `usable_size` — in the linear lane and install it as the engine's allocator
+> via `JS_NewRuntime2`. One grower owns the address space because the module
+> contains only one allocator. The typed arena survives as a bump fast path
+> carved from **our own** heap, so ADR-0017's zero-metadata path is kept rather
+> than traded.
+
+Carve-from-the-engine's-`malloc` above is not deleted: it becomes the
+**comparison baseline and the fallback** if the numbers below do not hold.
+
+This is an ADR-0017-level change and should be recorded as one. That ADR
+deferred intra-run reclamation while reserving "one fixed strategy, chosen and
+recorded then, not abstracted now" — this is that choice arriving, for the
+reason ADR-0020 already gives: targeting long-lived and native binaries makes
+reclamation needed.
+
+**What it buys over carving from the engine's `malloc`:**
+
+- One allocator by construction rather than by discipline. There is no second
+  implementation to coexist with, so the collision class is gone rather than
+  managed.
+- We own the address-space layout, making the arena's placement our decision
+  instead of something read out of the artifact at runtime.
+- Accounting becomes ours, so `JS_SetMemoryLimit` / `JS_SetGCThreshold` observe
+  numbers we control.
+- Dropping dlmalloc from the artifact may shrink it, which the ADR-0020 size
+  budget (626,104 / 261,243 gzipped at `-O2`) cares about. Unverified — measure,
+  do not assume.
+
+**What it costs — price these before building:**
+
+- **A real allocator is real work**: free lists, coalescing, realloc-in-place,
+  fragmentation behaviour. Getting it wrong corrupts the engine's heap, not
+  ours, so the failure surfaces inside foreign code.
+- **dlmalloc is tuned for exactly this workload.** A JS engine allocates many
+  small, short-lived objects; a first-cut allocator can lose materially on that
+  pattern. The comparison must be measured against the pinned artifact's
+  dlmalloc, not argued.
+- **`js_malloc_usable_size` must be honest.** QuickJS uses it for accounting
+  behind the memory limit and GC threshold. A wrong answer corrupts nothing but
+  skews when the collector runs — a footprint or latency mystery far from its
+  cause.
+- It removes none of the rest of this slice: passive data segments, the
+  absolute-address audit and the two-memory question are all orthogonal to which
+  allocator wins.
 
 ## The alternative this slice does not currently consider: two memories
 
@@ -203,6 +260,21 @@ should not do is win by default because the alternative was never written down.
       toolchain/runtime support, or on measurement — and state the security
       consequence accepted by staying on one memory, given the engine executes
       `eval` input.
+
+- [ ] The linear lane implements `malloc`/`calloc`/`free`/`realloc`/
+      `usable_size` and installs them via `JS_NewRuntime2`; a test asserts the
+      engine reaches **no** dlmalloc entry point.
+- [ ] `js_malloc_usable_size` reports the true reserved size, asserted across a
+      spread of allocation sizes rather than assumed from the request.
+- [ ] The allocator is measured against the pinned artifact's dlmalloc on an
+      engine-realistic workload (many small, short-lived allocations) and both
+      numbers are recorded. A material regression is grounds to fall back to
+      carve-from-`malloc`, which stays the baseline for exactly this reason.
+- [ ] The typed arena keeps its zero-metadata bump path, carved from our own
+      heap; standalone (unlinked) emit-identity is unchanged.
+- [ ] A stress run that frees and reallocates enough to exercise coalescing
+      shows a bounded heap — the failure this allocator exists to prevent only
+      appears under reuse, not under allocate-and-exit.
 
 ## Validation
 
