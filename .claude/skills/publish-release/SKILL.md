@@ -51,9 +51,10 @@ node scripts/release.mjs 0.70.0     # explicit version
 node scripts/release.mjs patch      # or a semver keyword: patch | minor | major
 ```
 
-The script resolves one concrete version and applies the **same string** to the
-root manifest, the proxy manifest, and the proxy's `dependencies["@loopdive/js2"]`
-— all three, because `verify-version` checks all three. Then it makes one commit
+The script resolves one concrete version and applies the **same string** to four
+places: the root manifest, the proxy manifest, the proxy's
+`dependencies["@loopdive/js2"]`, and `jsr.json` (which carries its own version
+field and is what JSR publishes). Then it makes one commit
 `release: vX.Y.Z` and one annotated tag `vX.Y.Z` on your branch. It also drafts
 `docs/release-notes/vX.Y.Z.md` from the commit subjects since the last release
 tag, amends it into the commit, and re-points the tag.
@@ -70,8 +71,17 @@ you have and is more current than any transcription.
 git show vX.Y.Z --stat
 ```
 
-Confirm the diff is the two `package.json` files (plus `pnpm-lock.yaml` if it
-moved) and the drafted notes — nothing else.
+Confirm the diff is exactly these, and nothing else:
+
+| file | what moved |
+| --- | --- |
+| `package.json` | version |
+| `packages/js2wasm/package.json` | version **and** the `@loopdive/js2` dependency pin |
+| `jsr.json` | version |
+| `docs/release-notes/vX.Y.Z.md` | the drafted notes |
+
+Plus `pnpm-lock.yaml` if it moved. `jsr.json` surprises people — it is a real,
+intended part of the bump, not stray noise.
 
 The drafted notes open with two generated sections:
 
@@ -157,6 +167,11 @@ three** match the tag:
 - root `package.json` version
 - `packages/js2wasm/package.json` version
 - the proxy's `dependencies["@loopdive/js2"]`
+
+**`jsr.json` is bumped but not checked.** The guard covers the three npm-side
+values only, while the JSR publish reads `jsr.json`. `release.mjs` keeps it in
+lockstep, so this is only a gap if someone edits versions by hand — which is
+the same habit the whole flow exists to discourage. Worth an eye during Step 2.
 
 A failure here means the tag and the manifests disagree — almost always a
 hand-cut tag, or a bump that missed the proxy. The fix is never to force the
