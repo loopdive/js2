@@ -183,7 +183,10 @@ PR #4644 is deliberately held as a draft until that review lands.
 - **Not** a Python front-end, and **not justified by one**. This issue adds no
   `from-python.ts`, no Python parser, no Python runtime. It makes a second
   producer *possible* as a side effect; do not schedule, descope, or cancel this
-  issue based on whether a Python front-end is wanted.
+  issue based on whether a Python front-end is wanted. *(Still true after the
+  2026-08-17 decision to do a Python PoC afterwards: the PoC is sequenced
+  **after** phases 1–3 and lives out-of-tree. If the Python work is cancelled,
+  phases 1–3 keep their maintainability justification and proceed unchanged.)*
 - **Not** a C++ front-end, now or later. C++ needs value semantics,
   copy/move/destructors, RAII scope-exit lifetimes, raw pointers and pointer
   arithmetic, precise struct layout/ABI, unsigned integer types, and template
@@ -240,8 +243,48 @@ seam is nominal.
 
 ### Phase 4 — Python producer, out-of-tree, via the #3030 serialized contract
 
-Only if phases 1–3 land and a Python front-end is actually wanted. It consumes
-the serialized IR as an out-of-tree producer — no changes to `from-ast.ts`.
+**Scheduled (project-lead decision, 2026-08-17): generalize the IR first —
+phases 1–3 — then do a Python PoC.** The conditional above is now resolved in
+the affirmative on the second half ("a Python front-end is actually wanted"),
+and unchanged on the first: phases 1–3 still gate it. The phase order itself is
+endorsed rather than altered.
+
+Three consequences of fixing the target, none of which change phases 1–3's
+content:
+
+- **The falsifier question is settled, and it settles well.** Python is a
+  *weak* neutrality test on its own — it is dynamically typed with a duck-typed
+  object model, so it exercises largely the same IR paths JS does (`dyn.*`, tag
+  domains, attribute lookup) and would not stress `union`/`box` with sum types,
+  `try`/`throw` with `Result`-style errors, or monomorphised generics. Passing
+  it would be weak evidence of neutrality. **Phase 3 is what makes this fine**:
+  the synthetic non-JS tag domain does the falsifying, and Python is then a
+  real-consumer proof rather than the test. Do not let Python displace phase 3
+  on the grounds that "a real language is a better test" — it is a better
+  *demo* and a worse *test*.
+- **#4551 moves onto the critical path.** A Python producer wants lists, dicts,
+  strings and classes, i.e. exactly the contested families (`vec.*`,
+  `object.*`, `string.*`, `class.*`) that phase 2 slice 1 deliberately left in
+  core pending a per-kind verdict. Those verdicts are no longer just tidiness.
+- **The `instrKind` namespace becomes a hard dependency, not a nicety.**
+  `docs/ir/ir-module.schema.json` defines it as a closed enum of 60 entries, so
+  an out-of-tree producer **cannot emit `py.getattr` at all** today. Opening it
+  (`anyOf: [enum, dialect.op pattern]`) is one edit plus a version bump while
+  consumer count is plausibly zero — see #4552's "two schema questions". This
+  is the cheapest thing on the path and the only one with an expiry.
+
+**Open, and deliberately not decided here: WasmGC or linear for the PoC.** The
+two are different projects. WasmGC is what the analysis below assumes, and
+keeps the host-GC integration that distinguishes this design from the
+interpreter ports. Linear memory dissolves the "cannot represent a flat
+`PyObject*` heap by construction" objection and would reuse the #4538 engine-link
+program (#4539's shared-memory topology, #4542's refcount discipline —
+CPython is refcounted like QuickJS), but forfeits host-GC integration, so
+cycles spanning the boundary leak, and it builds on the lane #4550 measured at
+a 0 % IR claim rate on real modules. Decide it when the PoC is scoped, not now.
+
+It consumes the serialized IR as an out-of-tree producer — no changes to
+`from-ast.ts`.
 Known gaps to solve **there**, not here: arbitrary-precision `int` (nothing in
 `IrType` expresses it); `__getattribute__` + descriptor protocol vs JS property
 lookup on `dynMemberGet`; MRO / multiple inheritance vs single-inheritance
