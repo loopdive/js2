@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-18T09:05:09.655Z",
-  "baseline_generated_at": "2026-08-18T09:05:09.655Z",
-  "baseline_sha": "c832861726fa625333d5bdb6ffb43da2831aa5f7",
+  "timestamp": "2026-08-18T17:00:36.842Z",
+  "baseline_generated_at": "2026-08-18T17:00:36.842Z",
+  "baseline_sha": "cc937c204763e836f9600b03c361775ce1f18d03",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8944,
-    "compile_error": 3403,
-    "compile_timeout": 8,
+    "fail": 8946,
+    "compile_error": 3402,
+    "compile_timeout": 7,
     "skip": 19,
-    "compilable": 40191,
+    "compilable": 40193,
     "host_free_pass": 31247,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
         "pass": 30276,
-        "fail": 8850,
-        "compile_error": 3382,
-        "compile_timeout": 8,
+        "fail": 8852,
+        "compile_error": 3381,
+        "compile_timeout": 7,
         "skip": 19,
-        "compilable": 39126,
+        "compilable": 39128,
         "host_free_pass": 30276,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 43621,
         "pass": 31247,
-        "fail": 8944,
-        "compile_error": 3403,
-        "compile_timeout": 8,
+        "fail": 8946,
+        "compile_error": 3402,
+        "compile_timeout": 7,
         "skip": 19,
-        "compilable": 40191,
+        "compilable": 40193,
         "host_free_pass": 31247,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 31614,
-        "fail": 11468,
-        "compile_error": 5530,
-        "compile_timeout": 8,
+        "fail": 11470,
+        "compile_error": 5529,
+        "compile_timeout": 7,
         "skip": 115,
-        "compilable": 43082,
+        "compilable": 43084,
         "host_free_pass": 31614,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,33 +84,33 @@
   "official_summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8944,
-    "compile_error": 3403,
-    "compile_timeout": 8,
+    "fail": 8946,
+    "compile_error": 3402,
+    "compile_timeout": 7,
     "skip": 19,
-    "compilable": 40191,
+    "compilable": 40193,
     "host_free_pass": 31247,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 31614,
-    "fail": 11468,
-    "compile_error": 5530,
-    "compile_timeout": 8,
+    "fail": 11470,
+    "compile_error": 5529,
+    "compile_timeout": 7,
     "skip": 115,
-    "compilable": 43082,
+    "compilable": 43084,
     "host_free_pass": 31614,
     "stale": 0
   },
   "strict_summary": {
     "total": 41110,
     "pass": 29168,
-    "fail": 8637,
-    "compile_error": 3280,
-    "compile_timeout": 6,
+    "fail": 8639,
+    "compile_error": 3279,
+    "compile_timeout": 5,
     "skip": 19,
-    "compilable": 37805,
+    "compilable": 37807,
     "host_free_pass": 29168,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 42535,
       "pass": 30276,
-      "fail": 8850,
-      "compile_error": 3382,
-      "compile_timeout": 8,
+      "fail": 8852,
+      "compile_error": 3381,
+      "compile_timeout": 7,
       "skip": 19,
-      "compilable": 39126,
+      "compilable": 39128,
       "host_free_pass": 30276,
       "stale": 0
     }
@@ -198,9 +198,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 1881,
-      "fail": 1066,
-      "compile_error": 131,
-      "compile_timeout": 4,
+      "fail": 1068,
+      "compile_error": 130,
+      "compile_timeout": 3,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 1881
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 7307,
+    "assertion_fail": 7308,
     "host_import_leak": 3971,
     "illegal_cast": 123,
     "negative_test_fail": 14,
@@ -1250,8 +1250,8 @@
           "test/language/expressions/dynamic-import/catch/nested-async-function-await-import-source-source-text-module.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
-          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js",
-          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js"
+          "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-defer-script-code-valid.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1291,7 +1291,7 @@
           "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/bubble-time-unit.js",
-          "test/built-ins/Temporal/PlainYearMonth/prototype/since/roundingmode-floor.js"
+          "test/built-ins/Temporal/PlainDate/prototype/subtract/overflow-undefined.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1724,15 +1724,15 @@
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js",
           "test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js",
-          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js",
+          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Reflect.defineProperty(sample, \"#\", {value: 8n, configurable: true, enumerable: true, writable: true}) must return true Expected SameValue(«false», «true») to be true (Testing with BigInt64Array and makeArray.)",
           "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
-          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true",
+          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Reflect.set(sample, \"Symbol(\\\"#\\\")\", #) must return false Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)"
         ]
       },
@@ -1774,15 +1774,15 @@
           "ES2020": 2
         },
         "sample_files": [
-          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-no-sc-line-method-rs-static-async-generator-method-privatename-identifier.js",
+          "test/language/expressions/class/elements/same-line-async-gen-static-private-fields.js",
           "test/language/expressions/class/elements/new-sc-line-gen-rs-static-async-generator-method-privatename-identifier.js",
           "test/language/expressions/class/elements/same-line-async-gen-literal-names.js",
           "test/language/expressions/class/dstr/private-gen-meth-static-obj-ptrn-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
+          "host_import_leak:standalone target emitted host imports: env::__gen_result_done, env::__gen_result_value (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_async_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_yield_star, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__get_caught_exception (##)",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_set_return, env::__get_caught_exception (##)"
@@ -1943,15 +1943,15 @@
         "count": 2988,
         "statuses": {
           "pass": 0,
-          "fail": 2666,
-          "compile_error": 318,
-          "compile_timeout": 4,
+          "fail": 2668,
+          "compile_error": 317,
+          "compile_timeout": 3,
           "skip": 0,
           "total": 2988,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 2145,
+          "assertion_fail": 2146,
           "type_error": 359,
           "host_import_leak": 263,
           "null_deref": 67,
@@ -1979,15 +1979,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js",
           "test/built-ins/TypedArray/Symbol.species/length.js",
-          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
+          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-begin.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: called custom ctor get accessor once Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
+          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: false (Testing with BigInt64Array and makeArray.)"
         ]
       },
@@ -2117,8 +2117,8 @@
         },
         "by_edition": {
           "ES2021": 20,
-          "ES2020": 5,
           "ES2024": 6,
+          "ES2020": 5,
           "ES5": 35,
           "Unclassified (untagged)": 23,
           "ES2015": 44,
@@ -2128,15 +2128,15 @@
         },
         "sample_files": [
           "test/built-ins/String/prototype/replaceAll/searchValue-replacer-method-abrupt.js",
-          "test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
           "test/built-ins/String/prototype/isWellFormed/return-abrupt-from-this.js",
+          "test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
           "test/built-ins/String/S15.5.2.1_A1_T19.js",
           "test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A4.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: custom abrupt Expected a Test262Error but got a [object Object]",
-          "assertion_fail:Test262Error: ToNumber throws when argument is BigInt, and String.fromCharCode must propagate it. Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+          "assertion_fail:Test262Error: ToNumber throws when argument is BigInt, and String.fromCharCode must propagate it. Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: ##: __str = new String(new Array(#,#,#)); __str ==\"#,#,#\". Actual: __str ==[object Object]",
           "assertion_fail:Test262Error: ##: Exception === 'intostring'. Actual: exception ===[object Object]"
         ]
@@ -2709,8 +2709,8 @@
         "sample_files": [
           "test/built-ins/Promise/any/iter-step-err-no-close.js",
           "test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js",
-          "test/built-ins/Promise/any/iter-returns-true-reject.js",
           "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
+          "test/built-ins/Promise/any/iter-returns-true-reject.js",
           "test/language/expressions/object/method-definition/async-gen-yield-star-next-then-non-callable-string-fulfillpromise.js"
         ],
         "sample_signatures": [
