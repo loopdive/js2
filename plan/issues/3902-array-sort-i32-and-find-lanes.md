@@ -3,7 +3,7 @@ id: 3902
 title: "perf: array/sort-i32 host-call takes 774 ms (1,586× JS) and has no gc-native lane at all; array/find's gc-native lane is disabled by a stale skip"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: critical
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: optimization
 area: codegen
 language_feature: array-methods
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 related: [3903, 3898, 3512, 3912]

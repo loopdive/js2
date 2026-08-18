@@ -1,7 +1,7 @@
 ---
 id: 4302
 title: "Async CPS: support the await-inside-try shapes used by Prettier, Axios, and Stylelint"
-status: in_progress
+status: in-progress
 sprint: current
 created: 2026-08-09
 updated: 2026-08-13

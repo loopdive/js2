@@ -2,7 +2,7 @@
 id: 4082
 title: "borrowed native-proto methods returning i32 skip result boxing — `local.set` gets a raw i32 and the module fails validation"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: s
 feasibility: hard

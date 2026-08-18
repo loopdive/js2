@@ -11,7 +11,7 @@ horizon: s
 task_type: ci
 area: ci
 goal: ci-hardening
-sprint: current
+sprint: 78
 related: [3612, 3915, 3880, 3902]
 ---
 

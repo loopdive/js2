@@ -3,9 +3,9 @@ id: 3975
 title: "standalone: route `$262.detachArrayBuffer` through the native detached-buffer marker (77/89 pass)"
 status: done
 completed: 2026-08-11
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-11
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

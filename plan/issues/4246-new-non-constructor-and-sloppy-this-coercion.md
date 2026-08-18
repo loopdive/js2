@@ -3,9 +3,9 @@ id: 4246
 title: "`new` on a non-constructor does not throw, and a sloppy callee binds a primitive `this` verbatim"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

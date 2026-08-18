@@ -3,9 +3,9 @@ id: 4483
 title: "ES5 standalone: built-ins/Function residual — call/apply arg semantics, bind carrier surface, __get_builtin CE (~30 tractable of 58 rows)"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-16
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

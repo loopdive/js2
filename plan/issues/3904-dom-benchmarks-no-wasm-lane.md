@@ -3,7 +3,7 @@ id: 3904
 title: "perf-bench: all four dom/* benchmarks publish a JS-only bar — the wasm lane fails silently and the page shows nothing"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 assignee: ttraenkler/issue-3904-dom-bench
 priority: high
@@ -13,7 +13,7 @@ task_type: bug
 area: testing
 language_feature: dom
 goal: performance
-sprint: current
+sprint: 78
 horizon: m
 es_edition: n/a
 related: [3902, 3903, 1009]

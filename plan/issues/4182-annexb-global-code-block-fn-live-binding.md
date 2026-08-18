@@ -3,7 +3,7 @@ id: 4182
 title: "annexB B.3.3.2 global-code: top-level block-nested function declarations bind STATICALLY (funcMap) instead of through a live module-global — ~38 ES5 standalone files"
 status: done
 assignee: ttraenkler/W7-annexb-global-blockfn
-sprint: current
+sprint: 78
 created: 2026-08-06
 completed: 2026-08-06
 priority: high

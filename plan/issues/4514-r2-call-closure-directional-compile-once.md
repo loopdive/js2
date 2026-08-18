@@ -4,7 +4,7 @@ title: "R2 prepared-owner call closure: directional awareness / component splitt
 status: done
 completed: 2026-08-16
 assignee: ttraenkler/opus-ir-2
-sprint: current
+sprint: 78
 created: 2026-08-16
 priority: high
 horizon: m

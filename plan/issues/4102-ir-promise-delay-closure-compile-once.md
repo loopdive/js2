@@ -2,9 +2,9 @@
 id: 4102
 title: "IR R3: prepare the exact Promise-delay closure component before direct body emission"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: critical
 horizon: m
 complexity: M

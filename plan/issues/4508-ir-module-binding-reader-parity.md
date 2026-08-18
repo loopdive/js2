@@ -2,9 +2,9 @@
 id: 4508
 title: "IR: feed module-binding storage edges into the prepared-owner fixpoint — module-binding readers seal or withdraw"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-16
+updated: 2026-08-18
 completed: 2026-08-16
 assignee: ttraenkler/opus-4508
 priority: high

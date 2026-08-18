@@ -3,9 +3,9 @@ id: 3583
 title: "IR adoption matrix: re-own the 28 orphaned mixed/direct-only rows (tracking issues closed or wont-fix)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-07-24
-updated: 2026-08-15
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

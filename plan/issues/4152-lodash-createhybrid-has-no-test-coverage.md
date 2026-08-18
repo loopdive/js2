@@ -3,9 +3,9 @@ id: 4152
 title: "lodash `createHybrid` — the function a prior #4134 attempt broke — had no test coverage at all"
 status: done
 completed: 2026-08-04
-sprint: current
+sprint: 78
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: easy

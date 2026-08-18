@@ -3,9 +3,9 @@ id: 3424
 title: "Reified builtin-value `.name`/`.length` reflective reads mis-dispatch when statics share a wrapper signature"
 status: done
 completed: 2026-07-28
-sprint: current
+sprint: 78
 created: 2026-07-18
-updated: 2026-07-28
+updated: 2026-08-18
 assignee: ttraenkler/codex-es5-regexp-meta-canonicalization
 priority: medium
 horizon: m

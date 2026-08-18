@@ -3,9 +3,9 @@ id: 4369
 title: "Dynamic `in` over a class instance leaves compiler-only struct fields on the Wasm stack"
 status: done
 assignee: ttraenkler/codex
-sprint: current
+sprint: 78
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-18
 completed: 2026-08-11
 priority: high
 horizon: s

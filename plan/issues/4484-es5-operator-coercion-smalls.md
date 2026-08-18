@@ -3,9 +3,9 @@ id: 4484
 title: "ES5 standalone: operator/coercion smalls — instanceof [[HasInstance]], null/undefined member ToObject throws, strict-assignment throws, `in` on plain maps (~30 rows)"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-16
+updated: 2026-08-18
 loc-budget-allow:
   # The substance of this change is in two NEW modules
   # (nullish-receiver-coercible.ts, builtin-nonwritable-write.ts). What lands in

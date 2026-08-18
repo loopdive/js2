@@ -3,7 +3,7 @@ id: 4396
 title: "Normalize backend, environment, capability, provider, and value-interop policy"
 status: done
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-18
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: refactor
 area: compiler, codegen, host-interop
 language_feature: compiler-internals
 goal: architecture
-sprint: current
+sprint: 78
 parent: 4395
 required_by: [4397, 4398]
 horizon: m

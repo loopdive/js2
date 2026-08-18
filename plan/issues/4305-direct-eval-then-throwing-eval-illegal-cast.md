@@ -2,9 +2,9 @@
 id: 4305
 title: "RuntimeError: illegal cast — a succeeding direct eval followed by a throwing one with an `instanceof` catch traps in caller-side codegen (engine-independent)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 assignee: ttraenkler/senior-dev
 priority: high

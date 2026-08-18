@@ -2,9 +2,9 @@
 id: 4493
 title: "Object.entries over a struct-typed record throws RuntimeError: illegal cast on the host round-trip"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: m

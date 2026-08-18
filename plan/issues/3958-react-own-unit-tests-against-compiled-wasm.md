@@ -2,9 +2,9 @@
 id: 3958
 title: "Run React's own unit tests against compiled React, replacing hand-transcribed vectors"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: m

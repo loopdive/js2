@@ -3,10 +3,10 @@ id: 4442
 title: "Self-contained %Function% carrier + the <fn>.constructor arm (R6 of #4440)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

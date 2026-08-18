@@ -3,7 +3,7 @@ id: 4513
 title: "IR: adopt statically-foldable computed object keys `{ [expr]: v }`"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 priority: medium
 horizon: m
 area: ir

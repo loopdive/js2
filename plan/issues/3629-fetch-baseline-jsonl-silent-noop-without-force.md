@@ -3,9 +3,9 @@ id: 3629
 title: "fetch-baseline-jsonl.mjs is a silent no-op without --force — exits 0, prints nothing, leaves a week-stale cache"
 status: done
 completed: 2026-08-02
-sprint: current
+sprint: 78
 created: 2026-07-25
-updated: 2026-08-02
+updated: 2026-08-18
 priority: high
 horizon: s
 complexity: S

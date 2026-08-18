@@ -2,10 +2,10 @@
 id: 3972
 title: "Standalone: `class Sub extends <builtin>` leaks one env::__new_<Parent> host import per parent (or is refused outright), failing the whole subclass-builtins family"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
 completed: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 assignee: ttraenkler/senior-dev-subclass-builtins
 priority: high
 horizon: m

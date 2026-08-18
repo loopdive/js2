@@ -2,9 +2,9 @@
 id: 4309
 title: "A sloppy direct `eval` in a `let`/`const` loop scope is lowered to the INDIRECT provider entry (and the #4308 'top-level eval traps' finding is this predicate, not a trap)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 assignee: ttraenkler/senior-dev
 priority: medium

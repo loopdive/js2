@@ -10,7 +10,7 @@ area: runtime
 goal: es5
 es_edition: 5
 assignee: ttraenkler/codex-es5-string-replace
-sprint: current
+sprint: 78
 loc-budget-allow:
   - src/runtime.ts
 ---

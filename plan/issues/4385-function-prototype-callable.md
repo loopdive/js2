@@ -2,9 +2,9 @@
 id: 4385
 title: "Standalone ES5: Function.prototype itself is not callable"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: high

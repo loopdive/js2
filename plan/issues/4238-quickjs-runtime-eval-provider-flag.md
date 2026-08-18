@@ -3,9 +3,9 @@ id: 4238
 title: "QuickJS-backed runtime-eval provider behind a flag — swap the eval engine, keep the Acorn+interpreter default until migration completes (#4236 variant C MVP)"
 status: done
 completed: 2026-08-09
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-09
+updated: 2026-08-18
 # Slices 2 and 3 (2026-08-09) touch NO src/ file — the whole value bridge AND
 # the direct-eval caller-scope snapshot live in the js2wasm-compiled adapter
 # source under scripts/, so they add no loc/func/oracle budget grants. All six

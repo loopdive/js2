@@ -2,7 +2,7 @@
 id: 4131
 title: "Annex B B.3.3.1 step 3 — a block/if/case-nested function must UPDATE an existing var binding"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

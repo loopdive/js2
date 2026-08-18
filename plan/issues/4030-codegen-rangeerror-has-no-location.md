@@ -4,7 +4,7 @@ id: 4030
 title: "A RangeError escaping into the codegen catch is reported with no location"
 status: done
 created: 2026-08-01
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 assignee: ttraenkler/claude
 priority: medium
@@ -13,7 +13,7 @@ reasoning_effort: low
 task_type: observability
 area: codegen, observability
 goal: npm-library-support
-sprint: current
+sprint: 78
 es_edition: n/a
 related: [4019]
 ---

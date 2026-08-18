@@ -3,9 +3,9 @@ id: 4180
 title: "Standalone: the #2372 descriptor-struct transcription fabricates a descriptor from a typed struct's INTERNAL wasm fields"
 status: done
 assignee: ttraenkler/W5-descriptor-residue
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-18
 completed: 2026-08-06
 priority: high
 horizon: m

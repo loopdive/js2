@@ -2,9 +2,9 @@
 id: 4032
 title: "Built-in / non-$Object carriers have no [[Extensible]] slot — every Array, function and built-in prototype reads back non-extensible, sealed and frozen in standalone"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: m

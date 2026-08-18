@@ -4,7 +4,7 @@ title: "baseline-summary-sync commits a NEW standalone high-water mark next to a
 status: done
 completed: 2026-08-07
 assignee: ttraenkler/lead
-sprint: current
+sprint: 78
 created: 2026-08-07
 priority: high
 horizon: s

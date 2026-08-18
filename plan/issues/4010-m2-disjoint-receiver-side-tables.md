@@ -2,9 +2,9 @@
 id: 4010
 title: "M2 — own properties on a non-$Object receiver live in TWO DISJOINT side tables that clobber each other; unify them"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 assignee: ttraenkler/senior-4010-s3
 priority: high

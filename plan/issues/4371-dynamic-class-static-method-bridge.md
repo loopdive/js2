@@ -1,10 +1,11 @@
 ---
 id: 4371
 title: "Dynamic class-object reads expose throwing placeholders for declared static methods"
-status: complete
-sprint: current
+status: done
+sprint: 78
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-18
+completed: 2026-08-11
 priority: high
 horizon: s
 feasibility: medium

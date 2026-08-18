@@ -2,9 +2,9 @@
 id: 3961
 title: "A symbol stored in a struct field reads back as a bare integer — React.Children sees zero children"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: m

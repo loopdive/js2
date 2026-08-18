@@ -3,9 +3,9 @@ id: 3639
 title: "Edition buckets report absence-of-evidence as conformance — 5,436 tests sorted into ES2015 by fall-through, 273 into ≤ES3"
 status: done
 completed: 2026-07-25
-sprint: current
+sprint: 78
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-08-18
 priority: high
 horizon: s
 complexity: S

@@ -3,9 +3,9 @@ id: 4463
 title: "regression: 044b8d09 (#4507 marked watchdog) broke 7 gc-lane tests + grew the null_deref trap ratchet 140→142 — three independent codegen defects"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 assignee: claude/es6-standalone-session
 priority: high
 horizon: s

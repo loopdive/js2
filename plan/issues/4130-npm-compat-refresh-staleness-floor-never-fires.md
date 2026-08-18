@@ -2,9 +2,9 @@
 id: 4130
 title: "npm-compat refresh reports SUCCESS and commits nothing — the staleness floor reads the artifact the job just regenerated, so it is always ~0h old and a busy queue defers forever"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-12
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: s

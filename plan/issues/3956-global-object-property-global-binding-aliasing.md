@@ -2,7 +2,7 @@
 id: 3956
 title: "fix(codegen): top-level global-object writes are silently dropped — `this.x = v` / `x = v` never reach `__module_init`, so the global binding does not exist"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

@@ -4,7 +4,7 @@ title: "perf: `a === b` with both operands statically `number` boxes, unboxes, a
 status: done
 completed: 2026-07-31
 created: 2026-07-27
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium
@@ -13,7 +13,7 @@ task_type: perf
 area: codegen
 language_feature: operators
 goal: performance
-sprint: current
+sprint: 78
 related: [3673, 3686, 3685, 1584, 1852, 2109]
 ---
 

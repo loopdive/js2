@@ -2,7 +2,7 @@
 id: 3962
 title: "feat(codegen): host-free `x instanceof <user function constructor>` — retire the `env::__instanceof_check` sole-import leak"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

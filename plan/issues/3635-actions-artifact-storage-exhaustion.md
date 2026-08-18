@@ -2,9 +2,9 @@
 id: 3635
 title: "~985k Actions artifacts accumulated — storage exhaustion, likely cause of the artifact 403s"
 status: done
-sprint: current
+sprint: 78
 created: 2026-07-25
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 assignee: ttraenkler/dev-ci-3584
 priority: high

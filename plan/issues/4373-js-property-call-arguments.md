@@ -1,10 +1,11 @@
 ---
 id: 4373
 title: "JavaScript callable-property and host bridges truncate arguments beyond declared arity"
-status: complete
-sprint: current
+status: done
+sprint: 78
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-18
+completed: 2026-08-11
 priority: high
 horizon: s
 feasibility: medium

@@ -3,9 +3,9 @@ id: 4480
 title: "standalone substrate: every function owns a real `.prototype` object linked to its instances — the recurring blocker behind F3/#4455-R3/R4/Array-A1 (~25+ rows)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: xl
 feasibility: hard

@@ -4,9 +4,9 @@ title: "Descriptor-ARGUMENT validation in Object.create/defineProperties (§8.10
 status: done
 completed: 2026-08-03
 assignee: ttraenkler/dev-4061-descriptor-args
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-03
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

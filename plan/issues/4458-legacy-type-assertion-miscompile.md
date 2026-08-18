@@ -6,7 +6,7 @@ completed: 2026-08-15
 priority: high
 task_type: bug
 area: codegen
-sprint: current
+sprint: 78
 horizon: s
 model: opus
 assignee: ttraenkler/opus-4458

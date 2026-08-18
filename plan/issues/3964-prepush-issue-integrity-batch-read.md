@@ -2,7 +2,7 @@
 id: 3964
 title: "Pre-push issue-integrity gate spawns one `git show` per issue file (~3,500 subprocesses)"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: s
 goal: developer-experience

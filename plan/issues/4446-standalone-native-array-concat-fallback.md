@@ -2,9 +2,9 @@
 id: 4446
 title: "standalone: Array.prototype.concat extern fallback leaks __array_concat_any/__js_array_new/__js_array_push — lower natively"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 assignee: claude/es6-standalone-session
 priority: high

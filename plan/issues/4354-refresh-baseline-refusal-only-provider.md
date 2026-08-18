@@ -2,9 +2,9 @@
 id: 4354
 title: "refresh-baseline promoted standalone baselines measured against the REFUSAL eval provider — 740 tests low (ES5 89.1% published as 82.5%)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-18
 completed: 2026-08-10
 priority: high
 horizon: s

@@ -2,9 +2,9 @@
 id: 4454
 title: "compileFiles fails with 'Missing __make_getter_callback import' on src/shape-inference.ts — late import registration gap"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: s

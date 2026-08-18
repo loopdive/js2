@@ -3,7 +3,7 @@ id: 3917
 title: "CRITICAL: the native number formatter truncates non-integers under `fast` — String(3.5) is \"3\", toFixed(2) is \"3.00\"; already wrong on main for standalone+fast and wasi+fast"
 status: done
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: critical
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bug
 area: codegen
 language_feature: number-to-string
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 related: [3912, 3907]

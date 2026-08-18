@@ -2,9 +2,9 @@
 id: 3988
 title: "npm-compat.html silently shows stale data: nothing regenerates `npm-compat.json`, so every generator change needs a hand-run nobody is reminded to do"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: high
 horizon: m

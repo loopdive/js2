@@ -3,9 +3,9 @@ id: 3945
 title: "Standalone: a REST element in a generator's binding-pattern param bails the native lowering — the rest local's type is minted by the emit site, so the plan phase cannot predict it"
 status: done
 completed: 2026-07-31
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 horizon: m
 complexity: M

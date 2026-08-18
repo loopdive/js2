@@ -2,9 +2,9 @@
 id: 4070
 title: "Add a `never` exhaustiveness check to `verify.ts` `collectUses` — a new IR kind currently fails at runtime, not compile time"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-16
+updated: 2026-08-18
 completed: 2026-08-16
 priority: medium
 horizon: s

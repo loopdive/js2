@@ -2,9 +2,9 @@
 id: 4085
 title: "JSON.stringify emits the literal `null` for every non-empty array, class instance and object-holding-an-array in standalone — silently corrupt output"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 assignee: ttraenkler/L-enum
 priority: high

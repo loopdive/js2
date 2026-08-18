@@ -3,9 +3,9 @@ id: 3915
 title: "benchmark-refresh pushes to main discard in-flight merge_group validations"
 status: done
 completed: 2026-08-01
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

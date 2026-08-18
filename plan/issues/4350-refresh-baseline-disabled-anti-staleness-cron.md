@@ -2,9 +2,9 @@
 id: 4350
 title: "refresh-baseline.yml was disabled, killing the 8h anti-staleness cron — the baseline went stale during merge droughts and manufactured phantom regressions"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-18
 completed: 2026-08-10
 priority: high
 horizon: s

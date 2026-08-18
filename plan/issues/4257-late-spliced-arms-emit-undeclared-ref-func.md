@@ -3,9 +3,9 @@ id: 4257
 title: "Late-spliced `__extern_get` arms emit `ref.func` after the declaration scan — `undeclared reference to function #N`"
 status: done
 completed: 2026-08-09
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: hard

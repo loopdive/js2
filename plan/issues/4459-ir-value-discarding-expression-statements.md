@@ -3,9 +3,9 @@ id: 4459
 title: "IR: adopt value-discarding expression statements (`x + 1;`, `x;`, `cond ? a : b;`)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 assignee: ttraenkler/opus-4459
 priority: medium
 horizon: s

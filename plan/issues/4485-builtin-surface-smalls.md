@@ -3,10 +3,10 @@ id: 4485
 title: "ES5 standalone: builtin-surface smalls — Error.prototype.toString, global value props, annexB Date (getYear/setYear/toGMTString), Array surface tail (~25 rows)"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-16
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

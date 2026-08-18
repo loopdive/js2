@@ -3,9 +3,9 @@ id: 4109
 title: "Bank hybrid legacy-body emission reductions"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: critical
 horizon: s
 feasibility: easy

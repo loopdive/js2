@@ -3,7 +3,7 @@ id: 3911
 title: "benchmarks/{dom,arrays,strings,mixed}.ts are dead byte-identical copies of benchmarks/suites/* — about to diverge with the buggy version on top"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: medium
 feasibility: easy
@@ -12,7 +12,7 @@ task_type: chore
 area: testing
 language_feature: n/a
 goal: performance
-sprint: current
+sprint: 78
 horizon: s
 es_edition: n/a
 related: [3904, 3902]

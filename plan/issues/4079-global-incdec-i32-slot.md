@@ -2,7 +2,7 @@
 id: 4079
 title: "`++`/`--` on an i32-slot module global emits `f64.add` on an i32 operand — module fails validation"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: s
 feasibility: hard
