@@ -169,6 +169,154 @@ export function groupReleaseLines(subjects) {
   return groups;
 }
 
+// A release range here is hundreds of subjects, and roughly a quarter of them
+// are machinery: scheduled baseline/artifact refreshes the bots commit with
+// `[skip ci]`, and the merge commits from keeping branches current. Listed
+// verbatim they bury the handful of lines a reader actually wants, so the
+// summary counts them and moves on.
+//
+// The filter is deliberately narrow — `chore(...)` AND `[skip ci]` together,
+// never `[skip ci]` alone. Measured on this repo's history every `[skip ci]`
+// subject was already a `chore(`, so the conjunction costs nothing today and
+// keeps a human change that happens to carry the marker from vanishing.
+function isAutomatedSubject(title) {
+  if (/^Merge (branch|remote-tracking branch|origin\/)/.test(title)) return true;
+  return /^chore[(:]/.test(title) && /\[skip ci\]/.test(title);
+}
+
+// Conventional-commit scope, when it names a subsystem. A third of this repo's
+// subjects put the issue number in the scope slot instead (`fix(#4488): …`),
+// which says nothing about where the change landed — those feed the issue
+// count rather than the area breakdown.
+function scopeOf(title) {
+  const m = /^[a-z]+\(([^)]+)\)!?:/.exec(title);
+  if (!m) return null;
+  const scope = m[1].trim();
+  return !scope || /^#\d+$/.test(scope) ? null : scope;
+}
+
+function countedList(pairs, limit) {
+  const shown = pairs.slice(0, limit).map(([name, n]) => `${name} (${n})`);
+  const rest = pairs.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")}, and ${rest} more` : shown.join(", ");
+}
+
+/**
+ * Condense a commit range into the shape of the work, so the notes open with
+ * what changed rather than with the first commit that happened to land.
+ *
+ * Pure by design: it takes subjects and returns data, so the wording can be
+ * unit-tested without a git repo or a release.
+ */
+export function summarizeReleaseWork(subjects) {
+  const groups = { Features: [], Fixes: [], Other: [] };
+  const areas = new Map();
+  const issues = new Set();
+  let automated = 0;
+
+  for (const s of subjects) {
+    const title = s.replace(/^Merge pull request #\d+ from \S+\s*/, "").trim();
+    if (!title || /^release: v/.test(title)) continue;
+    if (isAutomatedSubject(title)) {
+      automated++;
+      continue;
+    }
+
+    if (/^(feat|perf)[(:]/.test(title)) groups.Features.push(title);
+    else if (/^fix[(:]/.test(title)) groups.Fixes.push(title);
+    else groups.Other.push(title);
+
+    const scope = scopeOf(title);
+    if (scope) areas.set(scope, (areas.get(scope) || 0) + 1);
+    for (const ref of title.match(/#\d+/g) || []) issues.add(ref);
+  }
+
+  const counts = {
+    features: groups.Features.length,
+    fixes: groups.Fixes.length,
+    other: groups.Other.length,
+  };
+  return {
+    groups,
+    counts,
+    automated,
+    total: counts.features + counts.fixes + counts.other,
+    areas: [...areas.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    issues: [...issues].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))),
+  };
+}
+
+/**
+ * Render the summary as a short paragraph. Kept separate from the analysis so
+ * the prose can change without touching what gets counted.
+ */
+export function renderReleaseSummary(summary) {
+  if (summary.total === 0) {
+    return summary.automated > 0
+      ? `No human-authored changes in this range — ${summary.automated} automated baseline/artifact commits only.\n\n`
+      : "No changes recorded in this range.\n\n";
+  }
+
+  const parts = [];
+  if (summary.counts.features)
+    parts.push(`${summary.counts.features} feature${summary.counts.features === 1 ? "" : "s"}`);
+  if (summary.counts.fixes) parts.push(`${summary.counts.fixes} fix${summary.counts.fixes === 1 ? "" : "es"}`);
+  if (summary.counts.other) parts.push(`${summary.counts.other} other change${summary.counts.other === 1 ? "" : "s"}`);
+
+  let line = `**${summary.total} change${summary.total === 1 ? "" : "s"}** in this release`;
+  if (parts.length > 1) line += ` — ${parts.join(", ")}`;
+  line += ".";
+  if (summary.areas.length) line += ` Most active areas: ${countedList(summary.areas, 5)}.`;
+  if (summary.issues.length)
+    line += ` ${summary.issues.length} issue${summary.issues.length === 1 ? "" : "s"} referenced.`;
+  if (summary.automated) {
+    line += ` ${summary.automated} automated baseline/artifact commit${summary.automated === 1 ? "" : "s"} omitted below.`;
+  }
+  return `## Summary\n\n${line}\n\n`;
+}
+
+// test262 conformance is this project's headline number, so a release note
+// without it is missing the one figure readers look for. Best-effort by the
+// same rule as the rest of the notes: a release must never fail over prose.
+//
+// The delta is only printed when BOTH endpoints were actually read. A shallow
+// clone or a missing previous tag makes the baseline unreachable, and the
+// honest output there is the current number plus a line saying the comparison
+// could not be made — not a delta computed against a guess. An unattributable
+// number in a release note outlives the release.
+function readConformance(rev) {
+  try {
+    const raw = rev
+      ? git(["show", `${rev}:benchmarks/results/test262-current.json`])
+      : readFileSync(join(repoRoot, "benchmarks", "results", "test262-current.json"), "utf8");
+    const { pass, total } = JSON.parse(raw).summary ?? {};
+    return Number.isFinite(pass) && Number.isFinite(total) && total > 0 ? { pass, total } : null;
+  } catch {
+    return null;
+  }
+}
+
+function conformanceSection(prevTag) {
+  const now = readConformance(null);
+  if (!now) return "";
+
+  const pct = ((100 * now.pass) / now.total).toFixed(1);
+  let line = `test262: **${now.pass.toLocaleString("en-US")} / ${now.total.toLocaleString("en-US")} (${pct}%)** passing.`;
+
+  const before = readConformance(prevTag);
+  if (before) {
+    const delta = now.pass - before.pass;
+    const sign = delta > 0 ? "+" : "";
+    line +=
+      delta === 0
+        ? ` Unchanged since ${prevTag}.`
+        : ` ${sign}${delta.toLocaleString("en-US")} since ${prevTag} (${before.pass.toLocaleString("en-US")}).`;
+  } else {
+    line += ` No comparison against ${prevTag} — its baseline was not readable from this clone.`;
+  }
+  return `## Conformance\n\n${line}\n\n`;
+}
+
 function writeReleaseNotes(target, tag, previousVersion) {
   const prevTag = `v${previousVersion}`;
   let subjects = [];
@@ -180,18 +328,22 @@ function writeReleaseNotes(target, tag, previousVersion) {
     return null; // notes are a convenience; never fail a release over them
   }
 
-  const g = groupReleaseLines(subjects);
+  const summary = summarizeReleaseWork(subjects);
+  const g = summary.groups;
   const section = (name, lines) => (lines.length ? `## ${name}\n\n${lines.map((l) => `- ${l}`).join("\n")}\n\n` : "");
   const body =
     `# ${tag}\n\n` +
     `Lockstep release of \`@loopdive/js2\` and the \`js2wasm\` proxy: ` +
     `${previousVersion} → ${target}.\n\n` +
+    renderReleaseSummary(summary) +
+    conformanceSection(prevTag) +
     section("Features", g.Features) +
     section("Fixes", g.Fixes) +
     section("Other", g.Other) +
-    `<!-- Drafted by scripts/release.mjs from ${prevTag}..HEAD. Edit before merging: ` +
-    `commit subjects are a starting point, not the announcement. Conformance ` +
-    `numbers belong here with their denominators. -->\n`;
+    `<!-- Drafted by scripts/release.mjs from ${prevTag}..HEAD. The summary counts ` +
+    `commits; it does not read the diff, so it describes VOLUME, not significance. ` +
+    `Lead with what actually matters and cut the rest — the grouped lists below are ` +
+    `raw material, not the announcement. -->\n`;
 
   const notesDir = join(repoRoot, "docs", "release-notes");
   const notesPath = join(notesDir, `${tag}.md`);
@@ -300,8 +452,8 @@ function main() {
   console.log(`     publish-npm.yml's verify-version job confirms the tag, manifests,`);
   console.log(`     and proxy dependency all match before publishing. See docs/releasing.md.`);
   if (notesPath) {
-    console.log(`  5) Publish the notes onto the GitHub Release (publish-npm.yml creates the`);
-    console.log(`     release with an EMPTY body, so this is what readers actually see):`);
+    console.log(`  5) Publish the notes onto the GitHub Release (publish-npm.yml creates it with`);
+    console.log(`     --generate-notes, i.e. a raw commit list — replace that with the real notes):`);
     console.log(`       gh release edit ${tag} -R loopdive/js2wasm --notes-file ${notesPath}`);
     console.log(`       gh release view ${tag} -R loopdive/js2wasm --json body   # verify it landed`);
     console.log(`     ('edit', not 'create' — the release already exists by then.)`);

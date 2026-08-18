@@ -73,10 +73,21 @@ git show vX.Y.Z --stat
 Confirm the diff is the two `package.json` files (plus `pnpm-lock.yaml` if it
 moved) and the drafted notes — nothing else.
 
-**Edit `docs/release-notes/vX.Y.Z.md` now, before the PR.** Commit subjects are
-a starting point, not an announcement. If you quote conformance numbers, give
-the denominator and say which artifact they came from and when — a bare "74.8%"
-in a release note is unattributable a month later.
+The drafted notes open with two generated sections:
+
+- **Summary** — counts by type, the most active scopes, how many issues were
+  referenced, and how many automated baseline/artifact commits were left out.
+- **Conformance** — test262 pass/total, with the delta against the previous
+  release tag. If that tag's baseline is unreadable (shallow clone, missing
+  tag) the section says so instead of showing a delta; leave that sentence in
+  rather than filling the gap with a number you did not measure.
+
+**Then edit the file, before the PR.** The summary counts commits — it does not
+read diffs, so it reports volume, not significance. Lead with the two or three
+changes a user would actually notice and cut the rest; the grouped lists are
+raw material. If you add conformance figures of your own, carry the denominator
+and say which artifact they came from and when — a bare "74.8%" is
+unattributable a month later.
 
 ## Step 3 — push the BRANCH and open the release PR
 
@@ -137,11 +148,6 @@ gh release view vX.Y.Z -R loopdive/js2wasm --json body      # verify it landed
 ```
 
 `edit`, not `create` — the workflow already created it.
-
-> `scripts/release.mjs` currently prints that the workflow creates the release
-> with an **empty** body. That is stale: the workflow passes `--generate-notes`.
-> The step is still worth doing (curated beats auto-generated), just don't
-> expect to find an empty release.
 
 ## What CI checks before it publishes
 
