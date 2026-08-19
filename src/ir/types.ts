@@ -415,6 +415,14 @@ type InstrBase =
   // Stack: [dest:i32, src_offset:i32, len:i32] -> []
   | { op: "memory.init"; dataIdx: number }
   | { op: "data.drop"; dataIdx: number }
+  // Bulk memory, the other half (#4540 own-allocator slice). A real `calloc`
+  // must zero and a real `realloc` must relocate; hand-written byte loops for
+  // either put an interpreter loop on the allocator's hot path. Neither of
+  // these names a data segment, so neither needs the data-count section.
+  // Stack: memory.copy [dest:i32, src:i32, len:i32] -> []
+  //        memory.fill [dest:i32, byte:i32, len:i32] -> []
+  | { op: "memory.copy" }
+  | { op: "memory.fill" }
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
   | { op: "throw"; tagIdx: number }
   | { op: "rethrow"; depth: number }

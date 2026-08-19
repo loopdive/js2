@@ -80,12 +80,34 @@ export const ARENA_LIMIT_GLOBAL = "__arena_limit";
 export const RODATA_BIAS_GLOBAL = "__rodata_bias";
 
 /**
- * Whether this module's arena is carved from a host allocator.
+ * Whether this module is in LINKED mode — it imports its memory, so it does not
+ * own the address space and may not name an address.
  *
  * Derived from the emitted module rather than threaded through as a flag so
  * every downstream pass agrees with the bytes it will actually serialize.
+ *
+ * **Not the same question as {@link hasChunkedArena}, and #4557 is what split
+ * them.** Until then this predicate read `__arena_limit`, which was an exact
+ * proxy only while the chunked arena existed *only* in linked mode. The own
+ * allocator (#4557) gives a STANDALONE module a chunked arena too — carved from
+ * our own heap — and a standalone module still owns its address space, still
+ * emits ACTIVE data segments, and still needs `memory.min` to cover them. Left
+ * merged, the two questions would have emitted a passive Ryū table with nothing
+ * to copy it in.
  */
 export function isLinkedArena(mod: WasmModule): boolean {
+  return mod.imports.some((imp) => imp.desc.kind === "memory");
+}
+
+/**
+ * Whether `__malloc` is a CHUNKED bump arena (carving from some allocator)
+ * rather than the monotonic one that owns everything above its pointer.
+ *
+ * True in linked mode (chunks from the engine, #4540) and under the own
+ * allocator (chunks from `__heap_alloc`, #4557). What it buys either way is
+ * that no absolute heap floor exists to be lifted.
+ */
+export function hasChunkedArena(mod: WasmModule): boolean {
   return mod.globals.some((global) => global.name === ARENA_LIMIT_GLOBAL);
 }
 

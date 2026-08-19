@@ -78,6 +78,31 @@ per cross-module call.
    decision is a target, with that fallback working in the meantime. #4540
    carries the cost analysis.
 
+   **Status 2026-08-19 — the allocator half is BUILT (#4557); the memory half
+   is not.** The linear lane now has a real
+   `malloc`/`calloc`/`free`/`realloc`/`usable_size`, and QuickJS allocates
+   through it via `JS_NewRuntime2`, proven by call counters read out of our own
+   module. It is **opt-in** (`linearHeapAllocator: "malloc-v1"`); #4540's
+   carve-from-the-engine arena remains the default, because the measured
+   end-to-end cost is 1.025× and the reclamation benefit does not yet justify
+   flipping a new allocator under foreign code by default.
+
+   Two things recorded above turn out to be wrong, and both are worth carrying
+   forward rather than quietly fixing:
+
+   - **The members are installed as table callbacks, not wasm imports.** Five
+     unconditional imports would make the artifact un-instantiable without a
+     peer that supplies an allocator — which `extract-abi.mjs` (it instantiates
+     the artifact alone to read these very constants out of it) and the
+     runtime-eval tier both do. The #4245 membrane already solved this shape.
+     A consequence: memory ownership is *not* required for the allocator,
+     though it WOULD have been under imports, because engine-imports-allocator
+     plus we-import-memory is an instantiation cycle.
+   - **"Dropping dlmalloc may shrink the artifact" did not happen.** dlmalloc is
+     still linked and still provides the regions our allocator sub-allocates
+     from, so the artifact grew by 6,735 bytes. Exactly one component still
+     grows the memory, and it is still the engine.
+
 ## Scope
 
 - **The WasmGC backend is unaffected.** `JSValue` cannot hold WasmGC
