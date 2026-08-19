@@ -68,6 +68,25 @@ describe("#4206 — a bare-identifier write inside a `with` body needs the open-
       `);
     });
 
+    it("a `var x = v` declaration inside the body is a SetMutableBinding too", async () => {
+      // §13.3.2.4: the `var` hoists to the enclosing function/script scope, so
+      // the initializer is an ordinary assignment to the resolved reference —
+      // which the Object Environment Record intercepts. This is `12.10-0-8`.
+      await runScript(`
+        var o = { foo: 42 };
+        with (o) { var foo = "set in with"; }
+        if (o.foo !== "set in with") throw new Error("o.foo: " + String(o.foo));
+      `);
+    });
+
+    it("a `let` inside the body is NOT — it binds in the block", async () => {
+      await runScript(`
+        var o = { foo: 42 };
+        with (o) { let foo = "block local"; }
+        if (o.foo !== 42) throw new Error("o.foo must be untouched: " + String(o.foo));
+      `);
+    });
+
     it("the INNER target of a nested `with` is planned too", async () => {
       // The inner target sits inside the outer `with` body, where the checker
       // gives it no symbol at all — see `targetIsThisBinding` for the bounded

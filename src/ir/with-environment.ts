@@ -138,6 +138,21 @@ export function withBodyBareIdentifierWriteNames(body: ts.Statement): ReadonlySe
       const operand = unwrapParens(node.operand);
       if (ts.isIdentifier(operand)) names.add(operand.text);
     }
+    // §13.3.2.4: `var x = v` inside the body does NOT create a binding here —
+    // the `var` hoists to the enclosing function/script scope, and the
+    // initializer is an ordinary assignment to the resolved reference, which
+    // the Object Environment Record intercepts. `let`/`const` are excluded:
+    // those DO create a fresh lexical binding in the block and never reach the
+    // record.
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      const list = node.parent;
+      if (
+        ts.isVariableDeclarationList(list) &&
+        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0
+      ) {
+        names.add(node.name.text);
+      }
+    }
     forEachChild(node, visit);
   };
   visit(body);
