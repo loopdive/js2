@@ -1,10 +1,10 @@
 {
-  "generated": "2026-08-17",
+  "generated": "2026-08-19",
   "threshold": 1500,
-  "totalCeiling": 647974,
+  "totalCeiling": 650840,
   "files": {
-    "src/codegen-linear/index.ts": 5697,
-    "src/codegen-linear/runtime.ts": 4299,
+    "src/codegen-linear/index.ts": 5794,
+    "src/codegen-linear/runtime.ts": 4397,
     "src/codegen/any-helpers.ts": 2144,
     "src/codegen/array-methods.ts": 8881,
     "src/codegen/array-object-proto.ts": 2739,
@@ -75,7 +75,7 @@
     "src/codegen/wasi.ts": 2166,
     "src/compiler.ts": 1909,
     "src/compiler/early-errors/node-checks.ts": 2195,
-    "src/emit/binary.ts": 2056,
+    "src/emit/binary.ts": 2089,
     "src/interp/emitter.ts": 2139,
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 1862,
