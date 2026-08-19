@@ -211,3 +211,59 @@ faithful local oracle. Practical rule for anyone working these lanes on a Mac:
 rather than chasing them.** A 551-test locally-verified-passing regression guard
 (the 608-row stratified sample minus 57 rows that fail locally for this
 infrastructure reason) is the clean local gate.
+
+## 2026-08-19 — three caveats on how these numbers were measured
+
+Recorded because each one made a lane report, or nearly report, a wrong figure.
+They apply to any future push using the same method.
+
+### 1. Some guard rows pass VACUOUSLY — a fix can look like a regression
+
+`15.2.3.7-6-a-195` was passing because `desc.enumerable` read `undefined`, so
+`propertyHelper.js`'s `verifyProperty` **skipped the enumerable check entirely**.
+Fixing the underlying descriptor-field defect made that check actually run — and
+the row went red. That is an **unmasking, not a regression**, and the two are
+indistinguishable from the pass/fail delta alone.
+
+Consequence: a red row in this area needs its assertion read before it is
+treated as breakage. The repo already ships a detector for this shape —
+`pnpm run check:test-vacuity-shapes` (`scripts/check-test-vacuity-shapes.ts`) —
+which should be run alongside any conformance batch that touches property
+descriptors.
+
+### 2. Parallel runs of prototype-writing tests pollute each other
+
+A 121-module corpus of tests that write a builtin prototype member reports
+**6 failures on `main` itself** at 4 jobs, and a 7-row subset reported *0 pass*
+at 7 jobs where sequential-isolated reports **7 pass**. Same tree, same commit.
+
+The runner shards across processes and each shard runs its tests sequentially in
+one process, so a test that clobbers `Array.prototype` is visible to the next
+test in that shard.
+
+**For this family the only trustworthy measurement is one test per process,
+sequentially.** A parallel TOTAL is noise. This nearly cost a lane a false
+5-row regression attribution — the integrator's first reading was 7, the real
+number was 5.
+
+### 3. Under heavy load, `compilation timeout` COMPILE_ERRORs are contention
+
+Six concurrent lanes drove the box to load **60 on 10 cores**. The guard then
+produced 5 timeout-shaped `COMPILE_ERROR`s that all pass when re-run in
+isolation. Timeout-shaped guard failures under load are contention, not the
+change under test — but they are indistinguishable from a real hang in the
+output, so re-run before reporting.
+
+### Corollary for the guard itself
+
+The 551-row guard is a **stratified sample of currently-passing rows**. It
+therefore cannot see:
+
+- classes of module it contains none of — notably any module that writes a
+  builtin prototype member and then exercises it (this is why a clean 551/551
+  coexisted with a real 5-row `String.prototype.split` regression);
+- assertions that are being skipped vacuously inside a passing row.
+
+A green guard is necessary, not sufficient. Pair it with the prototype-write
+corpus (`.tmp/guard-protowrite.txt`, run isolated), the project's unit suites
+**measured relative to the merge base**, and `check:test-vacuity-shapes`.
