@@ -489,6 +489,21 @@ export function inferParamTypeFromCallSites(
   if (type !== null && type.kind === "ref" && sawUnderApplied) {
     type = { kind: "ref_null", typeIdx: type.typeIdx };
   }
+  // (#4555) The same under-application rule, applied to the NATIVE SCALAR
+  // narrowings the #3548 rule left alone. A `ref` at least has `ref.null` as a
+  // filler; `f64`/`i32`/`i64` have NO encoding of `undefined`, so the caller's
+  // pad emits a zero (`pushDefaultValue`) and the missing argument silently
+  // becomes `0` instead. That is observable ES semantics, not a representation
+  // detail: `function f(a, b) { return b === undefined; } f(1, 2); f(1);`
+  // returned `false` for the second call, because the `f(1, 2)` site narrowed
+  // `b` to f64 and the `f(1)` site padded it with `f64.const 0`.
+  // Withdrawing the narrowing leaves the parameter on its resolved `externref`,
+  // which carries the real `undefined`. Only the under-applied POSITION is
+  // withdrawn — a fully-applied parameter of the same function keeps its
+  // native slot, so numeric kernels are untouched.
+  if (type !== null && sawUnderApplied && (type.kind === "f64" || type.kind === "i32" || type.kind === "i64")) {
+    type = null;
+  }
   // (#2867 S2) Soundness, same shape as the #3548 under-application rule: if the
   // function ALSO escapes as a value, callers exist that this scan never saw, so
   // an agreed GC-`ref` narrowing is unproven. Withdraw it — a ref narrowing is
