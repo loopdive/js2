@@ -67,10 +67,21 @@ are not one feature:
 
 The `name` half shares this same bag mechanism, so it does not dodge the issue.
 
-## Recommended order
+## Recommended order — REVISED 2026-08-19
+
+This issue is now the **higher-value** of the pair. #4562 was re-measured and
+turned out far narrower than first filed (the general §10.1.6.3 merge is
+correct; only a function's intrinsic `length`/`name` are affected, and it does
+NOT unlock the #4491 lane as originally claimed). It is also a **two-lane** job,
+since the host lane returns `undefined` from `gOPD(fn,"length")` outright.
+
+By contrast this issue is single-lane, standalone-only, and breaks a plain-JS
+idiom outright rather than an attribute nuance — a bound function with any own
+property silently stops inheriting from `Function.prototype`.
 
 1. **This issue** — bag-vs-prototype read order on callable carriers.
-2. **#4562** — partial-descriptor merge in `__defineProperty_value`.
+2. **#4562** — materialise the function intrinsic as a record before merging
+   (two-lane; design the cross-lane loop in, don't bolt it on).
 3. Then revive the `length`/`name` seed: a clean ~9-row win instead of a wash.
 
 ## Acceptance criteria
