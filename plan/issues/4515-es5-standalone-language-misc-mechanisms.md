@@ -80,3 +80,47 @@ the JS-host lane, a different and much worse corpus at 84.8 %).
 **eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
 needs clang-18 (see #4163 for the full toolchain finding); record them as
 blocked rather than chasing them.
+
+## 2026-08-19 lane findings (in progress)
+
+### Fixed — `f.length` counts a SYNTHESIZED parameter
+
+`function f(x, y) { return arguments; }` reported `f.length === 3`. TypeScript's
+JS inference **synthesizes a trailing `args` parameter** on any function that
+mentions `arguments`, and `expectedArgumentCountOfSignature`
+(`src/codegen/function-expected-argument-count.ts:84`) counted it because it has
+no `valueDeclaration`. Now reads `sig.declaration.parameters` — the actual
+FormalsList, which is what §15.1.5 counts.
+
+Verified: `language/expressions/call/S11.2.4_A1.{1,2}_T2` both flip to PASS, and
+the #4436 controls (`language/{statements,expressions}/function/length-dflt.js`)
+still PASS.
+
+### Not fixed — a get/set PAIR on the same key is a hard trap in standalone
+
+```js
+var o = { set foo(v) {}, get foo() { return "G"; } };
+o.foo = 1;
+// RuntimeError: illegal cast in __call_fn_method_1
+//   (via __call_accessor_set ← __extern_set)
+```
+
+Decisive controls: a setter **alone** works, and get+set on **different** names
+works — so the setter slot ends up holding the arity-0 getter. Emission order in
+`literals.ts` (~line 1090) is getter-then-setter and looks correct, so the defect
+is below that, in `compileArrowAsClosure` or the `$PropEntry` store.
+
+Gates 3 lane rows
+(`language/reserved-words/ident-name-{keyword,global-property-accessor,reserved-word-literal}-accessor.js`)
+plus anything else using an accessor pair.
+
+### Two corrections to this issue's own census
+
+- **The 4 `timeout (10s)` rows are NOT compiler hangs.**
+  `language/comments/S7.4_A{5,6}` run **65,536 `eval()` calls** each, and
+  `language/statements/for/S12.6.3_A10{,.1}_T1` are 9-deep nested loops. They are
+  genuinely slow tests, so they should not be triaged as a hang cluster.
+- **5 of the 6 `Scope chain disturbed` rows need `with`** (owned by #4206); only
+  `S10.2.2_A1_T3` is plain var-hoisting and reachable here.
+
+That removes ~9 rows from this lane's reachable pool.
