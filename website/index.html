@@ -1735,9 +1735,8 @@
             versions. The goals below describe where the project is headed, not what it delivers today.
           </p>
           <p>
-            On compatibility: standalone mode already runs a growing subset of programs as pure WebAssembly with no JS
-            runtime, while full coverage still relies on a JavaScript host and its WebAssembly GC support. Reducing that
-            dependency so more code runs standalone is an explicit goal under active work &mdash; progress is tracked in
+            The JavaScript host is optional. Standalone mode compiles to pure WebAssembly with no JS runtime and now
+            tracks a few points behind the host-backed path; closing that gap is under active work. Both figures are in
             the compatibility report below.
           </p>
           <p>The project is guided by the following goals:</p>
@@ -1797,26 +1796,20 @@
         <div class="intro">
           <h2>Goal: 100% ECMAScript compatibility.</h2>
           <p>
-            Which JS language features compile to WebAssembly today, which still rely on host support, and which are
-            still on the roadmap. Status is derived from ECMAScript Test262 pass rates and known compiler limitations.
+            Which JS language features compile today and which are still on the roadmap, derived from Test262 pass rates
+            and known compiler limitations.
           </p>
           <p class="feat-tables-note">
-            Each edition's percentage and
+            Each edition's
             <span class="feat-tables-note-mono">pass / total</span>
-            count cover
-            <strong>every</strong>
-            Test262 test in that edition. Each feature row below is sliced from that same population by the tests'
-            <span class="feat-tables-note-mono">features:</span>
-            tags, so every row is a
+            covers every Test262 test in that edition; each row below is a
             <strong>subset</strong>
-            of its edition — when a section reads 100%, every row in it does too. Two caveats: a test can carry several
-            feature tags, so rows
-            <em>overlap</em>
-            (they are slices, not a sum); and the ≤ES3 / ES5 core-language sections predate
+            of it, sliced by the tests'
             <span class="feat-tables-note-mono">features:</span>
-            tags, so they show the edition headline only. The ES2016+ edition membership list is synchronized from
-            TC39's finished-proposals record on every site build; the detailed rows retain examples where the compiler
-            has a curated demo.
+            tags — so a section at 100% has every row at 100%. Rows
+            <em>overlap</em>
+            (a test can carry several tags), and the ≤ES3 / ES5 sections predate those tags, so they show the edition
+            headline only. ES2016+ membership syncs from TC39's finished-proposals record on every build.
           </p>
           <div class="compatibility-report-actions">
             <span class="compatibility-report-label">Compatibility Test Report:</span>
