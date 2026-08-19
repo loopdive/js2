@@ -133,3 +133,75 @@ plus anything else using an accessor pair.
   `S10.2.2_A1_T3` is plain var-hoisting and reachable here.
 
 That removes ~9 rows from this lane's reachable pool.
+
+## 2026-08-19 — `language/expressions/**` slice (branch `es5-language-expr`)
+
+Lane **0 → 8 of 51**, `target=standalone`, guard 551/551.
+
+### 1. Equality operators DISCARDED their operands' side effects (`2ee642ef`)
+
+```js
+var calls = 0;
+var u = function () { calls++; };
+u() == 1;      // calls === 0 — the call was never emitted
+```
+
+`==`, `!=`, `===`, `!==` all did it; `+`, `<`, `in`, `instanceof` were fine. The
+trigger is an operand whose static type is `void`/`never` — which is what
+TypeScript infers for `function () { throw "x"; }`.
+
+`compileBinaryExpression` emitted the operand code — 30 instructions, the call
+included — then hit `if (!leftType || !rightType) return null;` because a void
+operand yields no value. The caller read `null` as "not handled", **rolled the 30
+instructions back**, and substituted the statically-correct `i32.const 0`. The
+answer `false` was right; discarding the operand evaluation was not — §13.11.1
+evaluates both operands regardless.
+
+The four affected rows report `Actual: [object Object]`, which is a red herring:
+nothing throws at all, so the Test262Error from the *next* line is what gets
+caught.
+
+Fix: evaluate both sides, drop whatever they produced, then emit the constant —
+the pattern already used for the BigInt-vs-Number strict-equality fold. A
+counter-operand that is `any`/`unknown`/nullable is not folded and keeps the old
+return, so nothing that previously worked moves. Verified on a 14-case matrix
+including `u() == null` (true), `u() === null` (false), `u() == u()` (true).
+**+4 rows.**
+
+**This is a silent wrong-behaviour bug for ordinary programs**, not a conformance
+nicety: any `f() == x` where TS infers `void`/`never` for `f` loses the call.
+
+vitest relative to the merge base — unchanged: 9 equality/operator suites 2
+failed → the same 2; 41 operator-related `tests/equivalence/*` 1 file (5 tests)
+→ the same 1. Pre-existing: `issue-2063-switch-strict-equality`,
+`issue-2742-native-string-equality`, `equivalence/null-dereference-guards`.
+`issue-3055` looked like a third regression in the combined run and is **not**
+one — a 35 s timeout under load; 9/9 alone.
+
+### 2. `this.p++` on a `var`-declared script global writes NaN — #4500's missing third site
+
+```js
+var x = 1; --x;   // x is a Script global, so `this.x` IS the same property
+this.x = 1;
+--this.x;         // NaN — and this.x stays 1
+```
+
+#4500 Slice A fixed the **read** arm (`property-access.ts`) and the **write** arm
+(`assignment.ts`) so a `var`-declared script global routes to the module global
+that stores it. The read-modify-write in `unary-updates.ts` was never updated: it
+read the realm global **object**, which no longer holds the value, got
+`undefined`, and stored NaN over the real one. The #4205 arm directly above
+already declines the struct path for a realm-global receiver, so the only gap was
+that nobody added the module-global arm beside it.
+
+#4500's own note — *"the pair MUST land together; fixing only the read makes
+`this.p = 2; this.p === 2` regress"* — was correct and simply needed a **third**
+member. **+4 rows.**
+
+### Remaining 43 — long tail, no dominant cluster
+
+Largest visible micro-group is **ToPrimitive on object operands** in `+` and the
+relational operators (5–6 rows). Then **getters reached through the wrong
+receiver** (`o.foo` reads `null` instead of the getter's value, 3), and
+`f_arg.length` on an `arguments`-returning function (2, which belongs with the
+#4555 lane rather than here).

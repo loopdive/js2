@@ -105,14 +105,59 @@ closed 18 of those 44.
 | `db6568d` | +1 | an under-applied IIFE that reads `arguments` got **none at all** |
 | `d46d320` | +1 | the numeric **return** promotion turned that same under-applied param back into NaN |
 
-### Extractions
+### Extractions — CORRECTED 2026-08-19
 
-Six verbatim extractions ride along purely to satisfy the LOC/function gates:
-`expressions/this-keyword.ts`, `arguments-object-mop.ts`,
-`expressions/inline-iife-scope.ts`, `statements/null-guard-alias.ts`,
-`statements/var-slot-reuse.ts`, `helpers/undefined-receiver.ts`. Every god-file
-touched **shrank**, so no `loc-budget-allow:` / `func-budget-allow:` entries are
-needed.
+An earlier revision of this entry said "six verbatim extractions". That was
+wrong twice over, and the lane corrected it after verifying mechanically. Only
+**four** of the six new modules are extractions at all —
+`statements/var-slot-reuse.ts` and `helpers/undefined-receiver.ts` are **new
+code** — and of those four, **three are byte-verbatim and one is not**:
+
+| module | moved from | verdict |
+| --- | --- | --- |
+| `arguments-object-mop.ts` | `typeof-delete.ts` | byte-verbatim, 74/74 lines, only `function` → `export function` |
+| `statements/null-guard-alias.ts` | `statements/variables.ts` | byte-verbatim, 52/52 lines, only an added `export` |
+| `expressions/inline-iife-scope.ts` | `expressions/call-tail-dispatch.ts` | byte-verbatim, 161/161 lines, only an added `export` |
+| `expressions/this-keyword.ts` | `expressions.ts` (`fc46bc9`) | **NOT byte-verbatim** — de-indented by 2, wrapped in a new `compileThisKeyword(ctx, fctx, expr)`, and **one 10-line hunk ADDED** (the new §10.4.3 arm). Diffing the de-indented base against the new body shows that one added hunk and nothing else: no renamed params, no changed signatures, no dropped branches. |
+
+Every god-file touched still **shrank**, so no `loc-budget-allow:` /
+`func-budget-allow:` entries are needed.
+
+The lesson is the one `fc46bc9` illustrates: a commit carrying a 171-line new
+module *and* a semantic fix is exactly the shape where a moved line can change
+meaning unnoticed. Extractions should land as their own commit first.
+
+### Unit suites caught a regression the conformance corpus missed (`7b28483`)
+
+124 targeted suites, 1049 tests: base **59 failing**, branch-before-fix **62**.
+Two newly-failing suites, one real:
+
+- **`es5-standalone-this-and-construct.test.ts` (2 assertions) — a genuine
+  regression.** `(function(){ this.touched = true; }).call(obj)` reuses the
+  IIFE-inlining path, and #4246 binds its receiver via a `this` local in
+  `localMap`. The new §10.4.3 arm runs *before* that rung — deliberately, since
+  inside a constructor twin the enclosing `this` must not leak into a
+  receiver-LESS inline — so it discarded a receiver the caller really passed.
+  Both shapes land in `fctx.inlinedIifeNodes`, so that set cannot tell them
+  apart; `inlined-call-receiver.ts` now records which callees sit inside a
+  receiver-bound inline and the arm defers. Suite 22/22.
+- **`es5-standalone-arguments-callee.test.ts` (1 assertion) — not a
+  regression.** A #4243 placeholder asserting `gOPD(arguments,"callee") ===
+  undefined` in strict code, whose own comment scoped it to "not that the strict
+  behaviour is complete" because the %ThrowTypeError% accessor "this issue does
+  not yet mint". `536a3c0` mints it. Updated to assert the full §10.6 step 14
+  descriptor plus a throwing-write case. Suite 13/13.
+
+Lane and guard unchanged after the fix: **18/75**, **551/551**.
+
+### Locally-decidable pool is 35 of 75, not 44
+
+31 rows are QuickJS-provider-blocked outright, and a further **9 of the 26
+"actionable" rows are eval / `Function`-constructor rooted** — they merely reach
+a non-QuickJS path locally, so their real behaviour is still gated on the eval
+tier (`15.3.5.4_2-95/96/97gs`, `S15.3.4.3_A1_T1`, `S15.3.4.4_A1_T1`,
+`S15.3.4.3_A8_T6`, `S15.3.4.4_A7_T6`, `S15.3.5_A1_T1/T2`). So the lane closed 18
+of a **35**-row locally-decidable pool.
 
 ### Queued follow-ups (largest remaining, all reachable)
 
