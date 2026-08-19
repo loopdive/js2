@@ -27,7 +27,6 @@ loc-budget-allow:
   # in the new leaf module src/codegen/closures/set-accessor-param.ts; the
   # widening itself replaces an existing line in computeClosureWrapperSig, so
   # this is the import and nothing else.
-  - src/codegen/closures.ts
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms
@@ -211,3 +210,52 @@ relational operators (5–6 rows). Then **getters reached through the wrong
 receiver** (`o.foo` reads `null` instead of the getter's value, 3), and
 `f_arg.length` on an `arguments`-returning function (2, which belongs with the
 #4555 lane rather than here).
+
+## 2026-08-19 — `language/` statements+types slice (branch `es5-language-core`)
+
+**Lane 0 → 3. Denominator 102, not 106** — the 4 `timeout (10s)` rows all sit in
+this half and are excluded from the A/B, since they time out in both arms. Base
+re-measured by reverting the touched files in the same tree. The three flips are
+`language/reserved-words/ident-name-{keyword,global-property-accessor,reserved-word-literal}-accessor.js`.
+
+`75c03b8`'s two rows (`language/expressions/call/S11.2.4_A1.{1,2}_T2`) fell into
+the `language/expressions/**` half after the split and are credited there; the
+commit itself lives on this branch.
+
+### The accessor-pair root cause was not where it looked
+
+For an accessor **pair**, TypeScript takes the property's type from the
+**getter's return** and requires the setter's parameter to match — so
+`set foo(v)` beside `get foo(){ return "G"; }` infers `v: string`.
+`__call_fn_method_1` then coerces the incoming runtime externref to that declared
+ValType with an **unguarded `ref.cast`**, and `o.foo = 1` casts a number to
+`$AnyString` → trap.
+
+The descriptor readback was clean throughout (`gOPD(o,"foo").get.length === 0`,
+`.set.length === 1`), emission order in `literals.ts` was correct, and the native
+store takes getter/setter in the right slots — which is why this looked like a
+wrong closure in the slot and was not. The three controls explain themselves once
+the cause is known: a setter **alone** works (`v` is `any`), get+set on
+**different** names works (no getter constrains `v`), and a **void** getter works
+(nothing to cast to).
+
+Fix: a set accessor's parameters stay externref — the same rule
+`computeClosureWrapperSig` already applies to its unannotated-JS-default and
+unbound-declaration arms.
+
+**This is a wrong-behaviour bug for any object with a matched getter/setter
+pair**, which is a common shape — well beyond the 3 conformance rows.
+
+### Verification (the most thorough in this push)
+
+- **Guard 551/551.** A run at HEAD first read 546/551; all 5 were
+  `compilation timeout` (16–25 s) during the load spike and **all 5 pass** when
+  re-run serially on the same tree.
+- **vitest, base vs branch: 0 regressions.** 18 suites over the touched code.
+  Base `f7df34f1`: 6 files failed, 15 tests failed / 189 passed / 1 skipped.
+  Branch `a9d7ea08`: identical counts — and the sorted failing-test **name sets
+  are byte-identical** (`diff` clean), not merely equal in count. All 15
+  pre-existing.
+- **Prototype-write corpus, both arms: 120 pass / 1 not-pass**, the same single
+  QuickJS-provider row each side. Run strictly one-process-per-test via a
+  `while read` loop.

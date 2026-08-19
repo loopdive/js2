@@ -242,7 +242,21 @@ one process, so a test that clobbers `Array.prototype` is visible to the next
 test in that shard.
 
 **For this family the only trustworthy measurement is one test per process,
-sequentially.** A parallel TOTAL is noise. This nearly cost a lane a false
+sequentially.** A parallel TOTAL is noise.
+
+**And "one test per process" is NOT `t262run.mjs <list> 1`.** With `jobs=1` the
+runner creates a single shard and runs **all** the tests in **one** process —
+the worst case for pollution, not the best. The correct form is a shell loop
+that spawns a fresh process per path:
+
+```bash
+while read -r t; do
+  npx tsx .tmp/t262.mts "$t" | grep -q '^PASS' || echo "FAIL $t"
+done < list.txt
+```
+
+A lane caught this in the integrator's own instructions; `jobs=1` and
+"sequential-isolated" are opposites here. This nearly cost a lane a false
 5-row regression attribution — the integrator's first reading was 7, the real
 number was 5.
 
