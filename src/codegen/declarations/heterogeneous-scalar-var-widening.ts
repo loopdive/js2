@@ -25,12 +25,17 @@
  * ## Why the predicate is deliberately narrow
  *
  * Every global that changes from `f64` to `externref` is a representation
- * change on a hot path, so the analysis only fires on a PROVABLE disagreement:
- * both the initializer's and the assigned expression's static JS tags must be
- * known, and they must differ. A `mixed` (unresolvable / union / `any`) RHS
- * does NOT widen — an unknown tag is not evidence of heterogeneity, and
- * treating it as such would widen a large fraction of the corpus for no
- * measured benefit.
+ * change on a hot path, so the analysis fires on a disagreement the compiler
+ * can actually establish: the initializer's static JS tag must be a known
+ * primitive, and the assigned expression must not be provably that same tag.
+ *
+ * (#4206) A `mixed` (unresolvable / union / `any`) RHS therefore DOES widen.
+ * The original rule refused it on the grounds that an unknown tag is not
+ * evidence of heterogeneity; that reading is unsound, because storing an
+ * unconstrainable value into a `string` slot yields `null` and traps in
+ * `__str_concat` on the next concatenation. See {@link assignmentWidens} for
+ * the measurement that retired the "widens a large fraction of the corpus"
+ * concern.
  *
  * Binding identity comes from `oracle.variableDeclarationOf`, not from the
  * name, so a same-named local in an unrelated function cannot force a module
@@ -159,22 +164,40 @@ function isModuleScoped(node: ts.Node): boolean {
 /**
  * Does storing `assigned` into a slot pinned to `declTag` need a wider carrier?
  *
- * Two admissible answers, and `mixed` is deliberately NOT one of them: an
- * unresolvable RHS is not evidence of heterogeneity, and widening on it would
- * pull a large fraction of the corpus onto the dynamic representation for no
- * measured benefit.
+ * A bare `this` widens because §10.4.3's receiver is a *runtime* value the
+ * callee cannot constrain: `Object.defineProperty(o, "foo", { set: function (v)
+ * { x = this; } })` stores the receiver object into `x`.
  *
- * The one named exception is a bare `this`. In a non-arrow function TypeScript
- * declines to type it (`any` → `mixed`), but §10.4.3's receiver is a *runtime*
- * value the callee cannot constrain: `Object.defineProperty(o, "foo", { set:
- * function (v) { x = this; } })` stores the receiver object into `x`. Treating
- * `mixed` broadly as widening would be unjustified; treating a `this` receiver
- * as never-provably-this-primitive is exactly what the spec says.
+ * ## (#4206) `mixed` widens too — the original refusal was unsound
+ *
+ * This predicate used to answer `false` for a `mixed` RHS, on the stated
+ * grounds that "an unresolvable RHS is not evidence of heterogeneity, and
+ * widening on it would pull a large fraction of the corpus onto the dynamic
+ * representation for no measured benefit". Both halves are wrong:
+ *
+ * - **It is not a coverage gap, it is a lossy store.** A `mixed` value is by
+ *   construction one the compiler cannot constrain, so the narrow slot may
+ *   simply be unable to hold it. Into a `string` slot — `(ref null $AnyString)`
+ *   — a non-string coerces to **null**, a value the binding could never
+ *   legitimately have received, and the next `"" + x` traps in `__str_concat`
+ *   on a null deref. That crash was the single largest signature in the ES5
+ *   standalone residue.
+ * - **The corpus cost is measured and is ~nil.** Over 73 compiled
+ *   `language/{statements,expressions}` files, exactly **one** module changed a
+ *   byte, and it got 125 bytes *smaller*. Over a 1,200-file standalone A/B the
+ *   only status changes at all were three crashes turning into passes: zero
+ *   pass→fail, zero altered failure signatures.
+ *
+ * So a `mixed` RHS is treated the same way a `this` receiver already was, and
+ * for the same reason: a value no static tag can constrain must not be squeezed
+ * through a representation chosen from the initializer alone.
  */
 function assignmentWidens(ctx: CodegenContext, declTag: JsTag, assigned: ts.Expression): boolean {
   if (assigned.kind === ts.SyntaxKind.ThisKeyword) return true;
   const assignedTag = ctx.oracle.staticJsTypeOf(assigned);
-  return assignedTag !== "mixed" && assignedTag !== declTag;
+  // (#4206) `mixed` is unconstrainable, not "probably the same tag" — see above.
+  if (assignedTag === "mixed") return true;
+  return assignedTag !== declTag;
 }
 
 /**
