@@ -357,6 +357,7 @@ class NpmCompatChart extends HTMLElement {
     const validates = pkg.validation?.validates;
     const npmPackageUrl = this._npmUrl(pkg);
     const npmCodeUrl = this._npmUrl(pkg, true);
+    const playgroundUrl = `./playground/?npm=${encodeURIComponent(String(pkg.name ?? ""))}`;
     const issueLink = pkg.issue
       ? `<a class="issue" href="${this._issueUrl(pkg.issue)}" target="_blank" rel="noopener">#${pkg.issue}</a>`
       : "";
@@ -507,8 +508,12 @@ class NpmCompatChart extends HTMLElement {
             : ""
         }</div>
         <div class="rows">${correctness}${tests}${perf}${bugs}</div>
-        <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
-          title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
+        <div class="card-links">
+          <a class="playground-link" href="${playgroundUrl}"
+            title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>
+          <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
+            title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
+        </div>
       </div>`;
   }
 
@@ -920,6 +925,20 @@ class NpmCompatChart extends HTMLElement {
           text-decoration: none;
         }
         .entry:hover { color: var(--text-muted, rgba(255,255,255,0.46)); text-decoration: underline; }
+        .card-links {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: baseline;
+          gap: 4px 14px;
+        }
+        .playground-link {
+          display: inline-block;
+          margin-top: 10px;
+          color: var(--accent, #8ba4ff);
+          font-size: 10px;
+          text-decoration: none;
+        }
+        .playground-link:hover { text-decoration: underline; }
         .note {
           margin-top: 18px;
           font-size: 11px;
