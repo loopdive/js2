@@ -64,6 +64,27 @@ describe.each(LANES)("#4556 — element keys and mutable bindings (%s)", (lane) 
     ).toBe(30);
   });
 
+  // The shape that regressed test262 `String/prototype/split/*-instance-is-number`
+  // on `main`: a `var` loop counter indexing an ANY-typed array (the result of a
+  // call). Both operands of the comparison are element reads, so a fold on
+  // either side silently compares element 0 against the right element.
+  it("a var loop counter indexes an any-typed array element-by-element", async () => {
+    expect(
+      await run(
+        `const parts: any[] = ["", "00", "", "22"];
+         const want: any[] = ["", "00", "", "22"];
+         export function test(): number {
+           var matched = 0;
+           for (var index = 0; index < want.length; index++) {
+             if (parts[index] === want[index]) matched++;
+           }
+           return matched === 4 && parts[1] === "00" ? 1 : 0;
+         }`,
+        lane,
+      ),
+    ).toBe(1);
+  });
+
   it("the string spelling of an index still reaches that element", async () => {
     expect(
       await run(
