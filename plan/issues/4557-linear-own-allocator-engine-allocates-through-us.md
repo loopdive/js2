@@ -1,10 +1,11 @@
 ---
 id: 4557
 title: "Invert allocator ownership: a real linear-lane allocator, installed via JS_NewRuntime2 so QuickJS allocates through us"
-status: in-review
+status: done
 sprint: current
 created: 2026-08-19
 updated: 2026-08-19
+completed: 2026-08-19
 # Implementation complete and all acceptance criteria exercised (see
 # "Implementation notes"). `in-review` rather than `done` because this lane does
 # not merge: the project lead consolidates. Flip to `done` on merge.
