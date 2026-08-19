@@ -5819,7 +5819,7 @@ function preregisterExceptionSupport(ctx: CodegenContext, fns: readonly BuiltFnR
 
 /**
  * #2949 slice 3 — does this instruction carry a dynamic box/unbox/tag.test?
- * `jsTag` presence is the dynamic-operand discriminator for unbox/tag.test
+ * `tagId` presence is the dynamic-operand discriminator for unbox/tag.test
  * (verifier R2/R3 make it REQUIRED exactly there and reject it elsewhere).
  */
 /**
@@ -5854,7 +5854,7 @@ const UNION_IMPORT_FUNC_NAMES: ReadonlySet<string> = new Set([
 
 function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "box") return instr.toType.kind === "dynamic";
-  if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.jsTag !== undefined;
+  if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.tagId !== undefined;
   // #2949 S5.1 — dyn.truthy always consumes the boxed-any carrier, so its
   // presence requires the dynamic backing (ensureAnyHelpers / addUnionImports).
   if (instr.kind === "dyn.truthy") return true;

@@ -184,11 +184,14 @@ import {
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
-import { JsTag } from "./js-tag.js"; // #2949 S5.2 — the `unbox`/`tag.test` instruction fields still speak JsTag
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque `TagId`, so a
 // box-refinement names its partition through the JS producer's tag-domain
 // vocabulary. This file IS the JavaScript producer, so naming ECMAScript
 // partitions here is in-layer; the IR core cannot (and must not) do the same.
+// #3954 phase 3 (W4/W5) — the `unbox`/`tag.test` instruction fields and the
+// builder APIs that construct them now take a `TagId` too, so the direct
+// `JsTag` enum import this file used to carry is gone: the producer names its
+// partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
 import {
   exactClosureLiftedName,
@@ -3791,7 +3794,7 @@ function describeIrType(t: IrType): string {
   if (t.kind === "extern") return `extern<${t.className}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
-  // #2949 — dynamic leaf; render the optional JsTag refinement when present.
+  // #2949 — dynamic leaf; render the optional tag refinement when present.
   if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
   return `boxed<${describeIrType(t.inner)}>`;
 }
@@ -11342,10 +11345,10 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     const lt = cx.builder.typeOf(lhs);
     const resultType = irVal({ kind: "i32" });
     if (lt.kind === "dynamic") {
-      const isObject = cx.builder.emitTagTest(lhs, JsTag.Object);
+      const isObject = cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object);
       let whenObject!: IrValueId;
       const thenBody = cx.builder.collectBodyInstrs(() => {
-        const payload = cx.builder.emitUnbox(lhs, JsTag.Object);
+        const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
         const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
         if (result === null) {
           // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -12214,7 +12217,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // more precise than boxing `undefined` into the carrier + the general
   // helper). Only strict ops reach here (`isStrictEq`/`isStrictNeq` gate).
   if (t.kind === "dynamic") {
-    const flag = cx.builder.emitTagTest(v, JsTag.Undefined);
+    const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Undefined);
     return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   const tv = asVal(t);
@@ -12313,7 +12316,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // to legacy (return null → demote), NOT folded.
   if (otherType.kind === "dynamic") {
     if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
-      const flag = cx.builder.emitTagTest(v, JsTag.Null);
+      const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Null);
       return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
     }
     return null;

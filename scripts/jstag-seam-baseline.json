@@ -1,14 +1,10 @@
 {
-  "generated": "2026-08-19T01:03:23.476Z",
+  "generated": "2026-08-19T03:45:20.130Z",
   "totals": {
-    "valueImports": 2,
-    "refs": 42
+    "valueImports": 1,
+    "refs": 38
   },
   "files": {
-    "src/ir/from-ast.ts": {
-      "valueImports": 1,
-      "refs": 4
-    },
     "src/ir/integration.ts": {
       "valueImports": 1,
       "refs": 38

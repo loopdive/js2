@@ -47,11 +47,10 @@ import type {
 } from "./dialect/js.js";
 import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
-// #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
-// leaf `ir/js-tag.ts` (#3113 moved it below the IR layer so IR core files
-// consume it without the IR→codegen import inversion). Type-only:
-// nodes.ts stays free of value imports.
-import type { JsTag } from "./js-tag.js";
+// #3954 phase 3 (W4) — `js-tag.ts` is no longer imported here at all. The last
+// two references were `unbox.jsTag` / `tag.test.jsTag`; both now carry the
+// neutral `TagId` below, so the IR's core node module names no ECMAScript
+// partition, in a type position or otherwise.
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 // #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
 // OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
@@ -1059,20 +1058,31 @@ export interface IrInstrBox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) names the member ValType to
  *     extract; lowers to `struct.get $val`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the proven JS
- *     partition; it must have a payload (`jsTagUnboxKind(jsTag) !== null` —
- *     Null/Undefined are singleton partitions and cannot be unboxed). `tag`,
- *     when also present, must be consistent with the partition's payload
- *     kind (exact for scalar partitions, ref-shaped for String/Object/
- *     Function). Lowering lands in #2949 slice 3.
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the proven
+ *     partition of the producer's {@link TagId} domain; it must have a payload
+ *     (`domain.carrierKindOf(tagId) !== null` — a SINGLETON partition, e.g.
+ *     ECMAScript's Null/Undefined, cannot be unboxed). `tag`, when also
+ *     present, must be consistent with the partition's payload kind (exact for
+ *     scalar carriers, ref-shaped for reference carriers). Lowering lands in
+ *     #2949 slice 3.
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`, not the ECMAScript
+ * `JsTag` enum. It was `jsTag: JsTag` until this slice, which made the field an
+ * ECMAScript declaration sitting on a core-neutral node; worse, the brand is
+ * ONE-DIRECTIONAL (TypeScript assigns a branded `number` straight to a numeric
+ * enum), so a foreign domain's tag flowed in with no cast and failed at run
+ * time in the verifier instead of at compile time. The field is renamed as well
+ * as re-typed: every construction site had to change anyway (the brand blocks
+ * `JsTag → TagId`), and a `js`-prefixed name carrying a neutral id would have
+ * survived the widening as a lie.
  */
 export interface IrInstrUnbox extends IrInstrBase {
   readonly kind: "unbox";
   readonly value: IrValueId;
   /** Target member ValType — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** Proven JS partition — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
+  /** Proven domain partition — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 /**
@@ -1081,19 +1091,22 @@ export interface IrInstrUnbox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) must be a member ValType;
  *     lowers to `struct.get $tag; i32.const <N>; i32.eq`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the JS
- *     partition under test — ANY partition, including the payload-less
- *     Null/Undefined (testing for them is the point). Lowering (slice 3)
- *     dispatches on the carrier's runtime tag via the canonical classifier
- *     path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the domain
+ *     partition under test — ANY partition, including a payload-less singleton
+ *     (ECMAScript's Null/Undefined — testing for them is the point). Lowering
+ *     (slice 3) dispatches on the carrier's runtime tag via the canonical
+ *     classifier path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`; see `IrInstrUnbox` for
+ * why the field was renamed as well as re-typed.
  */
 export interface IrInstrTagTest extends IrInstrBase {
   readonly kind: "tag.test";
   readonly value: IrValueId;
   /** Member ValType under test — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** JS partition under test — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
+  /** Domain partition under test — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 // ---------------------------------------------------------------------------

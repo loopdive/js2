@@ -9,38 +9,50 @@
 //   > could not produce and assert it lowers and verifies. This is the cheap
 //   > falsification test — if it can't be written, the seam is nominal.
 //
-// VERDICT: **the seam is real for the TYPE LATTICE and nominal for every
-// OPERATION on a dynamic value.** A non-JS domain can define its partitions,
-// carriers, lattice and coercion rules; those partitions can ride an `IrType`;
-// and IR built against the domain's own carrier decisions lowers through the
-// production `lower.ts` and RUNS on the real bytecode VM. But the instant the
-// IR must *use* a dynamic value — `unbox` it, `tag.test` it, or `box` with the
-// partition proven — the node fields, the verifier and the lowering pass all
-// speak `JsTag`, and the synthetic domain is bypassed entirely.
+// ORIGINAL VERDICT (2026-08-19): **the seam is real for the TYPE LATTICE and
+// nominal for every OPERATION on a dynamic value.** A non-JS domain can define
+// its partitions, carriers, lattice and coercion rules; those partitions can
+// ride an `IrType`; and IR built against the domain's own carrier decisions
+// lowers through the production `lower.ts` and RUNS on the real bytecode VM.
+// But the instant the IR must *use* a dynamic value — `unbox` it, `tag.test`
+// it, or `box` with the partition proven — the node fields, the verifier and
+// the lowering pass all spoke `JsTag`, and the synthetic domain was bypassed.
+//
+// UPDATED VERDICT: **W3, W4 and W5 are CLOSED.** A foreign partition can now be
+// named on an `unbox`/`tag.test` node, built by `IrFunctionBuilder`, and
+// verified against its own domain — including the Abacus-specific singleton and
+// carrier rules. What remains nominal is the LOWERING of a dynamic value: W2
+// and W6 are one move, gated on the review of the #3029-S1-frozen
+// `IrDynamicLowering` contract, and W1 is a backend-capability gap owned by
+// #1584.
 //
 // Every wall below is asserted, not asserted-about: each `it` pins the exact
 // error or type-level refusal, so a future slice that closes one of them turns
 // a passing expectation red and has to come back here and say so.
 //
-// The walls, with their file:line as of this commit:
+// The walls, with their file:line as of the ORIGINAL run:
 //
-//   W1  src/ir/backend/legality.ts:451  the bytecode backend rejects the
+//   W1  src/ir/backend/legality.ts:451  OPEN. The bytecode backend rejects the
 //       `dynamic` IrType outright ("does not support IR type 'dynamic'"), and
 //       :300 rejects the `box`/`unbox`/`tag.test` instructions. Phase 3's
 //       literal vehicle therefore cannot carry a tag-bearing value AT ALL —
-//       for a backend-capability reason, not a seam reason.
-//   W2  src/ir/lower.ts:1764           `jsTagOf(instr.toType.tag)` — the
-//       box-to-dynamic hint crossing. Throws on a foreign partition.
-//   W3  src/ir/verify.ts:673           `defaultTagDomain()` — the verifier has
-//       no parameter, no field and no other channel by which it could be told
-//       which domain the IR it is checking belongs to.
-//   W4  src/ir/nodes.ts:1072 / :1093   `unbox.jsTag` / `tag.test.jsTag` are
-//       typed `JsTag`, and `TagId` IS assignable to a numeric enum in
-//       TypeScript — so the brand does NOT stop a foreign tag from flowing in.
-//       It fails at run time in W3 instead of at compile time.
-//   W5  src/ir/builder.ts:481          `emitUnbox(value, jsTag: JsTag)` — the
-//       only construction API for the instruction takes the ECMAScript enum.
-//   W6  src/ir/backend/handles.ts:283/300/308/319 — the frozen (#3029-S1)
+//       for a backend-capability reason, not a seam reason. #1584's business.
+//   W2  src/ir/lower.ts:1764           OPEN, deliberately. `jsTagOf(
+//       instr.toType.tag)` — the box-to-dynamic hint crossing. Throws on a
+//       foreign partition. Closing it edits the frozen `IrDynamicLowering`
+//       contract, so it moves with W6 or not at all.
+//   W3  src/ir/verify.ts:673           CLOSED. `verifyIrFunction(func, domain?)`
+//       now takes the domain (default `defaultTagDomain()`), threaded down to
+//       the per-instruction rules.
+//   W4  src/ir/nodes.ts:1072 / :1093   CLOSED. The fields are `tagId?: TagId`.
+//       NOTE the underlying language-level hole is UNCHANGED: `TagId` is still
+//       assignable to a numeric enum, so `TagId → JsTag` compiles with no cast.
+//       Widening the fields removed the sites where that mattered; the runtime
+//       check in `jsTagOf` is what guards the remaining crossing (W6).
+//   W5  src/ir/builder.ts:481          CLOSED. `emitUnbox(value, tagId: TagId)`
+//       / `emitTagTest(value, tagId: TagId)`, answering from a `TagDomain` the
+//       builder HOLDS (5th ctor arg, same default).
+//   W6  src/ir/backend/handles.ts:283/300/308/319 — OPEN. The frozen (#3029-S1)
 //       `IrDynamicLowering` contract is `JsTag`-typed member by member, and its
 //       `emitToBoolean`/`emitToNumber` are §7.1.2/§7.1.4 by definition.
 //
@@ -55,6 +67,8 @@ import { verifyIrBackendLegality } from "../src/ir/backend/legality.js";
 import { type FuncEntry, type Program, runProgram } from "../src/ir/backend/bytecode-vm.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import type { JsTag } from "../src/ir/js-tag.js";
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
+import { IrFunctionBuilder } from "../src/ir/builder.js";
 import { type IrLowerResolver, lowerIrFunctionBody, wasmValueTypeConverter } from "../src/ir/lower.js";
 import type { IrFunction, IrInstr, IrType } from "../src/ir/nodes.js";
 import { asBlockId, asValueId, irDynamic, irVal } from "../src/ir/nodes.js";
@@ -622,57 +636,148 @@ describe("#3954 phase 3 — W2: box-to-dynamic crosses to JsTag inside the lower
   });
 });
 
-describe("#3954 phase 3 — W3/W4: the instruction fields and the verifier are JS-only", () => {
-  it("W4: a foreign TagId flows into `unbox.jsTag` with NO cast — the brand is one-way", () => {
-    // TypeScript allows `number` (and therefore a branded number) to be
-    // assigned to a NUMERIC ENUM type. So `TagId` → `JsTag` is silently legal,
-    // while `JsTag` → `TagId` is correctly blocked by the brand. The seam's
-    // compile-time guarantee is therefore one-directional, and the direction it
-    // does NOT cover is precisely the one a second producer would take.
-    const smuggled: JsTag = ABACUS_TAGS.Nat; // no `as`, no @ts-expect-error needed
+// ───────────────────────────────────────────────────────────────────────────
+// W3 / W4 / W5 — CLOSED (#3954 phase 3 follow-up).
+// ───────────────────────────────────────────────────────────────────────────
+//
+// These three walls were pinned by assertions that a foreign partition could
+// NOT be named on an instruction, built by the builder, or verified. All three
+// now succeed, so the assertions below are the flipped versions:
+//
+//   W4  `unbox`/`tag.test` carry `tagId: TagId`, not `jsTag: JsTag`. The
+//       one-directional brand no longer matters HERE, because the field's own
+//       type is the branded one — and the direction TypeScript does block
+//       (`JsTag → TagId`) is now the direction a JS producer takes, so it is
+//       forced through `JS_TAG_IDS` / `tagIdOfJsTag`.
+//   W3  `verifyIrFunction(func, domain?)` takes the domain, defaulting to
+//       `defaultTagDomain()`.
+//   W5  `IrFunctionBuilder` holds a `TagDomain` (5th ctor arg, same default)
+//       and `emitUnbox`/`emitTagTest` take a `TagId`, asking THAT domain for
+//       the payload's carrier shape.
+//
+// W2 and W6 are deliberately untouched: they edit the `IrDynamicLowering`
+// contract frozen by #3029-S1. That is why `lower.ts` still refuses an Abacus
+// partition — see the W2 block above, which is unchanged and still passes.
+
+/** Build a one-instruction `unbox` function over a `dynamic<Abacus.Nat>` param. */
+function unboxAbacus(name: string, tag: TagId, resultType: IrType): IrFunction {
+  const instr: IrInstr = {
+    kind: "unbox",
+    value: asValueId(0),
+    tagId: tag,
+    result: asValueId(1),
+    resultType,
+  };
+  return {
+    ...irIdentities.next(name),
+    params: [{ value: asValueId(0), type: irDynamic(tag), name: "n" }],
+    resultTypes: [resultType],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [instr],
+        terminator: { kind: "return", values: [asValueId(1)] },
+      },
+    ],
+    exported: true,
+    valueCount: 2,
+  };
+}
+
+describe("#3954 phase 3 — W4 (CLOSED): the instruction fields are domain-neutral", () => {
+  it("`unbox.tagId` / `tag.test.tagId` take a `TagId`, and a `JsTag` member no longer fits", () => {
+    // The field is the BRANDED type now, so the assignment that used to be free
+    // in the wrong direction is the one that is blocked. A JS producer must go
+    // through `JS_TAG_IDS` (or `tagIdOfJsTag`), which is the point.
+    const abacus: IrInstr = {
+      kind: "unbox",
+      value: asValueId(0),
+      tagId: ABACUS_TAGS.Nat,
+      result: asValueId(1),
+      resultType: irVal({ kind: "externref" }),
+    };
+    expect(abacus.kind === "unbox" && tagIdValue(abacus.tagId!)).toBe(1003);
+
+    const blocked: IrInstr = {
+      kind: "tag.test",
+      value: asValueId(0),
+      // @ts-expect-error — a JsTag member is not assignable to the branded TagId
+      tagId: 5 as JsTag,
+      result: asValueId(1),
+      resultType: irVal({ kind: "i32" }),
+    };
+    expect(blocked.kind).toBe("tag.test");
+  });
+
+  it("the ONE-DIRECTIONAL brand is still open at the language level — just no longer reachable here", () => {
+    // TypeScript assigns a branded `number` straight to a numeric enum, so
+    // `TagId → JsTag` remains legal with no cast. Widening the node fields
+    // removed the SITES where that mattered; it did not close the hole. What
+    // still stands on it is the `IrDynamicLowering` contract (W6), which is
+    // `JsTag`-typed member by member — `lower.ts` therefore routes every
+    // crossing through `jsTagOf`, whose RUNTIME check is the real guard.
+    const smuggled: JsTag = ABACUS_TAGS.Nat; // still no `as`, still no error
     expect(smuggled as number).toBe(1003);
 
-    // The reverse really is blocked — quoted here so the asymmetry is pinned
-    // rather than asserted.
-    // @ts-expect-error — a JsTag member is not assignable to the branded TagId
+    // @ts-expect-error — and the reverse is still correctly blocked
     const blocked: TagId = 5 as JsTag;
     expect(tagIdValue(blocked)).toBe(5);
   });
+});
 
-  it("W3: the verifier answers from the JS domain, and has no channel to be told otherwise", () => {
-    // `verifyIrFunction(func)` takes exactly one argument, and the `IrFunction`
-    // carries no producer/domain field, so there is NO way to verify IR that
-    // belongs to another domain. verify.ts:673 calls `defaultTagDomain()`.
-    const unboxAbacusNat: IrInstr = {
-      kind: "unbox",
-      value: asValueId(0),
-      jsTag: ABACUS_TAGS.Nat, // typechecks, per W4
-      result: asValueId(1),
-      resultType: irVal({ kind: "f64" }),
-    };
+describe("#3954 phase 3 — W3 (CLOSED): the verifier can be told which domain the IR belongs to", () => {
+  it("verifies an Abacus `unbox` when handed the Abacus domain", () => {
+    // `Nat`'s carrier is `ref`, so a ref-shaped result is what the domain
+    // demands — and the verifier reads that from ABACUS_TAG_DOMAIN, not from
+    // ECMAScript.
+    const fn = unboxAbacus("unboxNat", ABACUS_TAGS.Nat, irVal({ kind: "externref" }));
+    expect(verifyIrFunction(fn, ABACUS_TAG_DOMAIN)).toEqual([]);
+  });
+
+  it("applies the Abacus SINGLETON rule (R2) — `Unit`, not Null/Undefined", () => {
+    // Abacus has exactly one nullary value; ECMAScript has two. Under the
+    // Abacus domain the payload-less rejection names `Unit`, which is a
+    // partition ECMAScript cannot express at all.
+    const fn = unboxAbacus("unboxUnit", ABACUS_TAGS.Unit, irVal({ kind: "i32" }));
+    const errors = verifyIrFunction(fn, ABACUS_TAG_DOMAIN);
+    expect(errors.map((e) => e.message).join("\n")).toMatch(/payload-less partition Unit/);
+  });
+
+  it("applies the Abacus CARRIER rule — `Rune` is an i32 SCALAR, so an f64 `tag` is inconsistent", () => {
+    // The carrier answer is the domain's: JS has no character type at all, so
+    // there is no ECMAScript partition this rule could be borrowed from.
     const fn: IrFunction = {
-      ...irIdentities.next("unboxNat"),
-      params: [{ value: asValueId(0), type: ABACUS_NAT_DYN, name: "n" }],
-      resultTypes: [irVal({ kind: "f64" })],
-      blocks: [
-        {
-          id: asBlockId(0),
-          blockArgs: [],
-          blockArgTypes: [],
-          instrs: [unboxAbacusNat],
-          terminator: { kind: "return", values: [asValueId(1)] },
-        },
-      ],
-      exported: true,
-      valueCount: 2,
+      ...unboxAbacus("unboxRune", ABACUS_TAGS.Rune, irVal({ kind: "i32" })),
     };
+    const withBadTag: IrFunction = {
+      ...fn,
+      blocks: fn.blocks.map((b) => ({
+        ...b,
+        instrs: b.instrs.map((i) => (i.kind === "unbox" ? { ...i, tag: { kind: "f64" as const } } : i)),
+      })),
+    };
+    expect(verifyIrFunction(fn, ABACUS_TAG_DOMAIN)).toEqual([]);
+    expect(
+      verifyIrFunction(withBadTag, ABACUS_TAG_DOMAIN)
+        .map((e) => e.message)
+        .join("\n"),
+    ).toMatch(/inconsistent with partition Rune \(payload kind i32\)/);
+  });
+
+  it("the DEFAULT domain still answers from ECMAScript — a foreign tag is a producer bug", () => {
+    // Omitting the argument is unchanged behaviour, and handing an Abacus
+    // partition to a JS-domain verifier is still a loud failure. That is
+    // correct: it is a domain MISMATCH, not a missing channel.
+    const fn = unboxAbacus("unboxNatDefault", ABACUS_TAGS.Nat, irVal({ kind: "externref" }));
     expect(() => verifyIrFunction(fn)).toThrow(/tag id 1003 is not an ECMAScript partition/);
   });
 
-  it("W3: the verifier accepts the SAME shape when the tag is an ECMAScript one", () => {
+  it("the verifier accepts the SAME shape when the tag is an ECMAScript one", () => {
     // Control, so the failure above is attributable to the domain and not to a
-    // malformed fixture. `JsTag.String` is 5; its carrier is ref-shaped, which
-    // is what the `externref` result declares.
+    // malformed fixture. `JS_TAG_IDS.String` is 5; its carrier is ref-shaped,
+    // which is what the `externref` result declares.
     const fn: IrFunction = {
       ...irIdentities.next("unboxString"),
       params: [{ value: asValueId(0), type: irDynamic(), name: "n" }],
@@ -686,7 +791,7 @@ describe("#3954 phase 3 — W3/W4: the instruction fields and the verifier are J
             {
               kind: "unbox",
               value: asValueId(0),
-              jsTag: 5 as JsTag,
+              tagId: JS_TAG_IDS.String,
               result: asValueId(1),
               resultType: irVal({ kind: "externref" }),
             },
@@ -698,5 +803,65 @@ describe("#3954 phase 3 — W3/W4: the instruction fields and the verifier are J
       valueCount: 2,
     };
     expect(verifyIrFunction(fn)).toEqual([]);
+  });
+});
+
+describe("#3954 phase 3 — W5 (CLOSED): the builder constructs foreign-domain instructions", () => {
+  function abacusBuilder(name: string, results: readonly IrType[]): IrFunctionBuilder {
+    // 5th ctor arg (#3954 W5) — the domain. 4th stays `undefined`: no
+    // allocation-site registry, as for every other test builder.
+    return new IrFunctionBuilder(irIdentities.next(name), results, true, undefined, ABACUS_TAG_DOMAIN);
+  }
+
+  it("`emitUnbox` derives the result ValType from the ABACUS carrier, not from ECMAScript", () => {
+    // `Rune` → i32. Nothing in ECMAScript maps a character to an i32 scalar
+    // (a JS "character" is a 1-length String, ref-shaped), so this answer could
+    // not have come from the JS domain.
+    const rune = abacusBuilder("abacusUnboxRune", [irVal({ kind: "i32" })]);
+    const rp = rune.addParam("c", irDynamic(ABACUS_TAGS.Rune));
+    rune.openBlock();
+    const scalar = rune.emitUnbox(rp, ABACUS_TAGS.Rune);
+    expect(rune.typeOf(scalar)).toEqual(irVal({ kind: "i32" }));
+    rune.terminate({ kind: "return", values: [scalar] });
+    expect(verifyIrFunction(rune.finish(), ABACUS_TAG_DOMAIN)).toEqual([]);
+
+    // `Nat` → ref (declared as `externref` by the plumbing).
+    const nat = abacusBuilder("abacusUnboxNat", [irVal({ kind: "externref" })]);
+    const np = nat.addParam("n", irDynamic(ABACUS_TAGS.Nat));
+    nat.openBlock();
+    const payload = nat.emitUnbox(np, ABACUS_TAGS.Nat);
+    expect(nat.typeOf(payload)).toEqual(irVal({ kind: "externref" }));
+    nat.terminate({ kind: "return", values: [payload] });
+    expect(verifyIrFunction(nat.finish(), ABACUS_TAG_DOMAIN)).toEqual([]);
+  });
+
+  it("`emitUnbox` rejects the ABACUS singleton by its own name", () => {
+    const b = abacusBuilder("abacusUnboxUnit", [irVal({ kind: "i32" })]);
+    const p = b.addParam("u", irDynamic(ABACUS_TAGS.Unit));
+    b.openBlock();
+    expect(() => b.emitUnbox(p, ABACUS_TAGS.Unit)).toThrow(/payload-less partition Unit/);
+  });
+
+  it("`emitTagTest` builds a `tag.test` carrying a foreign partition", () => {
+    const b = abacusBuilder("abacusTagTest", [irVal({ kind: "i32" })]);
+    const p = b.addParam("c", irDynamic(ABACUS_TAGS.Cap));
+    b.openBlock();
+    const flag = b.emitTagTest(p, ABACUS_TAGS.Cap);
+    b.terminate({ kind: "return", values: [flag] });
+    const fn = b.finish();
+    const instr = fn.blocks[0].instrs[0];
+    expect(instr.kind === "tag.test" && tagIdValue(instr.tagId!)).toBe(1006);
+    expect(verifyIrFunction(fn, ABACUS_TAG_DOMAIN)).toEqual([]);
+  });
+
+  it("a builder with NO domain argument still answers from ECMAScript", () => {
+    // The default is `defaultTagDomain()`, so every existing caller is
+    // unchanged — and an Abacus partition handed to a default builder fails
+    // loudly rather than being reinterpreted.
+    const b = new IrFunctionBuilder(irIdentities.next("defaultDomain"), [irVal({ kind: "f64" })], true);
+    const p = b.addParam("x", irDynamic());
+    b.openBlock();
+    expect(b.typeOf(b.emitUnbox(p, JS_TAG_IDS.NumberF64))).toEqual(irVal({ kind: "f64" }));
+    expect(() => b.emitUnbox(p, ABACUS_TAGS.Nat)).toThrow(/tag id 1003 is not an ECMAScript partition/);
   });
 });

@@ -189,9 +189,9 @@ describe("#2949 verifier rules for dynamic", () => {
     expect(errors.some((e) => /box target must be a union or dynamic/.test(e.message))).toBe(true);
   });
 
-  it("R2: unbox on a dynamic operand requires jsTag", () => {
+  it("R2: unbox on a dynamic operand requires tagId", () => {
     const f = fn(
-      "noJsTag",
+      "noTagId",
       [{ type: DYN, name: "x" }],
       [{ kind: "unbox", value: id(0), tag: { kind: "f64" }, result: id(1), resultType: F64 }],
       [id(1)],
@@ -199,27 +199,36 @@ describe("#2949 verifier rules for dynamic", () => {
       2,
     );
     const errors = verifyIrFunction(f);
-    expect(errors.some((e) => /requires jsTag/.test(e.message))).toBe(true);
+    expect(errors.some((e) => /requires tagId/.test(e.message))).toBe(true);
   });
 
-  it("R2: unbox with a payload-less JsTag (Undefined) is rejected", () => {
+  it("R2: unbox with a payload-less partition (Undefined) is rejected", () => {
     const f = fn(
       "unboxUndef",
       [{ type: DYN, name: "x" }],
-      [{ kind: "unbox", value: id(0), jsTag: JsTag.Undefined, result: id(1), resultType: F64 }],
+      [{ kind: "unbox", value: id(0), tagId: JS_TAG_IDS.Undefined, result: id(1), resultType: F64 }],
       [id(1)],
       [F64],
       2,
     );
     const errors = verifyIrFunction(f);
-    expect(errors.some((e) => /payload-less JsTag Undefined/.test(e.message))).toBe(true);
+    expect(errors.some((e) => /payload-less partition Undefined/.test(e.message))).toBe(true);
   });
 
-  it("R2: unbox dynamic with consistent jsTag+tag verifies clean; inconsistent is rejected", () => {
+  it("R2: unbox dynamic with consistent tagId+tag verifies clean; inconsistent is rejected", () => {
     const ok = fn(
       "unboxNum",
       [{ type: DYN, name: "x" }],
-      [{ kind: "unbox", value: id(0), jsTag: JsTag.NumberF64, tag: { kind: "f64" }, result: id(1), resultType: F64 }],
+      [
+        {
+          kind: "unbox",
+          value: id(0),
+          tagId: JS_TAG_IDS.NumberF64,
+          tag: { kind: "f64" },
+          result: id(1),
+          resultType: F64,
+        },
+      ],
       [id(1)],
       [F64],
       2,
@@ -229,20 +238,29 @@ describe("#2949 verifier rules for dynamic", () => {
     const bad = fn(
       "unboxNumBad",
       [{ type: DYN, name: "x" }],
-      [{ kind: "unbox", value: id(0), jsTag: JsTag.NumberF64, tag: { kind: "i32" }, result: id(1), resultType: F64 }],
+      [
+        {
+          kind: "unbox",
+          value: id(0),
+          tagId: JS_TAG_IDS.NumberF64,
+          tag: { kind: "i32" },
+          result: id(1),
+          resultType: F64,
+        },
+      ],
       [id(1)],
       [F64],
       2,
     );
     const errors = verifyIrFunction(bad);
-    expect(errors.some((e) => /inconsistent with jsTag NumberF64/.test(e.message))).toBe(true);
+    expect(errors.some((e) => /inconsistent with partition NumberF64/.test(e.message))).toBe(true);
   });
 
   it("R3: tag.test on dynamic accepts payload-less partitions (Null/Undefined)", () => {
     const f = fn(
       "isNull",
       [{ type: DYN, name: "x" }],
-      [{ kind: "tag.test", value: id(0), jsTag: JsTag.Null, result: id(1), resultType: I32 }],
+      [{ kind: "tag.test", value: id(0), tagId: JS_TAG_IDS.Null, result: id(1), resultType: I32 }],
       [id(1)],
       [I32],
       2,

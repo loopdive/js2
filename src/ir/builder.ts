@@ -41,13 +41,13 @@ import {
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
 // #3954 phase 1 — the builder's payload-shape question ("does this partition
-// have a payload, and of what shape?") is a `TagDomain` question, answered via
-// `producer.ts`. `JsTag` stays as a TYPE only: the `unbox`/`tag.test`
-// instruction fields still carry it (phase 1 converted `IrType`'s dynamic leaf,
-// not the instruction fields).
-import type { JsTag } from "./js-tag.js";
-import { tagIdOfJsTag } from "./js-tag-domain.js";
+// have a payload, and of what shape?") is a `TagDomain` question.
+// #3954 phase 3 (W5) — the builder now HOLDS its domain (constructor arg,
+// defaulting to `producer.ts`'s) instead of reaching for the global inside
+// `emitUnbox`, and `emitUnbox`/`emitTagTest` take a neutral `TagId`. `js-tag.ts`
+// is no longer imported: the builder names no ECMAScript partition.
 import { defaultTagDomain } from "./producer.js";
+import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
 
@@ -101,6 +101,11 @@ export class IrFunctionBuilder {
     // and any non-module-driven construction work without one — emitters then
     // simply leave `alloc` unset, which is inert at lowering.
     private readonly allocRegistry?: AllocSiteRegistry,
+    // #3954 phase 3 (W5): the tag domain the `dynamic` values built here are
+    // interpreted against. Defaults to the producer axis's default
+    // (`producer.ts`), so every existing caller is unchanged; a non-JS producer
+    // passes its own domain instead of the builder reaching for a global.
+    private readonly tagDomain: TagDomain = defaultTagDomain(),
   ) {}
 
   /**
@@ -459,31 +464,34 @@ export class IrFunctionBuilder {
   }
 
   /**
-   * Emit `unbox{value, jsTag}` — read the proven JS partition's payload off
-   * a boxed-any carrier. The caller MUST have proved the tag already (via an
+   * Emit `unbox{value, tagId}` — read the proven partition's payload off a
+   * boxed-any carrier. The caller MUST have proved the tag already (via an
    * earlier `emitTagTest`, or a static refinement); lowering emits a payload
    * read without a runtime re-check.
    *
-   * `jsTag` must be payload-bearing: Null/Undefined are singleton partitions
-   * with no payload (`jsTagUnboxKind === null`, verifier R2) — their identity
-   * is observed via `emitTagTest` alone, so unboxing them is rejected here.
+   * `tagId` must be payload-bearing: a SINGLETON partition has no payload
+   * (`carrierKindOf === null`, verifier R2 — ECMAScript's Null/Undefined) and
+   * its identity is observed via `emitTagTest` alone, so unboxing one is
+   * rejected here.
    *
-   * Result type is the partition's payload ValType per `jsTagUnboxKind`:
-   * `i32` (NumberI32 / Boolean), `f64` (NumberF64), or a ref-shaped carrier
-   * for String/Object/Function. The exact ref ValType is a resolver/consumer
-   * decision at lowering (host: the externref carrier is the value; WasmGC:
-   * String rides `externval`, Object/Function ride `refval` — see slice-3
-   * hazard (b)); the plumbing declares the ref-shaped result as `externref`
-   * and the S5.4 member-read producer refines it where a native ref is
-   * needed.
+   * Result type is the partition's payload ValType per the DOMAIN's
+   * `carrierKindOf`: `i32`, `f64`, or a ref-shaped carrier. The exact ref
+   * ValType is a resolver/consumer decision at lowering (host: the externref
+   * carrier is the value; WasmGC: String rides `externval`, Object/Function
+   * ride `refval` — see slice-3 hazard (b)); the plumbing declares the
+   * ref-shaped result as `externref` and the S5.4 member-read producer refines
+   * it where a native ref is needed.
+   *
+   * #3954 phase 3 (W5) — takes a neutral `TagId` and asks `this.tagDomain`,
+   * rather than taking `JsTag` and computing the ValType from the JS domain
+   * reached as a global. A JS producer passes `JS_TAG_IDS.X`.
    */
-  emitUnbox(value: IrValueId, jsTag: JsTag): IrValueId {
-    const domain = defaultTagDomain();
-    const tagId = tagIdOfJsTag(jsTag);
+  emitUnbox(value: IrValueId, tagId: TagId): IrValueId {
+    const domain = this.tagDomain;
     const payload = domain.carrierKindOf(tagId);
     if (payload === null) {
       throw new Error(
-        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${domain.nameOf(tagId)} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
+        `IrFunctionBuilder: emitUnbox with payload-less partition ${domain.nameOf(tagId)} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
       );
     }
     const payloadVal: ValType =
@@ -491,25 +499,25 @@ export class IrFunctionBuilder {
     const resultType = irVal(payloadVal);
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
-    this.pushInstr({ kind: "unbox", value, jsTag, result, resultType });
+    this.pushInstr({ kind: "unbox", value, tagId, result, resultType });
     return result;
   }
 
   /**
-   * Emit `tag.test{value, jsTag}` — does the carrier's runtime tag match the
-   * JS partition? Result is `i32` (1 if it matches, else 0).
+   * Emit `tag.test{value, tagId}` — does the carrier's runtime tag match the
+   * partition? Result is `i32` (1 if it matches, else 0).
    *
-   * `jsTag` may be ANY partition, including the payload-less Null/Undefined
-   * (testing for them is the point — verifier R3). Per the V2 numeric-class
-   * invariant the two number partitions are ONE class, so `tag.test` against
-   * either `NumberI32` or `NumberF64` lowers to the same numeric-class test
-   * in both backends (see slice-3 note 3 in the #2949 issue file).
+   * `tagId` may be ANY partition, including a payload-less singleton (testing
+   * for them is the point — verifier R3). Under the JS domain the V2
+   * numeric-class invariant applies: the two number partitions are ONE class,
+   * so `tag.test` against either `NumberI32` or `NumberF64` lowers to the same
+   * numeric-class test in both backends (slice-3 note 3 in the #2949 issue).
    */
-  emitTagTest(value: IrValueId, jsTag: JsTag): IrValueId {
+  emitTagTest(value: IrValueId, tagId: TagId): IrValueId {
     const resultType = irVal({ kind: "i32" });
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
-    this.pushInstr({ kind: "tag.test", value, jsTag, result, resultType });
+    this.pushInstr({ kind: "tag.test", value, tagId, result, resultType });
     return result;
   }
 

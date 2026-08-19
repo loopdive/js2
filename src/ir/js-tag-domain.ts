@@ -77,14 +77,19 @@ export function tagIdOfJsTag(tag: JsTag): TagId {
 
 /**
  * Bridge OUT of the domain: an opaque tag id back to the `JsTag` the WasmGC
- * lowering and the `unbox`/`tag.test` instruction fields still speak.
+ * lowering still speaks.
  *
- * Phase 1 leaves the instruction-level `jsTag` fields (`nodes.ts` `unbox` /
- * `tag.test`) and the `IrDynamicLowering` handle contract (`backend/handles.ts`,
- * frozen #3029-S1) typed in `JsTag`; only `IrType`'s dynamic leaf moved to
- * `TagId`. This function is the single conversion at that remaining boundary.
- * Throws on an id from another domain rather than silently emitting a bogus
- * `$AnyValue.tag` constant.
+ * Phase 1 moved `IrType`'s dynamic leaf to `TagId`; #3954 phase 3 (W4/W5) moved
+ * the `unbox`/`tag.test` instruction fields and the builder APIs that construct
+ * them. What remains typed in `JsTag` is the `IrDynamicLowering` handle contract
+ * (`backend/handles.ts`, frozen #3029-S1) — W2/W6 — so this function is the
+ * single conversion at that ONE remaining boundary, called from `lower.ts`'s
+ * box / unbox / tag.test dynamic arms.
+ *
+ * The runtime check is load-bearing beyond diagnostics: `TagId` is a branded
+ * `number` and TypeScript assigns a branded number straight to a numeric enum,
+ * so `TagId → JsTag` has NO compile-time barrier. This throw is the only thing
+ * standing between a foreign partition and a bogus `$AnyValue.tag` constant.
  */
 export function jsTagOf(tag: TagId): JsTag {
   const n = tag as number;

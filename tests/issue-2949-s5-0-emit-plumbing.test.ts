@@ -33,10 +33,10 @@ import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
-import { JsTag } from "../src/ir/js-tag.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
 // refinement is named through the JS tag domain, not the enum.
-import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
+import { JS_TAG_DOMAIN, JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
+import type { TagId } from "../src/ir/tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -192,18 +192,20 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
     expect(verifyIrFunction(b.finish())).toEqual([]);
   });
 
-  it("emitUnbox result IrType follows jsTagUnboxKind (i32 / f64 / ref→externref)", () => {
+  it("emitUnbox result IrType follows the DOMAIN's carrier kinds (i32 / f64 / ref→externref)", () => {
     // NumberF64 → f64, NumberI32 / Boolean → i32, String/Object/Function → externref.
-    const cases: Array<[JsTag, IrType]> = [
-      [JsTag.NumberF64, F64],
-      [JsTag.NumberI32, I32],
-      [JsTag.Boolean, I32],
-      [JsTag.String, irVal({ kind: "externref" })],
-      [JsTag.Object, irVal({ kind: "externref" })],
-      [JsTag.Function, irVal({ kind: "externref" })],
+    // #3954 W5 — the builder takes a neutral `TagId` and asks its `TagDomain`;
+    // the JS producer names its partitions via `JS_TAG_IDS`.
+    const cases: Array<[TagId, IrType]> = [
+      [JS_TAG_IDS.NumberF64, F64],
+      [JS_TAG_IDS.NumberI32, I32],
+      [JS_TAG_IDS.Boolean, I32],
+      [JS_TAG_IDS.String, irVal({ kind: "externref" })],
+      [JS_TAG_IDS.Object, irVal({ kind: "externref" })],
+      [JS_TAG_IDS.Function, irVal({ kind: "externref" })],
     ];
     for (const [tag, expected] of cases) {
-      const name = `unbox_${JsTag[tag]}`;
+      const name = `unbox_${JS_TAG_DOMAIN.nameOf(tag)}`;
       const b = new IrFunctionBuilder(identities.next(name), [expected], true);
       const x = b.addParam("x", F64);
       b.openBlock();
@@ -212,13 +214,19 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
       expect(b.typeOf(u)).toEqual(expected);
       b.terminate({ kind: "return", values: [u] });
       const node = b.finish().blocks[0].instrs[1];
-      expect(node).toMatchObject({ kind: "unbox", value: d, jsTag: tag, resultType: expected });
+      expect(node).toMatchObject({ kind: "unbox", value: d, tagId: tag, resultType: expected });
     }
   });
 
   it("emitTagTest always yields an i32 node for ANY partition (incl. singletons)", () => {
-    for (const tag of [JsTag.NumberF64, JsTag.String, JsTag.Object, JsTag.Null, JsTag.Undefined]) {
-      const name = `tagtest_${JsTag[tag]}`;
+    for (const tag of [
+      JS_TAG_IDS.NumberF64,
+      JS_TAG_IDS.String,
+      JS_TAG_IDS.Object,
+      JS_TAG_IDS.Null,
+      JS_TAG_IDS.Undefined,
+    ]) {
+      const name = `tagtest_${JS_TAG_DOMAIN.nameOf(tag)}`;
       const b = new IrFunctionBuilder(identities.next(name), [I32], true);
       const x = b.addParam("x", F64);
       b.openBlock();
@@ -227,7 +235,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
       expect(b.typeOf(t)).toEqual(I32);
       b.terminate({ kind: "return", values: [t] });
       const node = b.finish().blocks[0].instrs[1];
-      expect(node).toMatchObject({ kind: "tag.test", value: d, jsTag: tag, resultType: I32 });
+      expect(node).toMatchObject({ kind: "tag.test", value: d, tagId: tag, resultType: I32 });
     }
   });
 
@@ -244,8 +252,8 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
     const x = b.addParam("x", F64);
     b.openBlock();
     const d = b.emitBox(x, DYN);
-    expect(() => b.emitUnbox(d, JsTag.Null)).toThrow(/payload-less/);
-    expect(() => b.emitUnbox(d, JsTag.Undefined)).toThrow(/payload-less/);
+    expect(() => b.emitUnbox(d, JS_TAG_IDS.Null)).toThrow(/payload-less/);
+    expect(() => b.emitUnbox(d, JS_TAG_IDS.Undefined)).toThrow(/payload-less/);
   });
 });
 
@@ -259,13 +267,13 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
  * the value round-trips; when it does not (`t==0`) the guard returns 0. This
  * single function exercises ALL THREE builder methods and USES every value.
  */
-function boxTagUnboxF64(name: string, tag: JsTag): IrFunction {
+function boxTagUnboxF64(name: string, tag: TagId): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const x = b.addParam("x", F64);
   b.openBlock();
   const d = b.emitBox(x, DYN);
   const t = b.emitTagTest(d, tag);
-  const u = b.emitUnbox(d, JsTag.NumberF64);
+  const u = b.emitUnbox(d, JS_TAG_IDS.NumberF64);
   const zero = b.emitConst({ kind: "f64", value: 0 }, F64);
   const r = b.emitSelect(t, u, zero, F64);
   b.terminate({ kind: "return", values: [r] });
@@ -278,7 +286,7 @@ function boxUnboxBool(name: string): IrFunction {
   const x = b.addParam("x", I32);
   b.openBlock();
   const d = b.emitBox(x, irDynamic(JS_TAG_IDS.Boolean));
-  const u = b.emitUnbox(d, JsTag.Boolean);
+  const u = b.emitUnbox(d, JS_TAG_IDS.Boolean);
   b.terminate({ kind: "return", values: [u] });
   return b.finish();
 }
@@ -289,15 +297,15 @@ function boxUnboxI32(name: string): IrFunction {
   const x = b.addParam("x", I32);
   b.openBlock();
   const d = b.emitBox(x, DYN);
-  const u = b.emitUnbox(d, JsTag.NumberI32);
+  const u = b.emitUnbox(d, JS_TAG_IDS.NumberI32);
   b.terminate({ kind: "return", values: [u] });
   return b.finish();
 }
 
 function roundTripFns(): IrFunction[] {
   return [
-    boxTagUnboxF64("matchNumber", JsTag.NumberF64), // t==1 → returns x
-    boxTagUnboxF64("mismatchString", JsTag.String), // t==0 → returns 0
+    boxTagUnboxF64("matchNumber", JS_TAG_IDS.NumberF64), // t==1 → returns x
+    boxTagUnboxF64("mismatchString", JS_TAG_IDS.String), // t==0 → returns 0
     boxUnboxBool("boolRoundTrip"),
     boxUnboxI32("i32RoundTrip"),
   ];

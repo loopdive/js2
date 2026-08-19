@@ -51,12 +51,25 @@
  * synthetic non-JS domain. Result: **this seam is real for the type lattice
  * and NOMINAL for every operation on a dynamic value.** A foreign domain's
  * partitions ride an `IrType` through the production lowerer and execute on
- * the bytecode VM, but `unbox`/`tag.test`/`box`-with-a-proven-partition are
- * still `JsTag` end to end — the node fields (`nodes.ts`), the verifier
- * (`verify.ts` reads `defaultTagDomain()` and has no channel to be told
+ * the bytecode VM, but `unbox`/`tag.test`/`box`-with-a-proven-partition were
+ * `JsTag` end to end — the node fields (`nodes.ts`), the verifier
+ * (`verify.ts` read `defaultTagDomain()` and had no channel to be told
  * otherwise), the builder API and the frozen `IrDynamicLowering` contract.
  * The six walls, with file:line and what closing each costs, are in the
- * "Phase 3 (the falsification)" section of the issue file. Do not read this
+ * "Phase 3 (the falsification)" section of the issue file.
+ *
+ * ## What the phase-3 FOLLOW-UP closed
+ *
+ * W4, W5 and W3: the `unbox`/`tag.test` fields are a neutral `tagId: TagId`,
+ * `IrFunctionBuilder` HOLDS a domain (ctor arg, defaulting to `producer.ts`'s)
+ * and answers carrier questions from it, and `verifyIrFunction(func, domain?)`
+ * takes the domain and threads it to the per-instruction rules. So a foreign
+ * partition can now be NAMED, BUILT and VERIFIED against its own domain.
+ *
+ * **Still open**: LOWERING a dynamic value (W2/W6 — the #3029-S1-frozen
+ * `IrDynamicLowering` contract is `JsTag`-typed member by member, so `lower.ts`
+ * crosses through `jsTagOf` and throws on a foreign id) and the bytecode
+ * backend's lack of a boxed-value representation (W1, #1584). Do not read this
  * interface's existence as evidence that a second producer would work today.
  */
 

@@ -421,6 +421,11 @@ fixing on a test-writing slice would be scope creep with a latent bug):
   the domain (defaulting to `defaultTagDomain()`) rather than reaching for the
   global. That alone does **not** unblock the falsification — W4's field type
   still forces `JsTag` — but it is the prerequisite for W3.
+  *(Done for `verifyIrFunction` and `IrFunctionBuilder` in the phase-3 follow-up
+  below. `lowerIrFunctionBody` still does not take one, deliberately: its only
+  domain question is the `TagId → JsTag` crossing into the frozen
+  `IrDynamicLowering` contract, so giving it a domain parameter before W2/W6
+  would add a channel nothing could yet use.)*
 
 **What closing this would cost**, in dependency order: widen `unbox`/`tag.test`'s
 `jsTag` to `TagId` (W4) → thread the domain through verify/builder (W3, W5) →
@@ -429,6 +434,80 @@ widen `IrDynamicLowering` to `TagId` and move the `jsTagOf` crossing *into*
 edits a contract frozen by #3029-S1 and is the "larger, separately-reviewable
 move" phase 1 named. W1 is orthogonal and would be closed by giving the bytecode
 VM a boxed-value representation, which is #1584's business, not this issue's.
+
+### Phase 3 follow-up — W4, W5 and W3 CLOSED (2026-08-19)
+
+The first three steps of that dependency order are done. **W2, W6 and W1 are
+untouched and remain open**, for the reasons the table already gives.
+
+| wall | before | after |
+| --- | --- | --- |
+| W4 | `unbox.jsTag` / `tag.test.jsTag`, typed `JsTag` (`nodes.ts`) | `unbox.tagId` / `tag.test.tagId`, typed `TagId`. `nodes.ts` no longer imports `js-tag.ts` **at all** — not even as a type. |
+| W5 | `emitUnbox(value, jsTag: JsTag)`, result ValType computed from `defaultTagDomain()` reached inside the method | `emitUnbox(value, tagId: TagId)` / `emitTagTest(value, tagId: TagId)`, answering from a `TagDomain` the builder **holds** (5th ctor arg, default `defaultTagDomain()`) |
+| W3 | `verifyIrFunction(func)`, `defaultTagDomain()` at the point of use | `verifyIrFunction(func, domain = defaultTagDomain())`, threaded → `verifyBlock` → `verifyInstrStructure` |
+
+**Renamed, not just re-typed — and the rename was free.** The brand blocks
+`JsTag → TagId`, so *every* construction site had to change the moment the field
+type widened; renaming `jsTag` → `tagId` on those same lines cost no extra sites.
+Leaving the name would have kept an ECMAScript word on a core-neutral node while
+the type underneath said otherwise, which is precisely the kind of half-closed
+seam #3954 exists to remove.
+
+**The one-directional brand is STILL OPEN at the language level — the widening
+made it unreachable at these three sites, it did not close it.** TypeScript
+still assigns a branded `number` straight to a numeric enum, so `TagId → JsTag`
+compiles with no cast anywhere. What now stands on that is the `IrDynamicLowering`
+contract (W6): `lower.ts` routes each crossing through `jsTagOf`, whose **runtime**
+check is the actual guard. The phase-3 test pins this explicitly rather than
+letting the closed walls imply it is gone. Closing it at the type level would
+mean branding `JsTag` too (`js-tag.ts` is ABI — the enum's numeric values are
+`$AnyValue.tag` constants asserted by tests, so it must stay a numeric enum) or
+making `TagId` not structurally a `number` (an opaque object/symbol, which costs
+the free `===` comparisons the lattice helpers and every `switch (tagIdValue(t))`
+rely on). Neither is worth it while W6 is the only consumer; the honest answer is
+that W2/W6 removes the last crossing, and *that* closes it by deletion.
+
+**Behaviour-neutral, measured not assumed.** A 180-compile corpus (the 9 repo
+example files × 5 option modes + 13 hand-written dynamic-path snippets × 5 modes;
+153 produce a binary) was compiled on the base commit and again after the change:
+**every sha256 identical, byte for byte.** The corpus was checked to actually
+reach the changed instructions — an instrumented run counts 3 `emitUnbox`,
+33 `emitTagTest` and 12 refined `box`-to-dynamic constructions, so the paths are
+exercised rather than merely present. (`unbox` is reachable from the JS producer
+at exactly ONE site — the standalone primitive-wrapper `instanceof` helper,
+`from-ast.ts:11348` — and only under `target: "standalone", fast: true`.)
+
+**Gate counters.** `check:jstag-seam` went **`valueImports 2 → 1`, `refs 42 → 38`**
+— `from-ast.ts` drained completely, because its four `JsTag.X` reads became
+`JS_TAG_IDS.X`; `integration.ts` (the WasmGC lowering, which emits these integers
+as `$AnyValue.tag`) is now the sole remaining consumer. Banked with
+`--update-on-decrease`. `check:ir-kind-neutrality` verdict totals are **unchanged**
+(53 neutral / 26 js / 3 unresolved, 56 core / 26 dialect, 8 residuals); the
+`unbox` evidence citation was retargeted from `readonly jsTag?: JsTag;` to
+`readonly tagId?: TagId;` and the `box`/`unbox`/`tag.test` residual prose now
+names the *remaining* residual (the `TagId → JsTag` crossing in the lowering
+pass) instead of the operand type, which is no longer ECMAScript.
+
+**Two corrections to this issue's own working assumptions, both verified on the
+base commit rather than inferred:**
+
+- `tests/issue-2949` carries **7** pre-existing failures, not the 2 that had been
+  named. `issue-2949-s5-5-dyn-arith.test.ts` has 2, and
+  `issue-2949-slice2-dynamic-producers.test.ts` (3) and
+  `issue-2949-slice3b-any-dynamic.test.ts` (2) have the rest. All 7 reproduce on
+  the base with none of this work applied. They are unrelated to the tag seam and
+  want their own look; the figure is recorded here so the next slice does not
+  mistake a stale baseline for a regression it caused.
+- **No CI gate typechecks `tests/`.** `tsconfig.json` sets
+  `include: ["src/**/*.ts"]` and `exclude: [… "tests"]`, `tsconfig.ts7.json`
+  extends it without overriding either, and there is no `typecheck:tests` script.
+  The consequence for this issue specifically: the `@ts-expect-error` markers in
+  `tests/issue-3954-phase3-nonjs-domain.test.ts` that pin the brand's
+  directionality are **documentation, not an enforced assertion** — an
+  `@ts-expect-error` that no lane compiles cannot fail when the thing it expects
+  stops erroring. If the brand assertion is meant to be load-bearing (and W4's
+  finding is the argument that it should be), it needs a lane that actually runs.
+  Out of scope here; recorded so it is not assumed.
 
 ## Non-goals
 

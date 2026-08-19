@@ -258,22 +258,28 @@ const VERDICTS = {
       "JS involvement, so it is not a JS-only operation and moving it to the dialect would be wrong.",
     evidence: [{ file: NODES, quote: "ONE boxing concept in the IR" }],
     residual:
-      'The JS content is TYPE-LEVEL, via `toType.kind === "dynamic"` and `IrType { kind: "dynamic"; ' +
-      "tag?: JsTag }`. `JsTag` is defined as the value's ECMAScript type partition. That is exactly " +
-      "#3954 phase 1's `TagDomain` seam — parameterize the tag domain and this residual disappears " +
-      "without any declaration moving.",
+      'The JS content is TYPE-LEVEL, via `toType.kind === "dynamic"` and the dynamic leaf\'s ' +
+      "`tag?: TagId` refinement — #3954 phase 1's `TagDomain` seam, not a dialect question. Phase 1 " +
+      "made the refinement neutral at the declaration; what is still ECMAScript is the LOWERING, " +
+      "which crosses `TagId -> JsTag` (`lower.ts` `jsTagOf`) to meet the #3029-S1-frozen " +
+      "`IrDynamicLowering` contract. That is #3954 phase 3's W2/W6, and it moves no declaration.",
   },
   unbox: {
     verdict: "neutral",
     why: "Payload extraction from a tagged carrier after the tag is proven; the union operand form has no JS content.",
-    evidence: [{ file: NODES, quote: "readonly jsTag?: JsTag;" }],
-    residual: "Same as `box`: the `jsTag?: JsTag` operand is #3954 phase 1's `TagDomain`, not a dialect question.",
+    evidence: [{ file: NODES, quote: "readonly tagId?: TagId;" }],
+    residual:
+      "Same as `box`. #3954 phase 3 (W4/W5) made the operand itself neutral — the field is " +
+      "`tagId?: TagId` and `IrFunctionBuilder` asks a `TagDomain` — so the residual is now only the " +
+      "`TagId -> JsTag` crossing in the lowering pass (W2/W6), which is a seam question.",
   },
   "tag.test": {
     verdict: "neutral",
     why: "Runtime tag discriminator over a tagged carrier; serves scalar unions as well as the dynamic carrier.",
     evidence: [{ file: NODES, quote: "Runtime tag discriminator" }],
-    residual: "Same as `box`: the `jsTag?: JsTag` operand is #3954 phase 1's `TagDomain`, not a dialect question.",
+    residual:
+      "Same as `unbox`: the operand is a neutral `tagId?: TagId` since #3954 phase 3 (W4/W5); the " +
+      "residual is the `TagId -> JsTag` crossing in the lowering pass (W2/W6), a seam question.",
   },
 
   // ── core: strings ────────────────────────────────────────────────────────
