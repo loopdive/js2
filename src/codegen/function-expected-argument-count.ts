@@ -82,10 +82,25 @@ export function expectedArgumentCountOfParams(params: readonly (ts.ParameterDecl
  * expected (see {@link expectedArgumentCountOfParams}).
  */
 export function expectedArgumentCountOfSignature(sig: ts.Signature): number {
+  // Prefer the DECLARATION's own FormalsList. §15.1.5 counts a syntactic
+  // production, and a resolved signature is not one: for plain JS, TypeScript's
+  // inference SYNTHESIZES a trailing parameter on any function that mentions
+  // `arguments` —
+  //
+  //     function f(x, y) { return arguments; }
+  //     // sig.parameters → x, y, args        ← `args` is not in the source
+  //     f.length  // answered 3, spec 2
+  //
+  // and that third symbol has no `valueDeclaration`, so the fallback below
+  // counts it as an ordinary required formal. Reading `sig.declaration`
+  // sidesteps the question: it is the node the author (or the `.d.ts`) wrote,
+  // so a library signature is measured exactly as before.
+  const decl = sig.declaration;
+  if (decl !== undefined && !ts.isJSDocSignature(decl)) return expectedArgumentCountOfParams(decl.parameters);
   return expectedArgumentCountOfParams(
     sig.parameters.map((p) => {
-      const decl = (p as ts.Symbol).valueDeclaration;
-      return decl !== undefined && ts.isParameter(decl) ? decl : undefined;
+      const decl2 = (p as ts.Symbol).valueDeclaration;
+      return decl2 !== undefined && ts.isParameter(decl2) ? decl2 : undefined;
     }),
   );
 }

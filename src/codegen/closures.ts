@@ -125,6 +125,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
 } from "./closures/funcref-wrapper-types.js";
 import { recordLiftedCaptureSlots as recordCaptureSlots } from "./closures/capture-source-slot.js";
+import { EXTERNREF_PARAM, setAccessorParamIsDynamic } from "./closures/set-accessor-param.js";
 import { collectTransitiveCaptureNames } from "./function-declaration-observation.js";
 import { prepareLiftedFrameDeclarations } from "./closures/lifted-declaration-hoisting.js";
 export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
@@ -1690,7 +1691,7 @@ export function computeClosureWrapperSig(
   const arrowParams: ValType[] = [];
   for (const p of runtimeParameters(arrow)) {
     const paramType = ctx.checker.getTypeAtLocation(p);
-    let wasmType = resolveWasmType(ctx, paramType);
+    let wasmType = setAccessorParamIsDynamic(arrow) ? EXTERNREF_PARAM : resolveWasmType(ctx, paramType);
     // An unannotated JavaScript parameter whose default is object-valued is
     // still structurally open: callers may supply any property bag. TypeScript
     // infers the default's exact closed shape, but using that shape as the Wasm

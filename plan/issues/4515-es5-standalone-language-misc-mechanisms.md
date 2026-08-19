@@ -22,6 +22,12 @@ loc-budget-allow:
   # IMPORT LINE ONLY (+1).
   - src/codegen/closures.ts
 related: [2668, 1888, 3626, 2666]
+loc-budget-allow:
+  # One import line. The set-accessor parameter predicate + its rationale live
+  # in the new leaf module src/codegen/closures/set-accessor-param.ts; the
+  # widening itself replaces an existing line in computeClosureWrapperSig, so
+  # this is the import and nothing else.
+  - src/codegen/closures.ts
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms
