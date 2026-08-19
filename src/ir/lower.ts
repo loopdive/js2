@@ -1819,6 +1819,7 @@ export function lowerIrFunctionBody<S, Slot>(
           // explicit crossing the box arm above uses, and throws on a foreign
           // id rather than reading a bogus partition. Moving this crossing into
           // `integration.ts` is W2/W6 and is deliberately NOT done here.
+          // pushraw-ok(#2949): pre-existing hatch — emitUnbox returns an opaque Instr[] by contract
           for (const op of dyn.emitUnbox(jsTagOf(instr.tagId))) emitter.pushRaw(out, op);
           return;
         }
