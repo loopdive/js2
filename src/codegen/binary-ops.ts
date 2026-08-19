@@ -44,6 +44,7 @@ import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { isLogicalAssignNamedEvalNameRead, resolveStructName, resolveStructNameForExpr } from "./property-access.js";
 import { compileNullishObservedExpression } from "./property-nullish-read.js";
+import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import {
   emitAnyEqFromExternTemps,
@@ -2050,10 +2051,9 @@ export function compileBinaryExpression(
     }
   }
 
-  if (!leftType || !rightType) return null;
+  if (!leftType || !rightType) return foldVoidOperandEquality(fctx, op, leftType, rightType, leftTsType, rightTsType);
 
-  // (#4208 S1) §7.2.16 step 1, then the i32↔f64 promotion — one helper, because
-  // the ORDER is the fix: promoting first erases Type() for a Boolean operand.
+  // (#4208 S1) §7.2.16 step 1 then the i32↔f64 promotion — ORDER is the fix.
   const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
   if (promoted.folded !== undefined) return promoted.folded;
   leftType = promoted.leftType;
