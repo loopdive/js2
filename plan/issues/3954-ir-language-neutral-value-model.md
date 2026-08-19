@@ -262,6 +262,54 @@ win; its surface is 58 `JsTag.` member reads in 7 files (see the phase-1
 notes: the earlier "24 files" figure counted files merely mentioning the name,
 including an unrelated same-named type in `src/checker/oracle.ts`).
 
+**Phase 2, remaining move plan — settled 2026-08-19 by #4551's gate.**
+
+`scripts/check-ir-kind-neutrality.mjs` now carries a per-kind verdict with a
+cited `{file, quote}` for each, re-verified every run (a rotted citation fails
+rather than reporting a stale answer). Population pinned at **82** = 78
+`IrInstr` arms + 4 `IrTerminator` arms; the 3 symbolic-reference kinds
+(`IrFuncRef`/`IrGlobalRef`/`IrTypeRef`) are excluded and the 85 `readonly kind:`
+fields are reconciled explicitly. Current output: **53 neutral · 26 js · 3
+unresolved**, 59 in core / 23 in dialect.
+
+That collapses the seven contested families above to a **three-kind move list**
+and two open questions. Most of the "deliberately NOT moved" set came back
+**neutral**, which is the outcome worth recording — the intuitive reading was
+wrong more often than right, exactly as the spot-checks predicted:
+
+| family | verdict | what settled it |
+| --- | --- | --- |
+| `vec.*` (5) | neutral | the IR **refuses** holes, and `src/codegen/array-holes.ts` has no importer anywhere under `src/ir/` — asserted as a standing absence check, not a one-time grep |
+| `class.*` (8) | neutral | nominal, closed-world, tag-based `instanceof`, allocate-then-init — not ECMAScript's `[[Construct]]`/prototype protocol |
+| `object.*` (3) | neutral | declared record layout; the open-map half is `dyn.member_*`, already in the dialect |
+| `box`/`unbox`/`tag.test` (3) | neutral | the residual is the tag vocabulary itself, which phase 1's `TagDomain` now owns — as #4551 anticipated |
+| `coerce.to_externref` (1) | neutral | host-boundary, not language |
+| `string.*` (6) | 3 neutral / 2 js / 1 unresolved | the JS shape is in the **operation set**, not the encoding (`IrStringEncoding` already parameterizes that) |
+| `forof.vec` / `forof.string` (2) | neutral / js | they are not the same call |
+
+**Slice A — the move list, exactly 3 kinds**: `string.char_at`,
+`string.char_code_at`, `forof.string` → `src/ir/dialect/js.ts`. Same shape as
+the first slice: declaration moves plus re-exports, `import type` only, no
+importer changes. Acceptance is the gate's own counter — `jsInCore` **3 → 0**,
+verdict totals otherwise unchanged, typecheck clean, `tests/ir-*.test.ts` at
+the same 2 pre-existing failures.
+
+**Slice B — the payload-vocabulary leak**, which is a shape neither this issue
+nor #4551's contested list anticipated. `binary` and `intrinsic` are
+**unresolved**, and no declaration move fixes them: the *interface* is neutral
+while the *payload enum* is ECMAScript-tainted. `IrBinop` carries six `js.*`
+ToInt32 composites; `IntrinsicId` carries the `math.*` set. A dialect rule
+phrased over declarations passes both R1 and R2 while the leak sits inside the
+operand vocabulary. The unit of the fix is therefore the **enum**, not the
+file — either a dialect-tagged op namespace (which is the same open-namespace
+question #4552 raises for `instrKind` in the schema) or a split enum with the
+JS composites behind the dialect. That is a design call, not a mechanical move,
+and it belongs to #4552's reviewer.
+
+**Still open, one policy call**: `string.len` — code units or code points is a
+language decision, not a placement one, and the gate records it `unresolved`
+rather than guessing.
+
 **This slice was implemented by the Opus lane, not by this issue's owning
 lane.** `backend-agnostic-ir` is Lane B (fable) per
 `plan/method/lane-partition.md`; the cross-lane implementation was directed by

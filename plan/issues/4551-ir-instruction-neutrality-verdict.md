@@ -1,9 +1,10 @@
 ---
 id: 4551
 title: "Settle the neutral/ECMAScript split per IR instruction kind, so #3954's dialect boundary is drawn on evidence rather than an approximate count"
-status: blocked
+status: done
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-19
+completed: 2026-08-19
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -11,9 +12,8 @@ task_type: analysis
 area: ir
 language_feature: compiler-internals
 goal: backend-agnostic-ir
-sprint: Backlog
+sprint: current
 parent: 3954
-blocked_by: 4552
 horizon: m
 model: fable
 related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
@@ -28,10 +28,12 @@ related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
 ---
 # #4551 — A per-kind neutrality verdict for #3954 phase 2
 
-**Review gate:** needs an architect review from the **Fable lane** (Lane B owns
-`backend-agnostic-ir`, `plan/method/lane-partition.md`) before dispatch. That
-review is tracked as **#4552**. `status: blocked` until it lands. It may well be folded into #3954 outright rather
-than run separately; that is the reviewer's call.
+**Review gate:** the deliverable landed on 2026-08-19 (see Outcome), so this
+issue is `done`. The **Fable-lane architect review** it was blocked on is not
+waived — it moved to a post-merge review, folded into **#4552** along with
+#3954 phase 1, on the same project-lead call that un-drafted PR #4644. What
+that review can still change is the verdicts and the enforcement shape, not
+whether this work happens.
 
 **This is a sub-issue of #3954** ("Name the IR's ambient ECMAScript
 assumptions: factor the JS value model behind a tag-domain seam"), not a rival

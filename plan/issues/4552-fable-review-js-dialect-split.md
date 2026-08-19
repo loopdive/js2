@@ -4,7 +4,7 @@ title: "Fable-lane architect review: the #3954 phase 2 dialect split was impleme
 status: ready
 sprint: current
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-19
 priority: high
 horizon: s
 feasibility: easy
@@ -97,8 +97,10 @@ concern rather than a language one, which is the same argument that kept
 That order was **inverted** on a cost-of-delay argument: phase 2 is
 O(instruction kinds), `IrInstr` arms went 51 → 78 in the three months to
 2026-08-01, and `ir-full-coverage` is expected to add ~40 more, whereas phase
-1's surface (58 `JsTag` references across 24 files) is not growing the same
-way. See #4551 for the series.
+1's surface (**58 `JsTag.` member reads in 7 files** — an earlier "24 files"
+figure counted files merely *mentioning* the name, several of them
+`src/checker/oracle.ts`'s unrelated same-named string union) is not growing the
+same way. See #4551 for the series.
 
 The reviewer owns whether that inversion is right. A specific risk to weigh:
 phase 1 may want `box`/`unbox`/`tag.test` placed differently than a
@@ -118,6 +120,65 @@ corrected; confirm the corrections rather than the originals.
   is an ordinary length write, and the string primitives are parameterized by
   `IrStringEncoding`. #3954's "the backend half is the already-neutral half"
   holds.
+
+### 5. Also in scope now — #4551's gate and #3954 phase 1
+
+**Scope widened 2026-08-19.** When this issue was filed it asked for a review of
+the dialect split alone. Two further pieces of Lane B territory have since been
+implemented by the Opus lane on the same branch, and they need the same owner's
+verdict rather than a second review issue:
+
+- **#4551's `scripts/check-ir-kind-neutrality.mjs`** + baseline, in `quality`.
+  It pins the population at 82 (78 `IrInstr` arms + 4 `IrTerminator` arms, the
+  3 symbolic-reference kinds excluded and the disputed 85 `readonly kind:`
+  fields reconciled every run) and assigns every kind a `neutral`/`js`/
+  `unresolved` verdict with a cited `{file, quote}` the gate re-verifies.
+  Current: 53 / 26 / 3.
+
+  The question for the reviewer is whether **evidence-cited verdicts in a
+  committed baseline** are the right enforcement shape, or whether a verdict
+  belongs in the type system (a marker on the declaration) where it cannot
+  drift from the code at all. The gate's answer to drift is a citation check;
+  that is weaker than a compiler error and stronger than a comment.
+
+- **#3954 phase 1, the `TagDomain` seam** — `src/ir/tag-domain.ts` (zero
+  imports), `src/ir/js-tag-domain.ts`, `src/ir/producer.ts`, and
+  `scripts/check-jstag-seam.mjs` in `quality`. `IrType`'s dynamic leaf is now a
+  **branded** `TagId`, so the core cannot name an ECMAScript partition.
+  Measured 4 files / 4 value imports / 57 refs → 2 / 2 / 42; both survivors are
+  deliberate (`from-ast.ts` is the JS producer, `integration.ts` emits
+  `$AnyValue.tag` constants at the wasm boundary).
+
+  Three judgement calls to confirm or overrule:
+  1. `producer.ts` is a **pure lookup**, deliberately not a mutable
+     module-level slot — a compilation unit names its producer rather than
+     installing one globally. #3954's phase-1 text says "wire it at the single
+     place the producer is chosen", which reads either way.
+  2. The **instruction-level** `jsTag` fields (`unbox`, `tag.test`) and the
+     `IrDynamicLowering` handle contract (`backend/handles.ts`, frozen by
+     #3029-S1) still speak `JsTag`. `jsTagOf` / `tagIdOfJsTag` are the two
+     explicit crossings. Widening the seam to the frozen backend contract was
+     left as a separately-reviewable move — is that the right cut?
+  3. The domain's ECMA-262 predicates (ToBoolean §7.1.2, ToNumber §7.1.4,
+     `typeof` §13.5.3, Annex B §B.3.6) are **stated but not consumed** — phase 1
+     forbids moving bytes, so nothing folds on them yet. They are therefore
+     untested-by-use in production paths, only by the spec-transcription test.
+
+### 6. The payload-vocabulary leak — a design call this review inherits
+
+#4551's gate found a shape neither issue anticipated: `binary` and `intrinsic`
+are **`unresolved`**, and no declaration move settles them. The interface is
+neutral while the *payload enum* is ECMAScript-tainted — `IrBinop` carries six
+`js.*` ToInt32 composites, `IntrinsicId` carries `math.*`. Both pass R1 and R2
+of the dialect gate while being exactly the leak the gate exists to catch.
+
+The unit of the fix is the **enum**, not the file, which makes it the same
+question as (1) under "Two schema questions" below, one layer down. The
+reviewer owns whether that is a dialect-tagged op namespace, a split enum with
+the JS composites behind the dialect, or an accepted residual.
+
+Separately, `string.len` is recorded `unresolved` on a genuine policy call —
+code units or code points — that is a language decision, not a placement one.
 
 ## Outcome
 
