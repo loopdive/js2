@@ -20,6 +20,32 @@ async function build(opts: Record<string, unknown>) {
   return result.binary;
 }
 
+/**
+ * #4540 — importing a memory now REQUIRES saying where the heap comes from.
+ * These tests originally imported a memory and kept the standalone arena, which
+ * would bump-allocate from address 1024 inside the memory owner's shadow stack.
+ * Every case below therefore also imports a `malloc` and points the arena at it;
+ * that is the supported shape, not extra ceremony.
+ */
+const MALLOC_IMPORT = {
+  module: "qjs",
+  name: "malloc",
+  params: [{ kind: "i32" }],
+  results: [{ kind: "i32" }],
+} as const;
+
+/** A host-side bump allocator standing in for the owner's `malloc`. */
+function hostMalloc(memory: WebAssembly.Memory, start = 4096): (n: number) => number {
+  let cursor = start;
+  return (n: number) => {
+    const need = (n + 15) & ~15;
+    while (cursor + need > memory.buffer.byteLength) memory.grow(1);
+    const ptr = cursor;
+    cursor += need;
+    return ptr;
+  };
+}
+
 /** Decode the import section names/kinds straight from the binary. */
 function importsOf(bytes: Uint8Array): { module: string; name: string; kind: number }[] {
   const mod = new WebAssembly.Module(bytes);
@@ -73,16 +99,23 @@ describe("#4539 — linear link topology", () => {
   it("imports memory instead of defining one, and shares the host's memory", async () => {
     const bytes = await build({
       linearImportMemory: { module: "qjs", name: "memory", min: 2, max: 16384 },
+      linearExternImports: [MALLOC_IMPORT],
+      linearLinkedHeap: { mallocImport: "malloc" },
     });
     const imports = importsOf(bytes);
-    expect(imports).toEqual([{ module: "qjs", name: "memory", kind: 2 }]);
+    expect(imports).toEqual([
+      { module: "qjs", name: "memory", kind: 2 },
+      { module: "qjs", name: "malloc", kind: 0 },
+    ]);
 
     const mod = new WebAssembly.Module(bytes);
     // It must NOT also define/export its own memory — one memory, one owner.
     expect(WebAssembly.Module.exports(mod).some((e) => e.kind === "memory")).toBe(false);
 
     const memory = new WebAssembly.Memory({ initial: 2, maximum: 16384 });
-    const instance = await WebAssembly.instantiate(bytes, { qjs: { memory } });
+    const instance = await WebAssembly.instantiate(bytes, {
+      qjs: { memory, malloc: hostMalloc(memory) },
+    });
     const add = (instance.instance.exports as { add?: (a: number, b: number) => number }).add;
     expect(add?.(40, 2)).toBe(42);
   });
@@ -97,14 +130,25 @@ describe("#4539 — linear link topology", () => {
           params: [{ kind: "i32" }],
           results: [{ kind: "i32" }],
         },
+        MALLOC_IMPORT,
       ],
+      linearLinkedHeap: { mallocImport: "malloc" },
     });
     const memory = new WebAssembly.Memory({ initial: 2 });
     const instance = await WebAssembly.instantiate(bytes, {
-      qjs: { memory, qjs_tag: () => 7 },
+      qjs: { memory, qjs_tag: () => 7, malloc: hostMalloc(memory) },
     });
     const add = (instance.instance.exports as { add?: (a: number, b: number) => number }).add;
     expect(add?.(1, 1)).toBe(2);
+  });
+
+  // #4540 — the combination that was silently catastrophic is now refused.
+  it("refuses an imported memory without a linked heap", async () => {
+    const result = await compile(SRC, {
+      target: "linear",
+      linearImportMemory: { module: "qjs", name: "memory", min: 2 },
+    } as never);
+    expect(result.errors?.[0]?.message).toMatch(/importMemory was set without linkedHeap/);
   });
 
   it("dedupes a repeated import rather than emitting it twice", async () => {

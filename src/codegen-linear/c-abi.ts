@@ -18,6 +18,9 @@
 
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
+// `refcount/ownership.ts` imports `ExternCImportSpec` back from here, but only
+// as a TYPE, so the cycle is erased by tsc and there is no runtime cycle.
+import { type ArgOwnership, type ImportOwnership, resolveImportOwnership } from "./refcount/ownership.js";
 
 // ── Linear-memory aggregate header layout (mirrors runtime.ts) ───────
 //
@@ -467,8 +470,36 @@ export interface ExternCImportSpec {
    * to carry one, so the field is intentionally not optional-with-a-default:
    * a wrong default is a leak or a double-free, and "unset" must stay
    * distinguishable from "borrows".
+   *
+   * #4542 widened the field to accept a full {@link ImportOwnership} record.
+   * The `"borrows"` / `"consumes"` shorthand still means exactly what it did —
+   * it is the argument axis — but it cannot describe an import that RETURNS a
+   * handle, because the caller then also has to know whether that handle
+   * arrives with a reference it owns. `resolveImportOwnership` REFUSES the
+   * shorthand on a handle-returning import rather than picking one; see
+   * `refcount/ownership.ts` for the three axes and which of them may be
+   * derived (only the conservative safety ones).
    */
-  ownership?: "borrows" | "consumes";
+  ownership?: ArgOwnership | ImportOwnership;
+  /**
+   * This import is part of the dynamic-tier ENGINE surface (ADR-0020), so its
+   * JSValue handles are the refcount pass's responsibility.
+   *
+   * It exists because `{ address: "handle" }` carries two meanings that happen
+   * to coincide on wasm32 and are not the same idea:
+   *   - #4554's meaning — "a pointer-width scalar whose ROLE is a handle",
+   *     which is why `tests/issue-4539-c-link.test.ts` uses it on a plain
+   *     `int c_double(int)` to prove the role emits the same bytes as the
+   *     width; and
+   *   - #4542's meaning — "a reference the engine counts".
+   *
+   * Only the second one obliges anybody. Inferring "engine import" from the
+   * type role would make the first unusable, so it is DECLARED. With
+   * `engine: true`, {@link declareExternCImports} refuses an import whose
+   * ownership annotation is missing or incoherent — the "compile error, not a
+   * default" rule, applied at the declaration rather than deep inside lowering.
+   */
+  engine?: boolean;
 }
 
 /** Count the function imports already declared on a module. */
@@ -498,6 +529,11 @@ function internFuncType(mod: WasmModule, params: ValType[], results: ValType[]):
  * MUST run before any defined function exists on `mod`; throws otherwise, so
  * an index-shifting mistake is a loud failure at build time rather than a
  * miscompile. Returns `name → function index`; imports occupy `[0, n)`.
+ *
+ * Also VALIDATES ownership (#4542): every `engine: true` import, and every
+ * import that declares an `ownership` at all, is resolved here. An engine
+ * import missing its annotation fails at declaration — where the mistake was
+ * made — rather than surfacing later as a leak or a double-free.
  */
 export function declareExternCImports(
   mod: WasmModule,
@@ -506,6 +542,12 @@ export function declareExternCImports(
 ): Map<string, number> {
   const indices = new Map<string, number>();
   if (specs.length === 0) return indices;
+  for (const spec of specs) {
+    // A non-engine import that declares nothing is left alone: `{ address:
+    // "handle" }` is also a plain width role (#4554), and demanding an
+    // annotation there would break that meaning — see `ExternCImportSpec.engine`.
+    if (spec.engine === true || spec.ownership !== undefined) resolveImportOwnership(spec);
+  }
   if (mod.functions.length > 0) {
     throw new Error(
       `declareExternCImports: ${mod.functions.length} function(s) already defined. ` +
@@ -522,7 +564,11 @@ export function declareExternCImports(
       spec.results.map((t) => resolveExternCValType(t, model)),
     );
     const funcIdx = countImportedFuncs(mod);
-    mod.imports.push({ module: spec.module, name: spec.name, desc: { kind: "func", typeIdx } });
+    mod.imports.push({
+      module: spec.module,
+      name: spec.name,
+      desc: { kind: "func", typeIdx },
+    });
     indices.set(`${spec.module}.${spec.name}`, funcIdx);
     indices.set(spec.name, funcIdx);
   }

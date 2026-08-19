@@ -17,6 +17,7 @@
 - **NEVER delete worktrees without checking diffs**; never work agent branches from `/workspace`; never kill tests without asking.
 - **NEVER `git worktree prune` in the container** — repo shared with a HOST session; `prunable` = "not visible from here" — [never-prune-in-container](reference_never_git_worktree_prune_inside_container.md)
 - **NEVER comment on/close/reopen external GitHub issues without consent; NEVER `gh issue create`** — [no-github-issue-comments](feedback_no_github_issue_comments.md)
+- **EVERY TASK YOU WORK ON GETS AN ISSUE** — filed or updated, before/while working it, not after. Decisions that arrive in chat are tasks too. Three verified findings went untracked in one session because chat felt like tracking — [track-every-task](feedback_track_every_task_as_an_issue.md)
 - **ALWAYS give an issue's TITLE when citing it**, not a bare `#NNNN` (~3,900 issues; ids share GitHub's sequence with PR numbers, so a bare number is ambiguous). Read it, don't recall it: `grep -m1 "^title:" plan/issues/<id>-*.md` — [always-give-issue-titles](feedback_always_give_issue_titles.md)
 - **NEVER force-push/rewrite public `main`** (append-only; revert forward) — [main-append-only](feedback_public_main_append_only.md)
 - **NEVER merge external-contributor PR without recorded CLA accept** — [cla-gate](feedback_cla_gate.md)
