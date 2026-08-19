@@ -183,10 +183,9 @@ PR #4644 is deliberately held as a draft until that review lands.
 - **Not** a Python front-end, and **not justified by one**. This issue adds no
   `from-python.ts`, no Python parser, no Python runtime. It makes a second
   producer *possible* as a side effect; do not schedule, descope, or cancel this
-  issue based on whether a Python front-end is wanted. *(Still true after the
-  2026-08-17 decision to do a Python PoC afterwards: the PoC is sequenced
-  **after** phases 1–3 and lives out-of-tree. If the Python work is cancelled,
-  phases 1–3 keep their maintainability justification and proceed unchanged.)*
+  issue based on whether a Python front-end is wanted. *(Reaffirmed 2026-08-18: Python is
+  descheduled and gated on the linear backend; phases 1–3 proceed now on this
+  issue's own justification. See phase 4.)*
 - **Not** a C++ front-end, now or later. C++ needs value semantics,
   copy/move/destructors, RAII scope-exit lifetimes, raw pointers and pointer
   arithmetic, precise struct layout/ABI, unsigned integer types, and template
@@ -243,51 +242,84 @@ seam is nominal.
 
 ### Phase 4 — Python producer, out-of-tree, via the #3030 serialized contract
 
-**Scheduled (project-lead decision, 2026-08-17): generalize the IR first —
-phases 1–3 — then do a Python PoC.** The conditional above is now resolved in
-the affirmative on the second half ("a Python front-end is actually wanted"),
-and unchanged on the first: phases 1–3 still gate it. The phase order itself is
-endorsed rather than altered.
+**NOT SCHEDULED. Gated on the linear-memory backend (project-lead decision,
+2026-08-18).** Two calls, recorded together because the second follows from the
+first:
 
-Three consequences of fixing the target, none of which change phases 1–3's
-content:
+1. **Phases 1–3 proceed now**, on their own maintainability justification —
+   unchanged, and explicitly not contingent on Python.
+2. **Python is deferred and now depends on the LINEAR backend**, not WasmGC.
+   This supersedes the 2026-08-17 note that scheduled a Python PoC directly
+   after phases 1–3, and it resolves the WasmGC-vs-linear fork that note left
+   open.
 
-- **The falsifier question is settled, and it settles well.** Python is a
-  *weak* neutrality test on its own — it is dynamically typed with a duck-typed
-  object model, so it exercises largely the same IR paths JS does (`dyn.*`, tag
-  domains, attribute lookup) and would not stress `union`/`box` with sum types,
-  `try`/`throw` with `Result`-style errors, or monomorphised generics. Passing
-  it would be weak evidence of neutrality. **Phase 3 is what makes this fine**:
-  the synthetic non-JS tag domain does the falsifying, and Python is then a
-  real-consumer proof rather than the test. Do not let Python displace phase 3
-  on the grounds that "a real language is a better test" — it is a better
-  *demo* and a worse *test*.
-- **#4551 moves onto the critical path.** A Python producer wants lists, dicts,
-  strings and classes, i.e. exactly the contested families (`vec.*`,
-  `object.*`, `string.*`, `class.*`) that phase 2 slice 1 deliberately left in
-  core pending a per-kind verdict. Those verdicts are no longer just tidiness.
-- **The `instrKind` namespace becomes a hard dependency, not a nicety.**
-  `docs/ir/ir-module.schema.json` defines it as a closed enum of 60 entries, so
-  an out-of-tree producer **cannot emit `py.getattr` at all** today. Opening it
-  (`anyOf: [enum, dialect.op pattern]`) is one edit plus a version bump while
-  consumer count is plausibly zero — see #4552's "two schema questions". This
-  is the cheapest thing on the path and the only one with an expiry.
+#### What choosing linear decides
 
-**Open, and deliberately not decided here: WasmGC or linear for the PoC.** The
-two are different projects. WasmGC is what the analysis below assumes, and
-keeps the host-GC integration that distinguishes this design from the
-interpreter ports. Linear memory dissolves the "cannot represent a flat
-`PyObject*` heap by construction" objection and would reuse the #4538 engine-link
-program (#4539's shared-memory topology, #4542's refcount discipline —
-CPython is refcounted like QuickJS), but forfeits host-GC integration, so
-cycles spanning the boundary leak, and it builds on the lane #4550 measured at
-a 0 % IR claim rate on real modules. Decide it when the PoC is scoped, not now.
+- **The "impossible by construction" objection dissolves.** The reason a
+  WasmGC AOT compiler cannot serve the C-extension ecosystem is that numpy et
+  al. are written against a flat `PyObject*` heap and the CPython C API. Linear
+  memory *is* a flat heap. That does not deliver numpy — the CPython C **ABI**
+  (struct layouts, refcount macros, `PyTypeObject`, the buffer protocol) is a
+  far larger surface than the compiler — but it moves the question from
+  impossible to expensive.
+- **It becomes the #4538 engine-link program applied to CPython**, not an IR
+  project. It would reuse #4539's shared-memory link topology, #4540's heap
+  coexistence, and #4542's refcount/handle-scope discipline — CPython is
+  refcounted like QuickJS, so that pass transfers almost directly. Most of the
+  cost lands outside `src/ir/`.
+- **It forfeits host-GC integration, and that is an accepted cost, not an
+  oversight.** This issue's own analysis names host-GC integration as one of
+  two things the WasmGC design beats the interpreter ports on: a linear-memory
+  Python heap is invisible to the host collector, so cycles spanning the
+  boundary leak. Choosing linear means taking that tax rather than being
+  differentiated by avoiding it. Module size and startup — the other
+  differentiator — survive.
+- **It inherits the linear lane's maturity problem.** #2956 only recently wired
+  the linear backend onto the IR front-end, and #4550 measured a **0 % claim
+  rate on five real npm entry modules**. A producer on a lane that claims none
+  of the real code is not viable; that gate has to close first.
+- **It inherits #3299's non-goal, which linear makes harder to hold.** Do not
+  adopt an external engine's object layouts, builtins or GC wholesale; ADR-0020
+  is a deliberately *scoped* exception for the dynamic residue. The pull to
+  exceed that scope is much stronger when the goal is C-extension
+  compatibility.
+
+When phase 4 is eventually scoped it should be filed as its own issue under the
+standalone/linear program with an explicit `depends_on` covering #2956, #4550
+and the #4538 family — not carried as a phase of an IR-neutrality issue, whose
+justification is independent.
+
+#### Corrections to the 2026-08-17 note
+
+Two things that note claimed became false when Python was descheduled, and are
+corrected rather than left standing:
+
+- **The `instrKind` namespace is NOT a hard dependency.** With no scheduled
+  out-of-tree producer, opening it (`anyOf: [enum, dialect.op pattern]`) is an
+  option-preserving move, not a blocker. What is unchanged is that it is cheap
+  **now** and stops being cheap once anything consumes `IR_FORMAT_VERSION` 5.x
+  — so it still has an expiry, just not a dependent. See #4552's "two schema
+  questions".
+- **#4551 is not on a Python critical path.** Its verdicts on the contested
+  families (`vec.*`, `object.*`, `string.*`, `class.*`) stand on the dialect
+  boundary's own terms; they are not owed to a producer that is not scheduled.
+
+**Phase 3 is now the ONLY validation of neutrality**, which raises rather than
+lowers its importance: with no real second producer coming, the synthetic
+non-JS tag domain through `backend/bytecode-vm.ts` is the whole falsification
+story. It was already the better *test* (Python is dynamically typed and
+duck-typed, so it exercises largely the same IR paths JS does and would never
+stress `union`/`box` with sum types or `try`/`throw` with `Result`-style
+errors — a better demo, a worse test). Do not descope it.
+
+#### If and when it happens
 
 It consumes the serialized IR as an out-of-tree producer — no changes to
 `from-ast.ts`.
 Known gaps to solve **there**, not here: arbitrary-precision `int` (nothing in
-`IrType` expresses it); `__getattribute__` + descriptor protocol vs JS property
-lookup on `dynMemberGet`; MRO / multiple inheritance vs single-inheritance
+`IrType` expresses it — on linear this is an ordinary bignum runtime or a
+linked one); `__getattribute__` + descriptor protocol vs JS property lookup on
+`dynMemberGet`; MRO / multiple inheritance vs single-inheritance
 `IrClassShape`; codepoint vs UTF-16 string indexing (partly covered by
 `IrStringEncoding`).
 
