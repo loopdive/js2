@@ -12,6 +12,9 @@
 > field says to push*. No competitor projects are named — only the patterns
 > that recur across all of them, with our own architecture as the subject.
 >
+> For a single named project read against our architecture, see
+> [`lessons-from-mojo.md`](lessons-from-mojo.md).
+>
 > Read time ~15 min. The TL;DR is the next section; the prioritized action
 > table is at the bottom.
 
