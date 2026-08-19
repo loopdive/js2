@@ -30,6 +30,17 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
   - src/codegen/context/types.ts
+  # #4206 pre-init-read slice (2026-08-19): §10.2.11 gives every `var` binding
+  # `undefined` at function entry, but hoistVarDecl typed the slot from the
+  # DECLARATION, so `return value;` before `var value = "value"` read back null
+  # from a (ref null $AnyString) zero-init. The 150-line analysis lives in the
+  # new module src/codegen/declarations/hoisted-var-preinit-read.ts; these are
+  # the two irreducible wiring lines — one predicate call plus one import in
+  # each driver (index.ts +2, closures.ts +1). Already compacted from +6/+7 by
+  # folding the var-slot check into varBindingNeedsExternrefForUndefined and
+  # reducing the closure-return hook to a single call.
+  - src/codegen/index.ts
+  - src/codegen/closures.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
