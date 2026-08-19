@@ -633,3 +633,55 @@ the JS-host lane, a different and much worse corpus at 84.8 %).
 **eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
 needs clang-18 (see #4163 for the full toolchain finding); record them as
 blocked rather than chasing them.
+
+## 2026-08-19 landed slice — 13 rows, verified by the integrator
+
+Commit `bbe5002` on `es5-eval-with-annexb`, merged to `es5-standalone-integration`.
+
+**Lane 0 → 13 of 56, guard 551/551 (zero regressions), `target=standalone`** —
+both figures re-measured independently by the integrator, not accepted from the
+implementing lane.
+
+### The 13-row cluster was neither `__str_concat` nor eval
+
+`dereferencing a null pointer [in __str_concat() ← __module_init]` was the
+largest single signature in the whole 523-row ES5 standalone residue, and it sat
+under `language/statements/with/`, so it read as a `with`/eval problem. It is a
+**lossy store** in slot widening:
+
+`src/codegen/declarations/heterogeneous-scalar-var-widening.ts::assignmentWidens`
+refused to widen a primitive-pinned module `var` slot when the RHS's static tag
+was `mixed`. So `var result = "result"; result = p1;` keeps a
+`(ref null $AnyString)` slot, a number RHS fails the string coercion, **null** is
+stored, and the next `"" + result` dereferences it. The `with` scoping was
+already correct — probing `S12.10_A3.1_T2` showed `p1`, `this.p1` and
+`myObj.p1` all holding the right values; `result` was the only wrong one.
+
+### This reverses #4204's recorded verdict
+
+#4204 asserted that an unprovable (`mixed`) RHS must NOT widen, on the grounds
+that it "would move a large fraction of the corpus onto the dynamic
+representation for no measured benefit (5,943 syntactic candidates against 55
+provable ones)". That estimate was not re-measured when it was written into the
+negative test.
+
+Measured 2026-08-19, both halves:
+
+| check | result |
+| --- | --- |
+| 73 compiled `language/{statements,expressions}` modules, byte comparison | **1** module changed — and it **shrank** |
+| 1,200-file standalone A/B | 856 → 859; **0 pass→fail, 0 altered failure signatures** |
+| `tests/equivalence` | same 5 pre-existing failures in both arms |
+
+So the corpus-cost concern does not hold, and the refusal was not a coverage
+gap but a correctness bug. #4204's negative case was **updated in place** to
+assert the new verdict with the measurement recorded beside it, rather than
+deleted — the reversal stays visible to anyone re-deriving the predicate.
+A RED-on-base regression test was added
+(`tests/issue-4206-mixed-rhs-slot-widening.test.ts`).
+
+### Side effect worth knowing
+
+Rows hitting `quickjs provider is not built` went 4 → 11: the fix carries tests
+*past* their earlier failing assertion and into an `eval` call. Those become
+locally unverifiable rather than fixed — see the toolchain note in #4163.
