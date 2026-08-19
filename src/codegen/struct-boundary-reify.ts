@@ -11,7 +11,7 @@
  * god-file under the #3102 budget) from growing per shape.
  */
 import type { CodegenContext } from "./context/types.js";
-import { isOpenDescriptorShapeWithValueCarrier } from "./property-descriptor-shape.js";
+import { isOpenDescriptorShape } from "./property-descriptor-shape.js";
 
 /**
  * (#2358) Does a nominal OBJECT-LITERAL struct carry a USER ToPrimitive method —
@@ -44,9 +44,16 @@ export function structHasUserToPrimitive(ctx: CodegenContext, name: string): boo
  */
 export function structMustReifyAtExternrefBoundary(ctx: CodegenContext, name: string): boolean {
   if (structHasUserToPrimitive(ctx, name)) return true;
-  // (#4491) A VALUE-CARRYING open-descriptor literal gets no closed-struct read
-  // arm (`fillClosedStructExternGetArms` skips it), yet only the
+  // (#4491) An open-descriptor literal gets no closed-struct read arm
+  // (`fillClosedStructExternGetArms` skips it), yet only the
   // `Object.defineProperty` call site ever reified one — so as an ordinary
   // function argument every field read `undefined`.
-  return isOpenDescriptorShapeWithValueCarrier(name, ctx.structFields.get(name) ?? []);
+  //
+  // This covers the ATTRIBUTES-ONLY shape (`{writable, enumerable,
+  // configurable}`) as well as the value-carrying one. That is a deliberate
+  // tech-lead decision, not an oversight: keeping attributes-only unreadable
+  // held the standalone guard at a full score only because `verifyProperty`
+  // SKIPS each attribute branch while `desc.X` reads `undefined` — a row that
+  // passes by not asserting. See the unmasking list in the lane report.
+  return isOpenDescriptorShape(name, ctx.structFields.get(name) ?? []);
 }
