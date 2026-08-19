@@ -35,6 +35,7 @@
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileIdentifier } from "../expressions/identifiers.js";
+import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-receiver.js"; // (#4555)
 import { emitUndefined } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
 import { isStrictContext } from "./is-strict-function.js";
@@ -240,7 +241,13 @@ export function thisBelongsToInlinedIifeBody(fctx: FunctionContext, expr: ts.Nod
   for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
     if (ts.isSourceFile(node)) return false;
     if (ts.isArrowFunction(node)) continue; // transparent — inherits `this`
-    if (ts.isFunctionExpression(node)) return fctx.inlinedIifeNodes.has(node);
+    if (ts.isFunctionExpression(node)) {
+      // (#4246) A receiver-bound inline is NOT a receiver-less IIFE: its `this`
+      // is the value the caller passed, installed in `localMap` by
+      // `planInlinedReceiver`. Defer to that rung rather than overriding it.
+      if (inlinedCalleeHasBoundReceiver(node)) return false;
+      return fctx.inlinedIifeNodes.has(node);
+    }
     if (
       ts.isFunctionDeclaration(node) ||
       ts.isMethodDeclaration(node) ||
