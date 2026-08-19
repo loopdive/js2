@@ -31,6 +31,7 @@ import type {
   IrInstrExternProp,
   IrInstrExternPropSet,
   IrInstrForOfIter,
+  IrInstrForOfString,
   IrInstrGenEpilogue,
   IrInstrGenPush,
   IrInstrGenSetReturn,
@@ -41,6 +42,8 @@ import type {
   IrInstrIterReturn,
   IrInstrIterValue,
   IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
 } from "./dialect/js.js";
 import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
@@ -1190,29 +1193,6 @@ export type IrStringLengthProvider =
       readonly fieldIndex: number;
     };
 
-/** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
-export interface IrInstrStringCharAt extends IrInstrBase {
-  readonly kind: "string.char_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  readonly encodingEvidence: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/** Return one UTF-16 code unit as f64, or NaN out of bounds. */
-export interface IrInstrStringCharCodeAt extends IrInstrBase {
-  readonly kind: "string.char_code_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
-
 // ---------------------------------------------------------------------------
 // Object operations (#1169b — IR Phase 4 Slice 2)
 // ---------------------------------------------------------------------------
@@ -1784,78 +1764,6 @@ export interface IrInstrCoerceToExternref extends IrInstrBase {
 // dispatch the same way without a TS-checker round trip.
 
 // ---------------------------------------------------------------------------
-// String for-of (#1183 — IR Phase 4 Slice 6 part 4)
-// ---------------------------------------------------------------------------
-//
-// Slice 6 part 4 adds the string fast path. When `iterableType.kind ===
-// "string"` and the compiler is in native-strings mode, the for-of loop
-// iterates code units via `__str_charAt(str, i)` — a counter loop with
-// a `(ref $AnyString, i32) -> (ref $AnyString)` host helper. In host-
-// strings mode the dispatch falls through to `forof.iter` (#1182).
-//
-// `forof.string` is a STATEMENT-level declarative instr that mirrors
-// `forof.vec` and `forof.iter`. Carries the string SSA value, the four
-// slot indices (counter / length / str / element), and the body buffer.
-
-/**
- * Statement-level `for (const c of <string>) <body>` loop using the
- * native-strings counter pattern. Emitted only when the resolver
- * reports `nativeStrings(): true` — host-strings mode falls through
- * to `forof.iter` upstream in `lowerForOfStatement`.
- *
- * The lowerer emits:
- *   <emit str>
- *   local.set <strSlot>
- *   local.get <strSlot>
- *   struct.get $AnyString $len
- *   local.set <lengthSlot>
- *   i32.const 0
- *   local.set <counterSlot>
- *   block
- *     loop
- *       local.get <counterSlot>
- *       local.get <lengthSlot>
- *       i32.ge_s
- *       br_if 1
- *       local.get <strSlot>
- *       local.get <counterSlot>
- *       call $__str_charAt
- *       local.set <elementSlot>
- *       <body instrs>
- *       local.get <counterSlot>
- *       i32.const 1
- *       i32.add
- *       local.set <counterSlot>
- *       br 0
- *     end
- *   end
- *
- * Slot types (set by from-ast):
- *   counterSlot — i32
- *   lengthSlot  — i32
- *   strSlot     — `(ref $AnyString)` (resolver.resolveString())
- *   elementSlot — `(ref $AnyString)` — each iteration produces a
- *                 single-char string
- *
- * Result: void (`result: null`).
- */
-export interface IrInstrForOfString extends IrInstrBase {
-  readonly kind: "forof.string";
-  /** SSA value of the string (IrType.string). */
-  readonly str: IrValueId;
-  readonly counterSlot: number;
-  readonly lengthSlot: number;
-  readonly strSlot: number;
-  readonly elementSlot: number;
-  /** Body instrs emitted inside the loop. */
-  readonly body: readonly IrInstr[];
-  /** Code-point extraction intent bound to the exact native provider during preparation. */
-  readonly provider?: IrFuncRef;
-  /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
-  readonly loopLabel?: IrLabelId;
-}
-
-// ---------------------------------------------------------------------------
 // Exception handling — throw / try / catch / finally (#1169h — IR Slice 9)
 // ---------------------------------------------------------------------------
 //
@@ -2239,6 +2147,9 @@ export type {
   IrInstrExternProp,
   IrInstrExternPropSet,
   IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
+  IrInstrForOfString,
 } from "./dialect/js.js";
 
 export type IrInstr =

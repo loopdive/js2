@@ -330,7 +330,10 @@ const VERDICTS = {
       "an out-of-range index yields the EMPTY STRING rather than trapping. That total-function " +
       "convention is the thing a non-JS producer would have to work around — Java throws, Rust panics.",
     evidence: [
-      { file: NODES, quote: "Return one UTF-16 code unit as a string, or the empty string out of bounds." },
+      {
+        file: path.join(DIALECT_DIR, "js.ts"),
+        quote: "Return one UTF-16 code unit as a string, or the empty string out of bounds.",
+      },
       {
         file: "src/ir/string-runtime.ts",
         quote: "ECMAScript ToIntegerOrInfinity after the caller has performed ToNumber.",
@@ -344,7 +347,7 @@ const VERDICTS = {
       "reference semantics for backend-independent evidence tests, which is a spec obligation, not a " +
       "representation choice.",
     evidence: [
-      { file: NODES, quote: "Return one UTF-16 code unit as f64, or NaN out of bounds." },
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "Return one UTF-16 code unit as f64, or NaN out of bounds." },
       { file: "src/ir/string-runtime.ts", quote: "export function utf16CharCodeAt" },
     ],
   },
@@ -570,7 +573,7 @@ const VERDICTS = {
       "sibling `forof.iter` is already in the dialect, so keeping the string specialization in core " +
       "splits one protocol across the boundary.",
     evidence: [
-      { file: NODES, quote: "Code-point extraction intent" },
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "Code-point extraction intent" },
       { file: "src/ir/integration.ts", quote: "__str_charAt_cp" },
     ],
   },

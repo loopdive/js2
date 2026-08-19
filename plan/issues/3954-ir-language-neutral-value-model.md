@@ -294,6 +294,29 @@ importer changes. Acceptance is the gate's own counter — `jsInCore` **3 → 0*
 verdict totals otherwise unchanged, typecheck clean, `tests/ir-*.test.ts` at
 the same 2 pre-existing failures.
 
+**Slice A LANDED 2026-08-19.** `jsInCore` 3 -> 0; placement 59-core/23-dialect
+-> 56/26; verdict totals unchanged at 53/26/3, which is the acceptance signal
+that nothing was reclassified in passing. `tests/ir-*` at the same 2
+pre-existing failures (327 passed).
+
+Two things the plan did not anticipate, recorded because **the first recurs on
+every future slice**:
+
+1. **A verdict's citation follows its declaration.** The neutrality gate
+   re-verifies each `{file, quote}` as a literal substring, and all three moved
+   kinds cited quotes that live *inside* the declarations being moved — so the
+   gate fails with "the cited evidence is gone from `src/ir/nodes.ts`" until the
+   citation's `file` is retargeted to `dialect/js.ts`. That is a feature working
+   as designed (a rotted citation is supposed to fail), but it means **a move is
+   never confined to `nodes.ts` + the dialect + the baseline**: it always also
+   edits the verdict table. Expect it on slice B.
+2. **The dialect now has a downward import**: `IrStringEncoding` from
+   `../string-runtime.js`, type-only. `string-runtime.ts` sits *below* the node
+   layer, so this is an ordinary downward edge rather than a second
+   core<->dialect one — R1 constrains who imports *into* `dialect/`, not what
+   the dialect imports. Worth a reviewer's eye anyway (#4552), since it is the
+   first time the dialect depends on anything but `nodes.ts`.
+
 **Slice B — the payload-vocabulary leak**, which is a shape neither this issue
 nor #4551's contested list anticipated. `binary` and `intrinsic` are
 **unresolved**, and no declaration move fixes them: the *interface* is neutral
