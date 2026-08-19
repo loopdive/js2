@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   measure-and-gate:
-    if: github.repository == 'loopdive/js2wasm' && (github.event_name != 'push' || github.actor != 'github-actions[bot]')
+    if: github.repository == 'loopdive/js2' && (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     outputs:
@@ -376,7 +376,7 @@ jobs:
     if: |
       needs.measure-and-gate.result == 'success' &&
       github.event_name != 'pull_request' &&
-      github.repository == 'loopdive/js2wasm' &&
+      github.repository == 'loopdive/js2' &&
       github.actor != 'github-actions[bot]'
     needs: measure-and-gate
     runs-on: ubuntu-24.04

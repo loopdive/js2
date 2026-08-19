@@ -14,7 +14,7 @@
   "homepage": "https://js2wasm.loopdive.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/loopdive/js2wasm.git",
+    "url": "git+https://github.com/loopdive/js2.git",
     "directory": "packages/js2wasm"
   },
   "bugs": {
