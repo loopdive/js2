@@ -61,6 +61,7 @@ import {
   lowerIrFunctionToWasm,
   makeDynamicLowering,
   verifyIrFunction,
+  type IrFuncRef,
   type IrFunction,
   type IrLowerResolver,
   type IrType,
@@ -260,10 +261,23 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
     expect(fn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "unary")).toMatchObject({ op: "i32.eqz" });
   });
 
-  it("`+` stays EXCLUDED (concat dispatch — demotes), and non-f64 concrete counter-operands demote", () => {
-    // `x + 1` on a dynamic operand must NOT take a numeric fast path (JS `+`
-    // is ToPrimitive + concat-or-add): from-ast throws → clean legacy demote.
-    expect(() => irFromSource(`export function add(x) { return x + 1; }`, [DYN], F64)).toThrow();
+  it("`+` stays EXCLUDED from the numeric arm (concat dispatch), and non-f64 concrete counter-operands demote", () => {
+    // `x + 1` on a dynamic operand must NOT take a numeric fast path — JS `+`
+    // is ToPrimitive + concat-or-add, so ToNumber-ing the operand is wrong.
+    //
+    // The MECHANISM changed under this test and the assertion moved with it.
+    // It used to demote by throwing out of from-ast; the `+` guard in
+    // `lowerBinary` is now conditioned on `!expressionProducesDynamic(...)`
+    // for BOTH operands, so a dynamic operand skips the throw and lowers to a
+    // call to the safe runtime helper instead. Same exclusion, expressed in IR
+    // rather than by demoting — so assert the exclusion directly (no
+    // `dyn.to_number`; the helper does the dispatch) rather than asserting the
+    // old escape hatch.
+    const addFn = irFromSource(`export function add(x) { return x + 1; }`, [DYN], F64);
+    expect(instrKinds(addFn)).not.toContain("dyn.to_number");
+    expect(addFn.blocks.flatMap((b) => b.instrs).find((i) => i.kind === "call")).toMatchObject({
+      target: { name: "__ir_dyn_add" },
+    });
     // A string counter-operand cannot feed the numeric arm (relOperandToF64
     // returns null) — the mixed string/dynamic pair demotes.
     expect(() => irFromSource(`export function subs(x) { return x - "a"; }`, [DYN], F64)).toThrow();
@@ -283,7 +297,17 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
  * the from-ast function — the same dyn-arg → dyn-param call shape slice 2
  * claims.
  */
-function gcWrapperF64(name: string, callee: string, arity: 1 | 2): IrFunction {
+/**
+ * A wrapper's call target must carry a STRUCTURAL callable binding — the
+ * verifier rejects legacy name-only refs ("call target is missing required
+ * callable binding"). So the wrappers take the callee `IrFunction` itself and
+ * read its `unitId`, rather than a bare name resolved after the fact.
+ */
+function calleeRef(callee: IrFunction): IrFuncRef {
+  return { kind: "func", name: callee.name, binding: { kind: "unit", unitId: callee.unitId } };
+}
+
+function gcWrapperF64(name: string, callee: IrFunction, arity: 1 | 2): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const a = b.addParam("a", F64);
   const c = arity === 2 ? b.addParam("c", F64) : null;
@@ -291,18 +315,18 @@ function gcWrapperF64(name: string, callee: string, arity: 1 | 2): IrFunction {
   const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
   const args = [da];
   if (c !== null) args.push(b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64)));
-  const r = b.emitCall({ kind: "func", name: callee }, args, F64);
+  const r = b.emitCall(calleeRef(callee), args, F64);
   if (r === null) throw new Error("wrapper call produced no value");
   b.terminate({ kind: "return", values: [r] });
   return b.finish();
 }
 
-function gcWrapperBool(name: string, callee: string): IrFunction {
+function gcWrapperBool(name: string, callee: IrFunction): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const a = b.addParam("a", I32);
   b.openBlock();
   const da = b.emitBox(a, irDynamic(JS_TAG_IDS.Boolean));
-  const r = b.emitCall({ kind: "func", name: callee }, [da], F64);
+  const r = b.emitCall(calleeRef(callee), [da], F64);
   if (r === null) throw new Error("wrapper call produced no value");
   b.terminate({ kind: "return", values: [r] });
   return b.finish();
@@ -318,17 +342,18 @@ describe("#2949 S5.5 — gc runtime: from-ast dynamic arithmetic over the $AnyVa
       irFromSource(`export function neg(x) { return -x; }`, [DYN], F64),
       irFromSource(`export function toNum(x) { return +x; }`, [DYN], F64),
     ];
+    const [dec, mul, div, mod, neg, toNum] = fns;
     const wrappers = [
-      gcWrapperF64("decW", "dec", 1),
-      gcWrapperF64("mulW", "mul", 2),
-      gcWrapperF64("divW", "div", 2),
-      gcWrapperF64("modW", "mod", 2),
-      gcWrapperF64("negW", "neg", 1),
-      gcWrapperBool("toNumB", "toNum"),
+      gcWrapperF64("decW", dec!, 1),
+      gcWrapperF64("mulW", mul!, 2),
+      gcWrapperF64("divW", div!, 2),
+      gcWrapperF64("modW", mod!, 2),
+      gcWrapperF64("negW", neg!, 1),
+      gcWrapperBool("toNumB", toNum!),
     ];
     for (const f of [...fns, ...wrappers]) expect(verifyIrFunction(f)).toEqual([]);
     const ctx = makeGcCtx();
-    install(ctx, fns); // callees first — wrappers resolve them by name
+    install(ctx, fns); // callees first — each wrapper ref is bound to its callee unitId
     install(ctx, wrappers);
     const ex = await instantiateCtx(ctx);
 
