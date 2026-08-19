@@ -131,3 +131,81 @@ describe("#4206 — a `mixed` assignment widens a primitive-pinned module slot",
     });
   });
 });
+
+/**
+ * #4206 slice 2 — a `var` whose PRE-INITIALIZATION value is observed.
+ *
+ * §10.2.11 creates every `var` binding with `undefined` at function entry, so a
+ * read placed before the declaration answers `undefined`. `hoistVarDecl` typed
+ * the slot from the declaration, and a native-string `(ref null $AnyString)`
+ * has no representation for `undefined` — its zero-init reads back as `null`.
+ *
+ * Verified RED on this branch's merge base: every LEVER case below answered
+ * `null` (or, for the numeric slot, `0`).
+ */
+describe("#4206 — a read before the declaration observes `undefined`, not `null`", () => {
+  describe("PRECONDITION (green on BOTH arms)", () => {
+    it("the ordinary declaration order is unaffected", async () => {
+      await runScript(`
+        var f = function () { var value = "value"; return value; };
+        var r = f();
+        if (r !== "value") throw new Error("normal order: " + String(r));
+      `);
+    });
+
+    it("a bare `var` (no initializer) already read as undefined", async () => {
+      await runScript(`
+        var f = function () { var value; return value; };
+        var r = f();
+        if (r !== undefined) throw new Error("bare var: " + String(r));
+      `);
+    });
+  });
+
+  describe("LEVER (RED before this change)", () => {
+    it("a string-initialized local reads `undefined` before its declaration", async () => {
+      await runScript(`
+        var f = function () {
+          return value;
+          var value = "value";
+        };
+        var r;
+        r = f();
+        if (r !== undefined) throw new Error("expected undefined, got " + String(r));
+        if (r === null) throw new Error("read back null");
+      `);
+    });
+
+    it("the same shape inside a `with` body, where the checker resolves nothing", async () => {
+      // Binding identity here comes from the file-header's bounded name-keyed
+      // fallback: inside a `with` body `variableDeclarationOf` cannot answer.
+      await runScript(`
+        var myObj = { value: "myObj_value" };
+        var r;
+        with (myObj) {
+          var f = function () {
+            return value;
+            var value = "value";
+          };
+          r = f();
+        }
+        if (r !== undefined) throw new Error("expected undefined, got " + String(r));
+      `);
+    });
+
+    it("a with-body closure called AFTER the with also returns undefined", async () => {
+      await runScript(`
+        var myObj = { zz: 1 };
+        var r;
+        with (myObj) {
+          var f = function () {
+            return value;
+            var value = "value";
+          };
+        }
+        r = f();
+        if (r !== undefined) throw new Error("expected undefined, got " + String(r));
+      `);
+    });
+  });
+});
