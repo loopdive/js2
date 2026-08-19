@@ -8,6 +8,7 @@
  * (`+`, `-`, `!`, `~`) live in ./unary.ts.
  */
 import { ts } from "../../ts-api.js";
+import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
@@ -488,6 +489,13 @@ function compileMemberIncDec(
       }
     }
 
+    // (#4500 Slice A, third site) `this.p++` on a `var`-declared script global:
+    // read/write route it to the module global, this RMW read the OBJECT.
+    const realmIdx = ctx.moduleGlobals.get(propName);
+    if (realmIdx !== undefined && receiverIsRealmGlobalObject(ctx, fctx, operand.expression)) {
+      return compileGlobalIncDec(ctx, fctx, realmIdx, f64Op, mode);
+    }
+
     // (#3683 S2 branch c2) TYPED-`this` `++`/`--` inside a twin — a
     // struct.get/struct.set pair against the prologue's typed local instead of
     // `__get_member_<p>` + unbox + box + `__set_member_<p>`. Emitted before ANY
@@ -514,15 +522,8 @@ function compileMemberIncDec(
     }
     if (!typeName) {
       // (#2656) Unresolvable static struct type — typically an `any`/`externref`
-      // receiver (a fnctor-instance `this` inside a prototype method, acorn's
-      // tokenizer shape). Do NOT NaN-drop the write: route through the externref
-      // read-modify-write (mirrors the `this.prop += 1` compound path, including
-      // the symmetric struct.set dispatch so a typed-struct receiver hits the
-      // same slot the READ uses). Only kicks in when we can box the receiver to
-      // externref; otherwise fall back to the historical NaN behaviour.
-      // (#2681/#2686) Pin to the struct dispatcher ONLY for a reconstructed-fnctor
-      // receiver (acorn's `this.pos++`); a general any-receiver stays on the
-      // tombstone-aware sidecar. Computed before the receiver is consumed.
+      // receiver. Do NOT NaN-drop the write: route through the externref
+      // read-modify-write, which hits the same slot the READ uses. (#2681/#2686)
       const incDecPinned =
         (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
         resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
@@ -1004,20 +1005,18 @@ function compilePrefixUpdate(
   fctx: FunctionContext,
   expr: ts.PrefixUnaryExpression,
 ): ValType | null {
-  // §13.4 + Annex B.3.9: evaluate a sloppy-mode call target, then throw before
-  // ToNumeric. Strict-mode call targets were rejected by the early-error pass.
-  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) {
-    return { kind: "f64" };
-  }
+  // §13.4 + Annex B.3.9: evaluate a sloppy-mode call target, then throw.
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) return { kind: "f64" };
   // §13.4 / §7.1.3 — ++/-- on a Symbol throws TypeError before the update step.
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };
   }
+  // §13.4.4 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
+  const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, unwrapParens(expr.operand));
+  if (unresolvablePre !== undefined) return unresolvablePre;
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
-      // Unwrap parenthesized expressions: ++(x) -> ++x
       const ppOperand = unwrapParens(expr.operand);
-      // (#2663 Slice 3) `with` Object Environment Record precedence.
       if (ts.isIdentifier(ppOperand)) {
         const w = compileWithUpdateExpression(ctx, fctx, ppOperand, /*increment*/ true, /*prefix*/ true);
         if (w !== undefined) return w;
@@ -1195,9 +1194,7 @@ function compilePrefixUpdate(
       const arithOp = isIncrement ? "f64.add" : "f64.sub";
       const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
-      // Unwrap parenthesized expressions: --(x) -> --x
       const mmOperand = unwrapParens(expr.operand);
-      // (#2663 Slice 3) `with` Object Environment Record precedence.
       if (ts.isIdentifier(mmOperand)) {
         const w = compileWithUpdateExpression(ctx, fctx, mmOperand, /*increment*/ false, /*prefix*/ true);
         if (w !== undefined) return w;
@@ -1400,6 +1397,9 @@ function compilePostfixUnary(
     const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
     if (w !== undefined) return w;
   }
+  // §13.4.5 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
+  const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
+  if (unresolvablePost !== undefined) return unresolvablePost;
 
   if (!ts.isIdentifier(postOperand)) {
     // obj.prop++ or obj[idx]++ — delegate to member increment helper
