@@ -230,6 +230,25 @@ reclamation needed.
   absolute-address audit and the two-memory question are all orthogonal to which
   allocator wins.
 
+**Ownership is now explicit, and it points our way (project-lead, 2026-08-19;
+ADR-0020 Decision 6).** Two directions were left implicit and both are decided:
+
+- **The linear memory is ours** — our module defines and exports it, the engine
+  imports it. Today the reverse holds: `scripts/quickjs-artifact/build.sh:148`
+  passes `-Wl,--export-memory`, so the artifact owns the memory and #4539's
+  `declareImportedMemory` has us import it. Flipping this means rebuilding the
+  artifact with `-Wl,--import-memory`. This is a build-flag change plus an emit
+  change, and it has not been attempted — cost unmeasured.
+- **The allocator is ours** — installed via `JS_NewRuntime2` so the engine
+  allocates through us, with the typed arena as a bump fast path carved from
+  our own heap.
+
+This means the shipped slice is the RIGHT fix for the corruption class and the
+WRONG ownership direction: carving our arena from the engine's `malloc` gives
+one grower, but it is the engine's. Keep it as the working fallback; it is not
+the end state. The costs recorded in the Decision above are unchanged by this —
+they are the price of the intended direction, not of the fallback.
+
 **Status 2026-08-19: NOT implemented.** See "Implementation status" below —
 this slice shipped the recorded fallback (carve from the engine's `malloc`),
 which closes the corruption class on its own. The own-allocator decision stands
