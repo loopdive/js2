@@ -945,6 +945,16 @@ export interface CompileOptions {
     mallocImport: string;
     chunkBytes?: number;
   };
+  /**
+   * Which allocator backs the linear heap (#4557).
+   *
+   * `"malloc-v1"` emits a real allocator (free lists, coalescing, in-place
+   * `realloc`) and exports the five entry points the QuickJS artifact imports
+   * for `JS_NewRuntime2`, so the engine allocates through us instead of its own
+   * dlmalloc. Defaults to `"bump"` — ADR-0017's monotonic arena, and #4540's
+   * shipped fallback.
+   */
+  linearHeapAllocator?: "bump" | "malloc-v1";
 }
 
 import * as path from "path";

@@ -1550,6 +1550,20 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.u32(0x09);
       enc.u32(instr.dataIdx);
       break;
+    // `memory.copy` carries TWO memory indices (dst then src) and `memory.fill`
+    // one. Neither needs the data-count section — that requirement is specific
+    // to the two opcodes above, which name a data segment.
+    case "memory.copy":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x0a);
+      enc.byte(0x00);
+      enc.byte(0x00);
+      break;
+    case "memory.fill":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x0b);
+      enc.byte(0x00);
+      break;
     case "throw":
       if (valCtx) vIdx("exception tag", instr.tagIdx, valCtx.numTags);
       enc.byte(OP.throw);

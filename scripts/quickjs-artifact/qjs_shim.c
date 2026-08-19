@@ -52,6 +52,12 @@
  *    exported.  js2wasm's own bump arena must live ABOVE this module's heap or
  *    be made dynamic — two independent growers over one memory corrupt it
  *    (#4236 R5 gap 4).
+ *
+ *    SUPERSEDED IN PART by #4557: the peer may now install ITS allocator here
+ *    (`qjs_set_allocator` + `qjs_new_runtime2`), so the direction inverts and
+ *    QuickJS's whole heap comes from the peer.  What survives unchanged is the
+ *    one-address-space rule: whoever allocates, everyone takes addresses from
+ *    that one allocator rather than naming them.
  */
 
 #include <stddef.h>
@@ -66,8 +72,16 @@
 /* A handle is a JSValue* in the shared linear memory. */
 typedef uint32_t qjs_handle;
 
+/* #4557 — every scratch allocation in this file goes through these, so that
+ * installing the peer's allocator moves the WHOLE artifact onto it rather than
+ * leaving a second live heap behind. Defined under "peer allocator" below;
+ * declared here because `box` is the first user. */
+static void *qjs_shim_malloc(size_t n);
+static void qjs_shim_free(void *p);
+static void *qjs_shim_realloc(void *p, size_t n);
+
 static qjs_handle box(JSValue v) {
-  JSValue *p = (JSValue *)malloc(sizeof(JSValue));
+  JSValue *p = (JSValue *)qjs_shim_malloc(sizeof(JSValue));
   if (!p) return 0;
   *p = v;
   return (qjs_handle)(uintptr_t)p;
@@ -80,9 +94,170 @@ static JSValue unbox(qjs_handle h) {
   return *(JSValue *)(uintptr_t)h;
 }
 
+/* ------------------------------------------ peer allocator (#4557) --------
+ *
+ * ADR-0020 Decision 6, allocator half: the PEER's allocator becomes QuickJS's
+ * allocator, via `JS_NewRuntime2(&mf, opaque)`.  Everything the engine
+ * allocates — objects, shapes, atoms, bytecode, string data — then comes out of
+ * the peer's heap, and `JS_SetMemoryLimit` / `JS_SetGCThreshold` account
+ * against numbers the peer controls.
+ *
+ * ### Why these arrive as TABLE INDICES and not as wasm imports
+ *
+ * The obvious encoding is `__attribute__((import_module("js2wasm"),
+ * import_name("js2wasm_malloc")))`, and that is what #4557 originally
+ * specified.  It cannot be used, for a reason that only shows up downstream:
+ * a wasm import must be SATISFIED AT INSTANTIATION, so five unconditional
+ * imports would make this artifact un-instantiable without a peer that
+ * provides an allocator.  Two shipped configurations do exactly that —
+ * `extract-abi.mjs` instantiates the artifact alone to read the ABI constants
+ * out of it, and the runtime-eval tier instantiates it beside an adapter that
+ * imports FROM it and exports no allocator.  Both would have to hand it JS
+ * closures, which is precisely what `assertQuickjsArtifactStandalone` exists to
+ * forbid ("wasi-stub.mjs is the ONLY JavaScript allowed behind the seam").
+ *
+ * So this mirrors the #4245 membrane instead, which solved the identical
+ * problem: the peer's functions are stored into THIS module's
+ * `__indirect_function_table` (exported and growable at link time) and called
+ * through it.  On wasm32 a function pointer IS a table index, so each call
+ * below lowers to a `call_indirect` whose signature the engine typechecks, the
+ * edge stays wasm→wasm with no JS in it, and the artifact still imports ONLY
+ * `wasi_snapshot_preview1`.  The cost is one indirect call per allocation
+ * instead of a direct one.
+ *
+ * ### Ordering constraint, enforced rather than documented
+ *
+ * `qjs_set_allocator` REFUSES (returns 0) once this file has already handed out
+ * a libc allocation, because from that point on a pointer minted by dlmalloc
+ * could be freed through the peer.  Install first, then create the runtime.
+ */
+
+typedef void *(*qjs_alloc_fn)(uint32_t size);
+typedef void *(*qjs_calloc_fn)(uint32_t count, uint32_t size);
+typedef void (*qjs_free_fn)(void *ptr);
+typedef void *(*qjs_realloc_fn)(void *ptr, uint32_t size);
+typedef uint32_t (*qjs_usable_fn)(const void *ptr);
+
+static qjs_alloc_fn qjs_peer_malloc;
+static qjs_calloc_fn qjs_peer_calloc;
+static qjs_free_fn qjs_peer_free;
+static qjs_realloc_fn qjs_peer_realloc;
+static qjs_usable_fn qjs_peer_usable;
+
+/* Counts allocations this file served from libc (i.e. dlmalloc) rather than
+ * from the peer.  Exported because "does anything still allocate outside
+ * JSMallocFunctions" is a question #4557 requires answering with a measurement
+ * rather than with an argument. */
+static uint32_t qjs_libc_allocs;
+
+/* The shim's own scratch allocations (handle cells, eval buffers, argv arrays,
+ * rendered strings). They follow the peer allocator once it is installed, so
+ * the artifact does not keep a second live heap alongside it. */
+static void *qjs_shim_malloc(size_t n) {
+  if (qjs_peer_malloc) return qjs_peer_malloc((uint32_t)n);
+  qjs_libc_allocs++;
+  return malloc(n);
+}
+
+static void qjs_shim_free(void *p) {
+  if (qjs_peer_free) {
+    qjs_peer_free(p);
+    return;
+  }
+  free(p);
+}
+
+static void *qjs_shim_realloc(void *p, size_t n) {
+  if (qjs_peer_realloc) return qjs_peer_realloc(p, (uint32_t)n);
+  qjs_libc_allocs++;
+  return realloc(p, n);
+}
+
+static void *qjs_mf_calloc(void *opaque, size_t count, size_t size) {
+  (void)opaque;
+  return qjs_peer_calloc((uint32_t)count, (uint32_t)size);
+}
+static void *qjs_mf_malloc(void *opaque, size_t size) {
+  (void)opaque;
+  return qjs_peer_malloc((uint32_t)size);
+}
+static void qjs_mf_free(void *opaque, void *ptr) {
+  (void)opaque;
+  qjs_peer_free(ptr);
+}
+static void *qjs_mf_realloc(void *opaque, void *ptr, size_t size) {
+  (void)opaque;
+  return qjs_peer_realloc(ptr, (uint32_t)size);
+}
+static size_t qjs_mf_usable_size(const void *ptr) {
+  return (size_t)qjs_peer_usable(ptr);
+}
+
+static const JSMallocFunctions qjs_peer_mf = {
+    .js_calloc = qjs_mf_calloc,
+    .js_malloc = qjs_mf_malloc,
+    .js_free = qjs_mf_free,
+    .js_realloc = qjs_mf_realloc,
+    .js_malloc_usable_size = qjs_mf_usable_size,
+};
+
+/**
+ * Install the peer's allocator. Arguments are `__indirect_function_table` slot
+ * indices, in the order malloc / calloc / free / realloc / usable_size.
+ * Returns 1 on success, 0 if refused (already installed, an argument is 0, or a
+ * libc allocation has already been handed out by this file).
+ */
+int QJS_EXPORT(qjs_set_allocator)(uint32_t malloc_idx, uint32_t calloc_idx,
+                                  uint32_t free_idx, uint32_t realloc_idx,
+                                  uint32_t usable_idx) {
+  if (qjs_peer_malloc) return 0;
+  if (!malloc_idx || !calloc_idx || !free_idx || !realloc_idx || !usable_idx) {
+    return 0;
+  }
+  if (qjs_libc_allocs) return 0;
+  qjs_peer_malloc = (qjs_alloc_fn)(uintptr_t)malloc_idx;
+  qjs_peer_calloc = (qjs_calloc_fn)(uintptr_t)calloc_idx;
+  qjs_peer_free = (qjs_free_fn)(uintptr_t)free_idx;
+  qjs_peer_realloc = (qjs_realloc_fn)(uintptr_t)realloc_idx;
+  qjs_peer_usable = (qjs_usable_fn)(uintptr_t)usable_idx;
+  return 1;
+}
+
+/** How many allocations this file served from libc rather than from the peer. */
+uint32_t QJS_EXPORT(qjs_libc_alloc_count)(void) { return qjs_libc_allocs; }
+
 /* ---------------------------------------------------------------- lifecycle */
 
 JSRuntime *QJS_EXPORT(qjs_new_runtime)(void) { return JS_NewRuntime(); }
+
+/**
+ * A runtime whose whole heap comes from the peer's allocator (#4557).
+ * Returns NULL when no allocator has been installed — a null runtime is a
+ * diagnosable failure, whereas silently falling back to `JS_NewRuntime()` would
+ * make "the engine allocates through us" quietly untrue.
+ */
+JSRuntime *QJS_EXPORT(qjs_new_runtime2)(void) {
+  if (!qjs_peer_malloc) return NULL;
+  return JS_NewRuntime2(&qjs_peer_mf, NULL);
+}
+
+/** Bytes QuickJS believes it has allocated — its own accounting, which is
+ * driven by `js_malloc_usable_size`. Reported so a wrong `usable_size` shows up
+ * as a number rather than as a GC-timing mystery. */
+double QJS_EXPORT(qjs_malloc_size)(JSRuntime *rt) {
+  JSMemoryUsage u;
+  if (!rt) return 0;
+  JS_ComputeMemoryUsage(rt, &u);
+  return (double)u.malloc_size;
+}
+
+/** Live allocation count according to QuickJS's own accounting. */
+double QJS_EXPORT(qjs_malloc_count)(JSRuntime *rt) {
+  JSMemoryUsage u;
+  if (!rt) return 0;
+  JS_ComputeMemoryUsage(rt, &u);
+  return (double)u.malloc_count;
+}
 
 void QJS_EXPORT(qjs_free_runtime)(JSRuntime *rt) {
   if (rt) JS_FreeRuntime(rt);
@@ -109,7 +284,7 @@ void QJS_EXPORT(qjs_free_value)(JSContext *ctx, qjs_handle h) {
   if (!h) return;
   JSValue *p = (JSValue *)(uintptr_t)h;
   JS_FreeValue(ctx, *p);
-  free(p);
+  qjs_shim_free(p);
 }
 
 qjs_handle QJS_EXPORT(qjs_dup)(JSContext *ctx, qjs_handle h) {
@@ -208,12 +383,12 @@ int QJS_EXPORT(qjs_is_equal)(JSContext *ctx, qjs_handle a, qjs_handle b,
 /* `src` need not be NUL-terminated by the caller; we copy and terminate, which
  * is what JS_Eval requires. Returns an owned handle (possibly an exception). */
 qjs_handle QJS_EXPORT(qjs_eval)(JSContext *ctx, const char *src, uint32_t len) {
-  char *buf = (char *)malloc((size_t)len + 1);
+  char *buf = (char *)qjs_shim_malloc((size_t)len + 1);
   if (!buf) return 0;
   memcpy(buf, src, len);
   buf[len] = '\0';
   JSValue v = JS_Eval(ctx, buf, len, "<qjs_eval>", JS_EVAL_TYPE_GLOBAL);
-  free(buf);
+  qjs_shim_free(buf);
   return box(v);
 }
 
@@ -228,12 +403,12 @@ qjs_handle QJS_EXPORT(qjs_call)(JSContext *ctx, qjs_handle fn,
   JSValue *args = NULL;
   if (argc > 0) {
     if (!argv) return 0;
-    args = (JSValue *)malloc(sizeof(JSValue) * (size_t)argc);
+    args = (JSValue *)qjs_shim_malloc(sizeof(JSValue) * (size_t)argc);
     if (!args) return 0;
     for (uint32_t i = 0; i < argc; i++) args[i] = unbox(argv[i]);
   }
   JSValue r = JS_Call(ctx, unbox(fn), unbox(this_val), (int)argc, args);
-  free(args);
+  qjs_shim_free(args);
   return box(r);
 }
 
@@ -251,7 +426,7 @@ char *QJS_EXPORT(qjs_to_cstring)(JSContext *ctx, qjs_handle h) {
     return NULL;
   }
   size_t n = strlen(s);
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qjs_shim_malloc(n + 1);
   if (out) memcpy(out, s, n + 1);
   JS_FreeCString(ctx, s);
   return out;
@@ -271,7 +446,7 @@ char *QJS_EXPORT(qjs_to_cstring_len)(JSContext *ctx, qjs_handle h,
     if (len_out) *len_out = 0;
     return NULL;
   }
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qjs_shim_malloc(n + 1);
   if (out) {
     memcpy(out, s, n);
     out[n] = '\0';
@@ -350,7 +525,7 @@ static JSValue qjs_take(qjs_handle h) {
   if (!h) return JS_UNDEFINED;
   JSValue *p = (JSValue *)(uintptr_t)h;
   JSValue v = *p;
-  free(p);
+  qjs_shim_free(p);
   return v;
 }
 
@@ -531,7 +706,7 @@ static JSValue qjs_mb_exotic_call(JSContext *ctx, JSValueConst func_obj,
     return JS_ThrowTypeError(ctx, "not a compiled callable (#4245)");
   }
   if (argc > 0) {
-    cells = (qjs_handle *)malloc(sizeof(qjs_handle) * (size_t)argc);
+    cells = (qjs_handle *)qjs_shim_malloc(sizeof(qjs_handle) * (size_t)argc);
     if (!cells) return JS_ThrowTypeError(ctx, "out of memory (#4245)");
     for (i = 0; i < argc; i++) cells[i] = box(JS_DupValue(ctx, argv[i]));
   }
@@ -540,7 +715,7 @@ static JSValue qjs_mb_exotic_call(JSContext *ctx, JSValueConst func_obj,
   /* Every handle passed IN is released here (borrow-in), on both paths. */
   qjs_free_value(ctx, this_h);
   for (i = 0; i < argc; i++) qjs_free_value(ctx, cells[i]);
-  free(cells);
+  qjs_shim_free(cells);
   if (!r) {
     return JS_ThrowTypeError(
         ctx, "a compiled function could not be called from evaluated code "
@@ -599,9 +774,9 @@ static int qjs_wrap_reserve(uint32_t gc_id) {
   if (gc_id < qjs_wrap_slots_len) return 1;
   want = qjs_wrap_slots_len ? qjs_wrap_slots_len : 16;
   while (want <= gc_id) want *= 2;
-  slots = (JSValue *)realloc(qjs_wrap_slots, sizeof(JSValue) * (size_t)want);
+  slots = (JSValue *)qjs_shim_realloc(qjs_wrap_slots, sizeof(JSValue) * (size_t)want);
   if (!slots) return 0;
-  live = (uint8_t *)realloc(qjs_wrap_live, (size_t)want);
+  live = (uint8_t *)qjs_shim_realloc(qjs_wrap_live, (size_t)want);
   if (!live) {
     qjs_wrap_slots = slots;
     return 0;

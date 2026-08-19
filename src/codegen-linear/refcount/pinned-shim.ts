@@ -108,6 +108,23 @@ const HANDLE_FREE_EXPORTS: ExternCImportSpec[] = [
     results: [],
   },
   { module: "", name: "qjs_noop", params: [], results: [I32] },
+  // #4557 — the peer allocator. `qjs_set_allocator` takes five
+  // `__indirect_function_table` slot indices, positionally, in the order
+  // malloc / calloc / free / realloc / usable_size; the rest report on the
+  // installation. None of them touches a JSValue, so none carries ownership.
+  {
+    module: "",
+    name: "qjs_set_allocator",
+    params: [I32, I32, I32, I32, I32],
+    results: [I32],
+  },
+  { module: "", name: "qjs_new_runtime2", params: [], results: [PTR] },
+  { module: "", name: "qjs_libc_alloc_count", params: [], results: [I32] },
+  // f64 because QuickJS's accounting is int64 and an i64 crossing this boundary
+  // would be a BigInt at any JS edge; these are diagnostics, so the double's
+  // 53-bit exact range is ample.
+  { module: "", name: "qjs_malloc_size", params: [PTR], results: [F64] },
+  { module: "", name: "qjs_malloc_count", params: [PTR], results: [F64] },
 ];
 
 const HANDLE_EXPORTS: ExternCImportSpec[] = [

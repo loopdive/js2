@@ -5,6 +5,25 @@ to build a direct native backend at all is gated on evidence from #4544; this
 record fixes what it emits *if* that gate opens, so the question is not
 re-litigated each time it resurfaces.
 
+> **Gate result 2026-08-19: CLOSED — the direct backend is not justified.**
+> #4544 Part A measured the AOT route and it is not inadequate on either axis:
+> a real program becomes a **22.9 KB self-contained native binary** starting
+> **0.14–0.20 ms above bare process creation** (1.58x the size of the same
+> program hand-written in C, and indistinguishable from it on startup), via
+> `wasm2c` + clang. Even the whole QuickJS tier links into one 1.60 MB binary
+> that evaluates JavaScript in 0.64 ms. This ADR therefore stays Accepted as a
+> **target choice** and stays unscheduled — including its stated prerequisite of
+> finishing `ir-full-coverage` (#2855) first, which does not have to be paid for
+> this reason.
+>
+> **Still open:** the Wasm→C **throughput** objection under "Alternatives
+> rejected" was NOT tested — Part A measured size and startup only. Note it is
+> an argument about the *engine*, and the engine is already C, so a native build
+> can link `libquickjs` compiled directly by clang and route only generated code
+> through `wasm2c`. Evidence:
+> [`benchmarks/results/native-aot-baseline.json`](../../benchmarks/results/native-aot-baseline.json),
+> generator `scripts/benchmark-native-aot.mjs`.
+
 ## Context
 
 The goal behind #4538 is standalone **native binaries**. The near-term route is
