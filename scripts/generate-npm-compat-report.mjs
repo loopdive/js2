@@ -23,7 +23,7 @@
 // and copies it to website/public/benchmarks/results/).
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
@@ -81,6 +81,7 @@ import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
 import { setupNpmCompatCatalogPackage } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "../tests/dogfood/npm-compat-perf-specs.mjs";
+import { COOKIE_OPS } from "../tests/dogfood/cookie-ops.mjs";
 import {
   failedPerfLane,
   measureJsHostPerf,
@@ -1882,7 +1883,234 @@ function annotateUnavailableInfra(tests) {
   return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
 }
 
-async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
+function githubRawSource(source, filePath) {
+  if (!source?.repo || !source?.ref || !filePath) return null;
+  const match = source.repo.match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/);
+  if (!match) return null;
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  const path = [source.root && !normalizedFilePath.startsWith(`${source.root}/`) ? source.root : "", normalizedFilePath]
+    .filter(Boolean)
+    .join("/")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${encodeURIComponent(source.ref)}/${path}`;
+}
+
+function suiteSourceFromReport(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  if (!suite?.repo || !suite?.tag) return null;
+  return {
+    repo: suite.repo,
+    ref: suite.commit ?? suite.tag,
+    root: options.sourceRoot ?? suite.testDirectory ?? "",
+  };
+}
+
+function suiteFilePaths(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  const candidates = [
+    suite?.testFilePaths,
+    suite?.testFiles,
+    suite?.selectedFiles,
+    report?.compile?.details?.map((entry) => entry.file),
+    report?.compile?.files?.map((entry) => entry.file),
+    [...new Set((report?.results?.tests ?? []).map((entry) => entry.file))],
+  ];
+  const paths = candidates.find((value) => Array.isArray(value) && value.length > 0) ?? [];
+  const root = options.sourceRoot ?? suite?.testDirectory ?? "";
+  return [...new Set(paths.filter((value) => typeof value === "string").map((value) => value.replace(/\\/g, "/")))]
+    .map((value) => (root && !value.startsWith(`${root}/`) ? `${root}/${value}` : value))
+    .sort();
+}
+
+function fileMatches(resultFile, sourceFile) {
+  const resultPath = String(resultFile ?? "").replace(/\\/g, "/");
+  const sourcePath = String(sourceFile ?? "").replace(/\\/g, "/");
+  return resultPath === sourcePath || resultPath.endsWith(`/${sourcePath}`) || sourcePath.endsWith(`/${resultPath}`);
+}
+
+function firstResultError(results, compile) {
+  for (const result of results.filter((entry) => entry.status !== "harness-incompatible")) {
+    const error =
+      result.wasmError ??
+      result.compiledError ??
+      result.compiledMessage ??
+      result.runtimeError ??
+      result.nativeError ??
+      result.nativeMessage ??
+      result.skippedReason ??
+      result.error;
+    if (error) return String(error);
+  }
+  const compileError =
+    compile?.errors?.[0]?.message ??
+    compile?.validationError ??
+    compile?.runtimeError ??
+    compile?.nativeError ??
+    compile?.error ??
+    compile?.threw;
+  return compileError ? String(compileError) : null;
+}
+
+function buildSuiteFile(report, sourceFile, source, { singleFile = false } = {}) {
+  const tests = (report?.results?.tests ?? []).filter((entry) => fileMatches(entry.file, sourceFile));
+  const compile = [...(report?.compile?.details ?? []), ...(report?.compile?.files ?? [])].find((entry) =>
+    fileMatches(entry.file, sourceFile),
+  );
+  const scored = tests.filter((entry) => entry.status !== "harness-incompatible").length;
+  const passed = tests.filter((entry) => entry.status === "passed" || entry.status === "pass").length;
+  const failed = tests.filter((entry) =>
+    [
+      "failed",
+      "fail",
+      "runtime-failed",
+      "runtime-shape-failed",
+      "trapped",
+      "compiled-threw",
+      "compiled-parse-threw",
+      "compile-failed",
+      "divergent",
+    ].includes(entry.status),
+  ).length;
+  const compileFailed = tests.some((entry) => entry.status === "compile-failed");
+  const aggregatePassed = Number(report?.results?.passed ?? 0);
+  const aggregateTotal = Number(report?.results?.scored ?? report?.results?.total ?? 0);
+  const aggregateFailed = Math.max(0, aggregateTotal - aggregatePassed);
+  const hasAggregate = singleFile && tests.length === 0 && (aggregateTotal > 0 || aggregateFailed > 0);
+  const filePassed = hasAggregate ? aggregatePassed : passed;
+  const fileTotal = hasAggregate ? aggregateTotal : scored;
+  const fileFailed = hasAggregate ? aggregateFailed : failed;
+  const status =
+    compile?.success === false || compileFailed
+      ? "compile_error"
+      : fileFailed > 0
+        ? "fail"
+        : filePassed > 0
+          ? "pass"
+          : "skip";
+  const error = firstResultError(tests, compile) ?? (hasAggregate ? report?.results?.runtimeError : null);
+  const sourceUrl = githubRawSource(source, sourceFile);
+  return {
+    path: sourceFile,
+    status,
+    ...(tests.length > 0 || hasAggregate || compile?.success === false
+      ? { passed: filePassed, total: fileTotal || (compile?.success === false ? 1 : 0) }
+      : {}),
+    ...(error ? { error } : {}),
+    ...(tests.length > 0 ? { tests: tests.map((entry) => ({ name: entry.name, status: entry.status })) } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+function buildNpmSuitePlayground(report, options = {}) {
+  const source = suiteSourceFromReport(report, options);
+  const sourceFiles = suiteFilePaths(report, options);
+  if (!source || sourceFiles.length === 0) return null;
+  const files = sourceFiles.map((sourceFile) =>
+    buildSuiteFile(report, sourceFile, source, { singleFile: sourceFiles.length === 1 }),
+  );
+  const hasPerTestResults = files.some((file) => file.tests?.length || file.total != null);
+  const summary = hasPerTestResults
+    ? files.reduce(
+        (counts, file) => {
+          const total = file.total ?? 1;
+          const passed = file.passed ?? (file.status === "pass" ? total : 0);
+          counts.total += total;
+          counts.pass += passed;
+          if (file.status === "fail") counts.fail += Math.max(total - passed, 1);
+          else if (file.status === "compile_error") counts.compile_error += total;
+          else if (file.status === "skip") counts.skip += total;
+          return counts;
+        },
+        { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+      )
+    : {
+        pass: Number(report?.results?.passed ?? 0),
+        fail: Math.max(
+          0,
+          Number(report?.results?.scored ?? report?.results?.total ?? 0) - Number(report?.results?.passed ?? 0),
+        ),
+        compile_error: report?.compile?.success === false ? files.length : 0,
+        skip: 0,
+        total: Number(report?.results?.scored ?? report?.results?.total ?? 0),
+      };
+  return {
+    kind: options.kind ?? "upstream-suite",
+    label: options.label ?? "original upstream unit tests",
+    source: { repo: source.repo, ref: source.ref },
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+function buildDifferentialPlayground(report, options = {}) {
+  const recordedEntries = Array.isArray(report?.diff?.fixtures)
+    ? report.diff.fixtures
+    : Array.isArray(report?.diff?.ops)
+      ? report.diff.ops
+      : [];
+  const entries = recordedEntries.length > 0 ? recordedEntries : (options.fallbackEntries ?? []);
+  const compileBlocked = report?.compile?.success === false || report?.validation?.validates === false;
+  const files = entries.map((entry) => {
+    const rawStatus = entry.status ?? "skipped";
+    const status = ["equal", "pass", "passed"].includes(rawStatus)
+      ? "pass"
+      : ["skipped", "skip"].includes(rawStatus)
+        ? compileBlocked
+          ? "compile_error"
+          : "skip"
+        : "fail";
+    const error =
+      entry.compiledError ??
+      entry.wasmError ??
+      entry.skippedReason ??
+      entry.nativeError ??
+      (status === "skip" ? report?.diff?.skippedReason : null) ??
+      null;
+    const path = entry.fixture ?? entry.op ?? entry.name ?? options.sourcePath ?? "test.js";
+    const sourcePath =
+      entry.fixture && options.sourcePath ? `${options.sourcePath}/${entry.fixture}` : options.sourcePath;
+    return {
+      path,
+      status,
+      passed: status === "pass" ? 1 : 0,
+      total: 1,
+      ...(error ? { error: String(error) } : {}),
+      ...(sourcePath ? { sourceUrl: `https://raw.githubusercontent.com/loopdive/js2/main/${sourcePath}` } : {}),
+    };
+  });
+  const summary = files.reduce(
+    (counts, file) => {
+      counts.total++;
+      counts[file.status === "pass" ? "pass" : file.status === "fail" ? "fail" : "skip"]++;
+      return counts;
+    },
+    { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+  );
+  return {
+    kind: "differential",
+    label: options.label ?? "differential tests",
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+async function buildPackageEntry({
+  name,
+  version,
+  issue,
+  entryFile,
+  shape,
+  report,
+  tests,
+  perf,
+  entryIsBarrel,
+  playground,
+}) {
   return {
     name,
     version,
@@ -1898,6 +2126,13 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests: annotateUnavailableInfra(tests),
+    playground: playground ?? {
+      kind: "unavailable",
+      label: "package tests",
+      files: [],
+      summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+      note: tests?.reason ?? "No committed unit-test adapter is available for this package.",
+    },
     // (#4127) The correctness axis, kept separate from compile/validation so a
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
@@ -2012,6 +2247,10 @@ if (!perfOnly && selectedPackages.has("acorn")) {
           passRatePct: acornSuite.summary?.passRatePct ?? null,
           sourceIssue: 3729,
         },
+        playground: buildNpmSuitePlayground(acornSuite, {
+          sourceRoot: "test",
+          label: "Acorn official unit tests",
+        }),
         perf: acornPerf,
       }),
     );
@@ -2057,6 +2296,14 @@ if (!perfOnly && selectedPackages.has("marked")) {
           commit: markedSuite.upstreamSuite?.commit ?? null,
         },
       },
+      playground: buildDifferentialPlayground(markedReport, {
+        sourcePath: "tests/dogfood/fixtures/marked-inputs",
+        label: "marked fixture tests",
+        fallbackEntries: readdirSync(join(ROOT, "tests/dogfood/fixtures/marked-inputs"))
+          .filter((file) => file.endsWith(".md"))
+          .sort()
+          .map((fixture) => ({ fixture })),
+      }),
       perf: await perfNpmCompatPackage("marked", {
         setupFactory: setupMarked,
         report: markedReport,
@@ -2115,6 +2362,11 @@ if (!perfOnly && selectedPackages.has("clsx")) {
             total: clsxReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(clsxReport, {
+          sourcePath: "tests/dogfood/clsx-ops.mjs",
+          label: "clsx differential operations",
+          fallbackEntries: CLSX_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: clsxPerf,
       }),
     );
@@ -2171,6 +2423,11 @@ if (!perfOnly && selectedPackages.has("cookie")) {
             total: cookieReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(cookieReport, {
+          sourcePath: "tests/dogfood/cookie-ops.mjs",
+          label: "cookie differential operations",
+          fallbackEntries: COOKIE_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: cookiePerf,
       }),
     );
@@ -2218,6 +2475,9 @@ if (!perfOnly && selectedPackages.has("eslint")) {
       shape: "cjs-project",
       report: eslintReport,
       tests: eslintTests,
+      playground: buildNpmSuitePlayground(eslintSuite, {
+        label: "ESLint upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("eslint", {
         setupFactory: setupEslint,
         report: eslintReport,
@@ -2296,6 +2556,9 @@ if (!perfOnly && selectedPackages.has("react")) {
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
+      playground: buildNpmSuitePlayground(reactSuite, {
+        label: "React upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react", {
         setupFactory: setupReact,
         report: reactReport,
@@ -2352,6 +2615,9 @@ if (!perfOnly && selectedPackages.has("lit")) {
           implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
           sourceIssue: 3977,
         },
+        playground: buildNpmSuitePlayground(litSuite, {
+          label: "Lit upstream unit tests",
+        }),
         perf: await perfLit(),
       }),
     );
@@ -2415,6 +2681,9 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         implementationError: reactDomSuite.summary?.implementationError ?? null,
         sourceIssue: 3982,
       },
+      playground: buildNpmSuitePlayground(reactDomSuite, {
+        label: "React DOM upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react-dom", {
         setupFactory: () => setupNpmCompatCatalogPackage("react-dom"),
         report: reactDomImplementationReport,
@@ -2516,6 +2785,9 @@ for (const entry of NPM_COMPAT_CATALOG) {
       shape: entry.shape,
       report,
       tests,
+      playground: buildNpmSuitePlayground(catalogUpstreamReport, {
+        label: `${entry.name} upstream unit tests`,
+      }),
       perf: await perfNpmCompatPackage(entry.name, {
         setupFactory: () => setupNpmCompatCatalogPackage(entry.name),
         report,
@@ -2527,6 +2799,13 @@ for (const entry of NPM_COMPAT_CATALOG) {
 
 for (const pkg of packages) {
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
+  pkg.playground ??= {
+    kind: "unavailable",
+    label: "package tests",
+    files: [],
+    summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+    note: pkg.tests?.reason ?? "No committed unit-test adapter is available for this package.",
+  };
 }
 packages.sort(
   (left, right) =>

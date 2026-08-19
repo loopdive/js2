@@ -140,6 +140,8 @@ export class LayoutManager {
   // Callbacks
   onMount: ((panelId: string, tabId: string, contentEl: HTMLElement) => void) | null = null;
   onUnmount: ((panelId: string, tabId: string) => void) | null = null;
+  /** Return true when the tab close request was handled without removing it. */
+  onCloseTab: ((panelId: string, tabId: string) => boolean) | null = null;
   onLayoutChanged: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
@@ -149,6 +151,16 @@ export class LayoutManager {
 
   registerTab(item: TabItem): void {
     this.tabs.set(item.id, item);
+  }
+
+  updateTabTitle(tabId: string, title: string): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    tab.title = title;
+    for (const { tabBar } of this.panelEls.values()) {
+      const label = tabBar.querySelector(`[data-tab="${tabId}"] .panel-tab-label`);
+      if (label) label.textContent = title;
+    }
   }
 
   init(root?: LayoutNode): void {
@@ -369,11 +381,16 @@ export class LayoutManager {
     const leaf = this.findLeafById(this.root, panelId);
     if (!leaf) return;
 
-    const tab = this.tabs.get(tabId);
-    if (tab?.permanent) return;
-
     const idx = leaf.tabs.indexOf(tabId);
     if (idx === -1) return;
+
+    if (this.onCloseTab?.(panelId, tabId)) {
+      this.saveLayout();
+      return;
+    }
+
+    const tab = this.tabs.get(tabId);
+    if (tab?.permanent) return;
 
     if (leaf.tabs.length <= 1) {
       // Last tab in panel — remove the entire panel
