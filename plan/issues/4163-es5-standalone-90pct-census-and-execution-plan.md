@@ -256,7 +256,18 @@ done < list.txt
 ```
 
 A lane caught this in the integrator's own instructions; `jobs=1` and
-"sequential-isolated" are opposites here. This nearly cost a lane a false
+"sequential-isolated" are opposites here.
+
+**Isolation has a SECOND half: do not edit the tree while the run is in
+flight.** A lane launched a 121-test isolated run and kept editing `src/` during
+it; the tail compiled against a half-applied change and reported **3 phantom
+`String.prototype.toLowerCase` failures**. Re-run with the tree frozen: zero.
+The integrator hit the same trap from the other direction — a full 523-row
+measurement had to be discarded because four lane merges landed underneath it
+mid-run.
+
+So the rule is: **one process per test AND a frozen tree.** A long measurement is
+only valid against the commit it started on. This nearly cost a lane a false
 5-row regression attribution — the integrator's first reading was 7, the real
 number was 5.
 

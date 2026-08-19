@@ -285,3 +285,58 @@ Measured divergence:
 Side finding: putting all three assignments in **one** module hits
 `compilation timeout (16.9 s)`. Three large-length writes exhaust the compile
 budget — worth its own look, independent of E.
+
+## 2026-08-19 — bucket A landed (`b58ed406`), 3 of 4 rows
+
+**Lane 25/62 → 28/62.** Cleared on all four gates:
+
+| gate | base | branch | |
+| --- | --- | --- | --- |
+| lane | 25/62 | **28/62** | +3 |
+| 551-row guard | 551/551 | 551/551 | |
+| prototype-write corpus, **isolated** | 120/121 | 120/121 | zero diff |
+| unit suites, 83 files, **both lanes** | 868p / 69f | 882p / **69f** | 0 broken, +14 from 2 new suites |
+
+(The corpus's single failure — `language/expressions/instanceof/primitive-prototype-with-primitive.js`,
+QuickJS provider — is pre-existing on `main`. So the local corpus baseline is
+**120/121**, quantified.)
+
+### The fix
+
+`__protoidx_has_r(recv, "<m>") ? apply the companion entry : the builtin` — a
+two-arm runtime branch at the call site, following `emitDynViewMethodTwoArm`'s
+discipline (the existing precedent for branching between two full lowerings of
+one call).
+
+**`has`, not get-and-test-nullish**: presence is the spec question, and an
+override whose value is `undefined` must still shadow the builtin. What makes
+`has` *exact* rather than approximate: under `protoNamedDirty` alone the
+companion is seeded with **nothing** — seeding is driven by `protoMemberDirty`,
+and a proto WRITE deliberately does not set it — so `has` means precisely "the
+user overrode this member", never "this member exists".
+
+Gated on standalone + `protoNamedDirty` (a pre-scan flag, so a non-overriding
+module never builds the arm) + a whole-file scan for the write. Identifier
+receivers only, since the else arm re-dispatches and so compiles the receiver
+twice — same restriction and reason as the dyn-view two-arm.
+
+### Measured boundary — the remaining consult-order problem, characterised
+
+An **`any`-typed** receiver bypasses the array method path entirely and reaches
+`__extern_method_call`, which is **inconsistent** there: it honours an override
+for a member with **no** builtin arm (`join` on an `any` receiver picks it up
+today) and ignores it for one that **has** an arm (`toString` does not). That
+asymmetry is the sharpest available characterisation of what is left, and fixing
+it is strictly larger than this call-site branch. Documented in the module and
+the test rather than papered over.
+
+The 4th bucket-A row (`S15.4.3_A1.1_T2`) is untouched: it is a call on the
+**constructor object** with a Function-brand override, not an Array-instance
+call.
+
+### The unit test found a real hole, not a confirmation
+
+The write-scan matched only the bare `Array.prototype.x = …` and silently
+declined for `(Array.prototype as any).x = …` — the ordinary **TypeScript**
+spelling. Both halves now unwrap the type-only wrappers. Without the test the arm
+would have shipped working on test262's JS spelling and dead on TypeScript's.
