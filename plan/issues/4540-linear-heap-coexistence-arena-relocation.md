@@ -249,11 +249,28 @@ one grower, but it is the engine's. Keep it as the working fallback; it is not
 the end state. The costs recorded in the Decision above are unchanged by this —
 they are the price of the intended direction, not of the fallback.
 
-**Status 2026-08-19: NOT implemented.** See "Implementation status" below —
-this slice shipped the recorded fallback (carve from the engine's `malloc`),
-which closes the corruption class on its own. The own-allocator decision stands
-and is unstarted; `scripts/quickjs-artifact/qjs_shim.c` still calls plain
-`JS_NewRuntime()`.
+**Status 2026-08-19: NOT implemented in THIS slice; implemented in #4557.** See
+"Implementation status" below — this slice shipped the recorded fallback (carve
+from the engine's `malloc`), which closes the corruption class on its own.
+The own allocator was then built in
+[#4557](./4557-linear-own-allocator-engine-allocates-through-us.md): a real
+`malloc`/`calloc`/`free`/`realloc`/`usable_size` in the linear lane, installed
+through `qjs_new_runtime2` → `JS_NewRuntime2`. Three of that work's findings
+correct assumptions recorded on THIS page:
+
+- The `JSMallocFunctions` members are wired as **`__indirect_function_table`
+  callbacks, not wasm imports** — five unconditional imports would make the
+  artifact un-instantiable without a peer allocator, which `extract-abi.mjs`
+  and the runtime-eval tier both require.
+- The "many small, short-lived objects" premise this page uses to argue
+  dlmalloc's tuning advantage is **false for quickjs-ng v0.16.1**: it has its
+  own 4 KiB size-class arena in front of the embedder allocator, so an eval
+  creating 120,000 objects makes **10** calls to the embedder allocator.
+- Dropping dlmalloc did **not** shrink the artifact (it is still linked);
+  it grew by 6,735 bytes.
+
+**The fallback on this page stays the DEFAULT.** `linearHeapAllocator` is
+opt-in; the measured end-to-end cost of the own allocator is 1.025×.
 
 ## The alternative this slice does not currently consider: two memories
 

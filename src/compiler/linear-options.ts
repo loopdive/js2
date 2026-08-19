@@ -19,5 +19,8 @@ export function buildLinearOptions(
     // #4540 — heap ownership in linked mode. Undefined unless a link is
     // requested, so standalone emission is untouched.
     linkedHeap: options.linearLinkedHeap,
+    // #4557 — own allocator. Undefined for every existing caller, so the bump
+    // arena and its emitted bytes are untouched unless it is asked for.
+    heapAllocator: options.linearHeapAllocator,
   };
 }

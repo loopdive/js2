@@ -88,6 +88,7 @@ export function addRuntime(
   exposeArenaReset: boolean | undefined,
   defaultDataSegmentBase: number,
   linkedHeap?: LinkedHeapOptions,
+  heapAllocator?: "bump" | "malloc-v1",
 ): number {
   const enabled = sourceMayUseLinearNumberToString(ast);
   if (enabled && linkedHeap !== undefined) {
@@ -109,6 +110,7 @@ export function addRuntime(
     exposeArenaReset,
     ...(enabled ? { heapStart: LINEAR_NUMBER_FORMAT_HEAP_START } : {}),
     ...(linkedHeap !== undefined ? { linkedHeap } : {}),
+    ...(heapAllocator !== undefined ? { heapAllocator } : {}),
   });
   if (enabled) addLinearNumberToStringRuntime(mod);
   return enabled ? LINEAR_NUMBER_FORMAT_DATA_BASE : defaultDataSegmentBase;

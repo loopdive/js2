@@ -159,6 +159,21 @@ export interface LinearOptions {
     /** Bytes per carved chunk (default: one Wasm page). */
     chunkBytes?: number;
   };
+  /**
+   * Which allocator backs the heap (#4557).
+   *
+   * `"malloc-v1"` emits the real allocator — free lists, boundary tags,
+   * coalescing, in-place `realloc` — and exports `js2wasm_malloc` /
+   * `js2wasm_calloc` / `js2wasm_free` / `js2wasm_realloc` /
+   * `js2wasm_usable_size` so the QuickJS artifact can install them through
+   * `JS_NewRuntime2`. `__malloc` keeps its bump fast path; only the source of
+   * its chunks moves, from the engine's heap to ours.
+   *
+   * Defaults to `"bump"`, which is #4540's shipped fallback and the reason it
+   * was kept: if the measured comparison against the artifact's dlmalloc does
+   * not hold, this option is simply not set.
+   */
+  heapAllocator?: "bump" | "malloc-v1";
 }
 
 /**
@@ -235,7 +250,14 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   }
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
   const linkedHeap = resolveLinkedHeap(opts, externImportIndices);
-  const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE, linkedHeap);
+  const dataSegmentBase = numberFormat.addRuntime(
+    mod,
+    ast,
+    opts.exposeArenaReset,
+    DATA_SEGMENT_BASE,
+    linkedHeap,
+    opts.heapAllocator,
+  );
 
   // Add memory and runtime functions first
   if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
