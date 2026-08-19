@@ -1,10 +1,11 @@
 ---
 id: 4560
 title: "Standalone emits INVALID Wasm: `type error in fallthru[0] (expected (ref null N), got (ref N))` in __module_init / __cb_0"
-status: ready
+status: done
 sprint: current
 created: 2026-08-19
 updated: 2026-08-19
+completed: 2026-08-19
 priority: high
 horizon: s
 feasibility: medium
@@ -69,3 +70,55 @@ first task is to find the shape, not to fix the two rows.
 - A minimal non-test262 repro is added under `tests/` capturing the emitted block
   signature, so the shape is pinned rather than the two rows.
 - The standalone ES5 guard (551 locally-verified-passing rows) stays clean.
+
+## 2026-08-19 FIXED — commit `0cc8e8f` on `es5-array`
+
+**Both modules now load and run. The row count deliberately does NOT move** —
+lane stayed 22/62, guard 551/551. This is recorded as a validity fix, not a
+conformance gain; reading it as +2 would be wrong.
+
+### Root cause
+
+The native `join` fold's element switch had four arms — boolean, numeric,
+`externref`, and a terminal `else` that **assumed a string ref** and emitted
+`ref.as_non_null`. An array of object literals is none of those: its element type
+is a `(ref null $__anon_N)` closed struct, so the `else` fired and the fold's
+`local.set` into the `(ref $AnyString)` result rejected it.
+
+Minimal repro (standalone):
+
+```js
+var o = { valueOf: function () { return "+"; } };
+[o].join();   // CompileError: type error in fallthru[0] (expected (ref null 6), got (ref 80))
+```
+
+`var o = {}` compiles fine — a property-less literal gets a different element
+carrier — which is why the shape looked rarer than it is.
+
+**Fix:** `extern.convert_any` is total over every GC ref, so a struct element
+becomes an ordinary `externref` and reuses the `any[]` lane's
+`__extern_toString` — the same ToString `String(a[i])` uses, so the two cannot
+disagree. String carriers keep the untouched path via a supertype-chain walk
+rather than an id comparison. Extracted to `array-join-element.ts`, which also
+shrinks `array-methods.ts`.
+
+### Why neither row flips — measured, not assumed
+
+- **`toString/S15.4.4.2_A1_T4`** now passes five of six assertions, then fails
+  because **`new Array(o)` loses the element**. `literals.ts` (~L5168)
+  deliberately widens the one-element case to a `__vec_externref`; the consumer
+  coerces that to the contextual `(ref null $__anon)` carrier via
+  `emitVecToVecBody`, whose per-element `ref.test`-guarded cast **cannot**
+  succeed — the literal has a method, so it was materialised to `$Object`, not to
+  the closed struct its TS type resolves to. **Two representations for one TS
+  type; the cast silently yields `null`.** That is #2809 representation
+  territory, same family as bucket **D** in #4556.
+- **`toLocaleString/S15.4.4.3_A3_T1`** now runs and fails on inherited
+  `Array.prototype[1]` — plain bucket **B**, the documented `proto-index-store.ts`
+  boundary.
+
+### Scope decision
+
+This issue keeps **only the invalid-Wasm half**, which is done. The
+one-element-`new Array(o)` representation split should be folded into **#2809**
+rather than tracked here.

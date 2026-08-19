@@ -158,3 +158,28 @@ That is a broken module, not a semantics gap → **#4560**.
   NaN element read back out of an f64 vec makes its `length === undefined` branch
   fire. The real defect is undefined-vs-NaN in the numeric carrier — same family
   as G.
+
+### CORRECTION to bucket E (2026-08-19) — the obstacle is sentinels, not discovery
+
+The sketch above framed bucket E as "find every length-read site, then flip
+`i32.trunc_sat_f64_s` → `_u` and pair the read". Having actually enumerated the
+sites, that framing is **wrong in a way that would cause a silent regression**:
+
+- There are **~9 vec-length read sites in `property-access-dispatch.ts` alone**.
+- At least one of them (`~L2861`, the auto-length `$__ta_view` arm) reads a
+  field-0 **`-1` sentinel**.
+
+A blanket `_s` → `_u` flip turns that sentinel into **4294967295** — a silent
+wrong answer, in a code path that has nothing to do with array `length`
+semantics.
+
+**The 551-row guard cannot catch this**, because signed and unsigned encode
+identically for every value below 2³¹ and the sentinel case is not exercised by
+the guard corpus. A green guard here is false reassurance.
+
+So for whoever picks E up, step one is **"audit every field-0 reader for
+sentinel values"**, not "find the read sites". Add a constructed probe at
+4294967295 and at 2³¹ as the acceptance test, since the guard will not serve.
+
+This is why the fix was deliberately not landed. Recorded so the next attempt
+starts from the real obstacle rather than re-deriving it.
