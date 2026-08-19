@@ -262,12 +262,18 @@ export function nonArrayIndexNumericKey(
     const args = inner.arguments;
     if (args === undefined || args.length === 0) return "false";
     if (args.length === 1) {
+      // LITERAL argument only — `resolveConstantExpression` would fold a
+      // MUTABLE `let`/`var` binding to its initializer (see the note in
+      // `arrayIndexConstantKey`), so a later reassignment would silently give
+      // the wrong key.
       const a = skipTransparentExpressions(args[0]!);
       if (a.kind === ts.SyntaxKind.TrueKeyword) return "true";
       if (a.kind === ts.SyntaxKind.FalseKeyword) return "false";
-      const c = resolveConstantExpression(ctx, a);
-      if (typeof c === "number") return c !== 0 && !Number.isNaN(c) ? "true" : "false";
-      if (typeof c === "string") return c.length > 0 ? "true" : "false";
+      if (ts.isNumericLiteral(a)) {
+        const c = Number(a.text);
+        return c !== 0 && !Number.isNaN(c) ? "true" : "false";
+      }
+      if (ts.isStringLiteral(a)) return a.text.length > 0 ? "true" : "false";
     }
     return undefined;
   }
@@ -326,19 +332,34 @@ export function arrayIndexConstantKey(
   if (ts.isPrefixUnaryExpression(inner) && ts.isNumericLiteral(inner.operand)) return undefined;
   if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword) return undefined;
 
-  const isWrapper =
+  // LITERAL ARGUMENTS ONLY — never an identifier, at this level or inside the
+  // wrapper. `resolveConstantExpression` (literals.ts) folds a `let`/`var`
+  // binding to its INITIALIZER, mutability be damned, and returns it as a
+  // STRING even for a numeric one. So `for (var i = 0; …) nums[i]` resolved `i`
+  // to `"0"`, which IS an array index, and every iteration read `nums[0]`:
+  // `[1,2,3]` summed to 3 instead of 6. That fold is harmless to
+  // `nonArrayIndexNumericKey` — an index-looking result makes it decline — but
+  // here it is the ANSWER, so the same input becomes a silent wrong read.
+  // Every measured win (`S15.4_A1.1_T{4,7,8}`) spells the key as a literal or a
+  // wrapper around one, so nothing is lost by refusing identifiers outright.
+  const wrapperArg =
     ts.isNewExpression(inner) &&
     ts.isIdentifier(inner.expression) &&
     (inner.expression.text === "Number" || inner.expression.text === "String") &&
-    isUnshadowedGlobal(fctx, inner.expression.text);
-  if (!ts.isStringLiteral(inner) && !isWrapper && !ts.isIdentifier(inner)) return undefined;
+    isUnshadowedGlobal(fctx, inner.expression.text) &&
+    inner.arguments?.length === 1
+      ? skipTransparentExpressions(inner.arguments[0]!)
+      : undefined;
+  const isWrapper = wrapperArg !== undefined && (ts.isStringLiteral(wrapperArg) || ts.isNumericLiteral(wrapperArg));
+  if (!ts.isStringLiteral(inner) && !isWrapper) return undefined;
 
-  const s = resolveStringKey(ctx, fctx, key);
-  if (s !== undefined) return isArrayIndexString(s) ? Number(s) : undefined;
-  // `new Number(2)` resolves numerically, not as a string.
-  if (!isWrapper) return undefined;
-  const n = resolveNumericKey(ctx, fctx, key);
-  return n !== undefined && isArrayIndexNumber(n) ? n : undefined;
+  if (ts.isStringLiteral(inner)) return isArrayIndexString(inner.text) ? Number(inner.text) : undefined;
+  // `new String("2")` is a string key; `new Number(2)` a numeric one.
+  if (ts.isStringLiteral(wrapperArg!)) {
+    return isArrayIndexString(wrapperArg!.text) ? Number(wrapperArg!.text) : undefined;
+  }
+  const n = Number((wrapperArg as ts.NumericLiteral).text);
+  return isArrayIndexNumber(n) ? n : undefined;
 }
 
 /**
