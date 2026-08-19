@@ -188,9 +188,18 @@ too. A row count would have hidden that entirely.
 the shared object runtime, not `binary-ops.ts`, and a different blast radius. It
 would likely close the relational cells and a chunk of the `+` cells together.
 
-**Explicitly rejected shortcut:** special-casing the relational cascade to
-ToString whatever it could not reduce. It would move cells and be wrong. Do not
-take it.
+**Explicitly rejected shortcut:** special-casing the relational cascade to call
+`__extern_toString` on whatever `__to_primitive` could not reduce. It would move
+cells and be wrong. Do not take it — and the reason matters, because the cell
+count would look like progress:
+
+`__extern_toString` is **ToString, not ToPrimitive**. It skips `valueOf`
+entirely, so it produces the wrong answer wherever ToPrimitive(hint number) is
+supposed to prefer `valueOf` — most visibly `Date`, and any object with a numeric
+`valueOf`. It would convert a **loud** wrong answer (`false` everywhere, obvious
+in a truth table) into a **quiet** one that agrees with the spec on the common
+cases and diverges on exactly the ones tests are written for. Fix
+`__to_primitive`'s carrier coverage instead.
 
 ### Validation of the landed half
 
@@ -207,3 +216,4 @@ The lane's earlier "9 equality/operator suites: base 2 failed → 2 failed" was
 The conclusion held, but the figures were noise and were retracted rather than
 left quotable. With two independent halves needing to move, a contaminated
 baseline is exactly how a partial fix reads as complete.
+

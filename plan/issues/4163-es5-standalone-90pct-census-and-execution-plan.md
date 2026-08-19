@@ -279,6 +279,21 @@ isolation. Timeout-shaped guard failures under load are contention, not the
 change under test — but they are indistinguishable from a real hang in the
 output, so re-run before reporting.
 
+### 4. "Which code actually runs?" is answered by the emitted module, not the source
+
+The relational/ToPrimitive defect (#4564) was diagnosed wrong **twice** — first
+as the typed dispatch, then as the `__any_lt/gt/le/ge` helpers — and the
+integrator propagated the second into the issue file as settled fact. Both wrong
+answers came from reading **code that could run**: first the gate conditions,
+then the call graph into the helpers. Neither is evidence about what *does* run.
+
+Reading the **emitted module** settled it in one look: those helpers are not
+emitted at all for the failing programs; the comparison lowers inline to
+`ToNumber f64.<op> ToNumber`.
+
+For a "which path is taken?" question, dumping the emitted module is the cheaper
+**first** move, not the last resort.
+
 ### Corollary for the guard itself
 
 The 551-row guard is a **stratified sample of currently-passing rows**. It
