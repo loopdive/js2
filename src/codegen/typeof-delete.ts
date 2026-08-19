@@ -31,6 +31,10 @@ import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import {
+  emitPropertyDeleteWithUnmappedArgumentsWriteback,
+  isArgumentsObjectIdentifier,
+} from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
@@ -260,93 +264,6 @@ function emitStructDeleteOutcome(
     });
   }
   fctx.body.push({ op: "local.get", index: resLocal });
-}
-
-/**
- * A strict or non-simple-parameter function has an *unmapped* `arguments`
- * object, so it intentionally has no `mappedArgsInfo`. Its backing value is
- * still the same externref vec used by mapped arguments. The generic
- * `__delete_property` path records the successful deletion (and honors any
- * descriptor-sidecar refusal), but it cannot clear the opaque vec slot; a
- * subsequent compiled `arguments[i]` read therefore still sees the old value.
- *
- * Consume the generic delete result and, on success, clear a statically-known
- * in-bounds vec slot to the canonical `undefined` value. Leave the result on
- * the stack for the caller's normal strict-delete check.
- */
-function emitPropertyDeleteWithUnmappedArgumentsWriteback(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  inner: ts.PropertyAccessExpression | ts.ElementAccessExpression,
-  delIdx: number,
-): void {
-  fctx.body.push({ op: "call", funcIdx: delIdx });
-  if (
-    fctx.mappedArgsInfo ||
-    !ts.isElementAccessExpression(inner) ||
-    !ts.isIdentifier(inner.expression) ||
-    inner.expression.text !== "arguments"
-  ) {
-    return;
-  }
-
-  const idxArg = inner.argumentExpression;
-  const idxText = ts.isNumericLiteral(idxArg) ? idxArg.text : ts.isStringLiteral(idxArg) ? idxArg.text : undefined;
-  const argIndex = idxText !== undefined ? Number(idxText) : NaN;
-  if (!Number.isInteger(argIndex) || argIndex < 0) return;
-
-  const argsLocalIdx = fctx.localMap.get("arguments");
-  if (argsLocalIdx === undefined) return;
-  const argsType =
-    argsLocalIdx < fctx.params.length
-      ? fctx.params[argsLocalIdx]?.type
-      : fctx.locals[argsLocalIdx - fctx.params.length]?.type;
-  if (!argsType || (argsType.kind !== "ref" && argsType.kind !== "ref_null")) return;
-
-  const vecTypeIdx = argsType.typeIdx;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-  if (arrTypeIdx < 0) return;
-
-  const resultLocal = allocLocal(fctx, `__del_args_res_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.set", index: resultLocal });
-  emitUndefined(ctx, fctx);
-  const undefLocal = allocLocal(fctx, `__del_args_undef_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: undefLocal });
-
-  const clearIfInBounds: Instr[] = [
-    { op: "local.get", index: argsLocalIdx },
-    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: argIndex },
-    { op: "i32.gt_u" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: argsLocalIdx },
-        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
-        { op: "i32.const", value: argIndex },
-        { op: "local.get", index: undefLocal },
-        { op: "array.set", typeIdx: arrTypeIdx },
-      ],
-      else: [],
-    },
-  ];
-
-  fctx.body.push({ op: "local.get", index: resultLocal });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then:
-      argsType.kind === "ref_null"
-        ? [
-            { op: "local.get", index: argsLocalIdx },
-            { op: "ref.is_null" },
-            { op: "if", blockType: { kind: "empty" }, then: [], else: clearIfInBounds },
-          ]
-        : clearIfInBounds,
-    else: [],
-  });
-  fctx.body.push({ op: "local.get", index: resultLocal });
 }
 
 function emitStaticIdentifierDelete(ctx: CodegenContext, fctx: FunctionContext, ident: ts.Identifier): void {
@@ -1570,6 +1487,7 @@ export function compileTypeofExpression(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
+      if (isArgumentsObjectIdentifier(fctx, ident)) return compileStringLiteral(ctx, fctx, "object"); // (#4555) §10.6
       // (#2200 Phase 2) An Annex B B.3.3 block-fn outer binding must be handled
       // BEFORE the `!hasValueDecl` const-fold below: the checker reports its
       // symbol with no `valueDeclaration` at the reference site (the binding is
@@ -1851,6 +1769,12 @@ export function compileTypeofComparison(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
+      // (#4555) §10.6 — see isArgumentsObjectIdentifier.
+      if (isArgumentsObjectIdentifier(fctx, ident)) {
+        const argsMatch = stringLiteral === "object";
+        fctx.body.push({ op: "i32.const", value: isEq ? (argsMatch ? 1 : 0) : argsMatch ? 0 : 1 });
+        return { kind: "i32" };
+      }
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
         const actual = staticTypeofForWasmType(ctx, withBinding.field.type);
