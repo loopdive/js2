@@ -9,7 +9,11 @@
  * proof needed before allocation: the `with` target must resolve to this exact
  * declaration symbol, not merely share its spelling.
  */
-import { irWithTargetIdentifier, planIrWithTarget } from "../../ir/with-environment.js";
+import {
+  irWithTargetIdentifier,
+  planIrWithTarget,
+  withBodyBareIdentifierWriteNames,
+} from "../../ir/with-environment.js";
 import { forEachChild, ts } from "../../ts-api.js";
 
 /** Function/class bodies run under a separate declaration scan. */
@@ -41,14 +45,18 @@ export function bindingHasIrPlannedOpenWithTarget(
   const bindingSymbol = checker.getSymbolAtLocation(declaration);
   if (!bindingSymbol) return false;
   const moduleBinding = isModuleScopedDeclaration(declaration);
+  // (#4206) This target's own key set, so a write to an OUTER binding inside the
+  // body does not disqualify the closed carrier. `undefined` when the pre-pass
+  // cannot see a literal — nothing here can disprove ownership then.
+  const declaredOwnKeys = declaredObjectLiteralKeys(declaration);
 
   let found = false;
   const visit = (node: ts.Node, isStatementRoot: boolean): void => {
     if (found) return;
     if (!isStatementRoot && !moduleBinding && isFunctionOrClassBoundary(node)) return;
-    if (ts.isWithStatement(node) && planIrWithTarget(node).representation === "open-object") {
+    if (ts.isWithStatement(node) && planIrWithTarget(node, declaredOwnKeys).representation === "open-object") {
       const target = irWithTargetIdentifier(node);
-      if (target && checker.getSymbolAtLocation(target) === bindingSymbol) {
+      if (target && targetIsThisBinding(checker, target, bindingSymbol, declaration, moduleBinding)) {
         found = true;
         return;
       }
@@ -58,6 +66,64 @@ export function bindingHasIrPlannedOpenWithTarget(
 
   for (const statement of statements) visit(statement, true);
   return found;
+}
+
+/**
+ * (#4206) The keys of the object literal `declaration` is initialized with, or
+ * `undefined` when it has none the pre-pass can see. Feeds
+ * {@link planIrWithTarget}'s SetMutableBinding proof.
+ */
+function declaredObjectLiteralKeys(declaration: ts.Identifier): ReadonlySet<string> | undefined {
+  const parent = declaration.parent;
+  if (!ts.isVariableDeclaration(parent) || parent.name !== declaration) return undefined;
+  const initializer = parent.initializer;
+  if (initializer === undefined) return undefined;
+  const literal = unwrapTransparentExpression(initializer);
+  if (!ts.isObjectLiteralExpression(literal)) return undefined;
+  const keys = new Set<string>();
+  for (const property of literal.properties) {
+    const name = property.name;
+    if (name === undefined) continue;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) keys.add(name.text);
+  }
+  return keys;
+}
+
+/**
+ * (#4206) Does `target` name the same binding as `declaration`?
+ *
+ * Symbol identity is the rule. The ONE exception is a `with` target that is
+ * itself nested inside another `with` body: §14.11's Object Environment Record
+ * can bind any name at runtime, so TypeScript gives every identifier there
+ * `any` and NO symbol, and the identity test degrades to `undefined === symbol`
+ * — silently false. The inner target of `with (a) { with (b) { … } }` was
+ * therefore never planned, and the inner write kept coercing into `b`'s closed
+ * field carrier (`S12.10_A3.6_T{1,2}`).
+ *
+ * Bounded exactly like #4264's `withBodyAssignmentWidens`: it fires only when
+ * the checker has already declined, only for a target genuinely inside a `with`
+ * body, and only for a module-scoped declaration — whose one module-global
+ * carrier is the same binding a nested `with` body could name.
+ */
+function targetIsThisBinding(
+  checker: ts.TypeChecker,
+  target: ts.Identifier,
+  bindingSymbol: ts.Symbol,
+  declaration: ts.Identifier,
+  moduleBinding: boolean,
+): boolean {
+  const resolved = checker.getSymbolAtLocation(target);
+  if (resolved !== undefined) return resolved === bindingSymbol;
+  return moduleBinding && isInsideWithBody(target) && target.text === declaration.text;
+}
+
+/** True when `node` sits inside the BODY of a `with` statement. */
+function isInsideWithBody(node: ts.Node): boolean {
+  let prev: ts.Node | undefined;
+  for (let cur: ts.Node | undefined = node; cur; prev = cur, cur = cur.parent) {
+    if (prev !== undefined && ts.isWithStatement(cur) && cur.statement === prev) return true;
+  }
+  return false;
 }
 
 /** Module globals retain their one carrier across ordinary nested functions. */

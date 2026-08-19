@@ -25,7 +25,7 @@ import { forEachChild, ts } from "../ts-api.js";
  */
 export type IrWithTargetRepresentation = "closed-fields" | "open-object";
 
-export type IrWithTargetPlanReason = "runtime-has-binding" | "runtime-delete-binding";
+export type IrWithTargetPlanReason = "runtime-has-binding" | "runtime-delete-binding" | "runtime-set-binding";
 
 export interface IrWithTargetPlan {
   readonly representation: IrWithTargetRepresentation;
@@ -36,6 +36,10 @@ const CLOSED_WITH_TARGET_PLAN: IrWithTargetPlan = { representation: "closed-fiel
 const DELETE_WITH_TARGET_PLAN: IrWithTargetPlan = {
   representation: "open-object",
   reasons: ["runtime-has-binding", "runtime-delete-binding"],
+};
+const SET_WITH_TARGET_PLAN: IrWithTargetPlan = {
+  representation: "open-object",
+  reasons: ["runtime-has-binding", "runtime-set-binding"],
 };
 
 /** Unwrap the transparent parentheses allowed around a `with` target. */
@@ -86,14 +90,92 @@ function bodyContainsBareIdentifierDelete(body: ts.Statement): boolean {
 }
 
 /**
+ * (#4206) The W2 trigger — a bare-identifier WRITE.
+ *
+ * §9.1.1.2.5 SetMutableBinding on an Object Environment Record is an ordinary
+ * `Set(bindingObject, N, V, S)`: the value is arbitrary. The closed-fields
+ * projection pins each field's representation from the LITERAL's initializer,
+ * so it can only model the write when the value happens to fit that carrier —
+ * and inside a `with` body the value is dynamically scoped by construction, so
+ * nothing constrains it. Measured before this trigger existed,
+ * `--target standalone`:
+ *
+ * ```js
+ * var b = { p1: true };        // (field $p1 (mut i32))
+ * with (b) { p1 = "x1"; }
+ * b.p1                          // false   (spec: "x1")
+ * ```
+ *
+ * The string was coerced into the boolean carrier and read back as `false`.
+ * The same shape with a numeric or string field loses the value the same way.
+ *
+ * Compound assignments and `++`/`--` count: each performs SetMutableBinding
+ * with the result of an abstract operation whose type the projection likewise
+ * cannot pin. A MEMBER write (`o.p = v`) does not — that is an ordinary
+ * property write on a resolved receiver, not a binding operation.
+ *
+ * Returns the NAMES rather than a boolean because this file cannot see the
+ * target's shape. Both consumers supply the own-key set to
+ * {@link planIrWithTarget}, and they MUST agree: the allocation pre-pass
+ * (`declarations/dynamic-with-shape.ts`) decides the carrier and
+ * `codegen/with-scope.ts` decides the lowering, so a plan that says
+ * "open-object" to one and "closed-fields" to the other leaves a closed struct
+ * being read through the Tier-2 host reflection that cannot see its fields —
+ * `ReferenceError: p1 is not defined` (#3025's Tier-1 suite, measured).
+ */
+export function withBodyBareIdentifierWriteNames(body: ts.Statement): ReadonlySet<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (node !== body && isFunctionOrClassBoundary(node)) return;
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      const target = unwrapParens(node.left);
+      if (ts.isIdentifier(target)) names.add(target.text);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      const operand = unwrapParens(node.operand);
+      if (ts.isIdentifier(operand)) names.add(operand.text);
+    }
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return names;
+}
+
+function unwrapParens(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+function namesIntersect(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  for (const name of a) if (b.has(name)) return true;
+  return false;
+}
+
+/**
  * Plan only the W1 slice: a single identifier target whose directly executing
  * body uses bare-identifier DeleteBinding. This is intentionally independent
  * of host/standalone representation details; allocation consumes the plan in
  * the codegen pre-pass before it can create a closed struct.
  */
-export function planIrWithTarget(statement: ts.WithStatement): IrWithTargetPlan {
+export function planIrWithTarget(statement: ts.WithStatement, ownKeys?: ReadonlySet<string>): IrWithTargetPlan {
   if (!irWithTargetIdentifier(statement)) return CLOSED_WITH_TARGET_PLAN;
-  return bodyContainsBareIdentifierDelete(statement.statement) ? DELETE_WITH_TARGET_PLAN : CLOSED_WITH_TARGET_PLAN;
+  if (bodyContainsBareIdentifierDelete(statement.statement)) return DELETE_WITH_TARGET_PLAN;
+  const written = withBodyBareIdentifierWriteNames(statement.statement);
+  if (written.size === 0) return CLOSED_WITH_TARGET_PLAN;
+  // A write to a name the target does not own is not SetMutableBinding on THIS
+  // record — HasBinding answers false and the reference resolves outward — so it
+  // must not cost the target its closed-fields representation. A caller that
+  // cannot supply the key set gets the conservative plan.
+  if (ownKeys !== undefined && !namesIntersect(written, ownKeys)) return CLOSED_WITH_TARGET_PLAN;
+  return SET_WITH_TARGET_PLAN;
 }
 
 export type IrWithEnvironmentSelection =
