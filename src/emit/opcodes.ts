@@ -474,6 +474,12 @@ export const SECTION = {
   element: 9,
   code: 10,
   data: 11,
+  /**
+   * Data-count section (#4540). Must be emitted BETWEEN element (9) and code
+   * (10) when any body uses `memory.init` / `data.drop` — validation is
+   * single-pass and needs the segment count before it validates code.
+   */
+  dataCount: 12,
   tag: 13,
 } as const;
 

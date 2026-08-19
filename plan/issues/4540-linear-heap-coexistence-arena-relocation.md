@@ -17,6 +17,33 @@ goal: standalone-mode
 parent: 4538
 depends_on: [4539]
 related: [1856, 4236]
+# The bulk of the new code went to a NEW module, src/codegen-linear/linked-arena.ts
+# (~280 lines: the chunk-carving prologue, the passive-image installer, the
+# linked-mode predicates). That took runtime.ts's growth from +340 to +98.
+# What remains in the three god-files cannot move without making it worse:
+#   runtime.ts (+98)  — one `ArenaOptions` field, the two mode refusals, the
+#                       arena-limit global and the extra `__malloc` local. These
+#                       ARE the arena; a module that owns half of `addRuntime`
+#                       would split one function across two files.
+#   index.ts (+97)    — `resolveLinkedHeap` (the validation that makes the
+#                       catastrophic combination unrepresentable) plus the
+#                       `LinearOptions` field. Option validation belongs next to
+#                       the option it validates.
+#   binary.ts (+33)   — two opcode cases, the passive-segment branch and the
+#                       data-count section. Encoder cases only exist in the
+#                       encoder.
+loc-budget-allow:
+  - src/codegen-linear/runtime.ts
+  - src/codegen-linear/index.ts
+  - src/emit/binary.ts
+# Same reasoning, at function granularity. `encodeInstr` is the emitter's one
+# opcode switch — a new opcode has nowhere else to be encoded (+14 for
+# memory.init and data.drop). `emitBinaryWithSourceMapUnguarded` writes the
+# section sequence in order, and the data-count section is only legal BETWEEN
+# element and code (+19, with the passive-segment branch).
+func-budget-allow:
+  - src/emit/binary.ts::encodeInstr
+  - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
 # id 4540 reserved via claim-issue.mjs --allocate --allow-unscanned on
 # 2026-08-17 (gh CLI offline in this container; pr_scan=degraded). Equivalent
 # open-PR scan via the GitHub MCP at reservation time: the sole open PR was
@@ -32,15 +59,58 @@ Slice 2 of #4538. Implements handoff items 4–5 from #4236's slice-2 table.
 Sharing one linear memory between our compiled code and the engine means two
 allocators over one address space. Measured on the pinned artifact (#4236):
 
-- The artifact's first `malloc` returns **171,696 (0x29EB0)**, above a 64 KiB
-  `--stack-first` shadow stack at address 0 and ~105 KiB of static data.
+- The artifact's first `malloc` returns an address above a 64 KiB `--stack-first`
+  shadow stack at address 0 and ~105 KiB of static data.
 - Our linear `__heap_ptr` initialises to a hard-coded **1024** (`HEAP_START` in
   `src/codegen-linear/runtime.ts`) — i.e. **inside the artifact's shadow
   stack**.
 
-So the arena's very first allocation writes through the engine's stack. Two
-independent growers over one memory remains a corruption hazard even after
-relocation, and must be resolved by ownership rather than by spacing.
+So the arena's very first allocation writes through the engine's stack.
+
+### Correction (2026-08-19): the first-`malloc` constant is not portable
+
+This section and ADR-0020 both recorded that first `malloc` as **171,696
+(0x29EB0)**. Re-measured on a locally-built artifact from the *same* pinned refs
+(quickjs-ng `954dc53`, wasi-libc `8d8348e`, nominally the same clang 18.1.3) it
+is **172,176** — **+480**, because the static data shifted. Full layout as
+measured 2026-08-19, read out of the binary and confirmed by running it:
+
+| quantity | value |
+| --- | --- |
+| `__stack_pointer` global init | 65,536 → shadow stack `[0, 65536)`, grows down |
+| static data | `[65536, 170392)`, 104,856 B in 2 active segments |
+| `malloc(1)`, then `malloc(1)` | 172,176 then 172,192 (16-byte granularity) |
+| memory | 256 pages initial (16 MiB), 16,384 max (1 GiB) |
+
+**The substance of the collision claim is confirmed; the constant is not
+evidence.** `HEAP_START = 1024` is inside `[0, 65536)` on any build of this
+shape, and so are `DATA_SEGMENT_BASE = 64` and the Ryū `TABLE_BASE = 1024` /
+`LINEAR_NUMBER_FORMAT_DATA_BASE = 16384`; the Ryū heap floor of 65,536 lands on
+the *first byte* of static data. But anything that **hardcodes 171,696, or any
+measured heap base, is wrong by construction** — the number is a property of one
+build in one container, not of the artifact. Placement must be queried or
+delegated, never baked. (Both numbers are recorded rather than one silently
+replaced, because the discrepancy is the finding.)
+
+### Correction (2026-08-19): "two growers corrupt" was not reproducible
+
+This issue stated that *"two independent growers over one memory remains a
+corruption hazard even after relocation"*. **Measured, that is false for this
+artifact.** Probe: fill the engine's initial 16 MiB so its `dlmalloc` has grown,
+then grow the memory independently from outside by 16 pages, fill the new region
+with a canary, then make the engine allocate 8 MiB more. Result: **zero** engine
+pointers landed inside the externally-grown region, **zero** canary bytes were
+clobbered, and `eval("1+2")` still returned 3. wasi-libc's `MORECORE` re-derives
+its break from `memory.size`, so an interleaved external grow just makes its next
+segment non-contiguous, which it handles.
+
+The real second hazard is the mirror image, and it is about the *claim*, not the
+growth: our bump arena treats **everything from `__heap_ptr` to the end of
+memory** as its own. Once the engine grows, the pages it just took are inside
+the region the arena considers free, so the bump pointer walks into a live
+engine heap. Relocating the base fixes the first collision and not this one —
+which is exactly why a fixed `--global-base` is refused. The fix below removes
+both by construction.
 
 A second, independent hazard: **active data segments**. A linear module that
 emits an active segment writes at a link-time offset straight through the
@@ -160,6 +230,12 @@ reclamation needed.
   absolute-address audit and the two-memory question are all orthogonal to which
   allocator wins.
 
+**Status 2026-08-19: NOT implemented.** See "Implementation status" below —
+this slice shipped the recorded fallback (carve from the engine's `malloc`),
+which closes the corruption class on its own. The own-allocator decision stands
+and is unstarted; `scripts/quickjs-artifact/qjs_shim.c` still calls plain
+`JS_NewRuntime()`.
+
 ## The alternative this slice does not currently consider: two memories
 
 Everything above assumes **one** linear memory and then works to make two
@@ -235,31 +311,160 @@ target matrix needs verifying rather than assuming.
 allocator-unification design above may well still win on the numbers. What it
 should not do is win by default because the alternative was never written down.
 
+## Implementation status (2026-08-19) — slice 1 landed, allocator NOT attempted
+
+Delivered: dynamic placement, passive data segments, the absolute-address audit,
+and verification against the real artifact. **Not** delivered: our own
+`malloc`/`free`/`realloc`/`usable_size` installed via `JS_NewRuntime2`. The
+shim was not touched and the artifact was not rebuilt. The recorded fallback —
+**carve the arena from the engine's `malloc`** — is what shipped, and it is
+sufficient to close the corruption class on its own.
+
+### What changed
+
+| Area | Change |
+| --- | --- |
+| `src/codegen-linear/runtime.ts` | `ArenaOptions.linkedHeap`. In linked mode `__malloc` is a **chunked** bump arena: it carves chunks from an imported `malloc` and emits **no `memory.grow` at all**. `__heap_ptr` starts at 0 ("no chunk yet"), `__arena_limit` tracks the current chunk end. `finalizeLinkedDataImage` installs the passive literal image. |
+| `src/codegen-linear/index.ts` | `LinearOptions.linkedHeap`, and `resolveLinkedHeap` makes `importMemory` **without** `linkedHeap` a compile error — the catastrophic combination is now unrepresentable rather than merely discouraged. |
+| `src/codegen-linear/string-literals.ts` | Literal references become `global.get $__rodata_bias; i32.const <link-time offset>; i32.add` in linked mode. Rebasing per site, **not** inside `__str_from_data`: that helper is also called by the C ABI wrappers with a caller-supplied pointer, and biasing those would corrupt every string crossing the C boundary. |
+| `src/codegen-linear/number-format.ts` | Literal segment is emitted **passive** in linked mode. `number.toString()` is **refused** in linked mode (see limitations). |
+| `src/ir/types.ts`, `src/emit/{binary,wat,opcodes}.ts` | Passive data segments, `memory.init` / `data.drop`, and the **data-count section** (id 12, required before the code section or a validator rejects `memory.init` outright). All gated on a passive segment existing, so pre-existing modules are byte-identical. |
+
+### Why one grower, established by construction
+
+In linked mode the emitted module contains **no `memory.grow` opcode** — asserted
+on the WAT, with a companion assertion that the standalone module *does* contain
+one so the check cannot pass vacuously. The engine is the only grower because
+ours has no instruction to grow with.
+
+### Verified against the real artifact (`tests/issue-4540-heap-coexistence.test.ts`)
+
+- **Canary / differential probe.** Run the workload with our module and record
+  the exact `malloc` call sequence; replay that same sequence on a fresh engine
+  with no module of ours present; diff `[0, 170392)`. The sequences are
+  identical, so dlmalloc's state and shadow-stack residue match and **any**
+  differing byte is a write by our module. Result: zero.
+  **Not vacuous** — with the pre-fix placement temporarily restored
+  (`heapStart = 1024`, carving disabled) the same assertion fails at
+  `firstDiff === 1024`, the exact old `HEAP_START`.
+- **Literal placement.** The literal image lands at an allocated address above
+  the engine's static data; address 64 (its link-time base) still holds the
+  engine's bytes.
+- **Growth.** A workload that pushes 1.5 M array elements takes the memory from
+  256 pages past its initial size while the engine holds a live runtime, a
+  context and a 1 MiB filled block. The engine's block is byte-intact, `eval`
+  still evaluates, and our arena still works on the enlarged memory.
+- **Standalone emit identity.** `scripts/prove-emit-identity.mjs`: 60/60
+  `(file, target)` hashes identical to a baseline captured before the first edit.
+
+### Limitations, stated rather than hidden
+
+- **`number.toString()` is refused in linked mode.** The Ryū tables are
+  addressed by link-time constants spread across a large generated body
+  (`TABLE_BASE` plus per-table cursors, appearing as both `i32.const` operands
+  and `offset=` immediates). Rebasing them means rewriting every one of those
+  sites correctly; miss one and the formatter silently reads engine memory and
+  returns a plausible wrong number. A refused compile beats that. Follow-up:
+  rebase the tables with the same `__rodata_bias`.
+- **`exposeArenaReset` is refused in linked mode.** The linked arena is a chain
+  of host-allocated chunks; an O(1) rewind would strand every chunk but the
+  last — an unbounded leak from the export that exists to prevent leaks. Freeing
+  the chain needs a chunk list, which is follow-up work.
+- **Chunks are never freed.** ADR-0017's never-free property is unchanged; it is
+  now scoped to chunks rather than to the whole address space. This is the
+  reclamation gap the own-allocator decision exists to close.
+- **Start-function ordering is a contract, not an enforcement.** The image copy
+  runs in our module's `start`, which calls the engine's `malloc`; the engine
+  must therefore be instantiated and `_initialize`d first. That is the linked
+  topology's normal order, but nothing in the binary can check it.
+
+### Corrections to this issue found while implementing
+
+1. The first-`malloc` constant is environment-dependent (above).
+2. "Two independent growers corrupt" did not reproduce (above).
+3. The issue named `HEAP_START = 1024` as the collision. It is **one of five**
+   colliding constants: `HEAP_START` 1024, `DATA_SEGMENT_BASE` 64,
+   Ryū `TABLE_BASE` 1024, `LINEAR_NUMBER_FORMAT_DATA_BASE` 16384, and
+   `LINEAR_NUMBER_FORMAT_HEAP_START` 65536. The last is the worst of them and
+   was not mentioned: it is not merely inside the shadow stack, it is the exact
+   first byte of the engine's **static data**.
+4. The issue treats active data segments as a hazard alongside the arena. They
+   are strictly worse: an active segment is written **at instantiation**, before
+   any instruction of ours runs, so no discipline in our generated code can
+   mitigate it.
+
+### Unrelated pre-existing failures observed (NOT caused by this work)
+
+Both reproduce with these changes fully reverted on the same commit:
+
+- `pnpm run check:linear-ir` — `IR-compiled function count DECREASED: 8 → 6`,
+  buckets `illegal:instr-vec.set_length` and `select:string-builder-candidate`
+  each `0 → 2`.
+- `tests/emit-encodeinstr-failloud.test.ts` — the `br_table` case throws
+  `Cannot read properties of undefined (reading 'length')` instead of a message
+  naming `br_table`.
+
 ## Acceptance criteria
 
-- [ ] A linked module allocates, writes, and reads without touching any byte it
-      did not obtain from an allocator — asserted by a probe that fills the
-      engine's static region with a canary and verifies it is intact after a
-      workload.
-- [ ] All literal data in linked mode is emitted via passive segments; a lint
-      or emit-time assertion rejects active segments in that mode.
-- [ ] Standalone (unlinked) output is unchanged — same emit-identity proof as
-      #4539.
-- [ ] The refused alternatives (fixed `--global-base`, spacing the arenas
-      apart) are recorded with their failure mode in the issue or ADR, not just
-      in a commit message.
-- [ ] Exactly **one** component grows linear memory, established by
-      construction rather than by convention, and asserted by a test that
-      grows both workloads past their initial pages.
+Ticked only where the criterion was **exercised**, not merely reasoned about.
+
+- [x] A linked module allocates, writes, and reads without touching any byte it
+      did not obtain from an allocator. **Met, by a different probe than the one
+      specified.** A canary *fill* of the engine's static region is not usable —
+      that region holds live dlmalloc state, so filling it stops the engine
+      working. The differential probe (replay the identical `malloc` sequence on
+      a pristine engine, diff `[0, 170392)`) attributes every differing byte to
+      our module with no canary at all, and its negative control fails at
+      exactly 1024. A canary *is* used for the engine's heap block in the growth
+      test, where filling is safe.
+- [x] All literal data in linked mode is emitted via passive segments; an
+      emit-time assertion rejects active segments in that mode
+      (`finalizeLinkedDataImage` throws and names the offending ranges). A
+      companion test asserts the standalone lane still emits an ACTIVE segment,
+      so the passive assertion cannot pass by accident.
+- [x] Standalone (unlinked) output is unchanged — `prove-emit-identity`, 60/60
+      identical against a baseline captured before the first edit.
+- [x] The refused alternatives are recorded with their failure mode, here and in
+      ADR-0022. Note the correction above: *spacing* is refused because the
+      engine's heap grows into the region the arena claims, which is a different
+      (and reproducible) reason from the "two growers corrupt" one originally
+      recorded, which did not reproduce.
+- [x] Exactly **one** component grows linear memory, established by
+      construction: the linked module contains **no `memory.grow` opcode**
+      (asserted on the WAT, with a discriminating counter-assertion that the
+      standalone module does contain one). The growth test drives the shared
+      memory past the engine's initial 256 pages with both workloads live.
+
 - [ ] The arena-carved-from-`malloc` design is measured against routing typed
-      allocation directly at the engine's `malloc`, and the choice is recorded
-      with both numbers — ADR-0017's zero-metadata bump path is the thing
-      being traded, so the trade needs a figure.
-- [ ] The **two-memory** alternative is explicitly decided, not defaulted past:
-      record whether it was rejected on the cross-boundary copy cost, on
-      toolchain/runtime support, or on measurement — and state the security
-      consequence accepted by staying on one memory, given the engine executes
-      `eval` input.
+      allocation directly at the engine's `malloc` — **NOT DONE. No numbers were
+      taken and none should be inferred from this work.** Carve-from-`malloc` is
+      what shipped; the direct-`malloc` comparison arm was never built.
+- [ ] The **two-memory** alternative is explicitly decided — **NOT DONE.** Left
+      open deliberately: it carries a security dimension (one shared memory
+      means an exploited `eval` reaches our arena) that is a project-lead call,
+      not something this slice should settle by shipping one side of it.
+
+- [ ] The linear lane implements `malloc`/`calloc`/`free`/`realloc`/
+      `usable_size` and installs them via `JS_NewRuntime2`; a test asserts the
+      engine reaches **no** dlmalloc entry point. — **NOT ATTEMPTED.**
+      `qjs_shim.c` is untouched and the artifact was not rebuilt.
+- [ ] `js_malloc_usable_size` reports the true reserved size, asserted across a
+      spread of allocation sizes rather than assumed from the request. — **NOT
+      ATTEMPTED** (no allocator).
+- [ ] The allocator is measured against the pinned artifact's dlmalloc on an
+      engine-realistic workload (many small, short-lived allocations) and both
+      numbers are recorded. A material regression is grounds to fall back to
+      carve-from-`malloc`, which stays the baseline for exactly this reason. —
+      **NOT ATTEMPTED** (no allocator). The fallback is what shipped.
+- [~] The typed arena keeps its zero-metadata bump path, carved from our own
+      heap; standalone (unlinked) emit-identity is unchanged. — **half met.**
+      The bump path is intact and emit-identity holds, but the heap it is carved
+      from is the **engine's**, not ours.
+- [ ] A stress run that frees and reallocates enough to exercise coalescing
+      shows a bounded heap — the failure this allocator exists to prevent only
+      appears under reuse, not under allocate-and-exit. — **NOT DONE, and not
+      currently meaningful:** nothing frees. Chunks are never returned. This is
+      the open reclamation gap the own-allocator decision exists to close.
 
 - [ ] The linear lane implements `malloc`/`calloc`/`free`/`realloc`/
       `usable_size` and installs them via `JS_NewRuntime2`; a test asserts the
@@ -278,10 +483,13 @@ should not do is win by default because the alternative was never written down.
 
 ## Validation
 
-- Canary probe above, run against the real pinned artifact.
-- `pnpm run check:linear-ir`, emit-identity proof vs a pre-change baseline.
-- A stress run that grows both heaps past their initial pages — the failure
-  mode this slice exists to prevent only appears under growth.
+- Differential probe above, run against the real pinned artifact
+  (`tests/issue-4540-heap-coexistence.test.ts`, 10 tests, all passing).
+- `pnpm run check:linear-ir` — **fails, and fails identically with these changes
+  reverted on the same commit.** Pre-existing; see above.
+- Emit-identity proof vs a pre-change baseline: 60/60 identical.
+- A stress run that grows the shared memory past its initial pages with both
+  workloads live.
 
 ## Non-goals
 

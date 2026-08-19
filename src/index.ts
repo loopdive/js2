@@ -930,6 +930,21 @@ export interface CompileOptions {
      */
     indexType?: "i32" | "i64";
   };
+  /**
+   * Linked-mode heap (#4540) — REQUIRED alongside {@link linearImportMemory}.
+   *
+   * When the memory belongs to another module, the arena must be carved from
+   * that module's allocator instead of owning a fixed address range. Names the
+   * `linearExternImports` entry providing `malloc(size: i32) -> ptr: i32`.
+   *
+   * Compilation is refused if only one of the two is given: a memory-importing
+   * module with the standalone arena starts allocating at 1024, which is inside
+   * the pinned engine artifact's shadow stack.
+   */
+  linearLinkedHeap?: {
+    mallocImport: string;
+    chunkBytes?: number;
+  };
 }
 
 import * as path from "path";
