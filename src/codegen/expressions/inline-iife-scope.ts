@@ -33,8 +33,15 @@ import type { FunctionContext } from "../context/types.js";
  * already answered the full `{enumerable: false, configurable: true}`
  * descriptor.
  */
-export function argumentsEscapesIife(callee: ts.Node): boolean {
+export function argumentsEscapesIife(callee: ts.Node, call: ts.CallExpression): boolean {
   if (!ts.isFunctionExpression(callee) || callee.body === undefined) return false;
+  // (#4555) An UNDER-APPLIED IIFE cannot take the inline path at all (that arm
+  // requires `params.length <= args.length`), so it falls through to the LIFTED
+  // `compileIIFE`, which builds no arguments object whatsoever — the body then
+  // resolves `arguments` lexically, to a null outer binding or nothing. Route
+  // it to the closure path too, where the arguments object is real:
+  // `(function (a,b,c) { return arguments.length; })()` read `NaN`, want `0`.
+  if (callee.parameters.length > call.arguments.length && usesArgumentsInOwnBody(callee)) return true;
   let escapes = false;
   const visit = (node: ts.Node): void => {
     if (escapes) return;
@@ -48,6 +55,22 @@ export function argumentsEscapesIife(callee: ts.Node): boolean {
   };
   forEachChild(callee.body, visit);
   return escapes;
+}
+
+/** Does the function expression's OWN body mention `arguments` at all? */
+function usesArgumentsInOwnBody(callee: ts.FunctionExpression): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== callee && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node))) return;
+    if (ts.isIdentifier(node) && node.text === "arguments") {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(callee.body!, visit);
+  return found;
 }
 
 /** `arguments[i]` / `arguments.length` — the two uses the vec alone satisfies. */
