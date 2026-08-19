@@ -1,7 +1,7 @@
 ---
 id: 4540
 title: "Heap coexistence in one linear memory: relocate the bump arena above the engine's heap base, passive data segments only"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-08-17
 updated: 2026-08-17
@@ -485,20 +485,12 @@ Ticked only where the criterion was **exercised**, not merely reasoned about.
       currently meaningful:** nothing frees. Chunks are never returned. This is
       the open reclamation gap the own-allocator decision exists to close.
 
-- [ ] The linear lane implements `malloc`/`calloc`/`free`/`realloc`/
-      `usable_size` and installs them via `JS_NewRuntime2`; a test asserts the
-      engine reaches **no** dlmalloc entry point.
-- [ ] `js_malloc_usable_size` reports the true reserved size, asserted across a
-      spread of allocation sizes rather than assumed from the request.
-- [ ] The allocator is measured against the pinned artifact's dlmalloc on an
-      engine-realistic workload (many small, short-lived allocations) and both
-      numbers are recorded. A material regression is grounds to fall back to
-      carve-from-`malloc`, which stays the baseline for exactly this reason.
-- [ ] The typed arena keeps its zero-metadata bump path, carved from our own
-      heap; standalone (unlinked) emit-identity is unchanged.
-- [ ] A stress run that frees and reallocates enough to exercise coalescing
-      shows a bounded heap — the failure this allocator exists to prevent only
-      appears under reuse, not under allocate-and-exit.
+**The five own-allocator criteria above now belong to #4557** ("Invert allocator
+ownership: a real linear-lane allocator, installed via JS_NewRuntime2 so QuickJS
+allocates through us"), which is in progress. They are kept here with their
+honest NOT-ATTEMPTED annotations as the record of what this slice did and did
+not do; #4557 is where they get closed. An unannotated duplicate of the same
+five was removed rather than left to drift out of sync with them.
 
 ## Validation
 

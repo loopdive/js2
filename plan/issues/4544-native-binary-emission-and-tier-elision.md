@@ -1,10 +1,10 @@
 ---
 id: 4544
 title: "Native binary emission: size/startup baseline, and pay-for-what-you-use elision of the dynamic tier"
-status: ready
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-19
 priority: high
 horizon: l
 feasibility: medium
