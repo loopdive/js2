@@ -8,6 +8,7 @@
  * (`+`, `-`, `!`, `~`) live in ./unary.ts.
  */
 import { ts } from "../../ts-api.js";
+import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
@@ -1004,20 +1005,18 @@ function compilePrefixUpdate(
   fctx: FunctionContext,
   expr: ts.PrefixUnaryExpression,
 ): ValType | null {
-  // §13.4 + Annex B.3.9: evaluate a sloppy-mode call target, then throw before
-  // ToNumeric. Strict-mode call targets were rejected by the early-error pass.
-  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) {
-    return { kind: "f64" };
-  }
+  // §13.4 + Annex B.3.9: evaluate a sloppy-mode call target, then throw.
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) return { kind: "f64" };
   // §13.4 / §7.1.3 — ++/-- on a Symbol throws TypeError before the update step.
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };
   }
+  // §13.4.4 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
+  const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, unwrapParens(expr.operand));
+  if (unresolvablePre !== undefined) return unresolvablePre;
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
-      // Unwrap parenthesized expressions: ++(x) -> ++x
       const ppOperand = unwrapParens(expr.operand);
-      // (#2663 Slice 3) `with` Object Environment Record precedence.
       if (ts.isIdentifier(ppOperand)) {
         const w = compileWithUpdateExpression(ctx, fctx, ppOperand, /*increment*/ true, /*prefix*/ true);
         if (w !== undefined) return w;
@@ -1195,9 +1194,7 @@ function compilePrefixUpdate(
       const arithOp = isIncrement ? "f64.add" : "f64.sub";
       const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
-      // Unwrap parenthesized expressions: --(x) -> --x
       const mmOperand = unwrapParens(expr.operand);
-      // (#2663 Slice 3) `with` Object Environment Record precedence.
       if (ts.isIdentifier(mmOperand)) {
         const w = compileWithUpdateExpression(ctx, fctx, mmOperand, /*increment*/ false, /*prefix*/ true);
         if (w !== undefined) return w;
@@ -1400,6 +1397,9 @@ function compilePostfixUnary(
     const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
     if (w !== undefined) return w;
   }
+  // §13.4.5 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
+  const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
+  if (unresolvablePost !== undefined) return unresolvablePost;
 
   if (!ts.isIdentifier(postOperand)) {
     // obj.prop++ or obj[idx]++ — delegate to member increment helper
