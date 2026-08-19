@@ -79,8 +79,20 @@ export interface WasmModule {
   funcOrdinalToPosition: number[];
   /** Linear memory definitions */
   memories: { min: number; max?: number }[];
-  /** Data segments for linear memory (string literals, etc.) */
-  dataSegments: { offset: number; bytes: Uint8Array }[];
+  /**
+   * Data segments for linear memory (string literals, etc.).
+   *
+   * `passive` (#4540): a passive segment carries **no address**. It is not
+   * written at instantiation; the module copies it somewhere it OWNS with
+   * `memory.init`. That distinction is load-bearing in the ADR-0020 link
+   * topology, where the memory belongs to the engine artifact: an ACTIVE
+   * segment writes at its link-time offset straight through whatever the
+   * engine has there (measured: the artifact's shadow stack is [0, 65536) and
+   * its static data [65536, 170392), so our default bases at 64 / 1024 /
+   * 16384 all land inside them). `offset` is ignored for passive segments and
+   * is kept only so the array element type stays uniform.
+   */
+  dataSegments: { offset: number; bytes: Uint8Array; passive?: boolean }[];
   /** Whether the module has top-level executable statements (module init code) */
   hasTopLevelStatements?: boolean;
   /** Wasm start function index — runs automatically on instantiation (#907) */
@@ -397,6 +409,12 @@ type InstrBase =
   | { op: "return_call_ref"; typeIdx: TypeHandle }
   | { op: "memory.size" }
   | { op: "memory.grow" }
+  // Bulk memory (#4540). `memory.init` copies from a PASSIVE data segment to a
+  // runtime-chosen destination — the mechanism that lets linked-mode literal
+  // data live at an address we allocated instead of a link-time constant.
+  // Stack: [dest:i32, src_offset:i32, len:i32] -> []
+  | { op: "memory.init"; dataIdx: number }
+  | { op: "data.drop"; dataIdx: number }
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
   | { op: "throw"; tagIdx: number }
   | { op: "rethrow"; depth: number }

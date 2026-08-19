@@ -112,9 +112,17 @@ identity broken).
   and per-property time. The tier must therefore be **pay-for-what-you-use**,
   elided entirely when a program's dynamic residue is empty (#4544).
 - **Two allocators over one linear memory is a real corruption hazard**, not a
-  theoretical one: the artifact's first `malloc` returns 171,696, while our
-  linear `__heap_ptr` initialises to a hard-coded 1024 — inside the artifact's
-  shadow stack. Heap coexistence is a correctness prerequisite (#4540).
+  theoretical one: the artifact's heap begins above its 64 KiB shadow stack
+  `[0, 65536)` and ~105 KiB of static data, while our linear `__heap_ptr`
+  initialises to a hard-coded 1024 — inside that shadow stack. Heap coexistence
+  is a correctness prerequisite (#4540); **resolved** for placement by
+  [ADR-0022](./0022-linked-mode-heap-and-rodata-placement.md).
+  - **Correction, 2026-08-19:** this bullet previously stated the first `malloc`
+    returns **171,696**. A local build from the same pinned refs returns
+    **172,176** — +480, because static data shifted. The ordering claim is what
+    matters and is confirmed; the constant is a property of one build in one
+    container. **Nothing may hardcode it**, which is why ADR-0022 delegates
+    placement to the artifact's own allocator instead of naming an address.
 - **Refcount discipline becomes a codegen obligation** on every path, including
   exceptional ones; getting it wrong leaks or double-frees (#4542).
 - **Cycles that close through native memory are invisible to the engine's
