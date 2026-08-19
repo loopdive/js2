@@ -110,7 +110,7 @@ jobs:
     # The `paths-ignore` filter above is what actually breaks the trigger loop
     # now (this job's own landing changes only artifact paths). The actor guard
     # is kept as a second, cheaper line against any OTHER bot push to main.
-    if: github.repository == 'loopdive/js2wasm' && github.actor != 'github-actions[bot]'
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: baseline-promote
