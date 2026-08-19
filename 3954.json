@@ -1,11 +1,10 @@
 {
   "id": "3954",
   "assignee": "ttraenkler/claude-js-ir-generalization",
-  "requested_by": "git@thomas.traenkler.com",
-  "status": "released",
+  "requested_by": "ttraenkler/claude-js-ir-generalization",
+  "status": "in-progress",
   "branch": "claude/js-ir-generalization-9v7m8j",
-  "claimed_at": "2026-08-17T08:15:48Z",
-  "updated_at": "2026-08-17T11:43:29Z",
-  "write_id": "4326-pt5ndklu",
-  "released_at": "2026-08-17T11:43:29Z"
+  "claimed_at": "2026-08-19T00:39:28Z",
+  "updated_at": "2026-08-19T00:39:28Z",
+  "write_id": "3841-1ml4golq"
 }
