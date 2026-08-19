@@ -12,7 +12,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
-import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1/S2)
+import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addArrayIteratorImports,
@@ -4375,8 +4375,12 @@ function compileArrayJoinNative(
   // up front and flush the late-import shift BEFORE the fold bakes the call, so
   // the index is stable. Bail to the string-element path only if unavailable.
   let externToStrIdx: number | undefined;
+  let emptyElem: { elemLocal: number; test: Instr[] } | undefined; // (#4556) step 4.b
   if (elemType.kind === "externref") {
     externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+    emptyElem = joinEmptyElementTest(ctx, fctx, () =>
+      ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]),
+    );
     flushLateImportShifts(ctx, fctx);
     if (externToStrIdx === undefined) {
       reportError(ctx, callExpr, "join of a boxed-any array requires __extern_toString");
@@ -4468,20 +4472,16 @@ function compileArrayJoinNative(
     // stringify the sentinel struct itself to garbage. Gated on `usesArrayHoles`,
     // so hole-free `any[]` joins stay byte-identical. The empty string is cast
     // up to ref $AnyString for the concat fold.
-    const holeTest = ctx.usesArrayHoles ? holeTestInstrs(ctx) : [];
-    if (holeTest.length > 0) {
-      const elemExternTmp = allocTempLocal(fctx, { kind: "externref" });
-      elemToStr.push({ op: "local.tee", index: elemExternTmp });
-      elemToStr.push(...holeTest);
-      elemToStr.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "ref", typeIdx: anyStrTypeIdx } },
-        then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: anyStrTypeIdx }],
-        else: [{ op: "local.get", index: elemExternTmp }, ...toStrPath],
-      });
-    } else {
-      elemToStr.push(...toStrPath);
-    }
+    // (#4556) `$Hole` OR a genuine `undefined`/`null` element renders as ""
+    // (§23.1.3.18 step 4.b) — see `joinEmptyElementTest` in array-holes.ts.
+    elemToStr.push({ op: "local.set", index: emptyElem!.elemLocal });
+    elemToStr.push(...emptyElem!.test);
+    elemToStr.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: anyStrTypeIdx } },
+      then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: anyStrTypeIdx }],
+      else: [{ op: "local.get", index: emptyElem!.elemLocal }, ...toStrPath],
+    });
   } else {
     // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
     elemToStr.push({ op: "ref.as_non_null" });
