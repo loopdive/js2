@@ -3,9 +3,9 @@ id: 3948
 title: "Standalone: object-literal methods never register optional-param metadata, so `__argc` stays at the -1 sentinel and every parameter default is skipped — the #2581 generator bail was a workaround for it (98 leak rows)"
 status: done
 completed: 2026-08-01
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: m
 complexity: M

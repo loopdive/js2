@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 goal: es5
 es_edition: 5
-sprint: current
+sprint: 78
 horizon: m
 related: [3420, 2668, 2744, 3776]
 # The [[Writable]] consult must sit at the top of `compilePropertyAssignment`,

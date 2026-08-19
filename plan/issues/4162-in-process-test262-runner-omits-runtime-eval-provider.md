@@ -2,9 +2,9 @@
 id: 4162
 title: "In-process test262 runner omits the `js2wasm:runtime-eval` provider the worker supplies — standalone measurements silently die at instantiate and MASK their real signature"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-18
 completed: 2026-08-06
 assignee: ttraenkler/W8-instrument-4162
 priority: high

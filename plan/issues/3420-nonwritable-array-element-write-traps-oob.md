@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen
 goal: es5
 model: fable
-sprint: current
+sprint: 78
 horizon: m
 related: [3370, 3417, 3335, 3189]
 # The standalone follow-up extends the existing vec descriptor-overlay owner

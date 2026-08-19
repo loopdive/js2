@@ -1,10 +1,11 @@
 ---
 id: 4297
 title: "codegen: dominate conditional closure binding boxes"
-status: complete
-sprint: current
+status: done
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
+completed: 2026-08-09
 priority: high
 horizon: s
 feasibility: medium

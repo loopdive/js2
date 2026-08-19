@@ -10,7 +10,7 @@ horizon: s
 task_type: bugfix
 area: ci
 goal: ci-hardening
-sprint: current
+sprint: 78
 related: [2786, 3800]
 ---
 

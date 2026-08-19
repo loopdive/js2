@@ -4,9 +4,9 @@ title: "`typeof <builtin method>` does not answer \"function\" — 119 standalon
 status: done
 completed: 2026-08-03
 assignee: ttraenkler/dev-4120-typeof
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

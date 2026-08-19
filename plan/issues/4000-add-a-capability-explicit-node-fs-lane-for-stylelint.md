@@ -2,9 +2,9 @@
 id: 4000
 title: "npm-compat: add a capability-explicit Node fs lane for Stylelint"
 status: done
-sprint: current
+sprint: 78
 created: 2026-07-30
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: medium
 horizon: m

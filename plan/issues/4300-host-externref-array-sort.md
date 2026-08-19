@@ -1,10 +1,11 @@
 ---
 id: 4300
 title: "codegen: preserve host-array sort dispatch"
-status: complete
-sprint: current
+status: done
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
+completed: 2026-08-09
 priority: high
 horizon: xs
 feasibility: easy

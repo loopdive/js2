@@ -4,7 +4,7 @@ id: 4029
 title: "result.importObject is empty when a module has zero function imports but a non-empty string pool"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: high
@@ -14,7 +14,7 @@ task_type: bug
 area: compiler, runtime
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: current
+sprint: 78
 es_edition: n/a
 related: [1712, 4001, 4018]
 ---

@@ -2,9 +2,9 @@
 id: 4115
 title: "Bind retirement inventory rows to direct-codegen declarations"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: critical
 horizon: s
 feasibility: easy

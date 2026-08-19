@@ -2,9 +2,9 @@
 id: 3643
 title: "Three measured host-lane gaps: array destructuring never throws, `Array.from` ignores array-like `length`, and a heterogeneous vec null-derefs in slice/flat"
 status: done
-sprint: current
+sprint: 78
 created: 2026-07-26
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 assignee: ttraenkler/dev-core-semantics
 priority: high

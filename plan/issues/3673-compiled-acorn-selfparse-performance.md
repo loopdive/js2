@@ -5,7 +5,7 @@ status: done
 completed: 2026-07-27
 assignee: claude/acorn-performance
 created: 2026-07-26
-updated: 2026-07-27
+updated: 2026-08-18
 loc-budget-allow:
   - src/runtime.ts
   - src/codegen/object-runtime.ts
@@ -112,7 +112,7 @@ reasoning_effort: high
 task_type: perf
 area: runtime, codegen
 goal: self-hosting-dogfood
-sprint: current
+sprint: 78
 model: fable
 related: [1710, 1712, 1946, 1947, 2928, 3437, 3669, 3671, 3675]
 ---

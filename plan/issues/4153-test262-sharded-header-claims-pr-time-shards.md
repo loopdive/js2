@@ -3,9 +3,9 @@ id: 4153
 title: "`test262-sharded.yml`'s own header claims PR-time shard runs; the job `if:` conditions make them merge_group-only"
 status: done
 completed: 2026-08-04
-sprint: current
+sprint: 78
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: easy

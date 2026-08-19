@@ -2,7 +2,7 @@
 id: 3965
 title: "budget-status --pick steers agents into already-claimed and out-of-lane work — filter on the live claim ref, role scope and lane, and print every exclusion"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: medium

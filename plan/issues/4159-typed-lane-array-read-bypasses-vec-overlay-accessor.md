@@ -4,9 +4,9 @@ title: "SOUNDNESS: typed-lane array element access bypasses the #3251 vec overla
 status: done
 completed: 2026-08-07
 assignee: ttraenkler/W15
-sprint: current
+sprint: 78
 created: 2026-08-04
-updated: 2026-08-07
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

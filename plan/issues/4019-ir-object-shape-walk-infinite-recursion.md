@@ -4,7 +4,7 @@ id: 4019
 title: "Self-referential types recurse until the stack dies in the IR object-shape walk"
 status: done
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: bug
 area: compiler, codegen
 language_feature: type-mapping
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [1169, 1282, 3672, 4001, 4018]

@@ -3,7 +3,7 @@ id: 3908
 title: "linear backend: array/find emits an invalid module — local.set[0] expected i32, found local.get of type f64"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: medium
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bug
 area: codegen-linear
 language_feature: array-methods
 goal: performance
-sprint: current
+sprint: 78
 horizon: m
 es_edition: multi
 related: [3902, 3904]

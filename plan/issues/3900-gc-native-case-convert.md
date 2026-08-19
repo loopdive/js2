@@ -3,7 +3,7 @@ id: 3900
 title: "perf: gc-native toLowerCase/toUpperCase costs ~2.2 µs per 23-char conversion and emits an 11.7 KB module — the worst absolute outlier on the perf page"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: high
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: optimization
 area: codegen
 language_feature: string-methods
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 depends_on: [3898]

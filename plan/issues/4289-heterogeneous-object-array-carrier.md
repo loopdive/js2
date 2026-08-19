@@ -3,7 +3,7 @@ id: 4289
 title: "Array literal: a later anonymous-object shape is null-cast to the first element's struct"
 status: done
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bugfix
 area: codegen
 language_feature: arrays, object-literals
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1400]
 es_edition: ES2015
 related: [786, 1021, 2021, 3244]

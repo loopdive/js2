@@ -5,9 +5,9 @@ status: done
 completed: 2026-08-07
 closed-by: "upstream #4010 S2/S3, #4017, #4055, #4161 — verified by re-derivation, see the 2026-08-07 section"
 residue: 4210
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-07
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

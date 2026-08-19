@@ -2,9 +2,9 @@
 id: 4113
 title: "Require final allocation-provenance verification for every IR artifact"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: critical
 horizon: s
 complexity: S

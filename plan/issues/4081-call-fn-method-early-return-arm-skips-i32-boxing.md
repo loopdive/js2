@@ -2,9 +2,9 @@
 id: 4081
 title: "`__call_fn_method_N` has a THIRD dispatch arm that inlines save-result/restore-`__current_this`/return without the i32 boxing the other two arms do — 12 files"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 assignee: ttraenkler/H-crashes
 priority: high

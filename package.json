@@ -1,6 +1,6 @@
 {
   "name": "@loopdive/js2",
-  "version": "0.69.0",
+  "version": "0.70.0",
   "description": "Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC",
   "keywords": [
     "webassembly",
@@ -15,7 +15,7 @@
   "homepage": "https://js2wasm.loopdive.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/loopdive/js2wasm.git"
+    "url": "git+https://github.com/loopdive/js2.git"
   },
   "bugs": {
     "url": "https://github.com/loopdive/js2wasm/issues"

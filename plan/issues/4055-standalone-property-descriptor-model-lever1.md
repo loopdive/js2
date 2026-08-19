@@ -2,9 +2,9 @@
 id: 4055
 title: "LEVER 1 — property-descriptor model in standalone: 835 ≤ES5 failures across defineProperty/defineProperties/create/gOPD"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: l

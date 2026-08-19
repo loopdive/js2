@@ -5,9 +5,9 @@ status: done
 completed: 2026-08-08
 pr: 4230
 assignee: "ttraenkler/fable-3927-emission"
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-08-08
+updated: 2026-08-18
 loc-budget-allow:
   # The split's own code (≈500 LOC) lives in the NEW `fnctor-cold-tail.ts`.
   # These five are the unavoidable in-place seams: the three reflective

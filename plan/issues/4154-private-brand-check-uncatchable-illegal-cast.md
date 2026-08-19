@@ -3,7 +3,7 @@ id: 4154
 title: "private access on a foreign receiver traps `illegal cast` instead of throwing the §7.3.28 PrivateBrandCheck TypeError"
 status: done
 completed: 2026-08-04
-sprint: current
+sprint: 78
 priority: medium
 goal: error-model
 feasibility: medium

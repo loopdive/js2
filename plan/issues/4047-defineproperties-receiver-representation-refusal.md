@@ -2,9 +2,9 @@
 id: 4047
 title: "standalone Object.defineProperties: the #1906 refusal is a RECEIVER-representation gate, not a descriptor-shape one — resolve what is resolvable"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: m

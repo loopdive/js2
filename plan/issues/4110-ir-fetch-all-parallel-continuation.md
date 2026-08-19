@@ -2,9 +2,9 @@
 id: 4110
 title: "IR async fetchAllParallel non-identity continuation"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: critical
 horizon: m

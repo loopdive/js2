@@ -1,7 +1,7 @@
 ---
 id: 4294
 title: "codegen: pack JavaScript arguments for source closure rest parameters"
-status: in_progress
+status: in-progress
 sprint: current
 created: 2026-08-09
 updated: 2026-08-09

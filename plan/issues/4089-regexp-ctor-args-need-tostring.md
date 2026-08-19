@@ -2,7 +2,7 @@
 id: 4089
 title: "dynamic `new RegExp(pattern, flags)` casts its arguments instead of calling ToString — an object argument null-derefs and kills the module"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

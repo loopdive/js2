@@ -3,7 +3,7 @@ id: 3907
 title: "correctness: `fast` mode lowers EVERY TypeScript `number` to a Wasm i32 — gc-native does not implement JS number semantics (mixed/fibonacci returns -269,534,592 instead of 8,320,400,000)"
 status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 completed: 2026-07-31
 priority: critical
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bug
 area: codegen
 language_feature: numeric-types
 goal: performance
-sprint: current
+sprint: 78
 horizon: m
 es_edition: multi
 related: [3898, 1948, 3917, 3912, 323, 3673, 1236, 2789, 1825, 2682, 3931, 3734, 3741, 1120, 3521]

@@ -4,7 +4,7 @@ title: "standalone: heterogeneous inner-tuple (anytuple) nested reads broken —
 status: done
 completed: 2026-07-25
 created: 2026-07-23
-updated: 2026-07-26
+updated: 2026-08-18
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -14,7 +14,7 @@ language_feature: arrays, tuples, any
 es_edition: es5
 goal: standalone
 umbrella: 2860
-sprint: current
+sprint: 78
 horizon: m
 related: [2190, 2873, 3497]
 origin: "Red-suite triage 2026-07-23 (fable-exposed): 5 tests in tests/issue-2190.test.ts (#2190b block) fail on clean origin/main. A scoped source bisection on 2026-07-26 identified 570c816bbea429b81e672ccc2f9b9caed44ba33a (#745 S4.5 unionAnyRep native-lane default flip) as the first bad commit."

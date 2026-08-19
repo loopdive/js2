@@ -2,10 +2,10 @@
 id: 4428
 title: "`new Array(<wrapper>)` element loses object identity — x[0] comes back as the unwrapped primitive"
 status: done
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 loc-budget-allow:
   - src/codegen/typeof-delete.ts

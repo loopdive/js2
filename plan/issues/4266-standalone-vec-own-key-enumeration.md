@@ -3,9 +3,9 @@ id: 4266
 title: "Standalone key enumeration over a vec: the #3251 overlay is invisible to `Object.keys`/for-in/`getOwnPropertyNames`, and gOPN has no vec arm at all"
 status: done
 completed: 2026-08-09
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

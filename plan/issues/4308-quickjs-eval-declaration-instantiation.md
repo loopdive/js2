@@ -6,9 +6,9 @@ title: "EvalDeclarationInstantiation + Annex B B.3.3 for the QuickJS eval engine
 # This flip is the deferred HANDOFF-case observation of those merges.
 status: done
 assignee: ttraenkler/senior-dev
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-11
 priority: high
 horizon: xl

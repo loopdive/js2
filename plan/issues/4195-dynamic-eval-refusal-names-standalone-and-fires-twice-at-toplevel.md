@@ -3,9 +3,9 @@ id: 4195
 title: "the dynamic-eval refusal names `--target standalone` (which supports it) and fires twice per top-level call site"
 status: done
 completed: 2026-08-06
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: easy

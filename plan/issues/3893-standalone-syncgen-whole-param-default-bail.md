@@ -3,9 +3,9 @@ id: 3893
 title: "Standalone: one selection bail (`param.initializer`) routes whole-param-default generator FUNCTION EXPRESSIONS onto the host eager-buffer path (~98 rows of the 603-row symptom family)"
 status: done
 completed: 2026-07-31
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 horizon: m
 complexity: M

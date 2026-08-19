@@ -2,9 +2,9 @@
 id: 4132
 title: "npm-compat promotion fails: the bot's `git commit` runs husky's pre-commit hook, which cannot resolve a merge base under `fetch-depth: 1` — the artifact still never lands"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: s

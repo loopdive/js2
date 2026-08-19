@@ -3,9 +3,9 @@ id: 4091
 title: "RESCUE: Annex B cancel path + named-this-call, recovered from the shared /workspace checkout where it sat unbranched and unreviewable"
 status: done
 completed: 2026-08-02
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

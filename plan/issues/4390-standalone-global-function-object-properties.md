@@ -3,9 +3,9 @@ id: 4390
 title: "Standalone global object omits ES5 function-valued own properties"
 status: done
 assignee: ttraenkler/codex-es5-global-function-descriptors
-sprint: current
+sprint: 78
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

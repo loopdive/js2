@@ -4,7 +4,7 @@ title: "Port detectCanonicalCharReadLoop into the IR front-end — the #2682 cha
 status: done
 completed: 2026-08-15
 created: 2026-07-31
-updated: 2026-08-15
+updated: 2026-08-18
 assignee: ttraenkler/dev-3931
 loc-budget-allow:
   # The recogniser itself is a NEW module (src/ir/char-read-loop.ts). What
@@ -27,7 +27,7 @@ task_type: optimization
 area: codegen
 language_feature: string-methods
 goal: backend-agnostic-ir
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 related: [2682, 3907, 3521]

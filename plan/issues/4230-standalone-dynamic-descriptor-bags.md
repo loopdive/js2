@@ -2,9 +2,9 @@
 id: 4230
 title: "Standalone: `Object.defineProperties`/`Object.create` refuse a dynamic descriptor bag — the vec `Properties` key source misses the #3251 overlay, and the receiver-carrier gate fires before the key walk"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 completed: 2026-08-08
 priority: high
 horizon: l

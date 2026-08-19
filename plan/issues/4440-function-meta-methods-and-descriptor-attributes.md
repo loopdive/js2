@@ -3,10 +3,10 @@ id: 4440
 title: "Function meta R1/R-attr slice — method name/length + own-property descriptor attributes (writable/enumerable/configurable)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

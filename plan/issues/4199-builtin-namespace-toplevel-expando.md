@@ -4,9 +4,9 @@ title: "Standalone: a TOP-LEVEL expando write onto a builtin namespace singleton
 status: done
 assignee: ttraenkler/W17
 completed: 2026-08-07
-sprint: current
+sprint: 78
 created: 2026-08-07
-updated: 2026-08-07
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

@@ -2,9 +2,9 @@
 id: 4272
 title: "codegen: bind class method overloads to the body-bearing implementation"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: low

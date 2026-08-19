@@ -4,7 +4,7 @@ id: 4037
 title: "ESLint: `new K(...x)` needs the up-front-reserved $ObjVecArr type, which was not reserved"
 status: done
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 assignee: ttraenkler/claude
 priority: critical
@@ -14,7 +14,7 @@ task_type: bug
 area: codegen
 language_feature: spread
 goal: npm-library-support
-sprint: current
+sprint: 78
 required_by: [1282, 1400, 2693]
 es_edition: n/a
 related: [53, 1282, 2026, 4033]

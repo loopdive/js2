@@ -2,7 +2,7 @@
 id: 3969
 title: "reconcile-tasklist scored 0 true positives — read a stale local tree, and read any #N in a merged PR title as proof of closure"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: medium

@@ -2,9 +2,9 @@
 id: 4415
 title: "Compile hot path: -17% from three allocation/env-read fixes (profiled)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-18
 completed: 2026-08-14
 priority: medium
 horizon: m

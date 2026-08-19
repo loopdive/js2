@@ -4,7 +4,7 @@ title: "perf: gc-native split/replace and the csv-parse app benchmark are 2.7-3.
 status: done
 completed: 2026-07-31
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -12,7 +12,7 @@ task_type: optimization
 area: codegen
 language_feature: string-methods
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 related: [3898, 3899, 747, 1198]

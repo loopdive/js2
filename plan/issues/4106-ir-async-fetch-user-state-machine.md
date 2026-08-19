@@ -2,9 +2,9 @@
 id: 4106
 title: "IR async fetchUser plan producer and frame consumer"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 priority: critical
 horizon: m
 feasibility: medium

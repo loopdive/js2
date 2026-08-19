@@ -3,9 +3,9 @@ id: 2955
 title: "De-polymorph the IR front-end on string mode: abstract IR string ops resolved at lower time"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-07-02
-updated: 2026-07-17
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

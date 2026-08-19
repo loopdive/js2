@@ -3,9 +3,9 @@ id: 3896
 title: "Standalone: private generator methods (`*#m()`) leak the host generator machinery — a `PrivateIdentifier` fails an `isIdentifier` bail written for computed/string object-literal names"
 status: done
 completed: 2026-07-31
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-18
 priority: high
 horizon: m
 complexity: S

@@ -8,9 +8,9 @@ loc-budget-allow:
   - src/ir/from-ast.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

@@ -2,9 +2,9 @@
 id: 4262
 title: "Standalone error substrate: a minted TypeError must BE a TypeError, and err.constructor must be the value the NAME reads"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 priority: high
 horizon: l

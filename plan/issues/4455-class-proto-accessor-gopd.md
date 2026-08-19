@@ -3,10 +3,10 @@ id: 4455
 title: "gOPD on a class prototype returns undefined for accessors — blocks setter/static-method length-dflt files (R1 of #4440)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium
