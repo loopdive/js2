@@ -43,9 +43,21 @@
  *
  * JavaScript remains the ONLY implementation (`JS_TAG_DOMAIN`), wired at a
  * single place (`producer.ts`). Phase 1 is behaviour-neutral: emitted bytes
- * must not move. Phase 3 (#3954) is what actually falsifies the seam, by
- * constructing a non-JS domain in tests and lowering IR through the bytecode
- * backend with it.
+ * must not move.
+ *
+ * ## What phase 3 found (2026-08-19)
+ *
+ * `tests/issue-3954-phase3-nonjs-domain.test.ts` ran the falsification with a
+ * synthetic non-JS domain. Result: **this seam is real for the type lattice
+ * and NOMINAL for every operation on a dynamic value.** A foreign domain's
+ * partitions ride an `IrType` through the production lowerer and execute on
+ * the bytecode VM, but `unbox`/`tag.test`/`box`-with-a-proven-partition are
+ * still `JsTag` end to end — the node fields (`nodes.ts`), the verifier
+ * (`verify.ts` reads `defaultTagDomain()` and has no channel to be told
+ * otherwise), the builder API and the frozen `IrDynamicLowering` contract.
+ * The six walls, with file:line and what closing each costs, are in the
+ * "Phase 3 (the falsification)" section of the issue file. Do not read this
+ * interface's existence as evidence that a second producer would work today.
  */
 
 /**
@@ -90,13 +102,24 @@ export type TagCarrierKind = "i32" | "f64" | "ref" | null;
  *     fold the coercion to a constant.
  *   - `"payload-dependent"` — the answer needs the payload (JS: `0`, `NaN`,
  *     `""`, `false`), so the coercion must be emitted.
+ *   - `"not-coercible"` — the source language has NO implicit boolean coercion
+ *     for this partition: a conditional must be given a boolean, and offering
+ *     one of these is a type error in the producer, not a coercion the backend
+ *     emits. ECMAScript never returns this (§7.1.2 is total over every type),
+ *     which is exactly why it is easy to leave out — and leaving it out forces
+ *     any language without ToBoolean to answer with a JavaScript-shaped lie.
+ *     Added by #3954 PHASE 3, when the synthetic non-JS domain could not state
+ *     its own semantics without it. Note the asymmetry it removes:
+ *     {@link TagNumericCoercion} already had a `"throws"` arm for "this
+ *     language refuses", and truthiness did not.
  *
  * NOTE: this is a *semantic* fact about the source language, not a statement
  * about what the current lowering does. Phase 1 does not fold anything (it is
  * byte-neutral); the classification exists so that a folding pass, and any
- * non-JS domain, has one authoritative place to read the rule from.
+ * non-JS domain, has one authoritative place to read the rule from. Nothing
+ * under `src/` consumes it yet, so widening the union moves no bytes.
  */
-export type TagTruthiness = "always-true" | "always-false" | "payload-dependent";
+export type TagTruthiness = "always-true" | "always-false" | "payload-dependent" | "not-coercible";
 
 /**
  * What a partition contributes to a numeric coercion.

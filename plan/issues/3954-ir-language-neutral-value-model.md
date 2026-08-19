@@ -175,8 +175,16 @@ ratchet, wired into `quality`), `tests/issue-3954-tag-domain.test.ts`.
 
 - `IrType`'s dynamic leaf is `{ kind: "dynamic"; tag?: TagId }`. `TagId` is a
   **branded** number, so `JsTag.String` is no longer assignable and the IR core
-  literally cannot name an ECMAScript partition. The JavaScript producer
-  (`from-ast.ts`) names them through `JS_TAG_IDS`, which is in-layer.
+  cannot *write* an ECMAScript partition into a dynamic type. The JavaScript
+  producer (`from-ast.ts`) names them through `JS_TAG_IDS`, which is in-layer.
+  **Corrected 2026-08-19 by phase 3 (W4): the brand is ONE-DIRECTIONAL.**
+  TypeScript assigns a branded `number` to a numeric enum, so `JsTag -> TagId`
+  is blocked (verified) while `TagId -> JsTag` needs **no cast at all** — a
+  foreign producer's tag flows into `JsTag`-typed code silently and fails at
+  RUN time, not compile time. Phase 1's guarantee therefore covers the
+  direction that stops core code writing a JS tag, and **not** the direction a
+  second producer actually takes. Earlier phrasings of this line ("the IR core
+  literally cannot name an ECMAScript partition") overstate it.
 - **Every ECMA-262 predicate behind the seam cites its clause**
   (ToBoolean §7.1.2, ToNumber §7.1.4 incl. §7.1.4.1 StringToNumber and §7.1.1
   ToPrimitive, `typeof` §13.5.3, Annex B §B.3.6 `[[IsHTMLDDA]]`), and the
@@ -336,8 +344,91 @@ rather than guessing.
 **This slice was implemented by the Opus lane, not by this issue's owning
 lane.** `backend-agnostic-ir` is Lane B (fable) per
 `plan/method/lane-partition.md`; the cross-lane implementation was directed by
-the project lead. **#4552** tracks the Fable-lane architect review of it, and
-PR #4644 is deliberately held as a draft until that review lands.
+the project lead. **#4552** tracks the Fable-lane architect review of it. PR
+#4644 was held as a draft to gate on that review; the lead's call was to
+un-draft it once it was a working checkpoint, and it **merged 2026-08-17**, so
+the review is post-merge. #4552's scope has since widened to cover #4551's gate
+and phase 1 as well.
+
+**Phase 3 (the falsification) — RUN 2026-08-19. Verdict: the seam is REAL for
+the type lattice and NOMINAL for every operation on a dynamic value.**
+
+`tests/issue-3954-phase3-nonjs-domain.test.ts` (18 tests) builds **Abacus**, an
+exact-arithmetic language with six partitions numbered 1001–1006 — deliberately
+disjoint from `JsTag`'s 0–7, so a JS assumption fails loudly instead of
+reinterpreting an Abacus partition as a JavaScript one:
+
+| tag | carrier | why JS cannot produce it |
+| --- | --- | --- |
+| `Unit` | — (singleton) | ECMAScript has **two** nullary values; Abacus has one |
+| `Rune` | i32 | a Unicode scalar as a first-class **scalar**; JS has no character type, and U+1F600 is *two* JS code units |
+| `Nat` | ref | arbitrary-precision natural |
+| `Int` | ref | arbitrary-precision integer, with a genuine **`Nat <: Int`** so `joinTags` returns a supertag rather than top |
+| `Text` | ref | codepoint-indexed, and **refuses** numeric coercion where §7.1.4.1 StringToNumber accepts it |
+| `Cap` | i32 | an **affine** capability — used once, never copied; no ECMAScript analogue at all |
+
+The single cleanest proof it is not JavaScript wearing a hat: **no partition has
+an `f64` carrier and none coerces to a numeric constant**, so there is no `NaN`,
+no `-0` and no `Infinity` anywhere in the model. ECMAScript cannot avoid f64 —
+`Number` *is* a double (§6.1.6.1).
+
+**What worked (the seam is real here).** An Abacus program whose parameter and
+result types are **derived from `ABACUS_TAG_DOMAIN.carrierKindOf`** — not
+hand-written — passes `verifyIrFunction`, passes `verifyIrBackendLegality(…,
+"bytecode")`, is lowered by the production `lowerIrFunctionBody` through
+`BytecodeEmitter`, and **executes on the real `runProgram`**, returning
+arbitrary-precision (`bigint`) answers via handles across a two-frame `OP.CALL`.
+A `box` whose target carries an Abacus partition also verifies clean —
+`verify.ts`'s box-to-dynamic rule never reads the refinement.
+
+**What did not (the seam is nominal here).** Six walls, each pinned by an
+assertion in the test rather than described, so closing one turns an expectation
+red:
+
+| # | site | what it is |
+| --- | --- | --- |
+| W1 | `src/ir/backend/legality.ts:451` / `:300` | **The bytecode backend rejects the `dynamic` IrType outright**, and the `box`/`unbox`/`tag.test` instructions with it. This is a *backend-capability* wall, not a seam wall — a JS-domain dynamic is rejected identically (asserted as a control) — but it means **phase 3's literal vehicle cannot carry a tag-bearing value at all**, for any domain. |
+| W2 | `src/ir/lower.ts:1764` | `jsTagOf(instr.toType.tag)` is unconditional, so box-to-dynamic with an Abacus refinement throws `tag id 1003 is not an ECMAScript partition`. Control: the identical function with the refinement **dropped** reaches the backend handle. The tag is the only thing in the way. |
+| W3 | `src/ir/verify.ts:673` | `defaultTagDomain()`. `verifyIrFunction(func)` takes one argument and `IrFunction` carries no producer/domain field, so **there is no channel by which the verifier could be told which domain the IR belongs to.** |
+| W4 | `src/ir/nodes.ts:1072` / `:1093` | `unbox.jsTag` / `tag.test.jsTag` are typed `JsTag` — **and the brand is one-directional.** TypeScript assigns a branded `number` to a numeric enum, so `TagId → JsTag` is silently legal (no cast, no `@ts-expect-error` needed) while `JsTag → TagId` is correctly blocked. The direction the brand does *not* cover is exactly the one a second producer takes; the failure lands at run time in W3 instead of at compile time. |
+| W5 | `src/ir/builder.ts:481` | `emitUnbox(value, jsTag: JsTag)` — the only construction API for the instruction takes the ECMAScript enum, and computes the result ValType from the JS domain. |
+| W6 | `src/ir/backend/handles.ts:283/300/308/319` | the frozen (#3029-S1) `IrDynamicLowering` is `JsTag`-typed member by member, and `emitToBoolean`/`emitToNumber` are §7.1.2/§7.1.4 **by definition**, not by parameter. |
+
+**Quantified**: of the four things a `TagDomain` owns (partition set, carrier
+kinds, refinement lattice, coercion predicates), the first three ride the IR
+end-to-end and the fourth is inert — nothing under `src/` reads
+`truthinessOf`/`numericCoercionOf`/`classOf`. Of the three tag-bearing
+instructions, **zero** can be built, verified or lowered in a non-JS domain.
+
+**One source change, and only one.** `TagTruthiness` gained a
+`"not-coercible"` arm (`src/ir/tag-domain.ts`; zero imports preserved). Abacus
+has no implicit boolean coercion, and the union offered only three
+ECMAScript-shaped answers — so the synthetic domain could not state its own
+semantics without lying. `TagNumericCoercion` already had `"throws"` for "this
+language refuses"; truthiness did not, and that asymmetry is the tell. Nothing
+under `src/` consumes the predicate, so widening the union moves no bytes.
+
+**Reported, deliberately NOT fixed** (each has consumers or is a design call, so
+fixing on a test-writing slice would be scope creep with a latent bug):
+
+- `TagCarrierKind` has no `"i64"`. It is exactly `$AnyValue`'s payload set, so a
+  language with a machine-int64 partition cannot state its carrier — and adding
+  the arm needs a matching `builder.ts:487` change, where an unknown carrier
+  currently falls through to `externref`.
+- `TagNumericCoercion.constant.value` is a JS `number`, so a domain whose
+  numeric tower does not fit in an f64 cannot express a constant coercion.
+- `verifyIrFunction` / `IrFunctionBuilder` / `lowerIrFunctionBody` should take
+  the domain (defaulting to `defaultTagDomain()`) rather than reaching for the
+  global. That alone does **not** unblock the falsification — W4's field type
+  still forces `JsTag` — but it is the prerequisite for W3.
+
+**What closing this would cost**, in dependency order: widen `unbox`/`tag.test`'s
+`jsTag` to `TagId` (W4) → thread the domain through verify/builder (W3, W5) →
+widen `IrDynamicLowering` to `TagId` and move the `jsTagOf` crossing *into*
+`integration.ts`, where `$AnyValue.tag` actually lives (W2, W6). That last step
+edits a contract frozen by #3029-S1 and is the "larger, separately-reviewable
+move" phase 1 named. W1 is orthogonal and would be closed by giving the bytecode
+VM a boxed-value representation, which is #1584's business, not this issue's.
 
 ## Non-goals
 
@@ -500,10 +591,16 @@ linked one); `__getattribute__` + descriptor protocol vs JS property lookup on
 - [ ] test262 host and standalone pass counts are unchanged (identical).
       **CI must confirm** — the suite is a sharded `merge_group` job and was not
       run locally.
-- [ ] A test constructs a non-JS tag domain and lowers IR through the bytecode
-      backend with it. **Phase 3.** Phase 1 constructs the non-JS domain
-      (`tests/issue-3954-tag-domain.test.ts`) and carries its tag on an
-      `IrType`, but does not lower it — that is phase 3's falsification.
+- [x] A test constructs a non-JS tag domain and lowers IR through the bytecode
+      backend with it. **Phase 3, done 2026-08-19** —
+      `tests/issue-3954-phase3-nonjs-domain.test.ts`. Met **partially and
+      knowingly**: IR built against the Abacus domain's own carrier decisions
+      lowers through the production `lower.ts` and RUNS on `runProgram`, but a
+      **tag-bearing** instruction cannot be lowered through that backend by any
+      domain (W1), and cannot be built in a non-JS domain at all (W2–W6). The
+      answer to "is the seam nominal?" is *for operations on dynamic values,
+      yes* — see "Phase 3 (the falsification)" above for the six walls with
+      file:line and what closing each costs.
 - [x] Every ECMA-262-derived predicate moved behind the seam cites its spec
       clause, so a reader can tell a conformance decision from a lowering
       convenience — this is the issue's primary deliverable, not a nicety.
