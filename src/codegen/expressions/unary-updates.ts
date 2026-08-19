@@ -488,6 +488,13 @@ function compileMemberIncDec(
       }
     }
 
+    // (#4500 Slice A, third site) `this.p++` on a `var`-declared script global:
+    // read/write route it to the module global, this RMW read the OBJECT.
+    const realmIdx = ctx.moduleGlobals.get(propName);
+    if (realmIdx !== undefined && receiverIsRealmGlobalObject(ctx, fctx, operand.expression)) {
+      return compileGlobalIncDec(ctx, fctx, realmIdx, f64Op, mode);
+    }
+
     // (#3683 S2 branch c2) TYPED-`this` `++`/`--` inside a twin — a
     // struct.get/struct.set pair against the prologue's typed local instead of
     // `__get_member_<p>` + unbox + box + `__set_member_<p>`. Emitted before ANY
@@ -514,15 +521,8 @@ function compileMemberIncDec(
     }
     if (!typeName) {
       // (#2656) Unresolvable static struct type — typically an `any`/`externref`
-      // receiver (a fnctor-instance `this` inside a prototype method, acorn's
-      // tokenizer shape). Do NOT NaN-drop the write: route through the externref
-      // read-modify-write (mirrors the `this.prop += 1` compound path, including
-      // the symmetric struct.set dispatch so a typed-struct receiver hits the
-      // same slot the READ uses). Only kicks in when we can box the receiver to
-      // externref; otherwise fall back to the historical NaN behaviour.
-      // (#2681/#2686) Pin to the struct dispatcher ONLY for a reconstructed-fnctor
-      // receiver (acorn's `this.pos++`); a general any-receiver stays on the
-      // tombstone-aware sidecar. Computed before the receiver is consumed.
+      // receiver. Do NOT NaN-drop the write: route through the externref
+      // read-modify-write, which hits the same slot the READ uses. (#2681/#2686)
       const incDecPinned =
         (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
         resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
