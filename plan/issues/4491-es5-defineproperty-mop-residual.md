@@ -17,6 +17,14 @@ related: [4444, 3031, 4490]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/object-ops.ts
+  # 2026-08-19 mirror/vec descriptor slice: a compiled array crosses the
+  # externref boundary as a DETACHED __make_iterable mirror while
+  # Object.defineProperty gets the RAW vec, so every recorded attribute was
+  # invisible to reflective reads. The bulk went to two NEW subsystem modules
+  # (src/runtime/vec-descriptor-mirror.ts, src/runtime/builtin-proto-expando.ts)
+  # — +284 -> +134; the residual is call-site wiring that must live in the
+  # runtime barrel at the host-import boundary.
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
   - src/codegen/object-ops.ts::compilePropertyIntrospection
