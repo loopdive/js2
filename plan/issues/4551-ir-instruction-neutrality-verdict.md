@@ -203,3 +203,34 @@ Still unplaced, in rough order of how much the answer matters:
 The default is now explicit and safe — unresolved means core — so nothing is
 mis-placed while this is open. What it costs is that the dialect is smaller
 than it should be.
+
+## Outcome (2026-08-19)
+
+`scripts/check-ir-kind-neutrality.mjs` + `scripts/ir-kind-neutrality-baseline.json`,
+wired into `quality` as `check:ir-kind-neutrality`.
+
+Population pinned at **82** = 78 `IrInstr` arms + 4 `IrTerminator` arms, derived
+from a stated rule; the disputed 85 is reconciled and asserted every run as
+82 in-scope + 3 symbolic-reference kinds (`IrFuncRef`/`IrGlobalRef`/`IrTypeRef` —
+**references, not declarations**, one correction to the prose above).
+
+Verdicts: **53 neutral · 26 js · 3 unresolved**, each with a `{file, quote}`
+citation the gate re-verifies (a rotted citation fails rather than reporting a
+stale answer).
+
+- Settled: `vec.*` neutral (holes are refused by the IR, and `src/codegen/array-holes.ts`
+  has no importer under `src/ir/` — asserted as an absence check); `object.*`
+  neutral (declared record layout; the open-map half is `dyn.member_*`, already
+  in the dialect); `class.*` all 8 neutral (nominal, closed-world, tag-based
+  `instanceof`, allocate-then-init — not ECMAScript's `[[Construct]]`);
+  `coerce.to_externref` neutral; `box`/`unbox`/`tag.test` neutral with the
+  residual owned by phase 1's `TagDomain`, as this issue anticipated.
+- `string.*` splits 3 neutral / 2 js / 1 unresolved — confirming the operation
+  set, not the encoding, is where the JS shape is.
+- `forof.vec` neutral, `forof.string` js (they are not the same call).
+- Phase 2's remaining move list is exactly **3**: `string.char_at`,
+  `string.char_code_at`, `forof.string`.
+- The 3 unresolved are `binary`, `intrinsic`, `string.len`; `binary` and
+  `intrinsic` are a shape this issue's contested list did not anticipate — a
+  neutral interface over an ECMAScript-tainted payload vocabulary, where the
+  unit of the fix is the enum rather than the declaration.

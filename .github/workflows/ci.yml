@@ -156,6 +156,10 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-dialect
 
+      - name: IR per-kind neutrality verdict gate (#4551)
+        if: steps.npm_compat.outputs.only != 'true'
+        run: pnpm run check:ir-kind-neutrality
+
       - name: IR fallback gate (#1376)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-fallbacks

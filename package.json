@@ -111,6 +111,7 @@
     "detect:vacuity": "npx tsx scripts/detect-vacuity.ts",
     "check:test-vacuity-shapes": "npx tsx scripts/check-test-vacuity-shapes.ts",
     "check:ir-dialect": "node scripts/check-ir-dialect.mjs",
+    "check:ir-kind-neutrality": "node scripts/check-ir-kind-neutrality.mjs",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
     "check:host-import-policy": "node --import tsx scripts/check-host-import-policy.ts",
     "check:ir-only": "npx tsx scripts/check-ir-only.ts",
