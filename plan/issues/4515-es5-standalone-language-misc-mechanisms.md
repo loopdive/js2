@@ -59,3 +59,24 @@ sub-triage table).
   (#4354): `pnpm run build:compiler-bundle && node scripts/build-quickjs-eval-provider.mjs`.
 - An assertion that can throw before the probed value is read measures the
   throw, not the value — run a negative control (#3626 §2.2.1).
+
+## 2026-08-19 re-census + dispatch
+
+Fresh standalone baseline (`test262-standalone-current.jsonl`, 48,735 entries,
+fetched 2026-08-19 04:52): standalone ES5 is **8,506 / 9,029 (94.2 %)** with
+**523 non-passes** (495 fail, 24 compile_error, 4 compile_timeout). Earlier
+figures in this file predate that and should be read as history.
+
+This issue's lane in the 2026-08-19 6-way fan-out: **157 rows — language/ statements, expressions, types (largest lane)**.
+Umbrella + full partition: #4163.
+
+The residue is a **long tail** — the largest single error signature across all
+523 rows is 13. Expect many small root causes, not one lever.
+
+Local gate for this lane: 551 locally-verified-passing standalone ES5 tests must
+stay at 551/551. Reproduce with the `--standalone` flag (without it you measure
+the JS-host lane, a different and much worse corpus at 84.8 %).
+
+**eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
+needs clang-18 (see #4163 for the full toolchain finding); record them as
+blocked rather than chasing them.
