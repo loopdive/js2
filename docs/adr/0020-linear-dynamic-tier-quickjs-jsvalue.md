@@ -2,15 +2,18 @@
 
 Status: Accepted — decided by the project lead 2026-08-08 (recorded in #4236);
 written up as an ADR 2026-08-17 when the implementation program (#4538) was
-scheduled.
+scheduled. **Corrected 2026-08-19** — the original text defined the dynamic
+tier's trigger as *statically untyped*; the trigger is *eval-reachable*. That
+was a drafting mistake, not a superseded decision, so it is fixed in place. See
+Corrections at the end for what changed.
 
 ## Context
 
 The linear backend (`src/codegen-linear/`, the WASI/native target per
 [ADR-0003](./0003-wasmgc.md) and the codegen-axes split) has **no dynamic value
 representation at all**. `layout.ts` is a static fat-slot model over
-compile-time-planned records; a value the middle-end cannot give a single type
-has nowhere to live. Everything a JS engine provides for that residue —
+compile-time-planned records; a value that must be reachable from code the
+compiler never sees has nowhere to live. Everything a JS engine provides for that residue —
 dynamic property add/delete, prototype chains, interned keys, the builtin
 surface, `eval`, and reclamation — would otherwise have to be built from
 scratch.
@@ -39,9 +42,16 @@ per cross-module call.
 
 ## Decision
 
-1. **The linear backend's dynamic residue is represented as QuickJS
-   `JSValue`.** Typed code is untouched: unboxed `i32`/`f64` and planned record
-   layouts stay exactly as they are, and keep the measured AOT win.
+1. **The linear backend's eval-reachable values are represented as QuickJS
+   `JSValue`.** The rule, stated once and governing everywhere this ADR says
+   "dynamic": *a binding or object is engine-represented **iff it is reachable
+   by code that is not known at compile time*** — `eval`, `with`,
+   `new Function`. Everything else stays native, **including values the type
+   system cannot pin down**. A program with no `eval` links no engine however
+   dynamically typed it is; that is what makes the pay-for-what-you-use
+   requirement below achievable rather than aspirational. #4543 owns computing
+   the frontier. Typed code is untouched: unboxed `i32`/`f64` and planned
+   record layouts stay exactly as they are, and keep the measured AOT win.
 2. **`JSValue` is opaque.** All manipulation goes through the QuickJS C API
    with codegen-enforced refcount discipline. Internal layouts — NaN-boxing
    configuration, shapes, atoms — are never open-coded: they are not a stable
@@ -57,6 +67,16 @@ per cross-module call.
    the engine's cycle collector** — the single fixed strategy ADR-0017
    deferred. The bump arena remains for typed, compile-time-planned
    allocations.
+6. **We own the memory and the allocator; the engine does not.** Our module
+   defines and exports the linear memory and the engine imports it, and the
+   engine allocates through a real `malloc`/`calloc`/`free`/`realloc`/
+   `usable_size` we implement, installed via `JS_NewRuntime2`. The typed arena
+   stays a bump fast path carved from our own heap, so ADR-0017's zero-metadata
+   path is kept rather than traded. Both directions are currently reversed in
+   the tree — `scripts/quickjs-artifact/build.sh` passes `-Wl,--export-memory`,
+   and #4540 shipped the arena carved *from the engine's* `malloc` — so this
+   decision is a target, with that fallback working in the meantime. #4540
+   carries the cost analysis.
 
 ## Scope
 
@@ -112,11 +132,38 @@ identity broken).
   and per-property time. The tier must therefore be **pay-for-what-you-use**,
   elided entirely when a program's dynamic residue is empty (#4544).
 - **Two allocators over one linear memory is a real corruption hazard**, not a
-  theoretical one: the artifact's first `malloc` returns 171,696, while our
-  linear `__heap_ptr` initialises to a hard-coded 1024 — inside the artifact's
-  shadow stack. Heap coexistence is a correctness prerequisite (#4540).
+  theoretical one: the artifact's heap begins above its 64 KiB shadow stack
+  `[0, 65536)` and ~105 KiB of static data, while our linear `__heap_ptr`
+  initialises to a hard-coded 1024 — inside that shadow stack. Heap coexistence
+  is a correctness prerequisite (#4540); **resolved** for placement by
+  [ADR-0022](./0022-linked-mode-heap-and-rodata-placement.md).
+  - **Correction, 2026-08-19:** this bullet previously stated the first `malloc`
+    returns **171,696**. A local build from the same pinned refs returns
+    **172,176** — +480, because static data shifted. The ordering claim is what
+    matters and is confirmed; the constant is a property of one build in one
+    container. **Nothing may hardcode it**, which is why ADR-0022 delegates
+    placement to the artifact's own allocator instead of naming an address.
 - **Refcount discipline becomes a codegen obligation** on every path, including
   exceptional ones; getting it wrong leaks or double-frees (#4542).
 - **Cycles that close through native memory are invisible to the engine's
   collector.** This is a documented leak class with a weak-wrapper mitigation,
   accepted for this lane (#4541).
+
+## Corrections
+
+**2026-08-19 — the dynamic-tier trigger.** As first written, the Context said "a
+value the middle-end cannot give a single type has nowhere to live" and Decision
+1 said "the dynamic residue is represented as `JSValue`" without defining the
+term. Read together those say *statically untyped ⇒ engine*, which is wrong and
+expensive: it would link the ~1 MB engine into any program holding a
+heterogeneous value. The governing rule was always the one #4543 states —
+reachability from code not known at compile time — and Decision 1 now says so.
+Nothing had been built against the old wording; #4541 and #4540 were updated in
+the same change.
+
+**Open consequence, recorded rather than resolved:** this ADR supersedes #1852's
+native value+tag scheme (16-byte `[tag][val]` cell) for this target. Under the
+eval-reachable rule, untainted-but-dynamic values still need a native
+representation, and that scheme was retired. Either it returns for the untainted
+case, or the claim is that without `eval` little genuinely dynamic remains to
+represent. #4541 must settle this explicitly rather than inherit it.

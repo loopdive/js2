@@ -33,8 +33,22 @@ export function linearStringLiteralInstrs(
   }
   if (strFromDataIdx === undefined) throw new Error("linear string runtime: __str_from_data helper missing");
 
+  // #4540 — in linked mode the literal image is copied into a block obtained
+  // from the engine's allocator, so `literal.offset` is a position WITHIN the
+  // image, not an address. One runtime bias corrects every offset because the
+  // image preserves the link-time layout byte for byte. Standalone keeps the
+  // bare constant, so its emitted bytes are unchanged.
+  const literalAddr: Instr[] =
+    ctx.roDataBiasGlobalIdx === undefined
+      ? [{ op: "i32.const", value: literal.offset }]
+      : [
+          { op: "global.get", index: ctx.roDataBiasGlobalIdx },
+          { op: "i32.const", value: literal.offset },
+          { op: "i32.add" },
+        ];
+
   const materialize: Instr[] = [
-    { op: "i32.const", value: literal.offset },
+    ...literalAddr,
     { op: "i32.const", value: literal.bytes.length },
     { op: "call", funcIdx: strFromDataIdx },
     { op: "global.set", index: literal.cacheGlobalIdx },

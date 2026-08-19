@@ -50,7 +50,23 @@ supersedes #1852's *representation* for this target; it does **not** supersede
 Give the linear lane a dynamic value representation, which it currently lacks
 entirely (`layout.ts` is a static fat-slot model over planned records).
 
-1. **Representation.** A dynamic-position value is an opaque `JSValue` handle
+**Terminology (ADR-0020 Decision 1, corrected in place 2026-08-19).**
+Throughout this issue, "dynamic residue" / "dynamic position" means
+**eval-reachable**: reachable by code not known at compile time (`eval`, `with`,
+`new Function`), per the #4543 rule. It does **not** mean merely
+statically-untyped. A program with no `eval` links no engine however dynamically
+typed it is — that is what makes ADR-0020's pay-for-what-you-use requirement
+achievable. Read every "dynamic" below with that meaning.
+
+**Open question this slice must settle, not inherit.** ADR-0020 supersedes
+#1852's native value+tag scheme (16-byte `[tag][val]` cell) for this target.
+Under the eval-reachable rule, untainted-but-dynamic values still need a native
+representation and that scheme was retired. Decide explicitly: does it return
+for the untainted case, or is the claim that without `eval` little genuinely
+dynamic remains? Building to the old wording silently answers this the
+expensive way.
+
+1. **Representation.** An eval-reachable value is an opaque `JSValue` handle
    (an `i32` from codegen's perspective). All manipulation goes through the
    engine's C API. Internal layouts — NaN-box configuration, shapes, atoms —
    are never open-coded; they are not a stable ABI and vary by build flags.
@@ -142,8 +158,13 @@ still-unowned "version pin + upgrade policy" box lands here.
 
 ## Acceptance criteria
 
-- [ ] A program with a genuine dynamic residue (heterogeneous values, dynamic
-      property access) compiles and runs under `--target linear`, linked.
+- [ ] A program with a genuine **eval-reachable** residue (values reachable
+      from `eval` / `with` / `new Function`) compiles and runs under
+      `--target linear`, linked.
+- [ ] A program that is heterogeneously typed but contains **no** `eval`,
+      `with` or `new Function` links **no engine at all** — asserted on the
+      emitted module's imports, not by inspection. This is the criterion that
+      makes the eval-reachable rule real rather than stated.
 - [ ] The ABI stamp the module was compiled against is **embedded in the
       module** and **checked against the linked artifact** at link or
       instantiate time. A mismatch fails loudly, naming both versions; it must

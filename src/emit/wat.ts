@@ -212,13 +212,17 @@ export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> })
     lines.push(`${indent(1)}(start ${mod.startFuncIdx})`);
   }
 
-  // Data segments (active, for linear memory)
+  // Data segments (active, and passive since #4540, for linear memory)
   if (mod.dataSegments && mod.dataSegments.length > 0) {
     for (const seg of mod.dataSegments) {
       const hexBytes = Array.from(seg.bytes)
         .map((b) => `\\${b.toString(16).padStart(2, "0")}`)
         .join("");
-      lines.push(`${indent(1)}(data (i32.const ${seg.offset}) "${hexBytes}")`);
+      // A passive segment carries no offset expression — it is copied into a
+      // runtime-chosen destination by `memory.init`.
+      lines.push(
+        seg.passive ? `${indent(1)}(data "${hexBytes}")` : `${indent(1)}(data (i32.const ${seg.offset}) "${hexBytes}")`,
+      );
     }
   }
 
@@ -521,6 +525,12 @@ function formatInstr(instr: Instr, _depth: number): string {
       return `${instr.op} ${instr.lane}`;
     case "i8x16.shuffle":
       return `i8x16.shuffle ${instr.lanes.join(" ")}`;
+    // Bulk memory (#4540) — the segment index is the immediate, not a stack
+    // operand, so it has to be printed or the text form is unassemblable.
+    case "memory.init":
+      return `memory.init ${instr.dataIdx}`;
+    case "data.drop":
+      return `data.drop ${instr.dataIdx}`;
     default:
       return instr.op;
   }
