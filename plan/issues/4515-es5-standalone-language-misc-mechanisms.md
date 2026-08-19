@@ -12,6 +12,15 @@ task_type: bug
 area: codegen, runtime
 es_edition: 5
 goal: es5
+loc-budget-allow:
+  # 2026-08-19 accessor-pair fix: for an accessor PAIR, TypeScript takes the
+  # property type from the GETTER's return and requires the setter's parameter
+  # to match, so `set foo(v)` beside a string-returning getter infers `v: string`
+  # and __call_fn_method_1 casts the incoming externref with an UNGUARDED
+  # ref.cast — `o.foo = 1` traps. Predicate + rationale live in the new leaf
+  # module src/codegen/closures/set-accessor-param.ts; the god-file grows by the
+  # IMPORT LINE ONLY (+1).
+  - src/codegen/closures.ts
 related: [2668, 1888, 3626, 2666]
 ---
 
