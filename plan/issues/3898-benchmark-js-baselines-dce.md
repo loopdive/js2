@@ -3,7 +3,7 @@ id: 3898
 title: "perf-bench: string benchmarks on performance.html measure V8's loop-invariant hoisting, not string speed — several 'Wasm is slower' bars are artifacts"
 status: done
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: critical
 feasibility: easy
@@ -12,7 +12,7 @@ task_type: infrastructure
 area: testing
 language_feature: n/a
 goal: performance
-sprint: current
+sprint: 78
 horizon: m
 es_edition: n/a
 related: [1009, 1949, 3899, 3900, 3901, 3904, 3907]

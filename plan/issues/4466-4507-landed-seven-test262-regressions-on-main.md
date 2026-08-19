@@ -2,9 +2,9 @@
 id: 4466
 title: "#4507 landed 7 test262 regressions on main — three independent codegen defects the queue let through"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: m

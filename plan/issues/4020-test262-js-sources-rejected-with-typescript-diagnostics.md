@@ -2,9 +2,9 @@
 id: 4020
 title: "test262 .js sources rejected with TS8010/8017 'can only be used in TypeScript files' at L1:1 — 153 tests (112 Atomics, 29 module-code, 12 import)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-01
-updated: 2026-08-11
+updated: 2026-08-18
 completed: 2026-08-11
 priority: medium
 horizon: m

@@ -3,10 +3,10 @@ id: 4427
 title: "Compound `+=` chain with boolean RHS emits a non-validating module (any.convert_extern fed a (ref null $AnyString) if)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 # The lane decision + operand bridging moved OUT to the new subsystem module
 # src/codegen/string-compound-lane.ts; what stays in the driver is the hoisted
 # left/right checker types (shared with the #2058 block below it, net zero raw

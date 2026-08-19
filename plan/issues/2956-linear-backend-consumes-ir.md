@@ -3,9 +3,9 @@ id: 2956
 title: "Linear backend consumes the IR front-end: wire the selector + LinearEmitter into generateLinearModule"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-07-02
-updated: 2026-07-17
+updated: 2026-08-18
 assignee: ttraenkler/fable-epsilon
 branch: symphony/porffor/2956-after-pr-3203
 priority: medium

@@ -2,9 +2,9 @@
 id: 4259
 title: "ES2015 class accessor writeback: retain exact class-root writes and IR-own accessor bodies (72 files per lane)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: l
 feasibility: hard

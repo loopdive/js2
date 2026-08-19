@@ -3,10 +3,10 @@ id: 4443
 title: "__extern_get_idx answers undefined for a $__regexp_match_vec receiver in builtin-prototype-writing modules (R1 of #4439)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

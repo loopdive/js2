@@ -2,9 +2,9 @@
 id: 4441
 title: "merge_group shard split — FOURTH ratio re-derivation: 58/44 estimate overshot, measured 1.03 → 52/50"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: s

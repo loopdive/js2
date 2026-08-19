@@ -3,9 +3,9 @@ id: 2952
 title: "IR multi-exit control flow: labeled break/continue, switch (br_table), do-while, for-in adoption"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-07-02
-updated: 2026-08-15
+updated: 2026-08-18
 priority: medium
 horizon: l
 feasibility: hard

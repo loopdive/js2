@@ -4,9 +4,9 @@ title: "bug: compile-time `in`/`hasOwnProperty` fold answers constant FALSE for 
 status: done
 completed: 2026-08-08
 assignee: ttraenkler/opus-forin-2
-sprint: current
+sprint: 78
 created: 2026-08-08
-updated: 2026-08-08
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

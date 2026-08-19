@@ -3,9 +3,9 @@ id: 4489
 title: "standalone: module-scope `var x;` reads before declaration are `ref.null.extern`, indistinguishable from the closure ABI's absent-arg pad — seed with the undefined singleton (full-corpus A/B required)"
 status: done
 completed: 2026-08-16
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-16
+updated: 2026-08-18
 priority: medium
 horizon: m
 feasibility: medium

@@ -4,9 +4,9 @@ title: "An object-literal method call does not bind its receiver — `obj.m()` r
 status: done
 completed: 2026-08-09
 assignee: ttraenkler/senior-dev
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

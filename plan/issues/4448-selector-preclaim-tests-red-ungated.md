@@ -4,9 +4,9 @@ title: "issue-3529-selector-preclaim: 4 tests red on main — 3 broken by 620332
 status: done
 completed: 2026-08-15
 assignee: ttraenkler/opus-4448
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

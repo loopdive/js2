@@ -400,3 +400,51 @@ resulting `main` before execution pauses.
 - `/workspace` was 1,279 commits behind and is now level with `origin/main`.
   The 13 dirty files reverted to get there were each verified: every local-only
   line already existed on `main` in evolved form. Nothing unique lost.
+
+## Sprint 78 (2026-07-30 → 2026-08-18)
+
+Rolling budget window frozen with `--force` on 2026-08-18. **293 issues
+completed, 490 rolled forward**; nineteen days against sprint 77's 79 completed,
+the largest window the rolling model has produced. Completed work concentrated
+in the standalone/IR substrate (99 across `standalone-gap`, `standalone-mode`,
+`ir-full-coverage`), then `es5` (32), `dogfood` (26), `performance` (23) and
+`npm-library-support` (23).
+
+**test262 at freeze: 32,615 / 43,621 (74.8%)** from
+`benchmarks/results/test262-current.json` at `9896af5d7`. **No window delta is
+recorded** — the wrap-up ran in a shallow clone (2026-08-15 → 2026-08-18) and
+the start-of-window baseline is outside that history. The only movement visible
+was 32,530 → 32,615 (+85) over the final four days.
+
+- The freeze was **not** trigger-driven. `freeze-sprint.mjs` refused
+  (`budget < 99%, > 1h left`) because the statusline's budget cache does not
+  exist outside its host, so the remaining-budget reading was assumed, not
+  measured. Closed on an explicit stakeholder call instead. Windows that end by
+  judgement rather than by signal are hard to attribute numbers to — worth a
+  time-based trigger alongside the budget one.
+- **Nine issues carried statuses no tool recognises** (`complete` ×5,
+  `in_progress` ×5, overlapping at #2929). `in_progress` is normalised by
+  `build-data.js`; **`complete` is normalised by nothing**, and
+  `freeze-sprint.mjs` matches `done` exactly — so five finished issues were set
+  to roll forward as unfinished, silently, every window. Four were verified
+  against their own named suites and promoted; #3764 was not.
+- **#3764 stays `complete`, not `done`.** Its suite fails 2/3 on main: one
+  environmental (test262 submodule uninitialised), one real — the
+  standalone-purity assertion `importObject == {}` gets `env` plus a populated
+  `string_constants`.
+- **Every frozen window record read as open on the dashboard.** 75, 76 and 77 all
+  had `isClosed=false`: `freeze-sprint.mjs` writes sprint docs with no
+  frontmatter, so they fall to `build-data.js`'s
+  `sprintNumber <= explicitlyClosedMax` fallback, and the last doc with a
+  `status:` field was 74. Writing `status: closed` into the 78 doc raises the
+  threshold and closes 75–77 too; the durable fix belongs in the freeze script.
+- **Generated sprint issue-tables had drifted with nothing to heal them** —
+  `sync-sprint-issue-tables.mjs` rewrote 16 docs (+752 lines; sprint 50 was
+  missing #1406). No workflow calls it, unlike the test262 baseline or
+  `npm-compat.json`, both of which catch up on the next merge.
+
+Common thread across three of the five: **nothing validates frontmatter against
+`SCHEMA.md`.** CI already walks every issue file for
+`check:issue-ids:against-main`, so a status-enum check is nearly free — but the
+schema needs reconciling first (it says `review`; practice and 17 live issues
+say `in-review`, and `suspended` is unlisted).

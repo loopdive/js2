@@ -2,7 +2,7 @@
 id: 3989
 title: "string `+=` into an externref slot emits invalid Wasm in standalone — the unfixed store half of #3472"
 status: done
-sprint: current
+sprint: 78
 priority: high
 horizon: s
 feasibility: hard

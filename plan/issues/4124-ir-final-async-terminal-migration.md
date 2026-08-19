@@ -3,7 +3,7 @@ id: 4124
 title: "IR final async terminal migration: sequential loop and main"
 status: done
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: critical
 feasibility: hard
@@ -12,7 +12,7 @@ task_type: refactor
 area: ir, runtime, codegen
 language_feature: async, for-loop, multi-await
 goal: ir-full-coverage
-sprint: current
+sprint: 78
 parent: 3527
 depends_on: [4110]
 horizon: m

@@ -2,10 +2,10 @@
 id: 4456
 title: "Same-named nested function declarations in different scopes alias to ONE closure value (R8 of #4437 — correctness bug)"
 status: done
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 horizon: m

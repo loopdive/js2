@@ -3,10 +3,10 @@ id: 4430
 title: "Bounded sparse `new Array(n)` + filter holes: standalone IR route emits a non-validating module (in-tree #4222 test failing)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 assignee: ttraenkler/claude-es5-standalone
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: medium

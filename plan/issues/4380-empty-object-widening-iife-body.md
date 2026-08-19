@@ -3,7 +3,7 @@ id: 4380
 title: "Empty-object widening skips IIFE function-expression bodies"
 status: done
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-18
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, standalone, object-representation
 language_feature: object-literals, iife, arrow-functions
 goal: deno-runtime
-sprint: current
+sprint: 78
 es_edition: ES2015
 assignee: ttraenkler/codex-v8x-js2wasm
 related: [2937, 2944, 3364, 4376, 4378]

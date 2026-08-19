@@ -3,7 +3,7 @@ id: 4524
 title: "standalone: Object.defineProperty with a DATA descriptor is silently dropped on a closed-struct object literal"
 status: done
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-18
 completed: 2026-08-16
 pr: 4635
 priority: high
@@ -12,7 +12,7 @@ task_type: fix
 area: codegen
 language_feature: objects, property descriptors, object shape
 goal: es5-standalone
-sprint: current
+sprint: 78
 horizon: m
 assignee: ttraenkler/opus-es5-b
 related: [1888, 1901, 3076, 4208, 4479, 3475, 2668, 739]

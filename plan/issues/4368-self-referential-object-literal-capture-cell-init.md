@@ -3,9 +3,9 @@ id: 4368
 title: "Self-referential object-literal initializer writes through stale pre-capture local and emits invalid Wasm"
 status: done
 assignee: ttraenkler/codex
-sprint: current
+sprint: 78
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-18
 completed: 2026-08-11
 priority: high
 horizon: s

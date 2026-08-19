@@ -2,9 +2,9 @@
 id: 4261
 title: "standalone: a fnctor prototype-method call returns 0 when the SAME function also reads a declared field of that receiver — each half is correct alone"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-18
 completed: 2026-08-09
 assignee: ttraenkler/fable-4261-method-result
 priority: high

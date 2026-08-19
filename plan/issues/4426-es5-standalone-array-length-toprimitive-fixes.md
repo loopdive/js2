@@ -3,11 +3,11 @@ id: 4426
 title: "ES5 standalone: array-length write lane + ToPrimitive closure-dispatch conformance fixes"
 status: done
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: high
 goal: standalone-gap
-sprint: current
+sprint: 78
 es_edition: ES5
 task_type: bug
 loc-budget-allow:

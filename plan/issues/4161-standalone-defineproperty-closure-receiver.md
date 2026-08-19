@@ -2,7 +2,7 @@
 id: 4161
 title: "standalone: Object.defineProperty/defineProperties on a FUNCTION receiver define into the #3468 own-property bag (harvest of fork PR #4124's #3979 slice)"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-05
 completed: 2026-08-05
 priority: high

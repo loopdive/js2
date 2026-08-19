@@ -5,9 +5,9 @@ status: done
 completed: 2026-08-08
 pr: 4232
 assignee: "ttraenkler/fable-3927-emission"
-sprint: current
+sprint: 78
 created: 2026-08-06
-updated: 2026-08-08
+updated: 2026-08-18
 loc-budget-allow:
   # New module (PR #4233's bag half): carrier predicate, bag get/set, tombstone
   # marker filtering, enumeration merge. The declared-field write-through ladder

@@ -2,9 +2,9 @@
 id: 4141
 title: "merge_group trap ratchet charges ~1,200 baseline-skip Temporal rows to the candidate as new null_deref traps — the baseline heal step runs without TEST262_INCLUDE_PROPOSALS, so it launders real traps into `skip`"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-18
 completed: 2026-08-03
 priority: high
 horizon: m

@@ -3,9 +3,9 @@ id: 4431
 title: "early-error check-body costs — isStrictMode memoization, class private-name cache, hoisted per-visit allocations"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: medium
 horizon: s
 feasibility: medium

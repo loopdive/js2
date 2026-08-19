@@ -3,7 +3,7 @@ id: 3912
 title: "CRITICAL: fast mode (the whole gc-native lane) cannot stringify a number — 6 of 9 number→string ops trap at runtime; import-collector gates number_toString and the string family on different conditions"
 status: done
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 priority: critical
 feasibility: medium
@@ -12,7 +12,7 @@ task_type: bug
 area: codegen
 language_feature: number-to-string
 goal: performance
-sprint: current
+sprint: 78
 horizon: l
 es_edition: multi
 related: [3902, 3904, 3909, 3907, 3917]

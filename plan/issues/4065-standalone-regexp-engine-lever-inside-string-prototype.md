@@ -2,9 +2,9 @@
 id: 4065
 title: "RegExp engine is a separate lever hiding inside String.prototype — M1 REFUTED (51 → 8, consumed by #4016); real lever is the dynamic-pattern refusal under built-ins/RegExp"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-18
 completed: 2026-08-02
 priority: high
 horizon: m

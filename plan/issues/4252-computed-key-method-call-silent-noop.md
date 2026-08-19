@@ -3,7 +3,7 @@ id: 4252
 title: "obj[runtimeKey]() on a plain-object receiver is a silent no-op (drop-everything call fallback); standalone Proxy trap support matrix"
 status: done
 completed: 2026-08-08
-sprint: current
+sprint: 78
 created: 2026-08-08
 priority: high
 horizon: m

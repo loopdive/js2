@@ -3,7 +3,7 @@ id: 3983
 title: Standalone strict [[Set]] never throws — `__extern_set_strict` was an alias of `__extern_set`
 status: done
 completed: 2026-08-01
-sprint: current
+sprint: 78
 priority: high
 horizon: l
 feasibility: hard

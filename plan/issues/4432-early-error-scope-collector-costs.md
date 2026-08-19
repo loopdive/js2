@@ -2,9 +2,9 @@
 id: 4432
 title: "early-error scope-collector costs — TDZ per-name re-traversal, var/lexical conflict re-walks, ancestor-walk predicate memoization"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 priority: medium
 horizon: s

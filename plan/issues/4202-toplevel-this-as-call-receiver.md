@@ -4,7 +4,7 @@ title: "Top-level `this` is refused as a `.call`/`.apply` receiver, so the calle
 status: done
 created: 2026-08-07
 completed: 2026-08-07
-sprint: current
+sprint: 78
 priority: high
 task_type: bug
 area: codegen

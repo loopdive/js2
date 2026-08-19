@@ -3,9 +3,9 @@ id: 4464
 title: "ES5 standalone: language/statements/function bucket — 48 failures in coherent families (strict caller/arguments poison, constructor-return semantics, fn.prototype auto-object, module-init null-deref)"
 status: done
 completed: 2026-08-15
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: medium

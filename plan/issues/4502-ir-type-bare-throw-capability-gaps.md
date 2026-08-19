@@ -2,9 +2,9 @@
 id: 4502
 title: "ir: sweep from-ast bare `throw new Error` — type every capability gap as an IrUnsupportedError demote"
 status: done
-sprint: current
+sprint: 78
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-18
 completed: 2026-08-15
 assignee: ttraenkler/opus-4502
 priority: high

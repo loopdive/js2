@@ -3,9 +3,9 @@ id: 3628
 title: "≤ES3 edition: close the remaining 43 host-lane failures (230/273 → 273/273)"
 status: done
 completed: 2026-07-31
-sprint: current
+sprint: 78
 created: 2026-07-25
-updated: 2026-08-09
+updated: 2026-08-18
 assignee: ttraenkler/dev-es3-editions
 priority: high
 horizon: m

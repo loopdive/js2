@@ -3,9 +3,9 @@ id: 3791
 title: "IR standalone native RegExp test bridge"
 status: done
 completed: 2026-07-30
-sprint: current
+sprint: 78
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-08-18
 priority: high
 horizon: m
 feasibility: hard

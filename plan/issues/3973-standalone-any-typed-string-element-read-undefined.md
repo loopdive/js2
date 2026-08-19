@@ -4,10 +4,10 @@ title: "Issue 3973: standalone — dynamic element read `x[k]` on an `any`-typed
 status: done
 assignee: ttraenkler/sendev-untagged
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-18
 completed: 2026-08-01
 goal: standalone-gap
-sprint: current
+sprint: 78
 priority: high
 horizon: m
 feasibility: hard

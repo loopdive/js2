@@ -4,9 +4,9 @@ title: "`test262 PR stub` times out at 5 min and silently strands the PR — the
 status: done
 completed: 2026-08-01
 assignee: ttraenkler/dev-ci-3934
-sprint: current
+sprint: 78
 created: 2026-07-31
-updated: 2026-08-01
+updated: 2026-08-18
 priority: high
 horizon: s
 feasibility: easy
