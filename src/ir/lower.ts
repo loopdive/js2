@@ -88,6 +88,7 @@ import {
   verifyEmissionSchedule,
   type IrEffects,
 } from "./effects.js";
+import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the one TagId → JsTag crossing in the lowering pass
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
@@ -1756,7 +1757,13 @@ export function lowerIrFunctionBody<S, Slot>(
           // The target's tag refinement (if the producer proved a partition)
           // becomes the boxing hint — e.g. a Boolean-refined i32 boxes as a
           // tag-4 boolean instead of the unbranded NUMBER default.
-          for (const op of dyn.emitBox(fromVal, instr.toType.tag)) emitter.pushRaw(out, op);
+          // #3954 — the refinement is an opaque `TagId`; the `IrDynamicLowering`
+          // contract (backend/handles.ts, frozen #3029-S1) still speaks `JsTag`.
+          // `jsTagOf` is the ONE explicit crossing and throws on a foreign id
+          // rather than emitting a bogus `$AnyValue.tag` constant.
+          const boxHint = instr.toType.tag === undefined ? undefined : jsTagOf(instr.toType.tag);
+          // pushraw-ok(#2949): pre-existing hatch — emitBox returns an opaque Instr[] by contract
+          for (const op of dyn.emitBox(fromVal, boxHint)) emitter.pushRaw(out, op);
           return;
         }
         // `toType` must be a union (V1 only boxes into tagged unions). The

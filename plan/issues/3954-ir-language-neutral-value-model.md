@@ -14,6 +14,27 @@ task_type: refactor
 area: compiler
 language_feature: compiler-internals
 goal: backend-agnostic-ir
+# (#3102) Phase 1's growth in these five files is the seam itself plus the
+# comments that make it legible — the change is behaviour-neutral (emitted
+# bytes verified identical) and NET-REMOVES logic from them: the payload-shape
+# and tag-naming tables they used to read directly now live in the new
+# `src/ir/tag-domain.ts` / `src/ir/js-tag-domain.ts` leaves. The +24 in
+# nodes.ts and +9 in verify/builder are the documented rationale for the
+# `TagId` leaf and the domain calls that replaced `jsTagUnboxKind`/`JsTag[…]`.
+loc-budget-allow:
+  - src/ir/nodes.ts
+  - src/ir/builder.ts
+  - src/ir/from-ast.ts
+  - src/ir/verify.ts
+  - src/ir/lower.ts
+# (#3400) +6 lines in lower.ts's `box`-to-dynamic arm: the one explicit
+# TagId -> JsTag crossing plus the four-line note saying why it exists and
+# what it refuses. Splitting `emitInstrTree` is a real and separate task
+# (#3399); paying for it inside a behaviour-neutral seam change would make
+# this PR unreviewable against its own byte-identity claim.
+func-budget-allow:
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
 ---
 
 # Name the IR's ambient ECMAScript assumptions
@@ -144,6 +165,73 @@ Non-goals.
 
 ## Progress
 
+**Phase 1 (the tag-domain seam) — IMPLEMENTED 2026-08-19.**
+
+New files: `src/ir/tag-domain.ts` (the neutral interface, ZERO imports),
+`src/ir/js-tag-domain.ts` (`JS_TAG_DOMAIN`, the sole implementation),
+`src/ir/producer.ts` (the single wiring point),
+`scripts/check-jstag-seam.mjs` + `scripts/jstag-seam-baseline.json` (the
+ratchet, wired into `quality`), `tests/issue-3954-tag-domain.test.ts`.
+
+- `IrType`'s dynamic leaf is `{ kind: "dynamic"; tag?: TagId }`. `TagId` is a
+  **branded** number, so `JsTag.String` is no longer assignable and the IR core
+  literally cannot name an ECMAScript partition. The JavaScript producer
+  (`from-ast.ts`) names them through `JS_TAG_IDS`, which is in-layer.
+- **Every ECMA-262 predicate behind the seam cites its clause**
+  (ToBoolean §7.1.2, ToNumber §7.1.4 incl. §7.1.4.1 StringToNumber and §7.1.1
+  ToPrimitive, `typeof` §13.5.3, Annex B §B.3.6 `[[IsHTMLDDA]]`), and the
+  transcription is cross-checked against a real engine in the test rather than
+  merely restated. `numericCoercionOf` separates the arms that can run USER
+  CODE (Object/Function → ToPrimitive) from the pure ones — the distinction an
+  optimizer actually needs and the one the old code could not express.
+- Carrier kinds **delegate** to `jsTagUnboxKind`; no second tag table (D4).
+- Direct `JsTag` value usage under `src/` measured with the gate's own counter:
+  **HEAD 4 files / 4 value imports / 57 refs → 2 files / 2 / 42.** The two that
+  remain are deliberate: `from-ast.ts` (the JS producer) and `integration.ts`
+  (the WasmGC lowering, which emits these integers as `$AnyValue.tag`
+  constants). `verify.ts` and `builder.ts` now ask the domain
+  (`carrierKindOf` / `nameOf`) and hold `JsTag` as a TYPE only.
+- Behaviour-neutral, verified by running BOTH arms: sha256 of the emitted
+  binary for `website/playground/examples` × {gc-host, gc-native-strings,
+  standalone, wasi} (44 rows) and for 32 dynamic-path snippets × 3 modes
+  (96 rows, all compiling) — **identical before and after**.
+- The ratchet was negative-tested before being wired in (a deliberate
+  `import { JsTag }` + two reads in `src/ir/propagate.ts` fails it with a
+  file-and-field report; restored, green again).
+
+**Deliberately NOT converted in phase 1** — recorded so the next slice does not
+read the remainder as an oversight:
+
+- The **instruction-level** `jsTag` fields (`nodes.ts` `unbox` / `tag.test`)
+  and the `IrDynamicLowering` handle contract (`backend/handles.ts`, frozen
+  #3029-S1) still speak `JsTag`. The issue's phase-1 text scopes the change to
+  `IrType`'s dynamic leaf; widening it to the frozen backend contract is a
+  larger, separately-reviewable move. `jsTagOf` / `tagIdOfJsTag` are the two
+  explicit crossings.
+- `check-jstag-seam.mjs` is **not** wired into the post-merge banking job
+  (`baseline-summary-sync.yml`), matching `check:ir-fallbacks`, which is not
+  either. `--update-on-decrease` exists and was exercised locally.
+
+**Corrections to phase 1's own text**, from measuring it:
+
+- "58 `JsTag.` references across 24 files" conflates two counts. On `main`
+  there were **58 `JsTag.` member reads in 7 files**; 24 files mention `JsTag`
+  at all, and several of those are the **oracle's unrelated same-named type**
+  (`src/checker/oracle.ts` exports a `JsTag` string union). The ratchet
+  excludes it explicitly.
+- `propagate.ts`, `type-evidence.ts` and `analysis/lattice.ts` are named as
+  consumers to convert; **none of them references `JsTag` at all**. `lattice.ts`
+  is the ownership/access lattice (#1587) and is unrelated to tags.
+- "the truthiness / numeric-coercion predicates that `dynTruthy` /
+  `dynToNumber` currently hardcode" — there was **nothing per-tag to move**.
+  `dyn.truthy` / `dyn.to_number` delegate wholesale to runtime helpers
+  (`__any_unbox_bool` / `__any_to_f64` / `__is_truthy` / `__unbox_number`); the
+  only TypeScript-side ToBoolean table is `lowerToBooleanForCondition`, keyed
+  on the **carrier kind**, not the tag. So the domain's predicates are newly
+  *stated* rather than relocated, and phase 1 keeps them non-load-bearing on
+  purpose: consuming them (folding `if (x)` when `x` is a proven Object) would
+  move bytes, which phase 1 forbids.
+
 **Phase 2, first slice — LANDED 2026-08-17** (sequenced ahead of phase 1 by
 project-lead decision, on the cost-of-delay measurement in #4551: phase 2 is
 O(instruction kinds), and kinds went 51 -> 78 in the three months to
@@ -170,7 +258,9 @@ per-kind verdict; an unresolved kind stays in core rather than being placed on
 a hunch.
 
 Phase 1 (the `TagDomain` seam) is untouched and still the larger correctness
-win; its surface is 58 `JsTag` references across 24 files.
+win; its surface is 58 `JsTag.` member reads in 7 files (see the phase-1
+notes: the earlier "24 files" figure counted files merely mentioning the name,
+including an unrelated same-named type in `src/checker/oracle.ts`).
 
 **This slice was implemented by the Opus lane, not by this issue's owning
 lane.** `backend-agnostic-ir` is Lane B (fable) per
@@ -325,20 +415,28 @@ linked one); `__getattribute__` + descriptor protocol vs JS property lookup on
 
 ## Acceptance criteria
 
-- [ ] A `TagDomain` seam exists; `IrType`'s dynamic leaf no longer names
-      `JsTag` directly.
-- [ ] `JS_TAG_DOMAIN` is the only implementation and is wired at one place.
-- [ ] A ratcheted CI gate bounds direct `JsTag` value imports outside the domain
+- [x] A `TagDomain` seam exists; `IrType`'s dynamic leaf no longer names
+      `JsTag` directly. (`src/ir/tag-domain.ts`; the leaf carries a branded
+      `TagId`.)
+- [x] `JS_TAG_DOMAIN` is the only implementation and is wired at one place.
+      (`src/ir/js-tag-domain.ts`, chosen in `src/ir/producer.ts`.)
+- [x] A ratcheted CI gate bounds direct `JsTag` value imports outside the domain
       leaf, with a committed baseline and an `--update-on-decrease` mode.
-- [ ] Emitted binaries are byte-identical across phase 1 on the
-      `website/playground/examples` corpus.
+      (`scripts/check-jstag-seam.mjs`, in `quality`; negative-tested.)
+- [x] Emitted binaries are byte-identical across phase 1 on the
+      `website/playground/examples` corpus. (Also on 32 dynamic-path snippets;
+      both arms run.)
 - [ ] test262 host and standalone pass counts are unchanged (identical).
+      **CI must confirm** — the suite is a sharded `merge_group` job and was not
+      run locally.
 - [ ] A test constructs a non-JS tag domain and lowers IR through the bytecode
-      backend with it.
-- [ ] Every ECMA-262-derived predicate moved behind the seam cites its spec
+      backend with it. **Phase 3.** Phase 1 constructs the non-JS domain
+      (`tests/issue-3954-tag-domain.test.ts`) and carries its tag on an
+      `IrType`, but does not lower it — that is phase 3's falsification.
+- [x] Every ECMA-262-derived predicate moved behind the seam cites its spec
       clause, so a reader can tell a conformance decision from a lowering
       convenience — this is the issue's primary deliverable, not a nicety.
-- [ ] `docs/architecture/codegen-axes.md` gains a short "producer axis" note
+- [x] `docs/architecture/codegen-axes.md` gains a short "producer axis" note
       naming the seam and stating the C++ non-goal, so the boundary is
       documented where the other axes are.
 

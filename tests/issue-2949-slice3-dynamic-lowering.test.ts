@@ -41,6 +41,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -393,7 +396,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boolRT",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
           { kind: "unbox", value: id(1), jsTag: JsTag.Boolean, result: id(2), resultType: I32 },
         ],
         [id(2)],
@@ -405,7 +408,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boxedBoolIsBool",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
           { kind: "tag.test", value: id(1), jsTag: JsTag.Boolean, result: id(2), resultType: I32 },
         ],
         [id(2)],
@@ -452,7 +455,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boxedBoolIsNum",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
           { kind: "tag.test", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: I32 },
         ],
         [id(2)],
@@ -659,7 +662,7 @@ describe("#2949 s3 — R6: un-boxed ref→dynamic returns are rejected", () => {
   it("dynamic and tag-refined dynamic values still flow into a dynamic result", () => {
     const bare = fn("moveDyn", [{ type: DYN, name: "x" }], [], [id(0)], [DYN], 1);
     expect(verifyIrFunction(bare)).toEqual([]);
-    const refined = fn("moveRefined", [{ type: irDynamic(JsTag.String), name: "x" }], [], [id(0)], [DYN], 1);
+    const refined = fn("moveRefined", [{ type: irDynamic(JS_TAG_IDS.String), name: "x" }], [], [id(0)], [DYN], 1);
     expect(verifyIrFunction(refined)).toEqual([]);
   });
 

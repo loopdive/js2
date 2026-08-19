@@ -34,6 +34,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -182,7 +185,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
     const b = new IrFunctionBuilder(identities.next("boxRefined"), [DYN], true);
     const x = b.addParam("x", I32);
     b.openBlock();
-    const refined = irDynamic(JsTag.Boolean);
+    const refined = irDynamic(JS_TAG_IDS.Boolean);
     const d = b.emitBox(x, refined);
     expect(b.typeOf(d)).toEqual(refined);
     b.terminate({ kind: "return", values: [d] });
@@ -274,7 +277,7 @@ function boxUnboxBool(name: string): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const x = b.addParam("x", I32);
   b.openBlock();
-  const d = b.emitBox(x, irDynamic(JsTag.Boolean));
+  const d = b.emitBox(x, irDynamic(JS_TAG_IDS.Boolean));
   const u = b.emitUnbox(d, JsTag.Boolean);
   b.terminate({ kind: "return", values: [u] });
   return b.finish();

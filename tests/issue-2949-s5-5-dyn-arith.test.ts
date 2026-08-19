@@ -45,6 +45,9 @@ import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { FMOD_FN, ensureFmod } from "../src/codegen/fmod.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
@@ -285,9 +288,9 @@ function gcWrapperF64(name: string, callee: string, arity: 1 | 2): IrFunction {
   const a = b.addParam("a", F64);
   const c = arity === 2 ? b.addParam("c", F64) : null;
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.NumberF64));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
   const args = [da];
-  if (c !== null) args.push(b.emitBox(c, irDynamic(JsTag.NumberF64)));
+  if (c !== null) args.push(b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64)));
   const r = b.emitCall({ kind: "func", name: callee }, args, F64);
   if (r === null) throw new Error("wrapper call produced no value");
   b.terminate({ kind: "return", values: [r] });
@@ -298,7 +301,7 @@ function gcWrapperBool(name: string, callee: string): IrFunction {
   const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const a = b.addParam("a", I32);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.Boolean));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.Boolean));
   const r = b.emitCall({ kind: "func", name: callee }, [da], F64);
   if (r === null) throw new Error("wrapper call produced no value");
   b.terminate({ kind: "return", values: [r] });

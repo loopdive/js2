@@ -23,10 +23,15 @@
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
 import type { ValType } from "./types.js";
-// #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
-// (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
-// from the dependency-free leaf, so this adds no codegen module-graph pull.
-import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+// #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
+// consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
+// "does this partition have a payload, and what shape is it?". The verifier
+// therefore asks the producer's `TagDomain` (`producer.ts`) rather than
+// reading `jsTagUnboxKind`/`JsTag[…]` directly. `JsTag` stays as a TYPE here
+// because the instruction fields (`nodes.ts` unbox/tag.test `jsTag`) are not
+// part of phase 1's conversion — see #3954's phase-1 notes.
+import { tagIdOfJsTag } from "./js-tag-domain.js";
+import { defaultTagDomain } from "./producer.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
@@ -665,12 +670,16 @@ function verifyInstrStructure(
           block: block.id as number,
         });
       } else {
-        const payload = jsTagUnboxKind(instr.jsTag);
-        // R2 — Null/Undefined are singleton partitions with no payload:
-        // unboxing them is invalid (identity is observed via tag.test).
+        const domain = defaultTagDomain();
+        const tagId = tagIdOfJsTag(instr.jsTag);
+        const tagName = domain.nameOf(tagId);
+        const payload = domain.carrierKindOf(tagId);
+        // R2 — a payload-less SINGLETON partition (ECMAScript: Null /
+        // Undefined) cannot be unboxed; identity is observed via tag.test.
+        // Which partitions those are is the domain's answer, not ours.
         if (instr.kind === "unbox" && payload === null) {
           errors.push({
-            message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
+            message: `unbox with payload-less JsTag ${tagName} is invalid — use tag.test (#2949)`,
             func: func.name,
             block: block.id as number,
           });
@@ -691,7 +700,7 @@ function verifyInstrStructure(
           const consistent = payload === "ref" ? refShaped : k === payload;
           if (!consistent) {
             errors.push({
-              message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
+              message: `${instr.kind} tag ${k} is inconsistent with jsTag ${tagName} (payload kind ${payload}) (#2949)`,
               func: func.name,
               block: block.id as number,
             });

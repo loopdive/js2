@@ -50,6 +50,12 @@ import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
 // nodes.ts stays free of value imports.
 import type { JsTag } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+// #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
+// OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
+// producer's domain), not a bare ECMAScript `JsTag`. `tag-domain.ts` is itself
+// a ZERO-import leaf, so this adds a graph edge with no back edge and no TDZ
+// exposure — the same property `js-tag.ts`'s header protects.
+import { type TagId, tagRefinementEquals } from "./tag-domain.js";
 import type { ValType } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -438,12 +444,22 @@ export type IrType =
   // any op that requires a concrete kind (see verify.ts #2949 rules).
   //
   // `tag` is an OPTIONAL static refinement: when present, the producer has
-  // proved the runtime `JsTag` partition of the value (e.g. after a
-  // `tag.test` branch), enabling checked unboxes and op selection without a
-  // runtime re-test. Absence means "partition unknown". The refinement is
-  // erased at joins: two dynamics with different (or one missing) tags are
-  // NOT equal under `irTypeEquals` — producers must widen to the bare
+  // proved the runtime partition of the value (e.g. after a `tag.test`
+  // branch), enabling checked unboxes and op selection without a runtime
+  // re-test. Absence means "partition unknown". The refinement is erased at
+  // joins: two dynamics with different (or one missing) tags are NOT equal
+  // under `irTypeEquals` — producers must widen to the bare
   // `{kind:"dynamic"}` before a join point (branch args, slot writes).
+  //
+  // #3954 phase 1 — the tag is an OPAQUE `TagId`, not an ECMAScript `JsTag`.
+  // Which partitions exist, what each one's payload carrier is, how two
+  // refinements join, and how a partition coerces to boolean/number are all
+  // properties of the PRODUCER's `TagDomain` (`tag-domain.ts`), selected in
+  // `producer.ts`. Today `JS_TAG_DOMAIN` is the only implementation and its
+  // ids are numerically the `JsTag` values (they are ABI — the `$AnyValue.tag`
+  // constants the `__any_box_*` helpers write). The IR core deliberately
+  // cannot name a partition: `JS_TAG_IDS.String` is the JavaScript producer's
+  // vocabulary (`from-ast.ts`), not the lattice's.
   //
   // Lowering contract (per the ratified #1852 representation table):
   //   - WasmGC: `resolver.resolveDynamic()` returns the module's canonical
@@ -457,7 +473,7 @@ export type IrType =
   //     throws.
   // The `tag` refinement never changes the carrier — it is compile-time
   // knowledge only.
-  | { readonly kind: "dynamic"; readonly tag?: JsTag };
+  | { readonly kind: "dynamic"; readonly tag?: TagId };
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
@@ -494,12 +510,17 @@ export function asVal(t: IrType): ValType | null {
 
 /**
  * #2949 slice 1 — construct a dynamic IrType, optionally refined with a
- * statically-proven `JsTag` partition. `irDynamic()` is the lattice top
- * (partition unknown); `irDynamic(JsTag.String)` is a refinement a producer
- * may emit after a `tag.test` proof. See the `dynamic` arm of `IrType` for
- * the full contract (joins erase refinements; carrier is tag-independent).
+ * statically-proven partition. `irDynamic()` is the lattice top (partition
+ * unknown); `irDynamic(JS_TAG_IDS.String)` is a refinement the JavaScript
+ * producer may emit after a `tag.test` proof. See the `dynamic` arm of
+ * `IrType` for the full contract (joins erase refinements; carrier is
+ * tag-independent).
+ *
+ * #3954 phase 1 — `tag` is an opaque {@link TagId} from the producer's
+ * `TagDomain`. A bare number (and therefore a `JsTag` member) is deliberately
+ * NOT assignable: only a domain can mint one.
  */
-export function irDynamic(tag?: JsTag): IrType {
+export function irDynamic(tag?: TagId): IrType {
   return tag === undefined ? { kind: "dynamic" } : { kind: "dynamic", tag };
 }
 
@@ -566,7 +587,10 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   // first producer wrote, which is provably wrong for the other path.
   // Producers widen to the bare `{kind:"dynamic"}` before joins instead.
   if (a.kind === "dynamic" && b.kind === "dynamic") {
-    return (a.tag ?? null) === (b.tag ?? null);
+    // #3954 — refinement comparison lives in the domain leaf, not here: this
+    // is the rule "a refined dynamic is not the same type as an unrefined
+    // one", and it is domain-independent.
+    return tagRefinementEquals(a.tag, b.tag);
   }
   return false;
 }

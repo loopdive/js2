@@ -109,8 +109,12 @@ so its cost tracks this curve directly — and the growth is lumpy (+13 in the
 first half of July alone), which means "it has been quiet lately" is not
 evidence of anything at 17 days' resolution.
 
-Phase 1's surface is much smaller and is not growing the same way: **58 `JsTag`
-references across 24 files** today. That asymmetry is worth knowing when
+Phase 1's surface is much smaller and is not growing the same way: **58
+`JsTag.` member reads in 7 files** today. (An earlier revision of this line said
+"across 24 files" — that conflated the member-read count with the number of
+files merely *mentioning* `JsTag`, several of which are `src/checker/oracle.ts`'s
+**unrelated same-named type**, a `"number" | "string" | …` string union. Measured
+during #3954 phase 1.) That asymmetry is worth knowing when
 sequencing — deferring the tag seam is cheap; deferring the dialect split is
 what compounds, particularly against `ir-full-coverage`, which #3954 expects to
 add roughly 40 more kinds.

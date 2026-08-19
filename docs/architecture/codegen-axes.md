@@ -189,7 +189,41 @@ the work is O(instruction kinds), and kinds went 51 → 78 in the three months t
 2026-08-01. Doing it later costs proportionally more, and `ir-full-coverage` is
 expected to add roughly 40 more.
 
-Full design: #3954 (four phases — tag-domain seam, this dialect split,
+### The tag-domain seam (#3954 phase 1)
+
+The dialect split answers "which instruction kinds are JavaScript's?". The
+**tag-domain seam** answers the other half: "what does a *dynamic value* mean?".
+
+`IrType`'s dynamic leaf no longer names ECMAScript. It carries an opaque
+`TagId` resolved against a **`TagDomain`** (`src/ir/tag-domain.ts`, a
+zero-import leaf) that states four things about a source language's dynamic
+values: the partition set, each partition's Wasm-carrier kind, the refinement
+lattice, and the truthiness / numeric-coercion predicates.
+
+- **`src/ir/js-tag-domain.ts`** is the sole implementation — ECMAScript. Every
+  predicate arm there **cites its spec clause** (ToBoolean §7.1.2, ToNumber
+  §7.1.4, …), so a reader can tell a conformance decision from a lowering
+  convenience without already knowing which it is. That legibility is the
+  deliverable; a second front-end is a side effect.
+- **`src/ir/producer.ts`** is the single wiring point — a pure lookup from
+  producer id to domain, deliberately not a mutable global (a domain left set
+  by a previous compilation would silently reinterpret the next one's tags, and
+  this process runs many compilations).
+- **`scripts/check-jstag-seam.mjs`** (in `quality`) ratchets it: a committed
+  per-file baseline of direct `JsTag` value usage under `src/`, growth fails,
+  `--update-on-decrease` banks improvements. Two files remain by design — the
+  JavaScript producer (`from-ast.ts`, entitled to name JavaScript partitions)
+  and the WasmGC lowering (`integration.ts`, which emits these integers as
+  `$AnyValue.tag` constants).
+
+**C++ is an explicit non-goal on this axis, now and later.** It needs value
+semantics, copy/move/destructors, RAII scope-exit lifetimes, pointer
+arithmetic, precise struct layout/ABI and template monomorphization;
+`IrType`'s `object`/`class`/`boxed` kinds all assume GC-managed reference
+identity and cannot express "destroyed at scope end". A C++ front-end should
+target LLVM. Do not design for it.
+
+Full design: #3954 (four phases — this tag-domain seam, the dialect split,
 synthetic-tag-domain falsification, out-of-tree producer).
 
 ## When NOT to use IR yet

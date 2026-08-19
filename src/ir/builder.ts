@@ -40,7 +40,14 @@ import {
 } from "./nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
-import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+// #3954 phase 1 — the builder's payload-shape question ("does this partition
+// have a payload, and of what shape?") is a `TagDomain` question, answered via
+// `producer.ts`. `JsTag` stays as a TYPE only: the `unbox`/`tag.test`
+// instruction fields still carry it (phase 1 converted `IrType`'s dynamic leaf,
+// not the instruction fields).
+import type { JsTag } from "./js-tag.js";
+import { tagIdOfJsTag } from "./js-tag-domain.js";
+import { defaultTagDomain } from "./producer.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
 
@@ -432,7 +439,7 @@ export class IrFunctionBuilder {
    * construction time rather than as a malformed double-boxed carrier that
    * only fails later in verify/lower.
    *
-   * A `dynamic` `toType` may carry a `tag` refinement (`irDynamic(JsTag.X)`);
+   * A `dynamic` `toType` may carry a `tag` refinement (`irDynamic(JS_TAG_IDS.X)`);
    * lowering maps it onto the canonical boxing helper's representation hint
    * (e.g. a Boolean-refined i32 boxes as tag-4, not an unbranded number),
    * so producers that statically know the partition SHOULD refine the box
@@ -471,10 +478,12 @@ export class IrFunctionBuilder {
    * needed.
    */
   emitUnbox(value: IrValueId, jsTag: JsTag): IrValueId {
-    const payload = jsTagUnboxKind(jsTag);
+    const domain = defaultTagDomain();
+    const tagId = tagIdOfJsTag(jsTag);
+    const payload = domain.carrierKindOf(tagId);
     if (payload === null) {
       throw new Error(
-        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${JsTag[jsTag]} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
+        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${domain.nameOf(tagId)} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
       );
     }
     const payloadVal: ValType =

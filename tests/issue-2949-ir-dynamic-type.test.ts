@@ -22,6 +22,9 @@ import {
   type IrValueId,
 } from "../src/ir/index.js";
 import { JsTag, jsTagUnboxKind } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { JsTag as JsTagReexport } from "../src/codegen/value-tags.js";
 import type { FuncTypeDef, ValType } from "../src/ir/types.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
@@ -121,18 +124,18 @@ describe("#2949 JsTag leaf module", () => {
 describe("#2949 dynamic IrType lattice", () => {
   it("irDynamic constructs bare and refined dynamics; isDynamic narrows", () => {
     expect(irDynamic()).toEqual({ kind: "dynamic" });
-    expect(irDynamic(JsTag.String)).toEqual({ kind: "dynamic", tag: JsTag.String });
+    expect(irDynamic(JS_TAG_IDS.String)).toEqual({ kind: "dynamic", tag: JsTag.String });
     expect(isDynamic(irDynamic())).toBe(true);
     expect(isDynamic(F64)).toBe(false);
   });
 
   it("irTypeEquals is EXACT on the tag refinement", () => {
     expect(irTypeEquals(irDynamic(), irDynamic())).toBe(true);
-    expect(irTypeEquals(irDynamic(JsTag.String), irDynamic(JsTag.String))).toBe(true);
+    expect(irTypeEquals(irDynamic(JS_TAG_IDS.String), irDynamic(JS_TAG_IDS.String))).toBe(true);
     // Different refinements are different types (joins must widen first).
-    expect(irTypeEquals(irDynamic(JsTag.String), irDynamic(JsTag.Object))).toBe(false);
+    expect(irTypeEquals(irDynamic(JS_TAG_IDS.String), irDynamic(JS_TAG_IDS.Object))).toBe(false);
     // Refined vs bare are different types too.
-    expect(irTypeEquals(irDynamic(JsTag.String), irDynamic())).toBe(false);
+    expect(irTypeEquals(irDynamic(JS_TAG_IDS.String), irDynamic())).toBe(false);
     // dynamic is not any val-kind, even the carrier's ValType.
     expect(irTypeEquals(irDynamic(), irVal({ kind: "externref" }))).toBe(false);
   });
