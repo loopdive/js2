@@ -1,0 +1,852 @@
+{
+  "issue": 4544,
+  "part": "A",
+  "title": "Native binary emission: size/startup baseline",
+  "generatedAt": "2026-08-19T04:01:36.826Z",
+  "generatedBy": "scripts/benchmark-native-aot.mjs",
+  "gates": "docs/adr/0021-native-backend-targets-c.md",
+  "container": {
+    "arch": "x64",
+    "platform": "linux",
+    "cpus": "4",
+    "kernel": "6.18.5-fc-v20",
+    "node": "v22.22.2",
+    "note": "Shared 4-core container; startup numbers carry scheduler noise, which is why the distribution is reported rather than a single sample."
+  },
+  "methodology": {
+    "backend": "--target linear (linear memory). The linear backend is the only one all three AOT routes can consume: wasm2c and WAMR have no WasmGC support, so the WasmGC `wasi` target is AOT-able by at most one of the three.",
+    "startup": "Whole-process wall clock (exec to exit), argument chosen so the program's loop body runs ZERO times, one discarded warmup then N timed rounds, filesystem cache WARM. Lanes are interleaved in a rotating order within each round, and each round also times an exec-floor binary; QUOTE `aboveFloorMs` (median of per-round differences), not `p50Ms` — the absolute figures include ~1 ms of this harness's own spawnSync cost. Resolution is about +/-0.5 ms, so an aboveFloorMs under ~1 ms means indistinguishable from bare process creation.",
+    "size": "Raw and gzip -9. The honest size for a lane is artifact + whatever must ship with it: see denominators.runtimeSizes. wasm2c-native ships nothing else, so its binary IS its shipped size.",
+    "correctness": "Every lane is re-run on a REAL argument and all four lane outputs must agree with each other AND with Node before any timing is recorded. Agreement is checked at 6 significant digits because iwasm's `-f` printer is lossy; raw per-lane outputs are kept in each program's `outputs`.",
+    "dynamicTier": "Measured separately. No corpus program links QuickJS (all are typed and eval-free), so the corpus numbers are what a normal program pays."
+  },
+  "toolchain": {
+    "wasmtime": "wasmtime 27.0.0 (8eefa236f 2024-11-20)",
+    "wamrc": "wamrc 2.2.0",
+    "iwasm": "iwasm 2.2.0",
+    "wasm2c": "1.0.39 (native build at .tmp/toolchain/wabt-build/wasm2c)",
+    "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "wasmRtSource": "wabt 1.0.39 wasm2c/ (fetched at the matching tag; see script header)"
+  },
+  "commands": {
+    "wasm-jit": "wasmtime run --invoke run <prog>.wasm <arg>",
+    "wasmtime-aot": "wasmtime compile <prog>.wasm -o <prog>.cwasm && wasmtime run --allow-precompiled --invoke run <prog>.cwasm <arg>",
+    "wamr-aot": "wamrc -o <prog>.aot <prog>.wasm && iwasm -f run <prog>.aot <arg>",
+    "wasm2c-native": "wasm2c <prog>.wasm -o <prog>.c && clang -O2 -fwrapv -o <prog> scripts/native-aot-corpus/driver.c <prog>.c wasm-rt-impl.c wasm-rt-mem-impl.c -lm && ./<prog> <arg>",
+    "c-floor": "clang -O2 -fwrapv -o fib-c-floor scripts/native-aot-corpus/fib-floor.c && ./fib-c-floor <arg>"
+  },
+  "runs": 201,
+  "programs": [
+    {
+      "id": "noop",
+      "label": "Empty (startup isolation)",
+      "source": "scripts/native-aot-corpus/noop.ts",
+      "value": 7,
+      "checkArg": 7,
+      "outputs": {
+        "wasm-jit": "7",
+        "wasmtime-aot": "7",
+        "wamr-aot": "7",
+        "wasm2c-native": "7",
+        "node": "7"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 4986,
+          "gzip": 1942
+        },
+        "wasmtime-aot": {
+          "raw": 35288,
+          "gzip": 12812
+        },
+        "wamr-aot": {
+          "raw": 15828,
+          "gzip": 6048
+        },
+        "wasm2c-native": {
+          "raw": 26944,
+          "gzip": 8681
+        },
+        "wasm2c-native-stripped": {
+          "raw": 22944,
+          "gzip": 7486
+        },
+        "generatedCBytes": 104402
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.187,
+          "p50Ms": 3.662,
+          "p90Ms": 4.178,
+          "maxMs": 5.023
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/noop.wasm",
+            "0"
+          ],
+          "minMs": 7.437,
+          "p50Ms": 8.426,
+          "p90Ms": 9.131,
+          "maxMs": 12.396,
+          "aboveFloorMs": 4.719,
+          "stdout": "0"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/noop.cwasm",
+            "0"
+          ],
+          "minMs": 7.37,
+          "p50Ms": 8.05,
+          "p90Ms": 8.653,
+          "maxMs": 11.343,
+          "aboveFloorMs": 4.38,
+          "stdout": "0"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/noop.aot",
+            "0"
+          ],
+          "minMs": 7.628,
+          "p50Ms": 8.412,
+          "p90Ms": 9.096,
+          "maxMs": 11.631,
+          "aboveFloorMs": 4.679,
+          "stdout": "0:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/noop",
+            "0"
+          ],
+          "minMs": 3.376,
+          "p50Ms": 3.904,
+          "p90Ms": 4.409,
+          "maxMs": 6.12,
+          "aboveFloorMs": 0.196,
+          "stdout": "0"
+        }
+      }
+    },
+    {
+      "id": "fib",
+      "label": "Fibonacci loop",
+      "source": "website/public/benchmarks/competitive/programs/fib.js",
+      "value": 832040,
+      "checkArg": 30,
+      "outputs": {
+        "wasm-jit": "832040",
+        "wasmtime-aot": "832040",
+        "wamr-aot": "832040",
+        "wasm2c-native": "832040",
+        "node": "832040"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 4943,
+          "gzip": 1882
+        },
+        "wasmtime-aot": {
+          "raw": 35296,
+          "gzip": 12639
+        },
+        "wamr-aot": {
+          "raw": 15796,
+          "gzip": 5996
+        },
+        "wasm2c-native": {
+          "raw": 26936,
+          "gzip": 8640
+        },
+        "wasm2c-native-stripped": {
+          "raw": 22944,
+          "gzip": 7448
+        },
+        "generatedCBytes": 103476
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.354,
+          "p50Ms": 3.956,
+          "p90Ms": 4.584,
+          "maxMs": 5.848
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/fib.wasm",
+            "0"
+          ],
+          "minMs": 7.915,
+          "p50Ms": 8.851,
+          "p90Ms": 10.009,
+          "maxMs": 12.926,
+          "aboveFloorMs": 4.805,
+          "stdout": "0"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/fib.cwasm",
+            "0"
+          ],
+          "minMs": 7.735,
+          "p50Ms": 8.453,
+          "p90Ms": 9.428,
+          "maxMs": 22.987,
+          "aboveFloorMs": 4.532,
+          "stdout": "0"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/fib.aot",
+            "0"
+          ],
+          "minMs": 7.964,
+          "p50Ms": 8.785,
+          "p90Ms": 9.653,
+          "maxMs": 18.407,
+          "aboveFloorMs": 4.766,
+          "stdout": "0:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/fib",
+            "0"
+          ],
+          "minMs": 3.651,
+          "p50Ms": 4.11,
+          "p90Ms": 4.655,
+          "maxMs": 19.375,
+          "aboveFloorMs": 0.142,
+          "stdout": "0"
+        }
+      }
+    },
+    {
+      "id": "fib-recursive",
+      "label": "Fibonacci recursion",
+      "source": "website/public/benchmarks/competitive/programs/fib-recursive.js",
+      "value": 832040,
+      "checkArg": 30,
+      "outputs": {
+        "wasm-jit": "832040",
+        "wasmtime-aot": "832040",
+        "wamr-aot": "832040",
+        "wasm2c-native": "832040",
+        "node": "832040"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 4948,
+          "gzip": 1884
+        },
+        "wasmtime-aot": {
+          "raw": 35360,
+          "gzip": 12754
+        },
+        "wamr-aot": {
+          "raw": 16036,
+          "gzip": 6067
+        },
+        "wasm2c-native": {
+          "raw": 27040,
+          "gzip": 8706
+        },
+        "wasm2c-native-stripped": {
+          "raw": 22944,
+          "gzip": 7502
+        },
+        "generatedCBytes": 106422
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.383,
+          "p50Ms": 3.903,
+          "p90Ms": 4.39,
+          "maxMs": 6.175
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/fib-recursive.wasm",
+            "0"
+          ],
+          "minMs": 7.797,
+          "p50Ms": 8.613,
+          "p90Ms": 9.371,
+          "maxMs": 10.688,
+          "aboveFloorMs": 4.718,
+          "stdout": "0"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/fib-recursive.cwasm",
+            "0"
+          ],
+          "minMs": 7.398,
+          "p50Ms": 8.296,
+          "p90Ms": 9.004,
+          "maxMs": 12.057,
+          "aboveFloorMs": 4.373,
+          "stdout": "0"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/fib-recursive.aot",
+            "0"
+          ],
+          "minMs": 7.948,
+          "p50Ms": 8.709,
+          "p90Ms": 9.406,
+          "maxMs": 12.49,
+          "aboveFloorMs": 4.761,
+          "stdout": "0:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/fib-recursive",
+            "0"
+          ],
+          "minMs": 3.564,
+          "p50Ms": 4.057,
+          "p90Ms": 4.52,
+          "maxMs": 5.38,
+          "aboveFloorMs": 0.151,
+          "stdout": "0"
+        }
+      }
+    },
+    {
+      "id": "string-hash",
+      "label": "String build + hash",
+      "source": "website/public/benchmarks/competitive/programs/string-hash.js",
+      "value": 36729900,
+      "checkArg": 100,
+      "outputs": {
+        "wasm-jit": "36729899",
+        "wasmtime-aot": "36729899",
+        "wamr-aot": "3.67299e+07",
+        "wasm2c-native": "36729899",
+        "node": "36729899"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 6040,
+          "gzip": 2427
+        },
+        "wasmtime-aot": {
+          "raw": 43864,
+          "gzip": 15169
+        },
+        "wamr-aot": {
+          "raw": 19496,
+          "gzip": 7697
+        },
+        "wasm2c-native": {
+          "raw": 35368,
+          "gzip": 10380
+        },
+        "wasm2c-native-stripped": {
+          "raw": 31136,
+          "gzip": 9092
+        },
+        "generatedCBytes": 121542
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.447,
+          "p50Ms": 3.997,
+          "p90Ms": 4.542,
+          "maxMs": 5.176
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/string-hash.wasm",
+            "0"
+          ],
+          "minMs": 8.157,
+          "p50Ms": 9.039,
+          "p90Ms": 9.79,
+          "maxMs": 39.169,
+          "aboveFloorMs": 5.023,
+          "stdout": "0"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/string-hash.cwasm",
+            "0"
+          ],
+          "minMs": 7.73,
+          "p50Ms": 8.693,
+          "p90Ms": 9.411,
+          "maxMs": 40.988,
+          "aboveFloorMs": 4.681,
+          "stdout": "0"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/string-hash.aot",
+            "0"
+          ],
+          "minMs": 8.259,
+          "p50Ms": 8.968,
+          "p90Ms": 9.766,
+          "maxMs": 28.661,
+          "aboveFloorMs": 4.932,
+          "stdout": "0:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/string-hash",
+            "0"
+          ],
+          "minMs": 3.647,
+          "p50Ms": 4.206,
+          "p90Ms": 4.953,
+          "maxMs": 6.033,
+          "aboveFloorMs": 0.204,
+          "stdout": "0"
+        }
+      }
+    },
+    {
+      "id": "object-ops",
+      "label": "Object property ops",
+      "source": "website/public/benchmarks/competitive/programs/object-ops.js",
+      "value": -2174880,
+      "checkArg": 100,
+      "outputs": {
+        "wasm-jit": "-2174878",
+        "wasmtime-aot": "-2174878",
+        "wamr-aot": "-2174878",
+        "wasm2c-native": "-2174878",
+        "node": "-2174878"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 5190,
+          "gzip": 2073
+        },
+        "wasmtime-aot": {
+          "raw": 35496,
+          "gzip": 13331
+        },
+        "wamr-aot": {
+          "raw": 16512,
+          "gzip": 6342
+        },
+        "wasm2c-native": {
+          "raw": 31072,
+          "gzip": 9147
+        },
+        "wasm2c-native-stripped": {
+          "raw": 27040,
+          "gzip": 7957
+        },
+        "generatedCBytes": 109217
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.637,
+          "p50Ms": 4.154,
+          "p90Ms": 4.696,
+          "maxMs": 6.938
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/object-ops.wasm",
+            "0"
+          ],
+          "minMs": 8.074,
+          "p50Ms": 9.069,
+          "p90Ms": 9.712,
+          "maxMs": 13.548,
+          "aboveFloorMs": 4.88,
+          "stdout": "0"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/object-ops.cwasm",
+            "0"
+          ],
+          "minMs": 7.922,
+          "p50Ms": 8.701,
+          "p90Ms": 9.532,
+          "maxMs": 38.814,
+          "aboveFloorMs": 4.513,
+          "stdout": "0"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/object-ops.aot",
+            "0"
+          ],
+          "minMs": 8.218,
+          "p50Ms": 9.004,
+          "p90Ms": 9.707,
+          "maxMs": 11.64,
+          "aboveFloorMs": 4.824,
+          "stdout": "0:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/object-ops",
+            "0"
+          ],
+          "minMs": 3.84,
+          "p50Ms": 4.325,
+          "p90Ms": 4.913,
+          "maxMs": 44.125,
+          "aboveFloorMs": 0.153,
+          "stdout": "0"
+        }
+      }
+    },
+    {
+      "id": "collections",
+      "label": "Map/Set hash-table runtime",
+      "source": "scripts/emit-identity-corpus/collections.ts",
+      "value": 232,
+      "checkArg": null,
+      "outputs": {
+        "wasm-jit": "232",
+        "wasmtime-aot": "232",
+        "wamr-aot": "232",
+        "wasm2c-native": "232",
+        "node": "232"
+      },
+      "imports": [],
+      "size": {
+        "wasm-jit": {
+          "raw": 6488,
+          "gzip": 2395
+        },
+        "wasmtime-aot": {
+          "raw": 47960,
+          "gzip": 16123
+        },
+        "wamr-aot": {
+          "raw": 25420,
+          "gzip": 8687
+        },
+        "wasm2c-native": {
+          "raw": 39504,
+          "gzip": 10633
+        },
+        "wasm2c-native-stripped": {
+          "raw": 35224,
+          "gzip": 9264
+        },
+        "generatedCBytes": 125290
+      },
+      "startup": {
+        "runs": 201,
+        "execFloor": {
+          "minMs": 3.645,
+          "p50Ms": 4.122,
+          "p90Ms": 4.67,
+          "maxMs": 6.695
+        },
+        "wasm-jit": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/wasm/collections.wasm"
+          ],
+          "minMs": 8.418,
+          "p50Ms": 9.13,
+          "p90Ms": 9.813,
+          "maxMs": 15.544,
+          "aboveFloorMs": 4.968,
+          "stdout": "232"
+        },
+        "wasmtime-aot": {
+          "argv": [
+            ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+            "run",
+            "--allow-precompiled",
+            "--invoke",
+            "run",
+            ".tmp/native-aot/cwasm/collections.cwasm"
+          ],
+          "minMs": 7.877,
+          "p50Ms": 8.676,
+          "p90Ms": 9.458,
+          "maxMs": 26.96,
+          "aboveFloorMs": 4.51,
+          "stdout": "232"
+        },
+        "wamr-aot": {
+          "argv": [
+            ".tmp/toolchain/wamr-min/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/collections.aot"
+          ],
+          "minMs": 8.213,
+          "p50Ms": 9.064,
+          "p90Ms": 10.11,
+          "maxMs": 49.269,
+          "aboveFloorMs": 4.899,
+          "stdout": "232:f64"
+        },
+        "wasm2c-native": {
+          "argv": [
+            ".tmp/native-aot/bin/collections"
+          ],
+          "minMs": 3.868,
+          "p50Ms": 4.349,
+          "p90Ms": 4.797,
+          "maxMs": 6.115,
+          "aboveFloorMs": 0.179,
+          "stdout": "232"
+        }
+      }
+    }
+  ],
+  "denominators": {
+    "cFloor": {
+      "note": "fib(n) hand-written in C, same clang -O2 -fwrapv, stripped. The floor: what a native binary costs in size and startup when no Wasm was ever involved. `wasm2c-native-fib` is re-timed alongside it so the two are directly comparable.",
+      "size": {
+        "raw": 14528,
+        "gzip": 1806
+      },
+      "startup": {
+        "argv": [
+          ".tmp/native-aot/bin/fib-c-floor",
+          "0"
+        ],
+        "minMs": 3.592,
+        "p50Ms": 4.15,
+        "p90Ms": 4.728,
+        "maxMs": 5.806,
+        "aboveFloorMs": 0.011,
+        "stdout": "0"
+      },
+      "wasm2cNativeSameRound": {
+        "argv": [
+          ".tmp/native-aot/bin/fib",
+          "0"
+        ],
+        "minMs": 3.661,
+        "p50Ms": 4.215,
+        "p90Ms": 4.749,
+        "maxMs": 5.773,
+        "aboveFloorMs": 0.061,
+        "stdout": "0"
+      }
+    },
+    "execFloor": {
+      "note": "scripts/native-aot-corpus/exec-floor.c — `int main(void){return 0;}`, same clang, stripped. The process exec + dynamic-loader + libc-start floor that EVERY lane pays, plus this harness's own ~1 ms spawnSync overhead. No process-based route can start faster. It is what `aboveFloorMs` subtracts. NOT /bin/true: coreutils does locale setup worth ~0.5 ms, which showed up as impossible negative excesses on the floor-speed lanes.",
+      "binary": {
+        "raw": 14440,
+        "gzip": 1610
+      },
+      "startup": {
+        "minMs": 3.646,
+        "p50Ms": 4.155,
+        "p90Ms": 4.635,
+        "maxMs": 5.557
+      }
+    },
+    "nodeFloor": {
+      "note": "node instantiating the same fib .wasm. Context for startup only; Node's own boot dominates and nobody would ship this as a native binary.",
+      "startup": {
+        "argv": [
+          "/opt/node22/bin/node",
+          "scripts/native-aot-corpus/node-runner.mjs",
+          ".tmp/native-aot/wasm/fib.wasm",
+          "0"
+        ],
+        "minMs": 42.808,
+        "p50Ms": 47.889,
+        "p90Ms": 51.227,
+        "maxMs": 87.976,
+        "aboveFloorMs": 42.63,
+        "stdout": "0"
+      }
+    },
+    "runtimeSizes": {
+      "wasmtime": {
+        "path": ".tmp/toolchain/wasmtime-v27.0.0-x86_64-linux/wasmtime",
+        "raw": 42240592,
+        "gzip": 12137059,
+        "note": "wasmtime 27.0.0 official release CLI. Required at run time by the wasm-jit and wasmtime-aot lanes."
+      },
+      "iwasm": {
+        "path": ".tmp/toolchain/wamr-min/iwasm",
+        "raw": 305776,
+        "gzip": 117950,
+        "note": "iwasm 2.2.0 built AOT-ONLY from source (interpreter/JIT/SIMD off) — what an embedder would actually ship. Required at run time by the wamr-aot lane."
+      },
+      "iwasmRelease": {
+        "path": ".tmp/toolchain/iwasm/iwasm",
+        "raw": 52153728,
+        "gzip": 20936563,
+        "startup": {
+          "argv": [
+            ".tmp/toolchain/iwasm/iwasm",
+            "-f",
+            "run",
+            ".tmp/native-aot/aot/fib.aot",
+            "0"
+          ],
+          "minMs": 15.228,
+          "p50Ms": 17.527,
+          "p90Ms": 19.017,
+          "maxMs": 62.846,
+          "aboveFloorMs": 12.245,
+          "stdout": "0:f64"
+        },
+        "note": "The PREBUILT iwasm 2.2.0 release, for contrast only. A full developer build (interpreter + AOT + JIT + debug). Recorded because reaching for the convenient prebuilt is the obvious mistake here and it misstates WAMR badly on both axes — compare its bytes and its aboveFloorMs against the minimal build above."
+      },
+      "wasm2c-native": {
+        "path": null,
+        "raw": 0,
+        "gzip": 0,
+        "note": "Nothing. The wasm2c lane's binary IS the whole deliverable — wabt's wasm-rt is statically linked into it and is already counted in each program's wasm2c-native size."
+      }
+    }
+  },
+  "dynamicTier": {
+    "note": "The QuickJS boxed-tier artifact (#4236), built by scripts/quickjs-artifact/build.sh at -O2. Reported SEPARATELY and never blended with the corpus: no corpus program links it (all are typed and eval-free). This is what a program WITH a dynamic residue would additionally pay.",
+    "source": ".tmp/quickjs-artifact/libquickjs.wasm",
+    "buildInfo": {
+      "quickjs_ng_ref": "954dc53628e36891f93c359aa60895c2ae3dac6b",
+      "wasi_libc_ref": "8d8348ec24253d0638a693b8af82445c13d92d32",
+      "builtins_url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34-rc.1/libclang_rt-34.0-rc.1.tar.gz",
+      "target_triple": "wasm32-wasip1",
+      "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+      "raw_bytes": 1016254,
+      "gzip_bytes": 349808,
+      "sha256": "b0662069c241d0430d91c53a3b0e2d1281fd9eb78dd1c93490b0a9dfa70eec5b"
+    },
+    "size": {
+      "wasm-jit": {
+        "raw": 1016254,
+        "gzip": 352007
+      },
+      "wasmtime-aot": {
+        "raw": 3917128,
+        "gzip": 1908082
+      },
+      "wamr-aot": {
+        "raw": 1888868,
+        "gzip": 747411
+      }
+    },
+    "wasm2cNative": {
+      "status": "ok",
+      "note": "The whole engine linked into ONE self-contained native executable via the recommended route, evaluating real JavaScript. Nothing else ships alongside it. Startup includes instantiating a QuickJS runtime + context and evaluating `1+1`. The five wasi_snapshot_preview1 imports are implemented in scripts/native-aot-corpus/qjs-driver.c — about forty lines, no uvwasi, no WASI SDK at run time.",
+      "generatedCBytes": 12679743,
+      "size": {
+        "raw": 1595952,
+        "gzip": 703681
+      },
+      "evalResults": [
+        {
+          "src": "1+1",
+          "got": "2"
+        },
+        {
+          "src": "[1,2,3].map(x=>x*7).join(\"-\")",
+          "got": "7-14-21"
+        },
+        {
+          "src": "JSON.stringify({a:1,b:[2,3]})",
+          "got": "{\"a\":1,\"b\":[2,3]}"
+        }
+      ],
+      "startup": {
+        "argv": [
+          ".tmp/native-aot/bin/qjs-native",
+          "1+1"
+        ],
+        "minMs": 4.441,
+        "p50Ms": 4.872,
+        "p90Ms": 5.691,
+        "maxMs": 11.111,
+        "aboveFloorMs": 0.644,
+        "stdout": "2"
+      },
+      "execFloor": {
+        "minMs": 3.803,
+        "p50Ms": 4.311,
+        "p90Ms": 5.048,
+        "maxMs": 6.002
+      }
+    }
+  }
+}
