@@ -44,6 +44,8 @@ import { staticIntegerRange } from "../analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { tryCompileSingleUnitSplitLengthBinding } from "../derived-split-scalar.js";
 import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-ascii-case.js";
+import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
+import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 
 function symbolIsReadOnlyThroughLength(
   ctx: CodegenContext,
@@ -992,59 +994,6 @@ function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undef
   }
   if (argSymName !== "ArrayBuffer" && argSymName !== "SharedArrayBuffer" && argSymName !== "DataView") return null;
   return { kind: "ref_null", typeIdx: getOrRegisterTaViewType(ctx, viewName) };
-}
-
-function nullishLiteralKind(expr: ts.Expression): "null" | "undefined" | null {
-  if (expr.kind === ts.SyntaxKind.NullKeyword) return "null";
-  if (expr.kind === ts.SyntaxKind.UndefinedKeyword) return "undefined";
-  if (ts.isIdentifier(expr) && expr.text === "undefined") return "undefined";
-  return null;
-}
-
-function nullishPresenceOfType(type: ts.Type): { hasNull: boolean; hasUndefined: boolean } {
-  let hasNull = false;
-  let hasUndefined = false;
-  const parts = type.isUnion() ? type.types : [type];
-  for (const part of parts) {
-    if (part.flags & ts.TypeFlags.Null) hasNull = true;
-    if (part.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) hasUndefined = true;
-  }
-  return { hasNull, hasUndefined };
-}
-
-function excludesAllNullish(type: ts.Type, excludes: NullishExclusion): boolean {
-  const presence = nullishPresenceOfType(type);
-  if (!presence.hasNull && !presence.hasUndefined) return false;
-  if (presence.hasNull && excludes === "undefined") return false;
-  if (presence.hasUndefined && excludes === "null") return false;
-  return true;
-}
-
-function detectNullGuardAlias(ctx: CodegenContext, expr: ts.Expression): NullGuardFact | null {
-  if (!ts.isBinaryExpression(expr)) return null;
-  const op = expr.operatorToken.kind;
-  const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  const isLooseNeq = op === ts.SyntaxKind.ExclamationEqualsToken;
-  const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
-  const isLooseEq = op === ts.SyntaxKind.EqualsEqualsToken;
-  const isNeq = isStrictNeq || isLooseNeq;
-  const isEq = isStrictEq || isLooseEq;
-  if (!isNeq && !isEq) return null;
-
-  const rightNullish = nullishLiteralKind(expr.right);
-  const leftNullish = nullishLiteralKind(expr.left);
-  if (!rightNullish && !leftNullish) return null;
-
-  const comparedNullish = rightNullish ?? leftNullish;
-  const nonNullSide = rightNullish ? expr.left : expr.right;
-  if (!ts.isIdentifier(nonNullSide)) return null;
-  const excludes: NullishExclusion = isLooseEq || isLooseNeq ? "nullish" : comparedNullish!;
-  return {
-    varName: nonNullSide.text,
-    narrowedBranch: isNeq ? "then" : "else",
-    excludes,
-    provesNonNull: excludesAllNullish(ctx.checker.getTypeAtLocation(nonNullSide), excludes),
-  };
 }
 
 /** Check if an expression is a string method call that returns a host array (externref). */
@@ -2010,9 +1959,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const isHoistedLetConst = !isVar && existingIdx !== undefined && existingIdx >= fctx.params.length;
     const freshLocalForLetConst = !isVar && !isHoistedLetConst;
     const localIdx =
-      (isVar || isHoistedLetConst) && existingIdx !== undefined && existingIdx >= fctx.params.length
-        ? existingIdx
-        : allocLocal(fctx, name, wasmType);
+      reusedVarSlotIndex(fctx, decl, isVar, isHoistedLetConst, existingIdx) ?? allocLocal(fctx, name, wasmType);
 
     // (#3037 CS1a) A let/const any-object-carrier reuses a slot the hoist pre-pass
     // pre-allocated as externref (from `resolveWasmType(any)`), so the `wasmType`
@@ -2393,7 +2340,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // would reset it to undefined. Only emit the undefined-init for a FRESH
       // slot (the genuine first declaration) or a let/const binding leaving the
       // TDZ; skip it for a var that reused a hoisted local.
-      const isVarRedeclOfHoistedSlot = isVar && existingIdx !== undefined && existingIdx >= fctx.params.length;
+      const isVarRedeclOfHoistedSlot =
+        isVar && reusedVarSlotIndex(fctx, decl, isVar, isHoistedLetConst, existingIdx) !== undefined;
       if (!isVarRedeclOfHoistedSlot) {
         // No initializer: `let x;` / `var x;` — in JS, uninitialized variables
         // are `undefined`, not `null`. Emit __get_undefined() so that
