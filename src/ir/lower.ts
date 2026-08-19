@@ -88,6 +88,7 @@ import {
   verifyEmissionSchedule,
   type IrEffects,
 } from "./effects.js";
+import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
@@ -1756,7 +1757,13 @@ export function lowerIrFunctionBody<S, Slot>(
           // The target's tag refinement (if the producer proved a partition)
           // becomes the boxing hint — e.g. a Boolean-refined i32 boxes as a
           // tag-4 boolean instead of the unbranded NUMBER default.
-          for (const op of dyn.emitBox(fromVal, instr.toType.tag)) emitter.pushRaw(out, op);
+          // #3954 — the refinement is an opaque `TagId`; the `IrDynamicLowering`
+          // contract (backend/handles.ts, frozen #3029-S1) still speaks `JsTag`.
+          // `jsTagOf` is the ONE explicit crossing and throws on a foreign id
+          // rather than emitting a bogus `$AnyValue.tag` constant.
+          const boxHint = instr.toType.tag === undefined ? undefined : jsTagOf(instr.toType.tag);
+          // pushraw-ok(#2949): pre-existing hatch — emitBox returns an opaque Instr[] by contract
+          for (const op of dyn.emitBox(fromVal, boxHint)) emitter.pushRaw(out, op);
           return;
         }
         // `toType` must be a union (V1 only boxes into tagged unions). The
@@ -1790,7 +1797,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // `struct.get $val`. A future debug mode may prepend a tag check.
         const valueIrType = typeOf(instr.value);
         // #2949 slice 3 — unbox-from-dynamic: read the proven partition's
-        // payload off the carrier. `jsTag` is verifier-REQUIRED here (R2,
+        // payload off the carrier. `tagId` is verifier-REQUIRED here (R2,
         // payload-bearing partitions only); the handle picks the payload
         // read (gc: canonical `__any_unbox_f64`/`__any_unbox_i32` readers /
         // struct.get; host: `__unbox_number` family / identity).
@@ -1801,12 +1808,19 @@ export function lowerIrFunctionBody<S, Slot>(
               `ir/lower: resolver cannot lower unbox-from-dynamic (resolveDynamicLowering missing/null) (${func.name})`,
             );
           }
-          if (instr.jsTag === undefined) {
+          if (instr.tagId === undefined) {
             // Verifier R2 backstop.
-            throw new Error(`ir/lower: unbox on a dynamic operand requires jsTag (${func.name})`);
+            throw new Error(`ir/lower: unbox on a dynamic operand requires tagId (${func.name})`);
           }
           emitValue(instr.value, out);
-          for (const op of dyn.emitUnbox(instr.jsTag)) emitter.pushRaw(out, op);
+          // #3954 phase 3 (W4) — the instruction field is now a neutral
+          // `TagId`; the `IrDynamicLowering` contract (backend/handles.ts,
+          // frozen #3029-S1) still speaks `JsTag`. `jsTagOf` is the same
+          // explicit crossing the box arm above uses, and throws on a foreign
+          // id rather than reading a bogus partition. Moving this crossing into
+          // `integration.ts` is W2/W6 and is deliberately NOT done here.
+          // pushraw-ok(#2949): pre-existing hatch — emitUnbox returns an opaque Instr[] by contract
+          for (const op of dyn.emitUnbox(jsTagOf(instr.tagId))) emitter.pushRaw(out, op);
           return;
         }
         if (valueIrType.kind !== "union") {
@@ -1831,7 +1845,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // Emit struct.get $tag; i32.const <tagFor(tag)>; i32.eq.
         const valueIrType = typeOf(instr.value);
         // #2949 slice 3 — tag.test-on-dynamic: does the carrier's runtime
-        // tag match the partition? `jsTag` is verifier-REQUIRED here (R3,
+        // tag match the partition? `tagId` is verifier-REQUIRED here (R3,
         // ANY partition incl. Null/Undefined). Number partitions test the
         // numeric CLASS in both strategies (the V2 contract — see
         // `IrDynamicLowering` in backend/handles.ts for the WHY). The
@@ -1844,12 +1858,14 @@ export function lowerIrFunctionBody<S, Slot>(
               `ir/lower: resolver cannot lower tag.test-on-dynamic (resolveDynamicLowering missing/null) (${func.name})`,
             );
           }
-          if (instr.jsTag === undefined) {
+          if (instr.tagId === undefined) {
             // Verifier R3 backstop.
-            throw new Error(`ir/lower: tag.test on a dynamic operand requires jsTag (${func.name})`);
+            throw new Error(`ir/lower: tag.test on a dynamic operand requires tagId (${func.name})`);
           }
           emitValue(instr.value, out);
-          for (const op of dyn.emitTagTest(instr.jsTag, () => ensureDynTagScratch(dyn.carrier))) {
+          // #3954 phase 3 (W4) — see the `unbox` arm: `jsTagOf` is the one
+          // explicit TagId→JsTag crossing at the frozen handle contract.
+          for (const op of dyn.emitTagTest(jsTagOf(instr.tagId), () => ensureDynTagScratch(dyn.carrier))) {
             emitter.pushRaw(out, op);
           }
           return;
@@ -1857,7 +1873,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (valueIrType.kind !== "union") {
           throw new Error(`ir/lower: tag.test value must be a union IrType, got ${valueIrType.kind} (${func.name})`);
         }
-        // #2949 — `tag` became optional (dynamic operands use `jsTag`); the
+        // #2949 — `tag` became optional (dynamic operands use `tagId`); the
         // union path still REQUIRES it (verifier enforces; this is the
         // structural backstop).
         if (!instr.tag) {

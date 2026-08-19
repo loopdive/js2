@@ -7,21 +7,26 @@
 //
 // Every instruction declared here encodes an **ECMAScript** protocol: the
 // abstract operations behind `dyn.*` (ToBoolean / ToNumber / abstract equality
-// / property lookup), the iterator protocol, generator objects, `await`, and
-// the JS-host extern surface including RegExp. None of them means anything to
-// a source language that is not JavaScript.
+// / property lookup), the iterator protocol, generator objects, `await`, the
+// JS-host extern surface including RegExp, and — since slice A — the two
+// total-function string indexing operations plus the inlined string-iterator
+// statement form. None of them means anything to a source language that is not
+// JavaScript.
 //
 // The neutral core stays in `../nodes.ts`: control flow, calls, closures,
 // refcells, slots, arithmetic, try/throw.
 //
-// **This slice deliberately moves only the UNCONTESTED members.** `vec.*`,
-// `class.*`, `object.*`, `string.*`, `box`/`unbox`/`tag.test`,
-// `forof.vec`/`forof.string` and `coerce.to_externref` are NOT here, because
-// whether they are neutral is genuinely unsettled — see #4551, which owns the
-// per-kind verdict. Two of three spot-checks on those families reversed the
-// initial reading, so guessing would put kinds on the wrong side of a boundary
-// that is expensive to move. An unresolved kind stays in core; it does not get
-// placed on a hunch.
+// **Placement here is argued, never guessed.** The first slice moved only the
+// uncontested members; `scripts/check-ir-kind-neutrality.mjs` (#4551) then
+// produced a per-kind verdict with cited evidence, and slice A moved the three
+// kinds it judged `js` while still in core — `string.char_at`,
+// `string.char_code_at`, `forof.string`. The families that came back **neutral**
+// stay in core and are not candidates: `vec.*`, `class.*`, `object.*`,
+// `box`/`unbox`/`tag.test`, `forof.vec`, `coerce.to_externref`, and the
+// encoding-parameterized `string.const`/`string.concat`/`string.eq`. An
+// `unresolved` kind (`string.len`, and the payload-vocabulary leak in
+// `binary`/`intrinsic`) also stays in core — the gate's R3 rule turns a
+// premature move into a build failure rather than a silent mistake.
 //
 // **Structure:** declaration moves and re-exports only. `nodes.ts` re-exports
 // every name below, so all 54 importers are unchanged and no behaviour moves.
@@ -45,6 +50,10 @@ import type {
   IrValueId,
   irVal,
 } from "../nodes.js";
+// `string-runtime.ts` sits BELOW the IR node layer (it is where the
+// representation axis lives), so this is an ordinary downward edge, not a
+// second core->dialect one. Type-only, like everything else here.
+import type { IrStringEncoding } from "../string-runtime.js";
 
 /**
  * (#1373 Phase B) `await <expr>` — suspend the current async function until
@@ -578,4 +587,114 @@ export interface IrInstrRegExpLiteral extends IrInstrBase {
   readonly kind: "extern.regex";
   readonly pattern: string;
   readonly flags: string;
+}
+
+// ---------------------------------------------------------------------------
+// String indexing (#3954 phase 2, slice A)
+// ---------------------------------------------------------------------------
+//
+// The `string.*` family split three ways under #4551's per-kind verdict: the
+// encoding-parameterized members (`string.const` / `string.concat` /
+// `string.eq`) came back NEUTRAL, `string.len` is still an open policy call
+// (code units or code points), and these two are ECMAScript. The JS residue is
+// in the OPERATION, not the representation — `IrStringEncoding` already
+// parameterizes the latter. Both are total functions over an unnormalized
+// index: §22.1.3.1 yields the empty string out of range and §22.1.3.2 yields
+// NaN, after a ToIntegerOrInfinity (§7.1.5) normalization of the index. A
+// non-JS producer would have to work around that convention, not adopt it —
+// Java throws and Rust panics on the same input.
+
+/** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
+export interface IrInstrStringCharAt extends IrInstrBase {
+  readonly kind: "string.char_at";
+  readonly value: IrValueId;
+  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
+  readonly index: IrValueId;
+  readonly inputEncoding: IrStringEncoding;
+  readonly encodingEvidence: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
+}
+
+/** Return one UTF-16 code unit as f64, or NaN out of bounds. */
+export interface IrInstrStringCharCodeAt extends IrInstrBase {
+  readonly kind: "string.char_code_at";
+  readonly value: IrValueId;
+  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
+  readonly index: IrValueId;
+  readonly inputEncoding: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
+}
+
+// ---------------------------------------------------------------------------
+// String for-of (#1183 — IR Phase 4 Slice 6 part 4)
+// ---------------------------------------------------------------------------
+//
+// Slice 6 part 4 adds the string fast path. When `iterableType.kind ===
+// "string"` and the compiler is in native-strings mode, the for-of loop
+// iterates code units via `__str_charAt(str, i)` — a counter loop with
+// a `(ref $AnyString, i32) -> (ref $AnyString)` host helper. In host-
+// strings mode the dispatch falls through to `forof.iter` (#1182).
+//
+// `forof.string` is a STATEMENT-level declarative instr that mirrors
+// `forof.vec` and `forof.iter`. Carries the string SSA value, the four
+// slot indices (counter / length / str / element), and the body buffer.
+
+/**
+ * Statement-level `for (const c of <string>) <body>` loop using the
+ * native-strings counter pattern. Emitted only when the resolver
+ * reports `nativeStrings(): true` — host-strings mode falls through
+ * to `forof.iter` upstream in `lowerForOfStatement`.
+ *
+ * The lowerer emits:
+ *   <emit str>
+ *   local.set <strSlot>
+ *   local.get <strSlot>
+ *   struct.get $AnyString $len
+ *   local.set <lengthSlot>
+ *   i32.const 0
+ *   local.set <counterSlot>
+ *   block
+ *     loop
+ *       local.get <counterSlot>
+ *       local.get <lengthSlot>
+ *       i32.ge_s
+ *       br_if 1
+ *       local.get <strSlot>
+ *       local.get <counterSlot>
+ *       call $__str_charAt
+ *       local.set <elementSlot>
+ *       <body instrs>
+ *       local.get <counterSlot>
+ *       i32.const 1
+ *       i32.add
+ *       local.set <counterSlot>
+ *       br 0
+ *     end
+ *   end
+ *
+ * Slot types (set by from-ast):
+ *   counterSlot — i32
+ *   lengthSlot  — i32
+ *   strSlot     — `(ref $AnyString)` (resolver.resolveString())
+ *   elementSlot — `(ref $AnyString)` — each iteration produces a
+ *                 single-char string
+ *
+ * Result: void (`result: null`).
+ */
+export interface IrInstrForOfString extends IrInstrBase {
+  readonly kind: "forof.string";
+  /** SSA value of the string (IrType.string). */
+  readonly str: IrValueId;
+  readonly counterSlot: number;
+  readonly lengthSlot: number;
+  readonly strSlot: number;
+  readonly elementSlot: number;
+  /** Body instrs emitted inside the loop. */
+  readonly body: readonly IrInstr[];
+  /** Code-point extraction intent bound to the exact native provider during preparation. */
+  readonly provider?: IrFuncRef;
+  /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
+  readonly loopLabel?: IrLabelId;
 }

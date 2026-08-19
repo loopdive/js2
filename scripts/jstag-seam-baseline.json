@@ -1,0 +1,13 @@
+{
+  "generated": "2026-08-19T03:45:20.130Z",
+  "totals": {
+    "valueImports": 1,
+    "refs": 38
+  },
+  "files": {
+    "src/ir/integration.ts": {
+      "valueImports": 1,
+      "refs": 38
+    }
+  }
+}

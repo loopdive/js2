@@ -23,10 +23,19 @@
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
 import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
 import type { ValType } from "./types.js";
-// #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
-// (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
-// from the dependency-free leaf, so this adds no codegen module-graph pull.
-import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+// #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
+// consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
+// "does this partition have a payload, and what shape is it?". The verifier
+// therefore asks a `TagDomain` rather than reading `jsTagUnboxKind`/`JsTag[…]`
+// directly.
+// #3954 phase 3 (W3) — WHICH domain is now a PARAMETER, threaded from
+// `verifyIrFunction` down to the per-instruction rules, defaulting to
+// `defaultTagDomain()` so every existing caller is unchanged. Before this slice
+// the domain was reached as a global at the point of use, so there was no
+// channel at all by which the verifier could be told that the IR in front of it
+// belongs to another producer.
+import { defaultTagDomain } from "./producer.js";
+import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
@@ -318,7 +327,18 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
   }
 }
 
-export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
+/**
+ * Structurally verify one `IrFunction`.
+ *
+ * `domain` (#3954 phase 3, W3) is the {@link TagDomain} the function's
+ * `dynamic` values are interpreted against — it decides which partitions exist,
+ * which of them are payload-less singletons (rule R2) and what carrier shape
+ * each payload has (the `unbox`/`tag.test` `tag` consistency rule). It defaults
+ * to the producer axis's default domain, so callers that do not care are
+ * unchanged; a non-JS producer passes its own and the verifier stops answering
+ * from ECMAScript.
+ */
+export function verifyIrFunction(func: IrFunction, domain: TagDomain = defaultTagDomain()): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
 
@@ -390,7 +410,7 @@ export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const typeOf = buildDefTypeMap(func);
 
   for (const block of func.blocks) {
-    verifyBlock(func, block, defs, errors, defBlock, dominance);
+    verifyBlock(func, block, defs, errors, defBlock, dominance, domain);
   }
 
   // Check branch-arg arity AND types against target block signatures (#1924).
@@ -557,6 +577,8 @@ function verifyInstrStructure(
   block: IrBlock,
   localDefs: ReadonlySet<IrValueId>,
   errors: IrVerifyError[],
+  // #3954 phase 3 (W3) — see `verifyIrFunction`.
+  domain: TagDomain,
 ): void {
   // The lowerer emits an unconditional `i32.eqz` on a loop `condValue`, so
   // a non-i32 cond produces invalid Wasm that bricks the whole module.
@@ -655,22 +677,29 @@ function verifyInstrStructure(
   if (instr.kind === "unbox" || instr.kind === "tag.test") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
     if (operandIr && operandIr.kind === "dynamic") {
-      // #2949 R2/R3 — dynamic operands discriminate on the JS partition,
-      // so `jsTag` is REQUIRED (the ValType `tag` cannot distinguish
+      // #2949 R2/R3 — dynamic operands discriminate on the domain partition,
+      // so `tagId` is REQUIRED (the ValType `tag` cannot distinguish
       // e.g. String from Object — both are reference-shaped).
-      if (instr.jsTag === undefined) {
+      if (instr.tagId === undefined) {
         errors.push({
-          message: `${instr.kind} on a dynamic operand requires jsTag (#2949)`,
+          message: `${instr.kind} on a dynamic operand requires tagId (#2949)`,
           func: func.name,
           block: block.id as number,
         });
       } else {
-        const payload = jsTagUnboxKind(instr.jsTag);
-        // R2 — Null/Undefined are singleton partitions with no payload:
-        // unboxing them is invalid (identity is observed via tag.test).
+        // #3954 phase 3 (W3) — `domain` is the caller's, not a global. Note it
+        // is still an ERROR (thrown by `nameOf`) to hand a partition from one
+        // domain to a verifier holding another: that is a producer bug, and
+        // the loud failure is the point.
+        const tagId = instr.tagId;
+        const tagName = domain.nameOf(tagId);
+        const payload = domain.carrierKindOf(tagId);
+        // R2 — a payload-less SINGLETON partition (ECMAScript: Null /
+        // Undefined) cannot be unboxed; identity is observed via tag.test.
+        // Which partitions those are is the domain's answer, not ours.
         if (instr.kind === "unbox" && payload === null) {
           errors.push({
-            message: `unbox with payload-less JsTag ${JsTag[instr.jsTag]} is invalid — use tag.test (#2949)`,
+            message: `unbox with payload-less partition ${tagName} is invalid — use tag.test (#2949)`,
             func: func.name,
             block: block.id as number,
           });
@@ -691,7 +720,7 @@ function verifyInstrStructure(
           const consistent = payload === "ref" ? refShaped : k === payload;
           if (!consistent) {
             errors.push({
-              message: `${instr.kind} tag ${k} is inconsistent with jsTag ${JsTag[instr.jsTag]} (payload kind ${payload}) (#2949)`,
+              message: `${instr.kind} tag ${k} is inconsistent with partition ${tagName} (payload kind ${payload}) (#2949)`,
               func: func.name,
               block: block.id as number,
             });
@@ -707,7 +736,7 @@ function verifyInstrStructure(
     } else if (operandIr) {
       // Union operand (V1) — the ValType `tag` is REQUIRED (#2949 made
       // the field optional on the node because dynamic operands use
-      // `jsTag` instead) and must name a member of the union.
+      // `tagId` instead) and must name a member of the union.
       if (!instr.tag) {
         errors.push({
           message: `${instr.kind} on a union operand requires a ValType tag`,
@@ -833,6 +862,9 @@ function verifyBlock(
   errors: IrVerifyError[],
   defBlock: ReadonlyMap<IrValueId, number> | null,
   dominance: DominanceInfo | null,
+  // #3954 phase 3 (W3) — the tag domain this IR belongs to, threaded from
+  // `verifyIrFunction` rather than reached as a global at the point of use.
+  domain: TagDomain,
 ): void {
   const here = block.id as number;
   // #1850 — cross-block dominance: a use whose value is defined in a *different*
@@ -965,7 +997,7 @@ function verifyBlock(
       // Per-instruction structural (type-system) rules — extracted so the
       // scope walk stays readable (#2952 slice 4; the checks need only the
       // instr + operand types, none of the walk state).
-      verifyInstrStructure(instr, func, block, localDefs, errors);
+      verifyInstrStructure(instr, func, block, localDefs, errors, domain);
 
       if (instr.result !== null) {
         if (defs.has(instr.result)) {

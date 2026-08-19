@@ -31,6 +31,7 @@ import type {
   IrInstrExternProp,
   IrInstrExternPropSet,
   IrInstrForOfIter,
+  IrInstrForOfString,
   IrInstrGenEpilogue,
   IrInstrGenPush,
   IrInstrGenSetReturn,
@@ -41,15 +42,22 @@ import type {
   IrInstrIterReturn,
   IrInstrIterValue,
   IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
 } from "./dialect/js.js";
 import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
-// #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
-// leaf `ir/js-tag.ts` (#3113 moved it below the IR layer so IR core files
-// consume it without the IR→codegen import inversion). Type-only:
-// nodes.ts stays free of value imports.
-import type { JsTag } from "./js-tag.js";
+// #3954 phase 3 (W4) — `js-tag.ts` is no longer imported here at all. The last
+// two references were `unbox.jsTag` / `tag.test.jsTag`; both now carry the
+// neutral `TagId` below, so the IR's core node module names no ECMAScript
+// partition, in a type position or otherwise.
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+// #3954 phase 1 — the tag-domain seam. `IrType`'s dynamic leaf carries an
+// OPAQUE `TagId` resolved against a `TagDomain` (`producer.ts` picks the
+// producer's domain), not a bare ECMAScript `JsTag`. `tag-domain.ts` is itself
+// a ZERO-import leaf, so this adds a graph edge with no back edge and no TDZ
+// exposure — the same property `js-tag.ts`'s header protects.
+import { type TagId, tagRefinementEquals } from "./tag-domain.js";
 import type { ValType } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -438,12 +446,22 @@ export type IrType =
   // any op that requires a concrete kind (see verify.ts #2949 rules).
   //
   // `tag` is an OPTIONAL static refinement: when present, the producer has
-  // proved the runtime `JsTag` partition of the value (e.g. after a
-  // `tag.test` branch), enabling checked unboxes and op selection without a
-  // runtime re-test. Absence means "partition unknown". The refinement is
-  // erased at joins: two dynamics with different (or one missing) tags are
-  // NOT equal under `irTypeEquals` — producers must widen to the bare
+  // proved the runtime partition of the value (e.g. after a `tag.test`
+  // branch), enabling checked unboxes and op selection without a runtime
+  // re-test. Absence means "partition unknown". The refinement is erased at
+  // joins: two dynamics with different (or one missing) tags are NOT equal
+  // under `irTypeEquals` — producers must widen to the bare
   // `{kind:"dynamic"}` before a join point (branch args, slot writes).
+  //
+  // #3954 phase 1 — the tag is an OPAQUE `TagId`, not an ECMAScript `JsTag`.
+  // Which partitions exist, what each one's payload carrier is, how two
+  // refinements join, and how a partition coerces to boolean/number are all
+  // properties of the PRODUCER's `TagDomain` (`tag-domain.ts`), selected in
+  // `producer.ts`. Today `JS_TAG_DOMAIN` is the only implementation and its
+  // ids are numerically the `JsTag` values (they are ABI — the `$AnyValue.tag`
+  // constants the `__any_box_*` helpers write). The IR core deliberately
+  // cannot name a partition: `JS_TAG_IDS.String` is the JavaScript producer's
+  // vocabulary (`from-ast.ts`), not the lattice's.
   //
   // Lowering contract (per the ratified #1852 representation table):
   //   - WasmGC: `resolver.resolveDynamic()` returns the module's canonical
@@ -457,7 +475,7 @@ export type IrType =
   //     throws.
   // The `tag` refinement never changes the carrier — it is compile-time
   // knowledge only.
-  | { readonly kind: "dynamic"; readonly tag?: JsTag };
+  | { readonly kind: "dynamic"; readonly tag?: TagId };
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
@@ -494,12 +512,17 @@ export function asVal(t: IrType): ValType | null {
 
 /**
  * #2949 slice 1 — construct a dynamic IrType, optionally refined with a
- * statically-proven `JsTag` partition. `irDynamic()` is the lattice top
- * (partition unknown); `irDynamic(JsTag.String)` is a refinement a producer
- * may emit after a `tag.test` proof. See the `dynamic` arm of `IrType` for
- * the full contract (joins erase refinements; carrier is tag-independent).
+ * statically-proven partition. `irDynamic()` is the lattice top (partition
+ * unknown); `irDynamic(JS_TAG_IDS.String)` is a refinement the JavaScript
+ * producer may emit after a `tag.test` proof. See the `dynamic` arm of
+ * `IrType` for the full contract (joins erase refinements; carrier is
+ * tag-independent).
+ *
+ * #3954 phase 1 — `tag` is an opaque {@link TagId} from the producer's
+ * `TagDomain`. A bare number (and therefore a `JsTag` member) is deliberately
+ * NOT assignable: only a domain can mint one.
  */
-export function irDynamic(tag?: JsTag): IrType {
+export function irDynamic(tag?: TagId): IrType {
   return tag === undefined ? { kind: "dynamic" } : { kind: "dynamic", tag };
 }
 
@@ -566,7 +589,10 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
   // first producer wrote, which is provably wrong for the other path.
   // Producers widen to the bare `{kind:"dynamic"}` before joins instead.
   if (a.kind === "dynamic" && b.kind === "dynamic") {
-    return (a.tag ?? null) === (b.tag ?? null);
+    // #3954 — refinement comparison lives in the domain leaf, not here: this
+    // is the rule "a refined dynamic is not the same type as an unrefined
+    // one", and it is domain-independent.
+    return tagRefinementEquals(a.tag, b.tag);
   }
   return false;
 }
@@ -1032,20 +1058,31 @@ export interface IrInstrBox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) names the member ValType to
  *     extract; lowers to `struct.get $val`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the proven JS
- *     partition; it must have a payload (`jsTagUnboxKind(jsTag) !== null` —
- *     Null/Undefined are singleton partitions and cannot be unboxed). `tag`,
- *     when also present, must be consistent with the partition's payload
- *     kind (exact for scalar partitions, ref-shaped for String/Object/
- *     Function). Lowering lands in #2949 slice 3.
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the proven
+ *     partition of the producer's {@link TagId} domain; it must have a payload
+ *     (`domain.carrierKindOf(tagId) !== null` — a SINGLETON partition, e.g.
+ *     ECMAScript's Null/Undefined, cannot be unboxed). `tag`, when also
+ *     present, must be consistent with the partition's payload kind (exact for
+ *     scalar carriers, ref-shaped for reference carriers). Lowering lands in
+ *     #2949 slice 3.
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`, not the ECMAScript
+ * `JsTag` enum. It was `jsTag: JsTag` until this slice, which made the field an
+ * ECMAScript declaration sitting on a core-neutral node; worse, the brand is
+ * ONE-DIRECTIONAL (TypeScript assigns a branded `number` straight to a numeric
+ * enum), so a foreign domain's tag flowed in with no cast and failed at run
+ * time in the verifier instead of at compile time. The field is renamed as well
+ * as re-typed: every construction site had to change anyway (the brand blocks
+ * `JsTag → TagId`), and a `js`-prefixed name carrying a neutral id would have
+ * survived the widening as a lie.
  */
 export interface IrInstrUnbox extends IrInstrBase {
   readonly kind: "unbox";
   readonly value: IrValueId;
   /** Target member ValType — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** Proven JS partition — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
+  /** Proven domain partition — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 /**
@@ -1054,19 +1091,22 @@ export interface IrInstrUnbox extends IrInstrBase {
  *
  *   - union operand (V1): `tag` (REQUIRED here) must be a member ValType;
  *     lowers to `struct.get $tag; i32.const <N>; i32.eq`.
- *   - dynamic operand (#2949): `jsTag` (REQUIRED here) names the JS
- *     partition under test — ANY partition, including the payload-less
- *     Null/Undefined (testing for them is the point). Lowering (slice 3)
- *     dispatches on the carrier's runtime tag via the canonical classifier
- *     path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *   - dynamic operand (#2949): `tagId` (REQUIRED here) names the domain
+ *     partition under test — ANY partition, including a payload-less singleton
+ *     (ECMAScript's Null/Undefined — testing for them is the point). Lowering
+ *     (slice 3) dispatches on the carrier's runtime tag via the canonical
+ *     classifier path (`emitTagLoad`/`emitTagTest` on the backend emitter).
+ *
+ * #3954 phase 3 (W4) — `tagId` is the NEUTRAL `TagId`; see `IrInstrUnbox` for
+ * why the field was renamed as well as re-typed.
  */
 export interface IrInstrTagTest extends IrInstrBase {
   readonly kind: "tag.test";
   readonly value: IrValueId;
   /** Member ValType under test — REQUIRED for union operands (V1 contract). */
   readonly tag?: ValType;
-  /** JS partition under test — REQUIRED for dynamic operands (#2949). */
-  readonly jsTag?: JsTag;
+  /** Domain partition under test — REQUIRED for dynamic operands (#2949). */
+  readonly tagId?: TagId;
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,29 +1205,6 @@ export type IrStringLengthProvider =
       readonly ownerType: IrTypeRef;
       readonly fieldIndex: number;
     };
-
-/** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
-export interface IrInstrStringCharAt extends IrInstrBase {
-  readonly kind: "string.char_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  readonly encodingEvidence: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
-
-/** Return one UTF-16 code unit as f64, or NaN out of bounds. */
-export interface IrInstrStringCharCodeAt extends IrInstrBase {
-  readonly kind: "string.char_code_at";
-  readonly value: IrValueId;
-  /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
-  readonly index: IrValueId;
-  readonly inputEncoding: IrStringEncoding;
-  /** Semantic callable intent bound to the exact backend provider during preparation. */
-  readonly provider?: IrFuncRef;
-}
 
 // ---------------------------------------------------------------------------
 // Object operations (#1169b — IR Phase 4 Slice 2)
@@ -1760,78 +1777,6 @@ export interface IrInstrCoerceToExternref extends IrInstrBase {
 // dispatch the same way without a TS-checker round trip.
 
 // ---------------------------------------------------------------------------
-// String for-of (#1183 — IR Phase 4 Slice 6 part 4)
-// ---------------------------------------------------------------------------
-//
-// Slice 6 part 4 adds the string fast path. When `iterableType.kind ===
-// "string"` and the compiler is in native-strings mode, the for-of loop
-// iterates code units via `__str_charAt(str, i)` — a counter loop with
-// a `(ref $AnyString, i32) -> (ref $AnyString)` host helper. In host-
-// strings mode the dispatch falls through to `forof.iter` (#1182).
-//
-// `forof.string` is a STATEMENT-level declarative instr that mirrors
-// `forof.vec` and `forof.iter`. Carries the string SSA value, the four
-// slot indices (counter / length / str / element), and the body buffer.
-
-/**
- * Statement-level `for (const c of <string>) <body>` loop using the
- * native-strings counter pattern. Emitted only when the resolver
- * reports `nativeStrings(): true` — host-strings mode falls through
- * to `forof.iter` upstream in `lowerForOfStatement`.
- *
- * The lowerer emits:
- *   <emit str>
- *   local.set <strSlot>
- *   local.get <strSlot>
- *   struct.get $AnyString $len
- *   local.set <lengthSlot>
- *   i32.const 0
- *   local.set <counterSlot>
- *   block
- *     loop
- *       local.get <counterSlot>
- *       local.get <lengthSlot>
- *       i32.ge_s
- *       br_if 1
- *       local.get <strSlot>
- *       local.get <counterSlot>
- *       call $__str_charAt
- *       local.set <elementSlot>
- *       <body instrs>
- *       local.get <counterSlot>
- *       i32.const 1
- *       i32.add
- *       local.set <counterSlot>
- *       br 0
- *     end
- *   end
- *
- * Slot types (set by from-ast):
- *   counterSlot — i32
- *   lengthSlot  — i32
- *   strSlot     — `(ref $AnyString)` (resolver.resolveString())
- *   elementSlot — `(ref $AnyString)` — each iteration produces a
- *                 single-char string
- *
- * Result: void (`result: null`).
- */
-export interface IrInstrForOfString extends IrInstrBase {
-  readonly kind: "forof.string";
-  /** SSA value of the string (IrType.string). */
-  readonly str: IrValueId;
-  readonly counterSlot: number;
-  readonly lengthSlot: number;
-  readonly strSlot: number;
-  readonly elementSlot: number;
-  /** Body instrs emitted inside the loop. */
-  readonly body: readonly IrInstr[];
-  /** Code-point extraction intent bound to the exact native provider during preparation. */
-  readonly provider?: IrFuncRef;
-  /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
-  readonly loopLabel?: IrLabelId;
-}
-
-// ---------------------------------------------------------------------------
 // Exception handling — throw / try / catch / finally (#1169h — IR Slice 9)
 // ---------------------------------------------------------------------------
 //
@@ -2215,6 +2160,9 @@ export type {
   IrInstrExternProp,
   IrInstrExternPropSet,
   IrInstrRegExpLiteral,
+  IrInstrStringCharAt,
+  IrInstrStringCharCodeAt,
+  IrInstrForOfString,
 } from "./dialect/js.js";
 
 export type IrInstr =
