@@ -7275,7 +7275,7 @@ function compileCallExpression(
               namedThisCall || closureReceiver ? { kind: "externref" } : undefined,
             );
             if (thisType && closureReceiver) {
-              emitClosureReceiverInstall(fctx, closureReceiver);
+              emitClosureReceiverInstall(ctx, fctx, closureReceiver);
             } else if (thisType && !namedThisCall) {
               fctx.body.push({ op: "drop" });
             }

@@ -19,7 +19,7 @@
  * `var x = e;` keeps the ordinary store path, whose value need not fit the
  * parameter's own (possibly native f64/i32) slot type.
  */
-import type { ts } from "../../ts-api.js";
+import { ts } from "../../ts-api.js";
 import type { FunctionContext } from "../context/types.js";
 
 export function reusedVarSlotIndex(
@@ -30,7 +30,32 @@ export function reusedVarSlotIndex(
   existingIdx: number | undefined,
 ): number | undefined {
   if (existingIdx === undefined) return undefined;
+  if (declarationShadowsArgumentsObject(fctx, decl, existingIdx)) return undefined;
   if ((isVar || isHoistedLetConst) && existingIdx >= fctx.params.length) return existingIdx;
   if (isVar && decl.initializer === undefined && existingIdx < fctx.params.length) return existingIdx;
   return undefined;
+}
+
+/**
+ * (#4555) `var arguments = <expr>;` REBINDS the name in this scope — it must
+ * not write through the compiler-materialized arguments object.
+ *
+ * That object lives in a local literally named `arguments` whose type is a
+ * non-nullable `(ref $__vec_externref)`. Reusing the slot made the store coerce
+ * the declared value into that ref, and `var arguments = undefined;` therefore
+ * emitted a `ref.as_non_null` on a null — an unconditional trap
+ * ("dereferencing a null pointer") on a line that should simply have shadowed
+ * the binding. Allocate a fresh slot of the declaration's own type instead;
+ * a nested function still materializes its OWN arguments object, so only this
+ * scope's name is rebound, exactly as §10.5 orders the two steps.
+ */
+function declarationShadowsArgumentsObject(
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  existingIdx: number,
+): boolean {
+  if (decl.initializer === undefined) return false;
+  if (!ts.isIdentifier(decl.name) || decl.name.text !== "arguments") return false;
+  if (existingIdx < fctx.params.length) return false;
+  return fctx.locals[existingIdx - fctx.params.length]?.type.kind === "ref";
 }
