@@ -298,3 +298,28 @@ tests) at 22 failing on **both** arms with byte-identical failing-name sets.
 after the split and are credited there; the commit lives on this branch. The
 `Cannot access property on null or undefined` cluster is **2 rows in this half**,
 not 4 — the other two went to the expressions lane.
+
+### Routing correction — the 3 object-literal "getter" rows are NOT a getter family
+
+Checked directly rather than by shape, and they are not one family at all, so
+they should **not** be routed to #4555 alongside its primitive-receiver getters:
+
+- `language/expressions/object/11.1.5-0-1.js` and `11.1.5-0-2.js` define the
+  object **inside `eval()`** — eval-blocked locally (see #4163), not getter bugs.
+  A direct `var o = { get foo() { return "In getter"; } }; o.foo` returns
+  `"In getter"` correctly, so the getter machinery is fine.
+- `language/expressions/object/S11.1.5_A2.js` involves no eval and no getter:
+  `var x = this; var object = {prop: x}; object.prop === x` is
+  **Script-global-`this` identity**, adjacent to the #4500 realm-global family.
+
+#4555 keeps `f_arg.length` and its own primitive-receiver getters.
+
+### The relational/ToPrimitive bucket is spun out to #4564
+
+Root-caused to the bottom and deliberately not landed: the #2059 recovery path is
+**dead code** in standalone (`anyValueTypeIdx` is 45, so the
+`ctx.anyValueTypeIdx < 0` gate never fires and `emitAnyRelational` is
+unreachable), and the real implementation — `__any_lt/gt/le/ge` in
+`any-eq-helpers.ts` — is the numeric branch of §7.2.12 only. Full spec, the
+"no cheap subset" finding, and why the #1374 landmine does not apply to that
+route: **#4564**.
