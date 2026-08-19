@@ -19,6 +19,10 @@ loc-budget-allow:
   # widening itself replaces an existing line in computeClosureWrapperSig, so
   # this is the import and nothing else.
   - src/codegen/closures.ts
+  # One field. The §13 eval completion register is a FunctionContext slot; the
+  # register's whole lifecycle and rationale live in the new leaf module
+  # src/codegen/statements/eval-completion-value.ts, and eval-inline.ts SHRANK.
+  - src/codegen/context/types.ts
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms
