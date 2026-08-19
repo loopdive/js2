@@ -79,3 +79,39 @@ export function isOpenDescriptorShape(structName: string, fields: FieldDef[]): b
     )
   );
 }
+
+/**
+ * (#4491) An open descriptor shape that actually CARRIES a value — its `value`
+ * field exists and is an externref.
+ *
+ * ## Why the distinction, and what it deliberately leaves broken
+ *
+ * `isOpenDescriptorShape` is also true for an ATTRIBUTES-ONLY descriptor
+ * (`{writable, enumerable, configurable}`, no `value`), and those are equally
+ * unreadable through a `PropertyDescriptor`-typed parameter: measured
+ * (`--target standalone`), `pd({writable: true, enumerable: false,
+ * configurable: true})` reads `undefined/undefined/undefined`.
+ *
+ * Reifying them too is therefore MORE correct, and it is not a boxing problem —
+ * booleans survive the reify as booleans (measured: `w=true/boolean`). What it
+ * does is UNMASK four `verifyProperty` rows that pass vacuously today:
+ * `verifyProperty` guards each attribute branch with `desc.X !== undefined`, so
+ * while the read yields `undefined` the writable/enumerable/configurable checks
+ * are SKIPPED ENTIRELY. Make them readable and the checks run — and then fail,
+ * because writing to or deleting a builtin-prototype METHOD is a separate
+ * standalone gap (`Date.prototype.getYear = x` reads back `[object Object]`;
+ * annexB `getYear`/`substr`/`toGMTString` prop-desc, `15.2.3.6-4-624`).
+ *
+ * So this predicate is scoped to the value-carrying shape ON PURPOSE: it fixes
+ * the reads that have a working substrate behind them and leaves the
+ * attributes-only shape alone until the builtin-prototype mutation gap is
+ * closed. Widening it is a ONE-WORD change here — and costs
+ * `15.2.3.7-5-b-8`, which the wider form fixes. Recorded so the trade is
+ * visible rather than rediscovered.
+ */
+export function isOpenDescriptorShapeWithValueCarrier(structName: string, fields: FieldDef[]): boolean {
+  if (!isOpenDescriptorShape(structName, fields)) return false;
+  return fields.some(
+    (field) => field.name === "value" && (field.type.kind === "externref" || field.type.kind === "ref_extern"),
+  );
+}
