@@ -183,3 +183,105 @@ sentinel values"**, not "find the read sites". Add a constructed probe at
 
 This is why the fix was deliberately not landed. Recorded so the next attempt
 starts from the real obstacle rather than re-deriving it.
+
+## 2026-08-19 — a REGRESSION that every gate passed, and what it means
+
+`cdc21bd`'s constant-element-key lowering (fix 5) introduced a silent
+wrong-answer bug in **ordinary array iteration**:
+
+```js
+var nums = [1, 2, 3];
+var total = 0;
+for (var i = 0; i < nums.length; i++) { total += nums[i]; }
+// total === 3, not 6
+```
+
+`resolveConstantExpression` (`literals.ts`) folds a `let`/`var` binding to its
+**initializer** — mutability be damned — and returns it as a *string* even for a
+numeric one. `arrayIndexConstantKey` accepted a bare identifier and trusted that
+fold, so `i` resolved to the key `"0"`, which **is** a valid array index, and
+every iteration read `nums[0]`.
+
+The fold is inert where it originally lived: `nonArrayIndexNumericKey` (#4247)
+**declines** on an index-looking result, so the fold never becomes an answer
+there. The new call site returned it as the answer.
+
+Fixed in `6d185055` — literal arguments only, never an identifier, at the top
+level or inside a `new Number(…)` / `new String(…)` wrapper. Every measured win
+spells its key as a literal or a wrapper around one, so **nothing was lost:
+lane stays 25/62**. The same restriction was applied to the `new Boolean(<c>)`
+arm added by this lane, which had the identical hazard and had not yet bitten.
+Pinned by `tests/issue-4556-array-index-key-mutable-binding.test.ts` (4 cases per
+lane), verified to FAIL against the pre-fix resolver — a regression test that
+cannot fail is not one.
+
+Independently re-verified by the integrator: the repro fails at `cdc21bd` and
+passes on the integration branch.
+
+### Everything was green while the bug was in
+
+| gate | reading |
+| --- | --- |
+| standalone conformance lane | 25/62 — **unchanged by the bug** |
+| 551-row standalone guard | 551/551 — **unchanged by the bug** |
+| `tsc --noEmit` | clean |
+| LOC / function budget gates | clean |
+
+The suite that caught it was `tests/issue-4394-mixed-array-literal-host.test.ts`
+— a **GC-lane** suite.
+
+**The lesson is sharper than "a corpus samples behaviour".** The defect sat in
+lane-shared key resolution (`property-access.ts` and `assignment.ts` both call
+it) while the entire verification loop was standalone-only. So it was: **the
+corpus is one lane and the code is both.** A cross-lane unit suite was the only
+thing positioned to see it. Any change to shared codegen needs the *other*
+lane's suites run too, regardless of which lane the conformance target is.
+
+(Separately, the same commit regressed 5 `String.prototype.split` rows found by
+the integrator via the prototype-write corpus; `6d185055` fixes those too — same
+root cause.)
+
+### Unit suites, relative to merge base
+
+81 suites over array / element-access / join / holes / delete / proto-brand /
+global-function / Date, run in batches of 4 (the full set OOMs a vitest worker at
+6 GB).
+
+| | pass | fail | files |
+| --- | ---: | ---: | ---: |
+| base `f7df34f` | 868 | 69 | 81 |
+| head `6d18505` | 876 | 69 | 82 |
+
+69 pre-existing failures both sides, **0 broken**, +8 from the new test; the only
+per-file difference is the new file. `tests/issue-4205-script-goal-global-object.test.ts`
+OOMs on its own at 10 GB on base and head alike, so it is excluded from both
+sides rather than counted.
+
+## Bucket E — RETIRED, not deferred
+
+The exhaustive read-site audit retires the `_s`→`_u` sketch rather than sizing it:
+
+- **≥146 vec length read sites across 43 files** (counting only the
+  `struct.get typeIdx:…vec…, fieldIdx: 0` spelling; `type-coercion.ts:1764`
+  reads it as `fromTypeIdx`, so the true count is higher).
+- **Only 17 convert to f64** — the "read `.length` as a JS number" case the
+  sketch addressed. **129 consume the raw i32** as a loop bound, an
+  `array.new_default` size, or an `array.copy` count.
+
+So it is not a conversion-signedness fix. Storing ToUint32's bit pattern hands
+**−1** to 129 sites that today receive a clamped 2147483647:
+`array.new_default(-1)` traps, `i32.lt_s` loops zero times. Faithful lengths in
+[2³¹, 2³²) need the field widened or sparse-only semantics above 2³¹ — a
+representation change with 146+ consumers.
+
+Measured divergence:
+
+| assigned | read back | |
+| --- | --- | --- |
+| 2147483647 | 2147483647 | control, correct |
+| 2147483648 | **2147483647** | first divergence |
+| 4294967295 | **2147483647** | |
+
+Side finding: putting all three assignments in **one** module hits
+`compilation timeout (16.9 s)`. Three large-length writes exhaust the compile
+budget — worth its own look, independent of E.
