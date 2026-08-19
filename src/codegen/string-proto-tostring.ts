@@ -38,6 +38,46 @@ export const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
   toLocaleUpperCase: "__str_toUpperCase",
 };
 
+// (#2742) SUPERSEDED-WIRING CARVE-OUT. For these five members the #2875
+// reflective body is strictly worse than the legacy borrowed-receiver path it
+// intercepts, so refuse here and let the caller fall through.
+//
+// Why this is a carve-out and NOT "remove the wiring": #2875 was written when
+// legacy `.call` dropped `thisArg`; #3254 later fixed that with a
+// `receiverOverride` covering `STANDALONE_STR_PROTO_METHODS`. But #2875 also
+// carries semantics legacy never had — `emitStringRequireObjectCoercible` —
+// so the wiring is superseded for SOME members and still load-bearing for
+// others. Measured, blanket removal costs 13 `this-value-not-obj-coercible`
+// and `trimStart`/`trimEnd` files; this per-member set costs zero.
+//
+// Test262 A/B (450 files, same box/run/list, both arms one tree; rows floored
+// 450/450, zero timeouts): **+18 fail→pass, 0 pass→fail**, the 13 files that a
+// blanket removal regresses all HELD, `substring`/`charAt` control unmoved,
+// and zero off-target moves. Full ledger + the two rejected variants are in
+// plan/issues/2742-string-prototype-generic-receiver-tostring-this-coercion.md.
+//
+// Deliberately EXCLUDED (their wired bodies still win — do not "simplify"
+// this set without re-running the A/B): `charCodeAt`, `indexOf`,
+// `lastIndexOf`, `trimStart`, `trimEnd`, `at`, `substring`, `charAt`.
+//
+// (ES5 standalone lane, 2026-08-19) `trim` REMOVED from the set. Its wired
+// body is `? RequireObjectCoercible(this)` → `? ToString(this)` →
+// `__str_trim`, where ToString runs the runtime `__to_primitive`; the legacy
+// borrowed path it was deferring to stringifies the receiver STRUCTURALLY.
+// So `String.prototype.trim.call(child)` answered `"[object Object]"` for a
+// receiver whose `toString` is INHERITED from its constructor's prototype,
+// while every sibling with a real body (`slice`/`substring`/`charAt`/
+// `toUpperCase`/`indexOf`, measured on one module) answered `"abc"`. The
+// #2742 A/B's finding was that a BLANKET removal costs 13 files; `trim`
+// individually is not one of them — re-measured here on the 551-file ES5
+// standalone guard, which stays 551/551.
+export const SUPERSEDED_BY_BORROWED_PATH: ReadonlySet<string> = new Set([
+  "codePointAt",
+  "includes",
+  "startsWith",
+  "endsWith",
+]);
+
 /**
  * Emit `flatten(? ToString(param<paramIdx>))`, leaving the flat `$NativeString`
  * on the stack.
