@@ -3301,12 +3301,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e($PropEntry?) 5=cbd(i32)
   {
-    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the
-    // #2896 builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537
-    // carrier-bag arm, then the historical `return 1` no-op success. See that
-    // module for why the bag consult is tri-state and strictly additive.
+    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the #2896
+    // builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537 carrier-bag
+    // arm, then the historical `return 1` no-op success — see that module.
     reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
+      ...protoIndexOwnViewSubstituteInstrs(ctx, 0), // (#4556) $NativeProto → companion
       ...buildNonObjectDeleteArms(ctx, {
         bfnDeleteIdx,
         boundaryDeleteIdx: boundaryObjectDeleteIdx,
