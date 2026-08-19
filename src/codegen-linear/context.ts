@@ -36,6 +36,15 @@ export interface LinearContext {
   stringLiterals: Map<string, LinearStringLiteralData>;
   /** Current data segment write offset */
   dataSegmentOffset: number;
+  /**
+   * Linked mode only (#4540): index of the `__rodata_bias` global holding
+   * `runtimeDataBase - linkTimeDataBase`. When set, every literal reference is
+   * emitted as `bias + <link-time offset>` instead of a bare constant, because
+   * the literal image is copied into a block obtained from the engine's
+   * allocator rather than written at a link-time address we do not own.
+   * Undefined in standalone mode, where the emitted bytes are unchanged.
+   */
+  roDataBiasGlobalIdx?: number;
   /** Counter for generating unique lambda function names */
   lambdaCounter: number;
   /** Function indices to populate in the funcref table */

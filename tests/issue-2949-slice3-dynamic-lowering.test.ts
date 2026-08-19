@@ -40,7 +40,14 @@ import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
+// The `IrDynamicLowering` handle contract (backend/handles.ts, frozen #3029-S1)
+// still speaks `JsTag` — #3954 W6, deliberately untouched. The IR NODES do not:
+// since #3954 phase 3 (W4) `unbox`/`tag.test` carry a neutral `TagId`.
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
+import type { TagId } from "../src/ir/tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -365,7 +372,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "rtF64",
         [{ type: F64, name: "n" }],
-        [box(0), { kind: "unbox", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: F64 }],
+        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 }],
         [id(2)],
         [F64],
         3,
@@ -374,7 +381,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "i32AsNumber",
         [{ type: I32, name: "x" }],
-        [box(0), { kind: "unbox", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: F64 }],
+        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 }],
         [id(2)],
         [F64],
         3,
@@ -383,7 +390,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "f64AsI32",
         [{ type: F64, name: "n" }],
-        [box(0), { kind: "unbox", value: id(1), jsTag: JsTag.NumberI32, result: id(2), resultType: I32 }],
+        [box(0), { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberI32, result: id(2), resultType: I32 }],
         [id(2)],
         [I32],
         3,
@@ -393,8 +400,8 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boolRT",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
-          { kind: "unbox", value: id(1), jsTag: JsTag.Boolean, result: id(2), resultType: I32 },
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
+          { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.Boolean, result: id(2), resultType: I32 },
         ],
         [id(2)],
         [I32],
@@ -405,8 +412,8 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boxedBoolIsBool",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
-          { kind: "tag.test", value: id(1), jsTag: JsTag.Boolean, result: id(2), resultType: I32 },
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
+          { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.Boolean, result: id(2), resultType: I32 },
         ],
         [id(2)],
         [I32],
@@ -417,7 +424,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "boxedF64IsNumViaI32Tag",
         [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), jsTag: JsTag.NumberI32, result: id(2), resultType: I32 }],
+        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberI32, result: id(2), resultType: I32 }],
         [id(2)],
         [I32],
         3,
@@ -426,7 +433,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "boxedI32IsNumViaF64Tag",
         [{ type: I32, name: "x" }],
-        [box(0), { kind: "tag.test", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: I32 }],
+        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: I32 }],
         [id(2)],
         [I32],
         3,
@@ -435,7 +442,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "boxedF64IsStr",
         [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), jsTag: JsTag.String, result: id(2), resultType: I32 }],
+        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.String, result: id(2), resultType: I32 }],
         [id(2)],
         [I32],
         3,
@@ -443,7 +450,7 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
       fn(
         "boxedF64IsNull",
         [{ type: F64, name: "n" }],
-        [box(0), { kind: "tag.test", value: id(1), jsTag: JsTag.Null, result: id(2), resultType: I32 }],
+        [box(0), { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.Null, result: id(2), resultType: I32 }],
         [id(2)],
         [I32],
         3,
@@ -452,8 +459,8 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
         "boxedBoolIsNum",
         [{ type: I32, name: "b" }],
         [
-          box(0, irDynamic(JsTag.Boolean)),
-          { kind: "tag.test", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: I32 },
+          box(0, irDynamic(JS_TAG_IDS.Boolean)),
+          { kind: "tag.test", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: I32 },
         ],
         [id(2)],
         [I32],
@@ -500,29 +507,29 @@ describe("#2949 s3 — gc runtime round-trips ($AnyValue, pure module, no import
 describe("#2949 s3 — host runtime (externref carrier, __typeof_* classifiers)", () => {
   async function hostExports() {
     const ctx = makeHostCtx();
-    const test = (name: string, tag: JsTag): IrFunction =>
+    const test = (name: string, tag: TagId): IrFunction =>
       fn(
         name,
         [{ type: DYN, name: "x" }],
-        [{ kind: "tag.test", value: id(0), jsTag: tag, result: id(1), resultType: I32 }],
+        [{ kind: "tag.test", value: id(0), tagId: tag, result: id(1), resultType: I32 }],
         [id(1)],
         [I32],
         2,
       );
     const fns: IrFunction[] = [
-      test("isStr", JsTag.String),
-      test("isObj", JsTag.Object),
-      test("isNull", JsTag.Null),
-      test("isUndef", JsTag.Undefined),
-      test("isNum", JsTag.NumberF64),
-      test("isFn", JsTag.Function),
+      test("isStr", JS_TAG_IDS.String),
+      test("isObj", JS_TAG_IDS.Object),
+      test("isNull", JS_TAG_IDS.Null),
+      test("isUndef", JS_TAG_IDS.Undefined),
+      test("isNum", JS_TAG_IDS.NumberF64),
+      test("isFn", JS_TAG_IDS.Function),
       // box f64 → unbox NumberF64 through the host import pair.
       fn(
         "numRT",
         [{ type: F64, name: "n" }],
         [
           { kind: "box", value: id(0), toType: DYN, result: id(1), resultType: DYN },
-          { kind: "unbox", value: id(1), jsTag: JsTag.NumberF64, result: id(2), resultType: F64 },
+          { kind: "unbox", value: id(1), tagId: JS_TAG_IDS.NumberF64, result: id(2), resultType: F64 },
         ],
         [id(2)],
         [F64],
@@ -532,7 +539,7 @@ describe("#2949 s3 — host runtime (externref carrier, __typeof_* classifiers)"
       fn(
         "unboxBool",
         [{ type: DYN, name: "x" }],
-        [{ kind: "unbox", value: id(0), jsTag: JsTag.Boolean, result: id(1), resultType: I32 }],
+        [{ kind: "unbox", value: id(0), tagId: JS_TAG_IDS.Boolean, result: id(1), resultType: I32 }],
         [id(1)],
         [I32],
         2,
@@ -617,7 +624,7 @@ describe("#2949 s3 — lowering failure modes", () => {
     );
   });
 
-  it("unbox/tag.test dynamic arms enforce the jsTag backstop (verifier R2/R3 duplicate)", () => {
+  it("unbox/tag.test dynamic arms enforce the tagId backstop (verifier R2/R3 duplicate)", () => {
     const handle = makeDynamicLowering(makeHostCtx());
     const noTag = fn(
       "noTag",
@@ -628,7 +635,7 @@ describe("#2949 s3 — lowering failure modes", () => {
       2,
     );
     expect(() => lowerIrFunctionToWasm(noTag, stubResolver({ resolveDynamicLowering: () => handle }))).toThrow(
-      /requires jsTag/,
+      /requires tagId/,
     );
   });
 });
@@ -659,7 +666,7 @@ describe("#2949 s3 — R6: un-boxed ref→dynamic returns are rejected", () => {
   it("dynamic and tag-refined dynamic values still flow into a dynamic result", () => {
     const bare = fn("moveDyn", [{ type: DYN, name: "x" }], [], [id(0)], [DYN], 1);
     expect(verifyIrFunction(bare)).toEqual([]);
-    const refined = fn("moveRefined", [{ type: irDynamic(JsTag.String), name: "x" }], [], [id(0)], [DYN], 1);
+    const refined = fn("moveRefined", [{ type: irDynamic(JS_TAG_IDS.String), name: "x" }], [], [id(0)], [DYN], 1);
     expect(verifyIrFunction(refined)).toEqual([]);
   });
 

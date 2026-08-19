@@ -930,6 +930,31 @@ export interface CompileOptions {
      */
     indexType?: "i32" | "i64";
   };
+  /**
+   * Linked-mode heap (#4540) — REQUIRED alongside {@link linearImportMemory}.
+   *
+   * When the memory belongs to another module, the arena must be carved from
+   * that module's allocator instead of owning a fixed address range. Names the
+   * `linearExternImports` entry providing `malloc(size: i32) -> ptr: i32`.
+   *
+   * Compilation is refused if only one of the two is given: a memory-importing
+   * module with the standalone arena starts allocating at 1024, which is inside
+   * the pinned engine artifact's shadow stack.
+   */
+  linearLinkedHeap?: {
+    mallocImport: string;
+    chunkBytes?: number;
+  };
+  /**
+   * Which allocator backs the linear heap (#4557).
+   *
+   * `"malloc-v1"` emits a real allocator (free lists, coalescing, in-place
+   * `realloc`) and exports the five entry points the QuickJS artifact imports
+   * for `JS_NewRuntime2`, so the engine allocates through us instead of its own
+   * dlmalloc. Defaults to `"bump"` — ADR-0017's monotonic arena, and #4540's
+   * shipped fallback.
+   */
+  linearHeapAllocator?: "bump" | "malloc-v1";
 }
 
 import * as path from "path";

@@ -44,6 +44,9 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { JsTag } from "../src/ir/js-tag.js";
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
+// refinement is named through the JS tag domain, not the enum.
+import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
@@ -197,7 +200,7 @@ function gcRelBoxNum(name: string, op: keyof typeof RELOP): IrFunction {
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.NumberF64));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
   const na = b.emitDynToNumber(da);
   const r = b.emitBinary(RELOP[op], na, c, I32);
   b.terminate({ kind: "return", values: [r] });
@@ -214,7 +217,7 @@ function gcRelBoxBool(name: string, op: keyof typeof RELOP): IrFunction {
   const a = b.addParam("a", I32);
   const c = b.addParam("c", F64);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.Boolean));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.Boolean));
   const na = b.emitDynToNumber(da);
   const r = b.emitBinary(RELOP[op], na, c, I32);
   b.terminate({ kind: "return", values: [r] });
@@ -230,8 +233,8 @@ function gcRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
-  const da = b.emitBox(a, irDynamic(JsTag.NumberF64));
-  const dc = b.emitBox(c, irDynamic(JsTag.NumberF64));
+  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
+  const dc = b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64));
   const na = b.emitDynToNumber(da);
   const nc = b.emitDynToNumber(dc);
   const r = b.emitBinary(RELOP[op], na, nc, I32);

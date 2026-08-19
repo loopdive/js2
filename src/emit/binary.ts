@@ -506,6 +506,19 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     });
   }
 
+  // Data-count section (id 12) — REQUIRED before the code section as soon as a
+  // body contains `memory.init` / `data.drop` (#4540). Validation is
+  // single-pass: the validator reaches the code section before the data
+  // section, so without this it cannot bound the segment index and rejects the
+  // module outright ("data count section required"). Emitted ONLY when a
+  // passive segment exists, so every module that predates bulk memory keeps
+  // byte-identical output.
+  if (mod.dataSegments?.some((seg) => seg.passive)) {
+    enc.section(SECTION.dataCount, (s) => {
+      s.u32(mod.dataSegments.length);
+    });
+  }
+
   // Code section — track byte offsets for source map
   if (mod.functions.length > 0) {
     // Build code section body to determine code section payload offset
@@ -592,17 +605,23 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     }
   }
 
-  // Data section (active data segments for linear memory)
+  // Data section (active and, since #4540, passive segments for linear memory)
   if (mod.dataSegments && mod.dataSegments.length > 0) {
     enc.section(SECTION.data, (s) => {
       s.u32(mod.dataSegments.length);
       for (const seg of mod.dataSegments) {
-        // Active data segment for memory 0
-        s.byte(0x00); // active, memory index 0
-        // Offset expression: i32.const <offset>; end
-        s.byte(OP.i32_const);
-        s.i32(seg.offset);
-        s.byte(OP.end);
+        if (seg.passive) {
+          // Passive: no memory index, no offset expression. The module copies
+          // it into a destination it owns via `memory.init`.
+          s.byte(0x01);
+        } else {
+          // Active data segment for memory 0
+          s.byte(0x00); // active, memory index 0
+          // Offset expression: i32.const <offset>; end
+          s.byte(OP.i32_const);
+          s.i32(seg.offset);
+          s.byte(OP.end);
+        }
         // Data bytes
         s.u32(seg.bytes.length);
         s.bytes(seg.bytes);
@@ -1515,6 +1534,34 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       break;
     case "memory.grow":
       enc.byte(OP.memory_grow);
+      enc.byte(0x00);
+      break;
+    // Bulk memory (#4540). Both are `0xFC <u32 subopcode> …`; the module MUST
+    // also carry a data-count section (id 12) or a validator rejects
+    // `memory.init` before it ever reads the data section — see emitBinary.
+    case "memory.init":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x08);
+      enc.u32(instr.dataIdx);
+      enc.byte(0x00); // memory index
+      break;
+    case "data.drop":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x09);
+      enc.u32(instr.dataIdx);
+      break;
+    // `memory.copy` carries TWO memory indices (dst then src) and `memory.fill`
+    // one. Neither needs the data-count section — that requirement is specific
+    // to the two opcodes above, which name a data segment.
+    case "memory.copy":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x0a);
+      enc.byte(0x00);
+      enc.byte(0x00);
+      break;
+    case "memory.fill":
+      enc.byte(OP.misc_prefix);
+      enc.u32(0x0b);
       enc.byte(0x00);
       break;
     case "throw":

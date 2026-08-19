@@ -40,12 +40,26 @@ import {
   addUint8ArrayRuntime,
   FMOD_FN,
 } from "./runtime.js";
+import {
+  finalizeLinkedDataImage,
+  LINKED_ARENA_DEFAULT_CHUNK_BYTES,
+  type LinkedHeapOptions,
+  RODATA_BIAS_GLOBAL,
+} from "./linked-arena.js";
 import { linearStringLiteralInstrs } from "./string-literals.js";
 
 /** Type tag for class instances in linear memory */
 const CLASS_TYPE_TAG = 5;
 
-/** Data segment base address — must be below HEAP_START (1024) */
+/**
+ * Data segment base address — must be below HEAP_START (1024).
+ *
+ * **Standalone mode only** (#4540). In linked mode the segment is PASSIVE and
+ * this value stops being an address: it becomes the base the literal offsets
+ * were assigned from, which `__rodata_bias` corrects at runtime. An active
+ * segment at 64 would be written at instantiation into the memory owner's
+ * shadow stack, before any instruction of ours runs. See ADR-0022.
+ */
 const DATA_SEGMENT_BASE = 64;
 
 function isUint8ArrayTypeText(text: string): boolean {
@@ -125,6 +139,80 @@ export interface LinearOptions {
     /** memory64 index type (#4554). Refused for now; see declareImportedMemory. */
     indexType?: "i32" | "i64";
   };
+  /**
+   * Linked-mode heap (#4540) — REQUIRED whenever {@link importMemory} is set.
+   *
+   * Names the extern-C import that provides the host allocator. `__malloc` then
+   * bump-allocates inside chunks carved from it and never calls `memory.grow`,
+   * so the memory's owner stays its only grower.
+   *
+   * It is required rather than optional because the alternative is the measured
+   * failure this option exists to remove: with a memory we do not own and the
+   * standalone arena, `__heap_ptr` starts at 1024 — inside the pinned
+   * artifact's 64 KiB shadow stack — so the first allocation writes through the
+   * engine's stack. Making that combination unrepresentable is the fix; a
+   * default would just move the trap.
+   */
+  linkedHeap?: {
+    /** Name of the extern-C import providing `malloc(size: i32) -> ptr: i32`. */
+    mallocImport: string;
+    /** Bytes per carved chunk (default: one Wasm page). */
+    chunkBytes?: number;
+  };
+  /**
+   * Which allocator backs the heap (#4557).
+   *
+   * `"malloc-v1"` emits the real allocator — free lists, boundary tags,
+   * coalescing, in-place `realloc` — and exports `js2wasm_malloc` /
+   * `js2wasm_calloc` / `js2wasm_free` / `js2wasm_realloc` /
+   * `js2wasm_usable_size` so the QuickJS artifact can install them through
+   * `JS_NewRuntime2`. `__malloc` keeps its bump fast path; only the source of
+   * its chunks moves, from the engine's heap to ours.
+   *
+   * Defaults to `"bump"`, which is #4540's shipped fallback and the reason it
+   * was kept: if the measured comparison against the artifact's dlmalloc does
+   * not hold, this option is simply not set.
+   */
+  heapAllocator?: "bump" | "malloc-v1";
+}
+
+/**
+ * Resolve {@link LinearOptions.linkedHeap} into the runtime's concrete form,
+ * and make the catastrophic combination unrepresentable (#4540).
+ *
+ * `importMemory` without `linkedHeap` is the measured corruption: the arena
+ * would start bump-allocating at 1024, inside the memory owner's shadow stack.
+ * `linkedHeap` without `importMemory` is meaningless — we own the memory, so
+ * there is no host allocator to defer to. Both are refused here, before any
+ * bytes exist, rather than diagnosed later from a corrupted heap.
+ */
+function resolveLinkedHeap(
+  opts: LinearOptions,
+  externImportIndices: Map<string, number>,
+): LinkedHeapOptions | undefined {
+  if (!opts.importMemory && !opts.linkedHeap) return undefined;
+  if (opts.importMemory && !opts.linkedHeap) {
+    throw new Error(
+      "generateLinearModule: importMemory was set without linkedHeap. A module that does not own " +
+        "its memory must carve its arena from the owner's allocator; the standalone arena would " +
+        "start allocating at a fixed low address inside the owner's shadow stack (#4540).",
+    );
+  }
+  if (opts.linkedHeap && !opts.importMemory) {
+    throw new Error(
+      "generateLinearModule: linkedHeap was set without importMemory. Carving from a host " +
+        "allocator only makes sense when another module owns the address space (#4540).",
+    );
+  }
+  const { mallocImport, chunkBytes } = opts.linkedHeap!;
+  const mallocFuncIdx = externImportIndices.get(mallocImport);
+  if (mallocFuncIdx === undefined) {
+    throw new Error(
+      `generateLinearModule: linkedHeap.mallocImport '${mallocImport}' is not among externImports. ` +
+        "Declare it (params [i32], results [i32]) so the arena can call it (#4540).",
+    );
+  }
+  return { mallocFuncIdx, chunkBytes: chunkBytes ?? LINKED_ARENA_DEFAULT_CHUNK_BYTES };
 }
 
 /**
@@ -161,7 +249,15 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     });
   }
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
-  const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
+  const linkedHeap = resolveLinkedHeap(opts, externImportIndices);
+  const dataSegmentBase = numberFormat.addRuntime(
+    mod,
+    ast,
+    opts.exposeArenaReset,
+    DATA_SEGMENT_BASE,
+    linkedHeap,
+    opts.heapAllocator,
+  );
 
   // Add memory and runtime functions first
   if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
@@ -193,6 +289,21 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     init: [{ op: "i32.const", value: 0 }],
   });
 
+  // #4540 — linked mode rebases every literal reference through one global.
+  // It must exist BEFORE any function is compiled, because each literal site
+  // reads its index while being emitted. Not created in standalone mode, so
+  // that lane's global layout (and emitted bytes) is untouched.
+  let roDataBiasGlobalIdx: number | undefined;
+  if (linkedHeap !== undefined) {
+    roDataBiasGlobalIdx = mod.globals.length;
+    mod.globals.push({
+      name: RODATA_BIAS_GLOBAL,
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+  }
+
   const ctx: LinearContext = {
     mod,
     checker: ast.checker,
@@ -211,6 +322,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     moduleGlobals: new Map(),
     moduleCollectionTypes: new Map(),
     externImportSigs: externImportSigs.size > 0 ? externImportSigs : undefined,
+    ...(roDataBiasGlobalIdx !== undefined ? { roDataBiasGlobalIdx } : {}),
   };
 
   // #4539 — extern imports are callable by name. They occupy indices [0, n),
@@ -336,6 +448,13 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   finalizeLinearArena(mod, ast, opts.exposeArenaReset);
 
   emitClosureTable(ctx);
+
+  // #4540 — LAST, so the start function's index is stable: every earlier
+  // finalizer may still append functions, and a start index computed before
+  // them would name someone else's body.
+  if (roDataBiasGlobalIdx !== undefined) {
+    finalizeLinkedDataImage(mod, roDataBiasGlobalIdx, dataSegmentBase);
+  }
 
   // Surface codegen diagnostics so compiler.ts fails the compile rather than
   // emitting a structurally invalid binary for unsupported constructs (#1868).

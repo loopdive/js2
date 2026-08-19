@@ -1,9 +1,10 @@
 ---
 id: 4551
 title: "Settle the neutral/ECMAScript split per IR instruction kind, so #3954's dialect boundary is drawn on evidence rather than an approximate count"
-status: blocked
+status: done
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-19
+completed: 2026-08-19
 priority: medium
 feasibility: medium
 reasoning_effort: high
@@ -11,9 +12,8 @@ task_type: analysis
 area: ir
 language_feature: compiler-internals
 goal: backend-agnostic-ir
-sprint: Backlog
+sprint: current
 parent: 3954
-blocked_by: 4552
 horizon: m
 model: fable
 related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
@@ -28,10 +28,12 @@ related: [1713, 1851, 1852, 2949, 3029, 3030, 3954, 4523]
 ---
 # #4551 — A per-kind neutrality verdict for #3954 phase 2
 
-**Review gate:** needs an architect review from the **Fable lane** (Lane B owns
-`backend-agnostic-ir`, `plan/method/lane-partition.md`) before dispatch. That
-review is tracked as **#4552**. `status: blocked` until it lands. It may well be folded into #3954 outright rather
-than run separately; that is the reviewer's call.
+**Review gate:** the deliverable landed on 2026-08-19 (see Outcome), so this
+issue is `done`. The **Fable-lane architect review** it was blocked on is not
+waived — it moved to a post-merge review, folded into **#4552** along with
+#3954 phase 1, on the same project-lead call that un-drafted PR #4644. What
+that review can still change is the verdicts and the enforcement shape, not
+whether this work happens.
 
 **This is a sub-issue of #3954** ("Name the IR's ambient ECMAScript
 assumptions: factor the JS value model behind a tag-domain seam"), not a rival
@@ -109,8 +111,12 @@ so its cost tracks this curve directly — and the growth is lumpy (+13 in the
 first half of July alone), which means "it has been quiet lately" is not
 evidence of anything at 17 days' resolution.
 
-Phase 1's surface is much smaller and is not growing the same way: **58 `JsTag`
-references across 24 files** today. That asymmetry is worth knowing when
+Phase 1's surface is much smaller and is not growing the same way: **58
+`JsTag.` member reads in 7 files** today. (An earlier revision of this line said
+"across 24 files" — that conflated the member-read count with the number of
+files merely *mentioning* `JsTag`, several of which are `src/checker/oracle.ts`'s
+**unrelated same-named type**, a `"number" | "string" | …` string union. Measured
+during #3954 phase 1.) That asymmetry is worth knowing when
 sequencing — deferring the tag seam is cheap; deferring the dialect split is
 what compounds, particularly against `ir-full-coverage`, which #3954 expects to
 add roughly 40 more kinds.
@@ -203,3 +209,34 @@ Still unplaced, in rough order of how much the answer matters:
 The default is now explicit and safe — unresolved means core — so nothing is
 mis-placed while this is open. What it costs is that the dialect is smaller
 than it should be.
+
+## Outcome (2026-08-19)
+
+`scripts/check-ir-kind-neutrality.mjs` + `scripts/ir-kind-neutrality-baseline.json`,
+wired into `quality` as `check:ir-kind-neutrality`.
+
+Population pinned at **82** = 78 `IrInstr` arms + 4 `IrTerminator` arms, derived
+from a stated rule; the disputed 85 is reconciled and asserted every run as
+82 in-scope + 3 symbolic-reference kinds (`IrFuncRef`/`IrGlobalRef`/`IrTypeRef` —
+**references, not declarations**, one correction to the prose above).
+
+Verdicts: **53 neutral · 26 js · 3 unresolved**, each with a `{file, quote}`
+citation the gate re-verifies (a rotted citation fails rather than reporting a
+stale answer).
+
+- Settled: `vec.*` neutral (holes are refused by the IR, and `src/codegen/array-holes.ts`
+  has no importer under `src/ir/` — asserted as an absence check); `object.*`
+  neutral (declared record layout; the open-map half is `dyn.member_*`, already
+  in the dialect); `class.*` all 8 neutral (nominal, closed-world, tag-based
+  `instanceof`, allocate-then-init — not ECMAScript's `[[Construct]]`);
+  `coerce.to_externref` neutral; `box`/`unbox`/`tag.test` neutral with the
+  residual owned by phase 1's `TagDomain`, as this issue anticipated.
+- `string.*` splits 3 neutral / 2 js / 1 unresolved — confirming the operation
+  set, not the encoding, is where the JS shape is.
+- `forof.vec` neutral, `forof.string` js (they are not the same call).
+- Phase 2's remaining move list is exactly **3**: `string.char_at`,
+  `string.char_code_at`, `forof.string`.
+- The 3 unresolved are `binary`, `intrinsic`, `string.len`; `binary` and
+  `intrinsic` are a shape this issue's contested list did not anticipate — a
+  neutral interface over an ECMAScript-tainted payload vocabulary, where the
+  unit of the fix is the enum rather than the declaration.

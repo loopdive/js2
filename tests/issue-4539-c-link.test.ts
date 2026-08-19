@@ -24,6 +24,33 @@ function peerBytes(): Uint8Array {
   return Uint8Array.from(Buffer.from(PEER_WASM_B64, "base64"));
 }
 
+/**
+ * #4540 — a module that imports its memory must also say where its heap comes
+ * from. The fixture peer is freestanding C with no allocator, so the tests
+ * supply one from the host; the arena only needs a function with the right
+ * signature, not one that came from the peer module.
+ */
+const MALLOC_SPEC = {
+  module: "cpeer",
+  name: "malloc",
+  params: [{ kind: "i32" }],
+  results: [{ kind: "i32" }],
+} as const;
+const LINKED_HEAP = { mallocImport: "malloc" } as const;
+
+function hostMalloc(memory: WebAssembly.Memory): (n: number) => number {
+  // Above the peer's `__heap_base` (0x8000 per its exported globals), so the
+  // stand-in allocator does not itself land in the peer's data or stack.
+  let cursor = 0x8000;
+  return (n: number) => {
+    const need = (n + 15) & ~15;
+    while (cursor + need > memory.buffer.byteLength) memory.grow(1);
+    const ptr = cursor;
+    cursor += need;
+    return ptr;
+  };
+}
+
 describe("#4539 — linking against a real C-compiled module", () => {
   it("the fixture really is a C module that owns a memory and imports nothing", async () => {
     const mod = new WebAssembly.Module(peerBytes());
@@ -48,14 +75,20 @@ describe("#4539 — linking against a real C-compiled module", () => {
       linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
       linearExternImports: [
         { module: "cpeer", name: "c_double", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+        MALLOC_SPEC,
       ],
+      linearLinkedHeap: LINKED_HEAP,
     } as never);
     expect(result.errors ?? []).toEqual([]);
 
     // The real assertion: our emitted binary instantiates against exports of a
     // module clang produced. A signature mismatch or a bad index fails here.
     const ours = await WebAssembly.instantiate(result.binary, {
-      cpeer: { memory: peerExports.memory, c_double: peerExports.c_double },
+      cpeer: {
+        memory: peerExports.memory,
+        c_double: peerExports.c_double,
+        malloc: hostMalloc(peerExports.memory),
+      },
     });
     const add = (ours.instance.exports as { add?: (a: number, b: number) => number }).add;
     expect(add?.(2, 3)).toBe(5);
@@ -71,9 +104,11 @@ describe("#4539 — linking against a real C-compiled module", () => {
     const result = await compile(SRC, {
       target: "linear",
       linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
+      linearExternImports: [MALLOC_SPEC],
+      linearLinkedHeap: LINKED_HEAP,
     } as never);
     const ours = await WebAssembly.instantiate(result.binary, {
-      cpeer: { memory: peerExports.memory },
+      cpeer: { memory: peerExports.memory, malloc: hostMalloc(peerExports.memory) },
     });
 
     // Write through the C module, observe through the memory object our module
@@ -108,13 +143,15 @@ export function quadruple(n: number): number { return c_double(c_double(n)); }`,
         linearImportMemory: { module: "cpeer", name: "memory", min: 2 },
         linearExternImports: [
           { module: "cpeer", name: "c_double", params: [{ kind: "i32" }], results: [{ kind: "i32" }] },
+          MALLOC_SPEC,
         ],
+        linearLinkedHeap: LINKED_HEAP,
       } as never,
     );
     expect(result.errors ?? []).toEqual([]);
 
     const ours = await WebAssembly.instantiate(result.binary, {
-      cpeer: { memory: px.memory, c_double: px.c_double },
+      cpeer: { memory: px.memory, c_double: px.c_double, malloc: hostMalloc(px.memory) },
     });
     const quadruple = (ours.instance.exports as { quadruple?: (n: number) => number }).quadruple;
     expect(quadruple?.(5)).toBe(20);
@@ -142,13 +179,15 @@ export function poke(addr: number, value: number): number { return c_poke(addr, 
             params: [{ kind: "i32" }, { kind: "i32" }],
             results: [{ kind: "i32" }],
           },
+          MALLOC_SPEC,
         ],
+        linearLinkedHeap: LINKED_HEAP,
       } as never,
     );
     expect(result.errors ?? []).toEqual([]);
 
     const ours = await WebAssembly.instantiate(result.binary, {
-      cpeer: { memory: px.memory, c_poke: px.c_poke },
+      cpeer: { memory: px.memory, c_poke: px.c_poke, malloc: hostMalloc(px.memory) },
     });
     const poke = (ours.instance.exports as { poke?: (a: number, v: number) => number }).poke;
 
@@ -199,13 +238,15 @@ export function twice(n: number): number { return c_double(n); }`,
             params: [{ address: "handle" }],
             results: [{ address: "handle" }],
           },
+          MALLOC_SPEC,
         ],
+        linearLinkedHeap: LINKED_HEAP,
       } as never,
     );
     expect(result.errors ?? []).toEqual([]);
 
     const ours = await WebAssembly.instantiate(result.binary, {
-      cpeer: { memory: px.memory, c_double: px.c_double },
+      cpeer: { memory: px.memory, c_double: px.c_double, malloc: hostMalloc(px.memory) },
     });
     const twice = (ours.instance.exports as { twice?: (n: number) => number }).twice;
     expect(twice?.(21)).toBe(42);

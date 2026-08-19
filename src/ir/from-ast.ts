@@ -184,7 +184,15 @@ import {
   irClosureSignatureFromFunctionTypeNode,
   IR_MATH_METHOD_TABLE,
 } from "./select.js";
-import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
+// #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque `TagId`, so a
+// box-refinement names its partition through the JS producer's tag-domain
+// vocabulary. This file IS the JavaScript producer, so naming ECMAScript
+// partitions here is in-layer; the IR core cannot (and must not) do the same.
+// #3954 phase 3 (W4/W5) — the `unbox`/`tag.test` instruction fields and the
+// builder APIs that construct them now take a `TagId` too, so the direct
+// `JsTag` enum import this file used to carry is gone: the producer names its
+// partitions through `JS_TAG_IDS` throughout.
+import { JS_TAG_IDS } from "./js-tag-domain.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -3786,7 +3794,7 @@ function describeIrType(t: IrType): string {
   if (t.kind === "extern") return `extern<${t.className}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
-  // #2949 — dynamic leaf; render the optional JsTag refinement when present.
+  // #2949 — dynamic leaf; render the optional tag refinement when present.
   if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
   return `boxed<${describeIrType(t.inner)}>`;
 }
@@ -5198,7 +5206,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // for a dynamic receiver, which — being a claim-then-demote the selector
   // never actually produces — was itself unreachable in a claimed function.
   if (recvType.kind === "dynamic") {
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JsTag.String));
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynMemberGet(recv, key);
   }
 
@@ -5777,7 +5785,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     let key: IrValueId | null;
     if (isStringLitKey) {
       const propName = (arg as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text;
-      key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JsTag.String));
+      key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     } else {
       const idx = lowerExpr(arg, cx, irVal({ kind: "f64" }));
       const idxType = cx.builder.typeOf(idx);
@@ -7611,7 +7619,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
           `ir/from-ast: dynamic string replace replacement has no canonical dynamic box (${cx.funcName})`,
         );
       }
-      const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JsTag.String));
+      const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
       const result = cx.builder.emitCall(
         irRuntimeFuncRef(IR_DYN_STRING_REPLACE_FN),
         [recv, key, dynamicReplacement],
@@ -7630,7 +7638,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         `ir/from-ast: dynamic method .${methodName}(...) supports at most one non-spread argument (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JsTag.String));
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
     const dynamicArgs: IrValueId[] = [recv, key];
     for (const argument of expr.arguments) {
       const value = lowerExpr(argument, cx, irDynamic());
@@ -10736,7 +10744,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
       one,
       irVal({ kind: "f64" }),
     );
-    const boxed = cx.builder.emitBox(updated, irDynamic(JsTag.NumberF64));
+    const boxed = cx.builder.emitBox(updated, irDynamic(JS_TAG_IDS.NumberF64));
     if (storage.kind === "moduleGlobal") {
       cx.builder.emitGlobalSet(storage.globalRef, boxed);
     } else if (storage.kind === "slot") {
@@ -10865,7 +10873,7 @@ function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrV
     return cx.builder.emitUnary("f64.convert_i32_s", rand, irVal({ kind: "f64" }));
   }
   if (randType.kind === "string") {
-    const boxed = cx.builder.emitBox(rand, irDynamic(JsTag.String));
+    const boxed = cx.builder.emitBox(rand, irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynToNumber(boxed);
   }
   // #4208 S3/S7 — the original open OrdinaryToPrimitive object route. Keep
@@ -11337,10 +11345,10 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     const lt = cx.builder.typeOf(lhs);
     const resultType = irVal({ kind: "i32" });
     if (lt.kind === "dynamic") {
-      const isObject = cx.builder.emitTagTest(lhs, JsTag.Object);
+      const isObject = cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object);
       let whenObject!: IrValueId;
       const thenBody = cx.builder.collectBodyInstrs(() => {
-        const payload = cx.builder.emitUnbox(lhs, JsTag.Object);
+        const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
         const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
         if (result === null) {
           // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -12209,7 +12217,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // more precise than boxing `undefined` into the carrier + the general
   // helper). Only strict ops reach here (`isStrictEq`/`isStrictNeq` gate).
   if (t.kind === "dynamic") {
-    const flag = cx.builder.emitTagTest(v, JsTag.Undefined);
+    const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Undefined);
     return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
   }
   const tv = asVal(t);
@@ -12308,7 +12316,7 @@ function tryFoldNullCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Lo
   // to legacy (return null → demote), NOT folded.
   if (otherType.kind === "dynamic") {
     if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
-      const flag = cx.builder.emitTagTest(v, JsTag.Null);
+      const flag = cx.builder.emitTagTest(v, JS_TAG_IDS.Null);
       return isNeq ? cx.builder.emitUnary("i32.eqz", flag, IR_BOOL) : flag;
     }
     return null;
@@ -12452,7 +12460,11 @@ function tryLowerPrimitiveWrapperLooseEquality(
     throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
   }
   const primitiveTag =
-    wrapperKind === "Boolean" ? JsTag.Boolean : wrapperKind === "Number" ? JsTag.NumberF64 : JsTag.String;
+    wrapperKind === "Boolean"
+      ? JS_TAG_IDS.Boolean
+      : wrapperKind === "Number"
+        ? JS_TAG_IDS.NumberF64
+        : JS_TAG_IDS.String;
   const wrapperDynamic = cx.builder.emitBox(primitive, irDynamic(primitiveTag));
   const otherDynamic = boxConcreteToDynamic(primitiveOperand, primitiveType, primitiveExpression, cx);
   if (otherDynamic === null) {
@@ -12476,7 +12488,7 @@ function tryLowerPrimitiveWrapperLooseEquality(
  */
 function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, cx: LowerCtx): IrValueId | null {
   if (t.kind === "string") {
-    return cx.builder.emitBox(v, irDynamic(JsTag.String));
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
   }
   const tv = asVal(t);
   if (!tv) return null;
@@ -12484,12 +12496,12 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
   if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
-    return cx.builder.emitBox(v, irDynamic(JsTag.Boolean));
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the
   // number brand).
   if (tv.kind === "f64" || ts.isNumericLiteral(operand)) {
-    return cx.builder.emitBox(v, irDynamic(JsTag.NumberF64));
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.NumberF64));
   }
   // A bare non-literal `i32` is number-vs-boolean-ambiguous with no cheap proof
   // here — demote rather than risk a wrong tag. S5.P can refine with the

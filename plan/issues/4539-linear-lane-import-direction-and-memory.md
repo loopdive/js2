@@ -1,7 +1,7 @@
 ---
 id: 4539
 title: "Linear lane link topology: extern-C import declarations, emit imports at all, import the memory instead of defining it"
-status: in-progress
+status: done
 sprint: Backlog
 # The substantive code lands in c-abi.ts (not a god-file). What remains is
 # wiring that can only live where the module is constructed: +24 in
@@ -15,6 +15,7 @@ loc-budget-allow:
   - src/codegen-linear/runtime.ts
 created: 2026-08-17
 updated: 2026-08-17
+completed: 2026-08-19
 priority: high
 horizon: l
 feasibility: medium
@@ -75,15 +76,28 @@ drift):
 
 ## Acceptance criteria
 
-- [ ] A linear-target module can declare and call an imported C function, with
+- [x] A linear-target module can declare and call an imported C function, with
       correct function indices, verified by a decoded-module assertion.
-- [ ] A linear-target module can be emitted in import-memory mode and
+- [x] A linear-target module can be emitted in import-memory mode and
       instantiate successfully against the pinned engine artifact.
-- [ ] Existing standalone output is **unchanged** when neither mode is
+- [x] Existing standalone output is **unchanged** when neither mode is
       requested — verified by `scripts/prove-emit-identity.mjs` against a
       pre-change baseline captured at the first edit.
-- [ ] The import path is exercised by a test that links the two modules and
+- [x] The import path is exercised by a test that links the two modules and
       calls through, not merely by a unit test of the declaration table.
+
+**All four criteria met (recorded 2026-08-19, post-merge).** Where each is
+demonstrated, since three landed with this issue and the fourth arrived later:
+
+- Declare + call an imported C function with correct indices, and the
+  link-and-call-through test: `tests/issue-4539.test.ts` and
+  `tests/issue-4539-c-link.test.ts` (the latter builds a real clang module).
+- Standalone output unchanged: `prove-emit-identity`, 60/60 records identical.
+- **Instantiate against the pinned engine artifact** — this one was NOT met when
+  the rest landed, because no artifact existed here. It is met now via #4557,
+  whose tests instantiate our module alongside the real `libquickjs.wasm`
+  sharing one memory and run `eval` workloads through it. Ticked on that
+  evidence rather than on this issue's own tests.
 
 ## Validation
 
