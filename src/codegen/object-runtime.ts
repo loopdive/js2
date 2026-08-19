@@ -9432,7 +9432,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       // null → NaN handled by the shared clamp below). Abrupt completions
       // (throwing valueOf/toString, both-objects TypeError) propagate as Wasm
       // throws out of `__extern_length` to the borrow caller.
-      const L_PRIM = 4;
+      const primExtPos = lenFn.locals.findIndex((l) => l.name === "primExt"); // (#4556)
+      const L_PRIM = primExtPos >= 0 ? 1 + primExtPos : 1 + lenFn.locals.length;
       const isObjectRefLength =
         (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
         !isStringRefType(cand.lengthFieldType);
@@ -9476,10 +9477,9 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : isObjectRefLength
                 ? objectRefRead
                 : [];
-      if (isObjectRefLength && !lenPrimLocalAdded) {
-        // Scratch externref local for the ToPrimitive result — appended once.
-        // Registered locals are [any, lenF64, lenTrunc] after the single
-        // externref param, so the new local's index is 4 (= L_PRIM).
+      if (isObjectRefLength && !lenPrimLocalAdded && primExtPos < 0) {
+        // Scratch externref local for the ToPrimitive result — appended once,
+        // and only when the registration did not already provide it (#4556).
         lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });
         lenPrimLocalAdded = true;
       }

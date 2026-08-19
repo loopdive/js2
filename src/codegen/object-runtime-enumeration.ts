@@ -99,6 +99,114 @@ function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: 
  * Register the enumeration + array-like-index + Object-static native helpers.
  * Called once, in place, from `ensureObjectRuntime`.
  */
+/**
+ * (#2036 / #3317 / #4556, extracted from `buildObjectEnumerationHelpers` to fit
+ * the function-size budget — behaviour unchanged) The array-like open-`$Object`
+ * arm of standalone `__extern_length`: ToLength(Get(O, "length")) per §23.1.3,
+ * so a borrowed `Array.prototype.<m>.call(arrayLike, …)` iterates correctly.
+ *
+ * Locals it uses, as registered by the caller: 1=any(anyref), 2=lenF64(f64),
+ * 3=lenTrunc(f64), 4=primExt(externref, the ToPrimitive scratch).
+ */
+function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number): Instr[] {
+  const MAX_SAFE = 9007199254740991; // 2^53 - 1
+  const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
+  const unboxIdx2036 = ctx.funcMap.get("__unbox_number")!;
+  // (#4556) ToNumber, not just unbox. §7.1.20 ToLength is
+  // `ToIntegerOrInfinity(ToNumber(Get(O,"length")))`, and ToNumber of an
+  // OBJECT runs the observable ToPrimitive(v, number) walk —
+  // `valueOf` then `toString`. A bare `__unbox_number` skips that walk
+  // entirely: an accessor `length` returning `{toString(){…}}` answered
+  // NaN → clamped 0 → the borrowed HOF loop ran zero iterations, and a
+  // THROWING `toString` never threw at all (test262
+  // `Array/prototype/{every,forEach}/15.4.4.1{6,8}-4-{9,11}`).
+  //
+  // The closed-struct sibling arm (`fillExternArrayLikeStructArms`,
+  // #3317) already runs exactly this sequence for a ref-typed `length`
+  // FIELD; this brings the open-`$Object` arm — the shape
+  // `Object.defineProperty(obj,"length",{get(){…}})` produces — into
+  // line with it, so the two cannot disagree.
+  //
+  // `__to_primitive` is identity on a primitive, so a plain numeric or
+  // string `length` reaches the same clamp as before. When any of the
+  // three helpers is missing the arm degrades to the previous
+  // unbox-only read rather than emitting a call to a funcIdx that does
+  // not exist.
+  const toPrimIdx2036 = ctx.funcMap.get("__to_primitive");
+  const typeofStrIdx2036 = ctx.funcMap.get("__typeof_string");
+  const strToNumIdx2036 = ctx.funcMap.get("__str_to_number");
+  const L_PRIM = 4; // scratch externref local (registered below)
+  const toNumberInstrs: Instr[] =
+    toPrimIdx2036 !== undefined && typeofStrIdx2036 !== undefined && strToNumIdx2036 !== undefined
+      ? [
+          { op: "ref.null.extern" }, // hint: number/default (valueOf → toString)
+          { op: "call", funcIdx: toPrimIdx2036 },
+          { op: "local.tee", index: L_PRIM },
+          { op: "call", funcIdx: typeofStrIdx2036 },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [
+              { op: "local.get", index: L_PRIM },
+              { op: "call", funcIdx: strToNumIdx2036 },
+            ],
+            else: [
+              { op: "local.get", index: L_PRIM },
+              { op: "call", funcIdx: unboxIdx2036 },
+            ],
+          },
+        ]
+      : [{ op: "call", funcIdx: unboxIdx2036 }];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [
+        // lenVal = __extern_get(v, "length")  (proto-walk + marshaling)
+        { op: "local.get", index: 0 },
+        ...nativeStringLiteralInstrs(ctx, "length"),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: externGetIdx2036 },
+        // ToLength: ToNumber (above — NaN for a non-numeric length),
+        // then truncate + clamp to [0, 2^53-1].
+        ...toNumberInstrs,
+        { op: "local.tee", index: 2 },
+        // if NaN → 0 (n != n)
+        { op: "local.get", index: 2 },
+        { op: "f64.ne" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "f64" } },
+          then: [{ op: "f64.const", value: 0 }],
+          else: [
+            // trunc toward zero
+            { op: "local.get", index: 2 },
+            { op: "f64.trunc" },
+            { op: "local.tee", index: 3 },
+            // if <= 0 → 0
+            { op: "f64.const", value: 0 },
+            { op: "f64.le" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "f64" } },
+              then: [{ op: "f64.const", value: 0 }],
+              else: [
+                // min(trunc, 2^53-1)
+                { op: "local.get", index: 3 },
+                { op: "f64.const", value: MAX_SAFE },
+                { op: "f64.min" },
+              ],
+            },
+          ],
+        },
+      ],
+      else: [{ op: "f64.const", value: 0 }],
+    },
+  ];
+}
+
 export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnumerationHelperState): void {
   const {
     registerNative,
@@ -472,58 +580,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // arm is omitted and the body stays the original $ObjVec-or-0 to keep host
     // output byte-identical.
     const objLengthArm: Instr[] = objArrayLikeArms
-      ? (() => {
-          const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
-          const unboxIdx2036 = ctx.funcMap.get("__unbox_number")!;
-          return [
-            { op: "local.get", index: 1 },
-            { op: "ref.test", typeIdx: objectTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "f64" } },
-              then: [
-                // lenVal = __extern_get(v, "length")  (proto-walk + marshaling)
-                { op: "local.get", index: 0 },
-                ...nativeStringLiteralInstrs(ctx, "length"),
-                { op: "extern.convert_any" },
-                { op: "call", funcIdx: externGetIdx2036 },
-                // ToLength: unbox to number (NaN for non-number length), then
-                // truncate + clamp to [0, 2^53-1]. __unbox_number(null) = NaN.
-                { op: "call", funcIdx: unboxIdx2036 },
-                { op: "local.tee", index: 2 },
-                // if NaN → 0 (n != n)
-                { op: "local.get", index: 2 },
-                { op: "f64.ne" },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "f64" } },
-                  then: [{ op: "f64.const", value: 0 }],
-                  else: [
-                    // trunc toward zero
-                    { op: "local.get", index: 2 },
-                    { op: "f64.trunc" },
-                    { op: "local.tee", index: 3 },
-                    // if <= 0 → 0
-                    { op: "f64.const", value: 0 },
-                    { op: "f64.le" },
-                    {
-                      op: "if",
-                      blockType: { kind: "val", type: { kind: "f64" } },
-                      then: [{ op: "f64.const", value: 0 }],
-                      else: [
-                        // min(trunc, 2^53-1)
-                        { op: "local.get", index: 3 },
-                        { op: "f64.const", value: MAX_SAFE },
-                        { op: "f64.min" },
-                      ],
-                    },
-                  ],
-                },
-              ],
-              else: [{ op: "f64.const", value: 0 }],
-            },
-          ];
-        })()
+      ? buildObjectArrayLikeLengthArm(ctx, objectTypeIdx)
       : [{ op: "f64.const", value: 0 }];
     // (#2186) `$__vec_base` arm: a real array literal / array result boxed to
     // externref is a `__vec_<elemKind>` struct subtyping `$__vec_base`. Its
@@ -577,6 +634,12 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "any", type: { kind: "anyref" } },
         { name: "lenF64", type: { kind: "f64" } },
         { name: "lenTrunc", type: { kind: "f64" } },
+        // (#4556) local 4 — the ToPrimitive scratch used by the `$Object`
+        // ToNumber walk above AND by the closed-struct arms
+        // `fillExternArrayLikeStructArms` splices in later (#3317). Registering
+        // it HERE gives both a single, stable slot; the fill locates it by NAME
+        // so the two can never claim different indices.
+        { name: "primExt", type: { kind: "externref" } },
       ],
       body,
     );

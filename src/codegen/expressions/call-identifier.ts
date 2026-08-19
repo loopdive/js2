@@ -61,6 +61,7 @@ import {
   pushDefaultValue,
   pushParamSentinel,
 } from "../type-coercion.js";
+import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall } from "./calls-closures.js";
@@ -482,28 +483,14 @@ export function compileIdentifierCall(
       }
     }
 
-    // (#3064) Legacy `escape` (§B.2.1.1) / `unescape` (§B.2.1.2) — standalone /
-    // WASI route to the pure-Wasm `__escape` / `__unescape` helpers (emitted in
-    // declarations.ts). ToString-coerce the argument in codegen (the host lane
-    // gets that from the JS `escape`/`unescape`; here there is no host, so we
-    // must produce the native string ref ourselves) and hand it to the helper
-    // as an externref. Host mode has no `__escape` in funcMap → fall through to
-    // the existing generic env-import path (behaviour unchanged, byte-identical).
-    if ((funcName === "escape" || funcName === "unescape") && expr.arguments.length >= 1) {
-      const nativeHelperIdx = ctx.funcMap.get(funcName === "escape" ? "__escape" : "__unescape");
-      if (nativeHelperIdx !== undefined) {
-        const arg0 = expr.arguments[0]!;
-        const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
-        const arg0Type = compileExpression(ctx, fctx, arg0);
-        const strType = emitToString(ctx, fctx, arg0Type, arg0TsType, "string");
-        // emitToString returns a native `ref $AnyString` (native modes) — the
-        // helper wants an externref, so convert via `extern.convert_any`.
-        if (strType.kind !== "externref") {
-          coerceType(ctx, fctx, strType, { kind: "externref" });
-        }
-        fctx.body.push({ op: "call", funcIdx: nativeHelperIdx });
-        return { kind: "externref" };
-      }
+    // (#3064 / #4556) Legacy `escape` / `unescape` — see annexb-escape-call.ts.
+    {
+      const esc = compileAnnexBEscapeCall(ctx, fctx, expr, funcName, {
+        compileExpr: (e) => compileExpression(ctx, fctx, e),
+        compileStringLit: (text, node) => compileStringLiteral(ctx, fctx, text, node as ts.Expression),
+        toString: (t, tsType, hint) => emitToString(ctx, fctx, t, tsType as never, hint),
+      });
+      if (esc !== undefined) return esc;
     }
 
     // Number(x) — ToNumber coercion
