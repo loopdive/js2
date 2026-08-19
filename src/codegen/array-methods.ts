@@ -42,6 +42,7 @@ import {
 import { emitTaDynViewToVec, emitTaDynViewValidate, emitTaViewToVec, emitTaViewWriteBack } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js"; // (#4556 bucket A)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -1214,6 +1215,40 @@ function coerceArmToExternref(
  * inside an arm patches every already-emitted funcIdx (the shift walker dedups by
  * array identity, so double-registration is harmless).
  */
+/**
+ * Gate for the (#3058) dyn-view two-arm wrap — extracted from
+ * `compileArrayMethodCall` so the function stays inside its size budget.
+ * Behaviour-identical; each clause keeps its original rationale.
+ */
+function shouldWrapDynViewTwoArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  skipDynViewWrap: boolean,
+): boolean {
+  return (
+    !skipDynViewWrap &&
+    ctx.moduleUsesDynTaView &&
+    !dynViewTwoArmActive.has(callExpr) &&
+    ts.isPropertyAccessExpression(propAccess) &&
+    DYN_VIEW_READ_METHODS.has(methodName) &&
+    // (#3162) find/findIndex only join the two-arm under standalone — their
+    // correct THEN arm is the standalone-only #3098 `__hof_<name>` substrate
+    // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
+    (!FIND_METHODS.has(methodName) || ctx.standalone) &&
+    // (#2872) The static per-method impls the arms route to hard-require their
+    // search/index argument (`indexOf requires 1 argument` reportError). A
+    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
+    // promoted from the tolerant generic ladder into that hard CE — skip the
+    // wrap and keep the pre-#2872 lowering for it.
+    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
+    ts.isIdentifier(propAccess.expression) &&
+    dynViewReceiverIsExternref(fctx, propAccess.expression.text)
+  );
+}
+
 function emitDynViewMethodTwoArm(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1366,29 +1401,15 @@ export function compileArrayMethodCall(
   // compile-time fact — so we emit a two-arm branch that wraps BOTH the dyn-view
   // f64-vec impl and the EXACT existing externref/plain-array impl (never hijacks a
   // plain-array `any` receiver). See emitDynViewMethodTwoArm.
-  if (
-    !skipDynViewWrap &&
-    ctx.moduleUsesDynTaView &&
-    !dynViewTwoArmActive.has(callExpr) &&
-    ts.isPropertyAccessExpression(propAccess) &&
-    DYN_VIEW_READ_METHODS.has(methodName) &&
-    // (#3162) find/findIndex only join the two-arm under standalone — their
-    // correct THEN arm is the standalone-only #3098 `__hof_<name>` substrate
-    // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
-    (!FIND_METHODS.has(methodName) || ctx.standalone) &&
-    // (#2872) The static per-method impls the arms route to hard-require their
-    // search/index argument (`indexOf requires 1 argument` reportError). A
-    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
-    // promoted from the tolerant generic ladder into that hard CE — skip the
-    // wrap and keep the pre-#2872 lowering for it.
-    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
-    ts.isIdentifier(propAccess.expression) &&
-    dynViewReceiverIsExternref(fctx, propAccess.expression.text)
-  ) {
+  if (shouldWrapDynViewTwoArm(ctx, fctx, propAccess, callExpr, methodName, skipDynViewWrap)) {
     const two = emitDynViewMethodTwoArm(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType);
     if (two !== undefined) return two;
     // Fell through (arm compile declined) — continue with the ordinary single path.
   }
+  // (#4556 bucket A) A user override of `Array.prototype.<m>` wins over the
+  // builtin lowering — see builtin-proto-member-override.ts.
+  const ovr = tryEmitProtoOverrideTwoArm(ctx, fctx, propAccess, callExpr, "Array", methodName, expectedType);
+  if (ovr !== undefined) return ovr;
   // (#2863 Phase 2) `toLocaleString` is array-dispatched ONLY under standalone/
   // wasi (no host `__extern_toLocaleString` carrier). In host (gc) mode fall
   // through to the host `__extern_toLocaleString` path (real Intl grouping +
