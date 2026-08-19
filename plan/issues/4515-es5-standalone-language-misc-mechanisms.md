@@ -27,6 +27,10 @@ loc-budget-allow:
   # in the new leaf module src/codegen/closures/set-accessor-param.ts; the
   # widening itself replaces an existing line in computeClosureWrapperSig, so
   # this is the import and nothing else.
+  # One field. The §13 eval completion register is a FunctionContext slot; the
+  # register's whole lifecycle and rationale live in the new leaf module
+  # src/codegen/statements/eval-completion-value.ts, and eval-inline.ts SHRANK.
+  - src/codegen/context/types.ts
 ---
 
 # ES5 standalone `language/` misc — 110 rows, ~7 mechanisms
@@ -259,3 +263,38 @@ pair**, which is a common shape — well beyond the 3 conformance rows.
 - **Prototype-write corpus, both arms: 120 pass / 1 not-pass**, the same single
   QuickJS-provider row each side. Run strictly one-process-per-test via a
   `while read` loop.
+
+### `2f4ad77` — §13 completion value out of a nested statement in `eval` (+5)
+
+`eval` returns the Script's **completion value**, and §13 propagates it out of
+nested statements. The inline path used a syntactic shortcut: "last top-level
+statement is an ExpressionStatement → its value, else `undefined`".
+
+The sputnik rows force a real runtime `V` register instead, because no deeper
+syntactic search can answer them:
+
+```js
+eval("do { c++; if (…) continue; odds++; } while (c < 10)")   // 4
+```
+
+— the value is the last `odds++` **that actually ran**, reached through a
+`continue` on every other iteration.
+
+A local threaded on the `FunctionContext` gives that for free: it persists across
+iterations, survives `continue`, and needs **no loop/block/if lowering changes** —
+their children merely store instead of drop. Lifecycle and sink live in the new
+leaf `src/codegen/statements/eval-completion-value.ts`; the sink is
+**byte-identical to the old `drop`** whenever no register is active, and
+`eval-inline.ts` shrank.
+
+All five `language/statements/{do-while,while}` rows flip. **Lane 8/102** at the
+committed HEAD, guard 551/551 (2 jobs, no timeout artefacts), prototype-write
+corpus 120/121 unchanged, and a second vitest set (14 eval/loop suites, 201
+tests) at 22 failing on **both** arms with byte-identical failing-name sets.
+
+### Split accounting
+
+`75c03b8`'s two `f.length` rows landed in the `language/expressions/**` half
+after the split and are credited there; the commit lives on this branch. The
+`Cannot access property on null or undefined` cluster is **2 rows in this half**,
+not 4 — the other two went to the expressions lane.
