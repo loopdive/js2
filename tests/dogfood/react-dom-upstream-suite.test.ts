@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
-import { loadReactDomUpstreamSuitePin } from "./setup-react-dom-upstream-suite.mjs";
+import { loadReactDomUpstreamSuitePin, setupReactDomImplementation } from "./setup-react-dom-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
@@ -55,6 +55,17 @@ describe("react-dom upstream suite", () => {
     expect(pin.implementation.fizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.browser\.production\.js$/);
     expect(pin.implementation.nodeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.node\.production\.js$/);
     expect(pin.implementation.edgeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.edge\.production\.js$/);
+  });
+
+  it("can select the matching development implementation graph", () => {
+    const implementation = setupReactDomImplementation({ build: "development" });
+    expect(implementation.build).toBe("development");
+    expect(implementation.sharedPath).toMatch(/react-dom\.development\.js$/);
+    expect(implementation.clientPath).toMatch(/react-dom-client\.development\.js$/);
+    expect(implementation.serverPath).toMatch(/react-dom-server-legacy\.browser\.development\.js$/);
+    expect(implementation.fizzServerPath).toMatch(/react-dom-server\.browser\.development\.js$/);
+    expect(implementation.nodeFizzServerPath).toMatch(/react-dom-server\.node\.development\.js$/);
+    expect(implementation.edgeFizzServerPath).toMatch(/react-dom-server\.edge\.development\.js$/);
   });
 
   it("keeps every non-skipped ReactDOM test reachable in conservative mode", () => {

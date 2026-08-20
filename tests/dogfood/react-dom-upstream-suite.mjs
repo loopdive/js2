@@ -952,10 +952,15 @@ export async function runHarness({ quiet = false } = {}) {
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: reactRoot, version: reactVersion } = setupReact();
-  const reactSource = readFileSync(join(reactRoot, "package", "cjs", "react.production.js"), "utf-8");
-  const implementationPin = setupReactDomImplementation();
+  // React's Jest suite runs against development artifacts so warning and act
+  // assertions are meaningful. Keep production as the npm-compat default, but
+  // make the matching ReactDOM graph opt-in for the original warning tests.
+  const build = process.env.DOGFOOD_REACT_DOM_BUILD === "development" ? "development" : "production";
+  const reactModulePath = join(reactRoot, "package", "cjs", `react.${build}.js`);
+  const reactSource = readFileSync(reactModulePath, "utf-8");
+  const implementationPin = setupReactDomImplementation({ build });
   const localRequire = createRequire(import.meta.url);
-  const hostInfrastructure = installReactUpstreamInfrastructure({ react: localRequire("react") });
+  const hostInfrastructure = installReactUpstreamInfrastructure({ react: localRequire(reactModulePath), build });
   const installedReactDom = localRequire("react-dom/package.json");
   if (installedReactDom.version !== implementationPin.version) {
     throw new Error(
@@ -980,6 +985,7 @@ export async function runHarness({ quiet = false } = {}) {
     reactDom: {
       version: implementationPin.version,
       reactVersion,
+      build,
       schedulerVersion: schedulerPackage.version,
       source: implementationPin.pin.tarball,
       modules: [

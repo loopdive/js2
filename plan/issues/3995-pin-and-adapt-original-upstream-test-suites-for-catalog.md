@@ -566,3 +566,12 @@ constructors (`Request`, `Response`, `FormData`, `Blob`, and `File`) when they
 exist on `globalThis`, allowing Hono's original request tests to initialize in
 both Node and Wasm. These adapters are generic and are covered by a runner
 regression test; no Hono test callback or input is rewritten.
+
+The ReactDOM adapter now has the same explicit build selection as the React
+adapter: production remains the npm-compat default, while
+`DOGFOOD_REACT_DOM_BUILD=development` loads the matching development React,
+ReactDOM client, legacy server, and browser/Node/Edge Fizz graphs. This is
+important for the original warning and `act` tests: production artifacts omit
+those diagnostics, which otherwise appears as unavailable native test
+infrastructure. The selection is pin-checked and covered by the ReactDOM
+setup regression test; it does not change the production catalog result.

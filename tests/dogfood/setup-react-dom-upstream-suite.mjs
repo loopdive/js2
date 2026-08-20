@@ -20,7 +20,10 @@ function sha1(buffer) {
 // `npm-compat-catalog.json`, which is react-dom's existing pin — this suite
 // reads it rather than carrying a second, independently-editable copy that
 // could drift from the one the package-entry card already uses.
-export function setupReactDomImplementation({ force = false } = {}) {
+export function setupReactDomImplementation({ force = false, build = "production" } = {}) {
+  if (build !== "production" && build !== "development") {
+    throw new Error(`[dogfood] unsupported react-dom build: ${build}`);
+  }
   const suitePin = loadReactDomUpstreamSuitePin();
   const catalog = JSON.parse(readFileSync(join(HERE, "npm-compat-catalog.json"), "utf-8"));
   const packagePin = catalog.find((entry) => entry.name === "react-dom");
@@ -43,12 +46,14 @@ export function setupReactDomImplementation({ force = false } = {}) {
 
   const root = join(HERE, ".react-dom-upstream-suite-impl");
   if (force && existsSync(root)) rmSync(root, { recursive: true, force: true });
-  const sharedPath = join(root, suitePin.implementation.sharedModule);
-  const clientPath = join(root, suitePin.implementation.clientModule);
-  const serverPath = join(root, suitePin.implementation.serverModule);
-  const fizzServerPath = join(root, suitePin.implementation.fizzServerModule);
-  const nodeFizzServerPath = join(root, suitePin.implementation.nodeFizzServerModule);
-  const edgeFizzServerPath = join(root, suitePin.implementation.edgeFizzServerModule);
+  const suffix = `.${build}.js`;
+  const modulePath = (name) => join(root, "package", "cjs", `${name}${suffix}`);
+  const sharedPath = modulePath("react-dom");
+  const clientPath = modulePath("react-dom-client");
+  const serverPath = modulePath("react-dom-server-legacy.browser");
+  const fizzServerPath = modulePath("react-dom-server.browser");
+  const nodeFizzServerPath = modulePath("react-dom-server.node");
+  const edgeFizzServerPath = modulePath("react-dom-server.edge");
   if (
     !existsSync(sharedPath) ||
     !existsSync(clientPath) ||
@@ -71,6 +76,7 @@ export function setupReactDomImplementation({ force = false } = {}) {
     fizzServerPath,
     nodeFizzServerPath,
     edgeFizzServerPath,
+    build,
     version: packagePin.version,
     pin: packagePin,
   };
