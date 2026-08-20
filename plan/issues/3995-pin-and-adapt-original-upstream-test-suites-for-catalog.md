@@ -545,3 +545,24 @@ so **0/61** tests were scoreable. This does not change the default production
 result or turn an invalid binary into an infrastructure pass; the opt-in lane
 is retained to make the correct upstream environment runnable once that
 compiler blocker is addressed.
+
+## 2026-08-20 Hono web-host and Vitest infrastructure checkpoint
+
+The Hono adapter now exercises ten self-contained HTTP/utility files from the
+pinned v4.12.16 release instead of the original two-file smoke slice:
+`http-exception`, `request`, `accept`, `basic-auth`, `cookie`, `encode`, `html`,
+`ipaddr`, `mime`, and `url`. All **205/205** extracted callbacks execute in the
+native oracle, and the ten modules compile; nine validate because the upstream
+`ipaddr` module still exposes an existing Wasm fall-through type error. The
+validated Wasm modules score **78/205**. The remaining failures are compiler or
+runtime semantics (URL decoding, request-body/object carriers, cookie signing,
+binary encoding, and IPv4/IPv6 conversion), not unavailable test infrastructure.
+
+The shared upstream runner now supports Vitest table-template expansion,
+`describe.each`, promise `resolves`/`rejects` matchers with immediate rejection
+handlers, `toMatchObject`, and Vitest's compile-time-only `expectTypeOf` chain.
+The runtime host constructor registry also exposes the standard Node Web API
+constructors (`Request`, `Response`, `FormData`, `Blob`, and `File`) when they
+exist on `globalThis`, allowing Hono's original request tests to initialize in
+both Node and Wasm. These adapters are generic and are covered by a runner
+regression test; no Hono test callback or input is rewritten.

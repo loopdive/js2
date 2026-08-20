@@ -14,7 +14,18 @@ describe("hono v4.12.16 upstream suite", () => {
     expect(pin.commit).toBe("90d4182aabd328e2ec6af3f25ec62ddc574ad8cb");
     expect(pin.testFileCount).toBe(120);
     expect(pin.registrationSites).toBe(2355);
-    expect(pin.selectedFiles).toEqual(["src/utils/accept.test.ts", "src/utils/mime.test.ts"]);
+    expect(pin.selectedFiles).toEqual([
+      "src/http-exception.test.ts",
+      "src/request.test.ts",
+      "src/utils/accept.test.ts",
+      "src/utils/basic-auth.test.ts",
+      "src/utils/cookie.test.ts",
+      "src/utils/encode.test.ts",
+      "src/utils/html.test.ts",
+      "src/utils/ipaddr.test.ts",
+      "src/utils/mime.test.ts",
+      "src/utils/url.test.ts",
+    ]);
   });
 
   const heavy = process.env.DOGFOOD_HONO_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -25,9 +36,9 @@ describe("hono v4.12.16 upstream suite", () => {
     const report = JSON.parse(out);
     expect(report.upstreamSuite.commit).toBe(pin.commit);
     expect(report.extraction.filesSeen).toBe(120);
-    expect(report.extraction.filesSelected).toBe(2);
-    expect(report.extraction.testsRegistered).toBe(31);
-    expect(report.extraction.nativePassed).toBe(31);
+    expect(report.extraction.filesSelected).toBe(10);
+    expect(report.extraction.testsRegistered).toBe(205);
+    expect(report.extraction.nativePassed).toBe(205);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
   });
 });
