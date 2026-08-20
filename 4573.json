@@ -1,12 +1,11 @@
 {
   "id": "4573",
   "assignee": "ttraenkler/codex",
-  "requested_by": "ttraenkler/codex",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/4574-standalone-native-async-family",
-  "reserved_at": "2026-08-20T07:11:18Z",
   "claimed_at": "2026-08-20T07:11:18Z",
-  "updated_at": "2026-08-20T07:11:18Z",
-  "write_id": "45440-ezpzsz32",
-  "pr_scan": "ok"
+  "updated_at": "2026-08-20T07:11:38Z",
+  "write_id": "45875-2r2kbebs",
+  "released_at": "2026-08-20T07:11:38Z"
 }
