@@ -2586,16 +2586,29 @@ export interface ModuleInitBodyCompileRouting {
  * the IR body in place, so both routes preserve one exact startup handle.
  */
 export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)) return;
-  const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-  const initFuncIdx = mintDefinedFunc(ctx);
-  pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
-    name: "__module_init",
-    typeIdx: initTypeIdx,
-    locals: [],
-    body: [],
-    exported: false,
-  });
+  let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+  let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
+  if (!initFunc || initFuncIdx === undefined) {
+    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+    initFuncIdx = mintDefinedFunc(ctx);
+    initFunc = {
+      name: "__module_init",
+      typeIdx: initTypeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    };
+    pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, initFunc);
+  }
+  // Deferred initialization exposes the exact preallocated callable. Publish
+  // that alias before prepared-component sealing so final export planning does
+  // not discover a new alias into an already sealed scope. The later direct
+  // declaration pass replaces this same-name entry with the same handle.
+  if (ctx.deferTopLevelInit && !ctx.wasi) {
+    initFunc.exported = true;
+    ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+    ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+  }
 }
 
 /** Compile all function bodies (including class constructors and methods) */
@@ -3473,17 +3486,34 @@ export function compileDeclarations(
       });
     }
     if (exportModuleInit) {
-      // (#3505) compileMulti calls compileDeclarations once per source file
-      // against one accumulating context. Each pass emits a progressively
-      // more complete graph initializer, so only the newest export may remain:
-      // it contains every dependency seen so far in resolver order. Keeping
-      // the earlier exports gave the final Wasm duplicate `__module_init`
-      // names; selecting an earlier one instead would drop later modules.
-      ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
-      ctx.mod.exports.push({
-        name: "__module_init",
-        desc: { kind: "func", index: initFuncIdx },
-      });
+      const initExports = ctx.mod.exports.filter((entry) => entry.name === "__module_init");
+      if (skipModuleInitBody) {
+        // Prepared deferred initialization published this alias before the
+        // component seal. Preserve its exact ordinal and handle: removing and
+        // re-appending it here would create a late Program-ABI alias into the
+        // already sealed component, and would make its identity depend on any
+        // unrelated exports appended between preparation and declaration
+        // finalization.
+        if (
+          initExports.length !== 1 ||
+          initExports[0]!.desc.kind !== "func" ||
+          initExports[0]!.desc.index !== initFuncIdx
+        ) {
+          throw new Error("prepared deferred module initializer lost its exact pre-seal export alias");
+        }
+      } else {
+        // (#3505) compileMulti calls compileDeclarations once per source file
+        // against one accumulating context. Each pass emits a progressively
+        // more complete graph initializer, so only the newest export may remain:
+        // it contains every dependency seen so far in resolver order. Keeping
+        // the earlier exports gave the final Wasm duplicate `__module_init`
+        // names; selecting an earlier one instead would drop later modules.
+        ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+        ctx.mod.exports.push({
+          name: "__module_init",
+          desc: { kind: "func", index: initFuncIdx },
+        });
+      }
     }
 
     if (!ctx.wasi && !exportModuleInit) {

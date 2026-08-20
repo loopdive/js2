@@ -74,7 +74,11 @@ function recordAsyncPlanUses(fn: IrFunction, add: (value: IrValueId) => void): v
  * `alloc` field stripped from the dead instruction so DCE cannot retire the
  * alias after the fusion.
  */
-export function batchStringConcat(fn: IrFunction, registry?: AllocSiteRegistry): IrFunction {
+export function batchStringConcat(
+  fn: IrFunction,
+  registry?: AllocSiteRegistry,
+  maxArity = Number.POSITIVE_INFINITY,
+): IrFunction {
   const defs = new Map<IrValueId, IrInstr>();
   const uses = new Map<IrValueId, number>();
   const consumedByConcat = new Set<IrValueId>();
@@ -187,6 +191,11 @@ export function batchStringConcat(fn: IrFunction, registry?: AllocSiteRegistry):
         }
 
         const changedArgs = runs.length > 0;
+        // The host backend can import every observed arity. Native strings use
+        // fixed helpers whose current contract stops at eight operands; keep
+        // a larger tree pairwise instead of creating an intrinsic the backend
+        // cannot materialize during sealed preparation.
+        if (args.length > maxArity) return;
         if (!changedArgs && flatArgs.length < 3) return;
         if (args.length === 1) {
           const only = coalescibleLiteral(args[0]!);

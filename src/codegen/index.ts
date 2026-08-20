@@ -94,6 +94,7 @@ import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
   reconcileIrModuleInitPlan,
+  type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
 import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
@@ -3750,11 +3751,12 @@ interface IrFirstBodyRouting {
  * R4's intentionally bounded module-init owner: an ordered sequence of
  * initialized top-level lexical declarations. The selector proves a one-to-one
  * Program ABI projection while the semantic plan proves exact source order,
- * binding identity, TDZ intent, and Wasm-start invocation parity.
+ * binding identity, TDZ intent, and exactly-once invocation parity.
  */
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
+  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
 }
 
 function preparedExactLexicalModuleInit(
@@ -3764,19 +3766,26 @@ function preparedExactLexicalModuleInit(
   planning: IrModuleInitPlanningEvidence | undefined,
   identityContext: IrPlanningIdentityContext,
 ): PreparedLexicalModuleInitEvidence | undefined {
+  const exactInvocationLane =
+    (!ctx.nativeStrings &&
+      !ctx.standalone &&
+      planning?.plan.invocation.target === "host" &&
+      planning.plan.invocation.kind === "wasm-start") ||
+    (ctx.nativeStrings &&
+      ctx.standalone &&
+      ctx.targetProfile.semanticProviders === "native-first" &&
+      planning?.plan.invocation.target === "standalone" &&
+      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export"));
   if (
     ctx.fast ||
-    ctx.nativeStrings ||
-    ctx.standalone ||
     ctx.wasi ||
     ctx.strictNoHostImports ||
+    !exactInvocationLane ||
     selection.moduleInit?.reason !== null ||
     selection.moduleInit.stmtCount === 0 ||
     !planning?.plan.executable ||
     planning.plan.gaps.length !== 0 ||
     !planning.parity.aligned ||
-    planning.plan.invocation.target !== "host" ||
-    planning.plan.invocation.kind !== "wasm-start" ||
     !planning.plan.invocation.exactlyOnce ||
     planning.plan.liveSeeds.length !== 0
   ) {
@@ -3874,7 +3883,9 @@ function preparedExactLexicalModuleInit(
     visitInitializer(declaration.initializer);
     if (reachesSourceFunction) return undefined;
   }
-  return { unitId: planning.plan.unitId, globalBindingIds };
+  const invocationKind = planning.plan.invocation.kind;
+  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
+  return { unitId: planning.plan.unitId, globalBindingIds, invocationKind };
 }
 
 function preparedLexicalComponentPreflightFailure(
@@ -4106,7 +4117,7 @@ function planIrFirstBodyRouting(
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
   // preparation transaction. Constructor `_new` wrappers remain AST-free
-  // support. The exact prepared Map initializer may join that transaction;
+  // support. An exact prepared lexical initializer may join that transaction;
   // every other module-init shape remains direct.
   // selectR2PreparedOwnerComponents closes candidates over exact local call
   // edges, so any callable edge that crosses into those owners removes the
@@ -4199,17 +4210,18 @@ function planIrFirstBodyRouting(
       // runtime ABI. Keep that owner on the established direct route.
     } else {
       if (prepareModuleInit) preallocateModuleInitCallable(ctx, sourceFile);
-      const postWasmStartTdzSafeBindingsByOwnerUnitId = prepareModuleInit
-        ? new Map(
-            [...preparedFreeFunctionNames].map(
-              (legacyName) =>
-                [
-                  irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
-                  finalModuleInit.globalBindingIds,
-                ] as const,
-            ),
-          )
-        : undefined;
+      const postWasmStartTdzSafeBindingsByOwnerUnitId =
+        prepareModuleInit && finalModuleInit.invocationKind === "wasm-start"
+          ? new Map(
+              [...preparedFreeFunctionNames].map(
+                (legacyName) =>
+                  [
+                    irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+                    finalModuleInit.globalBindingIds,
+                  ] as const,
+              ),
+            )
+          : undefined;
       const projectLoweringPlans = (selection: IrSelection) =>
         irOverlayIdentity.projectIrIntegrationLoweringPlans(
           {
@@ -4861,7 +4873,7 @@ export function generateModule(
 
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
-    // generic module shapes, while the exact prepared Map initializer below
+    // generic module shapes, while the exact prepared lexical initializer below
     // consumes its gap/order/parity evidence before skipping the direct body.
     if (irPlanningIdentityContext) {
       const plan = buildIrModuleInitPlan({

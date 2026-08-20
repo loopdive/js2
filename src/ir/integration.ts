@@ -102,6 +102,7 @@ import {
   standaloneConsoleSinkAvailable,
   STANDALONE_STDOUT_APPEND_FN,
 } from "../codegen/native-strings.js";
+import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
@@ -334,6 +335,7 @@ import type { PreparedClassAccessorWritebackEvidence } from "./prepared-componen
 import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
@@ -2435,9 +2437,12 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const batched =
-        !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports
-          ? batchStringConcat(hygienic, allocRegistry)
+      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
+      const batched = hostBatchedConcat
+        ? batchStringConcat(hygienic, allocRegistry)
+        : standaloneBatchedConcat
+          ? batchStringConcat(hygienic, allocRegistry, 8)
           : hygienic;
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final);
@@ -2571,6 +2576,24 @@ export function compileIrPathFunctions(
   }
   if (!runGlobalPreparation(() => preregisterExceptionSupport(ctx, healthyForLower))) return finishReport();
   if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower))) return finishReport();
+  if (
+    !runGlobalPreparation(() => {
+      const registry = ctx.programAbiTypes;
+      if (!registry || ctx.mapTypeIdx < 0) return;
+      let mapCarrierRef: IrTypeRef | undefined;
+      healthyForLower = healthyForLower.map((entry) => {
+        const fn = attachIrPhysicalRefTypeRefs(entry.fn, (type) => {
+          if ((type.val.kind !== "ref" && type.val.kind !== "ref_null") || type.val.typeIdx !== ctx.mapTypeIdx) {
+            return undefined;
+          }
+          return (mapCarrierRef ??= registry.prepareNativeMapCarrier());
+        });
+        return fn === entry.fn ? entry : { ...entry, fn };
+      });
+    })
+  ) {
+    return finishReport();
+  }
   if (
     !runGlobalPreparation(() => {
       const pending = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
@@ -4737,12 +4760,14 @@ function resolveAndObserveCallableProvider(
     );
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ensureLateImport(
-      ctx,
-      `__concat_${arity}`,
-      Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, arity)
+      : ensureLateImport(
+          ctx,
+          `__concat_${arity}`,
+          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);

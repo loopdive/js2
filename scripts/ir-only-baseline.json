@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-16",
+  "generated": "2026-08-20",
   "lanes": {
     "single-host": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
       "emittedFloor": 37,
       "irBodyEmittedFloor": 37,
-      "legacyBodyEmittedCeiling": 10,
+      "legacyBodyEmittedCeiling": 0,
       "unsupportedCeiling": 0,
       "unsupportedByCode": {},
       "invariantCeiling": 0
@@ -24,11 +24,11 @@
       "terminalUnitFloor": 37,
       "emittedFloor": 22,
       "irBodyEmittedFloor": 22,
-      "legacyBodyEmittedCeiling": 18,
+      "legacyBodyEmittedCeiling": 15,
       "unsupportedCeiling": 15,
       "unsupportedByCode": {
-        "select/body-shape-rejected": 3,
         "select/host-surface-unavailable": 4,
+        "select/body-shape-rejected": 3,
         "select/call-graph-closure": 3,
         "select/date-constructor-unsupported": 1,
         "select/async-function": 4

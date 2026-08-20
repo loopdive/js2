@@ -32,6 +32,7 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   exceptionTagType: 9,
   refCell: 10,
   objectLayout: 11,
+  nativeMapCarrier: 12,
   classLayout: 0,
 } as const);
 
@@ -300,6 +301,11 @@ export class ProgramAbiTypeRegistry {
     readonly cell?: ProgramAbiTypeCell;
   };
   private exceptionTagTypeRefValue?: IrTypeRef;
+  private nativeMapCarrierSupport?: {
+    readonly ref: IrTypeRef;
+    readonly type: StructTypeDef;
+    readonly cell: ProgramAbiTypeCell;
+  };
   private closureSupportBatchPlanned = false;
   private refCellSupportBatchPlanned = false;
   private objectSupportBatchPlanned = false;
@@ -545,6 +551,52 @@ export class ProgramAbiTypeRegistry {
     const cell = this.session.typeCellFor(type) ?? this.session.createTypeCell(type);
     this.planPreparedSupportType(ref, type, cell, PROGRAM_ABI_TYPE_ROLE.exceptionTagType, 0);
     this.exceptionTagTypeRefValue = ref;
+    return ref;
+  }
+
+  /**
+   * Plan the exact native `$Map` carrier used by host-free IR Map adapters.
+   *
+   * The middle end initially sees the allocator-owned `ref $Map` selected by
+   * the compatibility resolver. Prepared components cannot seal against that
+   * raw module-relative index, so the final preparation pass attaches this
+   * remappable support identity to every retained Map value type.
+   */
+  prepareNativeMapCarrier(): IrTypeRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot prepare the native Map carrier after retained type planning",
+      );
+    }
+    const typeIdx = this.ctx.mapTypeIdx;
+    const type = typeIdx >= 0 ? this.ctx.mod.types[typeIdx] : undefined;
+    if (
+      !type ||
+      type.kind !== "struct" ||
+      type.name !== "Map" ||
+      this.ctx.structMap.get("Map") !== typeIdx ||
+      this.ctx.typeIdxToStructName.get(typeIdx) !== "Map"
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `native Map carrier ${typeIdx} is not the canonical allocator-owned Map struct`,
+      );
+    }
+    const cell = this.session.typeCellFor(type) ?? this.session.createTypeCell(type);
+    const existing = this.nativeMapCarrierSupport;
+    if (existing) {
+      if (existing.type !== type || existing.cell !== cell) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          "one compilation selected more than one physical native Map carrier",
+        );
+      }
+      return existing.ref;
+    }
+    const ref = irSupportTypeRef(canonicalEntrySource(this.session), "native-map-carrier", "__ir_native_map_carrier");
+    this.planPreparedSupportType(ref, type, cell, PROGRAM_ABI_TYPE_ROLE.nativeMapCarrier, 0);
+    this.nativeMapCarrierSupport = Object.freeze({ ref, type, cell });
     return ref;
   }
 
