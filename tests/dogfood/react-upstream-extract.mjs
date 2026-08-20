@@ -75,6 +75,7 @@ const SUPPORTED_MATCHERS = new Set([
   "toHaveBeenCalledTimes",
   "toBeCalledTimes",
   "toHaveBeenCalledWith",
+  "toBeGreaterThan",
   "toBeCalledWith",
   "toMatch",
   "toContainEqual",
@@ -141,6 +142,21 @@ function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) 
         "../../../../scripts/jest/patchMessageChannel"
     ) {
       return "var patchMessageChannel = globalThis.__js2ReactUpstreamInfrastructure.patchMessageChannel;";
+    }
+    // ReactDOM's Fizz tests import this small DOM helper from the monorepo's
+    // private test utilities. The helper only manipulates the jsdom tree and
+    // executes inline scripts; expose an equivalent host capability instead
+    // of dropping its bindings and rejecting every Fizz test that uses them.
+    if (
+      ts.isImportDeclaration(statement) &&
+      statement.moduleSpecifier.getText(sourceFile).replace(/["']/g, "") === "../test-utils/FizzTestUtils"
+    ) {
+      return (
+        "var insertNodesAndExecuteScripts = __js2FizzTestUtils.insertNodesAndExecuteScripts;\n" +
+        "var mergeOptions = __js2FizzTestUtils.mergeOptions;\n" +
+        "var stripExternalRuntimeInNodes = __js2FizzTestUtils.stripExternalRuntimeInNodes;\n" +
+        "var getVisibleChildren = __js2FizzTestUtils.getVisibleChildren;"
+      );
     }
     return null;
   }

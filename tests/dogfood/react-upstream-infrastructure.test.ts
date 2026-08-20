@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import { installReactUpstreamInfrastructure } from "./react-upstream-infrastructure.mjs";
 // @ts-expect-error — .mjs dogfood environment has no declaration file
 import { installReactTestEnvironment } from "./react-test-environment.mjs";
+// @ts-expect-error — .mjs dogfood shim has no declaration file
+import { REACT_EXPECT_SHIM } from "./react-upstream-shim.mjs";
 
 describe("React upstream test infrastructure", () => {
-  it("provides every cross-package host dependency used by the suites", () => {
+  it("provides every cross-package host dependency used by the suites", async () => {
     const previous = globalThis.__js2ReactUpstreamInfrastructure;
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";
@@ -47,6 +49,21 @@ describe("React upstream test infrastructure", () => {
       expect(root.getChildren()).toHaveLength(1);
       root.unmount();
       expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(infrastructure);
+
+      // ReactDOM's Fizz tests import these private monorepo helpers. They are
+      // host DOM infrastructure, so exercise the same facade used by the
+      // generated native/Wasm test source instead of leaving the extractor
+      // special case untested.
+      // eslint-disable-next-line no-new-func
+      const fizzUtils = new Function(`${REACT_EXPECT_SHIM}\nreturn __js2FizzTestUtils;`)();
+      expect(fizzUtils.mergeOptions({ a: 2 }, { a: 1, b: 3 })).toEqual({ a: 2, b: 3 });
+      const source = document.createElement("div");
+      source.innerHTML = '<span id="fizz">ok</span>';
+      const target = document.createElement("div");
+      await fizzUtils.insertNodesAndExecuteScripts(source, target, null);
+      expect(source.firstChild).toBeNull();
+      expect(fizzUtils.getVisibleChildren(target).props.children).toBe("ok");
+      expect(fizzUtils.stripExternalRuntimeInNodes([target.firstChild], "missing.js")).toHaveLength(1);
     } finally {
       installed.cleanup();
       dom.cleanup();

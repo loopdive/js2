@@ -26,6 +26,31 @@ describe("react upstream extractor", () => {
     }
   });
 
+  it("keeps the ReactDOM Fizz DOM helper on its explicit host facade", () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-fizz-extract-"));
+    const file = "fixture.js";
+    try {
+      writeFileSync(
+        join(root, file),
+        `import {getVisibleChildren, mergeOptions} from "../test-utils/FizzTestUtils";\n` +
+          `describe("fixture", () => { it("uses Fizz helpers", () => {\n` +
+          `  mergeOptions({}, {}); getVisibleChildren(document.body);\n` +
+          `}); });\n`,
+      );
+      const result = extractReactUpstreamTests({
+        root,
+        testFiles: [file],
+        admitAll: false,
+        supportedInfrastructure: new Set(["needs-dom"]),
+      });
+      expect(result.rejected).toHaveLength(0);
+      expect(result.tests).toHaveLength(1);
+      expect(result.tests[0].prelude).toContain("__js2FizzTestUtils");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("only treats calls rooted at expect as matchers", () => {
     const root = mkdtempSync(join(tmpdir(), "js2-react-matcher-"));
     const file = "fixture.js";
@@ -39,13 +64,13 @@ describe("react upstream extractor", () => {
           `    expect(value.toLowerCase()).toBe("abc");\n` +
           `  });\n` +
           `  it("rejects an unsupported Jest matcher", () => {\n` +
-          `    expect("abc").toBeGreaterThan("def");\n` +
+          `    expect("abc").toBeLessThan("def");\n` +
           `  });\n` +
           `});\n`,
       );
       const result = extractReactUpstreamTests({ root, testFiles: [file], admitAll: false });
       expect(result.tests.map((test: { name: string }) => test.name)).toEqual(["keeps ordinary string methods"]);
-      expect(result.rejectionCounts["unsupported-matcher:toBeGreaterThan"]).toBe(1);
+      expect(result.rejectionCounts["unsupported-matcher:toBeLessThan"]).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

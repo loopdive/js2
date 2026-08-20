@@ -461,6 +461,17 @@ pre-test `ReferenceError`. `Document` is now part of the explicit DOM global
 allowlist and has a regression assertion; a direct native import of the
 published Lit `css-tag` entry now initializes successfully.
 
+The conservative ReactDOM extraction then exposed a second infrastructure gap:
+172 Fizz tests imported the private monorepo
+`../test-utils/FizzTestUtils` module, whose bindings were previously dropped.
+The shim now provides the four original DOM helpers (`insertNodesAndExecuteScripts`,
+`mergeOptions`, `stripExternalRuntimeInNodes`, and `getVisibleChildren`) as an
+explicit host facade, with a native regression exercise. The Jest shim also
+implements the one remaining matcher used by the corpus, `toBeGreaterThan`.
+Conservative extraction now admits **2,001/2,003** ReactDOM tests; the only
+rejections are the two upstream `.skip` tests. This changes reachability and
+host setup, not the renderer's compiled behavior score.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared

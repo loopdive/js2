@@ -241,6 +241,9 @@ function expect(actual) {
     toHaveBeenCalledWith: function () {
       __assert(__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected mock arguments");
     },
+    toBeGreaterThan: function (expected) {
+      __assert(actual > expected, "expected " + actual + " toBeGreaterThan " + expected);
+    },
     toBeCalledWith: function () {
       __assert(__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected mock arguments");
     },
@@ -313,6 +316,9 @@ function expect(actual) {
       },
       toHaveBeenCalledWith: function () {
         __assert(!__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected different mock arguments");
+      },
+      toBeGreaterThan: function (expected) {
+        __assert(!(actual > expected), "expected not.toBeGreaterThan " + expected);
       },
       toBeCalledWith: function () {
         __assert(!__mockMatchesCalls(actual, Array.prototype.slice.call(arguments)), "expected different mock arguments");
@@ -439,6 +445,140 @@ function __js2NodeStreamFacade() {
     },
   };
 }
+
+// ReactDOM's Fizz tests import this private monorepo helper. It is test
+// infrastructure, not part of the published package graph, so keep the
+// browser/DOM behavior on the host while exposing the same named functions to
+// the native oracle and the compiled test lane.
+async function __js2FizzExecuteScript(script) {
+  var ownerDocument = script.ownerDocument;
+  if (script.parentNode === null) {
+    throw new Error("executeScript expects to be called on script nodes that are currently in a document");
+  }
+  var parent = script.parentNode;
+  var scriptSrc = script.getAttribute("src");
+  if (scriptSrc) {
+    if (document !== ownerDocument) {
+      throw new Error("You must set the current document to the global document to use script src in tests");
+    }
+    try {
+      require(scriptSrc);
+    } catch (error) {
+      var event = new window.ErrorEvent("error", { error: error });
+      window.dispatchEvent(event);
+    }
+    return;
+  }
+  var newScript = ownerDocument.createElement("script");
+  newScript.textContent = script.textContent;
+  for (var index = 0; index < script.attributes.length; index++) {
+    var attribute = script.attributes[index];
+    newScript.setAttribute(attribute.name, attribute.value);
+  }
+  parent.insertBefore(newScript, script);
+  parent.removeChild(script);
+}
+
+async function __js2FizzInsertNodesAndExecuteScripts(source, target, CSPnonce) {
+  var ownerDocument = target.ownerDocument || target;
+  var badNonceScriptNodes = new Map();
+  if (CSPnonce) {
+    var scripts = source.querySelectorAll("script");
+    for (var index = 0; index < scripts.length; index++) {
+      var script = scripts[index];
+      if (!script.hasAttribute("src") && script.getAttribute("nonce") !== CSPnonce) {
+        badNonceScriptNodes.set(script, script.textContent);
+        script.textContent = "";
+      }
+    }
+  }
+  var lastChild = null;
+  while (source.firstChild) {
+    var node = source.firstChild;
+    if (lastChild === node) throw new Error("Infinite loop.");
+    lastChild = node;
+    if (node.nodeType === 1) {
+      var element = node;
+      if (
+        element.dataset != null &&
+        (element.dataset.rxi != null ||
+          element.dataset.rri != null ||
+          element.dataset.rci != null ||
+          element.dataset.rsi != null)
+      ) {
+        ownerDocument.body.appendChild(element);
+      } else {
+        target.appendChild(element);
+        if (element.nodeName === "SCRIPT") {
+          await __js2FizzExecuteScript(element);
+        } else {
+          var nestedScripts = element.querySelectorAll("script");
+          for (var nestedIndex = 0; nestedIndex < nestedScripts.length; nestedIndex++) {
+            await __js2FizzExecuteScript(nestedScripts[nestedIndex]);
+          }
+        }
+      }
+    } else {
+      target.appendChild(node);
+    }
+  }
+  badNonceScriptNodes.forEach(function (scriptContent, script) {
+    script.textContent = scriptContent;
+  });
+}
+
+function __js2FizzMergeOptions(options, defaultOptions) {
+  return Object.assign({}, defaultOptions, options);
+}
+
+function __js2FizzStripExternalRuntimeInNodes(nodes, externalRuntimeSrc) {
+  if (!Array.isArray(nodes)) nodes = Array.from(nodes);
+  if (externalRuntimeSrc == null) return nodes;
+  return nodes.filter(function (node) {
+    return (
+      (node.tagName !== "SCRIPT" && node.tagName !== "script") ||
+      node.getAttribute("src") !== externalRuntimeSrc
+    );
+  });
+}
+
+function __js2FizzGetVisibleChildren(element) {
+  var children = [];
+  var node = element.firstChild;
+  while (node) {
+    if (node.nodeType === 1) {
+      if (
+        ((node.tagName !== "SCRIPT" && node.tagName !== "script") || node.hasAttribute("data-meaningful")) &&
+        node.tagName !== "TEMPLATE" &&
+        node.tagName !== "template" &&
+        !node.hasAttribute("hidden") &&
+        !node.hasAttribute("aria-hidden") &&
+        (node.getAttribute("rel") !== "expect" || node.getAttribute("blocking") !== "render")
+      ) {
+        var props = {};
+        var attributes = node.attributes;
+        for (var index = 0; index < attributes.length; index++) {
+          if (attributes[index].name === "id" && attributes[index].value.indexOf(":") >= 0) continue;
+          props[attributes[index].name] = attributes[index].value;
+        }
+        var nestedChildren = __js2FizzGetVisibleChildren(node);
+        if (nestedChildren !== undefined) props.children = nestedChildren;
+        children.push(__js2RequireActual("react").createElement(node.tagName.toLowerCase(), props));
+      }
+    } else if (node.nodeType === 3) {
+      children.push(node.data);
+    }
+    node = node.nextSibling;
+  }
+  return children.length === 0 ? undefined : children.length === 1 ? children[0] : children;
+}
+
+var __js2FizzTestUtils = {
+  insertNodesAndExecuteScripts: __js2FizzInsertNodesAndExecuteScripts,
+  mergeOptions: __js2FizzMergeOptions,
+  stripExternalRuntimeInNodes: __js2FizzStripExternalRuntimeInNodes,
+  getVisibleChildren: __js2FizzGetVisibleChildren,
+};
 
 function __js2WrapRoot(hostRoot) {
   return {
