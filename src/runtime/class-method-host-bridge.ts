@@ -10,6 +10,45 @@ export interface ClassMethodHostBridgeDeps {
   marshalBridgeResult(value: any, callbackState: ClassMethodCallbackState): any;
 }
 
+export function invokeResolvedClassMethod(
+  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
+  obj: any,
+  key: any,
+  exports: ClassMethodExports | undefined,
+  receiver: any,
+  args: any[],
+  miss: unknown,
+  unwrap: (value: any) => any,
+): any {
+  const method = resolver(obj, key, exports);
+  if (method === miss) return miss;
+  const result = method.apply(receiver, args);
+  return result === obj || result === receiver ? obj : unwrap(result);
+}
+
+export function createResolvedClassMethodInvoker(
+  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
+  miss: unknown,
+  unwrap: (value: any) => any,
+): (obj: any, key: any, exports: ClassMethodExports | undefined, receiver: any, args: any[]) => any {
+  return (obj, key, exports, receiver, args) =>
+    invokeResolvedClassMethod(resolver, obj, key, exports, receiver, args, miss, unwrap);
+}
+
+export function resolveSubclassParent(
+  parentName: string,
+  deps: Record<string, any> | undefined,
+  resolveNamespace: (path: string[], name: string, deps?: Record<string, any>) => any,
+): any {
+  let parent = (deps && deps[parentName]) ?? (globalThis as any)[parentName];
+  if (typeof parent !== "function" && parentName.includes(".")) {
+    const parts = parentName.split(".");
+    const name = parts.pop();
+    if (name) parent = resolveNamespace(parts, name, deps);
+  }
+  return parent;
+}
+
 /**
  * Build the host-side resolver for compiled class methods. The resolver keeps
  * method identity stable per instance and reads the compiler-emitted member
