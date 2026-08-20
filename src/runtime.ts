@@ -5819,7 +5819,8 @@ function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record
 const _resolveClassMemberOnInstance = createClassMemberResolver({
   miss: _MISS,
   canBeWeakKey: _canBeWeakKey,
-  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object),
+  isRegisteredInstance: (value) => _fnctorInstanceCtor.has(value as object) || _userClassTags.has(value as object),
+  getClassName: (value) => _userClassTags.get(value as object),
   marshalBridgeResult: _marshalBridgeResult,
 });
 
@@ -12293,6 +12294,19 @@ assert._isSameValue = isSameValue;
             return ret === wrappedObj ? obj : _unwrapForHost(ret);
           }
           if (typeof fn !== "function") {
+            // Host-backed user subclasses (for example jsdom's
+            // `VirtualConsole extends EventEmitter`) keep the real host object
+            // as their instance. Their own compiled methods are not installed
+            // on the host prototype, so a property read returns `undefined`;
+            // resolve the class-qualified externref bridge before the
+            // WasmGC-struct recovery paths below.
+            {
+              const resolvedClassMethod = _resolveClassMemberOnInstance(obj, method, exports);
+              if (resolvedClassMethod !== _MISS) {
+                const ret = resolvedClassMethod.apply(wrappedObj, wrappedArgs);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+              }
+            }
             // A struct proxy can have been materialized during the module start
             // function, before setInstance() made generated __sget_* exports
             // available. Its cached host view may therefore miss a physical
@@ -15474,8 +15488,17 @@ assert._isSameValue = isSameValue;
           if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
             return instance;
           }
-          // Look up the parent constructor — prefer host deps then globalThis.
-          const Parent: any = (deps && (deps as any)[parentName]) ?? (globalThis as any)[parentName];
+          // Look up the parent constructor — prefer an explicitly supplied
+          // dependency, then a global, and finally a dotted namespace path
+          // such as `events.EventEmitter`. Node module constructors are not
+          // globals, so the latter must use the same require-backed resolver
+          // as ordinary extern-class construction.
+          let Parent: any = (deps && (deps as any)[parentName]) ?? (globalThis as any)[parentName];
+          if (typeof Parent !== "function" && parentName.includes(".")) {
+            const parts = parentName.split(".");
+            const className = parts.pop();
+            if (className) Parent = _resolveNamespacedClass(parts, className, deps);
+          }
           if (typeof Parent !== "function") {
             // Cannot synthesize — return instance unchanged.
             return instance;
@@ -15774,13 +15797,23 @@ assert._isSameValue = isSameValue;
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
       return (id: number, cap: any) => {
+        // Keep the canonical WasmGC capture struct when a host-facing proxy
+        // crossed the import. Callback bodies cast captures to their exact
+        // struct type, so passing the proxy back would trap.
+        const callbackCap = _unwrapForHost(cap);
         // #3214 B2 reserves -1 for a reusable canonical IR closure and -2 for
         // the checker-proven one-shot inline form. Legacy callbacks keep their
         // non-negative `__cb_N` ids and remain on the existing dispatch path.
-        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
-        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
+        if (id === -2) return _wrapVoidHostCallback(callbackCap, callbackState, false);
+        if (id === -1) return _wrapVoidHostCallback(callbackCap, callbackState);
         const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, intent.constructible === true);
+        return createNativeFunctionCallbackBridge(
+          id,
+          callbackCap,
+          callbackState,
+          policy,
+          intent.constructible === true,
+        );
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {

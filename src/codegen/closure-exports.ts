@@ -538,7 +538,11 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
 
   let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
 
-  for (const entry of entries) {
+  // `funcrefDispatch` is built by prepending each arm, so reverse the
+  // priority order returned by `orderClosureDispatchEntries` to keep the
+  // broad-signature arm first at runtime.
+  const dispatchEntries = orderClosureDispatchEntries(ctx, entries);
+  for (const entry of [...dispatchEntries].reverse()) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
@@ -681,7 +685,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // (collectClosureBaseWrapperTypeIdxs): chain a `ref.test` per distinct self
   // shape, extracting field 0 from whichever matches. `funcLocal` stays null
   // when nothing matches and the dispatch falls through as before.
-  body.push(...buildFuncrefExtraction(ctx, entries, anyLocal, funcLocal));
+  body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
   body.push(...funcrefDispatch);
 
   publishClosureHostBridge(
@@ -777,6 +781,52 @@ function buildFuncrefExtraction(
     });
   }
   return out;
+}
+
+/**
+ * Order overlapping funcref signatures before emitting a dynamic dispatcher.
+ *
+ * Wasm function-reference subtyping is contravariant in parameters.  That
+ * means a closure whose parameter is `externref` can also satisfy a
+ * `ref.test` for a closure whose parameter is a narrower GC reference.  The
+ * old insertion order consequently let a `(self, ref $Vec)` arm claim a
+ * `(self, externref)` closure first; its argument conversion then attempted
+ * to cast an ordinary host event object to `$Vec` and trapped.  Put broad
+ * parameter signatures first (and concrete result signatures first), while
+ * keeping rest-parameter arms ahead of ordinary vec arms.  The method
+ * dispatcher uses this order directly; the plain dispatcher reverses it when
+ * constructing its nested if ladder below.
+ */
+function orderClosureDispatchEntries<T extends { funcTypeIdx: number; rest?: unknown }>(
+  ctx: CodegenContext,
+  entries: T[],
+): T[] {
+  const breadth = (type: ValType | undefined): number =>
+    type?.kind === "externref" || type?.kind === "anyref" ? 1 : 0;
+  const score = (entry: T) => {
+    const def = ctx.mod.types[entry.funcTypeIdx];
+    if (!def || def.kind !== "func") return { params: 0, results: 0 };
+    // Skip the lifted self parameter. Host dispatch only converts user args.
+    const params = def.params.slice(1).reduce((sum, type) => sum + breadth(type), 0);
+    const results = def.results.reduce((sum, type) => sum + breadth(type), 0);
+    return { params, results };
+  };
+  const ordered = entries
+    .map((entry, index) => ({ entry, index, score: score(entry) }))
+    .sort((a, b) => {
+      // Shape-qualified rest entries must win over a same-signature ordinary
+      // vec entry.  The stable index tie-break preserves deterministic output.
+      const restOrder = Number(Boolean(b.entry.rest)) - Number(Boolean(a.entry.rest));
+      if (restOrder !== 0) return restOrder;
+      // Function-parameter contravariance: broad host-facing parameters first.
+      if (a.score.params !== b.score.params) return b.score.params - a.score.params;
+      // Function-result covariance: concrete results first, broad externref
+      // results last, so a broad result arm cannot claim a narrower closure.
+      if (a.score.results !== b.score.results) return a.score.results - b.score.results;
+      return a.index - b.index;
+    })
+    .map(({ entry }) => entry);
+  return ordered;
 }
 
 /**
@@ -923,7 +973,14 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   // dispatch built after the loop.
   const callBodyByEntry: { entry: (typeof entries)[number]; callBody: Instr[] }[] = [];
 
-  for (const entry of entries) {
+  // The method dispatcher emits the arity bucket as a flat, ordered ladder;
+  // keep its priority order directly.  The fallback nested ladder below is
+  // assembled by prepending, so it reverses this sequence once more.
+  const dispatchEntries = orderClosureDispatchEntries(ctx, entries);
+  // The fallback ladder is built by prepending arms, whereas the arity bucket
+  // below consumes `callBodyByEntry` in sequence. Build the nested ladder in
+  // reverse and restore the flat list afterward so both paths agree.
+  for (const entry of [...dispatchEntries].reverse()) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
@@ -1079,6 +1136,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     ];
     callBodyByEntry.push({ entry, callBody });
   }
+  callBodyByEntry.reverse();
 
   // (#1712) Per-shape funcref extraction — same rationale as
   // `emitClosureCallExportN` / `buildFuncrefExtraction`: shared captures pass
@@ -1086,7 +1144,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   // require their own shape arms. The funcref dispatch below leaves its
   // externref result on the stack (null fallthrough when `funcLocal` stayed
   // null because no shape matched).
-  body.push(...buildFuncrefExtraction(ctx, entries, anyLocal, funcLocal));
+  body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
 
   // (#3673 round 10) Arity-bucketed signature dispatch. The full ladder below
   // is one funcref `ref.test` per DISTINCT closure func type (≈48 in compiled
@@ -1126,7 +1184,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       bucket.push(item);
     }
     const bucketArms: Instr[] = [];
-    for (const [closureArity, items] of buckets) {
+    for (const [closureArity] of buckets) {
+      // A rest closure accepts every host arity at or above its fixed prefix.
+      // Its Wasm funcref often has the same vec signature as an ordinary
+      // callback, so leaving it in only the prefix bucket lets the ordinary
+      // arm claim it first (and cast a host argument to the vec). Include rest
+      // entries in every compatible bucket and keep the dispatch order from
+      // `callBodyByEntry`, where rest arms precede ordinary vec arms.
+      const items = callBodyByEntry.filter(
+        ({ entry }) => entry.rest !== undefined || entry.closureArity === closureArity,
+      );
       bucketArms.push(
         { op: "local.get", index: declaredLocal },
         { op: "i32.const", value: closureArity },

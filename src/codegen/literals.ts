@@ -2559,6 +2559,16 @@ export function compileObjectLiteralForStruct(
     if (methodName === undefined) continue;
     const fullName = `${typeName}_${methodName}`;
     const existingFuncIdx = ctx.funcMap.get(fullName);
+    // Struct-shape deduplication is intentionally independent of source
+    // identity.  Once one literal has compiled a method body, reusing its
+    // name-keyed function for a later same-shape literal also reuses the
+    // promoted capture globals.  The next literal can therefore run the first
+    // body's captures (or observe a null capture slot) even though its method
+    // source is different.  A populated existing body proves this is a later
+    // literal; fork its method just as we already do for ToPrimitive methods.
+    // Empty pre-registered placeholders remain shared for the first literal.
+    const existingFunc = existingFuncIdx !== undefined ? definedFuncAt(ctx, existingFuncIdx) : undefined;
+    const forkForDistinctLiteral = existingFunc !== undefined && existingFunc.body.length > 0;
 
     // (#1989) ToPrimitive-relevant methods (`valueOf`/`toString`/
     // `@@toPrimitive`) MUST be per-instance when two same-shape object literals
@@ -2657,7 +2667,7 @@ export function compileObjectLiteralForStruct(
     // signature matches the first literal's (the exact #1989 same-shape repro).
     // Other methods keep the #1557 behaviour: fork only on a real signature
     // mismatch.
-    if (!forkToPrimitive) {
+    if (!forkToPrimitive && !forkForDistinctLiteral) {
       // Reaching here with `!forkToPrimitive` guarantees `existingFuncIdx` is
       // defined (the `existingFuncIdx === undefined && !forkToPrimitive`
       // short-circuit above already `continue`d), but TS can't narrow it.

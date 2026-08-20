@@ -3137,6 +3137,18 @@ export function compileDeclarations(
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
     }
+    // Captured globals are lexical to the function/module-init body that
+    // promotes them. Module initialization is intentionally compiled more
+    // than once (discovery and final emission); carrying the previous pass's
+    // name-keyed capture map into the next pass makes a later same-named
+    // binding resolve to the earlier pass's global instead of its own. Reset
+    // the short-lived capture indexes while retaining the already-emitted
+    // Wasm globals/functions; the pass being compiled will register fresh
+    // bindings and all emitted instructions retain their concrete indices.
+    ctx.capturedGlobals.clear();
+    ctx.capturedGlobalsWidened.clear();
+    ctx.capturedBoxGlobals?.clear();
+    ctx.tdzGlobals.clear();
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],

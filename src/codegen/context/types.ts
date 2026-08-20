@@ -601,6 +601,13 @@ export interface FunctionContext {
   /** Bindings widened because their assignments cross representation domains.
    * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
   mixedAssignmentCarrierVars?: Set<string>;
+  /**
+   * Callback captures whose ABI deliberately remains externref.  Their
+   * checker type may be a concrete array/object, but the value crossed a host
+   * callback boundary and must stay dynamically dispatched rather than being
+   * narrowed to a WasmGC ref that the host cannot reconstruct reliably.
+   */
+  captureExternrefNames?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */

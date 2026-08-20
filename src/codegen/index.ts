@@ -6624,8 +6624,81 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       const exportName = `__class_call_${key}_vararg`;
       if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, -1);
     }
+    // Host-backed user subclasses use a real JS object as their receiver, so
+    // the historical ref.test dispatch above can never identify them. Publish
+    // a class-qualified direct bridge for each own method; the runtime selects
+    // it from the user-class tag before consulting the struct/fnctor surface.
+    for (const className of [...ctx.classExternrefBackedSet].sort()) {
+      for (const key of [...keys].sort()) {
+        emitExternrefClassMethodDispatch(ctx, className, key);
+      }
+    }
     emitClassMemberKindExports(ctx, dispatchTypeIdx, [...keys].sort());
   }
+}
+
+/**
+ * Emit a direct `(externref, ...externref) -> externref` bridge for one own
+ * method of an externref-backed user subclass. Such instances are host
+ * objects (for example `VirtualConsole extends EventEmitter`), therefore a
+ * `ref.test` against the synthetic WasmGC class type is necessarily false.
+ * The class-qualified export is resolved by the runtime through the instance
+ * tag installed by `__tag_user_class`.
+ */
+function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string, methodName: string): void {
+  const fullName = `${className}_${methodName}`;
+  if (!ctx.classMethodSet.has(fullName)) return;
+  const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
+  if (methodIdx === undefined) return;
+  const method = definedFuncAt(ctx, methodIdx);
+  const methodType = method ? ctx.mod.types[method.typeIdx] : undefined;
+  if (!methodType || methodType.kind !== "func" || methodType.params.length < 1) return;
+  if (!supportsHostClassBridgeParam(methodType.params[0]!)) return;
+  const params = methodType.params.slice(1);
+  // Keep the bridge conservative: an externref call boundary can pass host
+  // values directly. Numeric/ref-specific adapters remain on the existing
+  // compiler-generated call path until they have a dedicated ABI contract.
+  if (params.some((param) => !supportsHostClassBridgeParam(param))) return;
+  const exportName = `__class_call_${className}_${methodName}_${params.length}`;
+  if (ctx.funcMap.has(exportName)) return;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, ...params.map(() => ({ kind: "externref" as const }))],
+    [{ kind: "externref" }],
+    `$${exportName}_type`,
+  );
+  const body: Instr[] = [];
+  for (let index = 0; index < params.length + 1; index++) body.push({ op: "local.get", index });
+  body.push({ op: "call", funcIdx: methodIdx });
+  const resultType = methodType.results.length > 0 ? methodType.results[0] : undefined;
+  if (resultType === undefined) {
+    const undefinedIdx = ctx.funcMap.get("__get_undefined");
+    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
+  } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
+    body.push({ op: "extern.convert_any" });
+  } else if (resultType.kind === "f64") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "i32") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "i64") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
+  } else if (resultType.kind === "f32") {
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx === undefined) return;
+    body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
+  }
+
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({ name: exportName, typeIdx, locals: [], body, exported: true });
+  exportFunc(ctx.mod, exportName, funcIdx);
+  ctx.funcMap.set(exportName, funcIdx);
 }
 
 /**
@@ -7728,6 +7801,16 @@ export function generateMultiModule(
       for (const sf of multiAst.sourceFiles) {
         collectExternDeclarations(ctx, sf);
       }
+      // `analyzeMultiSource` keeps the import-scoped Node emulation surface
+      // (`__js2wasm_node_env.d.ts`) in the TypeScript Program but deliberately
+      // omits it from `multiAst.sourceFiles` so it is not emitted as user code.
+      // It still carries the typed Node class stubs used by host heritage (for
+      // example `events.EventEmitter`), so collect its declarations before
+      // class discovery just like the single-file preprocessor does.
+      const nodeEnvDts = multiAst.program
+        .getSourceFiles()
+        .find((sf) => sf.fileName.endsWith("__js2wasm_node_env.d.ts"));
+      if (nodeEnvDts) collectExternDeclarations(ctx, nodeEnvDts);
     });
 
     // Multi-source projects can import every class declaration from package

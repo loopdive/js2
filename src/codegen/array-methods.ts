@@ -1647,7 +1647,15 @@ export function compileArrayMethodCall(
       break;
     }
     case "includes":
-      result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // A callback capture is deliberately kept as externref even when the
+      // checker narrows it to `string[]`.  The host may hand that capture back
+      // as a proxy/raw externref whose concrete WasmGC vec type is not the
+      // statically inferred one; the native vec loop would then ref.cast and
+      // trap.  Route that dynamic receiver through the existing host method
+      // bridge, which materializes/dispatches the array without a typed cast.
+      result = receiverIsExternref
+        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "includes")
+        : compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
       result = shouldUseHostArrayMethod(ctx, receiverIsExternref)

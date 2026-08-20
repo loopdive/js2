@@ -749,6 +749,7 @@ function compileIdentifierCore(
     // their own use site (ToNumber(undefined) = NaN matches JS).
     if (
       declaredType.kind === "externref" &&
+      !fctx.captureExternrefNames?.has(name) &&
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name)

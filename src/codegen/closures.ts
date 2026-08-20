@@ -3642,6 +3642,7 @@ export function compileArrowAsCallback(
     // (When needsThis=true, `this` is already bound to the `__this` param at
     // localMap index 1, so the fallback is never reached for that path.)
     readsCurrentThis: true,
+    captureExternrefNames: new Set(captures.filter((cap) => cap.type.kind === "externref").map((cap) => cap.name)),
   };
 
   // (#1384) Track cbFctx.body in liveBodies BEFORE any emission so addUnionImports
@@ -3709,6 +3710,14 @@ export function compileArrowAsCallback(
       }
     }
   }
+  // Callback captures are materialized into locals in this frame before the
+  // callback body is compiled.  Freeze those slots so a nested sibling call
+  // prepends the extracted capture rather than reusing the declaring frame's
+  // `outerLocalIdx` (which can alias a callback parameter such as `event`).
+  recordCaptureSlots(
+    cbFctx,
+    captures.map((capture) => capture.name),
+  );
   rehydrateWithEnvironmentScopes(fctx, cbFctx, cbName, ownLocals);
   // 4b. Convert ref/ref_null params from externref to their resolved types.
   //     The JS host passes all GC ref types as externref, so we need to convert

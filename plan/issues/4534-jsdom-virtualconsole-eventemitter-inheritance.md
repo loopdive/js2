@@ -1,10 +1,10 @@
 ---
 id: 4534
 title: "jsdom: VirtualConsole loses inherited EventEmitter methods — 'on is not a function', 5 of 6 upstream tests fail"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-20
 priority: medium
 horizon: m
 feasibility: medium
@@ -19,6 +19,26 @@ files:
 ---
 
 # jsdom: `class VirtualConsole extends EventEmitter` has no `on`
+
+## Current checkpoint (2026-08-20)
+
+The focused upstream slice now compiles and passes **6/6 original tests in
+Wasm** (and 6/6 in Node) on the working branch for draft PR #4660,
+`codex/react-redux-infra`. The fix combines the host-backed subclass member
+bridge with callback capture-slot preservation, dynamic array-method dispatch
+for host-owned receivers, and distinct closure bodies for same-shaped object
+literal methods. The measured run is:
+
+```text
+testsRegistered=6  nativePassed=6  wasmPassed=6  wasmFailed=0
+compileSucceeded=1  compileValidated=1  runtimeFailed=0
+```
+
+The full upstream package still has 17 source files; this harness intentionally
+selects the six tests from `test/api/virtual-console.js` and defers the other
+16 files (312 callbacks). The issue remains open until the infrastructure is
+landed and the reduction/regression coverage is committed; the draft PR is not
+yet a claim that all jsdom APIs work.
 
 ## Problem
 
@@ -75,7 +95,8 @@ node --import tsx tests/dogfood/jsdom-upstream-suite.mjs --json
 
 ## Acceptance criteria
 
-- [ ] Inherited methods callable on compiled subclass instances for the
+- [x] Inherited methods callable on compiled subclass instances for the
       pattern jsdom uses.
-- [ ] jsdom pinned slice ≥ 5/6, residual named.
+- [x] jsdom pinned slice ≥ 5/6, residual named (the selected slice is now 6/6;
+      16 upstream files remain intentionally deferred by the harness).
 - [ ] Reduction test committed.

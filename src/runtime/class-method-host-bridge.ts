@@ -5,6 +5,8 @@ export interface ClassMethodHostBridgeDeps {
   miss: unknown;
   canBeWeakKey(value: unknown): boolean;
   isRegisteredInstance(value: unknown): boolean;
+  /** Return the innermost compiled user-class name for a host-backed object. */
+  getClassName?(value: unknown): string | undefined;
   marshalBridgeResult(value: any, callbackState: ClassMethodCallbackState): any;
 }
 
@@ -23,6 +25,58 @@ export function createClassMemberResolver(
     if (exports === undefined || typeof key !== "string") return deps.miss;
     if (obj == null || typeof obj !== "object" || !deps.canBeWeakKey(obj)) return deps.miss;
     if (!deps.isRegisteredInstance(obj)) return deps.miss;
+    const callbackState: ClassMethodCallbackState = { getExports: () => exports };
+    const className = deps.getClassName?.(obj);
+    if (className !== undefined) {
+      // Externref-backed subclasses cannot use the ordinary ref.test cascade:
+      // the receiver is the real host object, not a WasmGC struct. The codegen
+      // emits a class-qualified bridge for each such method, so resolve it
+      // directly before consulting the historical fnctor/struct surface.
+      const prefix = `__class_call_${className}_${key}_`;
+      const candidates: Array<{ arity: number; fn: Function }> = [];
+      // `callbackState.getExports()` may be the host-bridge projection whose
+      // generated helpers live on a prototype. Walk the full export view, not
+      // only its enumerable own keys, so class-qualified bridges remain
+      // discoverable after projection.
+      const seenNames = new Set<string>();
+      let exportView: Record<string, any> | null = exports;
+      while (exportView !== null) {
+        for (const name of Object.getOwnPropertyNames(exportView)) {
+          if (seenNames.has(name) || !name.startsWith(prefix)) continue;
+          seenNames.add(name);
+          const suffix = name.slice(prefix.length);
+          if (!/^\d+$/.test(suffix)) continue;
+          const fn = exports[name];
+          if (typeof fn === "function") candidates.push({ arity: Number(suffix), fn });
+        }
+        exportView = Object.getPrototypeOf(exportView) as Record<string, any> | null;
+      }
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => a.arity - b.arity);
+        let bridges = classMethodHostBridges.get(obj);
+        if (!bridges) {
+          bridges = new Map();
+          classMethodHostBridges.set(obj, bridges);
+        }
+        let fn = bridges.get(key);
+        if (!fn) {
+          fn = function externrefClassMethodHostBridge(this: any, ...args: any[]) {
+            // Prefer the declaration whose arity covers the call, while
+            // retaining the smallest declaration for omitted/default args.
+            const selected =
+              candidates.find((candidate) => candidate.arity >= args.length) ?? candidates[candidates.length - 1]!;
+            const callArgs =
+              args.length < selected.arity
+                ? args.concat(new Array(selected.arity - args.length).fill(undefined))
+                : args.slice(0, selected.arity);
+            return deps.marshalBridgeResult(selected.fn(obj, ...callArgs), callbackState);
+          };
+          Object.defineProperty(fn, "name", { value: key, configurable: true });
+          bridges.set(key, fn);
+        }
+        return fn;
+      }
+    }
     let kindCache = memberKindFnCache.get(exports);
     if (!kindCache) {
       kindCache = new Map();
@@ -41,7 +95,6 @@ export function createClassMemberResolver(
     } catch {
       return deps.miss;
     }
-    const callbackState: ClassMethodCallbackState = { getExports: () => exports };
     if (kind === 2) {
       const getFn = exports[`__call_get_${key}`] as unknown as ((value: any) => any) | undefined;
       if (typeof getFn !== "function") return deps.miss;
