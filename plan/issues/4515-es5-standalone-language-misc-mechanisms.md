@@ -21,7 +21,7 @@ loc-budget-allow:
   # module src/codegen/closures/set-accessor-param.ts; the god-file grows by the
   # IMPORT LINE ONLY (+1).
   - src/codegen/closures.ts
-related: [2668, 1888, 3626, 2666]
+related: [2668, 1888, 3626, 2666, 4504]
 loc-budget-allow:
   # One import line. The set-accessor parameter predicate + its rationale live
   # in the new leaf module src/codegen/closures/set-accessor-param.ts; the
@@ -313,6 +313,19 @@ they should **not** be routed to #4555 alongside its primitive-receiver getters:
   **Script-global-`this` identity**, adjacent to the #4500 realm-global family.
 
 #4555 keeps `f_arg.length` and its own primitive-receiver getters.
+
+## 2026-08-20 follow-up — descriptor getter result carrier
+
+Fresh #4504 triage isolated
+`built-ins/Object/defineProperty/15.2.3.6-4-589.js` from prototype lookup. The
+inherited setters already run, create no own properties, receive the Date RHS as
+externref, and store it in an externref ref-cell. The remaining loss is on the
+getter/result boundary: because the captured cell starts at numeric `1001`, the
+getter closure is emitted with an f64 result ABI and ends by unboxing the stored
+Date, so the read becomes `NaN`. Extend this issue's accessor dynamic-boundary
+work to descriptor getter result carriers, or split a narrow follow-up before
+implementation. #4504 must keep this row visible but excluded from its nine-row
+descriptor-walk denominator.
 
 ### The relational/ToPrimitive bucket is spun out to #4564
 

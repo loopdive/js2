@@ -3404,6 +3404,11 @@ function tryEmitPinnedStructMemberSet(
 ): ValType | undefined {
   if (ts.isPrivateIdentifier(target.name)) return undefined;
   const propName = target.name.text;
+  // Preserve the source Reference's strictness through the pinned-fnctor
+  // dispatcher.  A synthetic module wrapper must not turn a sloppy script
+  // assignment into `__extern_set_strict`: that would make an inherited
+  // refusal throw instead of completing as the required no-op.
+  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
   if (
     propName === "length" ||
     propName === "constructor" ||
@@ -3420,7 +3425,7 @@ function tryEmitPinnedStructMemberSet(
   // Pre-check the dispatcher is reservable BEFORE emitting any receiver/value
   // side effects, so a decline leaves the body untouched (the
   // emitAlternateStructSetDispatch reserve below is idempotent).
-  if (reserveMemberSetDispatch(ctx, propName, /*strict*/ true, fctx) === undefined) return undefined;
+  if (reserveMemberSetDispatch(ctx, propName, strict, fctx) === undefined) return undefined;
 
   // Evaluate the receiver (reference before value), coerce to externref.
   const objResult = compileExpression(ctx, fctx, target.expression);
@@ -3453,7 +3458,7 @@ function tryEmitPinnedStructMemberSet(
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
   // (#4157 A) statically-f64 value → the typed write twin (no box/unbox).
-  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, /*strict*/ true);
+  const f64Set = tryEmitTypedF64MemberSet(ctx, fctx, objLocal, valResult, propName, strict);
   if (f64Set !== undefined) return f64Set;
   if (valResult && ctx.booleanPropertyNames.has(propName)) {
     // #2847: a dynamic method bridge may already have boxed an untyped
@@ -3473,7 +3478,7 @@ function tryEmitPinnedStructMemberSet(
 
   // #2664 deferred set dispatcher: native `struct.set` arms (incl. the
   // late-registered `__fnctor_<F>`) + `__extern_set_strict` sidecar terminal.
-  const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, /*strict*/ true);
+  const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, strict);
   if (!dispatched) return undefined; // no struct candidate yet — fall through to the normal write path
   // `=` evaluates to the assigned value.
   fctx.body.push({ op: "local.get", index: valLocal });
@@ -4276,6 +4281,17 @@ function compilePropertyAssignment(
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
   }
   const presenceSlot = presenceSlotOf(fields, fieldName);
+
+  // A flow-grown slot with a clear presence bit is not an own property yet.
+  // When inherited descriptors are observable, route it through the existing
+  // dynamic member-set dispatcher so its strict/non-strict terminal reaches
+  // the shared four-state [[Set]] decision before materializing the slot.
+  // This runs before either receiver or RHS is emitted, preserving evaluation
+  // order and leaving the direct physical fast path for a present slot in the
+  // dispatcher/runtime itself.
+  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && presenceSlot !== undefined) {
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+  }
 
   const structSelfType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };
   const structObjResult = compileExpression(ctx, fctx, target.expression, structSelfType);

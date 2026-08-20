@@ -93,6 +93,9 @@ export function fillErrorPropHelpers(ctx: CodegenContext): void {
   const ensureIdx = ctx.funcMap.get(ERROR_PROP_BAG_ENSURE);
   const callGetIdx = ctx.funcMap.get(CALL_ACCESSOR_GET);
   const callSetIdx = ctx.funcMap.get(CALL_ACCESSOR_SET);
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   if (
     newObjectIdx === undefined ||
     objFindIdx === undefined ||
@@ -233,62 +236,124 @@ export function fillErrorPropHelpers(ctx: CodegenContext): void {
   const SET_BAG = 4;
   const SET_ENTRY = 5;
   const SET_SETTER = 6;
+  const sharedSetAvailable = setDecideIdx !== undefined && setOwnIdx !== undefined && setResultGlobalIdx !== undefined;
   setFn(
     ERROR_PROP_SET,
-    [
-      { name: "any", type: ANY },
-      { name: "bag", type: EXT },
-      { name: "entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
-      { name: "setter", type: EXT },
-    ],
-    [
-      ...requireError(3, [{ op: "return" }]),
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: ensureIdx },
-      { op: "local.tee", index: SET_BAG },
-      { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-      { op: "local.get", index: SET_BAG },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: SET_ENTRY },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: SET_ENTRY },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-          { op: "i32.const", value: FLAG_ACCESSOR },
-          { op: "i32.and" },
+    sharedSetAvailable
+      ? [
+          { name: "any", type: ANY },
+          { name: "bag", type: EXT },
+          { name: "decision", type: I32 },
+        ]
+      : [
+          { name: "any", type: ANY },
+          { name: "bag", type: EXT },
+          { name: "entry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+          { name: "setter", type: EXT },
+        ],
+    sharedSetAvailable
+      ? [
+          ...requireError(3, [{ op: "return" }]),
+          // Query the existing own bag first.  The shared decision receives
+          // this nullable layer and only an allowed miss may ensure it.
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: lookupIdx },
+          { op: "local.set", index: 4 },
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: setDecideIdx! },
+          { op: "local.tee", index: 5 },
+          { op: "i32.const", value: 2 }, // SET_DECISION_HANDLED
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "global.set", index: setResultGlobalIdx! }, { op: "return" }],
+          },
+          { op: "local.get", index: 5 },
+          { op: "i32.const", value: 3 }, // SET_DECISION_REFUSED
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 2 }, { op: "global.set", index: setResultGlobalIdx! }, { op: "return" }],
+          },
+          { op: "local.get", index: 4 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: ensureIdx },
+              { op: "local.set", index: 4 },
+            ],
+          },
+          { op: "local.get", index: 4 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            // A missing side-bag allocation is an unadmitted
+            // representation boundary, not an OrdinarySet refusal.
+            then: [{ op: "return" }],
+          },
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: setOwnIdx! },
+          { op: "global.set", index: setResultGlobalIdx! },
+        ]
+      : [
+          ...requireError(3, [{ op: "return" }]),
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: ensureIdx },
+          { op: "local.tee", index: SET_BAG },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+          { op: "local.get", index: SET_BAG },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: objectTypeIdx },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: objFindIdx },
+          { op: "local.tee", index: SET_ENTRY },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
               { op: "local.get", index: SET_ENTRY },
               { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
-              { op: "extern.convert_any" },
-              { op: "local.tee", index: SET_SETTER },
-              { op: "ref.is_null" },
-              { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-              { op: "local.get", index: 0 },
-              { op: "local.get", index: SET_SETTER },
-              { op: "local.get", index: 2 },
-              { op: "call", funcIdx: callSetIdx },
-              { op: "return" },
+              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+              { op: "i32.const", value: FLAG_ACCESSOR },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: SET_ENTRY },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 5 },
+                  { op: "extern.convert_any" },
+                  { op: "local.tee", index: SET_SETTER },
+                  { op: "ref.is_null" },
+                  { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+                  { op: "local.get", index: 0 },
+                  { op: "local.get", index: SET_SETTER },
+                  { op: "local.get", index: 2 },
+                  { op: "call", funcIdx: callSetIdx },
+                  { op: "return" },
+                ],
+              },
             ],
           },
+          { op: "local.get", index: SET_BAG },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: externSetIdx },
         ],
-      },
-      { op: "local.get", index: SET_BAG },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: externSetIdx },
-    ],
   );
 }

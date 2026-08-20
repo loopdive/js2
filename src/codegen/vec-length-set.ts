@@ -84,6 +84,18 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
   if (strFlattenIdx === undefined || strEqualsIdx === undefined || unboxNumIdx === undefined) return;
+  // #4504's Reflect/strict wrappers observe the final state through this
+  // channel. A valid write to Array's physical own `length` succeeds even
+  // while the descriptor-aware runtime is active; invalid legacy no-ops leave
+  // the channel UNADMITTED rather than masquerading as descriptor refusals.
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
+  const publishSuccess = (): Instr[] =>
+    setResultGlobalIdx === undefined
+      ? []
+      : ([
+          { op: "i32.const", value: 1 },
+          { op: "global.set", index: setResultGlobalIdx },
+        ] satisfies Instr[]);
   // §10.4.2.4 step 3 applies ToUint32(ToNumber(value)) — and ToNumber runs
   // ToPrimitive first, so `arr.length = new Number(1)` / `new String("1")` /
   // `new Boolean(false)` must unwrap through valueOf before the numeric
@@ -237,6 +249,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                   { op: "ref.cast", typeIdx: vecBaseIdx },
                   { op: "local.get", index: lNew },
                   { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
+                  ...publishSuccess(),
                 ],
               },
               // "length" on a vec is handled terminally (a valid write stored

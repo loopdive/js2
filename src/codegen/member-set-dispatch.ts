@@ -44,7 +44,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { buildVecFromExternMaterializer, coercionInstrs, getVecInfo } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
-import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
 import {
   findFnctorLayoutStructsForField,
@@ -178,6 +178,10 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
             { op: "call", funcIdx: fallbackIdx },
           ]
         : [];
+    // The fallback is embedded in several independently finalized branches.
+    // Give each site its own instruction tree so later index remaps cannot
+    // mutate one shared node more than once.
+    const buildFallback = (): Instr[] => structuredClone(fallback) as Instr[];
 
     // (#3927) Cold-tail arms — a write to a flow-grown field this fnctor moved
     // off the main struct. These are the arms that make the split SOUND: with
@@ -199,24 +203,44 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     // each arm embeds its `next` chain exactly once (#1302).
     const layoutLocs = findFnctorLayoutStructsForField(ctx, propName).filter((loc) => loc.mutable);
     const residLocs = findFnctorResidStructsForField(ctx, propName);
+    const inheritedFlowDecisionActive = ctx.standalone && ctx.inheritedSetDescriptorDirty;
     const buildResidArmChain = (idx: number): Instr[] => {
-      if (idx >= residLocs.length) return fallback;
+      if (idx >= residLocs.length) return buildFallback();
       const loc = residLocs[idx]!;
       const ensureIdx = ctx.funcMap.get(residEnsureAllocatorName(loc.baseStructName));
       if (ensureIdx === undefined) return buildResidArmChain(idx + 1);
+      const directResidWrite = (): Instr[] =>
+        residFieldWriteInstrs(
+          loc,
+          2,
+          1,
+          COLD_LOCAL,
+          ensureIdx,
+          coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
+        );
+      const presenceAwareResidWrite: Instr[] =
+        inheritedFlowDecisionActive && loc.presenceSlot !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: loc.baseTypeIdx },
+              ...presenceTestInstrs(loc.baseTypeIdx, loc.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: directResidWrite(),
+                // Delegate exactly once to the strict/non-strict terminal.
+                // The closed-struct extern-set arm performs the shared
+                // descriptor decision before it allocates the resid carrier.
+                else: buildFallback(),
+              },
+            ]
+          : directResidWrite();
       return [
         ...residMatchTestInstrs(loc, 2),
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: residFieldWriteInstrs(
-            loc,
-            2,
-            1,
-            COLD_LOCAL,
-            ensureIdx,
-            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
-          ),
+          then: presenceAwareResidWrite,
           else: buildResidArmChain(idx + 1),
         },
       ];
@@ -224,12 +248,28 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     const buildLayoutArmChain = (idx: number): Instr[] => {
       if (idx >= layoutLocs.length) return buildResidArmChain(0);
       const loc = layoutLocs[idx]!;
+      const directLayoutWrite = (): Instr[] =>
+        layoutFieldWriteInstrs(loc, 2, 1, coercionInstrs(ctx, { kind: "externref" }, loc.fieldType));
+      const presenceAwareLayoutWrite: Instr[] =
+        inheritedFlowDecisionActive && loc.presenceSlot !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: loc.layoutTypeIdx },
+              ...presenceTestInstrs(loc.layoutTypeIdx, loc.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: directLayoutWrite(),
+                else: buildFallback(),
+              },
+            ]
+          : directLayoutWrite();
       return [
         ...layoutMatchTestInstrs(loc, 2),
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: layoutFieldWriteInstrs(loc, 2, 1, coercionInstrs(ctx, { kind: "externref" }, loc.fieldType)),
+          then: presenceAwareLayoutWrite,
           else: buildLayoutArmChain(idx + 1),
         },
       ];
@@ -241,20 +281,42 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       const ensureIdx =
         mainStructName === undefined ? undefined : ctx.funcMap.get(coldTailAllocatorName(mainStructName));
       if (ensureIdx === undefined) return buildColdArmChain(idx + 1);
+      const directColdWrite = (): Instr[] =>
+        coldFieldWriteArm(loc, 2, 1, COLD_LOCAL, ensureIdx, coercionInstrs(ctx, { kind: "externref" }, loc.fieldType));
+      const presenceAwareColdWrite: Instr[] =
+        inheritedFlowDecisionActive && loc.presenceSlot !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: loc.mainStructTypeIdx },
+              { op: "struct.get", typeIdx: loc.mainStructTypeIdx, fieldIdx: loc.coldSlotFieldIdx },
+              { op: "local.set", index: COLD_LOCAL },
+              { op: "local.get", index: COLD_LOCAL },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: buildFallback(),
+                else: [
+                  { op: "local.get", index: COLD_LOCAL },
+                  { op: "ref.cast", typeIdx: loc.coldStructTypeIdx },
+                  ...presenceTestInstrs(loc.coldStructTypeIdx, loc.presenceSlot),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: directColdWrite(),
+                    else: buildFallback(),
+                  },
+                ],
+              },
+            ]
+          : directColdWrite();
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: loc.mainStructTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: coldFieldWriteArm(
-            loc,
-            2,
-            1,
-            COLD_LOCAL,
-            ensureIdx,
-            coercionInstrs(ctx, { kind: "externref" }, loc.fieldType),
-          ),
+          then: presenceAwareColdWrite,
           else: buildColdArmChain(idx + 1),
         },
       ];
@@ -306,10 +368,36 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
               // shape. JS fields are representation-polymorphic; route the
               // incompatible value to the dynamic sidecar instead of trapping
               // on externref -> ref.cast. Dynamic reads use the same sidecar.
-              else: fallback,
+              else: buildFallback(),
             },
           ]
         : setFieldInstrs;
+      // A presence-tracked slot is a flow-grown property, not an own property
+      // until its bit is set.  In a module which can install inherited
+      // descriptors, an absent slot must therefore take the ordinary [[Set]]
+      // path once: that path can invoke a nearer setter or refuse a
+      // non-writable/getter-only descriptor.  The closed-struct arm of
+      // `__extern_set` performs the shared decision and only materializes the
+      // slot on MISS/ALLOW.  A present slot remains a physical own field and
+      // writes directly, ahead of every prototype descriptor.
+      const presenceAwareSetFieldInstrs: Instr[] =
+        ctx.standalone && ctx.inheritedSetDescriptorDirty && cand.presenceSlot !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              ...presenceTestInstrs(cand.structTypeIdx, cand.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: guardedSetFieldInstrs,
+                // This is intentionally the existing strict/non-strict
+                // dispatcher terminal rather than an inline decision: it
+                // preserves the one-call strict TypeError path and lets the
+                // closed-struct runtime publish the final Reflect outcome.
+                else: buildFallback(),
+              },
+            ]
+          : guardedSetFieldInstrs;
       // WasmGC canonicalizes structurally equivalent structs even when their
       // JavaScript field names differ. For collision-stamped structs, ref.test
       // alone can therefore select the wrong logical shape and write another
@@ -326,11 +414,11 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: guardedSetFieldInstrs,
+                then: presenceAwareSetFieldInstrs,
                 else: next,
               },
             ]
-          : guardedSetFieldInstrs;
+          : presenceAwareSetFieldInstrs;
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },

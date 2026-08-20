@@ -1441,6 +1441,14 @@ export function tryEmitProvenReceiverFieldGet(
     }
   }
 
+  // A clear flow-presence bit is a logical own-property miss. In an active
+  // inherited-descriptor module, route it to the dynamic getter so a fnctor
+  // prototype can supply the value rather than inlining `undefined`.
+  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && presenceSlot !== undefined) {
+    noteProvenReceiver(`inherited-presence:${cls}.${propName}`);
+    return undefined;
+  }
+
   const externGetIdx = ctx.funcMap.get("__extern_get");
   if (externGetIdx === undefined) {
     noteProvenReceiver("no-extern-get");

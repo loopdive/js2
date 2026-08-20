@@ -327,13 +327,21 @@ export function buildBagMarkerTestInstrs(
 export function buildBuiltinFnSetRefusalArm(ctx: CodegenContext): Instr[] {
   const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
   if (bfnGetMetaIdx === undefined) return [];
+  const refuse: Instr[] =
+    ctx.externSetResultGlobalIdx === undefined
+      ? [{ op: "return" }]
+      : [
+          { op: "i32.const", value: 2 }, // #4504 SET_RESULT_REFUSED
+          { op: "global.set", index: ctx.externSetResultGlobalIdx },
+          { op: "return" },
+        ];
   return [
     { op: "local.get", index: 0 },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: bfnGetMetaIdx },
     { op: "ref.is_null" },
     { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+    { op: "if", blockType: { kind: "empty" }, then: refuse },
   ];
 }
 
