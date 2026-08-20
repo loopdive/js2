@@ -138,6 +138,7 @@ import {
 export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument };
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 export { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding };
 
 function emitClosureDefaultReturnValue(
@@ -2469,7 +2470,7 @@ export function compileLiftedClosureBody(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && needsImplicitArgumentsObject(arrow, reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {

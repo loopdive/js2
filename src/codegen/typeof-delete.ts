@@ -32,8 +32,9 @@ import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
 import {
+  emitArgumentsTypeofComparison,
   emitPropertyDeleteWithUnmappedArgumentsWriteback,
-  isArgumentsObjectIdentifier,
+  staticTypeofForArgumentsIdentifier,
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue } from "./shared.js";
@@ -1487,7 +1488,8 @@ export function compileTypeofExpression(
       ident = (ident as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(ident)) {
-      if (isArgumentsObjectIdentifier(fctx, ident)) return compileStringLiteral(ctx, fctx, "object"); // (#4555) §10.6
+      const argumentsTypeof = staticTypeofForArgumentsIdentifier(ctx, fctx, ident);
+      if (argumentsTypeof !== null) return compileStringLiteral(ctx, fctx, argumentsTypeof);
       // (#2200 Phase 2) An Annex B B.3.3 block-fn outer binding must be handled
       // BEFORE the `!hasValueDecl` const-fold below: the checker reports its
       // symbol with no `valueDeclaration` at the reference site (the binding is
@@ -1770,11 +1772,7 @@ export function compileTypeofComparison(
     }
     if (ts.isIdentifier(ident)) {
       // (#4555) §10.6 — see isArgumentsObjectIdentifier.
-      if (isArgumentsObjectIdentifier(fctx, ident)) {
-        const argsMatch = stringLiteral === "object";
-        fctx.body.push({ op: "i32.const", value: isEq ? (argsMatch ? 1 : 0) : argsMatch ? 0 : 1 });
-        return { kind: "i32" };
-      }
+      if (emitArgumentsTypeofComparison(ctx, fctx, ident, stringLiteral, isEq)) return { kind: "i32" };
       const withBinding = findWithBinding(fctx, ident.text);
       if (withBinding) {
         const actual = staticTypeofForWasmType(ctx, withBinding.field.type);

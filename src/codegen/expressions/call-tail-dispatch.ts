@@ -41,6 +41,7 @@ import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
 import { ensureExtrasArgvGlobal, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import { isStaticUndefinedArg } from "../string-ops.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
 import {
   defaultValueInstrs,
   emitGuardedFuncRefCast,
@@ -86,7 +87,6 @@ import {
   emitSetArgc,
   functionExprBodyReferencesOwnName,
   tryEmitInlineDynamicCall,
-  usesArguments,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
 
@@ -167,7 +167,7 @@ export function compileTailDispatch(
         const params = callee.parameters;
         const args = expr.arguments;
         // Check if the IIFE body references `arguments` (only for function expressions, not arrows)
-        const iifeNeedsArguments = ts.isFunctionExpression(callee) && callee.body && usesArguments(callee.body);
+        const iifeNeedsArguments = ts.isFunctionExpression(callee) && needsImplicitArgumentsObject(callee);
         // Support IIFEs with matching parameter/argument counts
         if (params.length <= args.length) {
           const iifeBindingNames = collectDirectEvalBindingNames(callee);

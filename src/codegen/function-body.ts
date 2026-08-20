@@ -48,7 +48,7 @@ import {
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { seedDeclarationArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
@@ -641,7 +641,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // We create a vec struct (same as Array) populated from all function parameters.
   // Use externref elements so that all parameter types (numbers, strings, objects)
   // are preserved — matching the closure version in closures.ts (#771).
-  if (decl.body && (bodyUsesArguments(decl.body) || fctx.directEvalBindingNames !== undefined)) {
+  if (decl.body && needsImplicitArgumentsObject(decl, fctx.directEvalBindingNames !== undefined)) {
     // Ensure __box_number and __unbox_number are available for mapped arguments sync
     const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
     if (hasNumericParam) {

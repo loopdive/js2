@@ -4,7 +4,7 @@ title: "ES5 standalone: Function builtins / function-code / arguments-object res
 status: in-progress
 sprint: current
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-20
 assignee: ttraenkler/es5-standalone-push
 priority: high
 horizon: m
@@ -149,6 +149,60 @@ Two newly-failing suites, one real:
   descriptor plus a throwing-write case. Suite 13/13.
 
 Lane and guard unchanged after the fix: **18/75**, **551/551**.
+
+### 2026-08-20 regression correction — binding-aware `typeof arguments`
+
+The `fc46bc9` fast path recognized `arguments` by spelling plus `localMap`
+membership. An explicit parameter, initialized `var`, or function declaration
+named `arguments` can occupy the same local-map key, so both direct `typeof`
+and the comparison shortcut incorrectly constant-folded those bindings to
+`"object"`. The integration symptom was `tests/issue-1102.test.ts` returning 1
+instead of 11 for the parameter-default/eval closure case.
+
+`isArgumentsObjectIdentifier` now resolves binding identity exclusively
+through `ctx.oracle.valueDeclarationOf` and verifies that the live local still
+has the canonical arguments-vec carrier. The declaration-less implicit object
+and a no-op `var arguments;` redeclaration take the §10.6 shortcut; parameters,
+scalar initialized/reassigned vars, and function declarations do not. When a
+hoisted `function arguments(){}` leaves the checker flow type stale after a
+numeric/boolean `var arguments = value`, the exact scalar local carrier supplies
+the IR-side `typeof` verdict. Reference carriers deliberately fall through: a
+reified eval environment or closure wrapper is not itself the source value.
+The focused
+lowering also applies the ES5 §10.5 FormalParameters BoundNames rule before
+materializing an implicit object. That shared recursive gate covers every
+existing materializer: exported and nested declarations, closures, object
+methods, inline calls, and constructor function expressions. A spelling-keyed
+`localMap` therefore cannot overwrite a real `arguments` parameter in one of
+those alternate lowering paths.
+
+`tests/issue-4555-typeof-arguments.test.ts` now runs 17 runtime cases under each
+oracle backend, including a value supplied dynamically through the Wasm export,
+an omitted optional parameter, an arrow capture, direct-eval scope reification, hoisted-function/`var`
+rebindings, and every affected lowering path. Six structural controls pin
+plain, object-pattern, array-pattern, aliased, and negative BoundNames cases.
+This also pins the roots represented by
+`test262/test/language/function-code/S10.2.1_A4_T1.js` and
+`test262/test/language/eval-code/direct/arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js`.
+
+This correction deliberately stops at the ES5-safe formal-parameter rule. Full
+ES2015+ FunctionDeclarationInstantiation parity still needs a stable hidden
+implicit-arguments local created before default-parameter evaluation, followed
+by separate body-environment bindings. That follow-up is required before a
+top-level lexical `arguments` declaration and parameter-expression closures can
+share one ordinary function without carrier aliasing.
+
+The same-name hoisted-function plus reference-valued `var` initializer remains
+a separate carrier-unification gap: a string initializer can currently emit an
+invalid local store, while an object initializer can retain the hoisted
+function's static verdict. This patch does not disguise those broader failures
+as part of the scalar `typeof` correction.
+
+The under-applied IIFE fallback (`params.length > args.length`) is another
+separate ES5 gap: unlike the inlined matching/over-applied path, it currently
+does not materialize an implicit arguments object at all. It needs its own
+observable `arguments.length`/indexed-value slice rather than being hidden in
+this binding-identity fix.
 
 ### Locally-decidable pool is 35 of 75, not 44
 
