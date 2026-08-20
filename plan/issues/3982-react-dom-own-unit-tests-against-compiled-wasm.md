@@ -329,6 +329,25 @@ export issue rather than unavailable host infrastructure. The full server lane
 is now measurable and its compile, validation, native-oracle, and behavior
 counts are persisted under `report.server`.
 
+## Jest adapter infrastructure checkpoint (2026-08-20)
+
+The extractor no longer mistakes ordinary application calls such as
+`value.toString()` and `text.toLowerCase()` for Jest matchers. It now walks the
+syntax tree and only classifies calls rooted at `expect(...)` (including
+`.not`, `.resolves`, and `.rejects`). The shared shim implements the additional
+upstream matchers `toMatch`, `toContainEqual`, `toHaveBeenNthCalledWith`,
+`toMatchInlineSnapshot`, and `toMatchRenderedOutput`, and the host console
+capture is declared as available infrastructure in both suites.
+
+In conservative extraction mode this raises the React slice to 272/273
+admitted tests (the one remainder is an upstream skip) and the ReactDOM slice
+to 1,770/2,003 admitted tests. The remaining ReactDOM rejections are the
+Fizz/private test scaffolding and non-block test forms; they are recorded by
+reason rather than silently discarded. This checkpoint changes what reaches
+the compiler, not the Wasm behavior score: the client renderer still has the
+known module-export/runtime gap and the server smoke still has behavior
+failures.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
