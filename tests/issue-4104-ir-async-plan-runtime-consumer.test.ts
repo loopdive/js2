@@ -139,14 +139,18 @@ function withDiscardedAwaitBlock(fn: IrFunction): IrFunction {
   };
 }
 
-function prepare(fn: IrFunction) {
+function prepareForTarget(fn: IrFunction, target: "host" | "standalone") {
   const prepared = prepareIrRuntimeManifest({
     functions: [fn],
     sourceFile: "/repo/async-plan-consumer.ts",
-    policy: { target: "host", backend: "wasmgc" },
+    policy: { target, backend: "wasmgc" },
   });
   if (!prepared) throw new Error("missing async runtime manifest");
   return prepared;
+}
+
+function prepare(fn: IrFunction) {
+  return prepareForTarget(fn, "host");
 }
 
 describe("#4104 IR async plan runtime consumer", () => {
@@ -178,6 +182,27 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(semantic).toMatchObject({ kind: "intrinsic", id: "math.abs" });
     expect(semantic).not.toHaveProperty("provider");
     expect(lowered).toMatchObject({ kind: "intrinsic", id: "math.abs", provider: { kind: "backend-op" } });
+    expect(verifyIrFunction(fn)).toEqual([]);
+  });
+
+  it("attaches the standalone native runtime without changing the target-neutral semantic plan", () => {
+    const { unit } = fixture("-standalone");
+    const sourceFunction = irFunction(unit);
+    const sourcePlan = sourceFunction.asyncPlan;
+    const host = prepareForTarget(sourceFunction, "host");
+    const standalone = prepareForTarget(sourceFunction, "standalone");
+    const fn = standalone.functions[0]!;
+
+    expect(standalone.manifest.policy).toEqual({ target: "standalone", backend: "wasmgc" });
+    expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
+    expect(standalone.manifest.hostCapabilities).toEqual([]);
+    expect(standalone.manifest.providers.every((provider) => provider.implementation.kind === "native-managed")).toBe(
+      true,
+    );
+    expect(fn.asyncRuntime).toMatchObject({ kind: "standalone-native-wasmgc", adapters: [] });
+    expect(fn.asyncPlan).toEqual(sourcePlan);
+    expect(fn.asyncPlan).toEqual(host.functions[0]!.asyncPlan);
+    expect(sourceFunction.asyncRuntime).toBeUndefined();
     expect(verifyIrFunction(fn)).toEqual([]);
   });
 

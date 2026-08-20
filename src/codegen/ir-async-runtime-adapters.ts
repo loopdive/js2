@@ -10,8 +10,11 @@ import { sameIrCallableBinding, irImportFuncRef } from "../ir/callable-bindings.
 import type { IrFunction } from "../ir/nodes.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import { addImport } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
+import { prepareNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 
 function lowerAdapterType(type: AsyncHostAdapterValueType): ValType {
   return type === "i32" ? { kind: "i32" } : { kind: "externref" };
@@ -66,11 +69,27 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
 export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
   const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
   const catalogue = new Map(ALL_ASYNC_HOST_ADAPTERS.map((adapter) => [adapter.capability, adapter] as const));
+  let nativeRuntimeRequested = false;
+  let nativeUndefinedRequested = false;
 
   for (const fn of functions) {
     if (!fn.asyncRuntime) continue;
     if (!fn.asyncPlan || fn.funcKind !== "async") {
       throw new Error(`IR async runtime attachment for ${fn.name} has no valid async plan owner`);
+    }
+    if (fn.asyncRuntime.kind === "standalone-native-wasmgc") {
+      if (
+        !ctx.standalone ||
+        ctx.wasi ||
+        !ctx.nativeStrings ||
+        ctx.targetProfile.environment !== "none" ||
+        ctx.targetProfile.semanticProviders !== "native-first"
+      ) {
+        throw new Error(`IR async function ${fn.name} selected a native standalone runtime on the wrong target`);
+      }
+      nativeRuntimeRequested = true;
+      nativeUndefinedRequested ||= fn.asyncPlan.runtimeIntents.includes("value.undefined");
+      continue;
     }
     for (const attached of fn.asyncRuntime.adapters) {
       const adapter = catalogue.get(attached.capability);
@@ -80,6 +99,17 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
         throw new Error(`IR async adapter ${attached.capability} does not match its frozen import projection`);
       }
       requested.set(attached.capability, adapter);
+    }
+  }
+
+  if (nativeRuntimeRequested) {
+    ensureAsyncDriveRuntime(ctx);
+    prepareNativePromiseNumberBoundary(ctx);
+    if (nativeUndefinedRequested) {
+      // Promise<void> must settle with the canonical native `undefined`
+      // singleton, not the null externref sentinel. Reserve it before Program
+      // ABI sealing so async-frame lowering remains allocation-free.
+      canonicalUndefinedExternInstrs(ctx);
     }
   }
 

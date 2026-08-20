@@ -101,6 +101,33 @@ const capability = (
     providers: Object.freeze([...providers]),
   });
 
+const TIMER_PROVIDER_IMPORTS: readonly CapabilityProviderImportContract[] = Object.freeze([
+  Object.freeze({
+    name: "__timer_set_timeout",
+    kind: "func" as const,
+    params: Object.freeze(["externref", "externref"]),
+    results: Object.freeze(["externref"]),
+  }),
+  Object.freeze({
+    name: "__timer_set_interval",
+    kind: "func" as const,
+    params: Object.freeze(["externref", "externref"]),
+    results: Object.freeze(["externref"]),
+  }),
+  Object.freeze({
+    name: "__timer_clear_timeout",
+    kind: "func" as const,
+    params: Object.freeze(["externref"]),
+    results: Object.freeze([]),
+  }),
+  Object.freeze({
+    name: "__timer_clear_interval",
+    kind: "func" as const,
+    params: Object.freeze(["externref"]),
+    results: Object.freeze([]),
+  }),
+]);
+
 /**
  * Versioned capability contracts already backed by more than one real target
  * provider. The source program names the standard API; target/provider policy
@@ -128,7 +155,14 @@ export const PLATFORM_CAPABILITY_REGISTRY: Readonly<Record<string, PlatformCapab
     ],
   ),
   console: capability("console", ["console:write"], [provider("js-host", ["javascript"], "env")]),
-  timers: capability("timers", ["timers:schedule"], [provider("js-host", ["javascript"], "env")]),
+  timers: capability(
+    "timers",
+    ["timers:schedule"],
+    [
+      provider("js-host", ["javascript"], "env", TIMER_PROVIDER_IMPORTS),
+      provider("embedder", ["none", "unknown"], "env", TIMER_PROVIDER_IMPORTS),
+    ],
+  ),
   "module-loader": capability("module-loader", ["module:load"], [provider("js-host", ["javascript"], "env")]),
 });
 
@@ -159,7 +193,17 @@ function importSignature(
   };
 }
 
-function providerIdForImport(entry: Pick<HostImportInventoryEntry, "module">): CapabilityProviderId {
+function providerIdForImport(
+  entry: Pick<HostImportInventoryEntry, "module">,
+  definition?: PlatformCapabilityDefinition,
+  environment?: CompileEnvironment,
+): CapabilityProviderId {
+  const environmentMatches = definition?.providers.filter(
+    (candidate) =>
+      candidate.importNamespace === entry.module &&
+      (environment === undefined || candidate.environments.includes(environment)),
+  );
+  if (environmentMatches?.length === 1) return environmentMatches[0]!.id;
   if (entry.module === "env") return "js-host";
   if (entry.module === "wasi_snapshot_preview1") return "wasi-preview1";
   if (entry.module.startsWith("node:")) return "node";
@@ -185,6 +229,42 @@ function importContractMatches(
     stringArraysEqual(actual.params, expected.params) &&
     stringArraysEqual(actual.results, expected.results)
   );
+}
+
+/**
+ * Prove that one concrete Wasm import is covered by an exact registered
+ * capability/provider ABI for the selected target environment.
+ *
+ * This is intentionally stricter than requirement construction: providers
+ * without an explicit import contract return false, so a no-leak backstop can
+ * never interpret missing registry evidence as permission.
+ */
+export function isValidatedPlatformCapabilityImport(
+  mod: WasmModule,
+  importIndex: number,
+  capabilityId: string,
+  providerId: CapabilityProviderId,
+  environment: CompileEnvironment,
+): boolean {
+  const definition = PLATFORM_CAPABILITY_REGISTRY[capabilityId];
+  const selectedProvider = definition?.providers.find(({ id }) => id === providerId);
+  const entry = mod.imports[importIndex];
+  if (
+    !selectedProvider ||
+    !selectedProvider.environments.includes(environment) ||
+    !selectedProvider.imports ||
+    !entry ||
+    entry.module !== selectedProvider.importNamespace
+  ) {
+    return false;
+  }
+  const actual: CapabilityImportRequirement = {
+    module: entry.module,
+    name: entry.name,
+    kind: entry.desc.kind,
+    ...importSignature(mod, importIndex),
+  };
+  return selectedProvider.imports.some((expected) => importContractMatches(actual, expected));
 }
 
 /** Validate emitted provider bindings against the same frozen registry used to describe them. */
@@ -293,9 +373,10 @@ export function validatePlatformCapabilityRequirements(
 }
 
 /** Build the explicit platform-capability requirement set for one module. */
-export function buildPlatformCapabilityRequirements(
+export function buildCapabilityRequirements(
   mod: WasmModule,
   inventory: readonly HostImportInventoryEntry[],
+  environment?: CompileEnvironment,
 ): PlatformCapabilityRequirement[] {
   const grouped = new Map<string, Array<{ entry: HostImportInventoryEntry; index: number }>>();
   for (let index = 0; index < inventory.length; index++) {
@@ -310,7 +391,9 @@ export function buildPlatformCapabilityRequirements(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([family, entries]) => {
       const definition = PLATFORM_CAPABILITY_REGISTRY[family] ?? fallbackDefinition(family);
-      const selectedProviders = [...new Set(entries.map(({ entry }) => providerIdForImport(entry)))].sort();
+      const selectedProviders = [
+        ...new Set(entries.map(({ entry }) => providerIdForImport(entry, definition, environment))),
+      ].sort();
       const imports = entries
         .map(({ entry, index }) =>
           Object.freeze({

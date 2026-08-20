@@ -1669,6 +1669,12 @@ export interface CodegenContext {
    */
   emitHostBridge: boolean;
   /**
+   * The exact standalone Promise-delay provider registered a timer callback
+   * that must re-enter Wasm after the general JS host bridge is stripped.
+   * Finalization publishes only the reserved zero-argument timer dispatcher.
+   */
+  requiresStandaloneTimerCallbackDispatch?: boolean;
+  /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in
    * `createCodegenContext` (the `externref`/`f64` type-index-stability stubs),

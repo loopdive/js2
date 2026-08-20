@@ -105,7 +105,13 @@ export async function runHarness({ quiet = false } = {}) {
   const { entryModulePath, version, pin } = setupAcorn();
   report.acorn = { version, source: pin.tarball, entryModule: pin.entryModule };
   const { testDir, pin: suitePin } = setupAcornTestSuite();
-  report.testSuite = { repo: suitePin.repo, tag: suitePin.tag, commit: suitePin.commit };
+  report.testSuite = {
+    repo: suitePin.repo,
+    tag: suitePin.tag,
+    commit: suitePin.commit,
+    testDirectory: "test",
+    testFiles: TEST_FILES,
+  };
   log(`[dogfood] acorn@${version} official suite @ ${suitePin.tag} (${suitePin.commit.slice(0, 12)})`);
 
   const acornSource = readFileSync(entryModulePath, "utf-8");

@@ -62,8 +62,11 @@ describe("#4514 outside-caller ABI certification", () => {
     // reverse `callers` edge and `twice` compiled twice. `twice`'s signature is
     // `(number) => number`, whose prepared projection equals its allocated
     // slot, so the outside caller is not a signature hazard.
+    // The second declarator intentionally keeps the module-init outside the
+    // exact one-binding #4566 transaction; this test owns caller direction,
+    // not module-init eligibility.
     const { success, units } = await outcomes(
-      `let counter = 0;
+      `let counter = 0, sentinel = 1;
        function twice(n: number): number { return n * 2; }
        export function main(): number { return twice(counter) + 1; }`,
       "standalone",
@@ -85,8 +88,10 @@ describe("#4514 outside-caller ABI certification", () => {
     // storage edge withdraws it anyway. Widening any direction other than the
     // caller one would flip this to compile-once and break the sealing
     // constraint that edge exists for.
+    // Keep the storage owner deliberately non-preparable so this remains a
+    // negative storage-edge test after #4566's standalone lexical widening.
     const { success, units } = await outcomes(
-      `let counter = 0;
+      `let counter = 0, sentinel = 1;
        function reader(n: number): number { return n + counter; }
        export function caller(): number { return reader(1); }`,
       "standalone",
