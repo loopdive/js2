@@ -221,7 +221,7 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile.modules).toBe(1);
     expect(report.results.scored).toBe(18);
-    expect(report.results.passed).toBe(0);
+    expect(report.results.passed).toBeGreaterThanOrEqual(17);
   });
 
   const jsdomHeavy = process.env.DOGFOOD_JSDOM_UPSTREAM_SUITE === "1" ? it : it.skip;

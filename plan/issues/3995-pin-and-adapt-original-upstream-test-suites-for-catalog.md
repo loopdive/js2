@@ -340,14 +340,16 @@ QUnit registration sites from `mrdoob/three.js@r185` (commit
 `2431a09f46f34c560bc8e44b33be0e567723d5b9`). The first runtime adapter runs
 the original dependency-light `MathUtils.tests.js` module directly against the
 matching GitHub source. Its generated module compiles and validates, native
-Node passes **18/18**, and Wasm currently reports **0/18**.
+Node passes **18/18**, and Wasm now reports **17/18**.
 
-The module reaches the shared QUnit callback runner but currently returns false
-for every callback without a surfaced assertion message. The report preserves
-those measured zeroes and all 231 deferred browser, WebGL, DOM, loader, and
-larger object-graph files. The npm-compat generator invokes the suite directly,
-so the merge-only refresh publishes the numeric result and upstream pin rather
-than leaving Three.js at `adapter pending`.
+The adapter preserves Three's default-exported `QUnit.module(...)` call as a
+top-level registration side effect; otherwise the compiler elided the unused
+default value and the Wasm lane observed zero registered tests. The remaining
+single failure is a floating-point last-bit difference in `MathUtils.damp`, not
+missing test infrastructure. All 231 deferred browser, WebGL, DOM, loader, and
+larger object-graph files remain explicit inventory. The npm-compat generator
+invokes the suite directly, so the merge-only refresh publishes the numeric
+result and upstream pin rather than leaving Three.js at `adapter pending`.
 
 ## 2026-08-14 jsdom VirtualConsole slice
 
