@@ -527,6 +527,9 @@ function __js2RequireActual(name) {
     name === "react-dom/static.edge"
   ) {
     __js2CheckReactVersion("react-dom");
+    if (typeof __REACTDOM_SERVER__ !== "undefined" && __REACTDOM_SERVER__ !== null) {
+      return __REACTDOM_SERVER__;
+    }
     return __js2ReactDOMServer;
   }
   if (name === "react-native-renderer") {

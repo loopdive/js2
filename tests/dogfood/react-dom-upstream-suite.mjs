@@ -15,10 +15,10 @@
 //      test runs.
 //   2. `require("react")` / `require("react-dom")` / `require("scheduler")`
 //      inside those modules are rewired to the in-module values.
-//   3. The implementation is compiled ALONE first (the #3977 lit lesson): if it
-//      cannot produce a valid module, subdividing per test is wasted wall clock
-//      and hides the real finding. Today react-dom does NOT compile, so that
-//      pre-check IS the result.
+//   3. Each implementation graph is compiled ALONE first (the #3977 lit
+//      lesson): if it cannot produce a valid module, subdividing per test is
+//      wasted wall clock and hides the real finding. Client and server graphs
+//      therefore report independent compile/validation results.
 //
 // Invoke:  pnpm run dogfood:react-dom-upstream-suite
 //          node tests/dogfood/react-dom-upstream-suite.mjs --json
@@ -184,8 +184,39 @@ function buildImplementationSource({ reactSource, sharedSource, clientSource }) 
   ].join("\n");
 }
 
-function reactDomTestSetup(prelude, testSource = prelude) {
-  const lines = [`__reactDomEnsureInit();`, `document.body.textContent = "";`];
+// The legacy browser server renderer is a separate published CJS graph. Keep
+// it in its own module scope so the server lane can compile and measure the
+// original SSR tests without pulling the client renderer into the same
+// WasmGC type graph. Its only package dependencies are the pinned React and
+// react-dom shared exports, both wired to the same in-module values.
+function buildServerImplementationSource({ reactSource, sharedSource, serverSource }) {
+  return [
+    "var __REACT__, __REACTDOM_SHARED__, __REACTDOM__, __REACTDOM_SERVER__, __reactDomServerInitialized = false;",
+    "function __reactServerModule() { var exports = {};",
+    reactSource,
+    "return exports; }",
+    "function __reactDomSharedServerModule() { var exports = {};",
+    wireRequires(sharedSource),
+    "return exports; }",
+    "function __reactDomServerModule() { var exports = {};",
+    wireRequires(serverSource),
+    "return exports; }",
+    "function __reactDomServerEnsureInit() {",
+    "if (__reactDomServerInitialized) return;",
+    "__reactDomServerInitialized = true;",
+    "__REACT__ = __reactServerModule();",
+    "__REACTDOM_SHARED__ = __reactDomSharedServerModule();",
+    "__REACTDOM__ = __REACTDOM_SHARED__;",
+    "__REACTDOM_SERVER__ = __reactDomServerModule();",
+    "}",
+  ].join("\n");
+}
+
+function reactDomTestSetup(prelude, testSource = prelude, { server = false } = {}) {
+  const lines = [
+    `${server ? "__reactDomServerEnsureInit" : "__reactDomEnsureInit"}();`,
+    `document.body.textContent = "";`,
+  ];
   const binds = (name, expression) => {
     const declaration = new RegExp(`\\b(let|var|const)\\s+${name}\\b`).exec(prelude);
     if (declaration && declaration[1] !== "const") {
@@ -205,6 +236,7 @@ function reactDomTestSetup(prelude, testSource = prelude) {
   binds("OuterReactDOMClient", "__REACTDOM__");
   binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
   binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
+  if (server) binds("ReactDOMServer", "__REACTDOM_SERVER__");
   const actDeclaration = /\b(let|var|const)\s+act\b/.exec(prelude);
   if (actDeclaration && actDeclaration[1] === "const") {
     // Preserve an upstream const binding; the extractor's import rewrite owns
@@ -220,9 +252,9 @@ function reactDomTestSetup(prelude, testSource = prelude) {
   return lines.join("\n");
 }
 
-function withReactDomSetup(test) {
+function withReactDomSetup(test, options = {}) {
   const leadingDeclarations = /^(?:(?:let|var|const)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
-  const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`);
+  const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`, options);
   const prelude = `${leadingDeclarations}${setup}\n${test.prelude.slice(leadingDeclarations.length)}`;
   return { ...test, prelude };
 }
@@ -233,6 +265,16 @@ function buildModuleSource(implementation, tests) {
     REACT_EXPECT_SHIM,
     `export function __reactDomInit() { __reactDomEnsureInit(); }`,
     ...tests.map((test) => buildTestFunction(withReactDomSetup(test))),
+    LAST_ERROR_EXPORT,
+  ].join("\n");
+}
+
+function buildServerModuleSource(implementation, tests) {
+  return [
+    implementation,
+    REACT_EXPECT_SHIM,
+    `export function __reactDomServerInit() { __reactDomServerEnsureInit(); }`,
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server: true }))),
     LAST_ERROR_EXPORT,
   ].join("\n");
 }
@@ -308,12 +350,13 @@ function buildProjectFiles({ reactSource, sharedSource, clientSource, tests }) {
   };
 }
 
-function buildNativeRunners(implementation, tests) {
+function buildNativeRunners(implementation, tests, { server = false } = {}) {
+  const init = server ? "__reactDomServerEnsureInit()" : "__reactDomEnsureInit()";
   const source = [
     implementation,
     REACT_EXPECT_SHIM,
-    ...tests.map((test) => buildTestFunction(withReactDomSetup(test), { exported: false })),
-    `return { init: function () { __reactDomEnsureInit(); }, __lastError: function () { return __lastError; }, tests: { ${tests
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test, { server }), { exported: false })),
+    `return { init: function () { ${init}; }, __lastError: function () { return __lastError; }, tests: { ${tests
       .map((test) => `${JSON.stringify(test.id)}: ${test.id}`)
       .join(", ")} } };`,
   ].join("\n");
@@ -321,10 +364,10 @@ function buildNativeRunners(implementation, tests) {
   return new Function("require", source);
 }
 
-async function runNative(implementation, tests) {
+async function runNative(implementation, tests, options = {}) {
   try {
     const nativeRequire = createRequire(import.meta.url);
-    const runners = buildNativeRunners(implementation, tests)(nativeRequire);
+    const runners = buildNativeRunners(implementation, tests, options)(nativeRequire);
     runners.init();
     const out = [];
     for (const test of tests) {
@@ -349,7 +392,7 @@ async function runNative(implementation, tests) {
   }
 }
 
-async function runNativeByFile(implementation, tests) {
+async function runNativeByFile(implementation, tests, options = {}) {
   const byFile = new Map();
   for (const test of tests) {
     if (!byFile.has(test.file)) byFile.set(test.file, []);
@@ -358,9 +401,279 @@ async function runNativeByFile(implementation, tests) {
   const results = [];
   for (const [file, fileTests] of byFile) {
     nativeContextFile = file;
-    results.push(...(await runNative(implementation, fileTests)));
+    results.push(...(await runNative(implementation, fileTests, options)));
   }
   return results;
+}
+
+function withCompileTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// Run the original server-renderer tests against the separately published
+// legacy browser bundle. This lane is intentionally independent from the
+// client project lane: ReactDOMServer's module graph is smaller, has different
+// host requirements, and can be compiled to valid Wasm even while the client
+// graph is still being hardened.
+async function runServerHarness({ log, reactSource, sharedSource, serverSource, suitePin, serverTests }) {
+  const configuredLimit = Number(process.env.DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT ?? 0);
+  const selectedTests =
+    Number.isInteger(configuredLimit) && configuredLimit > 0 ? serverTests.slice(0, configuredLimit) : serverTests;
+  const implementation = buildServerImplementationSource({ reactSource, sharedSource, serverSource });
+  const testTimeoutMs = Number(process.env.DOGFOOD_REACT_DOM_TEST_TIMEOUT_MS ?? 10_000);
+  const configuredCompileTimeout = Number(process.env.DOGFOOD_REACT_DOM_COMPILE_TIMEOUT_MS ?? 300_000);
+  const compileTimeoutMs =
+    Number.isFinite(configuredCompileTimeout) && configuredCompileTimeout > 0 ? configuredCompileTimeout : 300_000;
+  const report = {
+    modules: ["package/cjs/react-dom-server-legacy.browser.production.js"],
+    implementationChars: implementation.length,
+    extraction: {
+      upstreamTestsSeen: serverTests.length,
+      admitted: serverTests.length,
+      selected: selectedTests.length,
+      rejected: 0,
+      rejectionCounts: {},
+      rejectedTests: [],
+    },
+    compile: null,
+    validation: null,
+    results: null,
+    summary: {},
+  };
+  const nativeHostErrors = [];
+  const disposeNativeHostErrorBoundary = installNativeHostErrorBoundary(nativeHostErrors);
+
+  const batchReports = [];
+  const runResults = new Map();
+  const admitted = [];
+  let totalCompileMs = 0;
+  let totalBytes = 0;
+
+  const compileGroup = async (file, groupTests, depth = 0) => {
+    const moduleSource = buildServerModuleSource(implementation, groupTests);
+    const started = performance.now();
+    let result;
+    try {
+      result = await withCompileTimeout(
+        compile(moduleSource, {
+          fileName: "react-dom-server-legacy.browser.js",
+          skipSemanticDiagnostics: true,
+          experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+          sourceMap: true,
+        }),
+        compileTimeoutMs,
+        `compile server ${file}`,
+      );
+    } catch (error) {
+      result = { success: false, errors: [{ message: error instanceof Error ? error.message : String(error) }] };
+    }
+    const compileMs = Math.round(performance.now() - started);
+    totalCompileMs += compileMs;
+
+    let validates = false;
+    let firstError = result?.errors?.[0]?.message ?? "no binary emitted";
+    if (result?.success && result.binary?.length) {
+      try {
+        await WebAssembly.compile(result.binary);
+        validates = true;
+        firstError = null;
+      } catch (error) {
+        firstError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    if (!validates && groupTests.length > 1 && depth < 6) {
+      const middle = Math.ceil(groupTests.length / 2);
+      await compileGroup(file, groupTests.slice(0, middle), depth + 1);
+      await compileGroup(file, groupTests.slice(middle), depth + 1);
+      return;
+    }
+
+    admitted.push(...groupTests);
+    let compiled = null;
+    if (validates) {
+      try {
+        const imports = result.importObject ?? {};
+        const { instance } = await WebAssembly.instantiate(result.binary, imports);
+        imports.setInstance?.(instance);
+        imports.__setInstance?.(instance);
+        instance.exports.__reactDomServerInit?.();
+        compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
+        totalBytes += result.binary.length;
+      } catch (error) {
+        firstError = `instantiate failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    batchReports.push({
+      file,
+      tests: groupTests.length,
+      compileMs,
+      binaryBytes: result?.binary?.length ?? 0,
+      imports: result?.imports?.map((entry) => `${entry.module}.${entry.name}`) ?? [],
+      compileSuccess: result?.success ?? false,
+      validates,
+      firstError,
+    });
+    log(
+      `[dogfood]   server ${file.replace(/^.*\//, "")}: ${groupTests.length} tests, ` +
+        `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
+    );
+
+    nativeContextFile = file;
+    const nativeResults = new Map(
+      (await runNative(implementation, groupTests, { server: true })).map((entry) => [entry.id, entry]),
+    );
+    for (const test of groupTests) {
+      runResults.set(test.id, {
+        native: nativeResults.get(test.id) ?? {},
+        compiled,
+        firstError,
+        sourceMap: result?.sourceMap,
+      });
+    }
+  };
+
+  const batches = new Map();
+  for (const test of selectedTests) {
+    if (!batches.has(test.file)) batches.set(test.file, []);
+    batches.get(test.file).push(test);
+  }
+  try {
+    for (const [file, fileTests] of batches) {
+      for (const chunk of splitBySize(fileTests)) await compileGroup(file, chunk);
+    }
+  } catch (error) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    disposeNativeHostErrorBoundary();
+    report.compile = {
+      success: false,
+      durationMs: totalCompileMs,
+      binaryBytes: totalBytes,
+      batches: batchReports,
+      invalidBatches: batchReports.filter((batch) => !batch.validates).length,
+      firstError: error instanceof Error ? error.message : String(error),
+    };
+    report.validation = { validates: false, firstError: report.compile.firstError };
+    report.results = {
+      scored: 0,
+      passed: 0,
+      failed: 0,
+      harnessIncompatible: 0,
+      implementationInvalidTests: selectedTests.length,
+      nativeHostErrors,
+      tests: [],
+    };
+    report.summary = {
+      headline: `0/0 executed upstream react-dom server tests pass against compiled Wasm (${selectedTests.length} selected; server lane aborted)`,
+      passRatePct: 0,
+      upstreamTestsSeen: serverTests.length,
+      admitted: serverTests.length,
+      selected: selectedTests.length,
+      scored: 0,
+      passed: 0,
+      failed: 0,
+      harnessIncompatible: 0,
+      implementationInvalidTests: selectedTests.length,
+      nativeHostErrors: nativeHostErrors.length,
+      compileMs: totalCompileMs,
+      binaryBytes: totalBytes,
+      batches: batchReports.length,
+      invalidBatches: report.compile.invalidBatches,
+      binaryValidates: false,
+      error: report.compile.firstError,
+    };
+    return report;
+  }
+
+  const tests = [];
+  for (const test of admitted) {
+    const { native, compiled, firstError, sourceMap } = runResults.get(test.id) ?? {};
+    const entry = {
+      id: test.id,
+      file: test.file,
+      fullName: test.fullName,
+      nativePassed: native?.value === 1,
+      nativeMessage: native?.error ?? native?.message ?? "",
+    };
+    if (!entry.nativePassed) {
+      entry.status = "harness-incompatible";
+      tests.push(entry);
+      continue;
+    }
+    if (!compiled) {
+      entry.status = "skipped";
+      entry.skippedReason = firstError ?? "binary did not instantiate";
+      tests.push(entry);
+      continue;
+    }
+    try {
+      const value = await withCompileTimeout(compiled[test.id](), testTimeoutMs, `server ${test.fullName}`);
+      entry.compiledPassed = value === 1;
+      entry.status = value === 1 ? "pass" : "fail";
+      if (value !== 1) entry.compiledMessage = compiled.__react_last_error?.() ?? "";
+    } catch (error) {
+      entry.status = "trapped";
+      const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
+      const source = offsetMatch ? sourceAtWasmOffset(sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
+      entry.compiledMessage = `${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
+    }
+    tests.push(entry);
+  }
+
+  const scored = tests.filter((test) => ["pass", "fail", "trapped"].includes(test.status));
+  const passed = tests.filter((test) => test.status === "pass").length;
+  const harnessIncompatible = tests.filter((test) => test.status === "harness-incompatible").length;
+  const implementationInvalidTests = tests.filter((test) => test.status === "skipped").length;
+  const failed = scored.length - passed;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  disposeNativeHostErrorBoundary();
+  report.compile = {
+    success: batchReports.every((batch) => batch.compileSuccess),
+    durationMs: totalCompileMs,
+    binaryBytes: totalBytes,
+    batches: batchReports,
+    invalidBatches: batchReports.filter((batch) => !batch.validates).length,
+  };
+  report.validation = {
+    validates: report.compile.invalidBatches === 0,
+    firstError: batchReports.find((batch) => !batch.validates)?.firstError ?? null,
+  };
+  report.results = {
+    scored: scored.length,
+    passed,
+    failed,
+    harnessIncompatible,
+    implementationInvalidTests,
+    nativeHostErrors,
+    tests,
+  };
+  report.summary = {
+    headline:
+      `${passed}/${scored.length} executed upstream react-dom server tests pass against compiled Wasm ` +
+      `(${selectedTests.length} selected; ${harnessIncompatible} need infrastructure; ${implementationInvalidTests} blocked before Wasm execution)`,
+    passRatePct: scored.length ? Number(((passed / scored.length) * 100).toFixed(2)) : 0,
+    upstreamTestsSeen: serverTests.length,
+    admitted: serverTests.length,
+    selected: selectedTests.length,
+    scored: scored.length,
+    passed,
+    failed,
+    harnessIncompatible,
+    implementationInvalidTests,
+    nativeHostErrors: nativeHostErrors.length,
+    compileMs: totalCompileMs,
+    binaryBytes: totalBytes,
+    batches: batchReports.length,
+    invalidBatches: report.compile.invalidBatches,
+    binaryValidates: report.validation.validates,
+  };
+  return report;
 }
 
 // Compiles the implementation ALONE — no test code. If this cannot produce a
@@ -551,6 +864,7 @@ export async function runHarness({ quiet = false } = {}) {
   const schedulerPackage = JSON.parse(readFileSync(schedulerPackagePath, "utf-8"));
   const sharedSource = readFileSync(implementationPin.sharedPath, "utf-8");
   const clientSource = readFileSync(implementationPin.clientPath, "utf-8");
+  const serverSource = readFileSync(implementationPin.serverPath, "utf-8");
   const { root: suiteRoot, pin: suitePin } = setupReactDomUpstreamSuite();
 
   const implementation = buildImplementationSource({ reactSource, sharedSource, clientSource });
@@ -562,7 +876,13 @@ export async function runHarness({ quiet = false } = {}) {
       reactVersion,
       schedulerVersion: schedulerPackage.version,
       source: implementationPin.pin.tarball,
-      modules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
+      modules: [
+        suitePin.implementation.sharedModule,
+        suitePin.implementation.clientModule,
+        suitePin.implementation.serverModule,
+      ],
+      clientModules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
+      serverModules: [suitePin.implementation.serverModule],
       implementationChars: implementation.length,
     },
     upstreamSuite: {
@@ -597,32 +917,31 @@ export async function runHarness({ quiet = false } = {}) {
       "needs-external-module",
     ]),
   });
-  // The browser server renderer is a separate published CJS graph. Including
-  // it in this client module currently produces an invalid WasmGC type graph,
-  // so keep those original tests visible but explicitly deferred instead of
-  // turning every client test into an implementation-invalid zero.
+  // The browser server renderer is a separate published CJS graph. Keep those
+  // original tests in the admitted corpus, but route them to their own module
+  // lane instead of including the graph in the client module.
   const serverTests = extracted.tests.filter((test) => /\bReactDOMServer\b/.test(`${test.prelude}\n${test.body}`));
-  if (serverTests.length > 0) {
-    const serverIds = new Set(serverTests.map((test) => test.id));
-    extracted.tests = extracted.tests.filter((test) => !serverIds.has(test.id));
-    extracted.rejected.push(...serverTests.map((test) => ({ ...test, reason: "needs-react-dom-server" })));
-    extracted.rejectionCounts["needs-react-dom-server"] =
-      (extracted.rejectionCounts["needs-react-dom-server"] ?? 0) + serverTests.length;
-  }
+  const serverIds = new Set(serverTests.map((test) => test.id));
+  const clientTests = extracted.tests.filter((test) => !serverIds.has(test.id));
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
     admitted: extracted.tests.length,
     rejected: extracted.rejected.length,
     rejectionCounts: extracted.rejectionCounts,
     rejectedTests: extracted.rejected,
+    clientAdmitted: clientTests.length,
+    serverAdmitted: serverTests.length,
   };
   const requestedLimit = Number(process.env.DOGFOOD_REACT_DOM_TEST_LIMIT ?? 0);
   const selectedTests =
-    Number.isInteger(requestedLimit) && requestedLimit > 0 ? extracted.tests.slice(0, requestedLimit) : extracted.tests;
+    Number.isInteger(requestedLimit) && requestedLimit > 0 ? clientTests.slice(0, requestedLimit) : clientTests;
   report.extraction.selected = selectedTests.length;
+  report.extraction.clientSelected = selectedTests.length;
+  report.extraction.serverSelected = Number(process.env.DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT ?? 0) || serverTests.length;
   log(
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
-      `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted`,
+      `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted ` +
+      `(${clientTests.length} client, ${serverTests.length} server)`,
   );
 
   // The project lane compiles the published React, shared, and client modules
@@ -639,6 +958,36 @@ export async function runHarness({ quiet = false } = {}) {
       clientSource,
       selectedTests,
     });
+    try {
+      result.server = await runServerHarness({
+        log,
+        reactSource,
+        sharedSource,
+        serverSource,
+        suitePin,
+        serverTests,
+      });
+    } catch (error) {
+      result.server = {
+        summary: {
+          headline:
+            "0/0 executed upstream react-dom server tests pass against compiled Wasm (server lane failed before execution)",
+          passRatePct: 0,
+          upstreamTestsSeen: serverTests.length,
+          admitted: serverTests.length,
+          selected: 0,
+          scored: 0,
+          passed: 0,
+          failed: 0,
+          harnessIncompatible: 0,
+          implementationInvalidTests: serverTests.length,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    report.server = result.server;
+    mkdirSync(dirname(REPORT_PATH), { recursive: true });
+    writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
     hostInfrastructure.cleanup();
     return result;
   }
@@ -903,6 +1252,35 @@ export async function runHarness({ quiet = false } = {}) {
     log(`[dogfood] native oracle recorded ${nativeHostErrors.length} expected late jsdom host error(s)`);
   }
   log(`[dogfood] full report → ${REPORT_PATH}`);
+  try {
+    report.server = await runServerHarness({
+      log,
+      reactSource,
+      sharedSource,
+      serverSource,
+      suitePin,
+      serverTests,
+    });
+  } catch (error) {
+    report.server = {
+      summary: {
+        headline:
+          "0/0 executed upstream react-dom server tests pass against compiled Wasm (server lane failed before execution)",
+        passRatePct: 0,
+        upstreamTestsSeen: serverTests.length,
+        admitted: serverTests.length,
+        selected: 0,
+        scored: 0,
+        passed: 0,
+        failed: 0,
+        harnessIncompatible: 0,
+        implementationInvalidTests: serverTests.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+  mkdirSync(dirname(REPORT_PATH), { recursive: true });
+  writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   hostInfrastructure.cleanup();
   return report;
 }

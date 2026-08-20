@@ -42,10 +42,12 @@ describe("react-dom upstream suite", () => {
     expect(pin.testFiles.length).toBeGreaterThanOrEqual(115);
     for (const file of pin.testFiles) expect(file.startsWith(`${pin.testDirectory}/`)).toBe(true);
 
-    // The client implementation uses TWO published CJS modules, not the package entry.
+    // Client and server use separate published CJS graphs. Keeping the server
+    // renderer separate is what lets its original tests run without pulling
+    // the client renderer's WasmGC graph into the SSR lane.
     expect(pin.implementation.sharedModule).toMatch(/^package\/cjs\//);
     expect(pin.implementation.clientModule).toMatch(/^package\/cjs\//);
-    expect(pin.implementation.serverModule).toBeUndefined();
+    expect(pin.implementation.serverModule).toMatch(/^package\/cjs\/.*browser\.production\.js$/);
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;
@@ -63,7 +65,10 @@ describe("react-dom upstream suite", () => {
     expect(report.extraction.admitted + report.extraction.rejected).toBe(report.extraction.upstreamTestsSeen);
     expect(report.extraction.rejectedTests.every((t: { reason?: string }) => !!t.reason)).toBe(true);
     expect(report.extraction.admitted).toBeGreaterThanOrEqual(ADMITTED_FLOOR);
-    expect(report.extraction.rejectionCounts["needs-react-dom-server"]).toBeGreaterThan(0);
+    expect(report.extraction.clientAdmitted + report.extraction.serverAdmitted).toBe(report.extraction.admitted);
+    expect(report.server.extraction.admitted).toBe(report.extraction.serverAdmitted);
+    expect(report.server.extraction.selected).toBeGreaterThan(0);
+    expect(report.server.results.passed + report.server.results.failed).toBe(report.server.results.scored);
 
     // The load-bearing assertion while #3982 is open: if the implementation
     // cannot compile, that must be REPORTED with the compiler's own message —

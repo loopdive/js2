@@ -310,6 +310,25 @@ remaining project/module export or compiler representation issue rather than
 unavailable DOM infrastructure. The default IR project lane remains the path
 to fix; do not turn the legacy probe into a pass-rate claim.
 
+## Separate server-renderer lane checkpoint (2026-08-20)
+
+The harness now acquires the published `react-dom-server-legacy.browser.production.js`
+bundle and compiles it in a separate module graph. The original server-renderer
+tests are admitted to that lane instead of being rejected as
+`needs-react-dom-server`; the client graph still contains only the shared and
+client renderer modules. This keeps the two WasmGC graphs independent while
+using the same pinned React source, jsdom host, expect shim, and native oracle.
+
+The one-client/three-server smoke run compiled and validated the server graph
+in 9.4 s as a 938,550-byte module and executed all three original server tests
+against it. The tests reached the renderer and failed their assertions
+(`expected value to be contained`), so this is an infrastructure milestone,
+not a green-pass claim. The client smoke test still fails at `Cannot read
+properties of null (reading 'createRoot')`; that remains a compiler/module-
+export issue rather than unavailable host infrastructure. The full server lane
+is now measurable and its compile, validation, native-oracle, and behavior
+counts are persisted under `report.server`.
+
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
 36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
@@ -357,7 +376,8 @@ add binding-aware slots on top of main's design, not restore that one.
 - [x] `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
-- [ ] react-dom's published client module compiles to a valid Wasm module.
+- [x] react-dom's published client module compiles to a valid Wasm module.
+- [x] The published browser server module has an independent valid Wasm lane.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
 - [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
 - [ ] Capture a nested `async function` declaration inside an `async` parent.

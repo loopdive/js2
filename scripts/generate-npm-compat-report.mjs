@@ -2413,6 +2413,21 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         // card does the same via implementationInvalidTests, #3977/#3978).
         implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
         implementationError: reactDomSuite.summary?.implementationError ?? null,
+        // Server-renderer tests run in a separate published browser bundle.
+        // Keep the lane visible in the committed artifact instead of folding
+        // its failures into the client renderer's denominator.
+        server: {
+          passed: reactDomSuite.server?.results?.passed ?? null,
+          total: reactDomSuite.server?.results?.scored ?? null,
+          passRatePct: reactDomSuite.server?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.server?.extraction?.admitted ?? null,
+          selected: reactDomSuite.server?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.server?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.server?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.server?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.server?.compile ?? null,
+          validation: reactDomSuite.server?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
       perf: await perfNpmCompatPackage("react-dom", {
