@@ -453,6 +453,14 @@ The host surface is covered by
 incompatible results are renderer/oracle behavior differences, not skipped
 tests caused by an unavailable browser API.
 
+The same audit found one shared-browser gap affecting Lit as well: jsdom
+provides `Document` on `window`, but the host had not promoted the constructor
+to the global scope. Lit's published `css-tag` module evaluates
+`Document.prototype` during initialization, so the omission caused a
+pre-test `ReferenceError`. `Document` is now part of the explicit DOM global
+allowlist and has a regression assertion; a direct native import of the
+published Lit `css-tag` entry now initializes successfully.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
