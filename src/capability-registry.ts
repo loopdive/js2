@@ -3,6 +3,7 @@
 import type { HostImportInventoryEntry } from "./host-import-policy.js";
 import type { WasmModule, ValType } from "./ir/types.js";
 import type { CompileEnvironment } from "./target-profile.js";
+import { DOM_CAPABILITY_IMPORTS, DOM_CAPABILITY_PERMISSIONS } from "./dom-capability-contract.js";
 
 export type CapabilityProviderId = "js-host" | "wasi-preview1" | "node" | "embedder";
 
@@ -19,6 +20,8 @@ export interface CapabilityProviderDefinition {
   readonly importNamespace: string;
   /** When present, every emitted import for this provider must match one of these ABI signatures. */
   readonly imports?: readonly CapabilityProviderImportContract[];
+  /** Require exactly one occurrence of every registered import contract. */
+  readonly completeImportContract?: boolean;
 }
 
 export interface PlatformCapabilityDefinition {
@@ -50,6 +53,8 @@ export interface PlatformCapabilityRequirement {
 export type CapabilityProviderDiagnosticCode =
   | "abi-namespace-mismatch"
   | "abi-version-mismatch"
+  | "permissions-mismatch"
+  | "compatible-providers-mismatch"
   | "missing-provider"
   | "unsupported-provider"
   | "unsupported-environment"
@@ -68,6 +73,7 @@ const provider = (
   environments: readonly CompileEnvironment[],
   importNamespace: string,
   imports?: readonly CapabilityProviderImportContract[],
+  completeImportContract = false,
 ): CapabilityProviderDefinition =>
   Object.freeze({
     id,
@@ -86,6 +92,7 @@ const provider = (
           ),
         }
       : {}),
+    ...(completeImportContract ? { completeImportContract: true } : {}),
   });
 
 const capability = (
@@ -163,6 +170,20 @@ export const PLATFORM_CAPABILITY_REGISTRY: Readonly<Record<string, PlatformCapab
       provider("embedder", ["none", "unknown"], "env", TIMER_PROVIDER_IMPORTS),
     ],
   ),
+  dom: capability("dom", DOM_CAPABILITY_PERMISSIONS, [
+    provider(
+      "embedder",
+      ["none"],
+      "env",
+      DOM_CAPABILITY_IMPORTS.map(({ name, params, results }) => ({
+        name,
+        kind: "func" as const,
+        params,
+        results,
+      })),
+      true,
+    ),
+  ]),
   "module-loader": capability("module-loader", ["module:load"], [provider("js-host", ["javascript"], "env")]),
 });
 
@@ -217,6 +238,13 @@ function fallbackDefinition(family: string): PlatformCapabilityDefinition {
 function stringArraysEqual(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
   if (left === undefined || right === undefined) return left === right;
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function stringSetsEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
 }
 
 function importContractMatches(
@@ -308,6 +336,21 @@ export function validatePlatformCapabilityRequirements(
         `capability '${requirement.id}' requires ABI v${requirement.abiVersion}, expected v${definition.abiVersion}`,
       );
     }
+    if (!stringSetsEqual(requirement.permissions, definition.permissions)) {
+      report(
+        "permissions-mismatch",
+        requirement.id,
+        `capability '${requirement.id}' permissions do not match its registered ABI v${definition.abiVersion}`,
+      );
+    }
+    const compatibleProviders = definition.providers.map(({ id }) => id);
+    if (!stringSetsEqual(requirement.compatibleProviders, compatibleProviders)) {
+      report(
+        "compatible-providers-mismatch",
+        requirement.id,
+        `capability '${requirement.id}' compatible providers do not match its registered ABI v${definition.abiVersion}`,
+      );
+    }
     if (requirement.selectedProviders.length === 0) {
       report("missing-provider", requirement.id, `capability '${requirement.id}' has no selected provider`);
       continue;
@@ -337,6 +380,21 @@ export function validatePlatformCapabilityRequirements(
         requirement.selectedProviders.length === 1
           ? requirement.imports
           : requirement.imports.filter((entry) => providerIdForImport(entry) === selectedProviderId);
+      if (
+        providerDefinition.completeImportContract &&
+        providerDefinition.imports &&
+        (selectedImports.length !== providerDefinition.imports.length ||
+          providerDefinition.imports.some(
+            (expected) => selectedImports.filter((actual) => importContractMatches(actual, expected)).length !== 1,
+          ))
+      ) {
+        report(
+          "provider-import-mismatch",
+          requirement.id,
+          `provider '${selectedProviderId}' must declare the complete capability '${requirement.id}' ABI v${definition.abiVersion} import contract`,
+          selectedProviderId,
+        );
+      }
       for (const actual of selectedImports) {
         if (actual.module !== providerDefinition.importNamespace) {
           report(

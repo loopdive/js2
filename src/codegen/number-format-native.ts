@@ -410,10 +410,9 @@ export function usesNativeNumberFormat(ctx: CodegenContext): boolean {
  * `(f64) -> externref` ABI (see this module's header), so calling it directly
  * from the IR would put an `externref` in a `(ref $AnyString)` slot.
  *
- * This is a callable-provider *symbol*, resolved to the adapter below by
- * `resolveAndObserveCallableProvider` — the same shape as
- * `stringFromCharCodePlan`'s per-lane helper name, so the lane question is
- * answered once, by the resolver, and never re-asked in `from-ast`.
+ * This callable-provider symbol resolves to the adapter in control modes or
+ * directly to the raw formatter when tuned lowering fuses the carrier. Like
+ * `stringFromCharCodePlan`, it answers the lane question only in the resolver.
  */
 export const IR_NATIVE_NUMBER_TO_STRING_FN = "__ir_number_toString_native";
 
@@ -421,17 +420,16 @@ export const IR_NATIVE_NUMBER_TO_STRING_FN = "__ir_number_toString_native";
  * (#4462) `__ir_number_toString_native(n: f64) -> (ref $AnyString)` — the native
  * `number_toString` plus the `any.convert_extern` + `ref.cast $AnyString` unwrap
  * that legacy's `(n).toString()` arm performs inline (`unwrapToNative`,
- * call-receiver-method.ts, #3912). Minted once, lazily, at IR callable-provider
- * resolution; `mintDefinedFunc`/`pushDefinedFunc` keep the baked inner index in
- * the late-import shift set.
+ * call-receiver-method.ts, #3912). Control modes mint it lazily at callable-
+ * provider resolution; `mintDefinedFunc`/`pushDefinedFunc` keep the baked inner
+ * index in the late-import shift set. Tuned lowering returns the raw formatter
+ * and emits these same two adapter instructions at the semantic call site.
  *
  * Returns null when the lane cannot supply it (no native strings, no
  * `$AnyString` type, or the source scan never registered a formatter) — the
  * caller must treat that as "capability absent" and never claim.
  */
-export function ensureIrNativeNumberToString(ctx: CodegenContext): number | null {
-  const existing = ctx.funcMap.get(IR_NATIVE_NUMBER_TO_STRING_FN);
-  if (existing !== undefined) return existing;
+export function ensureIrNativeNumberToString(ctx: CodegenContext, fuseCarrier = false): number | null {
   if (!irNativeNumberToStringAvailable(ctx)) return null;
   // The formatter itself may not exist yet: `emitNativeNumberFormat` is driven
   // by the legacy source scan (`state.primitiveNeeded`), which only fires on a
@@ -442,6 +440,10 @@ export function ensureIrNativeNumberToString(ctx: CodegenContext): number | null
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const inner = ctx.funcMap.get("number_toString");
   if (inner === undefined || anyStrTypeIdx < 0) return null;
+  if (fuseCarrier) return inner;
+
+  const existing = ctx.funcMap.get(IR_NATIVE_NUMBER_TO_STRING_FN);
+  if (existing !== undefined) return existing;
 
   const sigIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "ref", typeIdx: anyStrTypeIdx }]);
   const funcIdx = mintDefinedFunc(ctx);
@@ -477,6 +479,9 @@ export function ensureIrNativeNumberToString(ctx: CodegenContext): number | null
 export function irNativeNumberToStringAvailable(ctx: CodegenContext): boolean {
   return ctx.nativeStrings && usesNativeNumberFormat(ctx);
 }
+
+/** Native `toFixed` uses the same carrier and number-format substrate. */
+export const irNativeNumberToFixedAvailable = irNativeNumberToStringAvailable;
 
 /**
  * Emit native number-format functions and register them in `ctx.funcMap`.
