@@ -1,11 +1,24 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const IR_CUTOVER_AUDIT_SCHEMA = "js2-ir-cutover-audit-v1";
+export const IR_CUTOVER_CORPUS_MANIFEST_SCHEMA = "js2-ir-cutover-corpus-manifest-v1";
+export const IR_CUTOVER_CORPUS_RECEIPT_SCHEMA = "js2-ir-cutover-corpus-receipt-v1";
+
+const CORPUS_COUNT_FIELDS = Object.freeze([
+  "sourceCount",
+  "classCount",
+  "allUnitCount",
+  "terminalUnitCount",
+  "ownedSupportUnitCount",
+  "unownedSupportUnitCount",
+  "derivedUnitCount",
+]);
 
 // The stream records invocations that reach a WasmGC generator. Corpus
 // orchestration must provide explicit record/source/unit floors because parse
@@ -157,6 +170,23 @@ function duplicateValues(values) {
     else seen.add(value);
   }
   return [...duplicates].sort();
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function computeIrCutoverCorpusManifestDigest(manifest) {
+  if (!isObject(manifest)) return undefined;
+  const { digest: _digest, ...unsigned } = manifest;
+  return `sha256:${createHash("sha256").update(canonicalJson(unsigned)).digest("hex")}`;
 }
 
 function isNormalizedSourceKey(value) {
@@ -1042,6 +1072,410 @@ export function evaluateIrCutoverAuditJsonl(text, options = {}) {
   });
 }
 
+function validateCorpusManifest(manifest) {
+  const errors = [];
+  if (!isObject(manifest)) {
+    return { errors: [error(undefined, "malformed-manifest", "corpus manifest must be an object")] };
+  }
+  if (manifest.schema !== IR_CUTOVER_CORPUS_MANIFEST_SCHEMA) {
+    errors.push(
+      error(
+        undefined,
+        "manifest-schema-mismatch",
+        `manifest.schema must be ${JSON.stringify(IR_CUTOVER_CORPUS_MANIFEST_SCHEMA)}`,
+      ),
+    );
+  }
+  requiredString(manifest, "id", errors, undefined, "manifest");
+  const digest = requiredString(manifest, "digest", errors, undefined, "manifest");
+  const observedDigest = computeIrCutoverCorpusManifestDigest(manifest);
+  if (digest !== undefined && digest !== observedDigest) {
+    errors.push(
+      error(undefined, "manifest-digest-mismatch", `manifest digest declares ${digest}, observed ${observedDigest}`),
+    );
+  }
+
+  const invocation = isObject(manifest.invocation) ? manifest.invocation : {};
+  if (!isObject(manifest.invocation)) {
+    errors.push(error(undefined, "malformed-manifest", "manifest.invocation must be an object"));
+  }
+  const route = requiredString(invocation, "route", errors, undefined, "manifest.invocation");
+  const target = requiredString(invocation, "target", errors, undefined, "manifest.invocation");
+  const graph = requiredString(invocation, "graph", errors, undefined, "manifest.invocation");
+  const generator = requiredString(invocation, "generator", errors, undefined, "manifest.invocation");
+  const routeIdentity = route === undefined ? undefined : ROUTES[route];
+  if (!routeIdentity) {
+    errors.push(error(undefined, "manifest-route-mismatch", `manifest route is unknown: ${route}`));
+  } else if (graph !== routeIdentity.graph || generator !== routeIdentity.generator) {
+    errors.push(
+      error(
+        undefined,
+        "manifest-route-mismatch",
+        `manifest route ${route} requires ${routeIdentity.graph}/${routeIdentity.generator}`,
+      ),
+    );
+  }
+  if (target !== "standalone") {
+    errors.push(error(undefined, "manifest-target-mismatch", "corpus manifest target must be standalone"));
+  }
+
+  const sources = requiredArray(manifest, "sources", errors, undefined, "manifest");
+  const sourceIds = [];
+  const sourcePaths = [];
+  const sourcesById = new Map();
+  for (const [index, source] of sources.entries()) {
+    const context = `manifest.sources[${index}]`;
+    if (!isObject(source)) {
+      errors.push(error(undefined, "malformed-manifest", `${context} must be an object`));
+      continue;
+    }
+    const id = requiredString(source, "id", errors, undefined, context);
+    const path = requiredString(source, "path", errors, undefined, context);
+    requiredInteger(source, "bytes", errors, undefined, context, 1);
+    const sourceDigest = requiredString(source, "sha256", errors, undefined, context);
+    if (path !== undefined && !isNormalizedSourceKey(path)) {
+      errors.push(error(undefined, "manifest-source-path", `${context}.path must be a normalized relative path`));
+    }
+    if (sourceDigest !== undefined && !/^[0-9a-f]{64}$/u.test(sourceDigest)) {
+      errors.push(error(undefined, "manifest-source-digest", `${context}.sha256 must be 64 lowercase hex digits`));
+    }
+    if (id !== undefined) {
+      sourceIds.push(id);
+      sourcesById.set(id, source);
+    }
+    if (path !== undefined) sourcePaths.push(path);
+  }
+  for (const id of duplicateValues(sourceIds)) {
+    errors.push(error(undefined, "duplicate-manifest-source", `manifest repeats source id ${id}`));
+  }
+  for (const path of duplicateValues(sourcePaths)) {
+    errors.push(error(undefined, "duplicate-manifest-source", `manifest repeats source path ${path}`));
+  }
+
+  const cases = requiredArray(manifest, "cases", errors, undefined, "manifest");
+  const caseIds = [];
+  const caseSourceIds = [];
+  const casesById = new Map();
+  for (const [index, corpusCase] of cases.entries()) {
+    const context = `manifest.cases[${index}]`;
+    if (!isObject(corpusCase)) {
+      errors.push(error(undefined, "malformed-manifest", `${context} must be an object`));
+      continue;
+    }
+    const id = requiredString(corpusCase, "id", errors, undefined, context);
+    const sourceId = requiredString(corpusCase, "sourceId", errors, undefined, context);
+    const sourceKey = requiredString(corpusCase, "sourceKey", errors, undefined, context);
+    const auditSourceId = requiredString(corpusCase, "auditSourceId", errors, undefined, context);
+    if (sourceKey !== undefined && !isNormalizedSourceKey(sourceKey)) {
+      errors.push(error(undefined, "manifest-source-key", `${context}.sourceKey must be normalized`));
+    }
+    if (sourceId !== undefined && !sourcesById.has(sourceId)) {
+      errors.push(error(undefined, "unknown-manifest-source", `${context} references unknown source ${sourceId}`));
+    }
+    if (!isObject(corpusCase.expected)) {
+      errors.push(error(undefined, "malformed-manifest", `${context}.expected must be an object`));
+    } else {
+      for (const field of CORPUS_COUNT_FIELDS) {
+        requiredInteger(corpusCase.expected, field, errors, undefined, `${context}.expected`);
+      }
+      if (corpusCase.expected.sourceCount !== 1) {
+        errors.push(error(undefined, "manifest-source-count", `${context}.expected.sourceCount must equal 1`));
+      }
+    }
+    if (id !== undefined) {
+      caseIds.push(id);
+      casesById.set(id, corpusCase);
+    }
+    if (sourceId !== undefined) caseSourceIds.push(sourceId);
+    void auditSourceId;
+  }
+  for (const id of duplicateValues(caseIds)) {
+    errors.push(error(undefined, "duplicate-manifest-case", `manifest repeats case id ${id}`));
+  }
+  for (const sourceId of duplicateValues(caseSourceIds)) {
+    errors.push(error(undefined, "duplicate-manifest-case-source", `manifest repeats case source ${sourceId}`));
+  }
+  for (const sourceId of sourceIds) {
+    if (!caseSourceIds.includes(sourceId)) {
+      errors.push(error(undefined, "unused-manifest-source", `manifest source ${sourceId} has no case`));
+    }
+  }
+
+  const totals = isObject(manifest.totals) ? manifest.totals : {};
+  if (!isObject(manifest.totals)) {
+    errors.push(error(undefined, "malformed-manifest", "manifest.totals must be an object"));
+  }
+  const totalFields = ["caseCount", "sourceBytes", ...CORPUS_COUNT_FIELDS];
+  for (const field of totalFields) requiredInteger(totals, field, errors, undefined, "manifest.totals");
+  const computedTotals = {
+    caseCount: cases.length,
+    sourceBytes: sources.reduce(
+      (total, source) => total + (isObject(source) && Number.isInteger(source.bytes) ? source.bytes : 0),
+      0,
+    ),
+  };
+  for (const field of CORPUS_COUNT_FIELDS) {
+    computedTotals[field] = cases.reduce(
+      (total, corpusCase) =>
+        total +
+        (isObject(corpusCase) && isObject(corpusCase.expected) && Number.isInteger(corpusCase.expected[field])
+          ? corpusCase.expected[field]
+          : 0),
+      0,
+    );
+  }
+  for (const [field, value] of Object.entries(computedTotals)) {
+    if (totals[field] !== value) {
+      errors.push(
+        error(
+          undefined,
+          "manifest-total-mismatch",
+          `manifest.totals.${field} declares ${totals[field]}, cases declare ${value}`,
+        ),
+      );
+    }
+  }
+  return { errors, digest: observedDigest, invocation, sourcesById, casesById, cases, totals };
+}
+
+function corpusCaseErrors(corpusCase, source, envelope, invocation, line) {
+  const errors = [];
+  const audit = envelope.audit;
+  for (const field of ["route", "target", "graph", "generator"]) {
+    if (audit[field] !== invocation[field]) {
+      errors.push(
+        error(
+          line,
+          "case-invocation-mismatch",
+          `${corpusCase.id} expected ${field}=${invocation[field]}, observed ${audit[field]}`,
+        ),
+      );
+    }
+  }
+  const expectedSources = [corpusCase.auditSourceId];
+  const observedSources = audit.sources.map((item) => item.id);
+  if (
+    JSON.stringify(observedSources) !== JSON.stringify(expectedSources) ||
+    audit.sources[0]?.sourceKey !== corpusCase.sourceKey ||
+    audit.sources[0]?.kind !== "entry" ||
+    audit.sources[0]?.order !== 0
+  ) {
+    errors.push(
+      error(
+        line,
+        "case-source-mismatch",
+        `${corpusCase.id} expected entry source ${corpusCase.auditSourceId}/${corpusCase.sourceKey}`,
+      ),
+    );
+  }
+  const observed = {
+    sourceCount: audit.sourceCount,
+    classCount: audit.classCount,
+    allUnitCount: audit.allUnitCount,
+    terminalUnitCount: audit.terminalUnitCount,
+    ownedSupportUnitCount: audit.ownedSupportUnitCount,
+    unownedSupportUnitCount: audit.unownedSupportUnitCount,
+    derivedUnitCount: audit.derivedUnits.length,
+  };
+  for (const field of CORPUS_COUNT_FIELDS) {
+    if (observed[field] !== corpusCase.expected[field]) {
+      errors.push(
+        error(
+          line,
+          "case-count-mismatch",
+          `${corpusCase.id} expected ${field}=${corpusCase.expected[field]}, observed ${observed[field]}`,
+        ),
+      );
+    }
+  }
+  if (source === undefined) {
+    errors.push(error(line, "unknown-manifest-source", `${corpusCase.id} has no pinned source`));
+  }
+  return errors;
+}
+
+/** Validate a runner receipt stream against one exact content-addressed corpus manifest. */
+export function evaluateIrCutoverCorpusJsonl(text, manifest, options = {}) {
+  const input = options.input ?? "<memory>";
+  const manifestValidation = validateCorpusManifest(manifest);
+  const errors = [...manifestValidation.errors];
+  const rawLines = text.split(/\r?\n/u);
+  if (rawLines.at(-1) === "") rawLines.pop();
+  const attempts = new Map();
+  const completions = new Map();
+  const runIds = new Set();
+  const validEnvelopes = [];
+  const successfulCases = [];
+
+  for (const [index, rawLine] of rawLines.entries()) {
+    const line = index + 1;
+    if (rawLine.trim().length === 0) {
+      errors.push(error(line, "blank-receipt", "blank corpus receipt"));
+      continue;
+    }
+    let receipt;
+    try {
+      receipt = JSON.parse(rawLine);
+    } catch (cause) {
+      errors.push(error(line, "invalid-receipt-json", cause instanceof Error ? cause.message : String(cause)));
+      continue;
+    }
+    if (!isObject(receipt)) {
+      errors.push(error(line, "malformed-receipt", "corpus receipt must be an object"));
+      continue;
+    }
+    if (receipt.schema !== IR_CUTOVER_CORPUS_RECEIPT_SCHEMA) {
+      errors.push(error(line, "receipt-schema-mismatch", `unexpected receipt schema ${receipt.schema}`));
+    }
+    const runId = requiredString(receipt, "runId", errors, line, "receipt");
+    const manifestDigest = requiredString(receipt, "manifestDigest", errors, line, "receipt");
+    const caseId = requiredString(receipt, "caseId", errors, line, "receipt");
+    const kind = requiredString(receipt, "kind", errors, line, "receipt");
+    if (runId !== undefined) runIds.add(runId);
+    if (manifestDigest !== manifestValidation.digest) {
+      errors.push(
+        error(
+          line,
+          "stale-manifest-receipt",
+          `receipt manifest ${manifestDigest} does not match ${manifestValidation.digest}`,
+        ),
+      );
+    }
+    const corpusCase = caseId === undefined ? undefined : manifestValidation.casesById?.get(caseId);
+    if (caseId !== undefined && corpusCase === undefined) {
+      errors.push(error(line, "extra-corpus-case", `receipt references unexpected case ${caseId}`));
+    }
+    if (kind !== "attempt" && kind !== "completion") {
+      errors.push(error(line, "unknown-receipt-kind", `receipt.kind is unknown: ${kind}`));
+      continue;
+    }
+    if (caseId === undefined) continue;
+    const target = kind === "attempt" ? attempts : completions;
+    const sameKind = target.get(caseId) ?? [];
+    sameKind.push({ line, receipt });
+    target.set(caseId, sameKind);
+    if (kind !== "completion") continue;
+
+    const success = requiredBoolean(receipt, "success", errors, line, "receipt");
+    if (success !== true) {
+      if (!isObject(receipt.failure)) {
+        errors.push(error(line, "malformed-failure-receipt", `${caseId} failure completion lacks failure detail`));
+      } else {
+        requiredString(receipt.failure, "stage", errors, line, "receipt.failure");
+        requiredString(receipt.failure, "message", errors, line, "receipt.failure");
+      }
+      errors.push(error(line, "failed-corpus-case", `${caseId} did not complete successfully`));
+      continue;
+    }
+    if (!isObject(receipt.source)) {
+      errors.push(error(line, "malformed-receipt", `${caseId} successful completion lacks source evidence`));
+    } else if (corpusCase !== undefined) {
+      const source = manifestValidation.sourcesById?.get(corpusCase.sourceId);
+      if (receipt.source.bytes !== source?.bytes || receipt.source.sha256 !== source?.sha256) {
+        errors.push(error(line, "source-receipt-mismatch", `${caseId} source receipt differs from its manifest`));
+      }
+    }
+    const validated = validateEnvelope(receipt.envelope, line);
+    errors.push(...validated.errors);
+    if (validated.envelope === undefined || validated.errors.length > 0) continue;
+    if (validated.envelope.success !== true) {
+      errors.push(error(line, "failed-audit-envelope", `${caseId} successful completion wraps a failed audit`));
+      continue;
+    }
+    validEnvelopes.push(validated.envelope);
+    if (corpusCase !== undefined) {
+      const source = manifestValidation.sourcesById?.get(corpusCase.sourceId);
+      errors.push(...corpusCaseErrors(corpusCase, source, validated.envelope, manifestValidation.invocation, line));
+      successfulCases.push({ corpusCase, source, receipt, envelope: validated.envelope });
+    }
+  }
+
+  if (runIds.size !== 1) {
+    errors.push(error(undefined, "mixed-corpus-run", `expected one runId, observed ${runIds.size}`));
+  }
+  for (const corpusCase of manifestValidation.cases ?? []) {
+    const caseAttempts = attempts.get(corpusCase.id) ?? [];
+    const caseCompletions = completions.get(corpusCase.id) ?? [];
+    if (caseAttempts.length === 0) errors.push(error(undefined, "missing-corpus-attempt", corpusCase.id));
+    if (caseAttempts.length > 1) errors.push(error(undefined, "duplicate-corpus-attempt", corpusCase.id));
+    if (caseCompletions.length === 0) errors.push(error(undefined, "missing-corpus-completion", corpusCase.id));
+    if (caseCompletions.length > 1) errors.push(error(undefined, "duplicate-corpus-completion", corpusCase.id));
+  }
+
+  const observedTotals = {
+    caseCount: successfulCases.length,
+    sourceBytes: successfulCases.reduce(
+      (total, item) => total + (Number.isInteger(item.receipt.source?.bytes) ? item.receipt.source.bytes : 0),
+      0,
+    ),
+  };
+  for (const field of CORPUS_COUNT_FIELDS) {
+    observedTotals[field] = successfulCases.reduce((total, item) => {
+      if (field === "derivedUnitCount") return total + item.envelope.audit.derivedUnits.length;
+      return total + item.envelope.audit[field];
+    }, 0);
+  }
+  for (const [field, expected] of Object.entries(manifestValidation.totals ?? {})) {
+    if (observedTotals[field] !== expected) {
+      errors.push(
+        error(undefined, "corpus-total-mismatch", `expected ${field}=${expected}, observed ${observedTotals[field]}`),
+      );
+    }
+  }
+
+  const auditText = validEnvelopes.map((envelope) => JSON.stringify(envelope)).join("\n");
+  const requiredRoutes = [
+    ...new Set([manifestValidation.invocation?.route, ...(options.requiredRoutes ?? [])].filter(Boolean)),
+  ];
+  const auditReport = evaluateIrCutoverAuditJsonl(auditText, {
+    input: `${input}#audit-envelopes`,
+    requireNoLegacy: options.requireNoLegacy === true,
+    requiredRoutes,
+    expectSuccessful: manifestValidation.totals?.caseCount,
+    minSources: manifestValidation.totals?.sourceCount,
+    minUnits: manifestValidation.totals?.allUnitCount,
+  });
+  errors.push(...auditReport.errors);
+
+  return Object.freeze({
+    schema: IR_CUTOVER_CORPUS_RECEIPT_SCHEMA,
+    ok: errors.length === 0,
+    mode: options.requireNoLegacy === true ? "require-no-legacy" : "structural",
+    input,
+    manifest: Object.freeze({
+      id: manifest?.id ?? null,
+      digest: manifestValidation.digest ?? null,
+    }),
+    runId: runIds.size === 1 ? [...runIds][0] : null,
+    counts: Object.freeze({
+      receipts: rawLines.length,
+      attempts: [...attempts.values()].reduce((total, rows) => total + rows.length, 0),
+      completions: [...completions.values()].reduce((total, rows) => total + rows.length, 0),
+      successfulCompletions: successfulCases.length,
+      ...observedTotals,
+    }),
+    expected: Object.freeze({ ...(manifestValidation.totals ?? {}) }),
+    audit: auditReport,
+    errors: Object.freeze(errors),
+  });
+}
+
+export function formatIrCutoverCorpusReport(report) {
+  const lines = [
+    `Standalone IR cutover corpus: ${report.ok ? "PASS" : "FAIL"}`,
+    `Input: ${report.input}`,
+    `Mode: ${report.mode}`,
+    `Manifest: ${report.manifest.id} (${report.manifest.digest})`,
+    `Run: ${report.runId ?? "invalid/mixed"}`,
+    `Receipts: attempts=${report.counts.attempts}/${report.expected.caseCount ?? "?"}, completions=${report.counts.completions}/${report.expected.caseCount ?? "?"}, successful=${report.counts.successfulCompletions}`,
+    `Exact census: sources=${report.counts.sourceCount}/${report.expected.sourceCount ?? "?"}, units=${report.counts.allUnitCount}/${report.expected.allUnitCount ?? "?"}, terminal=${report.counts.terminalUnitCount}/${report.expected.terminalUnitCount ?? "?"}, derived=${report.counts.derivedUnitCount}/${report.expected.derivedUnitCount ?? "?"}`,
+  ];
+  for (const item of report.errors) {
+    lines.push(`ERROR${item.line === undefined ? "" : ` line ${item.line}`} [${item.code}]: ${item.message}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatIrCutoverAuditReport(report) {
   const routes = Object.entries(report.routes)
     .map(([route, count]) => `${route}=${count}`)
@@ -1073,6 +1507,7 @@ function usage() {
     "Usage: node scripts/check-standalone-ir-cutover.mjs --input <audit.jsonl> [options]",
     "",
     "Options:",
+    "  --manifest <path>      Validate exact runner receipts against a pinned corpus manifest",
     "  --require-no-legacy     Require successful standalone records to be fully IR-owned",
     "  --require-route <route> Require a successful standalone record for a public compile route (repeatable)",
     "  --expect-successful <n> Require exactly n successful standalone generator records",
@@ -1096,6 +1531,11 @@ function parseArgs(argv) {
       const value = argv[++index];
       if (!value || value.startsWith("--")) throw new Error("--input requires a path");
       options.input = value;
+    } else if (argument === "--manifest") {
+      if (options.manifest !== undefined) throw new Error("--manifest may be specified only once");
+      const value = argv[++index];
+      if (!value || value.startsWith("--")) throw new Error("--manifest requires a path");
+      options.manifest = value;
     } else if (argument === "--require-route") {
       const value = argv[++index];
       if (!value || value.startsWith("--")) throw new Error("--require-route requires a route");
@@ -1143,6 +1583,25 @@ export function runCli(argv = process.argv.slice(2)) {
   }
   if (!options.input) throw new Error("--input is required");
   const input = readInput(options.input);
+  if (options.manifest) {
+    if (options.expectSuccessful !== undefined || options.minSources !== undefined || options.minUnits !== undefined) {
+      throw new Error("--manifest supplies exact denominators; manual record/source/unit floors are not allowed");
+    }
+    const manifestInput = readInput(options.manifest);
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestInput.text);
+    } catch (cause) {
+      throw new Error(`manifest is not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+    const report = evaluateIrCutoverCorpusJsonl(input.text, manifest, {
+      input: input.absolute,
+      requireNoLegacy: options.requireNoLegacy,
+      requiredRoutes: options.requiredRoutes,
+    });
+    process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatIrCutoverCorpusReport(report));
+    return report.ok ? 0 : 1;
+  }
   const report = evaluateIrCutoverAuditJsonl(input.text, {
     input: input.absolute,
     requireNoLegacy: options.requireNoLegacy,
