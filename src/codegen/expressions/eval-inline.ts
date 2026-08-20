@@ -30,6 +30,7 @@ import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, compileStatement } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { collectReferencedIdentifiers, emitFuncRefAsClosure, getFuncSignature } from "../closures.js";
+import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowJsError, noJsHost } from "./helpers.js";
@@ -1971,7 +1972,7 @@ export function emitStandaloneIndirectEvalRuntime(
 }
 
 /** Hoist the realm's first-class `%eval%` wrapper without executing eval. */
-function ensureStandaloneIntrinsicEvalWrapper(
+export function ensureStandaloneIntrinsicEvalWrapper(
   ctx: CodegenContext,
   fctx: FunctionContext,
 ): { fnName: string; funcIdx: number } | undefined {
@@ -2021,14 +2022,13 @@ function ensureStandaloneIntrinsicEvalWrapper(
 
 /**
  * Materialize the current realm's first-class `%eval%` value for standalone.
- * Construction is pure AOT: merely storing `eval` (Deno primordials does
- * exactly this) must not execute the runtime compiler/interpreter. Calling the
+ * Capturing `eval` is pure AOT and does not execute the provider; calling the
  * resulting closure later invokes the existing indirect-eval provider seam.
  */
 export function emitStandaloneIntrinsicEvalValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
   const wrapper = ensureStandaloneIntrinsicEvalWrapper(ctx, fctx);
   if (!wrapper) return undefined;
-  const closureRef = emitFuncRefAsClosure(ctx, fctx, wrapper.fnName, wrapper.funcIdx);
+  const closureRef = emitCachedFuncClosureAccess(ctx, fctx, wrapper.fnName, wrapper.funcIdx);
   if (!closureRef) return undefined;
   if (closureRef.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };

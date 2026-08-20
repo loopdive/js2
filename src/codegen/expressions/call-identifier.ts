@@ -90,6 +90,7 @@ import { buildThrowJsErrorInstrs, emitThrowReferenceError } from "../js-errors.j
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isForeignEvalNode } from "./eval-source.js";
 import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
+import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import {
   calleeIsCapabilityCtorParam,
@@ -1372,14 +1373,12 @@ export function compileIdentifierCall(
       }
       const storedCarrierCall = tryCompileStoredStandaloneCarrierCall(ctx, fctx, expr, isKnownVariable);
       if (storedCarrierCall !== undefined) return storedCarrierCall;
-      // `%Function%` is represented by the linked provider's structural
-      // callable marker. Calling an alias through the checker-derived
-      // FunctionConstructor signature first would compile native-string
-      // arguments into module-local ref slots; a failed guarded cast then
-      // irreversibly becomes null before the marker fallback can see it. Route
-      // proven aliases through the generic externref dispatcher up front. It
-      // still evaluates the live binding and every argument exactly once, so
-      // this is a dispatch choice rather than constant-folding the alias.
+      if (prepareStandaloneEvalAliasCall(ctx, fctx, expr.expression, isKnownVariable)) {
+        const evalAliasCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        if (evalAliasCall !== null) return evalAliasCall;
+      }
+      // Provider-owned `%Function%` aliases need generic externref dispatch;
+      // the live binding and arguments are still evaluated exactly once.
       if (
         isKnownVariable &&
         ctx.standalone &&
