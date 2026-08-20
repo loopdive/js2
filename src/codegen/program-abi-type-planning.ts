@@ -18,6 +18,7 @@ import {
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
+import { DOM_CALLBACK_AUTHORITY_FIELD } from "../dom-capability-contract.js";
 
 const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   retainedModuleType: 0,
@@ -46,6 +47,8 @@ export type ProgramAbiClosureSupportRole = "carrier" | "invoke" | "allocate";
 export interface ProgramAbiClosureSupportLayoutRequest {
   readonly signature: IrClosureSignature;
   readonly captureFieldTypes: readonly IrType[];
+  /** Exact certified DOM callback identity when this is its private carrier. */
+  readonly domCallbackAuthorityKey?: string;
   /** Strongest physical capability the final IR actually uses for this layout. */
   readonly role: ProgramAbiClosureSupportRole;
   /** Canonical module-wide wrapper root already allocated by the closure registry. */
@@ -208,11 +211,15 @@ export function canonicalProgramAbiClosureSignatureKey(signature: IrClosureSigna
 export function canonicalProgramAbiClosureLayoutKey(
   signature: IrClosureSignature,
   captureFieldTypes: readonly IrType[],
+  domCallbackAuthorityKey?: string,
 ): string {
-  return JSON.stringify({
+  const ordinary = {
     signature: canonicalClosureSupportSignature(signature),
     captures: captureFieldTypes.map((type) => canonicalClosureSupportIrType(type, new Set<object>())),
-  });
+  };
+  return JSON.stringify(
+    domCallbackAuthorityKey === undefined ? ordinary : { ...ordinary, domCallbackAuthority: domCallbackAuthorityKey },
+  );
 }
 
 /** Backend-neutral semantic key for one mutable-capture cell payload. */
@@ -261,6 +268,8 @@ function vectorLogicalOrdinal(logicalKey: string): number {
       return 1;
     case "vec<externref>":
       return 2;
+    case "vec<string>":
+      return 3;
     default:
       throw new ProgramAbiInvariantError(
         "unknown-order-anchor",
@@ -704,7 +713,11 @@ export class ProgramAbiTypeRegistry {
 
     const canonical = requests.map((request) => {
       const signatureKey = canonicalProgramAbiClosureSignatureKey(request.signature);
-      const layoutKey = canonicalProgramAbiClosureLayoutKey(request.signature, request.captureFieldTypes);
+      const layoutKey = canonicalProgramAbiClosureLayoutKey(
+        request.signature,
+        request.captureFieldTypes,
+        request.domCallbackAuthorityKey,
+      );
       this.validateAllocatedClosureSupport(request, signatureKey);
       return { request, signatureKey, layoutKey } satisfies CanonicalClosureSupportRequest;
     });
@@ -1205,7 +1218,7 @@ export class ProgramAbiTypeRegistry {
       );
     }
 
-    if (request.captureFieldTypes.length === 0) {
+    if (request.captureFieldTypes.length === 0 && request.domCallbackAuthorityKey === undefined) {
       if (request.capturedSubtypeType !== request.allocationWrapperType) {
         throw new ProgramAbiInvariantError(
           "type-remap-mismatch",
@@ -1215,13 +1228,28 @@ export class ProgramAbiTypeRegistry {
     } else if (
       request.capturedSubtypeType === request.allocationWrapperType ||
       request.capturedSubtypeType.superTypeIdx !== wrapperIndex ||
-      request.capturedSubtypeType.fields.length !== closureSubtypeFieldCount(request.captureFieldTypes.length) ||
+      request.capturedSubtypeType.fields.length !==
+        closureSubtypeFieldCount(request.captureFieldTypes.length) +
+          (request.domCallbackAuthorityKey === undefined ? 0 : 1) ||
       !hasClosureHeaderPrefix(request.capturedSubtypeType.fields)
     ) {
       throw new ProgramAbiInvariantError(
         "type-remap-mismatch",
         `closure layout ${signatureKey} has a mismatched captured subtype at ${subtypeIndex}`,
       );
+    }
+    if (request.domCallbackAuthorityKey !== undefined) {
+      const authorityField = request.capturedSubtypeType.fields.at(-1);
+      if (
+        authorityField?.name !== DOM_CALLBACK_AUTHORITY_FIELD ||
+        authorityField.mutable ||
+        authorityField.type.kind !== "ref"
+      ) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `DOM callback closure layout ${signatureKey} has no exact authority field at ${subtypeIndex}`,
+        );
+      }
     }
   }
 

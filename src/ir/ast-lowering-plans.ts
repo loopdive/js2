@@ -102,6 +102,8 @@ export interface IrHostVoidCallbackLoweringPlan {
   readonly captureNames: ReadonlySet<string>;
   /** Exact source-order lift ordinal collision-proved before integration. */
   readonly liftedOrdinal: number;
+  /** This exact plan is owned by the dedicated standalone DOM dispatcher. */
+  readonly standaloneDomReusable?: true;
 }
 
 export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
@@ -110,6 +112,8 @@ export type IrHostDateSnapshotGetter = "getDate" | "getMonth" | "getFullYear";
 export interface IrHostDateSnapshotLoweringPlan {
   readonly ownerUnitId: IrUnitId;
   readonly ownerName: string;
+  /** Target-selected clock callable; host stays ambient, standalone carries exact embedder provenance. */
+  readonly target: IrFuncRef;
 }
 
 /** Exact getter use tied to one certified snapshot carrier. */
@@ -129,6 +133,8 @@ export interface ModuleBindingGlobal {
   readonly globalName: string;
   readonly tdzGlobalName: string | null;
   readonly type: IrType;
+  /** Explicit provider provenance for an externref that is not generic host authority. */
+  readonly capability?: "dom";
   /** Exact owner-qualified proof that this use executes only after Wasm start. */
   readonly omitTdzReadCheck?: true;
 }

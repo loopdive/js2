@@ -3,7 +3,7 @@
 import type { ImportDescriptor, ImportIntent } from "./index.js";
 import type { WasmModule } from "./ir/types.js";
 import type { CompileEnvironment } from "./target-profile.js";
-import { isDomCapabilityImportDescriptor } from "./dom-capability-contract.js";
+import { isDomCapabilityImportDescriptor, isDomInteractionImportDescriptor } from "./dom-capability-contract.js";
 
 export type HostImportPolicyClass =
   | "platform-capability"
@@ -159,6 +159,9 @@ function classifyBuiltin(name: string): HostImportPolicy {
  * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
  */
 export function classifyHostImport(descriptor: ImportDescriptor, environment?: CompileEnvironment): HostImportPolicy {
+  if (environment === "none" && isDomInteractionImportDescriptor(descriptor)) {
+    return policy("platform-capability", "dom-interaction", 4577, false, "explicit DOM interaction capability");
+  }
   if (environment === "none" && isDomCapabilityImportDescriptor(descriptor)) {
     return policy("platform-capability", "dom", 4576, false, "explicit bounded DOM subtree capability");
   }
@@ -238,7 +241,9 @@ export function classifyHostImport(descriptor: ImportDescriptor, environment?: C
     case "date_method":
       return policy("legacy-semantic", "date", 4397, true, "host-backed Date semantics");
     case "date_now":
-      return policy("platform-capability", "clock", 4398, true, "wall-clock capability");
+      return environment === "none"
+        ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
+        : policy("platform-capability", "clock", 4398, true, "wall-clock capability");
     case "declared_global":
       return policy("platform-capability", `global:${intent.name}`, 4398, false, "declared ambient host capability");
     case "dynamic_import":

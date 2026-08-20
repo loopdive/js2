@@ -9,6 +9,7 @@ import {
   type IrUnitId,
   type IrUnitInventory,
 } from "./identity.js";
+import { irGlobalBindingKey } from "./abi-bindings.js";
 
 export type ProgramAbiSlotPolicy = "required" | "alias" | "none";
 /** The three independent index spaces owned by ModuleAssembler. */
@@ -43,12 +44,17 @@ export type ProgramAbiIntent =
       readonly unitId?: IrUnitId;
       readonly classId?: IrClassId;
       readonly sourceId?: IrSourceId;
+      /** Exact platform-capability allocator provenance for imported callables. */
+      readonly capabilityId?: string;
+      readonly providerId?: string;
     }
   | {
       readonly kind: "global";
       readonly origin: "source" | "import" | "runtime" | "support";
       readonly valueType: string;
       readonly mutable: boolean;
+      /** Explicit provider provenance for capability-owned source storage. */
+      readonly capability?: "dom";
       /** Exact source that structurally owns a source-global binding ID. */
       readonly sourceId?: IrSourceId;
       /** Terminal unit that owns initialization/storage lifetime for this global. */
@@ -270,10 +276,18 @@ function freezePlan(entry: ProgramAbiPlanEntry): ProgramAbiPlanEntry {
 function aliasContractsMatch(alias: ProgramAbiIntent, canonical: ProgramAbiIntent): boolean {
   if (alias.kind !== canonical.kind) return false;
   if (alias.kind === "callable" && canonical.kind === "callable") {
-    return callableSignaturesEqual(alias.signature, canonical.signature);
+    return (
+      callableSignaturesEqual(alias.signature, canonical.signature) &&
+      alias.capabilityId === canonical.capabilityId &&
+      alias.providerId === canonical.providerId
+    );
   }
   if (alias.kind === "global" && canonical.kind === "global") {
-    return alias.valueType === canonical.valueType && alias.mutable === canonical.mutable;
+    return (
+      alias.valueType === canonical.valueType &&
+      alias.mutable === canonical.mutable &&
+      alias.capability === canonical.capability
+    );
   }
   if (alias.kind === "type" && canonical.kind === "type") return alias.shapeKey === canonical.shapeKey;
   if (alias.kind === "class" && canonical.kind === "class") {
@@ -639,6 +653,14 @@ export class ProgramAbiMap {
       const hasUnit = entry.intent.unitId !== undefined;
       const hasClass = entry.intent.classId !== undefined;
       const hasSource = entry.intent.sourceId !== undefined;
+      const hasCapability = entry.intent.capabilityId !== undefined;
+      const hasProvider = entry.intent.providerId !== undefined;
+      if (hasCapability !== hasProvider || (hasCapability && entry.intent.origin !== "import")) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `callable binding ${entry.id} has invalid platform-capability provenance`,
+        );
+      }
       if (entry.intent.origin === "source") {
         if (!hasUnit) {
           throw new ProgramAbiInvariantError(
@@ -695,6 +717,47 @@ export class ProgramAbiMap {
         }
         this.assertInventorySourceOrder(entry, entry.intent.sourceId!);
       }
+    }
+
+    if (entry.intent.kind === "global" && entry.intent.capability !== undefined) {
+      if (
+        entry.intent.capability !== "dom" ||
+        entry.intent.origin !== "source" ||
+        entry.intent.sourceId === undefined ||
+        entry.intent.unitId === undefined ||
+        entry.slotPolicy !== "required" ||
+        entry.aliasOf !== undefined
+      ) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `capability global binding ${entry.id} requires an exact source-owned allocator and storage-terminal provenance`,
+        );
+      }
+      const unit = this.units.get(entry.intent.unitId);
+      if (!unit) {
+        throw new ProgramAbiInvariantError(
+          "unknown-inventory-unit",
+          `capability global binding ${entry.id} references unit ${entry.intent.unitId} outside this inventory`,
+        );
+      }
+      if (unit.sourceId !== entry.intent.sourceId || !this.sourceOrders.has(entry.intent.sourceId)) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `capability global binding ${entry.id} source and storage-terminal provenance disagree`,
+        );
+      }
+      const exactReferenceKey = irGlobalBindingKey({
+        kind: "source",
+        bindingId: entry.id,
+        capability: entry.intent.capability,
+      });
+      if (entry.structuralReferenceKey !== exactReferenceKey) {
+        throw new ProgramAbiInvariantError(
+          "invalid-binding-reference",
+          `capability global binding ${entry.id} does not name its exact capability allocator reference`,
+        );
+      }
+      this.assertInventorySourceOrder(entry, entry.intent.sourceId);
     }
 
     if (entry.intent.kind === "class") {

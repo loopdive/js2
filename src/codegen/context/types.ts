@@ -17,6 +17,7 @@ import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
 import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
+import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 
 export interface CodegenError {
   message: string;
@@ -343,6 +344,8 @@ export interface ClosureInfo {
    * callable/property/method bridges. An ordinary allocation clears the bit.
    */
   hostOneShotOnly?: boolean;
+  /** Compiler-only carrier admitted exclusively by the reusable DOM callback dispatcher. */
+  domCallbackOnly?: boolean;
   /**
    * True when a source closure observes the call-site arity protocol through
    * its own `arguments`, a rest parameter, or a parameter default. Undefined
@@ -1267,7 +1270,7 @@ export interface FunctionContext {
   typedThisLocalIdx?: number;
 }
 
-export interface CodegenContext {
+export interface CodegenContext extends StandaloneCapabilityDemandState {
   mod: WasmModule;
   /**
    * Immutable target/provider/interop policy resolved once at context creation.
@@ -1657,14 +1660,6 @@ export interface CodegenContext {
    * decision lives in exactly one place.
    */
   emitHostBridge: boolean;
-  /**
-   * The exact standalone Promise-delay provider registered a timer callback
-   * that must re-enter Wasm after the general JS host bridge is stripped.
-   * Finalization publishes only the reserved zero-argument timer dispatcher.
-   */
-  requiresStandaloneTimerCallbackDispatch?: boolean;
-  /** Exact #4576 dom@1 import family was checker-certified for this module. */
-  requiresStandaloneDomCapability?: boolean;
   /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in

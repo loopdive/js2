@@ -4,7 +4,7 @@ title: "Fail-closed optimization parity gate before direct codegen retirement"
 status: in-progress
 sprint: current
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-08-20
 priority: critical
 horizon: m
 complexity: M
@@ -18,7 +18,7 @@ goal: ir-full-coverage
 parent: 3518
 depends_on: [3521]
 required_by: [3090]
-related: [2949, 3090, 3518, 3521]
+related: [2949, 3090, 3518, 3521, 4577]
 files:
   - plan/log/ir-optimization-retirement-ledger.md
   - scripts/check-ir-optimization-retirement.mjs
@@ -138,14 +138,25 @@ ledger as the positive control.
       refreshed reachability audit authorizes deletion. This remains future
       migration work, not acceptance for the current hybrid gate machinery.
 
-## Result (2026-08-11)
+## Result (2026-08-20)
 
-The committed inventory measures **44 total rows**, **30 with complete IR
-ownership**, and **1 retirement-ready**. The result is intentionally
+The committed inventory measures **50 total rows**, **36 with complete IR
+ownership**, **3 retirement-ready**, and **2 source-anchored direct owners**.
+The result is intentionally
 fail-closed for deletion while remaining green for the hybrid compiler: pending
 evidence is explicit and cannot be mistaken for completed parity. Normal
 `check:issues` passes; deletion-time `--require-ready` remains red as expected.
-In particular, `IR-OPT-SSA-LOCAL-COALESCING` records Calendar's current 217
-`renderCal` / 358 aggregate IR local ceilings against direct references of 63 /
-142, so improved binary and engine-compile results cannot be mistaken for full
-direct allocation parity.
+In particular, `IR-OPT-SSA-LOCAL-COALESCING` remains guarded by semantic,
+output-shape, and runtime evidence rather than treating a smaller aggregate
+binary as proof that every direct allocation decision has migrated.
+
+#4577 adds a Calendar checkpoint for the existing scalar-loop, direct-call,
+string/concat, specialized number-conversion, module-TDZ, and SSA-local
+decisions. The same exact source and standalone DOM/interaction/clock runtime
+produce 30,089/32,379 raw bytes, 18,387/19,030 gzip-9 bytes,
+477,625/481,730 pre-optimization WAT characters, 62,481/69,234 selected body
+characters, 155/172 locals, 172/172 calls, 156/167 functions, and 11/11 imports
+for IR/direct. All 660/660 measured executions preserve the deterministic
+12-render oracle. This is aggregate evidence, not an isolated runtime
+attribution, so it changes no pending performance status and makes no speedup
+claim.

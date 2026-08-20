@@ -7,6 +7,7 @@
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
+import * as bindingValue from "./module-binding-value-kinds.js";
 import { updateRetypesModuleBinding } from "./update-retyped-bindings.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
@@ -563,19 +564,8 @@ export function makeIrPrimitiveExpressionClassifier(
   return (expr) => classifyExpression(expr, new Set());
 }
 
-export type IrModuleBindingValueKind =
-  | { readonly kind: "f64" }
-  | { readonly kind: "i32"; readonly semantic: "boolean" }
-  | { readonly kind: "dynamic" }
-  | { readonly kind: "extern"; readonly className: string }
-  // (#4461) Host-free lanes lower `Map` to the WasmGC-native `$Map` struct
-  // (#1103a), NOT to an externref host handle. That is a different physical
-  // carrier — `(ref null $Map)` vs `externref` — so it is a distinct storage
-  // kind rather than a widened `extern`. Keeping them separate is what makes
-  // selector claim ⇔ lowering parity checkable: a `native-map` binding may
-  // only be claimed where the native `$Map` lowering exists, and an `extern`
-  // binding only where the host handle does.
-  | { readonly kind: "native-map"; readonly className: "Map" };
+export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
+export { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-binding-value-kinds.js";
 
 /** Name-compatible binding evidence used only by the pre-R1 planning seam. */
 export interface IrLegacyModuleBindingIdentity {
@@ -757,6 +747,7 @@ export interface IrModuleBindingResolverOptions {
   readonly numberStorage: "f64" | "i32";
   /** Extern-class globals exist only on the JS-host lane. */
   readonly allowHostExterns: boolean;
+  readonly resolveCapabilityExternBinding?: bindingValue.IrModuleCapabilityExternResolver;
   /**
    * Builtin Map uses an externref slot only in host-string mode. Native-string
    * lanes store it as `(ref null $Map)`, outside this capability's surface.
@@ -983,21 +974,6 @@ function isNativeMapStorageType(
   if (symbol?.name !== "Map") return false;
   const declarations = symbol.getDeclarations() ?? [];
   return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
-}
-
-/** True for either carrier of a builtin `Map` module binding (#4461). */
-export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "native-map" || (valueKind.kind === "extern" && valueKind.className === "Map");
-}
-
-/**
- * (#4461) True when the binding's legacy slot is a REFERENCE the selector's
- * extern-consumer discipline must police — the host externref handle or the
- * native `$Map`. Both leak a non-scalar representation into every consumer, so
- * both take the same conservative gates.
- */
-export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "extern" || valueKind.kind === "native-map";
 }
 
 /**
@@ -1304,7 +1280,7 @@ function callReceiverIsModuleExtern(
     const candidate = unwrapParens(expr);
     if (ts.isIdentifier(candidate)) {
       const valueKind = resolve(candidate)?.valueKind;
-      return valueKind !== undefined && isIrModuleReferenceValueKind(valueKind);
+      return valueKind !== undefined && bindingValue.isIrModuleReferenceValueKind(valueKind);
     }
     if (ts.isPropertyAccessExpression(candidate)) return visit(candidate.expression);
     if (ts.isCallExpression(candidate)) return visit(candidate.expression);
@@ -1343,6 +1319,7 @@ export function moduleExternValueNeedsLegacy(expr: ts.Expression): boolean {
 
 function writeValueMatches(
   checker: ts.TypeChecker,
+  declaration: ts.VariableDeclaration,
   targetType: ts.Type,
   targetKind: IrModuleBindingValueKind,
   value: ts.Expression,
@@ -1361,6 +1338,13 @@ function writeValueMatches(
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
   }
+  if (bindingValue.isCapabilityExternKind(targetKind))
+    return bindingValue.capabilityExternWriteMatches(
+      options.resolveCapabilityExternBinding,
+      declaration,
+      valueExpr,
+      targetKind,
+    );
   if (targetKind.kind === "extern") {
     if (moduleExternValueNeedsLegacy(valueExpr)) return false;
     if (valueExpr.kind === ts.SyntaxKind.NullKeyword) return true;
@@ -1974,6 +1958,7 @@ export function makeIrLegacyModuleBindingResolver(
 ): IrLegacyModuleBindingResolver {
   const isAmbientBinding = makeIrAmbientBindingPredicate(checker);
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(checker);
+  const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
     const declaration = directTopLevelDeclaration(node, checker);
@@ -2019,6 +2004,8 @@ export function makeIrLegacyModuleBindingResolver(
         valueKind = { kind: "extern", className };
       }
     }
+    if (!valueKind && !isModuleVar)
+      valueKind = bindingValue.resolveCapabilityExternKind(resolveCapabilityExtern, declaration, writeValue);
     // (#4461) Host-free carrier for the same builtin. Deliberately NOT folded
     // into the arm above: `allowHostExterns` is false on this lane, and the
     // resulting storage is the native `$Map` struct rather than an externref.
@@ -2028,7 +2015,15 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind) return { kind: "unsupported", declaration };
     if (
       writeValue !== undefined &&
-      !writeValueMatches(checker, declaredType, valueKind, writeValue, options, classifyPrimitiveExpression)
+      !writeValueMatches(
+        checker,
+        declaration,
+        declaredType,
+        valueKind,
+        writeValue,
+        options,
+        classifyPrimitiveExpression,
+      )
     ) {
       return { kind: "unsupported", declaration };
     }
@@ -2076,7 +2071,7 @@ export function makeIrLegacyModuleBindingResolver(
             if (found) return;
             if (ts.isIdentifier(candidate)) {
               const candidateKind = resolve(candidate)?.valueKind;
-              if (candidateKind !== undefined && isIrModuleReferenceValueKind(candidateKind)) {
+              if (candidateKind !== undefined && bindingValue.isIrModuleReferenceValueKind(candidateKind)) {
                 found = true;
                 return;
               }
@@ -2100,8 +2095,11 @@ export function makeIrLegacyModuleBindingResolver(
           // ABI at all — the struct reference cannot be branded against a
           // declared parameter class the way an externref handle can — so it
           // is refused as an argument outright rather than brand-matched.
-          if (binding?.valueKind.kind === "native-map") return false;
-          if (binding?.valueKind.kind !== "extern") return true;
+          if (!binding) return true;
+          const bindingKind = binding.valueKind;
+          if (bindingKind.kind === "native-map") return false;
+          const bindingClassName = bindingValue.externBoundaryClassName(bindingKind);
+          if (bindingClassName === undefined) return true;
           const parameter = parameters[parameterIndex];
           const parameterDeclaration = parameter?.valueDeclaration ?? parameter?.declarations?.[0];
           if (
@@ -2115,7 +2113,7 @@ export function makeIrLegacyModuleBindingResolver(
             checker.getTypeOfSymbolAtLocation(parameter, parameterDeclaration),
           );
           const parameterClassName = parameterType.getSymbol()?.name ?? parameterType.aliasSymbol?.name;
-          return parameterClassName === binding.valueKind.className;
+          return parameterClassName === bindingClassName;
         };
         let parameterIndex = 0;
         for (const rawArgument of callArguments) {
@@ -2162,6 +2160,7 @@ export function makeIrLegacyModuleBindingResolver(
         const declaredType = checker.getTypeAtLocation(identity.declaration.name);
         return writeValueMatches(
           checker,
+          identity.declaration,
           declaredType,
           identity.valueKind,
           value,

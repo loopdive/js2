@@ -62,6 +62,7 @@ import {
   type IrBlock,
   type IrClassShape,
   type IrClosureSignature,
+  type IrDomCallbackAuthority,
   type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
@@ -92,6 +93,7 @@ import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag c
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
+import { stackifyMovableNestedValues } from "./nested-stackification.js";
 import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
@@ -168,6 +170,8 @@ export interface IrLowerResolver {
     signature: IrClosureSignature,
     captureFieldTypes: readonly IrType[],
     hostOneShot?: boolean,
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
   ): IrClosureLowering | null;
   /**
    * Slice 3 (#1169c): resolve the WasmGC struct type for a ref cell
@@ -895,59 +899,18 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  // An effectful value in a nested region can also stay on the Wasm stack
-  // when its sole consumer is a later in-place instruction separated only by
-  // pure instructions. The consumer is guaranteed to emit at that exact
-  // region position, and crossing pure work cannot change observable order,
-  // so this removes only a redundant local.set/local.get pair.
-  for (const value of [...crossBlock]) {
-    const defPoint = lexicalDefPoints.get(value);
-    const usePoints = lexicalUsePoints.get(value);
-    const def = defBy.get(value);
-    const usePoint = usePoints?.length === 1 ? usePoints[0] : undefined;
-    const consumer = usePoint?.consumer;
-    if (
-      !defPoint ||
-      defPoint.region >= 0 ||
-      !def ||
-      effectsArePure(effectsOf(def)) ||
-      !usePoint ||
-      usePoint.region !== defPoint.region ||
-      usePoint.index <= defPoint.index ||
-      !consumer
-    ) {
-      continue;
-    }
-    const regionInstrs = lexicalInstrsByRegion.get(defPoint.region);
-    if (!regionInstrs) continue;
-    let terminalConsumer = consumer;
-    let terminalIndex = usePoint.index;
-    const isInPlace = (candidate: IrInstr): boolean =>
-      candidate.result === null ||
-      crossBlock.has(candidate.result) ||
-      anchorEager.has(candidate.result) ||
-      ((totalUses.get(candidate.result) ?? 0) === 0 && isSideEffecting(candidate));
-    while (!isInPlace(terminalConsumer)) {
-      if (terminalConsumer.result === null || !effectsArePure(effectsOf(terminalConsumer))) break;
-      const nextUses = lexicalUsePoints.get(terminalConsumer.result);
-      const next = nextUses?.length === 1 ? nextUses[0] : undefined;
-      if (
-        !next?.consumer ||
-        next.region !== defPoint.region ||
-        next.index <= terminalIndex ||
-        regionInstrs.slice(terminalIndex + 1, next.index).some((between) => !effectsArePure(effectsOf(between)))
-      ) {
-        break;
-      }
-      terminalConsumer = next.consumer;
-      terminalIndex = next.index;
-    }
-    if (!isInPlace(terminalConsumer)) continue;
-    if (regionInstrs.slice(defPoint.index + 1, terminalIndex).some((between) => !effectsArePure(effectsOf(between))))
-      continue;
-    crossBlock.delete(value);
-    needsLocal.delete(value);
-  }
+  // Effect-aware nested stackification is isolated so this backend driver
+  // only supplies the lexical schedule it already computed above.
+  stackifyMovableNestedValues({
+    crossBlock,
+    needsLocal,
+    anchorEager,
+    totalUses,
+    definitions: defBy,
+    definitionPoints: lexicalDefPoints,
+    usePoints: lexicalUsePoints,
+    instructionsByRegion: lexicalInstrsByRegion,
+  });
   // --- local allocation ---------------------------------------------------
   // Stable order: scan blocks then instrs. Every `needsLocal` value gets one
   // internal emission slot, placed after the function's parameter slots.
@@ -2124,15 +2087,17 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       // Slice 3 (#1169c): closure / ref-cell ops.
       case "closure.new": {
+        const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         const sub = resolver.resolveClosureSubtype?.(
           instr.signature,
           instr.captureFieldTypes,
           instr.hostOneShot === true,
+          instr.domCallbackAuthority,
+          liftedIdx,
         );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot lower closure subtype (${func.name})`);
         }
-        const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
         // ref.func $lifted, (#3673) $arity, push captures, struct.new <subtype>.
         emitter.emitFuncRef(liftedIdx, out);
         emitter.emitClosureArityOperand?.(instr.signature.defaultParamStart ?? instr.signature.params.length, out);
@@ -2152,6 +2117,7 @@ export function lowerIrFunctionBody<S, Slot>(
           subMeta.signature,
           subMeta.captureFieldTypes,
           subMeta.hostOneShot === true,
+          subMeta.domCallbackAuthority,
         );
         if (!sub) {
           throw new Error(`ir/lower: resolver cannot resolve closure subtype for ${func.name}`);
@@ -2478,10 +2444,7 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "vec.new_fixed": {
         // #1804 — build a fixed-length vec from its element SSA values.
-        const elemVT = asVal(instr.elementType);
-        if (!elemVT) {
-          throw new Error(`ir/lower: vec.new_fixed elementType must be a val IrType (${func.name})`);
-        }
+        lowerIrTypeToValType(instr.elementType, resolver, func.name);
         const vec = resolveVecType(
           instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
           instr.alloc,

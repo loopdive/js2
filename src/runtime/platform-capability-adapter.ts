@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ImportIntent } from "../index.js";
+import { resolveClockCapabilityImport, type ClockCapabilityImport } from "./clock-capability-adapter.js";
 import { resolveTimerCapabilityImport } from "./timer-capability-adapter.js";
 
 /** Per-instance state owned by the Web Storage capability adapter. */
@@ -15,6 +16,7 @@ export interface PlatformCapabilityInstanceState {
  */
 export interface PlatformCapabilityAdapterContext {
   deps?: Record<string, any>;
+  explicitClockImport?: ClockCapabilityImport;
   globalSandbox?: Record<string, any>;
   instanceState?: PlatformCapabilityInstanceState;
   getNodeRequire(): ((id: string) => any) | undefined;
@@ -148,7 +150,7 @@ export function resolvePlatformCapabilityImport(
     case "dynamic_import":
       return (specifier: unknown) => import(/* @vite-ignore */ specifier as string);
     case "date_now":
-      return () => Date.now();
+      return resolveClockCapabilityImport(context.explicitClockImport);
     case "declared_global": {
       const dependency = deps?.[intent.name];
       if (dependency !== undefined) return () => dependency;

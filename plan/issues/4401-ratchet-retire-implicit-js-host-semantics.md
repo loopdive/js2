@@ -15,7 +15,7 @@ sprint: current
 parent: 4395
 depends_on: [4397, 4399]
 horizon: l
-related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573, 4576]
+related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573, 4576, 4577]
 ---
 # #4401 — Ratchet and retire implicit JS-host semantic fallbacks
 
@@ -180,6 +180,24 @@ Track at least:
   Builtins imports exactly eight signature-checked DOM operations; none is
   forgiven as implicit semantic-host debt. The guarded runtime benchmark records
   parity within noise, and the final full-gate sweep is green.
+- The #4577 Calendar checkpoint extends the separately counted explicit
+  provider surface by 305 lines: 186 lines of exact DOM interaction/callback
+  authority in the existing provider leaves, a 58-line clock adapter, and a
+  61-line compiler-certified capability-authority leaf. The complete
+  explicit-capability measure is therefore **1,194** lines (889 → 1,194),
+  while the generic owned-adapter surface remains below its existing ceiling.
+  `runtime.ts` measures **17,095** lines and `resolveImport` remains **7,216**
+  lines / **15** cases. Native-first
+  continues to report 33 probes, zero legacy-semantic imports, and zero unknown
+  imports; the compatibility control remains non-vacuous.
+- The manifest is deliberately not runtime authority. It describes the exact
+  `dom@1`, `dom-interaction@1`, and `clock@1` provider/ABI selection, but
+  compiler-owned import provenance plus the registry's complete-import check
+  must first certify the artifact. DOM string and callback crossings then bind
+  to the exact root, instance/export view, manifest global, binding table, and
+  private callback brand. Forged, copied, relabeled, donor, or incomplete
+  manifests cannot grant capability authority. This keeps declarative
+  observability separate from bearer credentials.
 
 Still open: product/Test262/npm denominators, binary/startup/performance
 budgets, and the final default-policy evidence gate.

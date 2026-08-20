@@ -25,6 +25,14 @@
 import { ts } from "../ts-api.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { ClosureStructRegistry } from "./closure-struct-registry.js";
+import { irTypeKey } from "./type-key.js";
+export { irTypeKey } from "./type-key.js";
+import {
+  ensureStandaloneClockCapabilityImport,
+  standaloneClockCapabilityImport,
+} from "../codegen/standalone-clock-capability.js";
+import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import {
   projectIrBackendTargetProfile,
@@ -140,14 +148,7 @@ import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
 import { parseInlineOptions } from "../codegen/ir-inline.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
 import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
-import {
-  getFuncRefWrapperRootTypeIdx,
-  CLOSURE_CAPTURE_FIELD_BASE,
-  closureArityField,
-  closureBagField,
-  getOrCreateFuncRefWrapperTypes,
-  type ClosureAllocationMode,
-} from "../codegen/closures/funcref-wrapper-types.js";
+import { getFuncRefWrapperRootTypeIdx } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import {
   ensureIrNativeNumberToString,
@@ -266,6 +267,7 @@ import {
   type IrClassMemberKind,
   type IrClassShape,
   type IrClosureSignature,
+  type IrDomCallbackAuthority,
   type IrFuncRef,
   type IrFunction,
   type IrGlobalRef,
@@ -930,16 +932,16 @@ export function compileIrPathFunctions(
       : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
-  const supportsHostDateSnapshots = supportsBackendCapability("host-date-snapshot");
-  const backendCapabilitySelectionOptions = { supportsBackendCapability };
+  const { supportsDateSnapshots, resolveHostVoidCallback, backendCapabilitySelectionOptions } =
+    makeCalendarIrSelectionSupport(ctx, jsHostExterns, standaloneDomCapability, supportsBackendCapability);
   const moduleBindingOptions = {
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
     oracle: ctx.oracle,
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
-    // (#4461) Native `$Map` storage is the host-free carrier of the same
-    // builtin; it must agree with the selector-side option in codegen/index.ts.
+    // (#4461) Native `$Map` storage must agree with the selector-side option.
     allowNativeMapStorage: ctx.nativeStrings,
+    resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
@@ -1097,7 +1099,8 @@ export function compileIrPathFunctions(
       experimentalIR: true,
       jsHostExterns,
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
-      ...(supportsHostDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
+      ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
+      ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
@@ -1116,7 +1119,7 @@ export function compileIrPathFunctions(
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
       supportsLiteralStringReplace: true,
-      supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
+      supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
     });
@@ -1192,7 +1195,7 @@ export function compileIrPathFunctions(
     }
     return owner;
   };
-  const unsupportedHostDateOwnerNames = supportsHostDateSnapshots
+  const unsupportedHostDateOwnerNames = supportsDateSnapshots
     ? new Set<string>()
     : collectSelectedHostDateSnapshotOwners(sourceFile, selected, makeIrHostDateSnapshotResolver(ctx.checker));
   const unsupportedHostDateOwners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
@@ -3088,8 +3091,7 @@ export function compileIrPathFunctions(
       preparedClosure?.registry ??
       new ClosureStructRegistry(ctx, (t) => lowerIrTypeToValType(t, resolver, "<closure-registry>"));
     deferredCl.resolveBase = (sig) => closureRegistry.resolveBase(sig);
-    deferredCl.resolveSubtype = (sig, fields, hostOneShot) =>
-      closureRegistry.resolveSubtype(sig, fields, hostOneShot ? "host-one-shot" : "ordinary");
+    deferredCl.resolveSubtype = closureRegistry.resolveDeferredSubtype.bind(closureRegistry);
     const refCellRegistry = preparedClosure?.refCells ?? new RefCellRegistry(ctx);
     deferredCell.resolve = (inner) => refCellRegistry.resolve(inner);
     // Slice 4 (#1169d): the class registry is a thin lookup over the
@@ -3598,6 +3600,7 @@ function resolveModuleBindingGlobal(
       storageType = resolveIrDynamicCarrierType(ctx);
       break;
     case "extern":
+    case "capability-extern":
       if (!ctx.externClasses.has(identity.valueKind.className)) {
         throw new IrInvariantError(
           "unknown-type-ref",
@@ -3661,7 +3664,8 @@ function resolveModuleBindingGlobal(
     );
   }
   const tdzGlobalName = tdzGlobal ? expectedTdzGlobalName : null;
-  const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName);
+  const capability = identity.valueKind.kind === "capability-extern" ? identity.valueKind.capability : undefined;
+  const globalRef = irSourceGlobalRef(identity.globalBindingId, globalName, capability);
   const tdzGlobalRef = tdzGlobal ? irSourceGlobalRef(identity.tdzBindingId, expectedTdzGlobalName) : null;
   planProgramAbiGlobal(ctx, {
     ref: globalRef,
@@ -3688,6 +3692,7 @@ function resolveModuleBindingGlobal(
     globalName,
     tdzGlobalName,
     type,
+    ...(capability ? { capability } : {}),
     ...(postWasmStartTdzSafeBindingsByOwnerUnitId?.get(identity.ownerUnitId)?.has(identity.globalBindingId)
       ? { omitTdzReadCheck: true as const }
       : {}),
@@ -3851,6 +3856,8 @@ interface DeferredClosureResolver {
     sig: IrClosureSignature,
     fields: readonly IrType[],
     hostOneShot?: boolean,
+    domCallbackAuthority?: IrDomCallbackAuthority,
+    liftedFuncIdx?: number,
   ) => IrClosureLowering | null;
 }
 
@@ -5160,13 +5167,7 @@ function makeResolver(
     resolveClosureRoot(): number | null {
       return getFuncRefWrapperRootTypeIdx(ctx) ?? null;
     },
-    resolveClosureSubtype(
-      sig: IrClosureSignature,
-      fields: readonly IrType[],
-      hostOneShot?: boolean,
-    ): IrClosureLowering | null {
-      return closureResolver.resolveSubtype(sig, fields, hostOneShot);
-    },
+    resolveClosureSubtype: (...args) => closureResolver.resolveSubtype(...args),
     resolveRefCell(inner: ValType): IrRefCellLowering | null {
       return refCellResolver.resolve(inner);
     },
@@ -5528,7 +5529,12 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     }
   }
   if (needed.size === 0) return;
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) {
+  const exactStandaloneClock =
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.requiresStandaloneClockCapability === true &&
+    ctx.targetProfile.environment === "none";
+  if ((ctx.standalone || ctx.wasi || ctx.strictNoHostImports) && !exactStandaloneClock) {
     throw new Error("ir/integration: synthetic Date snapshots require the JS host");
   }
 
@@ -5537,7 +5543,11 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
     const spec = HOST_DATE_IMPORTS.get(name);
     if (!spec) throw new Error(`ir/integration: unsupported synthetic Date import ${name}`);
     if (!ctx.funcMap.has(name)) added = true;
-    ensureLateImport(ctx, spec.name, [...spec.params], [...spec.results]);
+    if (exactStandaloneClock && spec.name === "__date_now") {
+      ensureStandaloneClockCapabilityImport(ctx);
+    } else {
+      ensureLateImport(ctx, spec.name, [...spec.params], [...spec.results]);
+    }
   }
   if (added) flushLateImportShifts(ctx, null);
 
@@ -5546,7 +5556,10 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
   // resolving them as the ambient Date ABI.
   for (const name of needed) {
     const spec = HOST_DATE_IMPORTS.get(name)!;
-    if (!exactHostDateImport(ctx, spec)) {
+    if (
+      !exactHostDateImport(ctx, spec) ||
+      (exactStandaloneClock && spec.name === "__date_now" && standaloneClockCapabilityImport(ctx) === undefined)
+    ) {
       throw new Error(`ir/integration: ${name} is not the exact env host-Date import`);
     }
   }
@@ -5727,6 +5740,8 @@ function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     entries: fns,
     resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
     resolvePhysicalVec: (value) => resolvePhysicalVecImpl(ctx, value),
+    resolveString: () =>
+      ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : { kind: "externref" },
     typeKey: irTypeKey,
   });
 }
@@ -6778,45 +6793,6 @@ class ObjectStructRegistry {
 }
 
 /**
- * Recursive IrType→string key for shape hashing. Mirrors the legacy
- * `fieldsHashKey` format closely so identical shapes registered through
- * either path collide on a single struct (although the actual
- * legacy/IR convergence is enforced via `legacyFieldsHashKey` on the
- * lowered ValTypes — this key is the IR-side memo).
- */
-export function irTypeKey(t: IrType): string {
-  if (t.kind === "val") {
-    if (t.val.kind === "ref" || t.val.kind === "ref_null") {
-      return `${t.val.kind}:${(t.val as { typeIdx: number }).typeIdx}`;
-    }
-    return t.val.kind;
-  }
-  if (t.kind === "string") return "string";
-  if (t.kind === "vec") return `vec<${irTypeKey(t.elementType)}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "object") {
-    return `object{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
-  }
-  if (t.kind === "closure") {
-    const ps = t.signature.params.map(irTypeKey).join(",");
-    return `closure(${ps})->${t.signature.returnType === null ? "void" : irTypeKey(t.signature.returnType)}`;
-  }
-  if (t.kind === "callable") {
-    const ps = t.signature.params.map(irTypeKey).join(",");
-    return `callable(${ps})->${t.signature.returnType === null ? "void" : irTypeKey(t.signature.returnType)}`;
-  }
-  if (t.kind === "class") return `class:${t.shape.classId}`;
-  // Slice 10 (#1169i): extern is keyed solely on className.
-  if (t.kind === "extern") return `extern:${t.className}`;
-  // #1926 — union members / boxed inner are IrTypes; recurse.
-  if (t.kind === "union") return `union<${t.members.map(irTypeKey).join(",")}>`;
-  // #2949 — dynamic is keyed with its optional JsTag refinement: two
-  // dynamics with different refinements are distinct types (irTypeEquals is
-  // exact on the tag), so their keys must differ too.
-  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic:${t.tag}`;
-  return `boxed<${irTypeKey(t.inner)}>`;
-}
-
-/**
  * Mirror of `fieldsHashKey` in `src/codegen/index.ts`. Re-implemented
  * locally so the IR module doesn't pull on `codegen/index.ts`'s public
  * surface (which is large). The two implementations must stay in sync —
@@ -6833,172 +6809,6 @@ function legacyFieldsHashKey(fields: readonly FieldDef[]): string {
     }
   }
   return parts.join("|");
-}
-
-// ---------------------------------------------------------------------------
-// Closure / ref-cell registries (#1169c)
-// ---------------------------------------------------------------------------
-
-/**
- * Slice 3 / #3214 B0: closure allocation registry. Maintains:
- *   - **base** structs (one per signature) — the canonical legacy
- *     `__fn_wrap_*` allocation wrapper returned by
- *     `getOrCreateFuncRefWrapperTypes`. Every lifted funcref and closure SSA
- *     carrier uses the module-wide wrapper root instead, making its type stable
- *     across modules with different wrapper creation order.
- *   - **subtype** structs (one per `(signature, captureFieldTypes)`
- *     pair) — extends the base with capture fields. Constructed at
- *     each `closure.new` site; lifted bodies `ref.cast` __self to
- *     their corresponding subtype to read captures.
- */
-class ClosureStructRegistry {
-  private readonly baseCache = new Map<string, IrClosureLowering>();
-  private readonly subCache = new Map<string, IrClosureLowering>();
-
-  constructor(
-    private readonly ctx: CodegenContext,
-    private readonly resolveValType: (t: IrType) => ValType,
-  ) {}
-
-  private observe(typeIdx: number, mode: ClosureAllocationMode): void {
-    const info = this.ctx.closureInfoByTypeIdx.get(typeIdx);
-    if (!info) return;
-    if (mode === "ordinary") info.hostOneShotOnly = false;
-    else if (mode === "host-one-shot" && info.hostOneShotOnly === undefined) info.hostOneShotOnly = true;
-  }
-
-  resolveBase(sig: IrClosureSignature, mode: ClosureAllocationMode = "support"): IrClosureLowering | null {
-    const key = sigKey(sig);
-    const cached = this.baseCache.get(key);
-    if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      return cached;
-    }
-
-    // Resolve the source signature first, then delegate both the allocation
-    // wrapper and lifted func type to the canonical legacy registry. This is
-    // the ABI join point: legacy and IR share allocation metadata, while the
-    // helper makes the lifted func's self type the module-wide wrapper root.
-    let paramTypes: ValType[];
-    let resultTypes: ValType[];
-    try {
-      paramTypes = sig.params.map((p) => this.resolveValType(p));
-      resultTypes = sig.returnType === null ? [] : [this.resolveValType(sig.returnType)];
-    } catch {
-      return null;
-    }
-    const wrapper = getOrCreateFuncRefWrapperTypes(this.ctx, paramTypes, resultTypes, mode);
-    if (!wrapper) return null;
-
-    const lowering: IrClosureLowering = {
-      structTypeIdx: wrapper.structTypeIdx,
-      funcFieldIdx: 0,
-      capFieldIdx: () => {
-        throw new Error("ir/integration: base closure struct has no captures");
-      },
-      funcTypeIdx: wrapper.liftedFuncTypeIdx,
-    };
-    this.baseCache.set(key, lowering);
-    return lowering;
-  }
-
-  resolveSubtype(
-    sig: IrClosureSignature,
-    captureFieldTypes: readonly IrType[],
-    mode: ClosureAllocationMode = "support",
-  ): IrClosureLowering | null {
-    // A no-capture closure allocates the signature wrapper directly. Creating
-    // a redundant empty subtype would add an unnecessary RTT; invocation reads
-    // every wrapper through the root and discriminates on the funcref type.
-    if (captureFieldTypes.length === 0) return this.resolveBase(sig, mode);
-
-    const key = `${sigKey(sig)}#${captureFieldTypes.map(irTypeKey).join(",")}`;
-    const cached = this.subCache.get(key);
-    if (cached) {
-      this.observe(cached.structTypeIdx, mode);
-      return cached;
-    }
-
-    const base = this.resolveBase(sig, mode);
-    if (!base) return null;
-
-    const fields: FieldDef[] = [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(), // (#3673)
-      closureBagField(), // (#4241)
-    ];
-    for (let i = 0; i < captureFieldTypes.length; i++) {
-      let ft: ValType;
-      try {
-        ft = this.resolveValType(captureFieldTypes[i]!);
-      } catch {
-        return null;
-      }
-      fields.push({ name: `cap${i}`, type: ft, mutable: false });
-    }
-
-    const subIdx = this.ctx.mod.types.length;
-    // `compileIrPathFunctions` is invoked once per source file in the M0
-    // overlay, so this registry-local cache restarts at zero. Allocate against
-    // the module-wide struct registry to keep B2 captured subtypes unique and
-    // avoid overwriting a user class (or an earlier file's IR closure) named
-    // `__ir_closure_N`.
-    let subOrdinal = this.subCache.size;
-    let subName = `__ir_closure_${subOrdinal}`;
-    while (this.ctx.structMap.has(subName)) {
-      subName = `__ir_closure_${++subOrdinal}`;
-    }
-    this.ctx.mod.types.push({
-      kind: "struct",
-      name: subName,
-      fields,
-      superTypeIdx: base.structTypeIdx,
-    } as StructTypeDef);
-    this.ctx.structMap.set(subName, subIdx);
-    this.ctx.typeIdxToStructName.set(subIdx, subName);
-    // Closure subtypes are private callable carriers, not user-visible data
-    // structs. Keep them out of structFields just like legacy captured
-    // closures: registering them there makes finalize emit __sget_capN,
-    // __struct_field_names, and __is_data_struct, both bloating the module and
-    // misclassifying an IR closure as an object at the host boundary.
-
-    const baseInfo = this.ctx.closureInfoByTypeIdx.get(base.structTypeIdx);
-    if (!baseInfo) {
-      throw new Error(`ir/integration: canonical wrapper ${base.structTypeIdx} has no closure metadata`);
-    }
-    this.ctx.closureInfoByTypeIdx.set(subIdx, {
-      structTypeIdx: subIdx,
-      funcTypeIdx: base.funcTypeIdx,
-      paramTypes: [...baseInfo.paramTypes],
-      returnType: baseInfo.returnType,
-      hasCaptures: true,
-      ...(mode === "host-one-shot" ? { hostOneShotOnly: true } : mode === "ordinary" ? { hostOneShotOnly: false } : {}),
-    });
-
-    const fieldIdxByCap = new Map<number, number>();
-    for (let i = 0; i < captureFieldTypes.length; i++) fieldIdxByCap.set(i, i + CLOSURE_CAPTURE_FIELD_BASE); // after (#3673) $arity + (#4241) $bag
-
-    const lowering: IrClosureLowering = {
-      structTypeIdx: subIdx,
-      funcFieldIdx: 0,
-      capFieldIdx: (i: number): number => {
-        const v = fieldIdxByCap.get(i);
-        if (v === undefined) throw new Error(`ir/integration: closure subtype has no capture index ${i}`);
-        return v;
-      },
-      // call_ref dispatches via the signature-specific lifted func type. Its
-      // self param is the wrapper root; the captured body downcasts that root
-      // to this concrete subtype before reading captures.
-      funcTypeIdx: base.funcTypeIdx,
-    };
-    this.subCache.set(key, lowering);
-    return lowering;
-  }
-}
-
-function sigKey(sig: IrClosureSignature): string {
-  const ps = sig.params.map(irTypeKey).join(",");
-  return `(${ps})->${sig.returnType === null ? "void" : irTypeKey(sig.returnType)}`;
 }
 
 /**

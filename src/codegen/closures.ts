@@ -33,6 +33,7 @@ import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#26
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
 import { resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
+import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addFuncType,
@@ -166,7 +167,6 @@ import {
   mintClosureStructTypes,
   emitClosureParamDestructuring,
   emitClosureConstruction,
-  registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
 import {
   collectDirectEvalActivationBindingNames,
@@ -3208,6 +3208,16 @@ export function compileArrowAsClosure(
     ? undefined
     : recordDirectCallGeneric(ctx, arrow, closureName, structTypeIdx, liftedParams, closureResults);
 
+  const constructionMeta = registerStandaloneDomCallbackDirectClosure(ctx, arrow, {
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    inlineBody: captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+    liftedFuncIdx,
+    baseConstruction: mintedTypes.meta,
+  });
+
   // 7. At the creation site, emit struct.new with funcref + arity + captured values.
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
   emitClosureConstruction(
@@ -3217,7 +3227,7 @@ export function compileArrowAsClosure(
     liftedFuncIdx,
     structTypeIdx,
     hasRestParam ? Math.max(0, arrowParams.length - 1) : arrowParams.length,
-    mintedTypes.meta, // (#4437)
+    constructionMeta, // (#4437) plus the certified DOM callback carrier, when present
   );
   if (directGenericGlobalIdx !== undefined) {
     // Keep one typed handle to the exact closure instance installed on the
@@ -3230,17 +3240,6 @@ export function compileArrowAsClosure(
       { op: "ref.as_non_null" },
     );
   }
-
-  // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(
-    ctx,
-    arrow,
-    structTypeIdx,
-    liftedFuncTypeIdx,
-    closureReturnType,
-    arrowParams,
-    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
-  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
 }
