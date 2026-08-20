@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
 import { isReactUpstreamSuiteCheckoutValid, loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
@@ -80,15 +80,29 @@ describe("react upstream suite", () => {
     expect(calls[0]).toEqual([["value"]]);
   });
 
+  it("provides the Jest matchers used by the upstream React suites", () => {
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`${REACT_EXPECT_SHIM}
+      expect("abc").toMatch(/b/);
+      expect([{value: 1}]).toContainEqual({value: 1});
+      const mock = jest.fn();
+      mock("first");
+      mock("second");
+      expect(mock).toHaveBeenNthCalledWith(2, "second");
+      expect("<div>ok</div>").toMatchInlineSnapshot(\`<div>ok</div>\`);
+      return true;`)();
+    expect(result).toBe(true);
+  });
+
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
-  heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "react-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 128 * 1024 * 1024,
     });
     const report = JSON.parse(out);
 
     expect(report.upstreamSuite.commit).toBe("eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401");
+    expect(report.react.build).toBe("production");
 
     // Compilation is per upstream file and subdivides on compile/validation failure, so
     // "every batch valid" is NOT the contract while #3587 is open — one of 27

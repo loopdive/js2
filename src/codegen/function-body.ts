@@ -282,6 +282,15 @@ function assertDirectFunctionBodyAllowed(name: string): void {
 }
 
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
+  // Captured-global lookup is scoped to the function body currently being
+  // emitted. A preceding module-init pass or sibling function may have
+  // promoted a same-named lexical binding, but reusing that name-keyed entry
+  // would route this function's object-literal methods to the wrong global.
+  // The concrete globals remain in the module; only the short-lived lookup
+  // maps are reset before this body's lowering starts.
+  ctx.capturedGlobals.clear();
+  ctx.capturedGlobalsWidened.clear();
+  ctx.capturedBoxGlobals?.clear();
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
     reportError(ctx, decl, `Cannot resolve signature for function '${func.name}'`);

@@ -1873,15 +1873,22 @@ function knownBugsFor(name) {
 // or other host facilities out of the compiler score. Preserve the original
 // `harnessIncompatible` field for compatibility, but expose the user-facing
 // meaning explicitly so the card can distinguish unavailable infrastructure
-// from compiler-quarantined or invalid-module tests.
+// from compiler-quarantined or invalid-module tests. A native-oracle failure is
+// not automatically unavailable infrastructure: those tests did run, but
+// their expected renderer/oracle behavior could not be reproduced.
+function countUnavailableInfrastructure(report) {
+  const counts = report?.extraction?.rejectionCounts;
+  if (!counts || typeof counts !== "object") return 0;
+  return Object.entries(counts).reduce(
+    (total, [reason, count]) => (reason.startsWith("needs-") ? total + (Number.isFinite(count) ? count : 0) : total),
+    0,
+  );
+}
+
 function annotateUnavailableInfra(tests) {
   if (!tests || typeof tests !== "object") return tests;
-  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
-    ? tests.unavailableInfra
-    : Number.isFinite(tests.harnessIncompatible)
-      ? tests.harnessIncompatible
-      : null;
-  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra) ? tests.unavailableInfra : 0;
+  return { ...tests, unavailableInfra };
 }
 
 function githubRawSource(source, filePath) {
@@ -2535,6 +2542,7 @@ if (!perfOnly && selectedPackages.has("react")) {
         executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactSuite),
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
@@ -2591,6 +2599,7 @@ if (!perfOnly && selectedPackages.has("lit")) {
           admitted: litSuite.extraction?.admitted ?? null,
           upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
           harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+          unavailableInfra: countUnavailableInfrastructure(litSuite),
           // The headline finding, and the reason the pass rate is low: most of
           // lit's corpus sits behind an implementation module the validator
           // rejects (#3978), so those tests never ran against Wasm at all.
@@ -2654,6 +2663,7 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         admitted: reactDomSuite.extraction?.admitted ?? null,
         upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactDomSuite),
         // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
         // implementation module itself may be rejected, and the suite's OWN
         // test file pins that this is REPORTED with the compiler's message,
@@ -2661,6 +2671,89 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         // card does the same via implementationInvalidTests, #3977/#3978).
         implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
         implementationError: reactDomSuite.summary?.implementationError ?? null,
+        // Server-renderer tests run in a separate published browser bundle.
+        // Keep the lane visible in the committed artifact instead of folding
+        // its failures into the client renderer's denominator.
+        server: {
+          passed: reactDomSuite.server?.results?.passed ?? null,
+          total: reactDomSuite.server?.results?.scored ?? null,
+          passRatePct: reactDomSuite.server?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.server?.extraction?.admitted ?? null,
+          selected: reactDomSuite.server?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.server?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.server?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.server?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.server?.compile
+            ? {
+                success: reactDomSuite.server.compile.success ?? false,
+                durationMs: reactDomSuite.server.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.server.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.server.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.server?.validation ?? null,
+        },
+        // Browser Fizz is a third, independently published renderer graph.
+        // Keep its denominator separate from both the client and legacy SSR
+        // lanes: a Fizz test never ran against the client module merely
+        // because it came from the same upstream test directory.
+        fizz: {
+          passed: reactDomSuite.fizz?.results?.passed ?? null,
+          total: reactDomSuite.fizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.fizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.fizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.fizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.fizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.fizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.fizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.fizz?.compile
+            ? {
+                success: reactDomSuite.fizz.compile.success ?? false,
+                durationMs: reactDomSuite.fizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.fizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.fizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.fizz?.validation ?? null,
+        },
+        nodeFizz: {
+          passed: reactDomSuite.nodeFizz?.results?.passed ?? null,
+          total: reactDomSuite.nodeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.nodeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.nodeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.nodeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.nodeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.nodeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.nodeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.nodeFizz?.compile
+            ? {
+                success: reactDomSuite.nodeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.nodeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.nodeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.nodeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.nodeFizz?.validation ?? null,
+        },
+        edgeFizz: {
+          passed: reactDomSuite.edgeFizz?.results?.passed ?? null,
+          total: reactDomSuite.edgeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.edgeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.edgeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.edgeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.edgeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.edgeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.edgeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.edgeFizz?.compile
+            ? {
+                success: reactDomSuite.edgeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.edgeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.edgeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.edgeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.edgeFizz?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
       playground: buildNpmSuitePlayground(reactDomSuite, {
@@ -2741,6 +2834,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
           packageApiWorkload: workload?.tests ?? undefined,
+          unavailableInfra: countUnavailableInfrastructure(catalogUpstreamReport),
         }
       : null) ??
     workload?.tests ??

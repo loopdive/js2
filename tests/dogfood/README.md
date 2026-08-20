@@ -186,10 +186,11 @@ pnpm run dogfood:redux-workload
 
 The upstream lane verifies all nine original runtime test files at
 `reduxjs/redux@v5.0.1` and registers all 82 callbacks against the matching
-published bundle. Node reproduces 78 synchronous callbacks; four async
-callbacks remain explicitly harness-incompatible. All nine generated modules
-compile and validate, and the initial Wasm baseline is **5/78**. Per-file
-runtime traps and assertion differences are retained in the JSON report.
+published bundle. Node reproduces all 82 callbacks. The shared runner supplies
+the Node-compatible `global` alias used by Redux's console-warning tests in
+both the native and Wasm lanes. All nine generated modules compile and
+validate; the current Wasm baseline is **13/82**. Per-file runtime traps and
+assertion differences are retained in the JSON report.
 
 The smaller generated API driver remains as an independent secondary signal.
 It consumes `combineReducers`, `createStore`, `subscribe`, and
@@ -476,9 +477,9 @@ Three rules keep the number honest:
    expected to fail — a failure that is run and counted is more honest than a
    test filtered out before it runs. What they are not is _compiler evidence_:
    the native oracle fails them too, so they land in `harness-incompatible` and
-   sit outside the pass rate. Eight more are compile-quarantined by name rather
-   than described as executed. The report prints selected, executed, scored,
-   infra-blocked and quarantined counts so none can hide another.
+   sit outside the pass rate. Any compile-quarantined test is reported by name
+   rather than described as executed. The report prints selected, executed,
+   scored, infra-blocked and quarantined counts so none can hide another.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both
@@ -488,24 +489,76 @@ Three rules keep the number honest:
    `harness-incompatible` bucket instead of being counted as a compiler bug.
 
 Both React harnesses install the same explicit jsdom browser-global set for
-their native oracle. ReactDOM's extractor also removes unsupported ESM helper
-imports before building a `new Function`, recording their bindings as
-unavailable instead of allowing one import to poison every test in a batch.
-Renderer, Jest, and internal-test-utils bindings remain in the explicit
-`harness-incompatible` bucket until equivalent compiled modules are available;
-the harness never turns a native-only adapter into compiler evidence.
+their native oracle. `react-upstream-infrastructure.mjs` supplies the
+cross-package host half required by the original tests: ReactDOM client/server,
+the test renderer and noop renderer, `prop-types`, `create-react-class`, web
+streams, Jest spies/mocks, and `internal-test-utils` assertions. The published
+ReactDOM/client/server and test-renderer entries are resolved with
+`NODE_ENV=production` and aliased to the exact pinned React object; this avoids
+the real dev-renderer/production-React peer mismatch that otherwise fails in
+React's internal `actQueue` path. Production test-renderer has no `act` or
+committed tree, so the noop adapter uses a jsdom ReactDOM root and
+`flushSync`, including a test-renderer-shaped JSON/ref view. The setup also
+unrefs scheduler `MessagePort`s and restores the CommonJS module cache during
+cleanup, so a finished suite exits cleanly.
+
+The test-only dependencies are pinned in `devDependencies`:
+`react-test-renderer`, `create-react-class`, `prop-types`, and
+`web-streams-polyfill`. A compile-stuck large integration file is split into
+one upstream test per module; a per-test/compile watchdog records a timeout
+instead of blocking the rest of the corpus. Native-oracle failures still stay
+in the explicit `harness-incompatible` bucket and are never turned into
+compiler evidence.
+
+The shared upstream runner and the React shim both expose Node's `global`
+spelling as an alias of `globalThis`; this is required by React and Redux's
+original polyfill and console-warning tests and is installed identically in
+the native and Wasm lanes.
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
 
-Current exact result (2026-08-09): **64/64** natively scoreable upstream tests
-pass against compiled Wasm. The harness admits 272 of React's 273 tests (one is
-upstream-skipped), executes 264, reports 200 as needing unavailable
-Jest/renderer infrastructure on both lanes, and keeps eight explicitly
-compile-quarantined. The production
-`__DEV__ = false` constant is embedded in the shared native/Wasm source because
-that is the transform React itself applies to `react.production.js`; it does
-not precompute a test result.
+Current exact result (2026-08-20): **92/178** natively scoreable upstream tests
+pass against compiled Wasm. The harness admits and executes 272 of React's
+273 tests (one is upstream-skipped), reports 94 native-oracle-incompatible
+tests, and has zero compile-quarantined batches across 44 valid Wasm batches.
+The production `__DEV__ = false` constant is embedded in the shared native/Wasm
+source because that is the transform React itself applies to
+`react.production.js`; it does not precompute a test result. The remaining
+incompatible cases are recorded as infrastructure/behavior mismatches (mostly
+production warning expectations, renderer semantics, and compiled component
+closures crossing the Wasm/host boundary), not silently skipped package
+lookups.
+
+### ReactDOM's platform lanes
+
+`react-dom-upstream-suite.mjs` uses the same pinned React checkout, extractor,
+jsdom host, and native oracle, but keeps each published renderer graph
+independent. The 2,001 admitted ReactDOM tests are split into the client graph,
+legacy browser SSR, browser Fizz (60 tests), Node Fizz (35), and Edge Fizz (2).
+Each lane records its own compile, validation, native-oracle, and Wasm result
+counts in the report and on the npm-compat card. The Node lane exposes the real
+Node `stream.PassThrough` through a named host capability; browser and Edge use
+the standard Web Streams, messaging, encoder, headers, abort, and async-hooks
+host surface.
+
+To keep a local iteration bounded, use separate limits rather than silently
+dropping a platform:
+
+```bash
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT=1 \
+node --import tsx tests/dogfood/react-dom-upstream-suite.mjs --json
+```
+
+Concise upstream arrows are lifted as expression statements, so the full
+corpus is now admitted except for the two tests upstream marks `.skip`.
+Compiler/runtime failures remain failures; host-incompatible native tests and
+private test scaffolding are reported separately rather than converted into
+passes.
 
 ## lit upstream suite (#3977)
 
@@ -543,13 +596,19 @@ js2wasm cannot compile lit's published bytes at all, which no per-test number
 would have surfaced.
 
 Otherwise the rules are the React ones: 583 of 587 upstream tests are admitted
-(the 4 rejections are upstream's own `.skip`), the DOM-dependent ~90 % runs and
-lands in `harness-incompatible` via the native oracle, and lit's repo-internal
-`test-utils` — which ship in no tarball — resolve to a stub that throws, so
-those tests still run and fail on both sides instead of vanishing. The `assert`
-shim covers the 26 chai members lit's tests actually use, surveyed across all
-58 files; `equal` is `==` and `strictEqual` is `===`, because lit depends on the
-difference.
+(the 4 rejections are upstream's own `.skip`), and the DOM-dependent ~90 % runs
+through the jsdom browser surface. The shared browser bootstrap now exposes
+the standard DOM constructors used by lit (`HTMLAnchorElement`,
+`HTMLFieldSetElement`, `HTMLLabelElement`, `HTMLSpanElement`, and
+`ElementInternals`) in both the native and compiled lanes. Conservative
+extraction treats DOM, window, shadow-root, custom-element, constructable
+stylesheet, and Lit warning globals as supplied infrastructure; it no longer
+turns those source references into unavailable-infrastructure rejections.
+Lit's repo-internal `test-utils` — which ship in no tarball — still resolve to a
+stub that throws, so those tests run and fail on both sides instead of
+vanishing. The `assert` shim covers the 26 chai members lit's tests actually
+use, surveyed across all 58 files; `equal` is `==` and `strictEqual` is `===`,
+because lit depends on the difference.
 
 The suite found #3978, #3979 and #3980.
 
