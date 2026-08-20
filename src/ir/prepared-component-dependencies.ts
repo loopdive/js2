@@ -406,7 +406,17 @@ function recordImplicitTypeRequirement(
   switch (type.kind) {
     case "val":
       if (type.val.kind === "ref" || type.val.kind === "ref_null") {
-        block(`raw IR reference type ${type.val.kind}:${type.val.typeIdx} has no symbolic Program ABI type ref`);
+        if (!type.typeRef) {
+          block(`raw IR reference type ${type.val.kind}:${type.val.typeIdx} has no symbolic Program ABI type ref`);
+          return;
+        }
+        recordSupportTypeReference(
+          evidence,
+          type.typeRef,
+          abi,
+          ownership,
+          "IR physical reference carrier must use a compiler-support Program ABI type ref",
+        );
       }
       return;
     case "string": {

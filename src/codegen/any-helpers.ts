@@ -16,7 +16,7 @@ import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js"
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
-
+export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
  * Register the $AnyValue struct type for boxing `any` typed values.
  * The struct has a tag field to distinguish the boxed type at runtime,

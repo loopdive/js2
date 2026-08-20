@@ -94,6 +94,7 @@ import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
   buildIrModuleInitPlan,
   reconcileIrModuleInitPlan,
+  type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
 import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
@@ -126,7 +127,11 @@ import {
   makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
-import { collectPreparedIrAsyncOwners, prepareIrAsyncSelectionOptions } from "./async-ir-planning.js";
+import {
+  collectPreparedIrAsyncOwners,
+  prepareIrAsyncSelectionOptions,
+  registerIrAsyncPromiseDelayResolver,
+} from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
@@ -196,6 +201,7 @@ import {
 } from "./ir-prepared-free-functions.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
+import { isValidatedPlatformCapabilityImport } from "../capability-registry.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
@@ -461,6 +467,7 @@ import {
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import {
   emitClosureCallExport,
+  publishStandaloneTimerCallbackDispatch,
   emitClosureCallExport1,
   emitClosureCallExport2,
   emitClosureCallExport3,
@@ -2526,8 +2533,15 @@ function planIrOverlay(
   const resolveAmbientClassCall =
     jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
   const resolveHostDateSnapshot = supportsHostDateSnapshots ? makeIrHostDateSnapshotResolver(ast.checker) : undefined;
+  const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
+  const supportsStandalonePromiseDelay =
+    ctx.standalone &&
+    ctx.nativeStrings &&
+    !ctx.wasi &&
+    !ctx.fast &&
+    ctx.targetProfile.semanticProviders === "native-first";
   const resolvePromiseDelay =
-    jsHostExterns && !ctx.fast && !ctx.nativeStrings && options.resolveModuleBindings !== false
+    (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
       : undefined;
   // Selection gets one provisional descriptor population for the bounded
@@ -2572,6 +2586,10 @@ function planIrOverlay(
     if (hasFullyAnnotatedScalarAbi(declaration, { returnCarrierIsOverridden: functionReturnsDynamicObjectCarrier })) {
       return true;
     }
+    // The exact delay slot is frozen as `(f64, f64) -> externref` in both
+    // runtime projections, so a direct-only caller does not force this
+    // prepared callee back onto direct ownership.
+    if (resolvePromiseDelay?.resolveOwner(declaration)) return true;
     const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
     const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
     if (
@@ -2688,7 +2706,7 @@ function planIrOverlay(
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
       // byte-identical routing.
-      ...prepareIrAsyncSelectionOptions(ctx),
+      ...prepareIrAsyncSelectionOptions(ctx, resolvePromiseDelay),
     },
     identityMaps,
   );
@@ -2922,6 +2940,7 @@ function planIrOverlay(
     promiseDelayByOwner,
     identityPlan.safeFunctionUnitIds,
     identityContext,
+    supportsStandalonePromiseDelay ? "standalone-native" : "host-executor",
   );
   const { importedCalls, topLevelFunctionValues } = planIrImportedCalls({
     ctx,
@@ -3752,11 +3771,12 @@ interface IrFirstBodyRouting {
  * R4's intentionally bounded module-init owner: an ordered sequence of
  * initialized top-level lexical declarations. The selector proves a one-to-one
  * Program ABI projection while the semantic plan proves exact source order,
- * binding identity, TDZ intent, and Wasm-start invocation parity.
+ * binding identity, TDZ intent, and exactly-once invocation parity.
  */
 interface PreparedLexicalModuleInitEvidence {
   readonly unitId: IrUnitId;
   readonly globalBindingIds: ReadonlySet<IrBindingId>;
+  readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export">;
 }
 
 function preparedExactLexicalModuleInit(
@@ -3766,19 +3786,26 @@ function preparedExactLexicalModuleInit(
   planning: IrModuleInitPlanningEvidence | undefined,
   identityContext: IrPlanningIdentityContext,
 ): PreparedLexicalModuleInitEvidence | undefined {
+  const exactInvocationLane =
+    (!ctx.nativeStrings &&
+      !ctx.standalone &&
+      planning?.plan.invocation.target === "host" &&
+      planning.plan.invocation.kind === "wasm-start") ||
+    (ctx.nativeStrings &&
+      ctx.standalone &&
+      ctx.targetProfile.semanticProviders === "native-first" &&
+      planning?.plan.invocation.target === "standalone" &&
+      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export"));
   if (
     ctx.fast ||
-    ctx.nativeStrings ||
-    ctx.standalone ||
     ctx.wasi ||
     ctx.strictNoHostImports ||
+    !exactInvocationLane ||
     selection.moduleInit?.reason !== null ||
     selection.moduleInit.stmtCount === 0 ||
     !planning?.plan.executable ||
     planning.plan.gaps.length !== 0 ||
     !planning.parity.aligned ||
-    planning.plan.invocation.target !== "host" ||
-    planning.plan.invocation.kind !== "wasm-start" ||
     !planning.plan.invocation.exactlyOnce ||
     planning.plan.liveSeeds.length !== 0
   ) {
@@ -3876,7 +3903,9 @@ function preparedExactLexicalModuleInit(
     visitInitializer(declaration.initializer);
     if (reachesSourceFunction) return undefined;
   }
-  return { unitId: planning.plan.unitId, globalBindingIds };
+  const invocationKind = planning.plan.invocation.kind;
+  if (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") return undefined;
+  return { unitId: planning.plan.unitId, globalBindingIds, invocationKind };
 }
 
 function preparedLexicalComponentPreflightFailure(
@@ -3886,10 +3915,14 @@ function preparedLexicalComponentPreflightFailure(
   preliminaryR2Names: ReadonlySet<string>,
   moduleInit: PreparedLexicalModuleInitEvidence,
 ): string | undefined {
-  // The bounded lexical transaction does not yet own source-unit imports or
-  // Promise-delay registration. Keep those families on their existing route
-  // until their aggregate preparation can be proven without mutation.
-  if (plan.importedCalls.size > 0 || plan.promiseDelays.constructions.size > 0) {
+  // Host-executor Promise delay still owns two lifted source units and four
+  // host imports on its separate preparation route. The standalone-native
+  // projection has no derived source units: its single pre-observed provider
+  // can safely participate in this aggregate lexical transaction.
+  const hasSeparatelyPreparedPromiseDelay = [...plan.promiseDelays.constructions.values()].some(
+    ({ runtimeProjection }) => runtimeProjection !== "standalone-native",
+  );
+  if (plan.importedCalls.size > 0 || hasSeparatelyPreparedPromiseDelay) {
     return "the exact lexical component still depends on a separately prepared import or Promise-delay family";
   }
   if (!hasExactCurrentEnvFunctionImportManifest(ctx)) {
@@ -4108,7 +4141,7 @@ function planIrFirstBodyRouting(
   // direct-owned. Dependency-complete free functions, ordinary members,
   // accessors, and eligible source constructor `_init` bodies enter one sealed
   // preparation transaction. Constructor `_new` wrappers remain AST-free
-  // support. The exact prepared Map initializer may join that transaction;
+  // support. An exact prepared lexical initializer may join that transaction;
   // every other module-init shape remains direct.
   // selectR2PreparedOwnerComponents closes candidates over exact local call
   // edges, so any callable edge that crosses into those owners removes the
@@ -4201,17 +4234,18 @@ function planIrFirstBodyRouting(
       // runtime ABI. Keep that owner on the established direct route.
     } else {
       if (prepareModuleInit) preallocateModuleInitCallable(ctx, sourceFile);
-      const postWasmStartTdzSafeBindingsByOwnerUnitId = prepareModuleInit
-        ? new Map(
-            [...preparedFreeFunctionNames].map(
-              (legacyName) =>
-                [
-                  irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
-                  finalModuleInit.globalBindingIds,
-                ] as const,
-            ),
-          )
-        : undefined;
+      const postWasmStartTdzSafeBindingsByOwnerUnitId =
+        prepareModuleInit && finalModuleInit.invocationKind === "wasm-start"
+          ? new Map(
+              [...preparedFreeFunctionNames].map(
+                (legacyName) =>
+                  [
+                    irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+                    finalModuleInit.globalBindingIds,
+                  ] as const,
+              ),
+            )
+          : undefined;
       const projectLoweringPlans = (selection: IrSelection) =>
         irOverlayIdentity.projectIrIntegrationLoweringPlans(
           {
@@ -4825,6 +4859,16 @@ export function generateModule(
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
 
+    if (
+      options?.experimentalIR &&
+      ctx.standalone &&
+      ctx.nativeStrings &&
+      !ctx.wasi &&
+      !ctx.fast &&
+      ctx.targetProfile.semanticProviders === "native-first"
+    ) {
+      registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
+    }
     collectDeclarations(ctx, ast.sourceFile);
     // #3522 R3: exact fields that reference a later local class are collected
     // provisionally as externref. Finalize their already-observed storage slot
@@ -4863,7 +4907,7 @@ export function generateModule(
 
     // (#3523 R4) Build the semantic top-level plan independently from the
     // direct front-end's three mutable queues. The plan remains an observer for
-    // generic module shapes, while the exact prepared Map initializer below
+    // generic module shapes, while the exact prepared lexical initializer below
     // consumes its gap/order/parity evidence before skipping the direct body.
     if (irPlanningIdentityContext) {
       const plan = buildIrModuleInitPlan({
@@ -5727,7 +5771,7 @@ export function generateModule(
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
-    stripHostBridgeExports(ctx);
+    finalizeStandaloneTimerCallbackExports(ctx);
 
     // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
@@ -5826,10 +5870,33 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
       : null;
   if (severity === null) return;
   // #2783 — `--link`'d namespaces survive as link-time imports, not leaks.
-  const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces);
+  const hasCertifiedStandaloneTimerProvider = (module: string, name: string): boolean => {
+    if (
+      !ctx.requiresStandaloneTimerCallbackDispatch ||
+      ctx.targetProfile.environment !== "none" ||
+      module !== "env" ||
+      name !== "__timer_set_timeout"
+    ) {
+      return false;
+    }
+    return mod.imports.some(
+      (entry, index) =>
+        entry.module === module &&
+        entry.name === name &&
+        isValidatedPlatformCapabilityImport(mod, index, "timers", "embedder", "none"),
+    );
+  };
+  const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces).filter(
+    ({ module, name }) => !hasCertifiedStandaloneTimerProvider(module, name),
+  );
   for (const leak of leaks) {
     reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
   }
+}
+
+function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
+  publishStandaloneTimerCallbackDispatch(ctx);
+  stripHostBridgeExports(ctx);
 }
 
 /**
@@ -8512,7 +8579,7 @@ export function generateMultiModule(
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
-    stripHostBridgeExports(ctx);
+    finalizeStandaloneTimerCallbackExports(ctx);
 
     // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.

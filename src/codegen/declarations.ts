@@ -78,6 +78,11 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { ensureNativePromiseBoundaryBridge, isStandalonePromiseActive } from "./async-scheduler.js";
+import {
+  ensureNativeDynamicBoundaryTag,
+  prepareStandaloneNativePromiseUndefinedBoundary,
+} from "./native-dynamic-boundary-tag.js";
+import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
 import {
   ensureNativeStringBoundaryBridge,
@@ -222,60 +227,7 @@ function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
     }
   }
 
-  const name = "__dynamic_boundary_tag";
-  let funcIdx = ctx.funcMap.get(name);
-  if (funcIdx === undefined && ctx.anyValueTypeIdx >= 0) {
-    const anyTypeIdx = ctx.anyValueTypeIdx;
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], name);
-    funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, {
-      name,
-      typeIdx,
-      locals: [
-        { name: "any", type: { kind: "anyref" } },
-        { name: "tag", type: { kind: "i32" } },
-      ],
-      body: [
-        { op: "local.get", index: 0 },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: 1 }],
-          else: [
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "local.tee", index: 1 },
-            { op: "ref.test", typeIdx: anyTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "i32" } },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "ref.cast", typeIdx: anyTypeIdx },
-                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-                { op: "local.tee", index: 2 },
-                { op: "i32.const", value: 2 },
-                { op: "i32.lt_u" },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: [{ op: "local.get", index: 2 }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ],
-              else: [{ op: "i32.const", value: 0 }],
-            },
-          ],
-        },
-      ],
-      exported: true,
-    });
-    ctx.funcMap.set(name, funcIdx);
-  }
-  if (funcIdx !== undefined && !ctx.mod.exports.some((entry) => entry.name === name)) {
-    ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
-  }
+  ensureNativeDynamicBoundaryTag(ctx);
 }
 
 function recordExportSignature(
@@ -345,7 +297,11 @@ function recordExportSignature(
   if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
-  if (promiseHit) ensureNativePromiseBoundaryBridge(ctx);
+  if (promiseHit) {
+    prepareStandaloneNativePromiseNumberBoundary(ctx);
+    prepareStandaloneNativePromiseUndefinedBoundary(ctx);
+    ensureNativePromiseBoundaryBridge(ctx);
+  }
 }
 
 // An unannotated binding-pattern parameter — `function f([x, y])` or
@@ -2586,16 +2542,29 @@ export interface ModuleInitBodyCompileRouting {
  * the IR body in place, so both routes preserve one exact startup handle.
  */
 export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  if (ctx.programAbiModuleInitCallables?.functionForSource(sourceFile)) return;
-  const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
-  const initFuncIdx = mintDefinedFunc(ctx);
-  pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, {
-    name: "__module_init",
-    typeIdx: initTypeIdx,
-    locals: [],
-    body: [],
-    exported: false,
-  });
+  let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
+  let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
+  if (!initFunc || initFuncIdx === undefined) {
+    const initTypeIdx = addFuncType(ctx, [], [], "__module_init_type");
+    initFuncIdx = mintDefinedFunc(ctx);
+    initFunc = {
+      name: "__module_init",
+      typeIdx: initTypeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    };
+    pushProgramAbiModuleInitCallable(ctx, sourceFile, initFuncIdx, initFunc);
+  }
+  // Deferred initialization exposes the exact preallocated callable. Publish
+  // that alias before prepared-component sealing so final export planning does
+  // not discover a new alias into an already sealed scope. The later direct
+  // declaration pass replaces this same-name entry with the same handle.
+  if (ctx.deferTopLevelInit && !ctx.wasi) {
+    initFunc.exported = true;
+    ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+    ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+  }
 }
 
 /** Compile all function bodies (including class constructors and methods) */
@@ -3473,17 +3442,34 @@ export function compileDeclarations(
       });
     }
     if (exportModuleInit) {
-      // (#3505) compileMulti calls compileDeclarations once per source file
-      // against one accumulating context. Each pass emits a progressively
-      // more complete graph initializer, so only the newest export may remain:
-      // it contains every dependency seen so far in resolver order. Keeping
-      // the earlier exports gave the final Wasm duplicate `__module_init`
-      // names; selecting an earlier one instead would drop later modules.
-      ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
-      ctx.mod.exports.push({
-        name: "__module_init",
-        desc: { kind: "func", index: initFuncIdx },
-      });
+      const initExports = ctx.mod.exports.filter((entry) => entry.name === "__module_init");
+      if (skipModuleInitBody) {
+        // Prepared deferred initialization published this alias before the
+        // component seal. Preserve its exact ordinal and handle: removing and
+        // re-appending it here would create a late Program-ABI alias into the
+        // already sealed component, and would make its identity depend on any
+        // unrelated exports appended between preparation and declaration
+        // finalization.
+        if (
+          initExports.length !== 1 ||
+          initExports[0]!.desc.kind !== "func" ||
+          initExports[0]!.desc.index !== initFuncIdx
+        ) {
+          throw new Error("prepared deferred module initializer lost its exact pre-seal export alias");
+        }
+      } else {
+        // (#3505) compileMulti calls compileDeclarations once per source file
+        // against one accumulating context. Each pass emits a progressively
+        // more complete graph initializer, so only the newest export may remain:
+        // it contains every dependency seen so far in resolver order. Keeping
+        // the earlier exports gave the final Wasm duplicate `__module_init`
+        // names; selecting an earlier one instead would drop later modules.
+        ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+        ctx.mod.exports.push({
+          name: "__module_init",
+          desc: { kind: "func", index: initFuncIdx },
+        });
+      }
     }
 
     if (!ctx.wasi && !exportModuleInit) {

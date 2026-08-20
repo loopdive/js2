@@ -362,7 +362,19 @@ export type IrType =
   // Default (undefined) is "signed" for backward compat — every existing
   // `val: { kind: "i32" }` callsite preserves its current semantics.
   // Stage 1 only adds the field; producers / consumers come in Stages 2-3.
-  | { readonly kind: "val"; readonly val: ValType; readonly signed?: boolean }
+  | {
+      readonly kind: "val";
+      readonly val: ValType;
+      readonly signed?: boolean;
+      /**
+       * Final Program-ABI identity for a backend-owned `ref` / `ref_null`
+       * carrier. Middle-end producers may still carry the allocator index in
+       * `val` while building the candidate; preparation attaches this ref
+       * before a component may seal. Lowering resolves the symbolic identity,
+       * never the stale candidate index.
+       */
+      readonly typeRef?: IrTypeRef;
+    }
   // Backend-agnostic string marker (#1169a). The actual Wasm representation
   // is decided at lowering time via `IrLowerResolver.resolveString`:
   //   - host-strings backend  → `externref`

@@ -3,7 +3,7 @@ id: 4401
 title: "Ratchet and retire implicit JavaScript-host semantic fallbacks"
 status: in-progress
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-20
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -15,7 +15,7 @@ sprint: current
 parent: 4395
 depends_on: [4397, 4399]
 horizon: l
-related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382]
+related: [1524, 1932, 1934, 2094, 2879, 2961, 3526, 3681, 4035, 4382, 4573]
 ---
 # #4401 — Ratchet and retire implicit JS-host semantic fallbacks
 
@@ -164,6 +164,11 @@ Track at least:
   construct probe non-vacuous. Together they enable identity-preserving Proxy
   forwarding to a caller-owned JS constructor and do not forgive any legacy or
   unknown semantic provider.
+- #4573 extracts standalone timer binding and authenticated callback authority
+  from the generic adapter/runtime surfaces. Their two explicit-provider leaves
+  are tracked by a separate 306-line maximum, while the existing runtime,
+  resolver, and generic-adapter ceilings remain unchanged. This keeps the
+  capability visible without conflating it with implicit semantic-host debt.
 
 Still open: product/Test262/npm denominators, binary/startup/performance
 budgets, and the final default-policy evidence gate.

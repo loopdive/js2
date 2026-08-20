@@ -83,6 +83,11 @@ export type RuntimeProviderImplementation =
       /** Scheduling is supplied by the host Promise job queue, with no import. */
       readonly kind: "host-managed";
       readonly service: "promise-job-queue";
+    }
+  | {
+      /** Promise allocation, reactions, settlement, and queueing stay in WasmGC. */
+      readonly kind: "native-managed";
+      readonly service: "native-promise-runtime";
     };
 
 export type MathRuntimeProviderImplementation = Extract<
@@ -705,6 +710,12 @@ export class RuntimeManifestBuilder {
         throw new RuntimeManifestInvariantError(
           "unknown-host-capability",
           `host-managed provider ${provider.id} cannot request concrete host capabilities`,
+        );
+      }
+      if (provider.implementation.kind === "native-managed" && provider.hostCapabilities.length > 0) {
+        throw new RuntimeManifestInvariantError(
+          "unknown-host-capability",
+          `native-managed provider ${provider.id} cannot request concrete host capabilities`,
         );
       }
       if (provider.implementation.kind === "host-capability" && provider.hostCapabilities.length === 0) {
