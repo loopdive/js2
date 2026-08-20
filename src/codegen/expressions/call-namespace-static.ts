@@ -77,7 +77,8 @@ import { ensureNativeSymbolBoundaryBridge, ensureSymbolRegistry, usesNativeSymbo
 import { tryCompileTemporalStaticCall } from "../temporal-native.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper } from "./builtins.js";
-import { compileNewExpression } from "./new-super.js";
+import { emitStandaloneDateNowValue } from "../standalone-clock-capability.js";
+import { compileNewExpression, resolvesToNamedAmbientGlobal } from "./new-super.js";
 import {
   emitThrowTypeError,
   getFuncParamTypes,
@@ -2450,7 +2451,7 @@ export function compileNamespaceStaticCall(
   }
 
   // Handle Date.now() and Date.UTC() — pure Wasm static methods
-  if (ts.isIdentifier(propAccess.expression) && propAccess.expression.text === "Date") {
+  if (resolvesToNamedAmbientGlobal(ctx, propAccess.expression, "Date")) {
     const method = propAccess.name.text;
     if (method === "now") {
       // (#1483) Under --target wasi, route to clock_time_get instead of the
@@ -2459,8 +2460,7 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
         return { kind: "f64" };
       }
-      // (#2164) Pure standalone (--target standalone, no JS host AND no WASI
-      // clock) has no wall-clock source, so the env::__date_now host import is
+      // (#2164) Pure standalone without a JS host/WASI clock has no wall-clock source, so env::__date_now is
       // unsatisfiable — every module that calls Date.now() (or new Date() with
       // no args) failed to instantiate standalone, breaking unrelated Date
       // tests that only touch Date.now() in setup. Emit the Unix epoch (0)
@@ -2470,7 +2470,7 @@ export function compileNamespaceStaticCall(
       // cannot provide) stay failing — and those need a clock source, not a
       // host import.
       if (ctx.standalone === true) {
-        fctx.body.push({ op: "f64.const", value: 0 });
+        emitStandaloneDateNowValue(ctx, fctx);
         return { kind: "f64" };
       }
       const dateNowIdx = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);

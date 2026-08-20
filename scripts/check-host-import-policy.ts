@@ -313,6 +313,8 @@ const ownedAdapterPaths = [
 // Explicit provider implementations are tracked separately so #4401 does not
 // conflate required platform-capability code with implicit semantic-host debt.
 const explicitCapabilityPaths = [
+  "src/runtime/clock-capability-adapter.ts",
+  "src/runtime/compiled-capability-authority.ts",
   "src/runtime/dom-capability-adapter.ts",
   "src/runtime/standalone-dom-string-bridge.ts",
   "src/runtime/standalone-timer-callback-bridge.ts",

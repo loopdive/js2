@@ -81,10 +81,11 @@ export function prepareHostDateSnapshotPreflight(
     ({ ownerUnitId }) =>
       plan.identityPlan.safeFunctionUnitIds.has(ownerUnitId) || ownerUnitId === retainedModuleInitUnitId,
   );
-  const supported = supportsIrBackendTargetCapability(
-    projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
-    "host-date-snapshot",
-  );
+  const supported =
+    supportsIrBackendTargetCapability(
+      projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }),
+      "host-date-snapshot",
+    ) || ctx.requiresStandaloneClockCapability === true;
   const retention = prepareHostDateSnapshotLoweringByIdentity(
     ctx,
     sourceFile,

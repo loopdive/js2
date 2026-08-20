@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
+  DOM_CALLBACK_DISPATCH_EXPORT,
+  DOM_CALLBACK_DISPATCH_PHYSICAL_BASE,
   DOM_STRING_BINDINGS_EXPORT,
   DOM_STRING_BINDINGS_PHYSICAL_BASE,
   DOM_STRING_CHAR_EXPORT,
@@ -15,6 +17,7 @@ import {
 } from "../dom-capability-contract.js";
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { materializeStandaloneDomCallbackDispatch } from "./standalone-dom-callback-authority.js";
 import { definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -25,7 +28,12 @@ interface DomStringBoundaryAllocation {
 }
 
 const allocations = new WeakMap<CodegenContext, DomStringBoundaryAllocation>();
-const published = new WeakSet<CodegenContext>();
+const publishedBindingSizes = new WeakMap<CodegenContext, 3 | 4>();
+
+export interface StandaloneDomStringBoundaryPublishOptions {
+  /** Bind the exact certified reusable DOM callback dispatcher as slot three. */
+  readonly interactionCallbackDispatch?: boolean;
+}
 
 function publishFamily(
   ctx: CodegenContext,
@@ -163,13 +171,29 @@ export function emitStandaloneDomStringBoundary(ctx: CodegenContext): void {
  *
  * Slot zero binds the module to this buildImports lifecycle's exact
  * `global_document` import; slots one and two bind the two readout functions.
+ * When the caller explicitly requests the DOM-interaction extension, slot
+ * three binds the exact compiler-owned DOM callback dispatcher. The base
+ * dom@1 path retains its frozen three-slot artifact.
+ *
  * That association prevents a genuine-but-unrelated donor instance from
- * establishing DOM string authority.
+ * establishing DOM string or callback authority.
  */
-export function publishStandaloneDomStringBoundary(ctx: CodegenContext): void {
+export function publishStandaloneDomStringBoundary(
+  ctx: CodegenContext,
+  options: StandaloneDomStringBoundaryPublishOptions = {},
+): void {
   const allocation = allocations.get(ctx);
-  if (!allocation || published.has(ctx)) return;
-  published.add(ctx);
+  if (!allocation) return;
+  const bindingSize = options.interactionCallbackDispatch === true ? 4 : 3;
+  const priorBindingSize = publishedBindingSizes.get(ctx);
+  if (priorBindingSize !== undefined) {
+    if (priorBindingSize !== bindingSize) {
+      throw new Error(
+        `standalone dom@1 boundary was already published with ${priorBindingSize} bindings, not ${bindingSize}`,
+      );
+    }
+    return;
+  }
 
   const prepareFuncIdx = definedFuncHandleOf(ctx, allocation.prepare);
   const charFuncIdx = definedFuncHandleOf(ctx, allocation.char);
@@ -191,15 +215,27 @@ export function publishStandaloneDomStringBoundary(ctx: CodegenContext): void {
     throw new Error("standalone dom@1 native-string boundary lost env::global_document");
   }
 
+  let callbackDispatcherFuncIdx: number | undefined;
+  if (bindingSize === 4) {
+    const callbackDispatcher = materializeStandaloneDomCallbackDispatch(ctx);
+    callbackDispatcherFuncIdx = definedFuncHandleOf(ctx, callbackDispatcher);
+    if (callbackDispatcherFuncIdx === undefined) {
+      throw new Error("standalone DOM interaction boundary lost its compiler-owned callback dispatcher");
+    }
+  }
+
   const bindingsTableIdx =
     ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
-  ctx.mod.tables.push({ elementType: "funcref", min: 3, max: 3 });
+  ctx.mod.tables.push({ elementType: "funcref", min: bindingSize, max: bindingSize });
   const markerTableIdx = bindingsTableIdx + 1;
   ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
   ctx.mod.elements.push({
     tableIdx: bindingsTableIdx,
     offset: [{ op: "i32.const", value: 0 }],
-    funcIndices: [globalDocumentFuncIdx, prepareFuncIdx, charFuncIdx],
+    funcIndices:
+      callbackDispatcherFuncIdx === undefined
+        ? [globalDocumentFuncIdx, prepareFuncIdx, charFuncIdx]
+        : [globalDocumentFuncIdx, prepareFuncIdx, charFuncIdx, callbackDispatcherFuncIdx],
   });
 
   const manifestGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
@@ -218,6 +254,12 @@ export function publishStandaloneDomStringBoundary(ctx: CodegenContext): void {
     kind: "func",
     index: charFuncIdx,
   });
+  if (callbackDispatcherFuncIdx !== undefined) {
+    publishFamily(ctx, DOM_CALLBACK_DISPATCH_EXPORT, DOM_CALLBACK_DISPATCH_PHYSICAL_BASE, {
+      kind: "func",
+      index: callbackDispatcherFuncIdx,
+    });
+  }
   publishFamily(ctx, DOM_STRING_MANIFEST_EXPORT, DOM_STRING_MANIFEST_PHYSICAL_BASE, {
     kind: "global",
     index: manifestGlobalIdx,
@@ -230,4 +272,5 @@ export function publishStandaloneDomStringBoundary(ctx: CodegenContext): void {
     kind: "table",
     index: bindingsTableIdx,
   });
+  publishedBindingSizes.set(ctx, bindingSize);
 }

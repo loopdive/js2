@@ -3,7 +3,12 @@
 import type { HostImportInventoryEntry } from "./host-import-policy.js";
 import type { WasmModule, ValType } from "./ir/types.js";
 import type { CompileEnvironment } from "./target-profile.js";
-import { DOM_CAPABILITY_IMPORTS, DOM_CAPABILITY_PERMISSIONS } from "./dom-capability-contract.js";
+import {
+  DOM_CAPABILITY_IMPORTS,
+  DOM_CAPABILITY_PERMISSIONS,
+  DOM_INTERACTION_CAPABILITY_IMPORTS,
+  DOM_INTERACTION_CAPABILITY_PERMISSIONS,
+} from "./dom-capability-contract.js";
 
 export type CapabilityProviderId = "js-host" | "wasi-preview1" | "node" | "embedder";
 
@@ -135,6 +140,15 @@ const TIMER_PROVIDER_IMPORTS: readonly CapabilityProviderImportContract[] = Obje
   }),
 ]);
 
+const CLOCK_EMBEDDER_PROVIDER_IMPORTS: readonly CapabilityProviderImportContract[] = Object.freeze([
+  Object.freeze({
+    name: "__date_now",
+    kind: "func" as const,
+    params: Object.freeze([]),
+    results: Object.freeze(["f64"]),
+  }),
+]);
+
 /**
  * Versioned capability contracts already backed by more than one real target
  * provider. The source program names the standard API; target/provider policy
@@ -149,6 +163,7 @@ export const PLATFORM_CAPABILITY_REGISTRY: Readonly<Record<string, PlatformCapab
       provider("wasi-preview1", ["wasi"], "wasi_snapshot_preview1", [
         { name: "clock_time_get", kind: "func", params: ["i32", "i64", "i32"], results: ["i32"] },
       ]),
+      provider("embedder", ["none"], "env", CLOCK_EMBEDDER_PROVIDER_IMPORTS, true),
     ],
   ),
   randomness: capability(
@@ -176,6 +191,20 @@ export const PLATFORM_CAPABILITY_REGISTRY: Readonly<Record<string, PlatformCapab
       ["none"],
       "env",
       DOM_CAPABILITY_IMPORTS.map(({ name, params, results }) => ({
+        name,
+        kind: "func" as const,
+        params,
+        results,
+      })),
+      true,
+    ),
+  ]),
+  "dom-interaction": capability("dom-interaction", DOM_INTERACTION_CAPABILITY_PERMISSIONS, [
+    provider(
+      "embedder",
+      ["none"],
+      "env",
+      DOM_INTERACTION_CAPABILITY_IMPORTS.map(({ name, params, results }) => ({
         name,
         kind: "func" as const,
         params,
@@ -293,6 +322,28 @@ export function isValidatedPlatformCapabilityImport(
     ...importSignature(mod, importIndex),
   };
   return selectedProvider.imports.some((expected) => importContractMatches(actual, expected));
+}
+
+/**
+ * Authenticate the exact standalone clock provider only after codegen retained
+ * a compiler-certified Date snapshot demand. Registry shape alone is not
+ * authority: user source may declare an ambient function named `__date_now`.
+ */
+export function hasCertifiedStandaloneClockCapabilityProvider(
+  mod: WasmModule,
+  compilerCertifiedDemand: boolean,
+  environment: CompileEnvironment,
+): boolean {
+  if (!compilerCertifiedDemand || environment !== "none") return false;
+  const clockImports = mod.imports
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.module === "env" && entry.name === "__date_now");
+  return (
+    clockImports.length === 1 &&
+    mod.platformCapabilityImportProvenance?.get(clockImports[0]!.entry)?.capabilityId === "clock" &&
+    mod.platformCapabilityImportProvenance?.get(clockImports[0]!.entry)?.providerId === "embedder" &&
+    isValidatedPlatformCapabilityImport(mod, clockImports[0]!.index, "clock", "embedder", "none")
+  );
 }
 
 /** Validate emitted provider bindings against the same frozen registry used to describe them. */
@@ -440,6 +491,14 @@ export function buildCapabilityRequirements(
   for (let index = 0; index < inventory.length; index++) {
     const entry = inventory[index]!;
     if (entry.classification !== "platform-capability") continue;
+    // The clock import's public name/signature can be reproduced by an
+    // ambient source declaration.  Only the exact Import object allocated by
+    // the compiler-owned Date snapshot provider may mint clock@1 authority.
+    if (environment === "none" && entry.family === "clock") {
+      const imported = mod.imports[index];
+      const provenance = imported ? mod.platformCapabilityImportProvenance?.get(imported) : undefined;
+      if (provenance?.capabilityId !== "clock" || provenance.providerId !== "embedder") continue;
+    }
     const entries = grouped.get(entry.family) ?? [];
     entries.push({ entry, index });
     grouped.set(entry.family, entries);

@@ -70,15 +70,17 @@ import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runti
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
 import {
-  assertExplicitEmbedderCapabilityBindings,
+  CLOCK_CAPABILITY_AUTHORITY,
+  createCompiledDomCapabilityRuntime,
+  DOM_CAPABILITY_AUTHORITY,
+  prepareCompiledCapabilityAuthority,
+  type CompiledCapabilityAuthorityOptions,
+} from "./runtime/compiled-capability-authority.js";
+import type { DomCapabilityRoot } from "./runtime/dom-capability-adapter.js";
+import {
   createStandaloneTimerCallbackBridge,
   wrapStandaloneTimerCallback,
 } from "./runtime/standalone-timer-callback-bridge.js";
-import { requiresExactDomCapabilityAdapter } from "./dom-capability-contract.js";
-import {
-  createStandaloneDomCapabilityRuntime,
-  type DomCapabilityRoot,
-} from "./runtime/standalone-dom-string-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
 import { createClassMemberResolver, createResolvedClassMethodInvoker } from "./runtime/class-method-host-bridge.js";
@@ -3824,14 +3826,10 @@ export function buildCompiledAdapterImports(
     throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
   }
   const { imports, capabilities, targetProfile } = frozenManifest;
-  const explicitDomCapability = requiresExactDomCapabilityAdapter(imports, capabilities, targetProfile);
-  if (explicitDomCapability && options.domRoot === undefined) {
-    throw new Error("Explicit embedder capability 'dom' requires an authenticated domRoot");
-  }
-  assertExplicitEmbedderCapabilityBindings(frozenManifest, deps);
+  const authority = prepareCompiledCapabilityAuthority(frozenManifest, deps, options.domRoot !== undefined);
   return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
-    [DOM_CAPABILITY_AUTHORITY]: explicitDomCapability,
+    ...authority,
     ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
   });
 }
@@ -16301,10 +16299,8 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
-const DOM_CAPABILITY_AUTHORITY = Symbol("validated-dom-capability");
-export interface BuildImportsOptions {
+export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions {
   domRoot?: Element | ShadowRoot | DomCapabilityRoot;
-  [DOM_CAPABILITY_AUTHORITY]?: boolean;
   globalSandbox?: Record<string, any>;
   /**
    * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
@@ -16382,9 +16378,7 @@ export function buildImports(
   const env: Record<string, Function> = {};
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
   const timerCallbackBridge = createStandaloneTimerCallbackBridge();
-  const domCapabilityRuntime = options?.[DOM_CAPABILITY_AUTHORITY]
-    ? createStandaloneDomCapabilityRuntime(options.domRoot)
-    : undefined;
+  const domCapabilityRuntime = createCompiledDomCapabilityRuntime(options, options?.domRoot);
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
@@ -16445,8 +16439,10 @@ export function buildImports(
     let fn: Function;
 
     const domBinding = domCapabilityRuntime?.bindImport(imp);
+    const clockBinding = imp.intent.type === "date_now" ? options?.[CLOCK_CAPABILITY_AUTHORITY] : undefined;
     fn =
       domBinding ??
+      clockBinding ??
       resolveImport(
         imp.intent,
         deps,

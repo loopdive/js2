@@ -110,14 +110,14 @@ describe("#4398 explicit platform capability requirements", () => {
         abiNamespace: `js2wasm:capability/${id}`,
         abiVersion: 1,
         selectedProviders: ["js-host"],
-        compatibleProviders: ["js-host", "wasi-preview1"],
+        compatibleProviders: id === "clock" ? ["js-host", "wasi-preview1", "embedder"] : ["js-host", "wasi-preview1"],
       });
       expect(wasiRequirement).toMatchObject({
         id,
         abiNamespace: `js2wasm:capability/${id}`,
         abiVersion: 1,
         selectedProviders: ["wasi-preview1"],
-        compatibleProviders: ["js-host", "wasi-preview1"],
+        compatibleProviders: id === "clock" ? ["js-host", "wasi-preview1", "embedder"] : ["js-host", "wasi-preview1"],
       });
       expect(jsRequirement?.imports.every((entry) => entry.params && entry.results)).toBe(true);
       expect(wasiRequirement?.imports.every((entry) => entry.params && entry.results)).toBe(true);

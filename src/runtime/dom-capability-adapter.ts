@@ -1,9 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { type DomCapabilityImportContract, isDomCapabilityImportDescriptor } from "../dom-capability-contract.js";
+import {
+  DOM_INTERACTION_IMPORT_NAMES,
+  type DomCapabilityImportContract,
+  type DomInteractionImportContract,
+  isDomCapabilityImportDescriptor,
+  isDomInteractionImportDescriptor,
+} from "../dom-capability-contract.js";
 import type { ImportDescriptor } from "../index.js";
 
-export { DOM_CAPABILITY_IMPORT_NAMES } from "../dom-capability-contract.js";
+export { DOM_CAPABILITY_IMPORT_NAMES, DOM_INTERACTION_IMPORT_NAMES } from "../dom-capability-contract.js";
 
 export type DomCapabilityImportName = DomCapabilityImportContract["name"];
 
@@ -28,7 +34,18 @@ export type DomCapabilityStringSite =
   | "Document.createElement tagName"
   | "Element.innerHTML"
   | "Element.textContent"
-  | "CSSStyleDeclaration.cssText";
+  | "CSSStyleDeclaration.cssText"
+  | "CSSStyleDeclaration.background"
+  | "HTMLElement.addEventListener type";
+
+export { isDomInteractionImportDescriptor } from "../dom-capability-contract.js";
+
+export type DomInteractionImportName = DomInteractionImportContract["name"];
+
+export interface DomCapabilityInteractionOptions {
+  /** Wrap one packed Wasm closure through this lifecycle's authenticated dispatcher. */
+  readonly wrapCallback: (packedClosure: unknown) => Function;
+}
 
 export interface DomCapabilityAdapterOptions {
   /** Explicit subtree/Document facade. Ambient `document` is never consulted. */
@@ -37,6 +54,8 @@ export interface DomCapabilityAdapterOptions {
   readonly documentAuthority?: unknown;
   /** Strict native-string projection. It must either return a string or throw. */
   readonly toHostString: (value: unknown, site: DomCapabilityStringSite) => string;
+  /** Omit to retain the frozen eight-import dom@1 surface. */
+  readonly interaction?: DomCapabilityInteractionOptions;
 }
 
 export interface DomCapabilityImports {
@@ -50,10 +69,15 @@ export interface DomCapabilityImports {
   readonly Node_appendChild: (self: unknown, child: unknown) => unknown;
 }
 
+export interface DomInteractionImports {
+  readonly HTMLElement_addEventListener: (self: unknown, type: unknown, callback: unknown, options: unknown) => void;
+  readonly CSSStyleDeclaration_set_background: (self: unknown, value: unknown) => void;
+}
+
 /** Closed adapter surface consumed by `buildImports`. */
 export interface DomCapabilityAdapter {
-  readonly imports: Readonly<DomCapabilityImports>;
-  /** Return `undefined` for every name outside the exact eight-import ABI. */
+  readonly imports: Readonly<DomCapabilityImports & Partial<DomInteractionImports>>;
+  /** Return `undefined` outside the exact enabled ABI. */
   bind(descriptor: ImportDescriptor): Function | undefined;
 }
 
@@ -88,6 +112,9 @@ function requireMethod(value: ObjectLike, name: string, detail: string): Functio
 export function createDomCapabilityAdapter(options: DomCapabilityAdapterOptions): DomCapabilityAdapter {
   if (!options || typeof options.toHostString !== "function") {
     throw new TypeError("DOM capability authentication failed: a strict toHostString callback is required");
+  }
+  if (options.interaction !== undefined && typeof options.interaction.wrapCallback !== "function") {
+    throw new TypeError("DOM capability authentication failed: interaction.wrapCallback must be callable");
   }
 
   const hostRoot = requireObjectLike(options.root, "an explicit root");
@@ -143,7 +170,7 @@ export function createDomCapabilityAdapter(options: DomCapabilityAdapterOptions)
 
   const setStringProperty = (
     value: unknown,
-    property: "innerHTML" | "textContent" | "cssText",
+    property: "innerHTML" | "textContent" | "cssText" | "background",
     projected: string,
     site: string,
   ): void => {
@@ -152,7 +179,10 @@ export function createDomCapabilityAdapter(options: DomCapabilityAdapterOptions)
     }
   };
 
-  const imports: DomCapabilityImports = {
+  const imports: DomCapabilityImports & {
+    HTMLElement_addEventListener?: DomInteractionImports["HTMLElement_addEventListener"];
+    CSSStyleDeclaration_set_background?: DomInteractionImports["CSSStyleDeclaration_set_background"];
+  } = {
     global_document: () => documentAuthority,
 
     Document_createElement: (self, tagName, elementOptions) => {
@@ -217,12 +247,52 @@ export function createDomCapabilityAdapter(options: DomCapabilityAdapterOptions)
     },
   };
 
+  if (options.interaction) {
+    imports.HTMLElement_addEventListener = (
+      self: unknown,
+      type: unknown,
+      packedCallback: unknown,
+      eventOptions: unknown,
+    ) => {
+      const node = requireAuthorizedNode(self, "HTMLElement.addEventListener receiver");
+      if (eventOptions !== null && eventOptions !== undefined) {
+        throw new TypeError("DOM capability authority violation: addEventListener options must be null or undefined");
+      }
+      const hostType = toHostString(type, "HTMLElement.addEventListener type");
+      const callback = options.interaction!.wrapCallback(packedCallback);
+      if (typeof callback !== "function") {
+        throw new TypeError("DOM capability authentication failed: interaction callback wrapper was not callable");
+      }
+      const addEventListener = requireMethod(node, "addEventListener", "authorized node");
+      reflectApply(addEventListener, node, [hostType, callback, eventOptions]);
+    };
+
+    imports.CSSStyleDeclaration_set_background = (self: unknown, value: unknown) => {
+      const owner = isObjectLike(self)
+        ? (reflectApply(weakMapGet, providerStyles, [self]) as ObjectLike | undefined)
+        : undefined;
+      if (!owner) {
+        throw new TypeError(
+          "DOM capability authority violation: CSSStyleDeclaration.background receiver is not a provider style",
+        );
+      }
+      requireAuthorizedNode(owner, "CSSStyleDeclaration.background owner");
+      setStringProperty(
+        self,
+        "background",
+        toHostString(value, "CSSStyleDeclaration.background"),
+        "CSSStyleDeclaration.background",
+      );
+    };
+  }
+
   Object.freeze(imports);
   return Object.freeze({
     imports,
     bind(descriptor: ImportDescriptor): Function | undefined {
-      return isDomCapabilityImportDescriptor(descriptor)
-        ? imports[descriptor.name as DomCapabilityImportName]
+      if (isDomCapabilityImportDescriptor(descriptor)) return imports[descriptor.name as DomCapabilityImportName];
+      return options.interaction && isDomInteractionImportDescriptor(descriptor)
+        ? imports[descriptor.name as DomInteractionImportName]
         : undefined;
     },
   });
