@@ -130,6 +130,21 @@ continue to run, and native-oracle failures remain separate from compiler
 failures. The remaining implementation/compiler frontier is still tracked by
 #3978, #3979, and #3980.
 
+## Handoff checkpoint (2026-08-20)
+
+The reusable browser/test infrastructure is complete for this slice and is
+shipped with the npm-compat adapter work in PR #4660. Do not raise Lit's
+compatibility score from the admitted-test count alone: the published
+`lit-html` implementation still emits an invalid module, and the
+reactive-element batches still expose compiler failures such as invalid local
+indices, `global.set` in closures, and inherited-class callable resolution.
+
+The next owner should take #3978 first (make the published lit-html graph
+validate), then revisit #3979/#3980 for the remaining reactive-element
+code-generation failures. After those land, rerun the unchanged
+`DOGFOOD_LIT_UPSTREAM=1` driver and update only the measured report; no test
+source or harness-incompatible result should be reclassified as a pass.
+
 ## Acceptance criteria
 
 - [x] The corpus is lit's own test sources at a verified commit, not

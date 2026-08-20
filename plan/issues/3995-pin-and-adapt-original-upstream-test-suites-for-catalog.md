@@ -579,3 +579,22 @@ important for the original warning and `act` tests: production artifacts omit
 those diagnostics, which otherwise appears as unavailable native test
 infrastructure. The selection is pin-checked and covered by the ReactDOM
 setup regression test; it does not change the production catalog result.
+
+## 2026-08-20 final package checkpoint and handoff
+
+The jsdom VirtualConsole slice now runs its six selected original callbacks
+through both oracles: native Node **6/6** and Wasm **6/6**. The former five
+`on is not a function` failures were the shared callable host-method bridge,
+not jsdom test defects. The remaining jsdom registrations stay explicitly
+deferred because they require the full DOM/resource/async graph.
+
+The Three.js MathUtils slice now preserves the upstream default-exported
+`QUnit.module` registration side effect. Native Node is **18/18** and Wasm is
+**17/18**; the one remaining `MathUtils.damp` mismatch is a last-bit floating
+point difference, not unavailable infrastructure. The other 231 upstream
+files remain deferred browser/WebGL/loader coverage.
+
+The long landing-four-lane CI probe in this work was changed to await its
+child process instead of blocking Vitest's worker heartbeat; the focused core
+probe passes locally. Keep this CI plumbing in PR #4660 and treat the Lit
+compiler gaps in #3977/#3978/#3979/#3980 as the next independent work item.
