@@ -71,6 +71,7 @@ import {
   IR_NATIVE_MAP_SET_NUM_FN,
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
 import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
+import { ensureIrNativePromiseAllProvider } from "../codegen/ir-native-async-runtime.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -342,6 +343,7 @@ import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
   IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "./async-semantic-runtime.js";
 import {
@@ -4748,18 +4750,31 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
     index = ensureFmodIntrinsic(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
+    if (ctx.standalone) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "standalone async clock snapshot escaped its constant runtime projection",
+      );
+    }
     index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
-    index = ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
+    index = ctx.nativeStrings
+      ? ensureIrNativeNumberToString(ctx)
+      : ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CONSOLE_LOG_STRING_FN) {
-    index = ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
+    index = ctx.nativeStrings
+      ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
+      : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ensureLateImport(
-      ctx,
-      "__concat_5",
-      Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-      [{ kind: "externref" }],
-    );
+    index = ctx.nativeStrings
+      ? ensureNativeBatchedConcat(ctx, 5)
+      : ensureLateImport(
+          ctx,
+          "__concat_5",
+          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
+          [{ kind: "externref" }],
+        );
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     const arity = parseIrStringConcatManyArity(symbol)!;
     index = ctx.nativeStrings
@@ -4792,6 +4807,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativeNumberToString(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_NATIVE_PROMISE_DELAY_FN) {
     index = ensureIrNativePromiseDelayProvider(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
+    index = ensureIrNativePromiseAllProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
     // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
     // owns it and runs in the pre-body window so the funcidx is final. Absence is
@@ -5344,7 +5361,9 @@ function preregisterCallableProviders(
     const owner = owners.get(entry.terminalOwnerUnitId)!;
     const instructionBuffers = [
       ...entry.fn.blocks.map((block) => block.instrs),
-      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+      ...(entry.fn.asyncRuntime?.states.map((state) => state.body) ??
+        entry.fn.asyncPlan?.states.map((state) => state.body) ??
+        []),
     ];
     for (const instrs of instructionBuffers) {
       for (const root of instrs) {

@@ -360,7 +360,7 @@ describe("#4110 prepared fetchAllParallel", () => {
     expect(outerResolves).toBe(0);
   });
 
-  it("keeps the unchanged non-identity owner direct on the host-free target", async () => {
+  it("projects the unchanged exact owner through the standalone native runtime", async () => {
     const result = await compile(EXACT_SOURCE, {
       fileName: "issue-4110-host-free.ts",
       target: "standalone",
@@ -368,11 +368,15 @@ describe("#4110 prepared fetchAllParallel", () => {
       trackIrOutcomes: true,
     });
     expectSuccess(result);
-    expect(result.irFirstSkipped ?? []).not.toContain("fetchAllParallel");
+    expect(result.irFirstSkipped ?? []).toContain("fetchAllParallel");
     expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchAllParallel")).toMatchObject({
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
+    expect(
+      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(({ module, name }) => `${module}.${name}`),
+    ).toEqual(["env.__timer_set_timeout"]);
   });
 
   it.each([

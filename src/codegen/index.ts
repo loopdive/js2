@@ -127,7 +127,11 @@ import {
   makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
-import { collectPreparedIrAsyncOwners, prepareIrAsyncSelectionOptions } from "./async-ir-planning.js";
+import {
+  collectPreparedIrAsyncOwners,
+  prepareIrAsyncSelectionOptions,
+  registerIrAsyncPromiseDelayResolver,
+} from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
@@ -2700,7 +2704,7 @@ function planIrOverlay(
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
       // byte-identical routing.
-      ...prepareIrAsyncSelectionOptions(ctx),
+      ...prepareIrAsyncSelectionOptions(ctx, resolvePromiseDelay),
     },
     identityMaps,
   );
@@ -4853,6 +4857,16 @@ export function generateModule(
     // Off by default — programs without holes are byte-identical.
     scanForArrayHoles(ctx, ast.sourceFile);
 
+    if (
+      options?.experimentalIR &&
+      ctx.standalone &&
+      ctx.nativeStrings &&
+      !ctx.wasi &&
+      !ctx.fast &&
+      ctx.targetProfile.semanticProviders === "native-first"
+    ) {
+      registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
+    }
     collectDeclarations(ctx, ast.sourceFile);
     // #3522 R3: exact fields that reference a later local class are collected
     // provisionally as externref. Finalize their already-observed storage slot

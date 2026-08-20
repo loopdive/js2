@@ -19,20 +19,20 @@
         "(#4508) Restoring their compile-once needs call-closure refinement (directional awareness / component splitting), NOT a revert of the storage edge: the forward-only variant was measured and is unsound - it leaves a direct reader beside a still-prepared component whose late-discovered runtime providers break the frozen prepared ABI. tests/issue-4508.test.ts pins the four units' compile-twice state so the refinement flips a test.",
         "(#4514) legacyBodyEmittedCeiling 26 -> 18; emitted/irBodyEmitted unchanged at 22, unsupported unchanged at 15, invariants 0. The reverse-callers edge is now directional: an outside caller withdraws a callee only when the callee's ABI is not certified against it (every carrier fixed by the declaration AND the prepared projection equal to the allocated Program ABI slot). Instrumented measurement first confirmed the four algorithms.ts units had NO other blocking edge - fibMemo withdraws on storage, main on the callee edge into fibMemo, and those four on the caller edge into main alone.",
         "(#4514) -8, not the -4 the four named units predict: partial preparation of a source file also stops forcing its remaining units onto a worse route. The naive refinement was fatal exactly as #4508 predicted, but the mechanism is provider planning, not the closure: the first prepared transaction sealed the provider denominator for the WHOLE compilation, so runtime|21:__extern_is_undefined - first observed while lowering fibMemo / main / the module-init on the late route - threw 'callable provider ... discovered after prepared provider planning' and took the entry to success:false with 3 invariants. Late keys are now APPENDED past the sealed prefix, which keeps the property the seal protects (no already-minted ordinal moves) without refusing discovery.",
-        "(#4573) emitted/irBodyEmitted 22 -> 23, legacyBodyEmitted/unsupported 15 -> 14, and body-shape-rejected 3 -> 2. The exact checker-certified Promise delay now lowers through the native standalone $Promise runtime plus one explicit embedder timer capability. Its direct body and redundant executor/timer closure path are absent; generic Promise/timer near misses remain typed Unsupported."
+        "(#4573) emitted/irBodyEmitted 22 -> 23, legacyBodyEmitted/unsupported 15 -> 14, and body-shape-rejected 3 -> 2. The exact checker-certified Promise delay now lowers through the native standalone $Promise runtime plus one explicit embedder timer capability. Its direct body and redundant executor/timer closure path are absent; generic Promise/timer near misses remain typed Unsupported.",
+        "(#4574) emitted/irBodyEmitted 23 -> 27 and legacyBodyEmitted/unsupported 14 -> 10. The exact fetchUser, fetchAllSequential, fetchAllParallel, and async main family reuses the host-certified IrAsyncPlan through native Promise/frame providers, imports only the explicit timer capability, and removes all four select/async-function outcomes. Focused semantic and shape coverage proves always-async empty Promise.all, sequential/parallel ordering, rejection/idempotence, typed spills, fixed vectors, fused concat, specialized formatting, typed output, and native undefined settlement; raw main fulfillment observes undefined tag 2 rather than null tag 1. The tuned artifact is 124,774 raw bytes, 1,069,036 WAT characters, and 346 functions versus direct at 132,157, 1,184,675, and 353; both import exactly one timer capability. The remaining ten are exactly Calendar six and Builtins four."
       ],
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 23,
-      "irBodyEmittedFloor": 23,
-      "legacyBodyEmittedCeiling": 14,
-      "unsupportedCeiling": 14,
+      "emittedFloor": 27,
+      "irBodyEmittedFloor": 27,
+      "legacyBodyEmittedCeiling": 10,
+      "unsupportedCeiling": 10,
       "unsupportedByCode": {
         "select/host-surface-unavailable": 4,
         "select/body-shape-rejected": 2,
         "select/call-graph-closure": 3,
-        "select/date-constructor-unsupported": 1,
-        "select/async-function": 4
+        "select/date-constructor-unsupported": 1
       },
       "invariantCeiling": 0
     }

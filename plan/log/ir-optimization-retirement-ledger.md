@@ -51,6 +51,21 @@ matching source annotation are required; removing either side fails the gate.
 Measured inventory: **47 decisions; 33 have complete IR ownership; 3 are
 retirement-ready; 2 have source-anchored direct owners**.
 
+Checkpoint #4574 supplies combined standalone evidence for the existing
+numeric-Promise-carrier, typed-async-spill, proven-vector-bounds,
+fixed-vector-literal, fused-five-part-concat, ambient-clock-snapshot,
+specialized-number-to-string, and typed-string-logging rows. The exact family
+passes 13/13 focused tests, 39/39 related async/provider tests, #4124 at 11/11,
+and #4573 at 11/11; it imports only the timer capability and preserves
+always-asynchronous empty Promise.all settlement. Its tuned artifact is
+124,774 vs 132,157 raw bytes, 1,069,036 vs 1,184,675 WAT characters, and 346
+vs 353 functions for IR versus direct; both import exactly one timer
+capability. Raw `main` fulfillment additionally proves undefined tag 2 rather
+than null tag 1 at the native boundary. This is a valid aggregate parity
+envelope, but it does not isolate the contribution of each optimization, so
+the affected per-row performance records intentionally remain `pending` and
+no `retirementReady` value changes.
+
 <!-- ir-optimization-source-inventory:v1 -->
 
 <!-- ir-optimization-retirement-ledger:start -->

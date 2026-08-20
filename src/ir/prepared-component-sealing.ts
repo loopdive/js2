@@ -316,6 +316,25 @@ export function sealDependencyCompletePreparedComponents(input: {
     report = derive(candidateTerminalUnitIds);
   }
 
+  // Numeric Promise boundary readers are declared before preparation, but
+  // `__unbox_number` becomes an owned support dependency only after the
+  // provider fixed point above. Pre-plan only these two already-published
+  // aliases when their exact callable binding is about to join a component.
+  const completeDependencyIds = new Set(
+    report.components.flatMap((component) =>
+      component.status === "complete" ? component.abiDependencies.map((dependency) => dependency.bindingId) : [],
+    ),
+  );
+  const numericPromiseBoundaryTargets = new Set<IrBindingId>();
+  for (const name of ["__typeof_number", "__unbox_number"] as const) {
+    if (!ctx.mod.exports.some((entry) => entry.name === name)) continue;
+    const index = ctx.funcMap.get(name);
+    const helper = index === undefined ? undefined : definedFuncAt(ctx, index);
+    const bindingId = helper ? session.locatorBindingId(helper) : undefined;
+    if (bindingId && completeDependencyIds.has(bindingId)) numericPromiseBoundaryTargets.add(bindingId);
+  }
+  ctx.programAbiExports?.planAliasesForTargets(numericPromiseBoundaryTargets);
+
   const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
   for (const component of report.components) {
     if (component.status !== "complete") {

@@ -20,7 +20,7 @@ complexity: XL
 es_edition: multi
 lane: ir-retirement-r7
 model: gpt-5.6-sol
-related: [351, 1042, 1169f, 1326, 1373b, 2865, 2867, 2895, 2906, 2967, 3090, 3387, 3389, 3518, 4573]
+related: [351, 1042, 1169f, 1326, 1373b, 2865, 2867, 2895, 2906, 2967, 3090, 3387, 3389, 3518, 4573, 4574]
 origin: "#3518 R7 — make the existing frame engine consume AST-free prepared suspension plans"
 files:
   - src/ir/async-plan.ts
@@ -173,6 +173,32 @@ five-part concatenation, specialized number formatting, and typed string
 logging, and reduce the standalone census from **14 to 10** without reopening
 a legacy callee edge. JS-host, WASI, generic Promise constructors, async
 methods/generators, and source near misses are not widened by #4573.
+
+## Standalone async-family continuation (#4574, 2026-08-20)
+
+#4574 owns the dependency-complete native projection for `fetchUser`,
+`fetchAllSequential`, `fetchAllParallel`, and async `main`. It reuses the
+existing immutable host-certified `IrAsyncPlan`s, shared frame engine, native
+`$Promise` scheduler, and native Promise combinator; it does not add another
+frontend or async engine. The checkpoint is **27 IR / 10 legacy / 10
+Unsupported / 0 Invariants**, with all four `select/async-function` outcomes
+removed and `delay` remaining compile-once.
+
+The completed slice preserves typed sequential spills and ordering, eager but
+input-order-correct Promise.all, the fixed ID vector, four deterministic
+standalone clock snapshots, fused five-part string concatenation, specialized
+number formatting, typed output, and native undefined settlement. The current
+direct standalone family resolves or fans out too early and is not a semantic
+runtime oracle; #4574 uses source/spec traces and existing host-plan evidence
+for correctness while retaining direct only as an artifact/optimization
+reference. Its authoritative result is **27/37 IR, 10 legacy/Unsupported, zero
+Invariants**. Focused coverage passes 13/13, related async/provider coverage
+39/39, #4124 11/11, and #4573 11/11. The tuned IR artifact is smaller than
+direct at **124,774 vs 132,157 raw bytes**, **1,069,036 vs 1,184,675 WAT
+characters**, and **346 vs 353 functions**; both import exactly one timer
+capability. Raw `main` fulfillment proves the canonical native value is
+undefined tag 2 rather than null tag 1 before JS boundary normalization.
+Calendar six and Builtins four remain separate capability/storage families.
 
 ## `IrAsyncPlan` contract
 
