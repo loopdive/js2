@@ -95,11 +95,31 @@ Covers the 1-arg self-hosted set (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
 
 | | |
 | --- | --- |
-| `language/statements/function/S13.2.1_A5_T2.js` | FAIL → **PASS** |
-| `language/statements/return/S12.9_A4.js` | FAIL → **PASS** |
+| `test262/test/language/statements/function/S13.2.1_A5_T2.js` | FAIL → **PASS** |
+| `test262/test/language/statements/return/S12.9_A4.js` | FAIL → **PASS** |
 | 551-row standalone ES5 guard | **551 / 551** |
 
 Both rows verified individually, one process per test, `target=standalone`.
+
+**Re-verified on the merged PR tree, 2026-08-20** (the two rows are this issue's
+permanent repro, per the #2093 gate — they are cited above with their full
+`test262/test/…` paths so the gate can find them):
+
+```
+TEST262_TARGET=standalone \
+TEST262_PATH_FILTER="language/statements/function/S13.2.1_A5_T2.js|language/statements/return/S12.9_A4.js" \
+  bash scripts/run-test262-vitest.sh
+→ COMPLETED: 2 pass / 2 total
+```
+
+A note for whoever probes this next, because it cost a lane an hour: the fix is
+reached through the **builtin value-read** path, and a hand-written
+`const f: any = Math.cos; f(0)` in a TS module does **not** reach it — that shape
+still throws, from a different refusal, and the compiled binary contains neither
+the `math-value-read` body nor the generic `"not yet implemented"` string. So a
+probe in that shape looks exactly like "the fix does nothing" while the real
+conformance rows pass. Measure this one through the test262 runner, not a
+bespoke probe.
 
 ## Still open in the same family
 
