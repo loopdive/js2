@@ -3,6 +3,7 @@
 import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { createIrAsyncPlan, type IrAsyncPlan, type PreparedIrAsyncRuntime } from "./async-plan.js";
 import { ALL_ASYNC_HOST_ADAPTERS, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
+import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
@@ -27,6 +28,33 @@ export interface PreparedIrRuntimeManifest {
   readonly manifest: FrozenRuntimeManifest;
   /** Lookup-only handle retained after freeze for verifier/lowering adapters. */
   readonly providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>;
+}
+
+/** Project the semantic standalone clock intent without adding a helper call. */
+function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
+  const nested = mapNestedBuffers(instr, (buffer) => buffer.map(projectStandaloneAsyncStateInstr));
+  if (
+    nested.kind !== "call" ||
+    nested.target.binding.kind !== "intrinsic" ||
+    nested.target.binding.symbol !== IR_ASYNC_CLOCK_SNAPSHOT_FN
+  ) {
+    return nested;
+  }
+  if (
+    nested.args.length !== 0 ||
+    nested.result === null ||
+    nested.resultType?.kind !== "val" ||
+    nested.resultType.val.kind !== "f64"
+  ) {
+    throw new Error("standalone async clock snapshot has a malformed semantic call");
+  }
+  return {
+    kind: "const",
+    value: { kind: "f64", value: 0 },
+    result: nested.result,
+    resultType: nested.resultType,
+    ...(nested.site ? { site: nested.site } : {}),
+  };
 }
 
 /** Verify the closed semantic signature and any post-freeze provider binding. */
@@ -220,27 +248,40 @@ export function prepareIrRuntimeManifest(input: {
   const attachAsyncRuntime = (fn: IrFunction): IrFunction => {
     const plan = asyncPlans.get(fn.unitId);
     if (!plan) return fn;
-    const capabilities = new Set<AsyncHostCapabilityId>();
-    for (const intent of plan.runtimeIntents) {
-      for (const capability of builder.resolveProvider(intent).hostCapabilities) capabilities.add(capability);
+    const selectedProviders = plan.runtimeIntents.map((intent) => builder.resolveProvider(intent));
+    const nativeProjection = selectedProviders.every((provider) => provider.implementation.kind === "native-managed");
+    const hostProjection = selectedProviders.every(
+      (provider) =>
+        provider.implementation.kind === "host-capability" || provider.implementation.kind === "host-managed",
+    );
+    if (!nativeProjection && !hostProjection) {
+      throw new Error(`IR async runtime attachment for ${fn.name} mixes host and native providers`);
     }
-    const runtime: PreparedIrAsyncRuntime = Object.freeze({
-      kind: "host-wasmgc",
-      adapters: Object.freeze(
-        ALL_ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
-          Object.freeze({
-            capability: adapter.capability,
-            target: irImportFuncRef(adapter.module, adapter.field, adapter.field),
-          }),
-        ),
-      ),
-      states: Object.freeze(
-        plan.states.map((state) => {
-          const body = attachProvidersToBuffer(state.body, providers);
-          return body === state.body ? state : Object.freeze({ ...state, body });
-        }),
-      ),
-    });
+    const capabilities = new Set<AsyncHostCapabilityId>();
+    for (const provider of selectedProviders) {
+      for (const capability of provider.hostCapabilities) capabilities.add(capability);
+    }
+    const states = Object.freeze(
+      plan.states.map((state) => {
+        const attached = attachProvidersToBuffer(state.body, providers);
+        const body = nativeProjection ? attached.map(projectStandaloneAsyncStateInstr) : attached;
+        return body === state.body ? state : Object.freeze({ ...state, body });
+      }),
+    );
+    const runtime: PreparedIrAsyncRuntime = nativeProjection
+      ? Object.freeze({ kind: "standalone-native-wasmgc", adapters: Object.freeze([] as const), states })
+      : Object.freeze({
+          kind: "host-wasmgc",
+          adapters: Object.freeze(
+            ALL_ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
+              Object.freeze({
+                capability: adapter.capability,
+                target: irImportFuncRef(adapter.module, adapter.field, adapter.field),
+              }),
+            ),
+          ),
+          states,
+        });
     if (fn.asyncRuntime && JSON.stringify(fn.asyncRuntime) !== JSON.stringify(runtime)) {
       throw new Error(`IR async runtime attachment for ${fn.name} differs from the frozen manifest`);
     }

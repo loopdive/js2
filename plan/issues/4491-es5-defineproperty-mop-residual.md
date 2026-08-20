@@ -4,7 +4,7 @@ title: "ES5 standalone: Object.defineProperty/defineProperties/create residual (
 status: ready
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-20
 assignee: claude/es6-standalone-session
 priority: high
 horizon: m
@@ -13,7 +13,7 @@ task_type: conformance
 area: codegen
 es_edition: es5
 goal: standalone-mode
-related: [4444, 3031, 4490]
+related: [4444, 3031, 4490, 4504]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/object-ops.ts
@@ -593,3 +593,16 @@ the JS-host lane, a different and much worse corpus at 84.8 %).
 **eval-rooted rows cannot be validated on the dev Mac** — CI's QuickJS eval tier
 needs clang-18 (see #4163 for the full toolchain finding); record them as
 blocked rather than chasing them.
+
+## 2026-08-20 routing correction — Date writable-data own visibility
+
+Fresh ES5 standalone triage for #4504 isolated
+`built-ins/Object/defineProperty/15.2.3.6-4-408.js` from the inherited-`[[Set]]`
+cohort. The write decision itself is already correct: a writable data descriptor
+on `Date.prototype` permits `dateObj.prop = 1002`, and the value reads back as
+`1002`. The failure is that direct/borrowed `hasOwnProperty` and `in` do not see
+the Date instance's created expando (the statically typed Date introspection path
+folds false), while the dynamic receiver path can observe it. This is a Date
+carrier own-storage/visibility and `compilePropertyIntrospection` convergence
+row, not a prototype-descriptor refusal row. #4504 explicitly excludes it from
+its nine-test denominator; retain it here for the next MOP/introspection slice.

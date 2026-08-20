@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ImportIntent } from "../index.js";
+import { resolveTimerCapabilityImport } from "./timer-capability-adapter.js";
 
 /** Per-instance state owned by the Web Storage capability adapter. */
 export interface PlatformCapabilityInstanceState {
@@ -17,7 +18,7 @@ export interface PlatformCapabilityAdapterContext {
   globalSandbox?: Record<string, any>;
   instanceState?: PlatformCapabilityInstanceState;
   getNodeRequire(): ((id: string) => any) | undefined;
-  wrapWasmClosure(value: unknown, arity: number): ((...args: any[]) => any) | null;
+  wrapWasmClosure(value: unknown, arity: number, boundary?: "timer"): ((...args: any[]) => any) | null;
   wrapUnknownCallable(value: unknown): unknown;
 }
 
@@ -51,18 +52,6 @@ function makeWebStoragePolyfill(): Storage {
       return null;
     },
   };
-}
-
-let warnedTimerCallbackUnresolvable = false;
-
-function warnTimerCallbackUnresolvable(mode: "timeout" | "interval"): void {
-  if (warnedTimerCallbackUnresolvable) return;
-  warnedTimerCallbackUnresolvable = true;
-  console.warn(
-    `[js2wasm] ${mode === "interval" ? "setInterval" : "setTimeout"} callback could not be wrapped as a JS function ` +
-      `(WasmGC closure bridge unavailable — likely missing __call_fn_0 export, see #1382). ` +
-      `The call is being dropped to avoid a host coercion error. Provide a real JS function via deps to test in the meantime.`,
-  );
 }
 
 function makeNodeBuiltinFunctionAdapter(
@@ -202,27 +191,9 @@ export function resolvePlatformCapabilityImport(
         return polyfill;
       };
     }
-    case "timer_set": {
-      const host = intent.mode === "interval" ? setInterval : setTimeout;
-      return (callback: unknown, delay: unknown) => {
-        const callable = typeof callback === "function" ? callback : context.wrapWasmClosure(callback, 0);
-        if (!callable) {
-          warnTimerCallbackUnresolvable(intent.mode);
-          return 0;
-        }
-        return host(callable, Number(delay));
-      };
-    }
-    case "timer_clear": {
-      const host = intent.mode === "interval" ? clearInterval : clearTimeout;
-      return (handle: unknown) => {
-        try {
-          host(handle as any);
-        } catch {
-          // Browsers ignore invalid timer handles; retain that behavior.
-        }
-      };
-    }
+    case "timer_set":
+    case "timer_clear":
+      return resolveTimerCapabilityImport(intent, context);
     case "node_dirname":
       return () => (deps && deps.__dirname !== undefined ? deps.__dirname : (globalThis as any).__dirname);
     case "node_filename":

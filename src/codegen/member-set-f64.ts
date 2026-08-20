@@ -42,7 +42,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { presenceSetInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
+import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { isNativeGeneratorResultStruct } from "./generators-native.js";
 import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
 import { findAlternateStructsForField } from "./property-access.js";
@@ -208,31 +208,49 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       ...coercionInstrs(ctx, { kind: "f64" }, { kind: "externref" }),
       { op: "call", funcIdx: genericIdx },
     ];
+    const buildDelegate = (): Instr[] => structuredClone(delegate) as Instr[];
 
     // The SAME list, in the SAME order, as `fillMemberSetDispatch`.
     const candidates = findAlternateStructsForField(ctx, propName, -1).filter((c) => c.mutable);
     const buildChain = (idx: number): Instr[] => {
-      if (idx >= candidates.length) return delegate;
+      if (idx >= candidates.length) return buildDelegate();
       const cand = candidates[idx]!;
       // Only a plain f64 slot can take the value as-is. A native-generator
       // IteratorResult `value` slot is excluded because its f64 carries the
       // UNDEF_F64 sentinel (#2979) — the generic arm is the one that knows it.
-      const direct =
-        cand.fieldType.kind === "f64" && !isNativeGeneratorResultStruct(ctx, cand.structTypeIdx)
+      const canStoreDirect = cand.fieldType.kind === "f64" && !isNativeGeneratorResultStruct(ctx, cand.structTypeIdx);
+      const buildDirectStore = (): Instr[] => [
+        { op: "local.get", index: 2 }, // __any
+        { op: "ref.cast", typeIdx: cand.structTypeIdx },
+        { op: "local.get", index: 1 }, // val (f64)
+        { op: "struct.set", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
+        ...(cand.presenceSlot !== undefined
+          ? presenceSetInstrs(cand.structTypeIdx, cand.presenceSlot, [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+            ])
+          : []),
+      ];
+      const direct: Instr[] = !canStoreDirect
+        ? buildDelegate()
+        : ctx.standalone && ctx.inheritedSetDescriptorDirty && cand.presenceSlot !== undefined
           ? [
-              { op: "local.get", index: 2 } as Instr, // __any
-              { op: "ref.cast", typeIdx: cand.structTypeIdx } as Instr,
-              { op: "local.get", index: 1 } as Instr, // val (f64)
-              { op: "struct.set", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx } as Instr,
-              ...(cand.presenceSlot !== undefined
-                ? presenceSetInstrs(cand.structTypeIdx, cand.presenceSlot, [
-                    { op: "local.get", index: 2 },
-                    { op: "ref.cast", typeIdx: cand.structTypeIdx },
-                  ])
-                : []),
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              ...presenceTestInstrs(cand.structTypeIdx, cand.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // A flow slot does not become an own property until its
+                // presence bit is set. Delegate the absent case once to the
+                // generic dispatcher, which reaches `__extern_set` and its
+                // four-state inherited-descriptor decision.
+                then: buildDirectStore(),
+                else: buildDelegate(),
+              },
             ]
-          : delegate;
-      if (direct !== delegate) directArms++;
+          : buildDirectStore();
+      if (canStoreDirect) directArms++;
       const next = buildChain(idx + 1);
       // Structurally canonicalized shapes share one heap type, so `ref.test`
       // alone can select the wrong logical shape — verify the `$shape` stamp

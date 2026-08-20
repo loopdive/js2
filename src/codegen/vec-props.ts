@@ -284,6 +284,9 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
 
   const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
     const idx = ctx.funcMap.get(name);
@@ -445,9 +448,26 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
       strEqualsIdx !== undefined &&
       anyStrTypeIdx >= 0;
     if (canStore) {
+      const sharedSetAvailable =
+        bagLookupIdx !== undefined &&
+        setDecideIdx !== undefined &&
+        setOwnIdx !== undefined &&
+        setResultGlobalIdx !== undefined;
+      // This helper is the named-expando lane, not ArraySetLength itself (the
+      // dynamic length arm owns that physical property). Keep its historical
+      // unsupported `"length"` no-op UNADMITTED: publishing REFUSED here would
+      // make a strict dynamic write throw even though no descriptor/integrity
+      // refusal was observed by this helper.
+      const refusal: Instr[] = [{ op: "return" }];
       setBody(
         VEC_PROP_SET,
-        [{ name: "__fkey", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } }],
+        sharedSetAvailable
+          ? [
+              { name: "__fkey", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
+              { name: "__bag", type: { kind: "externref" } },
+              { name: "__decision", type: { kind: "i32" } },
+            ]
+          : [{ name: "__fkey", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } }],
         [
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: isVecIdx },
@@ -470,15 +490,81 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
               { op: "ref.as_non_null" },
               ...nativeStringLiteralInstrs(ctx, "length"),
               { op: "call", funcIdx: strEqualsIdx },
-              { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+              { op: "if", blockType: { kind: "empty" }, then: refusal },
             ],
           },
-          // store: __extern_set(ensure(obj), key, value)
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: bagEnsureIdx },
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
-          { op: "call", funcIdx: externSetIdx },
+          ...(sharedSetAvailable
+            ? ([
+                // Existing bag before inherited lookup; do not allocate merely
+                // to discover a native Array/Object prototype refusal.
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: bagLookupIdx! },
+                { op: "local.set", index: 4 },
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 4 },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: setDecideIdx! },
+                { op: "local.tee", index: 5 },
+                { op: "i32.const", value: 2 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 1 },
+                    { op: "global.set", index: setResultGlobalIdx! },
+                    { op: "return" },
+                  ],
+                },
+                { op: "local.get", index: 5 },
+                { op: "i32.const", value: 3 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    // This is a real nearest-descriptor refusal, not the
+                    // helper's historical unsupported boundary.
+                    { op: "i32.const", value: 2 },
+                    { op: "global.set", index: setResultGlobalIdx! },
+                    { op: "return" },
+                  ],
+                },
+                { op: "local.get", index: 4 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "call", funcIdx: bagEnsureIdx },
+                    { op: "local.set", index: 4 },
+                  ],
+                },
+                { op: "local.get", index: 4 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  // Allocation/representation failure remains the legacy
+                  // unsupported no-op. It is not an OrdinarySet refusal.
+                  then: [{ op: "return" }],
+                },
+                { op: "local.get", index: 4 },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: setOwnIdx! },
+                { op: "global.set", index: setResultGlobalIdx! },
+              ] satisfies Instr[])
+            : ([
+                // Legacy flag-clear path: direct own write through the bag.
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: bagEnsureIdx },
+                { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
+                { op: "call", funcIdx: externSetIdx },
+              ] satisfies Instr[])),
         ],
       );
     } else {

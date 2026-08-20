@@ -1,22 +1,28 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 function pin(name: string) {
   return JSON.parse(readFileSync(join(HERE, `${name}-upstream-suite-pin.json`), "utf-8"));
 }
 
-function run(name: string) {
-  const output = execFileSync("node", ["--import", "tsx", join(HERE, `${name}-upstream-suite.mjs`), "--json"], {
-    encoding: "utf-8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return JSON.parse(output);
+async function run(name: string) {
+  const { stdout } = await execFileAsync(
+    "node",
+    ["--import", "tsx", join(HERE, `${name}-upstream-suite.mjs`), "--json"],
+    {
+      encoding: "utf-8",
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
+  return JSON.parse(stdout);
 }
 
 describe("small npm package upstream suites", () => {
@@ -107,16 +113,16 @@ describe("small npm package upstream suites", () => {
   });
 
   const clsxHeavy = process.env.DOGFOOD_CLSX_UPSTREAM_SUITE === "1" ? it : it.skip;
-  clsxHeavy("runs all 32 original clsx callbacks in Node and Wasm", { timeout: 300_000 }, () => {
-    const report = run("clsx");
+  clsxHeavy("runs all 32 original clsx callbacks in Node and Wasm", { timeout: 300_000 }, async () => {
+    const report = await run("clsx");
     expect(report.extraction).toMatchObject({ filesSeen: 3, filesSelected: 3, testsRegistered: 32, nativePassed: 32 });
     expect(report.results.scored).toBe(32);
     expect(report.results.passed).toBeGreaterThanOrEqual(20);
   });
 
   const cookieHeavy = process.env.DOGFOOD_COOKIE_UPSTREAM_SUITE === "1" ? it : it.skip;
-  cookieHeavy("runs cookie's complete original callback inventory", { timeout: 300_000 }, () => {
-    const report = run("cookie");
+  cookieHeavy("runs cookie's complete original callback inventory", { timeout: 300_000 }, async () => {
+    const report = await run("cookie");
     expect(report.extraction).toMatchObject({
       filesSeen: 4,
       filesSelected: 4,
@@ -129,23 +135,23 @@ describe("small npm package upstream suites", () => {
   });
 
   const reduxHeavy = process.env.DOGFOOD_REDUX_UPSTREAM_SUITE === "1" ? it : it.skip;
-  reduxHeavy("runs Redux's complete original runtime callback inventory", { timeout: 600_000 }, () => {
-    const report = run("redux");
+  reduxHeavy("runs Redux's complete original runtime callback inventory", { timeout: 600_000 }, async () => {
+    const report = await run("redux");
     expect(report.extraction).toMatchObject({
       filesSeen: 9,
       filesSelected: 9,
       testsRegistered: 82,
-      nativePassed: 78,
-      nativeFailed: 4,
+      nativePassed: 82,
+      nativeFailed: 0,
     });
     expect(report.compile).toMatchObject({ modules: 9, succeeded: 9, validated: 9 });
-    expect(report.results).toMatchObject({ scored: 78 });
+    expect(report.results).toMatchObject({ scored: 82 });
     expect(report.results.passed).toBeGreaterThanOrEqual(5);
   });
 
   const axiosHeavy = process.env.DOGFOOD_AXIOS_UPSTREAM_SUITE === "1" ? it : it.skip;
-  axiosHeavy("runs Axios's selected original synchronous unit files", { timeout: 600_000 }, () => {
-    const report = run("axios");
+  axiosHeavy("runs Axios's selected original synchronous unit files", { timeout: 600_000 }, async () => {
+    const report = await run("axios");
     expect(report.extraction).toMatchObject({
       filesSeen: 49,
       filesSelected: 25,
@@ -160,8 +166,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const prettierHeavy = process.env.DOGFOOD_PRETTIER_UPSTREAM_SUITE === "1" ? it : it.skip;
-  prettierHeavy("runs Prettier's selected original synchronous unit files", { timeout: 600_000 }, () => {
-    const report = run("prettier");
+  prettierHeavy("runs Prettier's selected original synchronous unit files", { timeout: 600_000 }, async () => {
+    const report = await run("prettier");
     expect(report.extraction.filesSeen).toBe(20);
     expect(report.extraction.filesSelected).toBe(3);
     expect(report.extraction.filesDeferred).toBe(17);
@@ -171,8 +177,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const markedHeavy = process.env.DOGFOOD_MARKED_UPSTREAM_SUITE === "1" ? it : it.skip;
-  markedHeavy("runs Marked's original Hooks unit file", { timeout: 600_000 }, () => {
-    const report = run("marked");
+  markedHeavy("runs Marked's original Hooks unit file", { timeout: 600_000 }, async () => {
+    const report = await run("marked");
     expect(report.extraction).toMatchObject({
       filesSeen: 6,
       filesSelected: 1,
@@ -188,8 +194,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const stylelintHeavy = process.env.DOGFOOD_STYLELINT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  stylelintHeavy("runs Stylelint's selected original utility units", { timeout: 600_000 }, () => {
-    const report = run("stylelint");
+  stylelintHeavy("runs Stylelint's selected original utility units", { timeout: 600_000 }, async () => {
+    const report = await run("stylelint");
     expect(report.extraction).toMatchObject({
       filesSeen: 281,
       filesSelected: 5,
@@ -203,8 +209,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const threeHeavy = process.env.DOGFOOD_THREE_UPSTREAM_SUITE === "1" ? it : it.skip;
-  threeHeavy("runs Three.js's original MathUtils QUnit module", { timeout: 600_000 }, () => {
-    const report = run("three");
+  threeHeavy("runs Three.js's original MathUtils QUnit module", { timeout: 600_000 }, async () => {
+    const report = await run("three");
     expect(report.extraction).toMatchObject({
       filesSeen: 232,
       filesSelected: 1,
@@ -215,12 +221,12 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.compile.modules).toBe(1);
     expect(report.results.scored).toBe(18);
-    expect(report.results.passed).toBe(0);
+    expect(report.results.passed).toBeGreaterThanOrEqual(17);
   });
 
   const jsdomHeavy = process.env.DOGFOOD_JSDOM_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jsdomHeavy("runs jsdom's selected original VirtualConsole callbacks", { timeout: 600_000 }, () => {
-    const report = run("jsdom");
+  jsdomHeavy("runs jsdom's selected original VirtualConsole callbacks", { timeout: 600_000 }, async () => {
+    const report = await run("jsdom");
     expect(report.extraction).toMatchObject({
       filesSeen: 17,
       filesSelected: 1,
@@ -232,12 +238,12 @@ describe("small npm package upstream suites", () => {
       callbacksDeferred: 312,
     });
     expect(report.compile.modules).toBe(1);
-    expect(report.results.scored).toBe(6);
+    expect(report.results).toMatchObject({ scored: 6, passed: 6, failed: 0, runtimeFailed: 0 });
   });
 
   const styledComponentsHeavy = process.env.DOGFOOD_STYLED_COMPONENTS_UPSTREAM_SUITE === "1" ? it : it.skip;
-  styledComponentsHeavy("runs styled-components' selected original utility units", { timeout: 600_000 }, () => {
-    const report = run("styled-components");
+  styledComponentsHeavy("runs styled-components' selected original utility units", { timeout: 600_000 }, async () => {
+    const report = await run("styled-components");
     expect(report.extraction).toMatchObject({
       filesSeen: 41,
       filesSelected: 3,
@@ -251,8 +257,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const webpackHeavy = process.env.DOGFOOD_WEBPACK_UPSTREAM_SUITE === "1" ? it : it.skip;
-  webpackHeavy("runs webpack's selected original utility units", { timeout: 600_000 }, () => {
-    const report = run("webpack");
+  webpackHeavy("runs webpack's selected original utility units", { timeout: 600_000 }, async () => {
+    const report = await run("webpack");
     expect(report.extraction).toMatchObject({
       filesSeen: 98,
       filesSelected: 3,
@@ -266,8 +272,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const jestHeavy = process.env.DOGFOOD_JEST_UPSTREAM_SUITE === "1" ? it : it.skip;
-  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, () => {
-    const report = run("jest");
+  jestHeavy("runs Jest's original get-type units", { timeout: 600_000 }, async () => {
+    const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
       filesSelected: 2,
@@ -281,8 +287,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const tailwindcssHeavy = process.env.DOGFOOD_TAILWINDCSS_UPSTREAM_SUITE === "1" ? it : it.skip;
-  tailwindcssHeavy("runs Tailwind CSS's original segment utilities", { timeout: 600_000 }, () => {
-    const report = run("tailwindcss");
+  tailwindcssHeavy("runs Tailwind CSS's original segment utilities", { timeout: 600_000 }, async () => {
+    const report = await run("tailwindcss");
     expect(report.extraction).toMatchObject({
       filesSeen: 42,
       filesSelected: 2,
@@ -296,8 +302,8 @@ describe("small npm package upstream suites", () => {
   });
 
   const typescriptHeavy = process.env.DOGFOOD_TYPESCRIPT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, () => {
-    const report = run("typescript");
+  typescriptHeavy("runs TypeScript's original base64 unit", { timeout: 600_000 }, async () => {
+    const report = await run("typescript");
     expect(report.extraction).toMatchObject({
       filesSeen: 256,
       filesSelected: 1,

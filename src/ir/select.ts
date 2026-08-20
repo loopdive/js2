@@ -87,7 +87,8 @@ import {
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
-import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
@@ -448,6 +449,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    *  strictNoHostImports). Gates the host-extern capability. */
   readonly jsHostExterns?: boolean;
   /**
+   * (#4576) Exact checker-owned standalone DOM subtree plan. This is a
+   * provider capability, not permission to enable the generic host-extern
+   * surface: `jsHostExterns` remains false. The plan is all-or-nothing for its
+   * source component and authorizes only its recorded AST nodes.
+   */
+  readonly standaloneDomCapability?: IrStandaloneDomCapabilityPlan;
+  /**
    * Proven primitive value family used by coercion-sensitive builtin
    * acceptance. Invalid local annotations and type assertions return
    * `undefined`; this is evidence, not receiver routing.
@@ -490,6 +498,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly supportsSymbolicMathHelpers?: boolean;
   /** Backend owns a no-radix f64 → abstract-string formatter. */
   readonly supportsNumberToString?: boolean;
+  /** Backend owns bounded-literal f64.toFixed → abstract-string formatting. */
+  readonly supportsNumberToFixed?: boolean;
   /**
    * (#4462) The active backend has the HOST-FREE console sink (#3469's
    * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
@@ -661,7 +671,7 @@ export function planIrCompilation(
   // (#2856) Arm the host-extern identifier resolution for this run. Mode-gated
   // via the capability table: only a JS-host compile may claim host-global
   // shapes; standalone/wasi defer so legacy keeps its #1472/#2907 refusal.
-  armHostGlobalResolvers(options);
+  armHostGlobalResolvers(sourceFile, options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   // (#1373b C-1) Arm the async claim gate for this run (consulted by
   // `whyNotIrClaimable`'s async-modifier arm via `isAsyncIrReady`), and
@@ -1401,6 +1411,10 @@ let currentHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | n
  * and report the honest, target-owned reason.
  */
 let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | null = null;
+// Exact standalone provider authority. This stays separate from both host
+// resolvers so a DOM plan cannot accidentally arm `window`, `performance`, or
+// an unregistered extern member.
+let currentStandaloneDomCapability: IrStandaloneDomCapabilityPlan | null = null;
 
 /**
  * (#4457) Arm both host-global resolvers for a selector run: the live one when
@@ -1408,11 +1422,23 @@ let currentDeferredHostGlobalResolver: ((node: ts.Identifier) => string | undefi
  * defers. Exactly one is non-null for a given run (both are null when no
  * resolver was supplied at all).
  */
-function armHostGlobalResolvers(options: IrSelectionOptions | undefined): void {
+function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionOptions | undefined): void {
   const deferred = hostExternCapability(options?.jsHostExterns === true) === "defer";
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
+  const candidate = options?.standaloneDomCapability;
+  currentStandaloneDomCapability =
+    candidate &&
+    candidate.sourceFile === sourceFile &&
+    domSurfaceCapability(options?.jsHostExterns === true, true) !== "defer" &&
+    options?.jsHostExterns !== true
+      ? candidate
+      : null;
+}
+
+function standaloneDomOperation(node: ts.Node): IrStandaloneDomOperation | undefined {
+  return currentStandaloneDomCapability?.operation(node);
 }
 
 /**
@@ -1494,7 +1520,7 @@ export function configureIrStructuralSelectorPredicates(
   currentLocalClassDeclarations = localClassDeclarations;
   configureDynamicScanSource(sourceFile, functionDeclarations);
   currentAsyncDeclNames = asyncDeclarationNames;
-  armHostGlobalResolvers(options);
+  armHostGlobalResolvers(sourceFile, options);
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
@@ -3374,6 +3400,16 @@ function isPhase1StatementListInScope(
         // Identifier or (#3000) a PrivateIdentifier (`this.#x = v`).
         if (!ts.isIdentifier(s.expression.left.name) && !ts.isPrivateIdentifier(s.expression.left.name))
           return shapeNo("nontail-assign-computedprop", s.expression);
+        const standaloneDomSet = standaloneDomOperation(s.expression.left);
+        if (standaloneDomSet?.kind === "member-set") {
+          if (!isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses)) {
+            return shapeNo("nontail-dom-assign-recv", standaloneDomSet.access.expression);
+          }
+          if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
+            return shapeNo("nontail-dom-assign-rhs", s.expression.right);
+          }
+          continue;
+        }
         if (!moduleExternPropertyWriteIsProven(s.expression.left, s.expression.right)) {
           return shapeNo("nontail-module-extern-assign-value", s.expression.right);
         }
@@ -4607,6 +4643,13 @@ function isPhase1BodyStatement(
           // bodies, in addition to plain-Identifier field writes.
           if (!ts.isIdentifier(stmt.expression.left.name) && !ts.isPrivateIdentifier(stmt.expression.left.name))
             return false;
+          const standaloneDomSet = standaloneDomOperation(stmt.expression.left);
+          if (standaloneDomSet?.kind === "member-set") {
+            return (
+              isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
+              isPhase1Expr(stmt.expression.right, scope, localClasses)
+            );
+          }
           if (!moduleExternPropertyWriteIsProven(stmt.expression.left, stmt.expression.right)) {
             return shapeNo("body-module-extern-assign-value", stmt.expression.right);
           }
@@ -4891,6 +4934,13 @@ function isPhase1Tail(
     ) {
       if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name))
         return shapeNo("tail-assign-computedprop", expr);
+      const standaloneDomSet = standaloneDomOperation(expr.left);
+      if (standaloneDomSet?.kind === "member-set") {
+        return (
+          isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
+          isPhase1Expr(expr.right, scope, localClasses)
+        );
+      }
       if (!moduleExternPropertyWriteIsProven(expr.left, expr.right)) {
         return shapeNo("tail-module-extern-assign-value", expr.right);
       }
@@ -6360,7 +6410,12 @@ function selectorSupportsNumberToString(): boolean {
 
 function isBoundedToFixedCall(expr: ts.CallExpression): boolean {
   if (!ts.isPropertyAccessExpression(expr.expression) || expr.expression.name.text !== "toFixed") return false;
-  if (currentModuleBindingResolver?.supportsHostNumberToString !== true) return false;
+  if (
+    currentSelectionOptions?.supportsNumberToFixed !== true &&
+    currentModuleBindingResolver?.supportsHostNumberToString !== true
+  ) {
+    return false;
+  }
   if (expr.arguments.length !== 1 || !ts.isNumericLiteral(expr.arguments[0]!)) return false;
   const digits = Number(expr.arguments[0]!.text.replace(/_/g, ""));
   return (
@@ -8123,6 +8178,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return true;
     }
+    // (#4576) A certified standalone `document` is a provider-owned global
+    // read, not a generic host-global admission. Node identity proves this
+    // exact occurrence is the receiver of `document.body` or the registered
+    // `document.createElement(tag)` call in the closed plan.
+    if (standaloneDomOperation(expr)?.kind === "global-get") return true;
     // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
     // call shape the builder lowers. Checked before the reject arm below, which
     // would otherwise bucket it as target-unserviceable.
@@ -8372,6 +8432,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
+      const standaloneDomCall = standaloneDomOperation(expr);
+      if (standaloneDomCall?.kind === "member-call") {
+        // Arity, optional/computed syntax, declaration identity, and boundary
+        // families were certified when the source-wide plan was built. Keep
+        // ordinary Phase-1 recursion for lexical scope and argument effects.
+        if (!isPhase1Expr(standaloneDomCall.access.expression, scope, localClasses)) return false;
+        return standaloneDomCall.call.arguments.every(
+          (argument) => !ts.isSpreadElement(argument) && isPhase1Expr(argument, scope, localClasses),
+        );
+      }
       // #4385 — exact ambient `%Function.prototype%()` call. This is a
       // callable intrinsic object, not a dynamic method lookup. Its arguments
       // are still ordinary evaluated expressions; the runtime entry point
@@ -8950,6 +9020,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // the mangled `__priv_x` slot. Non-class receivers with a private name are
     // a TS error and never reach here.
     if (!ts.isIdentifier(expr.name) && !ts.isPrivateIdentifier(expr.name)) return false;
+    const standaloneDomGet = standaloneDomOperation(expr);
+    if (standaloneDomGet?.kind === "member-get") {
+      return isPhase1Expr(standaloneDomGet.access.expression, scope, localClasses);
+    }
     // Slice 11 (#1169n) — optional chaining (`obj?.prop`). The lowerer
     // doesn't yet emit the null-guard branch, so accept the shape
     // structurally but the lowerer will throw clean fallback when it

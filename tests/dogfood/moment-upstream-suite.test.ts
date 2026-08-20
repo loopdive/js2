@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runDogfoodScript } from "./run-dogfood-script";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pin = JSON.parse(readFileSync(join(HERE, "moment-upstream-suite-pin.json"), "utf-8"));
@@ -18,9 +18,8 @@ describe("moment 2.30.1 upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_MOMENT_UPSTREAM_SUITE === "1" ? it : it.skip;
-  heavy("runs every callback in the selected original files against Node and Wasm", { timeout: 900_000 }, () => {
-    const out = execFileSync("node", ["--import", "tsx", join(HERE, "moment-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
+  heavy("runs every callback in the selected original files against Node and Wasm", { timeout: 900_000 }, async () => {
+    const out = await runDogfoodScript(join(HERE, "moment-upstream-suite.mjs"), ["--json"], {
       maxBuffer: 32 * 1024 * 1024,
     });
     const report = JSON.parse(out);

@@ -20,6 +20,7 @@
 
 import { ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
+import { isNodeBuiltin, normalizeNodeBuiltin } from "./import-resolver.js";
 
 /** A single require() call rewrite plan. */
 interface RequireRewrite {
@@ -253,8 +254,18 @@ function bindingIsReassigned(sf: ts.SourceFile, declaration: ts.VariableDeclarat
 function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
   if (!decl.initializer) return null;
 
-  const moduleSpec = extractRequireSpecifier(decl.initializer);
-  if (moduleSpec === null) return null;
+  const rawModuleSpec = extractRequireSpecifier(decl.initializer);
+  if (rawModuleSpec === null) return null;
+  // `compileProject` keeps ESM imports in the TypeScript graph instead of
+  // running the single-file import preprocessor. Mark bare Node builtins with
+  // the explicit `node:` scheme so the shared ambient Node surface can provide
+  // typed class exports (notably `events.EventEmitter`) to that graph. The
+  // runtime resolves `node:x` and `x` identically; relative/package specifiers
+  // remain byte-for-byte unchanged.
+  const moduleSpec =
+    isNodeBuiltin(rawModuleSpec) && !rawModuleSpec.startsWith("node:")
+      ? `node:${normalizeNodeBuiltin(rawModuleSpec)}`
+      : rawModuleSpec;
 
   // Now look at the binding pattern to decide between default-import and named-import.
   if (ts.isIdentifier(decl.name)) {

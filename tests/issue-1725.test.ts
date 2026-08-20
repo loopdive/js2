@@ -154,4 +154,20 @@ describe("#1725 — functor-constructor struct.set repair must not cast a value-
     // so the body is unchanged (the receiver is already a struct ref).
     expect(JSON.stringify(fixedBody)).toBe(before);
   });
+
+  it("does not duplicate an exact receiver cast already emitted before struct.set", () => {
+    const mod = buildModule();
+    mod.functions[0]!.body = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast_null", typeIdx: 0 },
+      { op: "f64.const", value: 1 },
+      { op: "struct.set", typeIdx: 0, fieldIdx: 0 },
+    ];
+    const before = JSON.stringify(mod.functions[0]!.body);
+
+    expect(repairStructTypeMismatches(mod)).toBe(0);
+    expect(JSON.stringify(mod.functions[0]!.body)).toBe(before);
+    expect(hasBadAdjacency(mod.functions[0]!.body)).toBe(false);
+  });
 });

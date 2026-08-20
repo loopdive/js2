@@ -304,6 +304,36 @@ export function emitObjectMethodAsClosure(
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  // Object-literal methods share the signature wrapper with ordinary
+  // functions. A rest method with a simple identifier rest parameter needs an
+  // allocation-specific discriminator so `__call_fn_method_N` can materialize
+  // its trailing argument vector. Binding-pattern rest parameters use a
+  // different destructuring ABI and must retain the shared wrapper; otherwise
+  // the dispatcher loses the pattern's hidden externref carrier.
+  const methodHasSimpleRest =
+    memberDecl !== undefined &&
+    ts.isFunctionLike(memberDecl) &&
+    memberDecl.parameters.some(
+      (parameter) => parameter.dotDotDotToken !== undefined && ts.isIdentifier(parameter.name),
+    );
+  let allocationStructTypeIdx = structTypeIdx;
+  if (methodHasSimpleRest) {
+    const base = ctx.mod.types[structTypeIdx];
+    if (base?.kind === "struct") {
+      allocationStructTypeIdx = ctx.mod.types.length;
+      ctx.mod.types.push({
+        kind: "struct",
+        name: `${base.name}_rest_${ctx.closureCounter++}`,
+        fields: base.fields.map((field) => ({ ...field })),
+        superTypeIdx: structTypeIdx,
+      });
+      ctx.closureInfoByTypeIdx.set(allocationStructTypeIdx, {
+        ...wrapperTypes.closureInfo,
+        structTypeIdx: allocationStructTypeIdx,
+        hasRestParam: true,
+      });
+    }
+  }
 
   // Create the trampoline. Signature matches the wrapper's lifted func
   // type: (closure_self, ...userParams) → ret. We ignore closure_self,
@@ -377,12 +407,15 @@ export function emitObjectMethodAsClosure(
   // type and report the BASE (#4437's note 3: a `ref.cast` to a MORE derived
   // type traps on a value stored as the base; widening is the safe direction).
   const metaSlot = fnMetaSlotForMemberDecl(ctx, memberDecl);
-  const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  const allocTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, allocationStructTypeIdx) : undefined;
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
   fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push(closureBagInitInstr());
   if (metaSlot && allocTypeIdx !== undefined) for (const instr of metaSlot.init) fctx.body.push(instr);
-  fctx.body.push({ op: "struct.new", typeIdx: allocTypeIdx !== undefined && metaSlot ? allocTypeIdx : structTypeIdx });
+  fctx.body.push({
+    op: "struct.new",
+    typeIdx: allocTypeIdx !== undefined && metaSlot ? allocTypeIdx : allocationStructTypeIdx,
+  });
 
   return { kind: "ref", typeIdx: structTypeIdx };
 }

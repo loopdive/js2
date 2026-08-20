@@ -71,6 +71,21 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
   if (fctx.asyncDriveReturn && inFrameIdx !== undefined) return inFrameIdx;
   if (fctx.liftedCaptureNames?.has(cap.name)) return inFrameIdx ?? cap.outerLocalIdx;
 
+  // A let/const pre-hoist can record the capture before block-shadow setup
+  // replaces that binding with its source-position local. Nested-function body
+  // compilation may allocate many temporaries in between, leaving the recorded
+  // index in range but now owned by an unrelated local. This is stronger
+  // evidence than the broad localMap preference reverted in #1177: if the slot
+  // no longer even names the captured binding, it cannot be the right source.
+  // Prefer the current lexical binding in that provably-stale case. Deno's
+  // `registerErrorClass` hits this with `errorConstructors` (recorded 485,
+  // live 561); reading 485 produced an unrelated externref and an illegal cast.
+  const recordedDef =
+    cap.outerLocalIdx < fctx.params.length
+      ? fctx.params[cap.outerLocalIdx]
+      : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+  if (inFrameIdx !== undefined && recordedDef?.name !== cap.name) return inFrameIdx;
+
   const existsHere = cap.outerLocalIdx < fctx.params.length + fctx.locals.length;
   if (!existsHere && inFrameIdx !== undefined) return inFrameIdx;
 

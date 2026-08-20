@@ -968,7 +968,7 @@ const TA_VIEW_CTOR_NAMES = new Set([
  * `new TA(buf, byteOffset[, length])` also resolves to a `$__ta_view` (with the
  * byteOffset field populated), so 1..3 args are accepted here.
  */
-function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undefined): ValType | null {
+export function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undefined): ValType | null {
   if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isNewExpression(unwrapped) || !ts.isIdentifier(unwrapped.expression)) return null;

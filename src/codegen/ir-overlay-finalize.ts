@@ -11,10 +11,19 @@ import {
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "../ir/planning-identity.js";
-import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
+import {
+  IR_NATIVE_PROMISE_DELAY_FN,
+  type IrPromiseDelayLoweringPlan,
+  type IrPromiseDelayLoweringPlans,
+} from "../ir/promise-delay-lowering.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import {
+  canEnsureIrNativePromiseDelayProvider,
+  ensureIrNativePromiseDelayProvider,
+  hasExactIrNativePromiseDelayProvider,
+} from "./ir-native-promise-delay.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -635,41 +644,56 @@ export function preparePromiseDelayLoweringByIdentity(
   const activePlans = validatedPlans.filter((delay) => retained.has(delay.ownerUnitId));
   if (activePlans.length === 0) return retained;
 
+  const runtimeProjection = activePlans[0]!.runtimeProjection;
+  if (activePlans.some((plan) => plan.runtimeProjection !== runtimeProjection)) {
+    planningInvariant("unit-record-mismatch", "one Promise-delay preparation batch mixes target runtime projections");
+  }
+  const standaloneNative = runtimeProjection === "standalone-native";
+
   const blocked = new Set<IrUnitId>();
-  const promiseExact = hasUncontestedExactEnvFunctionImport(
-    ctx,
-    "Promise_new",
-    [{ kind: "externref" }],
-    [{ kind: "externref" }],
-  );
   const timerExact = hasUncontestedExactEnvFunctionImport(
     ctx,
     "__timer_set_timeout",
     [{ kind: "externref" }, { kind: "externref" }],
     [{ kind: "externref" }],
   );
-  const boxExact = hasUncontestedExactEnvFunctionImport(
-    ctx,
-    "__box_number",
-    [{ kind: "f64" }],
-    [{ kind: "externref" }],
-  );
-  const callExact = hasUncontestedExactEnvFunctionImport(
-    ctx,
-    "__call_1_f64",
-    [{ kind: "externref" }, { kind: "f64" }],
-    [{ kind: "f64" }],
-  );
-
-  if (
-    !promiseExact ||
-    !timerExact ||
-    (hasFunctionNameOccupant(ctx, "__box_number") && !boxExact) ||
-    (hasFunctionNameOccupant(ctx, "__call_1_f64") && !callExact)
-  ) {
-    for (const delay of activePlans) blocked.add(delay.ownerUnitId);
+  let boxExact = false;
+  let callExact = false;
+  if (standaloneNative) {
+    if (
+      !ctx.standalone ||
+      !ctx.nativeStrings ||
+      ctx.wasi ||
+      ctx.targetProfile.semanticProviders !== "native-first" ||
+      !timerExact ||
+      !canEnsureIrNativePromiseDelayProvider(ctx)
+    ) {
+      for (const delay of activePlans) blocked.add(delay.ownerUnitId);
+    }
+  } else {
+    const promiseExact = hasUncontestedExactEnvFunctionImport(
+      ctx,
+      "Promise_new",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    boxExact = hasUncontestedExactEnvFunctionImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    callExact = hasUncontestedExactEnvFunctionImport(
+      ctx,
+      "__call_1_f64",
+      [{ kind: "externref" }, { kind: "f64" }],
+      [{ kind: "f64" }],
+    );
+    if (
+      !promiseExact ||
+      !timerExact ||
+      (hasFunctionNameOccupant(ctx, "__box_number") && !boxExact) ||
+      (hasFunctionNameOccupant(ctx, "__call_1_f64") && !callExact)
+    ) {
+      for (const delay of activePlans) blocked.add(delay.ownerUnitId);
+    }
   }
-  if (!ctx.programAbiSession) {
+  if (!standaloneNative && !ctx.programAbiSession) {
     for (const delay of activePlans) {
       for (const liftedName of [delay.executorLiftedName, delay.timerLiftedName]) {
         if (ctx.funcMap.has(liftedName) || ctx.mod.functions.some((fn) => fn.name === liftedName)) {
@@ -689,37 +713,44 @@ export function preparePromiseDelayLoweringByIdentity(
     if (process.env.JS2WASM_TEST_INJECT_IR_PROMISE_REGISTRATION_THROW === "1") {
       throw new Error("injected Promise late-registration failure");
     }
-    let requestedLateImport = false;
-    if (!boxExact) {
-      ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      requestedLateImport = true;
+    if (standaloneNative) {
+      ensureIrNativePromiseDelayProvider(ctx);
+      flushLateImportShifts(ctx, null);
+    } else {
+      let requestedLateImport = false;
+      if (!boxExact) {
+        ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+        requestedLateImport = true;
+      }
+      if (!callExact) {
+        ensureLateImport(ctx, "__call_1_f64", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
+        requestedLateImport = true;
+      }
+      if (requestedLateImport) flushLateImportShifts(ctx, null);
     }
-    if (!callExact) {
-      ensureLateImport(ctx, "__call_1_f64", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
-      requestedLateImport = true;
-    }
-    if (requestedLateImport) flushLateImportShifts(ctx, null);
   } catch (error) {
     registrationFailure = classifyIrFailure(error, "resolve");
     for (const delay of retainedPlans) preparationFailures?.set(delay.ownerUnitId, registrationFailure);
   }
 
-  const exactAfterRegistration =
-    !registrationFailure &&
-    hasUncontestedExactEnvFunctionImport(ctx, "Promise_new", [{ kind: "externref" }], [{ kind: "externref" }]) &&
-    hasUncontestedExactEnvFunctionImport(
-      ctx,
-      "__timer_set_timeout",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    ) &&
-    hasUncontestedExactEnvFunctionImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]) &&
-    hasUncontestedExactEnvFunctionImport(
-      ctx,
-      "__call_1_f64",
-      [{ kind: "externref" }, { kind: "f64" }],
-      [{ kind: "f64" }],
-    );
+  const timerExactAfterRegistration = hasUncontestedExactEnvFunctionImport(
+    ctx,
+    "__timer_set_timeout",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const exactAfterRegistration = standaloneNative
+    ? !registrationFailure && timerExactAfterRegistration && hasExactIrNativePromiseDelayProvider(ctx)
+    : !registrationFailure &&
+      hasUncontestedExactEnvFunctionImport(ctx, "Promise_new", [{ kind: "externref" }], [{ kind: "externref" }]) &&
+      timerExactAfterRegistration &&
+      hasUncontestedExactEnvFunctionImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]) &&
+      hasUncontestedExactEnvFunctionImport(
+        ctx,
+        "__call_1_f64",
+        [{ kind: "externref" }, { kind: "f64" }],
+        [{ kind: "f64" }],
+      );
   if (!exactAfterRegistration) {
     retained = closeIrBlockedComponentByIdentity(
       sourceFile,

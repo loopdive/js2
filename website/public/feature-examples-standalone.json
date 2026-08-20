@@ -46,7 +46,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 937,
+      "passCount": 950,
       "totalCount": 1083
     },
     {
@@ -70,31 +70,31 @@
     {
       "name": "Labeled statements (break / continue)",
       "testCategories": ["language/statements/labeled"],
-      "passCount": 21,
+      "passCount": 24,
       "totalCount": 24
     },
     {
       "name": "for-in",
       "testCategories": ["language/statements/for-in"],
-      "passCount": 104,
+      "passCount": 105,
       "totalCount": 119
     },
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 118,
+      "passCount": 125,
       "totalCount": 263
     },
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 337,
+      "passCount": 334,
       "totalCount": 357
     },
     {
       "name": "with statement",
       "testCategories": ["language/statements/with", "annexB/language/statements/with"],
-      "passCount": 120,
+      "passCount": 140,
       "totalCount": 181
     },
     {
@@ -105,13 +105,13 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 538,
+      "passCount": 533,
       "totalCount": 604
     },
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 970,
+      "passCount": 976,
       "totalCount": 1177
     },
     {
@@ -126,13 +126,13 @@
         "language/statements/continue",
         "language/statements/return"
       ],
-      "passCount": 615,
+      "passCount": 641,
       "totalCount": 699
     },
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 181,
+      "passCount": 184,
       "totalCount": 201
     },
     {
@@ -144,25 +144,25 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3985,
+      "passCount": 4036,
       "totalCount": 4581
     },
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1024,
+      "passCount": 1027,
       "totalCount": 1230
     },
     {
       "name": "Numbers",
       "testCategories": ["built-ins/Number", "built-ins/Math"],
-      "passCount": 618,
+      "passCount": 621,
       "totalCount": 667
     },
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 89,
+      "passCount": 90,
       "totalCount": 165
     },
     {
@@ -173,19 +173,19 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 90,
+      "passCount": 83,
       "totalCount": 234
     },
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 1925,
+      "passCount": 1992,
       "totalCount": 3161
     },
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1606,
+      "passCount": 1598,
       "totalCount": 1896
     },
     {
@@ -197,13 +197,13 @@
     {
       "name": "Object.defineProperty (full)",
       "testCategories": ["built-ins/Object/defineProperty"],
-      "passCount": 1077,
+      "passCount": 1090,
       "totalCount": 1131
     },
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 392,
+      "passCount": 391,
       "totalCount": 440
     },
     {
@@ -215,7 +215,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 3693,
+      "passCount": 3673,
       "totalCount": 4290
     },
     {
@@ -227,7 +227,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1345,
+      "passCount": 1330,
       "totalCount": 1552
     },
     {
@@ -251,7 +251,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 1832,
+      "passCount": 1826,
       "totalCount": 2486
     },
     {
@@ -282,7 +282,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 828,
+      "passCount": 808,
       "totalCount": 1955
     },
     {
@@ -294,7 +294,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 503,
+      "passCount": 504,
       "totalCount": 1106
     },
     {
@@ -306,7 +306,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 568,
+      "passCount": 574,
       "totalCount": 1072
     },
     {
@@ -354,7 +354,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2654,
+      "passCount": 2683,
       "totalCount": 3812
     },
     {
@@ -390,13 +390,13 @@
     {
       "name": "WeakRef / FinalizationRegistry",
       "testCategories": ["built-ins/WeakRef", "built-ins/FinalizationRegistry"],
-      "passCount": 32,
+      "passCount": 30,
       "totalCount": 82
     },
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3595,
+      "passCount": 3583,
       "totalCount": 4979
     },
     {
@@ -444,7 +444,7 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 6,
+      "passCount": 5,
       "totalCount": 25
     },
     {
@@ -460,7 +460,7 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 49,
+      "passCount": 56,
       "totalCount": 132
     },
     {
@@ -484,7 +484,7 @@
     {
       "name": "RegExp v flag",
       "testCategories": ["built-ins/RegExp/unicodeSets"],
-      "passCount": 180,
+      "passCount": 179,
       "totalCount": 187
     },
     {
@@ -522,7 +522,7 @@
     {
       "name": "Upsert (Map.getOrInsert)",
       "testCategories": [],
-      "passCount": 47,
+      "passCount": 49,
       "totalCount": 72
     },
     {
@@ -558,7 +558,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 162,
+      "passCount": 157,
       "totalCount": 178
     },
     {
@@ -588,7 +588,7 @@
     {
       "name": "escape() / unescape()",
       "testCategories": ["annexB/built-ins/escape", "annexB/built-ins/unescape"],
-      "passCount": 19,
+      "passCount": 27,
       "totalCount": 35
     },
     {

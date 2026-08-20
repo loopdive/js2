@@ -23,7 +23,7 @@
 // and copies it to website/public/benchmarks/results/).
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
@@ -81,6 +81,7 @@ import { setupReact } from "../tests/dogfood/setup-react.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
 import { setupNpmCompatCatalogPackage } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { buildNpmCompatPerfDriver, getNpmCompatPerfSpec } from "../tests/dogfood/npm-compat-perf-specs.mjs";
+import { COOKIE_OPS } from "../tests/dogfood/cookie-ops.mjs";
 import {
   failedPerfLane,
   measureJsHostPerf,
@@ -91,6 +92,7 @@ import {
   packagePerfRecord,
   skippedPerfLane,
 } from "./lib/npm-compat-perf.mjs";
+import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -1871,18 +1873,233 @@ function knownBugsFor(name) {
 // or other host facilities out of the compiler score. Preserve the original
 // `harnessIncompatible` field for compatibility, but expose the user-facing
 // meaning explicitly so the card can distinguish unavailable infrastructure
-// from compiler-quarantined or invalid-module tests.
-function annotateUnavailableInfra(tests) {
-  if (!tests || typeof tests !== "object") return tests;
-  const unavailableInfra = Number.isFinite(tests.unavailableInfra)
-    ? tests.unavailableInfra
-    : Number.isFinite(tests.harnessIncompatible)
-      ? tests.harnessIncompatible
-      : null;
-  return unavailableInfra === null ? tests : { ...tests, unavailableInfra };
+// from compiler-quarantined or invalid-module tests. A native-oracle failure is
+// not automatically unavailable infrastructure: those tests did run, but
+// their expected renderer/oracle behavior could not be reproduced.
+function countUnavailableInfrastructure(report) {
+  const counts = report?.extraction?.rejectionCounts;
+  if (!counts || typeof counts !== "object") return 0;
+  return Object.entries(counts).reduce(
+    (total, [reason, count]) => (reason.startsWith("needs-") ? total + (Number.isFinite(count) ? count : 0) : total),
+    0,
+  );
 }
 
-async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
+function annotateUnavailableInfra(tests) {
+  if (!tests || typeof tests !== "object") return tests;
+  const unavailableInfra = Number.isFinite(tests.unavailableInfra) ? tests.unavailableInfra : 0;
+  return { ...tests, unavailableInfra };
+}
+
+function githubRawSource(source, filePath) {
+  if (!source?.repo || !source?.ref || !filePath) return null;
+  const match = source.repo.match(/github\.com\/([^/]+)\/([^/#]+?)(?:\.git)?$/);
+  if (!match) return null;
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  const path = [source.root && !normalizedFilePath.startsWith(`${source.root}/`) ? source.root : "", normalizedFilePath]
+    .filter(Boolean)
+    .join("/")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${encodeURIComponent(source.ref)}/${path}`;
+}
+
+function suiteSourceFromReport(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  if (!suite?.repo || !suite?.tag) return null;
+  return {
+    repo: suite.repo,
+    ref: suite.commit ?? suite.tag,
+    root: options.sourceRoot ?? suite.testDirectory ?? "",
+  };
+}
+
+function suiteFilePaths(report, options = {}) {
+  const suite = report?.upstreamSuite ?? report?.testSuite ?? null;
+  const candidates = [
+    suite?.testFilePaths,
+    suite?.testFiles,
+    suite?.selectedFiles,
+    report?.compile?.details?.map((entry) => entry.file),
+    report?.compile?.files?.map((entry) => entry.file),
+    [...new Set((report?.results?.tests ?? []).map((entry) => entry.file))],
+  ];
+  const paths = candidates.find((value) => Array.isArray(value) && value.length > 0) ?? [];
+  const root = options.sourceRoot ?? suite?.testDirectory ?? "";
+  return [...new Set(paths.filter((value) => typeof value === "string").map((value) => value.replace(/\\/g, "/")))]
+    .map((value) => (root && !value.startsWith(`${root}/`) ? `${root}/${value}` : value))
+    .sort();
+}
+
+function fileMatches(resultFile, sourceFile) {
+  const resultPath = String(resultFile ?? "").replace(/\\/g, "/");
+  const sourcePath = String(sourceFile ?? "").replace(/\\/g, "/");
+  return resultPath === sourcePath || resultPath.endsWith(`/${sourcePath}`) || sourcePath.endsWith(`/${resultPath}`);
+}
+
+function firstResultError(results, compile) {
+  for (const result of results.filter((entry) => entry.status !== "harness-incompatible")) {
+    const error =
+      result.wasmError ??
+      result.compiledError ??
+      result.compiledMessage ??
+      result.runtimeError ??
+      result.nativeError ??
+      result.nativeMessage ??
+      result.skippedReason ??
+      result.error;
+    if (error) return String(error);
+  }
+  const compileError =
+    compile?.errors?.[0]?.message ??
+    compile?.validationError ??
+    compile?.runtimeError ??
+    compile?.nativeError ??
+    compile?.error ??
+    compile?.threw;
+  return compileError ? String(compileError) : null;
+}
+
+function buildSuiteFile(report, sourceFile, source, { singleFile = false } = {}) {
+  const tests = (report?.results?.tests ?? []).filter((entry) => fileMatches(entry.file, sourceFile));
+  const compile = [...(report?.compile?.details ?? []), ...(report?.compile?.files ?? [])].find((entry) =>
+    fileMatches(entry.file, sourceFile),
+  );
+  const scored = tests.filter((entry) => entry.status !== "harness-incompatible").length;
+  const passed = tests.filter((entry) => entry.status === "passed" || entry.status === "pass").length;
+  const failed = tests.filter((entry) =>
+    [
+      "failed",
+      "fail",
+      "runtime-failed",
+      "runtime-shape-failed",
+      "trapped",
+      "compiled-threw",
+      "compiled-parse-threw",
+      "compile-failed",
+      "divergent",
+    ].includes(entry.status),
+  ).length;
+  const compileFailed = tests.some((entry) => entry.status === "compile-failed");
+  const aggregatePassed = Number(report?.results?.passed ?? 0);
+  const aggregateTotal = Number(report?.results?.scored ?? report?.results?.total ?? 0);
+  const aggregateFailed = Math.max(0, aggregateTotal - aggregatePassed);
+  const hasAggregate = singleFile && tests.length === 0 && (aggregateTotal > 0 || aggregateFailed > 0);
+  const filePassed = hasAggregate ? aggregatePassed : passed;
+  const fileTotal = hasAggregate ? aggregateTotal : scored;
+  const fileFailed = hasAggregate ? aggregateFailed : failed;
+  const status =
+    compile?.success === false || compileFailed
+      ? "compile_error"
+      : fileFailed > 0
+        ? "fail"
+        : filePassed > 0
+          ? "pass"
+          : "skip";
+  const error = firstResultError(tests, compile) ?? (hasAggregate ? report?.results?.runtimeError : null);
+  const sourceUrl = githubRawSource(source, sourceFile);
+  return {
+    path: sourceFile,
+    status,
+    ...(tests.length > 0 || hasAggregate || compile?.success === false
+      ? { passed: filePassed, total: fileTotal || (compile?.success === false ? 1 : 0) }
+      : {}),
+    ...(error ? { error } : {}),
+    ...(tests.length > 0 ? { tests: tests.map((entry) => ({ name: entry.name, status: entry.status })) } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+function buildNpmSuitePlayground(report, options = {}) {
+  const source = suiteSourceFromReport(report, options);
+  const sourceFiles = suiteFilePaths(report, options);
+  if (!source || sourceFiles.length === 0) return null;
+  const files = sourceFiles.map((sourceFile) =>
+    buildSuiteFile(report, sourceFile, source, { singleFile: sourceFiles.length === 1 }),
+  );
+  const hasPerTestResults = files.some((file) => file.tests?.length || file.total != null);
+  const summary = hasPerTestResults
+    ? summarizePlaygroundFiles(files)
+    : {
+        pass: Number(report?.results?.passed ?? 0),
+        fail: Math.max(
+          0,
+          Number(report?.results?.scored ?? report?.results?.total ?? 0) - Number(report?.results?.passed ?? 0),
+        ),
+        compile_error: report?.compile?.success === false ? files.length : 0,
+        skip: 0,
+        total: Number(report?.results?.scored ?? report?.results?.total ?? 0),
+      };
+  return {
+    kind: options.kind ?? "upstream-suite",
+    label: options.label ?? "original upstream unit tests",
+    source: { repo: source.repo, ref: source.ref },
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+function buildDifferentialPlayground(report, options = {}) {
+  const recordedEntries = Array.isArray(report?.diff?.fixtures)
+    ? report.diff.fixtures
+    : Array.isArray(report?.diff?.ops)
+      ? report.diff.ops
+      : [];
+  const entries = recordedEntries.length > 0 ? recordedEntries : (options.fallbackEntries ?? []);
+  const compileBlocked = report?.compile?.success === false || report?.validation?.validates === false;
+  const files = entries.map((entry) => {
+    const rawStatus = entry.status ?? "skipped";
+    const status = ["equal", "pass", "passed"].includes(rawStatus)
+      ? "pass"
+      : ["skipped", "skip"].includes(rawStatus)
+        ? compileBlocked
+          ? "compile_error"
+          : "skip"
+        : "fail";
+    const error =
+      entry.compiledError ??
+      entry.wasmError ??
+      entry.skippedReason ??
+      entry.nativeError ??
+      (status === "skip" ? report?.diff?.skippedReason : null) ??
+      null;
+    const path = entry.fixture ?? entry.op ?? entry.name ?? options.sourcePath ?? "test.js";
+    const sourcePath =
+      entry.fixture && options.sourcePath ? `${options.sourcePath}/${entry.fixture}` : options.sourcePath;
+    return {
+      path,
+      status,
+      passed: status === "pass" ? 1 : 0,
+      total: 1,
+      ...(error ? { error: String(error) } : {}),
+      ...(sourcePath ? { sourceUrl: `https://raw.githubusercontent.com/loopdive/js2/main/${sourcePath}` } : {}),
+    };
+  });
+  const summary = summarizePlaygroundFiles(files);
+  return {
+    kind: "differential",
+    label: options.label ?? "differential tests",
+    files,
+    summary,
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
+async function buildPackageEntry({
+  name,
+  version,
+  issue,
+  entryFile,
+  shape,
+  report,
+  tests,
+  perf,
+  entryIsBarrel,
+  playground,
+}) {
   return {
     name,
     version,
@@ -1898,6 +2115,13 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests: annotateUnavailableInfra(tests),
+    playground: playground ?? {
+      kind: "unavailable",
+      label: "package tests",
+      files: [],
+      summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+      note: tests?.reason ?? "No committed unit-test adapter is available for this package.",
+    },
     // (#4127) The correctness axis, kept separate from compile/validation so a
     // package that compiles to a valid module but computes the WRONG ANSWER
     // cannot read as green. `unverified` means nothing is known — it is never
@@ -2012,6 +2236,10 @@ if (!perfOnly && selectedPackages.has("acorn")) {
           passRatePct: acornSuite.summary?.passRatePct ?? null,
           sourceIssue: 3729,
         },
+        playground: buildNpmSuitePlayground(acornSuite, {
+          sourceRoot: "test",
+          label: "Acorn official unit tests",
+        }),
         perf: acornPerf,
       }),
     );
@@ -2057,6 +2285,14 @@ if (!perfOnly && selectedPackages.has("marked")) {
           commit: markedSuite.upstreamSuite?.commit ?? null,
         },
       },
+      playground: buildDifferentialPlayground(markedReport, {
+        sourcePath: "tests/dogfood/fixtures/marked-inputs",
+        label: "marked fixture tests",
+        fallbackEntries: readdirSync(join(ROOT, "tests/dogfood/fixtures/marked-inputs"))
+          .filter((file) => file.endsWith(".md"))
+          .sort()
+          .map((fixture) => ({ fixture })),
+      }),
       perf: await perfNpmCompatPackage("marked", {
         setupFactory: setupMarked,
         report: markedReport,
@@ -2115,6 +2351,11 @@ if (!perfOnly && selectedPackages.has("clsx")) {
             total: clsxReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(clsxReport, {
+          sourcePath: "tests/dogfood/clsx-ops.mjs",
+          label: "clsx differential operations",
+          fallbackEntries: CLSX_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: clsxPerf,
       }),
     );
@@ -2171,6 +2412,11 @@ if (!perfOnly && selectedPackages.has("cookie")) {
             total: cookieReport.summary.opDiff?.total ?? null,
           },
         },
+        playground: buildDifferentialPlayground(cookieReport, {
+          sourcePath: "tests/dogfood/cookie-ops.mjs",
+          label: "cookie differential operations",
+          fallbackEntries: COOKIE_OPS.map((op) => ({ op: op.name })),
+        }),
         perf: cookiePerf,
       }),
     );
@@ -2218,6 +2464,9 @@ if (!perfOnly && selectedPackages.has("eslint")) {
       shape: "cjs-project",
       report: eslintReport,
       tests: eslintTests,
+      playground: buildNpmSuitePlayground(eslintSuite, {
+        label: "ESLint upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("eslint", {
         setupFactory: setupEslint,
         report: eslintReport,
@@ -2293,9 +2542,13 @@ if (!perfOnly && selectedPackages.has("react")) {
         executed: reactSuite.results?.executed ?? null,
         upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactSuite),
         quarantined: reactSuite.compile?.quarantined?.length ?? null,
         sourceIssue: 3958,
       },
+      playground: buildNpmSuitePlayground(reactSuite, {
+        label: "React upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react", {
         setupFactory: setupReact,
         report: reactReport,
@@ -2346,12 +2599,16 @@ if (!perfOnly && selectedPackages.has("lit")) {
           admitted: litSuite.extraction?.admitted ?? null,
           upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
           harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+          unavailableInfra: countUnavailableInfrastructure(litSuite),
           // The headline finding, and the reason the pass rate is low: most of
           // lit's corpus sits behind an implementation module the validator
           // rejects (#3978), so those tests never ran against Wasm at all.
           implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
           sourceIssue: 3977,
         },
+        playground: buildNpmSuitePlayground(litSuite, {
+          label: "Lit upstream unit tests",
+        }),
         perf: await perfLit(),
       }),
     );
@@ -2406,6 +2663,7 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         admitted: reactDomSuite.extraction?.admitted ?? null,
         upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
         harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        unavailableInfra: countUnavailableInfrastructure(reactDomSuite),
         // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
         // implementation module itself may be rejected, and the suite's OWN
         // test file pins that this is REPORTED with the compiler's message,
@@ -2413,8 +2671,94 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
         // card does the same via implementationInvalidTests, #3977/#3978).
         implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
         implementationError: reactDomSuite.summary?.implementationError ?? null,
+        // Server-renderer tests run in a separate published browser bundle.
+        // Keep the lane visible in the committed artifact instead of folding
+        // its failures into the client renderer's denominator.
+        server: {
+          passed: reactDomSuite.server?.results?.passed ?? null,
+          total: reactDomSuite.server?.results?.scored ?? null,
+          passRatePct: reactDomSuite.server?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.server?.extraction?.admitted ?? null,
+          selected: reactDomSuite.server?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.server?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.server?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.server?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.server?.compile
+            ? {
+                success: reactDomSuite.server.compile.success ?? false,
+                durationMs: reactDomSuite.server.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.server.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.server.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.server?.validation ?? null,
+        },
+        // Browser Fizz is a third, independently published renderer graph.
+        // Keep its denominator separate from both the client and legacy SSR
+        // lanes: a Fizz test never ran against the client module merely
+        // because it came from the same upstream test directory.
+        fizz: {
+          passed: reactDomSuite.fizz?.results?.passed ?? null,
+          total: reactDomSuite.fizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.fizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.fizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.fizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.fizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.fizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.fizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.fizz?.compile
+            ? {
+                success: reactDomSuite.fizz.compile.success ?? false,
+                durationMs: reactDomSuite.fizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.fizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.fizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.fizz?.validation ?? null,
+        },
+        nodeFizz: {
+          passed: reactDomSuite.nodeFizz?.results?.passed ?? null,
+          total: reactDomSuite.nodeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.nodeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.nodeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.nodeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.nodeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.nodeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.nodeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.nodeFizz?.compile
+            ? {
+                success: reactDomSuite.nodeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.nodeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.nodeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.nodeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.nodeFizz?.validation ?? null,
+        },
+        edgeFizz: {
+          passed: reactDomSuite.edgeFizz?.results?.passed ?? null,
+          total: reactDomSuite.edgeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.edgeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.edgeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.edgeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.edgeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.edgeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.edgeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.edgeFizz?.compile
+            ? {
+                success: reactDomSuite.edgeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.edgeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.edgeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.edgeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.edgeFizz?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
+      playground: buildNpmSuitePlayground(reactDomSuite, {
+        label: "React DOM upstream unit tests",
+      }),
       perf: await perfNpmCompatPackage("react-dom", {
         setupFactory: () => setupNpmCompatCatalogPackage("react-dom"),
         report: reactDomImplementationReport,
@@ -2490,6 +2834,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
             commit: catalogUpstreamReport.upstreamSuite?.commit ?? null,
           },
           packageApiWorkload: workload?.tests ?? undefined,
+          unavailableInfra: countUnavailableInfrastructure(catalogUpstreamReport),
         }
       : null) ??
     workload?.tests ??
@@ -2516,6 +2861,9 @@ for (const entry of NPM_COMPAT_CATALOG) {
       shape: entry.shape,
       report,
       tests,
+      playground: buildNpmSuitePlayground(catalogUpstreamReport, {
+        label: `${entry.name} upstream unit tests`,
+      }),
       perf: await perfNpmCompatPackage(entry.name, {
         setupFactory: () => setupNpmCompatCatalogPackage(entry.name),
         report,
@@ -2527,6 +2875,13 @@ for (const entry of NPM_COMPAT_CATALOG) {
 
 for (const pkg of packages) {
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
+  pkg.playground ??= {
+    kind: "unavailable",
+    label: "package tests",
+    files: [],
+    summary: { pass: 0, fail: 0, compile_error: 0, skip: 0, total: 0 },
+    note: pkg.tests?.reason ?? "No committed unit-test adapter is available for this package.",
+  };
 }
 packages.sort(
   (left, right) =>
