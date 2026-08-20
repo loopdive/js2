@@ -16,6 +16,9 @@ export const REACT_EXPECT_SHIM = `
 // and compiled lane must execute the original assertions with the production
 // value instead of relying on an ambient host global.
 var __DEV__ = false;
+// React's upstream tests use Node's global spelling for host polyfills. Keep
+// that compatibility binding in the native and Wasm lanes alike.
+var global = globalThis;
 
 var __lastError = "";
 
