@@ -1,7 +1,7 @@
 ---
 id: 4566
 title: "Standalone IR: prepare Algorithms module init, fibMemo, and main before direct emission"
-status: in-progress
+status: done
 created: 2026-08-20
 updated: 2026-08-20
 priority: critical

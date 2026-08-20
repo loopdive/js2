@@ -21,6 +21,7 @@ related: [2895, 2961, 3137, 3469, 3518, 3526, 3527, 3792, 4103, 4104, 4106, 4110
 origin: "2026-08-20 continuation from the measured 23 IR / 14 legacy / 14 Unsupported standalone checkpoint"
 files:
   - scripts/ir-only-baseline.json
+  - scripts/ir-kind-neutrality-baseline.json
   - src/codegen/any-helpers.ts
   - src/codegen/async-frame.ts
   - src/codegen/async-ir-planning.ts
@@ -171,9 +172,9 @@ clock, formatting, concat, console, callback, or generic closure bridge is
 present. Empty Promise.all completion remains observably asynchronous.
 
 The final tuned standalone artifact is better than the legacy-direct reference
-on every frozen aggregate metric: **124,774 vs 132,157 raw bytes**, **1,069,036
-vs 1,184,675 WAT characters**, and **346 vs 353 functions**. Both artifacts
-import exactly one timer capability. The direct lane is an
+on every frozen aggregate metric: **125,889 vs 133,307 raw bytes**, **55,276 vs
+57,037 gzip-9 bytes**, **1,081,058 vs 1,197,082 WAT characters**, and **346 vs
+353 functions**. Both artifacts import exactly one timer capability. The direct lane is an
 artifact/optimization reference only because its async behavior is not a valid
 semantic oracle.
 
@@ -188,13 +189,13 @@ The final integration matrix passes strict IR-only census, fallback, issue and
 issue-ID integrity, oracle, adoption, dead-export, coercion, boxing, rollback,
 LOC/function, stack, harness, typecheck, formatting, and lint gates.
 
-A frozen fresh-process delay guard kept the #4573 hot path inside its direct
-comparison envelope: IR/direct was **0.391x** with **1.75%** direct/direct
-control drift and identical checksums across all 21 batches. IR also remained
-**2.03% smaller raw**, and both lanes retained exactly the timer capability
-import. This bounded guard uses a stronger per-operation checksum than #4573's
-unpublished original driver, so it confirms directional non-regression without
-replacing that checkpoint's absolute nanosecond result.
+A final fresh-process delay guard kept the #4573 hot path decisively ahead of
+its direct reference. Across three direct/IR/direct rounds, with compilation,
+instantiation, and real timer waiting excluded, median IR overhead was **356.8
+ns/op** versus **1,896.4 ns/op** for the pooled direct endpoints: **0.188x**, or
+**81.2% less overhead**. Direct endpoint drift was **3.5–7.1%**, all 135 timed
+batches produced checksum **5,788,385**, and both lanes retained exactly the
+timer capability import.
 
 ## Handoff
 
