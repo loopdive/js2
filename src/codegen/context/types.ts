@@ -1663,6 +1663,8 @@ export interface CodegenContext {
    * Finalization publishes only the reserved zero-argument timer dispatcher.
    */
   requiresStandaloneTimerCallbackDispatch?: boolean;
+  /** Exact #4576 dom@1 import family was checker-certified for this module. */
+  requiresStandaloneDomCapability?: boolean;
   /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in

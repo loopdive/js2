@@ -358,6 +358,41 @@ describe("#4574 standalone native async-family ownership", () => {
     }
   });
 
+  it("executes tuned async native number-string carrier fusion", async () => {
+    const previous = process.env.JS2WASM_IR_INLINE;
+    Reflect.deleteProperty(process.env, "JS2WASM_IR_INLINE");
+    try {
+      const result = await compileRuntimeTracked(RUNTIME_SOURCE, "issue-4574-standalone-async-number-string-fusion.ts");
+      expectSuccess(result);
+      const mainFamily = familyBody(result.wat, "main");
+      const rawNumberToString = functionIndices(result.wat, (name) => name === "number_toString");
+      expect(rawNumberToString).toHaveLength(1);
+      const rawCalls = callCount(mainFamily, rawNumberToString);
+      expect(rawCalls).toBeGreaterThanOrEqual(4);
+      expect(
+        [
+          ...mainFamily.matchAll(
+            new RegExp(`\\bcall ${rawNumberToString[0]}\\n\\s+any\\.convert_extern\\n\\s+ref\\.cast`, "g"),
+          ),
+        ],
+        "each tuned async number formatter call restores the native string carrier",
+      ).toHaveLength(rawCalls);
+      expect(result.wat).not.toContain("(func $__ir_number_toString_native");
+
+      const harness = await instantiateControlled(result, [1, 2, 3, 4, 5], { phase: "main" });
+      const promise = (harness.exports.main as () => unknown)();
+      for (let index = 0; index < 5; index++) harness.jobs[index]!.fire();
+      for (let index = 9; index >= 5; index--) harness.jobs[index]!.fire();
+      expect(harness.state(promise)).toBe(1);
+      expect(harness.stdout()).toBe(
+        "async/await demo\n" + "sequential sum = 150 (took ~0ms)\n" + "parallel  sum = 150 (took ~0ms)\n" + "done\n",
+      );
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_INLINE");
+      else process.env.JS2WASM_IR_INLINE = previous;
+    }
+  });
+
   it("keeps the grounded loop, Promise.all, and main logging optimizations in their IR states", async () => {
     const result = await compileExact();
     expectSuccess(result);
