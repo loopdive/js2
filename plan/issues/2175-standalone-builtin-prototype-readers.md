@@ -2081,3 +2081,44 @@ is a larger, spec-semantics slice than P1-as-written and should be re-planned
 and re-scoped as such — the ~11 P1 candidates are a lower bound on its value,
 since the general defect affects every inherited accessor, not just builtin
 prototypes.
+
+---
+
+## 2026-08-20 — mutable seeded data methods after honest descriptor reification
+
+PR #4658's merge-group run exposed 264 previously vacuous `propertyHelper.js`
+passes after #4491 made attribute-only descriptor bags readable. The largest
+real defect underneath them was not descriptor creation: `gOPD` already
+reported the correct flags. It was the immutable builtin-prototype shortcuts:
+
+- assignment updated the seeded companion entry, but flowing reads still
+  returned the original singleton closure;
+- deletion removed the companion entry, but the CSV `hasOwnProperty` shortcut
+  still reported the method as present.
+
+The bounded repair makes the seeded companion authoritative for data-method
+reads and own-presence checks. It deliberately excludes accessors (not seeded)
+and `constructor` (a separate carrier). An authentic replay recovered 221 of
+222 direct `verifyProperty` data-method regressions; the one unmeasured direct
+row needs the local QuickJS provider. The separate primordial-property row also
+passes. Representative Array, Date, TypedArray, Set, String, and Annex B rows
+all pass without narrowing descriptor reification again.
+
+### Recorded residual implementation plan
+
+Two related surfaces remain outside this bounded repair and must be kept as
+explicit follow-up work rather than hidden by another vacuity shortcut:
+
+1. Make syntactic `<Builtin>.prototype.<method>` reads consult the seeded
+   companion before returning their static singleton whenever the module can
+   mutate that method. Keep identity-fast output byte-stable for modules with no
+   prototype mutation, and pin assignment, restoration, deletion, and
+   inheritance from `Object.prototype`.
+2. Make `propertyIsEnumerable` use the companion's real entry for seeded data
+   methods. The current CSV arm always returns false, so delete-and-recreate with
+   `{ enumerable: true }` disagrees with `gOPD`. Pin both true and false flags,
+   deletion, and a same-named inherited entry to preserve own-only semantics.
+
+Both follow-ups must use the existing finalize-filled companion helpers; do not
+bake `$NativeProto` type indices early, and do not route own-property checks
+through `__protoidx_has_r`, which intentionally walks on to `Object.prototype`.

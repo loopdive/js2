@@ -26,14 +26,15 @@
  * behind it (#2885 Site-2) was already correct: `gOPD(Number.prototype,
  * "toString").value === Number.prototype.toString` held on the same build.
  *
- * ## Why a CSV scan and not a per-brand chain
+ * ## Why a hybrid seeded-member ladder and CSV scan
  *
- * The member set is known per brand at COMPILE time, so a chain of
- * `__str_equals` against each name would also work. It does not scale: the arm
- * is spliced into three predicate bodies, and `String.prototype` alone
- * advertises 36 members across ~14 registered brands. Scanning the receiver's
- * OWN `$memberCsv` at runtime is brand-agnostic — one native, constant size,
- * and automatically correct for any brand whose glue registers later.
+ * Immutable and unseeded members stay on the brand-agnostic `$memberCsv` scan:
+ * one native, constant-size path that automatically covers glue registered
+ * later. Seeded DATA methods are different because their companion entry can
+ * be replaced or deleted. A demand-gated per-brand/member ladder recognizes
+ * only those materialized mutable keys before the CSV shortcut and asks the
+ * companion for the authoritative own-property answer. This keeps the common
+ * immutable path compact without letting the CSV resurrect deleted methods.
  *
  * ## `constructor` is own, unconditionally, and is NOT in the CSV
  *
@@ -68,10 +69,12 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { seededNativeProtoDataMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
 /** `$NativeProto` field indices — the reader-visible contract (native-proto.ts). */
+const NP_BRAND = 0;
 const NP_IS_CLASS = 1;
 const NP_MEMBER_CSV = 4;
 /** `$NativeString` layout: (len i32, off i32, data (array i16)). */
@@ -103,6 +106,9 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return undefined;
+  const seededDataMembers = seededNativeProtoDataMembersByBrand(ctx);
+  const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
+  const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
 
   // params: 0 obj, 1 key
   const L_ANY = 2;
@@ -167,6 +173,41 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: natStr, fieldIdx: STR_LEN },
     { op: "local.set", index: L_KLEN },
+    // A seeded DATA method is no longer an immutable CSV fact: its companion
+    // entry is the real own property and can be replaced or deleted. Resolve
+    // those keys through the companion before the historical CSV shortcut.
+    // Accessors and `constructor` deliberately fall through because neither is
+    // seeded yet and their existing synthesized paths remain authoritative.
+    ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined
+      ? []
+      : [...seededDataMembers.entries()].flatMap(([brand, members]) => [
+          { op: "local.get", index: L_ANY } as Instr,
+          { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,
+          { op: "i32.const", value: brand } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: members.flatMap((member) => [
+              { op: "local.get", index: L_KEY } as Instr,
+              { op: "ref.as_non_null" } as Instr,
+              ...nativeStringLiteralInstrs(ctx, member),
+              { op: "call", funcIdx: equalsIdx } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: protoOwnRecvIdx },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: objectHasOwnIdx },
+                  { op: "return" },
+                ],
+              } as Instr,
+            ]),
+          } as Instr,
+        ])),
     // ES5 §15.x.4.1 — `constructor` is an own property of every builtin proto.
     { op: "local.get", index: L_KEY },
     { op: "ref.as_non_null" },
