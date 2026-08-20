@@ -27,6 +27,11 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.internalTestUtils?.act).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
+      expect(globalThis.HTMLAnchorElement).toBeTypeOf("function");
+      expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
+      expect(globalThis.HTMLLabelElement).toBeTypeOf("function");
+      expect(globalThis.HTMLSpanElement).toBeTypeOf("function");
+      expect(globalThis.ElementInternals).toBeTypeOf("function");
       console.error("warning from %s", "React");
       expect(infrastructure.consumeConsole("error")).toEqual(["warning from React"]);
       infrastructure.errors.push("render component at stack");

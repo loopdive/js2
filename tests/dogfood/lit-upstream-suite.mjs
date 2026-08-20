@@ -389,6 +389,17 @@ export async function runHarness({ quiet = false } = {}) {
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_LIT_ADMIT_ALL !== "0",
+    // The harness installs these browser surfaces through jsdom before
+    // extraction. Conservative mode must not call a supplied DOM API
+    // "unavailable" merely because the upstream source mentions it.
+    supportedInfrastructure: new Set([
+      "needs-dom",
+      "needs-custom-elements",
+      "needs-window",
+      "needs-shadow-dom",
+      "needs-constructable-stylesheets",
+      "needs-dev-mode-warnings",
+    ]),
   });
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,

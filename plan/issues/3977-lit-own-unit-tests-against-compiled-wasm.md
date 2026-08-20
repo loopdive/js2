@@ -4,7 +4,7 @@ title: "Run lit's own unit tests against compiled lit, and stop measuring the `l
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-20
 priority: high
 horizon: m
 feasibility: medium
@@ -110,6 +110,25 @@ where the implementation IS valid and the per-test batches are not:
 - `Codegen error: inherited class callable __anonClass_N_updated has no entry`
 
 These are recorded per batch in the report rather than aggregated away.
+
+## Browser infrastructure checkpoint (2026-08-20)
+
+The Lit harness already installs jsdom before extraction and execution. The
+shared browser bootstrap now also exports the DOM constructors that Lit's
+upstream tests use directly (`HTMLAnchorElement`, `HTMLFieldSetElement`,
+`HTMLLabelElement`, `HTMLSpanElement`, and `ElementInternals`). Conservative
+extraction is now told which browser surfaces are actually supplied — DOM,
+window, custom elements, shadow roots, constructable stylesheets, and Lit's
+warning registry — instead of classifying those references as unavailable
+infrastructure. A source-level audit of the pinned 587-test corpus reports
+**583 admitted and 4 upstream-skipped** in both admit-all and conservative
+modes.
+
+This changes reachability only; it does not turn jsdom's incomplete browser
+semantics or Lit's missing monorepo test utilities into passes. Those tests
+continue to run, and native-oracle failures remain separate from compiler
+failures. The remaining implementation/compiler frontier is still tracked by
+#3978, #3979, and #3980.
 
 ## Acceptance criteria
 

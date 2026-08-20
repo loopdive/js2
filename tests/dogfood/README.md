@@ -596,13 +596,19 @@ js2wasm cannot compile lit's published bytes at all, which no per-test number
 would have surfaced.
 
 Otherwise the rules are the React ones: 583 of 587 upstream tests are admitted
-(the 4 rejections are upstream's own `.skip`), the DOM-dependent ~90 % runs and
-lands in `harness-incompatible` via the native oracle, and lit's repo-internal
-`test-utils` — which ship in no tarball — resolve to a stub that throws, so
-those tests still run and fail on both sides instead of vanishing. The `assert`
-shim covers the 26 chai members lit's tests actually use, surveyed across all
-58 files; `equal` is `==` and `strictEqual` is `===`, because lit depends on the
-difference.
+(the 4 rejections are upstream's own `.skip`), and the DOM-dependent ~90 % runs
+through the jsdom browser surface. The shared browser bootstrap now exposes
+the standard DOM constructors used by lit (`HTMLAnchorElement`,
+`HTMLFieldSetElement`, `HTMLLabelElement`, `HTMLSpanElement`, and
+`ElementInternals`) in both the native and compiled lanes. Conservative
+extraction treats DOM, window, shadow-root, custom-element, constructable
+stylesheet, and Lit warning globals as supplied infrastructure; it no longer
+turns those source references into unavailable-infrastructure rejections.
+Lit's repo-internal `test-utils` — which ship in no tarball — still resolve to a
+stub that throws, so those tests run and fail on both sides instead of
+vanishing. The `assert` shim covers the 26 chai members lit's tests actually
+use, surveyed across all 58 files; `equal` is `==` and `strictEqual` is `===`,
+because lit depends on the difference.
 
 The suite found #3978, #3979 and #3980.
 
