@@ -40,6 +40,10 @@ func-budget-allow:
   - src/codegen/closed-struct-extern-set.ts::buildReceiverArms
   - src/codegen/vec-props.ts::fillVecPropHelpers
   - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
+coercion-sites-allow:
+  # Proxy [[Set]] must ToBoolean the set-trap result. This is one new call
+  # into the existing shared __is_truthy engine, not a hand-rolled coercion.
+  - src/codegen/object-runtime-proxy.ts
 ---
 
 # #4504 — inherited `[[Set]]` nearest-descriptor walk
@@ -529,6 +533,8 @@ Additional gates:
 - conditional-emission oracle: **IDENTICAL 60/60** (36 successful emissions,
   24 expected compile errors);
 - broad carrier same-population A/B: no attributable regressions;
+- Proxy `set` trap results use the shared `__is_truthy` coercion engine; the
+  narrow frontmatter allowance records that single required call site;
 - formatting, repository budgets, oracle ratchet, and commit hooks: pass.
 
 The two diagnostic exclusions remain deliberately open under their existing
