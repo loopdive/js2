@@ -36,8 +36,8 @@ have been found via two Array rows, but nothing about it is Array-specific.
 
 Both under `--target standalone`:
 
-- `built-ins/Array/prototype/toLocaleString/A3_T1.js` — fails in `__module_init`
-- `built-ins/Array/prototype/toString/A1_T4.js` — fails in `__cb_0`
+- `test262/test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js` — fails in `__module_init`
+- `test262/test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js` — fails in `__cb_0`
 
 ```bash
 npx tsx .tmp/t262.mts built-ins/Array/prototype/toLocaleString/A3_T1.js
