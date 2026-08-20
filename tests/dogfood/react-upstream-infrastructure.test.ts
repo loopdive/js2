@@ -33,7 +33,10 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");
       expect(globalThis.HTMLAnchorElement).toBeTypeOf("function");
       expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
+      expect(globalThis.HTMLLinkElement).toBeTypeOf("function");
       expect(globalThis.HTMLImageElement).toBeTypeOf("function");
+      expect(globalThis.HTMLSourceElement).toBeTypeOf("function");
+      expect(globalThis.HTMLTableColElement).toBeTypeOf("function");
       expect(globalThis.HTMLTableElement).toBeTypeOf("function");
       expect(globalThis.HTMLLabelElement).toBeTypeOf("function");
       expect(globalThis.HTMLSpanElement).toBeTypeOf("function");

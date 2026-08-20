@@ -61,6 +61,12 @@ Pin matching source revisions and provide adapters for: hono, lodash, axios, rea
 
 Start with React DOM, Jest, and Lit, which already compile and validate their entry artifacts.
 
+The React browser harness installs the complete set of HTML element constructors
+provided by JSDOM that appear in the pinned React and ReactDOM sources. This
+keeps `instanceof` and feature-detection paths faithful without inventing host
+stubs; constructors absent from JSDOM remain unavailable rather than being
+reported as passing infrastructure.
+
 ## Provenance
 
 Migrated on 2026-08-01 from a GitHub issue on `loopdive/js2` (opened 2026-07-30)
