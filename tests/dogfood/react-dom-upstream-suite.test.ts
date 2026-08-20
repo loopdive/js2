@@ -9,6 +9,8 @@ import { loadReactDomUpstreamSuitePin } from "./setup-react-dom-upstream-suite.m
 import { loadReactUpstreamSuitePin } from "./setup-react-upstream-suite.mjs";
 // @ts-expect-error — .mjs dogfood harness has no declaration file
 import { isExpectedLateJsdomHostError } from "./react-dom-upstream-suite.mjs";
+// @ts-expect-error — .mjs dogfood extractor has no declaration file
+import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +53,32 @@ describe("react-dom upstream suite", () => {
     expect(pin.implementation.fizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.browser\.production\.js$/);
     expect(pin.implementation.nodeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.node\.production\.js$/);
     expect(pin.implementation.edgeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.edge\.production\.js$/);
+  });
+
+  it("keeps every non-skipped ReactDOM test reachable in conservative mode", () => {
+    const pin = loadReactDomUpstreamSuitePin();
+    const extracted = extractReactUpstreamTests({
+      root: join(HERE, ".react-upstream-suite"),
+      testFiles: pin.testFiles,
+      admitAll: false,
+      supportedInfrastructure: new Set([
+        "needs-react-dom",
+        "needs-react-noop",
+        "needs-test-utils",
+        "needs-act",
+        "needs-console-assertions",
+        "asserts-on-console",
+        "needs-jest-runtime",
+        "needs-dom",
+        "dev-build-only",
+        "needs-feature-flags",
+        "needs-scheduler",
+        "needs-external-module",
+      ]),
+    });
+    expect(extracted.tests.length + extracted.rejected.length).toBe(2003);
+    expect(extracted.tests.length).toBe(2001);
+    expect(extracted.rejectionCounts).toEqual({ "upstream-skipped": 2 });
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;
