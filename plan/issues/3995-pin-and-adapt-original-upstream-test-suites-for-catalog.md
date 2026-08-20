@@ -510,3 +510,11 @@ oracle's infrastructure-incompatible bucket fell from 94 to 93. The
 create-react-class slice specifically moved from 0/16 to **10/16** scored
 passes. The remaining React failures are compiler/runtime behavior or
 development-build warning differences, not silently skipped infrastructure.
+
+The shared JSDOM setup also now installs the browser constructors and standard
+web globals referenced by the ReactDOM corpus (image/table/media elements,
+streams, encoders, fetch types, files, and abort primitives). Node-owned
+`performance`, `queueMicrotask`, and `setImmediate` remain untouched because
+JSDOM's implementations delegate back to those globals and copying them would
+recurse. The setup test covers representative constructors and stream/fetch
+globals.

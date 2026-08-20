@@ -24,6 +24,27 @@ const DOM_GLOBALS = [
   "HTMLDivElement",
   "HTMLAnchorElement",
   "HTMLFieldSetElement",
+  "HTMLImageElement",
+  "HTMLMediaElement",
+  "HTMLAudioElement",
+  "HTMLVideoElement",
+  "HTMLObjectElement",
+  "HTMLEmbedElement",
+  "HTMLParamElement",
+  "HTMLTableElement",
+  "HTMLTableCaptionElement",
+  "HTMLTableCellElement",
+  "HTMLTableRowElement",
+  "HTMLTableSectionElement",
+  "HTMLUListElement",
+  "HTMLOListElement",
+  "HTMLLIElement",
+  "HTMLParagraphElement",
+  "HTMLPreElement",
+  "HTMLQuoteElement",
+  "HTMLLegendElement",
+  "HTMLProgressElement",
+  "HTMLMeterElement",
   "HTMLInputElement",
   "HTMLLabelElement",
   "HTMLSelectElement",
@@ -73,6 +94,28 @@ const DOM_GLOBALS = [
   "getComputedStyle",
   "requestAnimationFrame",
   "cancelAnimationFrame",
+  // Node supplies these in the test process while jsdom supplies the DOM
+  // constructors. Use whichever side implements the standard global.
+  "MessageChannel",
+  "MessagePort",
+  "TextEncoder",
+  "TextDecoder",
+  "ReadableStream",
+  "WritableStream",
+  "TransformStream",
+  "URL",
+  "URLSearchParams",
+  "FormData",
+  "Headers",
+  "Request",
+  "Response",
+  "Blob",
+  "File",
+  "FileReader",
+  "FileList",
+  "DataTransfer",
+  "AbortController",
+  "AbortSignal",
 ];
 
 export function installReactTestEnvironment() {
@@ -83,7 +126,7 @@ export function installReactTestEnvironment() {
   const { window } = dom;
   const previous = new Map();
   for (const name of DOM_GLOBALS) {
-    const value = name === "window" || name === "self" ? window : window[name];
+    const value = name === "window" || name === "self" ? window : (window[name] ?? globalThis[name]);
     if (value === undefined) continue;
     previous.set(name, { present: Object.hasOwn(globalThis, name), value: globalThis[name] });
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
