@@ -42,7 +42,11 @@ describe("React upstream test infrastructure", () => {
       expect(globalThis.HTMLSpanElement).toBeTypeOf("function");
       expect(globalThis.Document).toBeTypeOf("function");
       expect(globalThis.ElementInternals).toBeTypeOf("function");
+      expect(globalThis.CSSStyleDeclaration).toBeTypeOf("function");
+      expect(globalThis.ErrorEvent).toBeTypeOf("function");
       expect(globalThis.ProgressEvent).toBeTypeOf("function");
+      expect(globalThis.PointerEvent).toBeTypeOf("function");
+      expect(globalThis.TouchEvent).toBeTypeOf("function");
       expect(globalThis.TextEncoder).toBeTypeOf("function");
       expect(globalThis.ReadableStream).toBeTypeOf("function");
       expect(globalThis.FormData).toBeTypeOf("function");

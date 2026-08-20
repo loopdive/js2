@@ -65,7 +65,9 @@ The React browser harness installs the complete set of HTML element constructors
 provided by JSDOM that appear in the pinned React and ReactDOM sources. This
 keeps `instanceof` and feature-detection paths faithful without inventing host
 stubs; constructors absent from JSDOM remain unavailable rather than being
-reported as passing infrastructure.
+reported as passing infrastructure. This includes the event constructors used
+by Fizz and event-plugin tests, which JSDOM exposes on `window` but not on
+Node's `globalThis` by default.
 
 ## Provenance
 
