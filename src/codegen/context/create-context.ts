@@ -2,8 +2,7 @@
 /**
  * Backend context creation ownership.
  *
- * This module constructs a fresh CodegenContext and performs the minimal
- * upfront registry bootstrap that generateModule/generateMultiModule rely on.
+ * Constructs a fresh CodegenContext and the minimal registries used by both generators.
  */
 import { ts } from "../../ts-api.js";
 import type { WasmModule } from "../../ir/types.js";
@@ -15,6 +14,7 @@ import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/typ
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
 import type { ProgramAbiSession } from "../program-abi-session.js";
+import { createBodyRouteAudit } from "./body-route-audit.js";
 import { ProgramAbiClassCallableRegistry } from "../program-abi-class-callable-planning.js";
 import { ProgramAbiCallableRegistry } from "../program-abi-callable-planning.js";
 import { ProgramAbiExportRegistry } from "../program-abi-export-planning.js";
@@ -42,8 +42,8 @@ export function createCodegenContext(
   programAbiSession?.assertModule(mod);
   const targetProfile = resolveCompileTargetProfile(options);
   // #1524 — strict-mode default policy. WASI builds enforce the dual-mode
-  // architectural principle by default (`CLAUDE.md` → "JS host optional");
-  // pass `strictNoHostImports: false` to opt out (the CLI's
+  // architectural principle (`CLAUDE.md` → "JS host optional"); pass
+  // `strictNoHostImports: false` to opt out (the CLI's
   // `--allow-host-imports` does this). Strict mode also implies
   // `nativeStrings` so the wasm:js-string namespace is not requested.
   const strictNoHostImports = targetProfile.strictEnvImportGate;
@@ -106,6 +106,7 @@ export function createCodegenContext(
     irPostClaimErrors: [],
     // #3519 — normal compiles pay no ledger allocation cost.
     irOutcomes: options?.trackIrOutcomes ? [] : undefined,
+    irBodyRouteAuditSession: createBodyRouteAudit(options, irPlanningIdentityContext, targetProfile.target),
     lastKnownNode: null,
     externClasses: new Map(),
     pseudoExternClasses: new Map(),
@@ -462,9 +463,7 @@ export function createCodegenContext(
   getOrRegisterVecType(ctx, "f64", { kind: "f64" });
   ctx.suppressVecUsageFlag = false;
 
-  if (ctx.nativeStrings) {
-    registerNativeStringTypes(ctx);
-  }
+  if (ctx.nativeStrings) registerNativeStringTypes(ctx);
 
   return ctx;
 }
