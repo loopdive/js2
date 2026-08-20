@@ -69,7 +69,11 @@
   };
 
   function setBuildInfo(target) {
-    const { 0: arch, 1: vendor, 2: os, 3: env } = StringPrototypeSplit(target, "-", 4);
+    const { 0: arch, 1: vendor, 2: os, 3: env } = StringPrototypeSplit(
+      target,
+      "-",
+      4,
+    );
     build.target = target;
     build.arch = arch;
     build.vendor = vendor;
@@ -99,7 +103,9 @@
     try {
       error = errorMap[className]?.(message);
     } catch (e) {
-      throw new Error(`Unable to build custom error for "${className}"\n  ${e.message}`);
+      throw new Error(
+        `Unable to build custom error for "${className}"\n  ${e.message}`,
+      );
     }
     // Strip buildCustomError() calls from stack trace
     if (typeof error == "object") {
@@ -153,11 +159,14 @@
     const promise = new Promise((resolve, reject) => {
       promiseRing[idx] = [resolve, reject, promiseId];
     });
-    const wrappedPromise = PromisePrototypeCatch(promise, function __opRejectHandler(res) {
-      // recreate the stacktrace and strip internal event loop frames
-      ErrorCaptureStackTrace(res, __opRejectHandler);
-      throw res;
-    });
+    const wrappedPromise = PromisePrototypeCatch(
+      promise,
+      function __opRejectHandler(res) {
+        // recreate the stacktrace and strip internal event loop frames
+        ErrorCaptureStackTrace(res, __opRejectHandler);
+        throw res;
+      },
+    );
     wrappedPromise[promiseIdSymbol] = promiseId;
     return wrappedPromise;
   }
@@ -408,7 +417,11 @@
       /* END TEMPLATE */
 
       default:
-        throw new Error(`Too many arguments for async op codegen (length of ${opName} was ${originalOp.length - 1})`);
+        throw new Error(
+          `Too many arguments for async op codegen (length of ${opName} was ${
+            originalOp.length - 1
+          })`,
+        );
     }
     ObjectDefineProperty(fn, "name", {
       value: opName,

@@ -27,9 +27,19 @@
     TypedArrayPrototypeGetSymbolToStringTag,
     TypeError,
   } = window.__bootstrap.primordials;
-  const { ops, hasPromise, promiseIdSymbol, registerErrorClass } = window.Deno.core;
-  const { __setLeakTracingEnabled, __isLeakTracingEnabled, __initializeCoreMethods, __resolvePromise, FixedQueue } =
-    window.__infra;
+  const {
+    ops,
+    hasPromise,
+    promiseIdSymbol,
+    registerErrorClass,
+  } = window.Deno.core;
+  const {
+    __setLeakTracingEnabled,
+    __isLeakTracingEnabled,
+    __initializeCoreMethods,
+    __resolvePromise,
+    FixedQueue,
+  } = window.__infra;
   const __timers = window.__timers;
   delete window.__timers;
   const {
@@ -103,12 +113,17 @@
     op_is_weak_set,
   } = ops;
 
-  const { getContinuationPreservedEmbedderData, setContinuationPreservedEmbedderData } = op_get_extras_binding_object();
+  const {
+    getContinuationPreservedEmbedderData,
+    setContinuationPreservedEmbedderData,
+  } = op_get_extras_binding_object();
 
   // core/infra collaborative code
   delete window.__infra;
 
-  __initializeCoreMethods(submitLeakTrace);
+  __initializeCoreMethods(
+    submitLeakTrace,
+  );
 
   function submitLeakTrace(id) {
     const error = new Error();
@@ -189,7 +204,9 @@
   }
 
   function runImmediates() {
-    const queue = outstandingQueue.head !== null ? outstandingQueue : immediateQueue;
+    const queue = outstandingQueue.head !== null
+      ? outstandingQueue
+      : immediateQueue;
     let immediate = queue.head;
     if (queue !== outstandingQueue) {
       queue.head = queue.tail = null;
@@ -318,7 +335,10 @@
       const prevContext = getAsyncContext();
       setAsyncContext(rejections[i + 2]);
       try {
-        const handled = unhandledPromiseRejectionHandler(rejections[i], rejections[i + 1]);
+        const handled = unhandledPromiseRejectionHandler(
+          rejections[i],
+          rejections[i + 1],
+        );
         if (!handled) {
           const err = rejections[i + 1];
           op_dispatch_exception(err, true);
@@ -460,7 +480,10 @@
       const prevContext = getAsyncContext();
       setAsyncContext(arguments[i + 2]);
       try {
-        const handled = unhandledPromiseRejectionHandler(arguments[i], arguments[i + 1]);
+        const handled = unhandledPromiseRejectionHandler(
+          arguments[i],
+          arguments[i + 1],
+        );
         if (!handled) {
           const err = arguments[i + 1];
           op_dispatch_exception(err, true);
@@ -663,7 +686,12 @@
       }
     });
 
-    op_set_promise_hooks(wrappedHooks[0], wrappedHooks[1], wrappedHooks[2], wrappedHooks[3]);
+    op_set_promise_hooks(
+      wrappedHooks[0],
+      wrappedHooks[1],
+      wrappedHooks[2],
+      wrappedHooks[3],
+    );
   }
 
   const {
@@ -728,7 +756,12 @@
     for (let i = 0; i < keys.length; ++i) {
       const key = keys[i];
       if (ObjectHasOwn(customConsole, key)) {
-        customConsole[key] = FunctionPrototypeBind(callConsole, customConsole, consoleFromV8[key], customConsole[key]);
+        customConsole[key] = FunctionPrototypeBind(
+          callConsole,
+          customConsole,
+          consoleFromV8[key],
+          customConsole[key],
+        );
       } else {
         // Add additional console APIs from the inspector
         customConsole[key] = consoleFromV8[key];
@@ -766,20 +799,16 @@
 
   const consoleStringifyArg = (arg) => {
     if (
-      typeof arg === "string" ||
-      typeof arg === "boolean" ||
-      typeof arg === "number" ||
-      arg === null ||
-      arg === undefined
+      typeof arg === "string" || typeof arg === "boolean" ||
+      typeof arg === "number" || arg === null || arg === undefined
     ) {
       return arg;
     }
     const tag = TypedArrayPrototypeGetSymbolToStringTag(arg);
     if (op_is_typed_array(arg)) {
-      return `${tag}(${TypedArrayPrototypeGetLength(arg)}) [${TypedArrayPrototypeJoin(
-        TypedArrayPrototypeSlice(arg, 0, 10),
-        ", ",
-      )}]`;
+      return `${tag}(${TypedArrayPrototypeGetLength(arg)}) [${
+        TypedArrayPrototypeJoin(TypedArrayPrototypeSlice(arg, 0, 10), ", ")
+      }]`;
     }
     if (tag !== undefined) {
       tag + " " + JSON.stringify(arg, undefined, 2);
@@ -1065,7 +1094,8 @@
       const traces = op_leak_tracing_get_all();
       return new SafeMap(traces);
     },
-    getLeakTraceForPromise: (promise) => op_leak_tracing_get(0, promise[promiseIdSymbol]),
+    getLeakTraceForPromise: (promise) =>
+      op_leak_tracing_get(0, promise[promiseIdSymbol]),
     queueNextTick,
     processTicksAndRejections,
     runNextTicks,
@@ -1081,8 +1111,18 @@
     runMicrotasks: () => op_run_microtasks(),
     hasTickScheduled,
     setHasTickScheduled,
-    compileFunction: (source, specifier, hostDefinedOptions, params) => {
-      const [result, error] = op_compile_function(source, specifier, hostDefinedOptions, params);
+    compileFunction: (
+      source,
+      specifier,
+      hostDefinedOptions,
+      params,
+    ) => {
+      const [result, error] = op_compile_function(
+        source,
+        specifier,
+        hostDefinedOptions,
+        params,
+      );
       if (error) {
         const { 0: thrown, 1: isNativeError, 2: isCompileError } = error;
         return [
@@ -1096,8 +1136,16 @@
       }
       return [result, null];
     },
-    evalContext: (source, specifier, hostDefinedOptions) => {
-      const [result, error] = op_eval_context(source, specifier, hostDefinedOptions);
+    evalContext: (
+      source,
+      specifier,
+      hostDefinedOptions,
+    ) => {
+      const [result, error] = op_eval_context(
+        source,
+        specifier,
+        hostDefinedOptions,
+      );
       if (error) {
         const { 0: thrown, 1: isNativeError, 2: isCompileError } = error;
         return [
@@ -1119,8 +1167,13 @@
     encode: (text) => op_encode(text),
     encodeBinaryString: (buffer) => op_encode_binary_string(buffer),
     decode: (buffer) => op_decode(buffer),
-    structuredClone: (value, deserializers) => op_structured_clone(value, deserializers ?? cloneableDeserializers),
-    serialize: (value, options, errorCallback) => {
+    structuredClone: (value, deserializers) =>
+      op_structured_clone(value, deserializers ?? cloneableDeserializers),
+    serialize: (
+      value,
+      options,
+      errorCallback,
+    ) => {
       return op_serialize(
         value,
         options?.hostObjects,
@@ -1170,14 +1223,19 @@
     isWeakSet: (value) => op_is_weak_set(value),
     memoryUsage: () => op_memory_usage(),
     setWasmStreamingCallback: (fn) => op_set_wasm_streaming_callback(fn),
-    abortWasmStreaming: (rid, error) => op_abort_wasm_streaming(rid, error),
+    abortWasmStreaming: (
+      rid,
+      error,
+    ) => op_abort_wasm_streaming(rid, error),
     destructureError: (error) => op_destructure_error(error),
     opNames: () => op_op_names(),
     eventLoopHasMoreWork: () => op_event_loop_has_more_work(),
     byteLength: (str) => op_str_byte_length(str),
     addMainModuleHandler: (handler) => op_add_main_module_handler(handler),
-    setHandledPromiseRejectionHandler: (handler) => op_set_handled_promise_rejection_handler(handler),
-    setUnhandledPromiseRejectionHandler: (handler) => (unhandledPromiseRejectionHandler = handler),
+    setHandledPromiseRejectionHandler: (handler) =>
+      op_set_handled_promise_rejection_handler(handler),
+    setUnhandledPromiseRejectionHandler: (handler) =>
+      unhandledPromiseRejectionHandler = handler,
     reportUnhandledException: (e) => op_dispatch_exception(e, false),
     reportUnhandledPromiseRejection: (e) => op_dispatch_exception(e, true),
     createTimer: __timers.createTimer,
@@ -1189,7 +1247,14 @@
     createSystemTimer: (callback, after, isRefed) =>
       __timers.createTimer(callback, after, undefined, false, !!isRefed, true),
     createSystemInterval: (callback, interval, isRefed) =>
-      __timers.createTimer(callback, interval, undefined, true, !!isRefed, true),
+      __timers.createTimer(
+        callback,
+        interval,
+        undefined,
+        true,
+        !!isRefed,
+        true,
+      ),
     currentUserCallSite,
     wrapConsole,
     v8Console,

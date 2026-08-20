@@ -1,6 +1,26 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { compile } from "../src/index.js";
+
+const EXNREF_RUNNER = String.raw`
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const module = new WebAssembly.Module(Buffer.concat(chunks));
+  const imports = WebAssembly.Module.imports(module);
+  const calls = [];
+  const importObject = {};
+  for (const descriptor of imports) {
+    importObject[descriptor.module] ??= {};
+    importObject[descriptor.module][descriptor.name] = (...args) => {
+      calls.push(descriptor.module + "::" + descriptor.name + "(" + args.length + ")");
+      return null;
+    };
+  }
+  const instance = await WebAssembly.instantiate(module, importObject);
+  instance.exports.__module_init();
+  process.stdout.write(JSON.stringify({ value: instance.exports.test(), imports, calls }));
+`;
 
 async function runStandaloneJs(source: string): Promise<{
   value: number;
@@ -17,21 +37,17 @@ async function runStandaloneJs(source: string): Promise<{
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
 
-  const module = new WebAssembly.Module(result.binary);
-  const imports = WebAssembly.Module.imports(module);
-  const calls: string[] = [];
-  const importObject: Record<string, Record<string, Function>> = {};
-  for (const descriptor of imports) {
-    importObject[descriptor.module] ??= {};
-    importObject[descriptor.module]![descriptor.name] = (...args: unknown[]) => {
-      calls.push(`${descriptor.module}::${descriptor.name}(${args.length})`);
-      return null;
-    };
-  }
-
-  const instance = await WebAssembly.instantiate(module, importObject);
-  (instance.exports.__module_init as () => void)();
-  return { value: (instance.exports.test as () => number)(), imports, calls };
+  const child = spawnSync(
+    process.execPath,
+    ["--experimental-wasm-exnref", "--input-type=module", "--eval", EXNREF_RUNNER],
+    { input: result.binary, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+  );
+  expect(child.status, child.stderr || child.stdout).toBe(0);
+  return JSON.parse(child.stdout) as {
+    value: number;
+    imports: WebAssembly.ModuleImportDescriptor[];
+    calls: string[];
+  };
 }
 
 describe("#4376 — Deno primordials standalone runtime substrate", () => {
