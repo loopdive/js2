@@ -7,7 +7,10 @@
 // four source owners compile once through IR and preserve the direct backend's
 // value, security, and optimization envelope.
 
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -25,6 +28,22 @@ pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 const SOURCE = readFileSync(new URL("../website/playground/examples/js/builtins.ts", import.meta.url), "utf8");
 const FILE_NAME = "website/playground/examples/js/builtins.ts";
 const TERMINALS = ["el", "crd", "rw", "main"] as const;
+
+const TEST262_OBJECT_REST_BINDING_CASES = [
+  {
+    relative: "language/expressions/object/scope-meth-param-rest-elem-var-close.js",
+    sha256: "0c1c9f35c1996f58af69f8e4ea587c210f7df6686dd4a12acb0cadd28488f167",
+    expectedStatus: "pass",
+    expectedError: undefined,
+  },
+  {
+    relative: "language/expressions/object/scope-meth-param-rest-elem-var-open.js",
+    sha256: "0fc352e5f3674c6e8add9928590777f3b62a4ea2e2270a254a73d6dad64e5e87",
+    expectedStatus: "fail",
+    expectedError:
+      'Test262Error: Expected SameValue(«"outside"», «"inside"») to be true | at L28: assert.sameValue(probe1(), \'inside\');',
+  },
+] as const;
 
 const DOM_IMPORTS = [
   "global_document",
@@ -480,6 +499,95 @@ function unsupportedCounts(outcomes: readonly IrObservedOutcome[]): Record<strin
   }
   return result;
 }
+
+async function runRestBindingFixtureAtShippedDefaults(filePath: string) {
+  // Run the exact shipped configuration in an isolated process. Besides
+  // avoiding mutation of this file's inline-off shape environment, the child
+  // pins the exnref engine flag required by the assembled Test262 harness even
+  // when an ordinary changed-root hook launches Vitest without that flag.
+  const childEnv = { ...process.env };
+  Reflect.deleteProperty(childEnv, "JS2WASM_IR_INLINE");
+  childEnv.JS2WASM_TEST262_FIXTURE = filePath;
+  childEnv.JS2WASM_TEST262_RUNNER = new URL("./test262-runner.ts", import.meta.url).href;
+  const marker = "__JS2WASM_TEST262_RESULT__";
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      "--experimental-wasm-exnref",
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `
+        const { runTest262File } = await import(process.env.JS2WASM_TEST262_RUNNER);
+        const result = await runTest262File(
+          process.env.JS2WASM_TEST262_FIXTURE,
+          "issue-4576-object-rest-binding",
+          120_000,
+          "standalone",
+        );
+        process.stdout.write(${JSON.stringify(marker)} + JSON.stringify(result));
+      `,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", env: childEnv, maxBuffer: 4 * 1024 * 1024 },
+  );
+  const markerIndex = stdout.lastIndexOf(marker);
+  expect(markerIndex, "missing isolated Test262 verdict marker").toBeGreaterThanOrEqual(0);
+  return JSON.parse(stdout.slice(markerIndex + marker.length)) as {
+    status: string;
+    error?: string;
+    reason?: string;
+  };
+}
+
+describe("#4576 standalone Test262 object-rest regression matrix", () => {
+  for (const fixture of TEST262_OBJECT_REST_BINDING_CASES) {
+    it(`runs the exact ${fixture.relative} source and preserves its pre-merge verdict`, async () => {
+      const filePath = fileURLToPath(new URL(`../test262/test/${fixture.relative}`, import.meta.url));
+      const source = readFileSync(filePath, "utf8");
+      expect(
+        createHash("sha256").update(source).digest("hex"),
+        `${fixture.relative} exact Test262 source revision`,
+      ).toBe(fixture.sha256);
+
+      const result = await runRestBindingFixtureAtShippedDefaults(filePath);
+      expect(result.status, result.error ?? result.reason ?? "missing Test262 verdict detail").toBe(
+        fixture.expectedStatus,
+      );
+      expect(result.error).toBe(fixture.expectedError);
+    }, 180_000);
+  }
+
+  it("keeps an ordinary identifier-rest object method on the direct-call path", async () => {
+    const result = await compile(
+      `
+        export function ordinaryRestDirectCall(): number {
+          const receiver = {
+            total(head: number, ...tail: number[]): number {
+              return head + tail[0] + tail.length;
+            },
+          };
+          return receiver.total(40, 1);
+        }
+      `,
+      {
+        fileName: "issue-4576-ordinary-object-rest-direct-control.ts",
+        target: "standalone",
+        experimentalIR: false,
+        emitWat: true,
+      },
+    );
+    expectSuccess(result);
+    expect(watCallTargets(result.wat, watFunction(result, "ordinaryRestDirectCall"))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/_total$/)]),
+    );
+
+    const imports = buildCompiledImports(result);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.ordinaryRestDirectCall as () => number)()).toBe(42);
+  });
+});
 
 describe("#4576 standalone DOM Builtins ownership", () => {
   it("ratchets the five-entry standalone census from 27/10 to 31/6, leaving exactly Calendar", async () => {
