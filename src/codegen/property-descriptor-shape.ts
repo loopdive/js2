@@ -79,28 +79,3 @@ export function isOpenDescriptorShape(structName: string, fields: FieldDef[]): b
     )
   );
 }
-
-/**
- * (#4491) An open descriptor shape that also CARRIES a value — its `value`
- * field exists and is an externref.
- *
- * RETAINED FOR REFERENCE, not currently the boundary predicate. The reify in
- * `struct-boundary-reify.ts` was scoped to this shape for one measurement
- * cycle, then deliberately widened to ALL open descriptor shapes: keeping the
- * attributes-only shape unreadable held the standalone guard at a full score
- * only because `verifyProperty` SKIPS each attribute branch while `desc.X`
- * reads `undefined`. Four rows were passing without asserting anything
- * (annexB `getYear`/`substr`/`toGMTString` prop-desc, `15.2.3.6-4-624`); they
- * are now red against a real, separate defect — writing to or deleting a
- * builtin-prototype METHOD.
- *
- * Note for anyone re-narrowing this: the regression the narrow form appeared
- * to prevent was NOT a boxing problem. Booleans survive the reify as booleans
- * (measured: `w=true/boolean`).
- */
-export function isOpenDescriptorShapeWithValueCarrier(structName: string, fields: FieldDef[]): boolean {
-  if (!isOpenDescriptorShape(structName, fields)) return false;
-  return fields.some(
-    (field) => field.name === "value" && (field.type.kind === "externref" || field.type.kind === "ref_extern"),
-  );
-}

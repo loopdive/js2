@@ -17,12 +17,6 @@ related: [4444, 3031, 4490]
 loc-budget-allow:
   - src/codegen/vec-overlay.ts
   - src/codegen/object-ops.ts
-<<<<<<< HEAD
-  # 2026-08-19: the mirror->vec descriptor resolution (below). The bulk of the
-  # new logic went to a NEW subsystem module, src/runtime/vec-descriptor-mirror.ts
-  # (+284 -> +67 after the move); the residual is call-site wiring that has to
-  # live at the host-import boundary in runtime.ts itself.
-=======
   # 2026-08-19 mirror/vec descriptor slice: a compiled array crosses the
   # externref boundary as a DETACHED __make_iterable mirror while
   # Object.defineProperty gets the RAW vec, so every recorded attribute was
@@ -30,7 +24,6 @@ loc-budget-allow:
   # (src/runtime/vec-descriptor-mirror.ts, src/runtime/builtin-proto-expando.ts)
   # — +284 -> +134; the residual is call-site wiring that must live in the
   # runtime barrel at the host-import boundary.
->>>>>>> es5-obj-defineproperty-standalone
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
