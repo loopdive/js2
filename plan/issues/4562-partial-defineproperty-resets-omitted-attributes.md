@@ -21,6 +21,16 @@ loc-budget-allow:
   # the god-file grows by the IMPORT LINE plus the CALL LINE and nothing else,
   # down from +9.
   - src/codegen/expressions/calls.ts
+coercion-sites-allow:
+  # 2026-08-20: one `__unbox_number` call in the new src/codegen/bound-fn-meta.ts.
+  # It is NOT a hand-rolled ToNumber: §20.2.3.2 step 6.b is answered FIRST by
+  # `__typeof_number` (a non-coercing `typeof x === "number"` test), and the
+  # unbox runs only on the branch where the value is already known to be a
+  # Number primitive. Routing this through the coercion engine would be wrong,
+  # not merely redundant — a coercing read answers 1 for `new Number(1)` and
+  # `"1"` and THROWS on a Symbol, where §20.2.3.2 wants 0 in all three cases
+  # (built-ins/Function/prototype/bind/instance-length-default-value).
+  - src/codegen/bound-fn-meta.ts
 related: [4437, 4555, 4563, 4491, 4163]
 origin: "2026-08-19 ES5 standalone push, #4555 lane, while attempting bound-function `length`."
 ---
