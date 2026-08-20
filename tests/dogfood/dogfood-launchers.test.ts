@@ -27,6 +27,8 @@ describe("dogfood launchers", () => {
       const source = readFileSync(join(DOGFOOD_ROOT, file), "utf8");
       expect(source, file).not.toContain('execFileSync("npx", ["tsx"');
       expect(source, file).not.toContain('spawnSync("npx", ["tsx"');
+      expect(source, file).not.toContain('execFileSync("node", ["--import", "tsx"');
+      expect(source, file).not.toContain('spawnSync("node", ["--import", "tsx"');
     }
   });
 });
