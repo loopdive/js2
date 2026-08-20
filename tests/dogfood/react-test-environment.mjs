@@ -54,6 +54,7 @@ const DOM_GLOBALS = [
   "DocumentType",
   "Event",
   "CustomEvent",
+  "ProgressEvent",
   "MouseEvent",
   "KeyboardEvent",
   "FocusEvent",
