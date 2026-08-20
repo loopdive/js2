@@ -521,3 +521,19 @@ globals. The host dependency resolver now also searches pnpm peer-dependency
 roots, so ReactDOM's upstream `scheduler` and `scheduler/unstable_mock`
 imports resolve to the installed package even though the workspace root does
 not expose a direct symlink.
+
+The upstream runner also accepts `DOGFOOD_REACT_BUILD=development`. This uses
+the published `react.development.js` artifact and loads ReactDOM and the test
+renderer under the matching `NODE_ENV`, which is the environment used by
+React's Jest suite. The default npm-compat lane remains the production build;
+the development option gives the original warning and `act` tests a faithful
+renderer pair instead of treating production-build differences as unavailable
+host infrastructure. The selected build is recorded in the JSON report.
+
+The first development-build probe (80 filtered upstream tests) is intentionally
+recorded as a compiler finding: the native oracle ran, but all 80 Wasm batches
+hit the existing stack-balance/local-index invariant in the development graph,
+so **0/61** tests were scoreable. This does not change the default production
+result or turn an invalid binary into an infrastructure pass; the opt-in lane
+is retained to make the correct upstream environment runnable once that
+compiler blocker is addressed.

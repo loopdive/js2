@@ -102,6 +102,7 @@ describe("react upstream suite", () => {
     const report = JSON.parse(out);
 
     expect(report.upstreamSuite.commit).toBe("eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401");
+    expect(report.react.build).toBe("production");
 
     // Compilation is per upstream file and subdivides on compile/validation failure, so
     // "every batch valid" is NOT the contract while #3587 is open — one of 27

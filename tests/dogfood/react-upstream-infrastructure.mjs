@@ -58,7 +58,29 @@ function readModule(name) {
   }
 }
 
-function loadCrossPackageReactModules(nativeReact) {
+function readReactForBuild(build) {
+  if (build !== "development") return readModule("react");
+  let reactPath;
+  try {
+    reactPath = require.resolve("react");
+  } catch {
+    return readModule("react");
+  }
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousCacheEntry = require.cache[reactPath];
+  process.env.NODE_ENV = "development";
+  delete require.cache[reactPath];
+  try {
+    return require("react");
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousCacheEntry) require.cache[reactPath] = previousCacheEntry;
+    else delete require.cache[reactPath];
+  }
+}
+
+function loadCrossPackageReactModules(nativeReact, { build = "production" } = {}) {
   if (!nativeReact) {
     return {
       reactDom: readModule("react-dom"),
@@ -96,16 +118,14 @@ function loadCrossPackageReactModules(nativeReact) {
     };
   }
 
-  // The React suite under test is the published production graph. ReactDOM
-  // and react-test-renderer choose their development/production entry point
-  // from NODE_ENV, so loading them under the surrounding test runner's
-  // default environment pairs a development renderer with production React.
-  // That pair has different internal queues (for example, the development
-  // renderer expects an act queue that production React does not expose) and
-  // fails before a test assertion runs. Resolve every peer package under the
-  // same production selector, then restore the caller's environment.
+  // ReactDOM and react-test-renderer choose their development/production entry
+  // point from NODE_ENV. Resolve every peer package under the same selector as
+  // the React artifact under test, then restore the caller's environment. A
+  // mismatched renderer pair has different internal queues (for example, the
+  // development renderer expects an act queue that production React does not
+  // expose) and fails before a test assertion runs.
   const previousNodeEnv = process.env.NODE_ENV;
-  process.env.NODE_ENV = "production";
+  process.env.NODE_ENV = build === "development" ? "development" : "production";
   let modules;
   try {
     modules = {
@@ -400,9 +420,11 @@ function unrefMessagePorts() {
  * generated test source can use them in the native oracle and through the
  * Wasm host boundary.
  */
-export function installReactUpstreamInfrastructure({ react } = {}) {
-  const nativeReact = react ?? readModule("react");
-  const { reactDom, reactDomClient, reactDomServer, reactTestRenderer } = loadCrossPackageReactModules(nativeReact);
+export function installReactUpstreamInfrastructure({ react, build = "production" } = {}) {
+  const nativeReact = react ?? readReactForBuild(build);
+  const { reactDom, reactDomClient, reactDomServer, reactTestRenderer } = loadCrossPackageReactModules(nativeReact, {
+    build,
+  });
   const propTypes = readModule("prop-types");
   const webStreams = readModule("web-streams-polyfill/ponyfill") ?? readModule("web-streams-polyfill");
   // React's create-react-class integration tests import both the already

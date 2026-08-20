@@ -189,12 +189,17 @@ export async function runHarness({
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: packageRoot, version, pin } = setupReact();
   const { root: suiteRoot, pin: suitePin } = setupReactUpstreamSuite();
-  const productionModulePath = join(packageRoot, "package", "cjs", "react.production.js");
-  const reactSource = readFileSync(productionModulePath, "utf-8");
+  // Jest runs React's upstream unit files against the development build. Keep
+  // the published production artifact as the default npm-compat lane, while
+  // allowing the upstream harness to select the matching development graph so
+  // warning/act assertions are not misclassified as missing infrastructure.
+  const build = process.env.DOGFOOD_REACT_BUILD === "development" ? "development" : "production";
+  const modulePath = join(packageRoot, "package", "cjs", `react.${build}.js`);
+  const reactSource = readFileSync(modulePath, "utf-8");
 
   const report = {
     generatedAt: new Date().toISOString(),
-    react: { version, source: pin.tarball, entryModule: "package/cjs/react.production.js" },
+    react: { version, source: pin.tarball, build, entryModule: `package/cjs/react.${build}.js` },
     upstreamSuite: {
       repo: suitePin.repo,
       tag: suitePin.tag,
@@ -269,8 +274,8 @@ export async function runHarness({
   // radius to the batch, and the failing batch is still REPORTED rather than
   // dropped.
   const require = createRequire(import.meta.url);
-  const nativeReact = require(productionModulePath);
-  const hostInfrastructure = installReactUpstreamInfrastructure({ react: nativeReact });
+  const nativeReact = require(modulePath);
+  const hostInfrastructure = installReactUpstreamInfrastructure({ react: nativeReact, build });
 
   const batches = new Map();
   for (const test of extracted.tests) {
@@ -306,7 +311,7 @@ export async function runHarness({
       const started = performance.now();
       try {
         result = await withTimeout(
-          compile(moduleSource, { fileName: "react.production.js", skipSemanticDiagnostics: true }),
+          compile(moduleSource, { fileName: `react.${build}.js`, skipSemanticDiagnostics: true }),
           compileTimeoutMs,
           `compile ${file}`,
         );

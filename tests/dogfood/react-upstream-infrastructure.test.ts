@@ -79,4 +79,19 @@ describe("React upstream test infrastructure", () => {
     }
     expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(previous);
   });
+
+  it("can pair the development React artifact with development peer renderers", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    const installed = installReactUpstreamInfrastructure({ build: "development" });
+    try {
+      expect(installed.infrastructure.reactDomClient?.createRoot).toBeTypeOf("function");
+      expect(installed.infrastructure.reactTestRenderer?.version).toBe(installed.infrastructure.react?.version);
+      expect(installed.infrastructure.require("scheduler/unstable_mock").unstable_flushAll).toBeTypeOf("function");
+    } finally {
+      installed.cleanup();
+      if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
 });
