@@ -728,11 +728,10 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
     }
   });
 
-  it("Phase C: Reflect.ownKeys routes to native own-name enumeration in standalone (no host import)", async () => {
-    // Reflect.ownKeys must retain non-enumerable own names, unlike Object.keys.
-    // Computed keys defeat shape inference and force the genuine open-object
-    // path; the native runtime's current string-key surface uses
-    // __getOwnPropertyNames (symbol-key support remains separate work).
+  it("Phase C: Reflect.ownKeys routes to native __object_keys in standalone (no host import)", async () => {
+    // #1472 Phase C — Reflect.ownKeys(o) on an open `any` lowers to the native
+    // __object_keys helper (string own keys of the $Object hash-map). Computed
+    // keys defeat shape inference and force the genuine open-object path.
     const source = `
         export function run(): number {
           const o: any = {};
@@ -746,7 +745,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     const wat = (r as unknown as { wat?: string }).wat ?? "";
-    expect(wat).toMatch(/\(func \$__getOwnPropertyNames\b/);
+    expect(wat).toMatch(/\(func \$__object_keys\b/);
     expect(WebAssembly.validate(r.binary)).toBe(true);
     const { instance } = await WebAssembly.instantiate(r.binary, {});
     expect((instance.exports as Record<string, () => number>).run()).toBe(2);

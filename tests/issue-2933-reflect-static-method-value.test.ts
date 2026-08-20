@@ -60,10 +60,14 @@ describe("#2933 — standalone Reflect.* static-method value reads", () => {
     );
   });
 
-  it("Reflect.ownKeys as a value returns the own keys", async () => {
+  it("Reflect.ownKeys as a value includes non-enumerable own names", async () => {
     expect(
       await runStandalone(
-        `const o: any = { a: 1, b: 2 }; const f: any = Reflect.ownKeys; const ks: any = f(o); return ks.length;`,
+        `const o: any = { visible: 1 };
+         Object.defineProperty(o, "hidden", { value: 2, enumerable: false });
+         const f: any = Reflect.ownKeys;
+         const ks: any = f(o);
+         return ks.length;`,
       ),
     ).toBe(2);
   });
