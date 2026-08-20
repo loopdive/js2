@@ -24,8 +24,9 @@
  *
  * So the CURRENT invariants, asserted from the binary's import section:
  *  1. all-drivable async-gen module → native carrier, ZERO imports;
- *  2. non-drivable async-gen module → host lane fires (legacy `__gen_*` /
- *     `__get_caught_exception` imports present — no native/legacy mixing);
+ *  2. non-drivable async-gen module → the generator host lane fires
+ *     (legacy `__gen_*` imports present), while standalone exception handling
+ *     remains native (`__get_caught_exception` absent; #2997);
  *  3. non-async-gen module → native carrier, no host Promise imports.
  */
 import { describe, expect, it } from "vitest";
@@ -77,7 +78,9 @@ describe("#2980/#3132 Promise-lane carrier gates (standalone, post-widen)", () =
       }
     `);
     expect(imports).toContain("env.__gen_next");
-    expect(imports).toContain("env.__get_caught_exception");
+    // #2997 moves standalone exception handling to standardized Wasm EH even
+    // when an unrelated generator shape still requires the legacy host buffer.
+    expect(imports).not.toContain("env.__get_caught_exception");
   });
 
   it("NON-async-gen module: Promise.reject stays NATIVE (widen wins, unchanged since #2980)", async () => {
