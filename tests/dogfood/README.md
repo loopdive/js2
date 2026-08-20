@@ -506,10 +506,15 @@ instead of blocking the rest of the corpus. Native-oracle failures still stay
 in the explicit `harness-incompatible` bucket and are never turned into
 compiler evidence.
 
+The shared upstream runner and the React shim both expose Node's `global`
+spelling as an alias of `globalThis`; this is required by React and Redux's
+original polyfill and console-warning tests and is installed identically in
+the native and Wasm lanes.
+
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
 
-Current exact result (2026-08-20): **68/122** natively scoreable upstream tests
+Current exact result (2026-08-20): **79/122** natively scoreable upstream tests
 pass against compiled Wasm. The harness admits and executes 272 of React's
 273 tests (one is upstream-skipped), reports 150 native-oracle-incompatible
 tests, and has zero compile-quarantined batches. The production
