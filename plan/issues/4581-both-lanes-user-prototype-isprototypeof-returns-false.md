@@ -105,6 +105,58 @@ That also explains the context-dependence in the section above: what changes
 between probes is whether the fold can prove its precondition, not what the walk
 computes.
 
+### NARROWED 2026-08-20 — the walk is fine; the RECEIVER SPELLING is the trigger
+
+Further measurement, and this supersedes "the walk answers false for everything":
+
+```js
+var proto = {};
+var o = Object.create(proto);
+proto.isPrototypeOf(o);                        // TRUE   — correct
+Object.getPrototypeOf(o) === proto;            // true
+
+function A() {}
+var a = new A();
+Object.getPrototypeOf(a).isPrototypeOf(a);     // TRUE   — correct
+A.prototype.isPrototypeOf(a);                  // FALSE  — wrong
+Object.getPrototypeOf(a) === A.prototype;      // true
+```
+
+So the chain walk is **correct** whenever the receiver is a genuine `$Object` —
+a plain object, or the very same prototype reached via `getPrototypeOf`. It is
+wrong **only when the receiver is spelled `<UserFn>.prototype`**.
+
+That is a sharp, self-contradictory pair worth stating plainly:
+
+- `Object.getPrototypeOf(a) === A.prototype` → **true**
+- `Object.getPrototypeOf(a).isPrototypeOf(a)` → **true**
+- `A.prototype.isPrototypeOf(a)` → **false**
+
+Three readings of the same object, two right and one wrong, so the defect is in
+how `<UserFn>.prototype` is lowered **in method-receiver position** — not in the
+walk, and not in the prototype linkage.
+
+The earlier `.call`-spelled readings (`isPrototypeOf.call(op, a)` → false) belong
+to the separate value-read gap in #4580, not to this: extracting the method as a
+value yields the refusal/`false` stub, so those probes were measuring that, not
+the walk.
+
+### The likely mechanism
+
+`native-user-instanceof.ts` gets this right and says why:
+
+> `emitFnctorProtoGet` lazily materializes the per-fnctor prototype `$Object` —
+> **the same global the #2660 S3a `new F()` reconstruct seeds `$proto` from, so
+> object identity holds.**
+
+`instanceof` therefore feeds `__isPrototypeOf` the canonical `$Object`. A plain
+`A.prototype` property read in receiver position evidently does **not** — it
+yields something that compares `===`-equal but is not the object the instance's
+`$proto` actually points at, so the `ref.eq` at each level never matches.
+
+**Shortest route to a fix:** route `<UserFn>.prototype.<method>(…)` in receiver
+position through `emitFnctorProtoGet`, exactly as the `instanceof` lowering does.
+
 ### The mechanism to check first
 
 `__isPrototypeOf` (`src/codegen/object-runtime-prototype.ts` ~L313) documents its
