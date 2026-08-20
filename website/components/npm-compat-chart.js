@@ -459,6 +459,69 @@ class NpmCompatChart extends HTMLElement {
       }
     }
 
+    // ReactDOM's server renderer is a separate published graph and therefore
+    // has its own upstream-test denominator. Keep that result visible instead
+    // of merging server-renderer failures into the client renderer row.
+    const serverTestData = pkg.tests?.server;
+    const serverTests =
+      serverTestData && serverTestData.total != null
+        ? this._row(
+            "server tests",
+            `<span class="mono">${serverTestData.passed ?? 0}/${serverTestData.total}</span>${
+              serverTestData.passRatePct != null ? ` <span class="muted">${serverTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream server suite</span>${
+              serverTestData.upstreamTestsSeen
+                ? ` <span class="muted">${serverTestData.selected ?? serverTestData.admitted ?? 0} of ${serverTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const fizzTestData = pkg.tests?.fizz;
+    const fizzTests =
+      fizzTestData && fizzTestData.total != null
+        ? this._row(
+            "browser Fizz tests",
+            `<span class="mono">${fizzTestData.passed ?? 0}/${fizzTestData.total}</span>${
+              fizzTestData.passRatePct != null ? ` <span class="muted">${fizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream browser Fizz suite</span>${
+              fizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${fizzTestData.selected ?? fizzTestData.admitted ?? 0} of ${fizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const nodeFizzTestData = pkg.tests?.nodeFizz;
+    const nodeFizzTests =
+      nodeFizzTestData && nodeFizzTestData.total != null
+        ? this._row(
+            "Node Fizz tests",
+            `<span class="mono">${nodeFizzTestData.passed ?? 0}/${nodeFizzTestData.total}</span>${
+              nodeFizzTestData.passRatePct != null ? ` <span class="muted">${nodeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Node Fizz suite</span>${
+              nodeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${nodeFizzTestData.selected ?? nodeFizzTestData.admitted ?? 0} of ${nodeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const edgeFizzTestData = pkg.tests?.edgeFizz;
+    const edgeFizzTests =
+      edgeFizzTestData && edgeFizzTestData.total != null
+        ? this._row(
+            "Edge Fizz tests",
+            `<span class="mono">${edgeFizzTestData.passed ?? 0}/${edgeFizzTestData.total}</span>${
+              edgeFizzTestData.passRatePct != null ? ` <span class="muted">${edgeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Edge Fizz suite</span>${
+              edgeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${edgeFizzTestData.selected ?? edgeFizzTestData.admitted ?? 0} of ${edgeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
     // Perf — historical ratios stay split by input knowledge and placement;
     // full methodology lives below the dashboard.
     let perf;
@@ -513,7 +576,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${perf}${bugs}</div>
+        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
         <div class="card-links">
           <a class="playground-link" href="${playgroundUrl}"
             title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>

@@ -7,6 +7,17 @@
   "testFileCount": 120,
   "testFilePathSha256": "0b1f031feb13aad34fdaa135884d52c888c2ea7efbc7789e1e4ec2908b484adc",
   "registrationSites": 2355,
-  "selectedFiles": ["src/utils/accept.test.ts", "src/utils/mime.test.ts"],
-  "_note": "The published Hono tarball contains dist but omits its Vitest sources. The complete 120-file src/**/*.test.{ts,tsx} inventory is verified by path hash at the matching immutable tag. The first adapter executes every callback in two synchronous utility files against the published dist bytes; all other files remain explicitly deferred rather than silently absent. registrationSites is a measured count of test()/it() call sites, not a claim about test.each expansion."
+  "selectedFiles": [
+    "src/http-exception.test.ts",
+    "src/request.test.ts",
+    "src/utils/accept.test.ts",
+    "src/utils/basic-auth.test.ts",
+    "src/utils/cookie.test.ts",
+    "src/utils/encode.test.ts",
+    "src/utils/html.test.ts",
+    "src/utils/ipaddr.test.ts",
+    "src/utils/mime.test.ts",
+    "src/utils/url.test.ts"
+  ],
+  "_note": "The published Hono tarball contains dist but omits its Vitest sources. The complete 120-file src/**/*.test.{ts,tsx} inventory is verified by path hash at the matching immutable tag. The adapter executes ten self-contained HTTP/utility files against the published dist bytes; files requiring external test packages, platform adapters, DOM, sockets, or network mocks remain explicitly deferred rather than silently absent. registrationSites is a measured count of test()/it() call sites, not a claim about test.each expansion."
 }

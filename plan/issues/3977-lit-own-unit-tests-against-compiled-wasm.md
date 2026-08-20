@@ -4,7 +4,7 @@ title: "Run lit's own unit tests against compiled lit, and stop measuring the `l
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-20
 priority: high
 horizon: m
 feasibility: medium
@@ -110,6 +110,40 @@ where the implementation IS valid and the per-test batches are not:
 - `Codegen error: inherited class callable __anonClass_N_updated has no entry`
 
 These are recorded per batch in the report rather than aggregated away.
+
+## Browser infrastructure checkpoint (2026-08-20)
+
+The Lit harness already installs jsdom before extraction and execution. The
+shared browser bootstrap now also exports the DOM constructors that Lit's
+upstream tests use directly (`HTMLAnchorElement`, `HTMLFieldSetElement`,
+`HTMLLabelElement`, `HTMLSpanElement`, and `ElementInternals`). Conservative
+extraction is now told which browser surfaces are actually supplied — DOM,
+window, custom elements, shadow roots, constructable stylesheets, and Lit's
+warning registry — instead of classifying those references as unavailable
+infrastructure. A source-level audit of the pinned 587-test corpus reports
+**583 admitted and 4 upstream-skipped** in both admit-all and conservative
+modes.
+
+This changes reachability only; it does not turn jsdom's incomplete browser
+semantics or Lit's missing monorepo test utilities into passes. Those tests
+continue to run, and native-oracle failures remain separate from compiler
+failures. The remaining implementation/compiler frontier is still tracked by
+#3978, #3979, and #3980.
+
+## Handoff checkpoint (2026-08-20)
+
+The reusable browser/test infrastructure is complete for this slice and is
+shipped with the npm-compat adapter work in PR #4660. Do not raise Lit's
+compatibility score from the admitted-test count alone: the published
+`lit-html` implementation still emits an invalid module, and the
+reactive-element batches still expose compiler failures such as invalid local
+indices, `global.set` in closures, and inherited-class callable resolution.
+
+The next owner should take #3978 first (make the published lit-html graph
+validate), then revisit #3979/#3980 for the remaining reactive-element
+code-generation failures. After those land, rerun the unchanged
+`DOGFOOD_LIT_UPSTREAM=1` driver and update only the measured report; no test
+source or harness-incompatible result should be reclassified as a pass.
 
 ## Acceptance criteria
 
