@@ -166,6 +166,30 @@ export function buildClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => I
 /** Build `__extern_set`'s non-object receiver arm. */
 export function buildClosurePropSetMissArm(ctx: CodegenContext): Instr[] {
   const closurePropSetIdx = ctx.funcMap.get(CLOSURE_PROP_SET);
+  // #4504 installs a final native-companion decision tail after this arm.
+  // Keep the historical unconditional terminal miss in flag-clear modules,
+  // but let a non-closure receiver fall through to that tail when the shared
+  // result channel is active (Date/Number and other no-bag carriers still
+  // have an inherited descriptor chain).
+  if (ctx.externSetResultGlobalIdx !== undefined) {
+    const isClosurePropCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+    if (closurePropSetIdx === undefined || isClosurePropCarrierIdx === undefined) return [];
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isClosurePropCarrierIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: closurePropSetIdx },
+          { op: "return" },
+        ],
+      },
+    ];
+  }
   return closurePropSetIdx === undefined
     ? [{ op: "return" }]
     : [
@@ -604,6 +628,9 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
+  const setOwnIdx = ctx.funcMap.get("__extern_set_own");
+  const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
 
   const setBody = (name: string, locals: { name: string; type: ValType }[], body: Instr[]): void => {
     const idx = ctx.funcMap.get(name);
@@ -754,24 +781,108 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   }
 
   // ── __closure_prop_set(externref obj, externref key, externref value) -> () ──
-  // if is_closure(obj) { bag = ensure(obj); __extern_set(bag, key, value) }
+  // Look up an existing bag before the inherited resolver; only MISS/ALLOW
+  // reaches ensure + the direct own write.  Calling __extern_set on the bag
+  // would restart a prototype walk with the bag as `this`.
   if (isClosureIdx !== undefined && bagEnsureIdx !== undefined && externSetIdx !== undefined) {
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: isClosureIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
+    const sharedSetAvailable =
+      bagLookupIdx !== undefined &&
+      setDecideIdx !== undefined &&
+      setOwnIdx !== undefined &&
+      setResultGlobalIdx !== undefined;
+    const body: Instr[] = sharedSetAvailable
+      ? [
           { op: "local.get", index: 0 },
-          { op: "call", funcIdx: bagEnsureIdx }, // -> bag externref
-          { op: "local.get", index: 1 }, // key
-          { op: "local.get", index: 2 }, // value
-          { op: "call", funcIdx: externSetIdx }, // __extern_set(bag,key,value) -> ()
-        ],
-      },
-    ];
-    setBody(CLOSURE_PROP_SET, [], body);
+          { op: "call", funcIdx: isClosureIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: bagLookupIdx! },
+              { op: "local.set", index: 3 },
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: setDecideIdx! },
+              { op: "local.tee", index: 4 },
+              { op: "i32.const", value: 2 }, // SET_DECISION_HANDLED
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 1 },
+                  { op: "global.set", index: setResultGlobalIdx! },
+                  { op: "return" },
+                ],
+              },
+              { op: "local.get", index: 4 },
+              { op: "i32.const", value: 3 }, // SET_DECISION_REFUSED
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 2 },
+                  { op: "global.set", index: setResultGlobalIdx! },
+                  { op: "return" },
+                ],
+              },
+              { op: "local.get", index: 3 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: bagEnsureIdx },
+                  { op: "local.set", index: 3 },
+                ],
+              },
+              { op: "local.get", index: 3 },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // A missing side-bag allocation is an unadmitted
+                // representation boundary, not an OrdinarySet refusal.
+                then: [{ op: "return" }],
+              },
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: setOwnIdx! },
+              { op: "global.set", index: setResultGlobalIdx! },
+            ],
+          },
+        ]
+      : [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isClosureIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: bagEnsureIdx }, // -> bag externref
+              { op: "local.get", index: 1 }, // key
+              { op: "local.get", index: 2 }, // value
+              { op: "call", funcIdx: externSetIdx }, // __extern_set(bag,key,value) -> ()
+            ],
+          },
+        ];
+    setBody(
+      CLOSURE_PROP_SET,
+      sharedSetAvailable
+        ? [
+            { name: "__bag", type: { kind: "externref" } },
+            { name: "__decision", type: { kind: "i32" } },
+          ]
+        : [],
+      body,
+    );
   } else {
     // Deps absent — keep a valid empty body (void result).
     setBody(CLOSURE_PROP_SET, [], []);

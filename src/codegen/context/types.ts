@@ -1596,6 +1596,17 @@ export interface CodegenContext {
    */
   vecAccessorDescriptorDirty: boolean;
   /**
+   * (#4504) A descriptor that can affect inherited [[Set]] may exist in this
+   * module: an accessor, a non-writable data descriptor, an accessor
+   * declaration, or dynamically introduced code.  This is deliberately
+   * separate from `vecAccessorDescriptorDirty`: the latter protects typed vec
+   * value write-back and can stay clear for a provably data descriptor whose
+   * `writable` bit is false, while that descriptor is still load-bearing for
+   * the ordinary inherited-set decision.  Clear keeps the resolver and its
+   * result channel out of flag-clear modules.
+   */
+  inheritedSetDescriptorDirty: boolean;
+  /**
    * (#4222) The module contains a `delete <elementAccess>`, so some array index
    * may be semantically ABSENT while its dense backing slot still holds a
    * value. `__delete_property`'s vec arm (#4010) records that as a
@@ -1908,6 +1919,12 @@ export interface CodegenContext {
   protoIndexStoreReserved?: boolean;
   /** (#4160) Set once `fillProtoIndexStore` has run (idempotency latch). */
   protoIndexStoreFilled?: boolean;
+  /** (#4504) Mutable result channel for one completed native [[Set]] attempt:
+   * 0 = unadmitted, 1 = success/handled, 2 = refused.  `Reflect.set` exposes
+   * it as a boolean while strict assignment distinguishes refusal from an
+   * unadmitted host boundary.  Undefined when the descriptor resolver is not
+   * emitted. */
+  externSetResultGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_obj_companion` (`(mut externref)`). */
   protoIndexObjCompanionGlobalIdx?: number;
   /** (#4160) Global index of `__protoidx_arr_companion` (`(mut externref)`). */

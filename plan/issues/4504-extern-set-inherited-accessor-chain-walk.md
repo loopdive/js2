@@ -1,11 +1,11 @@
 ---
 id: 4504
-title: "Standalone: [[Set]] ignores inherited accessors — §9.1.9 proto-chain accessor walk in __extern_set"
+title: "Standalone: inherited [[Set]] nearest-descriptor walk across objects and native companions"
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-08-15
-assignee: claude/es6-team-reflection
+updated: 2026-08-20
+assignee: ttraenkler/codex
 priority: high
 horizon: l
 feasibility: hard
@@ -13,10 +13,36 @@ task_type: conformance
 area: codegen
 es_edition: es5
 goal: standalone-mode
-related: [2175, 1888, 4206, 4491]
+related: [2175, 1888, 2668, 4206, 4479, 4491, 4515]
+loc-budget-allow:
+  # The shared four-state [[Set]] decision/result channel must live at the
+  # existing public runtime boundary; the remaining entries are narrow
+  # dispatcher/index-fixup integrations for that same decision.
+  - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-proxy.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/typed-this.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/proto-index-store.ts
+func-budget-allow:
+  # These are existing reserve/finalize chokepoints whose instruction trees
+  # must share one decision/result ABI. Splitting only the new branches would
+  # duplicate index/local ownership across modules and recreate the remap risk
+  # called out in this issue's principal risks.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/closed-struct-extern-set.ts::fillClosedStructExternSetArms
+  - src/codegen/closed-struct-extern-set.ts::buildReceiverArms
+  - src/codegen/vec-props.ts::fillVecPropHelpers
+  - src/codegen/member-set-dispatch.ts::fillMemberSetDispatch
 ---
 
-# #4504 — `[[Set]]` ignores inherited accessors
+# #4504 — inherited `[[Set]]` nearest-descriptor walk
 
 Split out of #2175's "P1" after a baseline probe disproved that issue's premise.
 #2175 P1 framed this as a defect in the builtin-prototype COMPANION store; it is
@@ -83,7 +109,7 @@ in. That is the same failure mode the one-boundary rule exists to prevent, and
 the reason #2175 P2 landed `hasOwnProperty` and `gOPD` together rather than
 shipping the contained half alone.
 
-## Scope
+## Historical scope (2026-08-15)
 
 The ~11 companion candidates carried over from #2175 P1
 (`.tmp/p1-cands.json`, regex-scoped) are a **LOWER BOUND**: they only count
@@ -244,3 +270,226 @@ Worth its own id after review — note it currently makes 15.2.3.6-4-591 pass, s
 site, not another arm of this loop. `__protoidx_own_recv` (from the P2 fix) is
 the natural substitution primitive for it. Its gate is p4 flipping plus a re-run
 of this battery.
+
+## Implementation Plan — authoritative re-ground, 2026-08-20
+
+This section supersedes the implementation recommendations above while retaining
+them as issue history. The 2026-08-15 partial walk proved the seam, but it is not
+an ES `[[Set]]` implementation: it handles only inherited accessors on an
+ordinary `$Object`, treats every inherited data descriptor as writable, and
+throws for a setter-less accessor even in sloppy code. The remaining work is the
+nearest inherited **descriptor** decision across explicit `$Object` prototype
+links, fnctor prototype links, and implicit native-prototype companions.
+
+Authoritative baseline: compiler `0d87f21636f88cf416e67fc176760987d3b0bbb1`,
+Test262 `b363f29d3c43c626dc852744ad64a0b48a003693`, honest host-free
+`--target standalone`, oracle v13. ES5 is **8619 pass / 385 fail / 25 compile
+error / 0 skip = 9029 total, 410 non-pass**. All eleven diagnostic rows below
+are reached runtime failures in `.test262-cache/test262-standalone-current.jsonl`.
+
+### Exact scope and denominator
+
+The original eleven-row diagnostic cohort contains only **nine #4504 targets**.
+Do not report this issue as 11/11, and do not make either excluded failure a
+condition of the descriptor-walk implementation.
+
+| Test262 row | Runtime shape and nearest descriptor | Baseline symptom | #4504 outcome |
+| --- | --- | --- | --- |
+| `15.2.3.6-4-410` | JSON; `Object.prototype` companion, non-writable data | own shadow yields `"unlikelyValue"` | refuse; no own property; read `1001` |
+| `15.2.3.6-4-415` | three-level ordinary `Object.create` chain, non-writable data at different depths | `verifyNotWritable` returns false | refuse at the nearest matching descriptor; create no own property |
+| `15.2.3.6-4-579` | Array carrier; `Array.prototype` companion setter | array receives an own property | invoke setter once with the array as receiver; no own property |
+| `15.2.3.6-4-581` | Number wrapper; `Number.prototype` companion getter-only accessor | `verifyNotWritable` returns false | sloppy refusal; no own property; retain `"data"` |
+| `15.2.3.6-4-584` | Date carrier; `Date.prototype` companion setter | captured data remains `"data"` | invoke setter once with the Date receiver; no own property |
+| `15.2.3.6-4-586` | JSON; `Object.prototype` companion getter-only accessor | `verifyNotWritable` returns false | sloppy refusal; no own property |
+| `15.2.3.6-4-594` | bound function; `Function.prototype` companion setter | bound function receives an own property | invoke setter once with the bound function receiver; no own property |
+| `15.2.3.6-4-596` | bound function; `Function.prototype` companion getter-only accessor | own shadow yields `"unlikelyValue"` | sloppy refusal; no own property; retain `"data"` |
+| `8.14.4-8-b_1` | `__fnctor_proto_start` chain, inherited non-writable data; `noStrict` | instance receives an own property | silent refusal; no own property; retain `"unwritable"` |
+| `15.2.3.6-4-408` | Date plus inherited **writable** data | `dateObj.hasOwnProperty("prop")` is false | **Excluded:** the correct set decision is “create own”; Date expando storage/own-view visibility is a separate follow-up |
+| `15.2.3.6-4-589` | ordinary inherited setter, Date object RHS | setter stores the Date in an externref ref-cell, but the getter's statically inferred f64 result ABI unboxes it to `NaN` | **Excluded:** descriptor getter/result-carrier widening loses Date identity; extend #4515 or file a narrower follow-up |
+
+The exclusions now have explicit in-repo owners: #4491 records Date carrier-bag
+and `hasOwnProperty` visibility for 4-408, while #4515 records the accessor
+dynamic-boundary work for 4-589. Do not silently assign either row to completed
+#1212. In 4-589 the setter input already crosses as externref; the remaining
+loss is the getter's f64 result ABI.
+
+### Required semantics
+
+Implement ES5.1 [`[[CanPut]]`/`[[Put]]`](https://262.ecma-international.org/5.1/#sec-8.12.5),
+equivalent here to current [`OrdinarySet`](https://tc39.es/ecma262/2026/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryset)
+and [`OrdinarySetWithOwnDescriptor`](https://tc39.es/ecma262/2026/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinarysetwithowndescriptor):
+
+- Inspect the receiver's own layer first, then walk prototypes from nearest to
+  farthest. Stop at the first live descriptor; storage backend must not alter
+  precedence.
+- An inherited writable data descriptor permits creation of an own data property
+  on the original receiver. It also stops the search; never consult a farther
+  accessor or non-writable descriptor.
+- An inherited non-writable data descriptor refuses the write and creates no own
+  property.
+- An inherited accessor with a setter calls it exactly once with the original
+  receiver as `this` and the unmodified RHS. A getter-only accessor refuses.
+- Refusal is a silent no-op for sloppy assignment, a catchable `TypeError` for
+  strict assignment, and boolean `false` for `Reflect.set`. A successful setter
+  or data write makes `Reflect.set` return `true`; a setter-thrown exception
+  propagates. The assignment expression still evaluates to the original RHS.
+
+### Runtime changes
+
+**`src/codegen/object-runtime.ts` — `ensureObjectRuntime`, `__extern_set`
+(current lines 2781–3137), `__reflect_set` (3140–3282).**
+
+- Keep the public `__extern_set(externref, externref, externref) -> void` ABI.
+  Replace `inheritedAccessorArm` (2797–2913) with one shared four-state decision:
+  `MISS`, `ALLOW_OWN`, `HANDLED`, `REFUSED`. The decision may invoke a setter;
+  callers must therefore consume it once and must not replay it. `MISS` and
+  `ALLOW_OWN` are deliberately distinct: a nearer writable data descriptor
+  terminates lookup and must not expose a farther companion descriptor.
+- For a `$Object` own miss, start at `receiver.$proto`; for a non-`$Object`
+  fnctor, start at `__fnctor_proto_start(receiver)` (registered near 1766).
+  Walk `$Object` links with `__obj_find`. Test `FLAG_ACCESSOR`, `$set`, and
+  `FLAG_WRITABLE`; return immediately on the first entry. On explicit-chain
+  exhaustion only, consult the implicit native companion helper below.
+- In sloppy `__extern_set`, `HANDLED` and `REFUSED` both return. `ALLOW_OWN`
+  reaches today's frozen/extensibility and own update/create tail without
+  consulting another provider; `MISS` may consult the next provider and, after
+  the final miss, reaches that same tail. Remove the current inherited
+  getter-only `buildThrowJsErrorInstrs` arm. Own and inherited refusal must have
+  the same strictness owner.
+- Make `__reflect_set` use the same decision/result rather than its current
+  own-`$Object`-only preflight. Return true for `HANDLED`, false for `REFUSED`,
+  and perform the existing allowed own write after `ALLOW_OWN` or the final
+  `MISS`. Never invoke an inherited setter once in the preflight and again
+  through `__extern_set`.
+
+**`src/codegen/proto-index-store.ts` — reservations (111–248),
+`fillProtoIndexStore` (497–515), `fillGetKBody` (896–981), and
+`fillBrandOffBody` (1019–1169).**
+
+- Reserve before `__extern_set`, then finalize alongside the existing helpers,
+  `__protoidx_set_r(origRecv, key, value) -> i32` using the same four statuses.
+  Follow `fillGetKBody`: classify with `__protoidx_brand_off`, probe the receiver
+  brand's companion with `create = 0`, then Object's companion when distinct,
+  and stop on the first live entry.
+- Add local constants for `$PropEntry.$set` and `FLAG_WRITABLE = 0x01` beside
+  the existing entry-field/accessor constants. Accessor+setter calls
+  `__call_accessor_set(origRecv, setter, value)` and returns `HANDLED`;
+  getter-only or non-writable data returns `REFUSED`; writable data returns
+  `ALLOW_OWN`; only absence returns `MISS`. Probe Object's companion only after
+  a brand-companion `MISS`, never after `ALLOW_OWN`.
+- Preserve reserve/fill discipline: fresh placeholder instruction arrays,
+  finalized type/function indices, appended locals only, and no helper/import
+  index shifts in flag-clear modules.
+
+**Carrier own layers — `src/codegen/instance-props.ts` (set arm 229–252,
+`__instance_prop_set` 415–433), `src/codegen/vec-props.ts` (set arm 133–159,
+`__vec_prop_set` 432–488), `src/codegen/closure-props.ts` (set arm 166–177,
+`__closure_prop_set` 756–778), and `src/codegen/error-props.ts` (set arm 58–80,
+helper 233–293).**
+
+- Change the terminal carrier write sequence from unconditional `bagEnsure` to:
+  look up an existing bag without allocation; resolve a live own bag descriptor;
+  on an own miss run the inherited decision with the **original carrier**; only
+  `ALLOW_OWN` or a final `MISS` may ensure a bag and create the own property.
+- A carrier-bag accessor must also receive the original carrier, not the hidden
+  `$Object` bag. Own writable data updates the bag; own non-writable data and
+  getter-only accessors refuse. Do not run the inherited resolver on the bag:
+  doing so substitutes the wrong receiver and can consult Object's companion
+  twice. Preserve higher-precedence physical fields, vec indices/`length`, and
+  builtin-function `name`/`length` refusal arms.
+
+**`src/codegen/object-runtime-strict-set.ts` — `buildStrictSetHelper`
+(95–149).**
+
+- Remove the current semantic split where non-`$Object` values blindly delegate
+  to `__extern_set`. For every admitted standalone receiver, consume the same
+  four-state result as `__reflect_set`; throw the existing catchable
+  TypeError only for `REFUSED`. Do not turn an unadmitted host boundary into an
+  inherited-property claim.
+
+**Conditional emission — `src/codegen/context/types.ts`,
+`src/codegen/context/create-context.ts`, and `src/codegen/array-holes.ts`'s
+`scanForArrayHoles`.**
+
+- Do not reuse `vecAccessorDescriptorDirty` as the semantic gate: it is a typed
+  vec optimization flag and a provably data-only non-writable descriptor such
+  as row 4-415 leaves it clear. Add a dedicated pre-scan fact (for example
+  `inheritedSetDescriptorDirty`) covering a descriptor that may be accessor or
+  non-writable, accessor declarations, and dynamic code. A provably writable
+  data descriptor alone need not arm the walk; when the flag is armed, it still
+  must stop a walk before any farther descriptor.
+- Native companion reservation remains governed by the existing
+  `protoIndexDirty || protoNamedDirty || protoMemberDirty` substrate. Prove that
+  the new set helper emits only when both the descriptor decision and relevant
+  runtime substrate can be observed.
+
+### IR ownership and non-goals
+
+There must be no Test262 call-site patch and no parallel descriptor algorithm in
+IR. Legacy assignment already chooses symbolic `__extern_set` or
+`__extern_set_strict` in `compilePropertyAssignmentExternSet`
+(`src/codegen/expressions/assignment.ts` 4353–4467). Prepared IR direct open
+writes use `irRuntimeFuncRef("__extern_set")` (`src/ir/from-ast.ts` near 5406);
+`dyn.member_set` is lowered symbolically through `__dyn_member_set`
+(`src/ir/from-ast.ts` 5465–5518; `src/ir/lower.ts` 2008–2030), whose standalone
+implementation uses `__reflect_set` and delegates allowed writes to
+`__extern_set` (`src/codegen/dyn-read.ts` 826–970). Fixing the runtime seam
+therefore covers both producers.
+
+The standalone prepared-IR resolver still declines ambient
+`Object.defineProperty` (`src/ir/integration.ts` 4255–4258); typed descriptor
+reification remains #2668. The nine acceptance rows already reach the legacy
+runtime `Object.defineProperty` implementation, so widening the IR selector is
+neither necessary nor permitted in #4504.
+
+### Staged delivery and acceptance
+
+1. **Ordinary `$Object`.** Introduce the four-state decision, handle inherited
+   writable/non-writable data and accessors, correct sloppy/strict/Reflect
+   ownership, and flip exactly scoped row 4-415. Recheck 4-589 only as a control:
+   the setter must still run, but its Date-value failure remains excluded.
+2. **Fnctor explicit chain.** Add the `__fnctor_proto_start` entry point without
+   allocating a sidecar first; flip `8.14.4-8-b_1`.
+3. **Native companions and carriers.** Add `__protoidx_set_r`, wire own-bag miss
+   ordering, and flip rows 4-410, 4-579, 4-581, 4-584, 4-586, 4-594, and 4-596.
+   Row 4-408 remains an explicit Date own-view follow-up, even if incidental
+   movement occurs.
+4. **Consolidate and remove the historical arm.** No duplicate walk, no
+   unconditional sloppy throw, and no per-Test262 special cases remain.
+
+Each stage requires a same-population A/B: record candidate compiler SHA while
+holding corpus SHA, oracle v13, honest standalone lane, harness, and all **9029
+ES5 tests** fixed. The targeted #4504 denominator is **9**: all nine fail on A
+and must pass on B. With exactly nine flips and zero regressions the full ES5
+floor is **8628 pass** and the non-pass ceiling is **401**; do not quote 8630/399
+from the eleven-row diagnostic cohort. Report 4-408 and 4-589 separately.
+
+Add `tests/issue-4504-inherited-set.test.ts` with focused controls for inherited
+writable and non-writable data, setter and getter-only accessors, two-or-more
+prototype levels, nearest-descriptor shadowing, original receiver identity,
+sloppy no-op versus catchable strict TypeError, `Reflect.set` true/false, setter
+exception propagation, and unchanged assignment-result RHS. Keep passing
+`15.2.3.6-4-591.js` as a regression control after removing its historical
+unconditional sloppy throw. Final gates:
+
+- all nine exact Test262 rows pass; zero pass-to-non-pass across all 9029 ES5;
+- the full eleven-row diagnostic report makes the two exclusions visible;
+- targeted host-mode controls remain unchanged;
+- `prove-emit-identity` is identical for all 60 flag-clear modules, or any
+  measured drift is reported and blocks the slice rather than being waived.
+
+### Principal risks
+
+- Looking past an inherited writable data descriptor changes “nearest wins” and
+  can invoke the wrong farther setter.
+- Ensuring a carrier bag before prototype resolution fabricates an own property;
+  resolving on the hidden bag loses receiver identity.
+- A side-effecting preflight can call a setter twice unless `__reflect_set` and
+  strict assignment consume `HANDLED` directly.
+- The current `vecAccessorDescriptorDirty` gate misses row 4-415 and class
+  accessor shapes; an unconditional walk breaks emission identity.
+- Late helper/type registration can invalidate baked Wasm indices. Follow the
+  existing proto-index reserve/fill pattern and append locals.
+- Rows 4-408 and 4-589 are real failures but different defects; including either
+  in the #4504 denominator would hide whether the inherited descriptor decision
+  itself is correct.

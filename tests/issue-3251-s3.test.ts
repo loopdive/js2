@@ -131,17 +131,23 @@ describe("#3251 — plural Object.defineProperties over an array target", () => 
     ).toBe(303);
   });
 
-  it("plural-defined writable:false is enforced on later writes", async () => {
+  it("plural-defined writable:false refuses Reflect and throws on a later strict-module write", async () => {
     expect(
       await runStandalone(`${MK}
         ${MKD}
         export function test(): number {
           const arr: any = mkArr();
           Object.defineProperties(arr, mkDescs());
-          arr[1] = 999;
-          return arr[1] as number;
+          let caught = 0;
+          try {
+            arr[1] = 999;
+          } catch (error) {
+            caught = error instanceof TypeError ? 1 : 2;
+          }
+          const reflected = Reflect.set(arr, "1", 888);
+          return caught * 1000 + (reflected === false ? 200 : 0) + (arr[1] as number);
         }`),
-    ).toBe(202);
+    ).toBe(1402);
   });
 
   it("plain-object defineProperties is unregressed", async () => {
