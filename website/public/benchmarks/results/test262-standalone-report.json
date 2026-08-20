@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-19T17:00:38.282Z",
-  "baseline_generated_at": "2026-08-19T17:00:38.282Z",
-  "baseline_sha": "48360c40b32cbaa58505c189df193608d359cb1f",
+  "timestamp": "2026-08-20T02:02:44.136Z",
+  "baseline_generated_at": "2026-08-20T02:02:44.136Z",
+  "baseline_sha": "675c15bd1922b46187860dc4934a31f28781f0fe",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1251,7 +1251,7 @@
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-return-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-do-while-import-source-specifier-tostring.js",
           "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-if-import-defer-script-code-valid.js"
+          "test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-source-text-module.js"
         ],
         "sample_signatures": [
           "other:L#:## SyntaxError: import.source(...) is not supported (Stage # proposal — import-defer / source-phase-imports)",
@@ -1724,15 +1724,15 @@
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js",
           "test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js",
-          "test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js",
           "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
+          "test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Reflect.defineProperty(sample, \"#\", {value: 8n, configurable: true, enumerable: true, writable: true}) must return true Expected SameValue(«false», «true») to be true (Testing with BigInt64Array and makeArray.)",
           "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
-          "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true",
           "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
+          "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true",
           "assertion_fail:Test262Error: Reflect.set(sample, \"Symbol(\\\"#\\\")\", #) must return false Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)"
         ]
       },
@@ -1979,15 +1979,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js",
           "test/built-ins/TypedArray/Symbol.species/length.js",
-          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
+          "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
           "test/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-begin.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: called custom ctor get accessor once Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
+          "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: false (Testing with BigInt64Array and makeArray.)"
         ]
       },
@@ -2709,8 +2709,8 @@
         "sample_files": [
           "test/built-ins/Promise/any/iter-step-err-no-close.js",
           "test/built-ins/Promise/allSettled/iter-returns-undefined-reject.js",
-          "test/built-ins/Promise/any/iter-returns-true-reject.js",
           "test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js",
+          "test/built-ins/Promise/any/iter-returns-true-reject.js",
           "test/language/expressions/object/method-definition/async-gen-yield-star-next-then-non-callable-string-fulfillpromise.js"
         ],
         "sample_signatures": [
@@ -3119,15 +3119,15 @@
         "sample_files": [
           "test/language/expressions/does-not-equals/S11.9.2_A2.4_T2.js",
           "test/language/expressions/function/dstr/dflt-ary-ptrn-rest-id-iter-step-err.js",
-          "test/language/types/object/S8.6_A3_T2.js",
           "test/language/types/reference/S8.7_A5_T1.js",
+          "test/language/types/object/S8.6_A3_T2.js",
           "test/language/expressions/object/method-definition/fn-name-gen.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: ##: var x = function () { throw \"x\"; }; var y = function () { throw \"y\"; }; x() != y() throw \"x\". Actual: [object Object]",
           "assertion_fail:Test262Error:",
-          "assertion_fail:Test262Error: ##: var __map={}; \"foo\" in __map",
           "assertion_fail:Test262Error: ##: typeof(__ref) === \"undefined\". Actual: object",
+          "assertion_fail:Test262Error: ##: var __map={}; \"foo\" in __map",
           "assertion_fail:Test262Error: name descriptor value should be id; name value should be id"
         ]
       },
