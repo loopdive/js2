@@ -45,7 +45,7 @@ import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-i
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
-import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -3283,7 +3283,7 @@ export function compileObjectLiteralForStruct(
       // Track object-literal methods that read `arguments` (#1053) so
       // callers can populate the __extras_argv global with runtime args
       // beyond the formal param count.
-      if (prop.body && bodyUsesArguments(prop.body)) {
+      if (needsImplicitArgumentsObject(prop)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -3427,7 +3427,7 @@ export function compileObjectLiteralForStruct(
       // Set up `arguments` object if the method body references it (#820).
       // Object literal methods need an arguments vec struct so that
       // `arguments.length` and `arguments[n]` work at runtime.
-      if (prop.body && bodyUsesArguments(prop.body)) {
+      if (needsImplicitArgumentsObject(prop)) {
         const methodParamTypes = methodFctxParams.slice(1).map((p) => p.type); // skip 'this'
         // Object-literal methods inherit the surrounding code's strictness (#779e).
         // (#2743) Also unmapped when the parameter list is non-simple

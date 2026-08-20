@@ -14,7 +14,7 @@
 // is guarded behind an import.meta.url check).
 
 import { describe, expect, it } from "vitest";
-import { isTrailingAddCandidate } from "../scripts/enqueue-green-prs.mjs";
+import { isTrailingAddCandidate, reconcileAlreadyQueued } from "../scripts/enqueue-green-prs.mjs";
 
 describe("#2560 auto-enqueue trailing-add invariant", () => {
   // The forming HEAD is in the queue snapshot's `queued` set, so it must never
@@ -49,5 +49,48 @@ describe("#2560 auto-enqueue trailing-add invariant", () => {
     const queued = new Set([10, 11, 12, 13, 14]);
     for (const n of queued) expect(isTrailingAddCandidate(n, queued)).toBe(false);
     expect(isTrailingAddCandidate(15, queued)).toBe(true);
+  });
+
+  it("clears a stale manual-enqueue label while keeping a queued PR on the skip edge", () => {
+    const cleared: number[] = [];
+    const queued = new Set([101]);
+
+    expect(reconcileAlreadyQueued(101, queued, ["needs-manual-enqueue"], (number) => cleared.push(number))).toBe(true);
+    expect(cleared).toEqual([101]);
+  });
+
+  it("does not call the labels API for an ordinarily queued PR", () => {
+    const cleared: number[] = [];
+    const queued = new Set([101]);
+
+    expect(reconcileAlreadyQueued(101, queued, [{ name: "ready" }], (number) => cleared.push(number))).toBe(true);
+    expect(cleared).toEqual([]);
+  });
+
+  it("does not mutate a stale label during a dry-run sweep", () => {
+    const cleared: number[] = [];
+    const queued = new Set([101]);
+
+    expect(reconcileAlreadyQueued(101, queued, ["needs-manual-enqueue"], (number) => cleared.push(number), true)).toBe(
+      true,
+    );
+    expect(cleared).toEqual([]);
+  });
+
+  it("does not run queued-only cleanup for a trailing enqueue candidate", () => {
+    const cleared: number[] = [];
+    const queued = new Set([101]);
+
+    expect(reconcileAlreadyQueued(200, queued, ["needs-manual-enqueue"], (number) => cleared.push(number))).toBe(false);
+    expect(cleared).toEqual([]);
+  });
+
+  it("keeps a queued PR skipped even when best-effort label cleanup fails", () => {
+    const queued = new Set([101]);
+    const failingCleanup = () => {
+      throw new Error("labels API unavailable");
+    };
+
+    expect(reconcileAlreadyQueued(101, queued, ["needs-manual-enqueue"], failingCleanup)).toBe(true);
   });
 });

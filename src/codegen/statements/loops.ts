@@ -51,6 +51,7 @@ import {
   compileObjectDestructuring,
   ensureAsyncIterator,
 } from "./destructuring.js";
+import { emitForInStaticUnroll } from "./for-in-static-unroll.js"; // (#4561)
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
@@ -3510,30 +3511,17 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   if (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) {
     // Fallback: static unrolling. Used in standalone for a closed-shape receiver
     // (WasmGC struct) — the static key set is exact — and as the historical
-    // fallback when no enumeration primitive is available.
-    // (#4138) Strip null/undefined before reading the static shape: a receiver
-    // that flowed through `Array.pop()` / an optional access types as
-    // `T | undefined`, and a UNION's getProperties() is the COMMON property
-    // set — empty here — so the loop silently enumerated nothing (the runtime
-    // null case is already handled by the guards the loop emits). This is the
-    // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
-    // runtime still unrolls one static shape, and closed structs remain
-    // non-enumerable through the dynamic runtime — both stay open in #4138.
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
-    const props = exprType.getProperties();
-    if (props.length === 0) return;
-    for (const prop of props) {
-      // (#51) Materialize each enumerated key via the dual-mode helper. Under
-      // nativeStrings `stringGlobalMap` holds a `-1` sentinel global, so the old
-      // `global.get <sentinel>` reached binary emit as "global index out of
-      // range — -1". `stringConstantExternrefInstrs` emits the NativeString
-      // inline (externref) standalone and a host `global.get` only under GC.
-      addStringConstantGlobal(ctx, prop.name);
-      for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
-      fctx.body.push({ op: "local.set", index: keyLocal });
-      if (callTarget) emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
-      compileStatement(ctx, fctx, stmt.statement);
-    }
+    // fallback when no enumeration primitive is available. (#4561) It owns its
+    // own `block $break` / per-iteration `block $continue` scaffolding; see
+    // `for-in-static-unroll.ts` for why it had none.
+    emitForInStaticUnroll(
+      ctx,
+      fctx,
+      stmt,
+      keyLocal,
+      callTarget ? () => emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget) : undefined,
+      () => compileStatement(ctx, fctx, stmt.statement),
+    );
     return;
   }
 

@@ -123,6 +123,7 @@ import {
   elementAccessTypedArrayName,
   emitNonIndexVecElementSet,
   nonArrayIndexNumericKey,
+  compileElementIndexI32,
 } from "../array-nonindex-key.js"; // (#4247) §10.4.2.2 named-key routing + the relocated TA-view-name helper
 import {
   compileStringBuilderAppend,
@@ -5087,9 +5088,7 @@ function compileElementAssignment(
     // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
     // the existing conversion path when constants, bounds, or overflow safety
     // cannot be established.
-    const idxResult = tryEmitStaticI32Expression(ctx, fctx, target.argumentExpression)
-      ? ({ kind: "i32" } as const)
-      : compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
+    const idxResult = compileElementIndexI32(ctx, fctx, target.argumentExpression);
     if (!idxResult) {
       reportError(ctx, target, "Failed to compile element index");
       return null;

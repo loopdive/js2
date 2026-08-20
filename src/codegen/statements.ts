@@ -29,6 +29,7 @@ import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
+import { sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
 
@@ -138,8 +139,7 @@ function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefi
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
-  const resultType = compileExpression(ctx, fctx, evaluated);
-  if (resultType !== null) fctx.body.push({ op: "drop" });
+  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated));
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {

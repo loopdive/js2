@@ -204,6 +204,12 @@ export const FS_PATH_BASED_MEMBERS = [
   "existsSync",
 ] as const;
 
+// detectNodeFsImports records this impossible-as-an-Identifier marker when a
+// node:fs named import uses `as`. WASI lowering currently keys direct calls by
+// their local identifier, so aliases must fail closed instead of confusing an
+// unsupported export for a supported spelling (#4565).
+export const WASI_NODE_FS_ALIAS_SENTINEL = "\0node:fs:aliased-binding";
+
 function buildFsCapability(): NodeModuleCapability {
   const members = new Map<string, NodeMemberCapability>();
   for (const m of FS_MEMBERS) members.set(m.name, m);

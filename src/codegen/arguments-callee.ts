@@ -67,6 +67,7 @@ import { ts } from "../ts-api.js";
 // reaches the same helper the same way.
 import { emitCachedFuncClosureExternref } from "./closures/method-trampolines.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { seedStrictArgumentsCalleePoison } from "./arguments-callee-poison-accessor.js"; // (#4555) §10.6 step 14
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -165,9 +166,14 @@ export function seedDeclarationArgumentsCallee(
   funcName: string,
   argsLocalIdx: number,
 ): void {
-  // §10.6 step 14 gives a STRICT arguments object a poison accessor instead;
-  // see `arguments-callee-poison.ts` for the half of that this lane covers.
-  if (isStrictFunction(decl, ctx.inferModuleStrictArguments)) return;
+  // (#4555) §10.6 step 14 gives a STRICT arguments object a poison ACCESSOR
+  // instead of this data property. (`arguments-callee-poison.ts` covers only a
+  // direct syntactic read; the accessor is what a descriptor query, a
+  // `hasOwnProperty`, or a write on an escaped arguments object observes.)
+  if (isStrictFunction(decl, ctx.inferModuleStrictArguments)) {
+    seedStrictArgumentsCalleePoison(ctx, fctx, argsLocalIdx);
+    return;
+  }
   if (ctx.classSet.has(funcName)) return;
   const captures = ctx.nestedFuncCaptures.get(funcName);
   if (captures && captures.length > 0) return;
@@ -203,7 +209,10 @@ export function seedLiftedClosureArgumentsCallee(
   arrow: ts.FunctionLikeDeclaration,
   argsLocalIdx: number,
 ): void {
-  if (isStrictFunction(arrow, ctx.inferModuleStrictArguments)) return;
+  if (isStrictFunction(arrow, ctx.inferModuleStrictArguments)) {
+    seedStrictArgumentsCalleePoison(ctx, liftedFctx, argsLocalIdx); // (#4555) §10.6 step 14
+    return;
+  }
   const selfType = liftedFctx.params[0]?.type ?? null;
   if (selfType === null) return;
   seedArgumentsCallee(ctx, liftedFctx, argsLocalIdx, () => {

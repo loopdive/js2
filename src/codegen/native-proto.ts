@@ -362,6 +362,30 @@ export function nativeProtoSeedersByBrandOffset(ctx: CodegenContext): ReadonlyMa
 }
 
 /**
+ * Data-method keys whose builtin prototype companion is authoritative.
+ *
+ * A registered seeder installs these members as ordinary `$PropEntry` values,
+ * so later assignment or deletion must be observed from that table rather than
+ * from the immutable `$NativeProto.$memberCsv` / singleton-closure shortcuts.
+ * Accessors are deliberately absent because the current seeder does not install
+ * them; constructors have their own carrier and are not part of `memberCsv`.
+ */
+export function seededNativeProtoDataMembersByBrand(ctx: CodegenContext): ReadonlyMap<number, readonly string[]> {
+  const out = new Map<number, readonly string[]>();
+  for (const [brand, seederName] of nativeProtoSeederRegistry(ctx)) {
+    if (ctx.funcMap.get(seederName) === undefined) continue;
+    const glue = getNativeProtoBuiltinGlue(ctx, brand);
+    if (!glue) continue;
+    const members = glue.memberCsv
+      .split(",")
+      .map((member) => member.trim())
+      .filter((member) => member.length > 0 && !member.startsWith("@@") && glue.memberKind(member) === "method");
+    if (members.length > 0) out.set(brand, members);
+  }
+  return out;
+}
+
+/**
  * §17 attributes for a builtin prototype METHOD, in the
  * `__defineProperty_value` host flag encoding: `{writable: true, enumerable:
  * false, configurable: true}` — value bits `0b101` + all three "specified"

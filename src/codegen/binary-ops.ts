@@ -38,12 +38,14 @@ import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from ".
 import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { isLogicalAssignNamedEvalNameRead, resolveStructName, resolveStructNameForExpr } from "./property-access.js";
 import { compileNullishObservedExpression } from "./property-nullish-read.js";
+import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import {
   emitAnyEqFromExternTemps,
@@ -1645,27 +1647,22 @@ export function compileBinaryExpression(
     }
   }
 
-  // (#2059) Relational (`<`,`<=`,`>`,`>=`) where an operand is statically
-  // `any`/`unknown` (so it lowers to a dynamic externref that may hold a runtime
-  // string). §7.2.13 IsLessThan compares two strings lexicographically, but the
-  // numeric paths below ToNumber-coerce both sides — `Number("a")` is NaN, so
-  // `("a" as any) < ("b" as any)` wrongly yielded `false`. Route these through a
-  // runtime-dispatched compare BEFORE the f64 hint is applied.
+  // (#2059) Relational where an operand is statically `any`/`unknown`: §7.2.13
+  // compares two strings lexicographically, but the numeric paths below
+  // ToNumber both sides, so `("a" as any) < ("b" as any)` yielded `false`.
+  // Route to the runtime-dispatched compare before the f64 hint is applied.
   //
-  // CRITICAL (#1374 lesson): gate on **statically any/unknown** operands only,
-  // NOT on "any non-numeric TS type". The closed PR #1374 gated on
-  // `!isPrimNumericish` (both sides), which routed object/class relationals to
-  // the host comparator — host `<` then threw on opaque WasmGC structs (14
-  // runtime_error regressions). A concrete object/class operand is NOT
-  // any/unknown, so it keeps its existing relational path.
-  //
-  // Fast mode (`anyValueTypeIdx >= 0`) is excluded for the same reason as the
-  // `+` gate — the AnyValue helpers own that ABI. Per-site recovery is
-  // default-mode only.
-  if (isRelational && ctx.anyValueTypeIdx < 0) {
+  // Two arms, deliberately gated differently — see relational-to-primitive.ts:
+  //  - ANY arm: unchanged, including its `anyValueTypeIdx < 0` exclusion.
+  //  - OBJECT arm (§7.2.12): standalone only, and NOT subject to that exclusion
+  //    (the AnyValue helpers do not in fact own this shape). #1374's host
+  //    comparator hazard cannot recur there — no host operator is involved.
+  if (isRelational) {
     const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
     const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    if ((leftIsAnyish || rightIsAnyish) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
+    const anyArm = ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish);
+    const objArm = admitsObjectRelational(ctx, leftTsType, rightTsType);
+    if ((anyArm || objArm) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
       return emitAnyRelational(ctx, fctx, expr, op);
     }
   }
@@ -2050,10 +2047,9 @@ export function compileBinaryExpression(
     }
   }
 
-  if (!leftType || !rightType) return null;
+  if (!leftType || !rightType) return foldVoidOperandEquality(fctx, op, leftType, rightType, leftTsType, rightTsType);
 
-  // (#4208 S1) §7.2.16 step 1, then the i32↔f64 promotion — one helper, because
-  // the ORDER is the fix: promoting first erases Type() for a Boolean operand.
+  // (#4208 S1) §7.2.16 step 1 then the i32↔f64 promotion — ORDER is the fix.
   const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
   if (promoted.folded !== undefined) return promoted.folded;
   leftType = promoted.leftType;
@@ -2570,6 +2566,8 @@ export function emitAnyRelational(
   op: ts.SyntaxKind,
 ): ValType {
   const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
+  // Registered before the operands compile, so its setup cannot desync funcIdxs.
+  if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
@@ -2648,6 +2646,8 @@ export function emitAnyRelational(
   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     addUnionImports(ctx);
+    // §7.2.12 step 1 — the arm below must be chosen from the PRIMITIVES.
+    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp);
     const typeofStr = ctx.funcMap.get("__typeof_string");
     const unboxNum = ctx.funcMap.get("__unbox_number");
     const strCompare = ctx.nativeStrHelpers.get("__str_compare");

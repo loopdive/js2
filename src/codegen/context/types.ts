@@ -613,6 +613,7 @@ export interface FunctionContext {
   continueStack: number[];
   /** Map from label name to break/continue stack indices for labeled break/continue */
   labelMap: Map<string, { breakIdx: number; continueIdx: number }>;
+  evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
   /** Map from variable name → ref cell info (for mutable closure captures) */
