@@ -4,7 +4,7 @@ title: "Compiler-derived capability manifest and per-program explain workflow"
 status: backlog
 sprint: Backlog
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-20
 priority: high
 horizon: l
 feasibility: hard
@@ -15,7 +15,7 @@ language_feature: compiler-capabilities
 es_edition: multi
 goal: developer-experience
 depends_on: [3526, 3678]
-related: [1590, 2135, 2634, 3518, 3519, 3681]
+related: [1590, 2135, 2634, 3518, 3519, 3681, 4567]
 origin: "2026-08-12 compiler architecture and user-trust review"
 ---
 # #4382 — Compiler-derived capability manifest and per-program explain workflow
@@ -78,6 +78,23 @@ The report is deterministic, versioned, serializable, and embedded in or
 adjacent to the compile result. Backend emission may consume this frozen plan;
 it may not revise the public classification after artifacts have started.
 
+### Node API projection
+
+Project Node builtin decisions from “Make `node:*` builtin support
+member-explicit, provider-explicit, and fail-closed” (#4567); do not infer them
+from the broad recognized-module list or emitted import-name patterns. For each
+used `node:*` member, report:
+
+- canonical module and real export name;
+- source import form and location;
+- selected typed interface plus runtime provider, if any;
+- target-lane result and transitive host/WASI capabilities;
+- unsupported or unknown reason with the stable diagnostic and remediation.
+
+Namespace/default imports and dynamic member reads must retain unresolved
+members as visible `unknown` rows. A report cannot claim a whole module is
+supported merely because one export has a provider.
+
 ### Repository-wide projections
 
 Generate machine-readable release and website artifacts from the same registry.
@@ -121,6 +138,10 @@ document its replacement rather than breaking existing automation abruptly.
       decisions, providers, host capabilities, diagnostics, and provenance.
 - [ ] The report is derived from #2135/#3526 production decisions; no parallel
       support matrix or emitted-import name heuristic becomes authoritative.
+- [ ] Every used `node:*` member projects the module, member, import form,
+      provider, target availability, transitive capabilities, and precise
+      unsupported/unknown reason from “Make `node:*` builtin support
+      member-explicit, provider-explicit, and fail-closed” (#4567).
 - [ ] Focused fixtures cover host-free Wasm, declared host capability,
       runtime-evaluation provider, unsupported source, and deliberately
       unprojected/unknown source for every supported target mode.
