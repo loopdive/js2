@@ -517,4 +517,7 @@ streams, encoders, fetch types, files, and abort primitives). Node-owned
 `performance`, `queueMicrotask`, and `setImmediate` remain untouched because
 JSDOM's implementations delegate back to those globals and copying them would
 recurse. The setup test covers representative constructors and stream/fetch
-globals.
+globals. The host dependency resolver now also searches pnpm peer-dependency
+roots, so ReactDOM's upstream `scheduler` and `scheduler/unstable_mock`
+imports resolve to the installed package even though the workspace root does
+not expose a direct symlink.

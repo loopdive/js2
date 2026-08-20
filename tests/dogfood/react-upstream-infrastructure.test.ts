@@ -30,6 +30,7 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.internalTestUtils?.act).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
+      expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");
       expect(globalThis.HTMLAnchorElement).toBeTypeOf("function");
       expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
       expect(globalThis.HTMLImageElement).toBeTypeOf("function");

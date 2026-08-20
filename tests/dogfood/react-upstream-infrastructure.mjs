@@ -1,7 +1,25 @@
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { format } from "node:util";
 
 const require = createRequire(import.meta.url);
+
+function peerPackageRoots() {
+  const roots = [];
+  for (const packageName of ["react-dom", "react-test-renderer"]) {
+    try {
+      // pnpm keeps peer dependencies next to the package that declares them,
+      // even when the workspace root does not expose a direct symlink.
+      roots.push(dirname(dirname(require.resolve(packageName))));
+    } catch {
+      // The package may not be installed in a lightweight runner; the normal
+      // require path below remains the only candidate in that case.
+    }
+  }
+  return roots;
+}
+
+const PEER_PACKAGE_ROOTS = peerPackageRoots();
 
 const PROP_TYPE_NAMES = [
   "array",
@@ -29,6 +47,13 @@ function readModule(name) {
   try {
     return require(name);
   } catch {
+    for (const root of PEER_PACKAGE_ROOTS) {
+      try {
+        return require(join(root, name));
+      } catch {
+        // Try the next package peer root.
+      }
+    }
     return null;
   }
 }
