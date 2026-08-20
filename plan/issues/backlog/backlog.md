@@ -2,6 +2,45 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-08-20 — Node API compatibility and provider hardening
+
+- [#4567](../4567-node-builtins-provider-explicit-fail-closed.md) — replace the
+  gap between recognized `node:*` modules and runnable members with one
+  provider-explicit registry; unavailable and unknown members fail before
+  emission instead of becoming null, empty, or undefined placeholders.
+- [#4568](../4568-node-path-posix-win32-provider-parity.md) — complete POSIX and
+  Win32 path semantics through a portable `node:path` provider, including
+  namespace objects, parse/format, target policy, and an explicit cwd
+  dependency.
+- [#4569](../4569-node-crypto-secure-provider-only.md) — remove insecure
+  randomness degradation and require Node crypto, Web Crypto, WASI
+  `random_get`, or another explicitly injected secure provider.
+- [#4570](../4570-node-fs-shared-validation-error-contract.md) — centralize the
+  observable filesystem contract so JS-host and WASI providers agree on
+  validation, first-error ordering, stable error fields, and async settlement.
+- [#4571](../4571-wasi-preopen-node-fs-provider.md) — implement the bounded
+  path-based `node:fs`/`node:fs/promises` surface as a linkable WASI-preopen
+  provider without ambient access or implementation-specific import names.
+- [#4572](../4572-portable-node-utility-provider-tranche.md) — measure and
+  implement a portable utility tranche covering assert, querystring,
+  incremental string decoding, and a bounded pure `node:util` subset.
+- [#2512](../2512-node-host-apis-as-separate-linkable-wasm-modules.md) — make
+  standard `node:<module>`/real-member imports the stable interface and link
+  only the provider families proven used by prepared IR.
+- [#4419](../4419-compilefiles-drops-node-builtin-bindings.md) — restore the
+  missing `compileFiles` binding path first and test every import shape/compiler
+  entry point against both supported and unavailable members.
+
+“Compiler-derived capability manifest and per-program explain workflow” (#4382)
+and “Differential whole-program target matrix” (#3681) gain
+Node-member/provider projections and contract fixtures; they remain indexed in
+the architecture section below. Recommended order: the `compileFiles` binding
+repair (#4419), provider-explicit registry (#4567), secure crypto provider
+(#4569), shared filesystem contract (#4570), link-on-demand module interface
+(#2512), then path/WASI-filesystem/utility providers (#4568/#4571/#4572).
+Networking and stream expansion stays deferred until the shared async scheduler
+has an explicit, measured callback-order contract.
+
 ## 2026-08-12 — Compiler capability, diagnostics, and portability hardening
 
 - [#3518](../3518-ir-only-default-and-direct-frontend-retirement.md) and
