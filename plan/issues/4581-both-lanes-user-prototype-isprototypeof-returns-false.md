@@ -1,10 +1,11 @@
 ---
 id: 4581
 title: "BOTH LANES — silent wrong answer: `A.prototype.isPrototypeOf(a)` returns `false` for `a = new A()`, while `Object.getPrototypeOf(a) === A.prototype` is `true`"
-status: ready
+status: wont-fix
 sprint: current
 created: 2026-08-20
 updated: 2026-08-20
+completed: 2026-08-20
 priority: high
 horizon: m
 feasibility: medium
@@ -19,6 +20,23 @@ origin: "2026-08-20, ES5 standalone push follow-up, while investigating the Obje
 ---
 
 # #4581 — `A.prototype.isPrototypeOf(a)` answers `false`
+
+> **RETIRED as a duplicate of #4480 R4 (2026-08-20).** This shape is already
+> documented there, with the same instrumented measurement
+> (`struct=108 resolve=undefined` vs `struct=17 resolve=F`), and the `ref.test`
+> arm for it was written, **measured unreachable, and removed rather than
+> shipped as dead code**. The blocker is the #2660 escape gate, not the walk.
+>
+> Filing this at all was my miss — the mechanism is documented *in the source*,
+> in a 15-line comment at the exact call site (`native-is-prototype-of.ts`,
+> "(#4480 S2, NOT taken)"), which I should have read before opening an issue.
+>
+> **One finding here is NOT covered by R4 and has been carried across to #4480:**
+> this reproduces on the **js-host lane** too, and R4 is framed as a standalone
+> substrate/escape-gate problem. See the note appended to #4480.
+
+---
+
 
 ## Silent wrong answer, in BOTH lanes
 
