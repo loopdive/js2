@@ -1,7 +1,7 @@
 ---
 id: 4504
 title: "Standalone: inherited [[Set]] nearest-descriptor walk across objects and native companions"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-15
 updated: 2026-08-20
@@ -493,3 +493,46 @@ unconditional sloppy throw. Final gates:
 - Rows 4-408 and 4-589 are real failures but different defects; including either
   in the #4504 denominator would hide whether the inherited descriptor decision
   itself is correct.
+
+## Final implementation and evidence (2026-08-20)
+
+Implemented the inherited `[[Set]]` decision at the shared standalone runtime
+boundary. Ordinary objects, fnctors, native companions, and carrier sidecars now
+share one nearest-descriptor decision with distinct `MISS`, `ALLOW_OWN`,
+`HANDLED`, and `REFUSED` outcomes. Sloppy assignment, strict assignment, and
+`Reflect.set` consume that result without replaying setters. Both legacy and IR
+producers continue to lower symbolically through the same runtime helpers; no
+Test262 call-site workaround or parallel IR descriptor algorithm was added.
+
+The implementation is commits `03800c09703215` and `4006a1706563f4`, based on
+and merged with `origin/main` compiler `12c93a7ba49755e8a203c61afa66c918a690894f`.
+The fixed Test262 checkout was
+`b363f29d3c43c626dc852744ad64a0b48a003693`.
+
+The clean-main full official standalone control covered all **43,621** rows and
+classified the fixed **9,029-test ES5 population** as **8,621 pass / 385 fail /
+23 compile error / 0 skip**. Compiler `4006a1706563f4` then ran those exact
+9,029 paths: **8,631 pass / 375 fail / 23 compile error / 0 skip**. This is a
+measured **+10 ES5 passes**, with **zero pass-to-non-pass**, timeout, or other
+population-noise changes.
+
+The ten improvements are the nine planned rows — `15.2.3.6-4-410`,
+`15.2.3.6-4-415`, `15.2.3.6-4-579`, `15.2.3.6-4-581`, `15.2.3.6-4-584`,
+`15.2.3.6-4-586`, `15.2.3.6-4-594`, `15.2.3.6-4-596`, and `8.14.4-8-b_1` —
+plus the adjacent strict sibling `8.14.4-8-b_2`.
+
+Additional gates:
+
+- focused #4504 suite: **36/36**;
+- #4504 plus #3251 strict/sloppy related suites: **57/57**;
+- TypeScript 7 and TypeScript 5 typechecks: pass;
+- conditional-emission oracle: **IDENTICAL 60/60** (36 successful emissions,
+  24 expected compile errors);
+- broad carrier same-population A/B: no attributable regressions;
+- formatting, repository budgets, oracle ratchet, and commit hooks: pass.
+
+The two diagnostic exclusions remain deliberately open under their existing
+owners: `15.2.3.6-4-408` is Date expando/own-view visibility in #4491, and
+`15.2.3.6-4-589` is accessor result-carrier widening in #4515. Neither is an
+inherited-descriptor-decision failure, and neither was counted in #4504's
+acceptance denominator.
