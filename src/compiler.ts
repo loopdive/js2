@@ -1113,7 +1113,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link);
+  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",

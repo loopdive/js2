@@ -15,6 +15,7 @@ import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
 
 export interface PreparedIrAsyncFrameResolver {
   resolveFunc(ref: IrFuncRef): number;
+  callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
 }
 
 function preparedHostImports(fn: IrFunction, resolver: PreparedIrAsyncFrameResolver): HostAsyncImports {
@@ -237,6 +238,12 @@ function preparedCfg(
         case "call": {
           for (const arg of instr.args) emitGet(fctx, Number(arg));
           fctx.body.push({ op: "call", funcIdx: resolver.resolveFunc(instr.target) });
+          if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+            if (ctx.anyStrTypeIdx < 0) {
+              throw new Error(`IR async frame ${fn.name} lost its native string carrier`);
+            }
+            fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+          }
           if (instr.result !== null) {
             if (instr.resultType === null) throw new Error(`IR async frame ${fn.name} has an untyped call result`);
             fctx.body.push({ op: "local.set", index: localOf(fctx, Number(instr.result)) });

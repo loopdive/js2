@@ -84,7 +84,7 @@ import {
   irUnitFuncRef,
   sameIrCallableBinding,
 } from "./callable-bindings.js";
-import { IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
+import { IR_NUMBER_TO_FIXED_FN, IR_NUMBER_TO_STRING_FN } from "./string-runtime.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
 import { collectOuterWrites } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
@@ -145,10 +145,12 @@ import {
   binaryOpCapability,
   collectStringLiteralLens,
   consoleSurfaceCapability,
+  domSurfaceCapability,
   hostExternCapability,
   prefixOpCapability,
   stringIndexProvenBelow,
 } from "./capability.js";
+import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
@@ -454,6 +456,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   nativeNumberToStringAvailable?(): boolean;
   /**
+   * Does this lane own a host-free `Number::toFixed` provider whose result is
+   * already the IR string carrier? The bounded literal-digits lowering asks
+   * this separately from the host import capability so host behavior remains
+   * byte-for-byte unchanged.
+   */
+  nativeNumberToFixedAvailable?(): boolean;
+  /**
    * (#4462) Does this lane have the host-free console sink (#3469's
    * `__stdout_append`)? Consulted by the console capability row
    * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
@@ -558,6 +567,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   jsHostExterns?(): boolean;
   /**
+   * #4576 — exact source-node authorization for the standalone dom@1
+   * provider. Absence never falls back to a name/type guess.
+   */
+  standaloneDomOperation?(node: ts.Node): IrStandaloneDomOperation | undefined;
+  /**
    * (#4461) The host-free `Map` carrier. Returns the lane's native `$Map`
    * module-binding storage type (`(ref null $Map)` as an IR `val`) when this
    * compile lowers `Map` to the WasmGC struct (#1103a), and `undefined` on the
@@ -622,8 +636,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#2955 slice 2) The ENTIRE string-prototype-method mode decision for
    * `lowerStringMethodCall`, resolved on the lower-time side (the resolver is
    * owned by integration/lower) so from-ast reads no `nativeStrings` at this
-   * site. Given the method name and the call-site arg count (user args,
-   * receiver excluded), returns:
+   * site. Given the method name, call-site arg count (user args, receiver
+   * excluded), and conservative producer-side receiver encoding, returns:
    *   - `null` — this mode cannot lower the call (native-mode
    *     indexOf/includes/startsWith/endsWith, native-mode omitted optionals
    *     other than `slice(start)`, or no resolver at all) → from-ast returns
@@ -651,10 +665,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   stringMethodPlan?(
     method: string,
     argCount: number,
+    receiverEncoding: Encoding | undefined,
   ): {
     funcName: string;
     indexArgRep: "f64" | "i32";
-    padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero";
+    padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero" | "search-zero";
+    /** Native indexOf returns i32 while JavaScript's numeric carrier is f64. */
+    resultRep?: "i32-number";
   } | null;
   /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
@@ -4084,10 +4101,22 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     if (!p) {
       const moduleBinding = cx.resolver?.resolveModuleBinding?.(expr);
       if (moduleBinding) return lowerResolvedModuleBindingRead(expr.text, moduleBinding, cx);
+      const standaloneDomGlobal = cx.resolver?.standaloneDomOperation?.(expr);
       const hg = cx.resolver?.getHostGlobalInfo?.(expr.text);
+      if (standaloneDomGlobal?.kind === "global-get" && !hg) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: certified DOM global ${expr.text} has no prepared import (${cx.funcName})`,
+        );
+      }
       if (hg) {
+        const exactStandaloneDomGlobal =
+          standaloneDomGlobal?.kind === "global-get" &&
+          standaloneDomGlobal.identifier === expr &&
+          standaloneDomGlobal.importName === hg.importName;
         assertNotDeferred(
-          hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
+          domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomGlobal),
           `host global "${expr.text}"`,
           cx.funcName,
         );
@@ -5131,8 +5160,22 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     // (`document.body.appendChild(...)`, `e.style.cssText = ...`) keeps
     // dispatching through the extern arms.
     const className = recvType.className;
+    const standaloneDomRead = cx.resolver?.standaloneDomOperation?.(expr);
+    const exactStandaloneDomRead = standaloneDomRead?.kind === "member-get" && standaloneDomRead.access === expr;
+    assertNotDeferred(
+      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomRead),
+      `extern property read .${propName}`,
+      cx.funcName,
+    );
     const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property", expr);
     if (resolved?.property) {
+      if (exactStandaloneDomRead && `${resolved.importPrefix}_get_${propName}` !== standaloneDomRead.importName) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: certified DOM property read resolved to the wrong import (${cx.funcName})`,
+        );
+      }
       const resultType: IrType = resolved.resultClassName
         ? { kind: "extern", className: resolved.resultClassName }
         : irVal(resolved.property.type);
@@ -6742,7 +6785,13 @@ function emitDefaultExternArg(cx: LowerCtx, expected: ValType): IrValueId {
   }
 }
 
-function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCtx, where: string): IrValueId {
+function coerceToExpectedExtern(
+  value: IrValueId,
+  expected: ValType,
+  cx: LowerCtx,
+  where: string,
+  boundary?: "native-string" | "dom-handle",
+): IrValueId {
   const t = cx.builder.typeOf(value);
   // Same-kind val match (e.g. f64 → f64).
   const got = asVal(t);
@@ -6762,6 +6811,13 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
   // no resolver → host-shaped → pass-through.)
   if (expected.kind === "externref" && t.kind === "string" && cx.resolver?.stringIsExternref?.() !== false) {
     return value;
+  }
+  // #4576 — the authenticated dom@1 adapter is the sole host boundary that
+  // accepts the native `$AnyString` carrier. The Wasm import still receives an
+  // externref, but the lifecycle-pinned adapter decodes it through the narrow
+  // readout pair before touching the DOM. No other host call may opt into this.
+  if (expected.kind === "externref" && t.kind === "string" && boundary === "native-string") {
+    return cx.builder.emitCoerceToExternref(value);
   }
   // extern → externref: extern values are externref-shaped.
   if (expected.kind === "externref" && t.kind === "extern") {
@@ -7747,6 +7803,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return r;
   }
 
+  // #4576 — native-string lanes expose the same bounded literal-digits slice
+  // through a symbolic provider. Its thunk adapts the formatter's historical
+  // externref ABI to `(ref $AnyString)`; the existing host arm above remains a
+  // direct env import and is intentionally unchanged.
+  if (
+    methodName === "toFixed" &&
+    expr.arguments.length === 1 &&
+    ts.isNumericLiteral(expr.arguments[0]!) &&
+    recvType.kind === "val" &&
+    recvType.val.kind === "f64" &&
+    cx.resolver?.nativeNumberToFixedAvailable?.() === true
+  ) {
+    const digits = Number(expr.arguments[0]!.text.replace(/_/g, ""));
+    if (!Number.isInteger(digits) || digits < 0 || digits > 100) {
+      demoteToLegacy(
+        "method-call-unsupported",
+        `ir/from-ast: number.toFixed digits not a bounded integer literal (${cx.funcName})`,
+      );
+    }
+    const digitValue = cx.builder.emitConst({ kind: "f64", value: digits }, irVal({ kind: "f64" }));
+    const r = cx.builder.emitCall(irIntrinsicFuncRef(IR_NUMBER_TO_FIXED_FN), [recv, digitValue], { kind: "string" });
+    if (r === null) throw new Error(`ir/from-ast: ${IR_NUMBER_TO_FIXED_FN} produced no result in ${cx.funcName}`);
+    return r;
+  }
+
   // Slice 13c (#1232) — String prototype method dispatch. When the receiver
   // is `IrType.string`, look up the method in the synthetic String pseudo-
   // extern registry (#1238) and dispatch to either the native helper
@@ -7784,6 +7865,13 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // chained access dispatches), and (c) statement-position void calls
   // (`host.appendChild(box);`) — expression position keeps throwing on void.
   if (recvType.kind === "extern") {
+    const standaloneDomCall = cx.resolver?.standaloneDomOperation?.(expr);
+    const exactStandaloneDomCall = standaloneDomCall?.kind === "member-call" && standaloneDomCall.call === expr;
+    assertNotDeferred(
+      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomCall),
+      `extern method call .${methodName}`,
+      cx.funcName,
+    );
     const className = recvType.className;
     const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
     const flatInfo = cx.resolver?.getExternClassInfo?.(className);
@@ -7795,6 +7883,13 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       );
     }
     const definingClass = chained?.importPrefix ?? flatInfo?.importPrefix ?? className;
+    if (exactStandaloneDomCall && `${definingClass}_${methodName}` !== standaloneDomCall.importName) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified DOM method call resolved to the wrong import (${cx.funcName})`,
+      );
+    }
     // params[0] is the receiver — userParams = params.slice(1).
     const userParams = method.params.slice(1);
     if (expr.arguments.length > userParams.length) {
@@ -7840,7 +7935,15 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         continue;
       }
       const argVal = lowerExpr(argument, cx, irVal(expected));
-      args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${definingClass}.${methodName}`));
+      args.push(
+        coerceToExpectedExtern(
+          argVal,
+          expected,
+          cx,
+          `arg ${i} of ${definingClass}.${methodName}`,
+          exactStandaloneDomCall ? standaloneDomCall.argumentBoundaries[i] : undefined,
+        ),
+      );
     }
     // (#2856) Pad missing OPTIONAL args with default sentinels: the host
     // import's Wasm signature has FIXED arity = the registered params
@@ -8123,17 +8226,19 @@ function lowerStringMethodCall(
   // explicit even though this deliberately narrow proof admits only effect-
   // free literal/const chains. A second position argument stays on the normal
   // runtime path.
-  if (methodName === "includes" && args.length === 1 && cx.checker) {
+  if ((methodName === "includes" || methodName === "indexOf") && args.length === 1 && cx.checker) {
     const receiverValue = immutableLiteralStringValue(receiverExpr, cx.checker);
     const searchValue = immutableLiteralStringValue(args[0]!, cx.checker);
     if (receiverValue !== undefined && searchValue !== undefined) {
       lowerExpr(args[0]!, cx, { kind: "string" });
-      return cx.builder.emitConst({ kind: "bool", value: receiverValue.includes(searchValue) }, irVal({ kind: "i32" }));
+      return methodName === "includes"
+        ? cx.builder.emitConst({ kind: "bool", value: receiverValue.includes(searchValue) }, irVal({ kind: "i32" }))
+        : cx.builder.emitConst({ kind: "f64", value: receiverValue.indexOf(searchValue) }, irVal({ kind: "f64" }));
     }
   }
 
+  const receiverEncoding = inferStringEncoding(receiverExpr, cx);
   if (methodName === "charAt" || methodName === "charCodeAt") {
-    const receiverEncoding = inferStringEncoding(receiverExpr, cx);
     const receiverEvidence = typedValueEvidence(receiverExpr, cx.builder.typeOf(recv), receiverEncoding, cx);
     // Without encoding evidence, preserve the established helper-call path
     // below. Internal stdlib string parameters intentionally have no source
@@ -8181,7 +8286,7 @@ function lowerStringMethodCall(
   // decision (native indexOf/includes/startsWith/endsWith per #2002, native
   // omitted optionals other than slice(start), or a resolver without the
   // callback) — return null so the caller's clean throw demotes to legacy.
-  const plan = cx.resolver?.stringMethodPlan?.(methodName, args.length) ?? null;
+  const plan = cx.resolver?.stringMethodPlan?.(methodName, args.length, receiverEncoding) ?? null;
   if (plan === null) return null;
   const funcName = plan.funcName;
 
@@ -8236,6 +8341,12 @@ function lowerStringMethodCall(
   // implicit `end` arg.
   for (let i = args.length; i < sig.hostArgs.length; i++) {
     const expectedHost = sig.hostArgs[i]!;
+    // #4576 — native indexOf/includes helpers take an explicit i32 position;
+    // their one-argument JS surface defaults that omitted position to zero.
+    if (plan.padOmitted === "search-zero") {
+      loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
+      continue;
+    }
     // (#3156) charCodeAt() — omitted position is position 0 (§22.1.3.3
     // ToIntegerOrInfinity(undefined) = 0). The guarded helpers take an i32
     // index in both modes, so the pad is an i32 zero.
@@ -8293,12 +8404,13 @@ function lowerStringMethodCall(
     }
   }
 
-  const r = cx.builder.emitCall(irIntrinsicFuncRef(funcName), loweredArgs, sig.result);
+  const callResultType = plan.resultRep === "i32-number" ? irVal({ kind: "i32" }) : sig.result;
+  const r = cx.builder.emitCall(irIntrinsicFuncRef(funcName), loweredArgs, callResultType);
   if (r === null) {
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
-  return r;
+  return plan.resultRep === "i32-number" ? cx.builder.emitUnary("f64.convert_i32_s", r, irVal({ kind: "f64" })) : r;
 }
 
 function immutableLiteralStringValue(
@@ -8415,8 +8527,13 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   // args do. Readonly properties never resolve as writable in the lib, so
   // TS source that assigns them failed checking before reaching us.
   if (recvType.kind === "extern") {
+    const standaloneDomSet = cx.resolver?.standaloneDomOperation?.(expr) ?? cx.resolver?.standaloneDomOperation?.(lhs);
+    const exactStandaloneDomSet =
+      standaloneDomSet?.kind === "member-set" &&
+      standaloneDomSet.assignment === expr &&
+      standaloneDomSet.access === lhs;
     assertNotDeferred(
-      hostExternCapability(cx.resolver?.jsHostExterns?.() !== false),
+      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomSet),
       `extern property write .${fieldName}`,
       cx.funcName,
     );
@@ -8427,8 +8544,21 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
         `ir/from-ast: extern class ${recvType.className} has no property "${fieldName}" in ${cx.funcName}`,
       );
     }
+    if (exactStandaloneDomSet && `${resolved.importPrefix}_set_${fieldName}` !== standaloneDomSet.importName) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: certified DOM property write resolved to the wrong import (${cx.funcName})`,
+      );
+    }
     const newValue = lowerExpr(expr.right, cx, irVal(resolved.property.type));
-    const coerced = coerceToExpectedExtern(newValue, resolved.property.type, cx, `value of .${fieldName}`);
+    const coerced = coerceToExpectedExtern(
+      newValue,
+      resolved.property.type,
+      cx,
+      `value of .${fieldName}`,
+      exactStandaloneDomSet ? standaloneDomSet.valueBoundary : undefined,
+    );
     cx.builder.emitExternPropSet(resolved.importPrefix, fieldName, recv, coerced);
     return;
   }

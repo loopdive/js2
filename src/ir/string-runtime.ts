@@ -37,6 +37,12 @@ export const IR_STRING_LITERAL_MATERIALIZE_FN = "__ir_string_literal_materialize
  * emits this call and the resolver picks the provider.
  */
 export const IR_NUMBER_TO_STRING_FN = "__ir_number_to_string";
+/**
+ * Bounded `Number::toFixed(value, fractionDigits)` as a backend-neutral
+ * callable intent. The native provider adapts the formatter's historical
+ * `externref` result back to the lane's `(ref $AnyString)` carrier.
+ */
+export const IR_NUMBER_TO_FIXED_FN = "__ir_number_to_fixed";
 
 export function irStringConcatManySymbol(arity: number): string {
   if (!Number.isInteger(arity) || arity < 3) {

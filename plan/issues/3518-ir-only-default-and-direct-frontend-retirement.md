@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-11
+updated: 2026-08-20
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -18,7 +18,7 @@ complexity: XL
 es_edition: n/a
 lane: ir-retirement
 model: gpt-5.6-sol
-related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382]
+related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 loc-budget-allow:
   # +2: one import plus one call, wiring the new
@@ -553,3 +553,28 @@ overrides on body shape (`functionReturnsDynamicObjectCarrier`, now handed in
 as explicit evidence rather than re-derived). The last one was a live hole for
 the already-certified `number`/`boolean` returns, not something the `string`
 extension introduced.
+
+### Completed checkpoint: standalone Builtins DOM projection (2026-08-20)
+
+#4576 advances the authoritative standalone lane from **27 → 31 of 37 IR
+bodies** and from **10 → 6 legacy/typed Unsupported bodies**, with **0
+Invariants**. The four newly prepared owners are Builtins `el`, `crd`, `rw`,
+and `main`. `select/host-surface-unavailable` falls **4 → 2** and
+`select/call-graph-closure` falls **3 → 1**; the remaining six outcomes are
+exactly Calendar: two host-surface, two body-shape, one call-graph, and one
+Date-constructor blocker. The single-host lane remains **37/37 IR**.
+
+The family is admitted only with the exact `dom@1` embedder contract: eight
+signature-checked imports, one authenticated subtree root, and an explicit
+native-string boundary. The focused **14/14** Builtins suite proves the
+**81-element/24-value** DOM oracle, direct-body poison, conservative near
+misses, and tamper/authority failures. The optimized artifact is smaller than
+the direct control in raw, gzip, compiler-WAT, function-body WAT, local, and
+call counts while retaining 124 functions and the same eight imports. Literal
+CSS, batched concat, immutable string-search, constant bitwise, proven-ASCII
+case, and native number-format carrier optimizations are all pinned.
+
+The frozen runtime A/B establishes parity within noise, and the complete
+publication gate matrix is green. This closes the Builtins checkpoint, not the
+R9 epic: Calendar's atomic six-unit retirement remains the next standalone
+census step.
