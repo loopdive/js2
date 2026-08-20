@@ -425,6 +425,13 @@ function __js2ReactInfra() {
   return value;
 }
 
+function __js2PrepareReactValue(value) {
+  var infra = __js2ReactInfra();
+  return infra.prepareReactValues && typeof infra.prepareReactValue === "function"
+    ? infra.prepareReactValue(value)
+    : value;
+}
+
 function __js2NodeStreamFacade() {
   return {
     PassThrough: function () {
@@ -435,8 +442,17 @@ function __js2NodeStreamFacade() {
 
 function __js2WrapRoot(hostRoot) {
   return {
-    render: function (value) { return hostRoot.render(value); },
+    render: function (value) { return hostRoot.render(__js2PrepareReactValue(value)); },
     unmount: function () { return hostRoot.unmount(); },
+  };
+}
+
+function __js2WrapNoopRoot(hostRoot) {
+  return {
+    render: function (value) { return hostRoot.render(__js2PrepareReactValue(value)); },
+    unmount: function () { return hostRoot.unmount(); },
+    getChildren: function () { return hostRoot.getChildren(); },
+    getChildrenAsJSX: function () { return hostRoot.getChildrenAsJSX(); },
   };
 }
 
@@ -462,7 +478,7 @@ var __js2ReactDOMClient = {
 
 var __js2ReactDOM = {
   createPortal: function (children, container, key) {
-    return __js2ReactInfra().reactDom.createPortal(children, container, key);
+    return __js2ReactInfra().reactDom.createPortal(__js2PrepareReactValue(children), container, key);
   },
   flushSync: function (callback) {
     return __js2ReactInfra().reactDom.flushSync(callback);
@@ -473,7 +489,7 @@ var __js2ReactDOM = {
   },
   render: function (value, container, callback) {
     var root = __js2ReactInfra().reactDomClient.createRoot(container);
-    root.render(value);
+    root.render(__js2PrepareReactValue(value));
     if (typeof callback === "function") callback();
     return null;
   },
@@ -517,19 +533,24 @@ var __js2ReactDOM = {
 
 var __js2ReactDOMServer = {
   renderToString: function (value, options) {
-    return __js2ReactInfra().reactDomServer.renderToString(value, options);
+    return __js2ReactInfra().reactDomServer.renderToString(__js2PrepareReactValue(value), options);
   },
   renderToStaticMarkup: function (value, options) {
-    return __js2ReactInfra().reactDomServer.renderToStaticMarkup(value, options);
+    return __js2ReactInfra().reactDomServer.renderToStaticMarkup(__js2PrepareReactValue(value), options);
   },
   renderToReadableStream: function (value, options) {
-    return __js2ReactInfra().reactDomServer.renderToReadableStream(value, options);
+    return __js2ReactInfra().reactDomServer.renderToReadableStream(__js2PrepareReactValue(value), options);
   },
 };
 
 var __js2ReactTestRenderer = {
   create: function (value, options) {
-    return __js2WrapRenderer(__js2ReactInfra().reactTestRenderer.create(value, options));
+    var renderer;
+    var prepared = __js2PrepareReactValue(value);
+    var create = function () { renderer = __js2ReactInfra().reactTestRenderer.create(prepared, options); };
+    if (typeof __js2ReactInfra().reactTestRenderer.act === "function") __js2ReactInfra().reactTestRenderer.act(create);
+    else create();
+    return __js2WrapRenderer(renderer);
   },
   act: function (callback) {
     return __js2ReactInfra().reactTestRenderer.act(callback);
@@ -538,16 +559,35 @@ var __js2ReactTestRenderer = {
 
 var __js2ReactNoop = {
   render: function (value) {
-    var renderer = __js2ReactInfra().reactTestRenderer.create(value);
-    return __js2WrapRenderer(renderer);
+    var noop = __js2ReactInfra().reactNoop;
+    if (!noop || typeof noop.render !== "function") throw new Error("React upstream noop renderer infrastructure is unavailable");
+    return __js2WrapRenderer(noop.render(__js2PrepareReactValue(value)));
   },
-  flush: function () {},
+  createRoot: function () {
+    var noop = __js2ReactInfra().reactNoop;
+    if (!noop || typeof noop.createRoot !== "function") throw new Error("React upstream noop renderer infrastructure is unavailable");
+    return __js2WrapNoopRoot(noop.createRoot());
+  },
+  flush: function () {
+    var noop = __js2ReactInfra().reactNoop;
+    return typeof noop.flush === "function" ? noop.flush() : undefined;
+  },
   flushSync: function (callback) {
-    return __js2ReactInfra().reactTestRenderer.act(callback);
+    var noop = __js2ReactInfra().reactNoop;
+    return typeof noop.flushSync === "function" ? noop.flushSync(callback) : callback();
   },
-  getChildren: function () { return []; },
-  getChildrenAsJSX: function () { return null; },
-  clear: function () {},
+  getChildren: function () {
+    var noop = __js2ReactInfra().reactNoop;
+    return typeof noop.getChildren === "function" ? noop.getChildren() : [];
+  },
+  getChildrenAsJSX: function () {
+    var noop = __js2ReactInfra().reactNoop;
+    return typeof noop.getChildrenAsJSX === "function" ? noop.getChildrenAsJSX() : null;
+  },
+  clear: function () {
+    var noop = __js2ReactInfra().reactNoop;
+    if (typeof noop.clear === "function") noop.clear();
+  },
 };
 
 var __js2PropTypes = {};
@@ -568,8 +608,8 @@ for (var __js2PropTypeIndex = 0; __js2PropTypeIndex < __js2PropTypeNames.length;
 
 var __js2InternalTestUtils = {
   act: function (callback) {
-    var renderer = __js2ReactInfra().reactTestRenderer;
-    if (renderer && typeof renderer.act === "function") return renderer.act(callback);
+    var utils = __js2ReactInfra().internalTestUtils;
+    if (utils && typeof utils.act === "function") return utils.act(callback);
     var result = callback();
     return result && typeof result.then === "function" ? result : Promise.resolve(result);
   },
@@ -578,6 +618,8 @@ var __js2InternalTestUtils = {
   // server callback and await its promise; routing it through
   // react-test-renderer.act would add an unrelated renderer dependency.
   serverAct: function (callback) {
+    var utils = __js2ReactInfra().internalTestUtils;
+    if (utils && typeof utils.serverAct === "function") return utils.serverAct(callback);
     var result = callback();
     return result && typeof result.then === "function" ? result : Promise.resolve(result);
   },
@@ -598,11 +640,23 @@ function __js2AssertConsole(kind, expected) {
     if (actual.length !== 0) throw new Error("unexpected console output: " + actual.join("\\n"));
     return;
   }
+  function matches(entry, wanted) {
+    var parts = String(wanted).split("**");
+    var cursor = entry.indexOf(parts[0]);
+    if (cursor < 0) return false;
+    cursor += parts[0].length;
+    for (var index = 1; index < parts.length; index++) {
+      var next = entry.indexOf(parts[index], cursor);
+      if (next < 0) return false;
+      cursor = next + parts[index].length;
+    }
+    return true;
+  }
   for (var i = 0; i < wanted.length; i++) {
     var text = String(wanted[i]);
     var found = false;
     for (var j = 0; j < actual.length; j++) {
-      if (actual[j].indexOf(text.replace(/\\*\\*/g, "")) >= 0) { found = true; break; }
+      if (matches(actual[j], text)) { found = true; break; }
     }
     if (!found) throw new Error("expected console " + kind + " output: " + text);
   }
@@ -684,12 +738,21 @@ function __js2RequireActual(name) {
   }
   if (name === "react-native-renderer") {
     __js2CheckReactVersion("react-native-renderer");
-    return __js2ReactInfra().require(name);
+    var nativeRenderer = __js2ReactInfra().reactNativeRenderer;
+    if (nativeRenderer === null || nativeRenderer === undefined)
+      throw new Error("React upstream native renderer infrastructure is unavailable");
+    return nativeRenderer;
   }
   if (name === "react-test-renderer") return __js2ReactTestRenderer;
   if (name === "react-noop-renderer") return __js2ReactNoop;
+  // These entries are internal React-monorepo test dependencies rather than
+  // published package graphs. Keep their host carriers explicit so an
+  // upstream test reaches its assertion instead of failing at module lookup.
+  if (name === "react/jsx-runtime") return __js2ReactInfra().reactJsxRuntime;
+  if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
   if (name === "prop-types") return __js2PropTypes;
+  if (name === "create-react-class") return __js2ReactInfra().createReactClass;
   if (name === "create-react-class/factory") return function () {
     var factory = __js2ReactInfra().createReactClass;
     if (typeof factory !== "function") throw new Error("create-react-class test infrastructure is unavailable");

@@ -492,11 +492,15 @@ Both React harnesses install the same explicit jsdom browser-global set for
 their native oracle. `react-upstream-infrastructure.mjs` supplies the
 cross-package host half required by the original tests: ReactDOM client/server,
 the test renderer and noop renderer, `prop-types`, `create-react-class`, web
-streams, Jest spies/mocks, and `internal-test-utils` assertions. ReactDOM and
-the renderer are loaded with the exact pinned React object, so hooks do not see
-a second peer instance. The setup also unrefs scheduler `MessagePort`s and
-restores the CommonJS module cache during cleanup, so a finished suite exits
-cleanly.
+streams, Jest spies/mocks, and `internal-test-utils` assertions. The published
+ReactDOM/client/server and test-renderer entries are resolved with
+`NODE_ENV=production` and aliased to the exact pinned React object; this avoids
+the real dev-renderer/production-React peer mismatch that otherwise fails in
+React's internal `actQueue` path. Production test-renderer has no `act` or
+committed tree, so the noop adapter uses a jsdom ReactDOM root and
+`flushSync`, including a test-renderer-shaped JSON/ref view. The setup also
+unrefs scheduler `MessagePort`s and restores the CommonJS module cache during
+cleanup, so a finished suite exits cleanly.
 
 The test-only dependencies are pinned in `devDependencies`:
 `react-test-renderer`, `create-react-class`, `prop-types`, and
@@ -514,13 +518,17 @@ the native and Wasm lanes.
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
 
-Current exact result (2026-08-20): **79/122** natively scoreable upstream tests
+Current exact result (2026-08-20): **92/178** natively scoreable upstream tests
 pass against compiled Wasm. The harness admits and executes 272 of React's
-273 tests (one is upstream-skipped), reports 150 native-oracle-incompatible
-tests, and has zero compile-quarantined batches. The production
-`__DEV__ = false` constant is embedded in the shared native/Wasm source because
-that is the transform React itself applies to `react.production.js`; it does
-not precompute a test result.
+273 tests (one is upstream-skipped), reports 94 native-oracle-incompatible
+tests, and has zero compile-quarantined batches across 44 valid Wasm batches.
+The production `__DEV__ = false` constant is embedded in the shared native/Wasm
+source because that is the transform React itself applies to
+`react.production.js`; it does not precompute a test result. The remaining
+incompatible cases are recorded as infrastructure/behavior mismatches (mostly
+production warning expectations, renderer semantics, and compiled component
+closures crossing the Wasm/host boundary), not silently skipped package
+lookups.
 
 ### ReactDOM's platform lanes
 

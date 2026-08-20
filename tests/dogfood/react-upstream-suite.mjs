@@ -83,7 +83,7 @@ function withTimeout(value, timeoutMs, label) {
   return Promise.race([Promise.resolve(value), timeout]).finally(() => clearTimeout(timer));
 }
 
-async function runNative(tests, nativeReact, timeoutMs) {
+async function runNative(tests, nativeReact, timeoutMs, infrastructure) {
   try {
     // A few upstream tests intentionally require the published ReactDOM
     // package (for example Portal coverage).  Supplying Node's real resolver
@@ -91,7 +91,41 @@ async function runNative(tests, nativeReact, timeoutMs) {
     // still reports the same call as unavailable if the compiler cannot lower
     // it, rather than hiding the gap behind an oracle-build failure.
     const nativeRequire = createRequire(import.meta.url);
-    const runners = buildNativeRunners(tests)(nativeReact, nativeRequire);
+    const hostRequire = (name) => {
+      // These packages are React's monorepo-only test infrastructure and are
+      // intentionally absent from node_modules. Resolve them through the same
+      // explicit host surface used by the compiled lane so a native failure
+      // means the test or implementation disagrees, not that the oracle could
+      // not find a package that was never published.
+      if (name === "react") return nativeReact;
+      if (name === "react-dom") return infrastructure?.reactDom ?? nativeRequire(name);
+      if (name === "react-dom/client") return infrastructure?.reactDomClient ?? nativeRequire(name);
+      if (name === "react-dom/server") return infrastructure?.reactDomServer ?? nativeRequire(name);
+      if (name === "react-test-renderer") return infrastructure?.reactTestRenderer ?? nativeRequire(name);
+      if (name === "react-noop-renderer") {
+        if (!infrastructure?.reactNoop) throw new Error("React upstream noop renderer infrastructure is unavailable");
+        return infrastructure.reactNoop;
+      }
+      if (name === "react-native-renderer") {
+        if (!infrastructure?.reactNativeRenderer)
+          throw new Error("React upstream native renderer infrastructure is unavailable");
+        return infrastructure.reactNativeRenderer;
+      }
+      if (name === "internal-test-utils") {
+        if (!infrastructure?.internalTestUtils)
+          throw new Error("React upstream internal test utilities are unavailable");
+        return infrastructure.internalTestUtils;
+      }
+      if (name === "react/jsx-runtime") return infrastructure?.reactJsxRuntime ?? nativeRequire(name);
+      if (name === "react/jsx-dev-runtime") return infrastructure?.reactJsxDevRuntime ?? nativeRequire(name);
+      if (name === "create-react-class") return infrastructure?.createReactClass ?? nativeRequire(name);
+      if (name === "create-react-class/factory") {
+        const factory = nativeRequire("create-react-class/factory");
+        return factory;
+      }
+      return nativeRequire(name);
+    };
+    const runners = buildNativeRunners(tests)(nativeReact, hostRequire);
     const out = [];
     for (const test of tests) {
       let value;
@@ -344,8 +378,15 @@ export async function runHarness({
         `${validates ? "valid" : `INVALID — ${String(firstError).slice(0, 70)}`}`,
     );
 
+    // The native oracle receives the exact host React values it would see in
+    // Node.  Only the compiled call path may opt into reifying values that
+    // crossed the Wasm/host boundary.
+    hostInfrastructure.infrastructure.prepareReactValues = false;
     const nativeResults = new Map(
-      (await runNative(batchTests, nativeReact, testTimeoutMs)).map((entry) => [entry.id, entry]),
+      (await runNative(batchTests, nativeReact, testTimeoutMs, hostInfrastructure.infrastructure)).map((entry) => [
+        entry.id,
+        entry,
+      ]),
     );
     for (const test of batchTests) {
       runResults.set(test.id, { native: nativeResults.get(test.id) ?? {}, compiled, firstError });
@@ -405,12 +446,15 @@ export async function runHarness({
     }
     let value;
     try {
+      hostInfrastructure.infrastructure.prepareReactValues = true;
       value = await withTimeout(compiled[test.id](), testTimeoutMs, `compiled ${test.fullName}`);
     } catch (error) {
       entry.status = "trapped";
       entry.compiledMessage = error instanceof Error ? error.message : String(error);
       tests.push(entry);
       continue;
+    } finally {
+      hostInfrastructure.infrastructure.prepareReactValues = false;
     }
     entry.compiledPassed = value === 1;
     entry.status = value === 1 ? "pass" : "fail";

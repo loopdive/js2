@@ -461,6 +461,33 @@ add binding-aware slots on top of main's design, not restore that one.
 - [x] Tests blocked before a valid implementation exists are reported as not
       executed, never as behavioral divergences.
 
+## Cross-package React host infrastructure checkpoint (2026-08-20)
+
+The shared React upstream host now resolves the published ReactDOM/client/server
+and `react-test-renderer` entries under `NODE_ENV=production`, while aliasing
+the exact pinned React object into their CommonJS peer lookup. This removes the
+dev-renderer/production-React internal queue mismatch (`actQueue.push`) that
+previously failed before an upstream assertion ran. It exposes jsdom,
+ReactDOM, the JSX runtimes, `create-react-class`, `internal-test-utils`, a
+`react-noop-renderer` adapter, a version-only `react-native-renderer` carrier,
+and Node stream capability explicitly.
+
+Production test-renderer does not provide `act` or a committed tree, so the
+noop adapter uses a jsdom ReactDOM root with `flushSync` and exposes the
+test-renderer-shaped children/JSON/ref view. The native oracle leaves host
+React values untouched; only the compiled Wasm call path may opt into a
+boundary preparation step.
+
+The exact React run now admits and executes **272/273** upstream tests (one
+upstream skip), has **0 compile-quarantined** tests, and produces **44 valid
+Wasm batches**. Of the 272 executed tests, **178 are natively scoreable and
+92 pass** against compiled Wasm; **94** are reported as native-oracle
+incompatible. Those 94 are not missing package lookups: the remaining groups
+are production warning expectations, renderer semantics, and compiled
+component/function closures that still arrive as opaque host objects. ReactDOM
+compiled correctness therefore remains a separate follow-up, while this
+checkpoint makes the cross-package infrastructure explicit and measurable.
+
 ## Permanent test reference
 
 `tests/dogfood/react-dom-upstream-suite.test.ts` — pin/commit assertions run
