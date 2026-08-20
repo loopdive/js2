@@ -897,6 +897,7 @@ export function compileIrPathFunctions(
   const backendCapabilitySelectionOptions = { supportsBackendCapability };
   const moduleBindingOptions = {
     numberStorage: ctx.fast ? ("i32" as const) : ("f64" as const),
+    oracle: ctx.oracle,
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
     // (#4461) Native `$Map` storage is the host-free carrier of the same

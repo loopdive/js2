@@ -70,7 +70,11 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §
 import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
-import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
+import {
+  NO_ARG_STRING_MEMBER_HELPER,
+  SUPERSEDED_BY_BORROWED_PATH,
+  emitStringProtoToStringFlat,
+} from "./string-proto-tostring.js"; // (#3992)
 import { standaloneGlobalFunctionSeedInstrs } from "./standalone-global-functions.js";
 
 /**
@@ -892,28 +896,7 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  * `$__any_to_string` are functions (append-only, no index shift).
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  // (#2742) SUPERSEDED-WIRING CARVE-OUT. For these five members the #2875
-  // reflective body is strictly worse than the legacy borrowed-receiver path it
-  // intercepts, so refuse here and let the caller fall through.
-  //
-  // Why this is a carve-out and NOT "remove the wiring": #2875 was written when
-  // legacy `.call` dropped `thisArg`; #3254 later fixed that with a
-  // `receiverOverride` covering `STANDALONE_STR_PROTO_METHODS`. But #2875 also
-  // carries semantics legacy never had — `emitStringRequireObjectCoercible` —
-  // so the wiring is superseded for SOME members and still load-bearing for
-  // others. Measured, blanket removal costs 13 `this-value-not-obj-coercible`
-  // and `trimStart`/`trimEnd` files; this per-member set costs zero.
-  //
-  // Test262 A/B (450 files, same box/run/list, both arms one tree; rows floored
-  // 450/450, zero timeouts): **+18 fail→pass, 0 pass→fail**, the 13 files that a
-  // blanket removal regresses all HELD, `substring`/`charAt` control unmoved,
-  // and zero off-target moves. Full ledger + the two rejected variants are in
-  // plan/issues/2742-string-prototype-generic-receiver-tostring-this-coercion.md.
-  //
-  // Deliberately EXCLUDED (their wired bodies still win — do not "simplify"
-  // this set without re-running the A/B): `charCodeAt`, `indexOf`,
-  // `lastIndexOf`, `trimStart`, `trimEnd`, `at`, `substring`, `charAt`.
-  const SUPERSEDED_BY_BORROWED_PATH = new Set(["trim", "codePointAt", "includes", "startsWith", "endsWith"]);
+  // (#2742) The superseded-wiring carve-out — see string-proto-tostring.ts.
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);

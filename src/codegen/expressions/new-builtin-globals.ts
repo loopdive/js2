@@ -18,7 +18,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
-import { emitToString } from "../coercion-engine.js";
+import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
 import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
@@ -159,6 +159,32 @@ function isStaticUndefinedExpr(expr: ts.Expression, fctx: FunctionContext): bool
 }
 
 /**
+ * Does `new String(value)` need the RUNTIME ToString walk rather than the
+ * compile-time one?
+ *
+ * Only for an ARRAY (or tuple) argument. That is the one shape where the static
+ * lowering is structurally wrong: `emitToString` answers a GC-ref receiver with
+ * `$__any_to_string`, which stringifies the vec as `"[object Object]"`, while
+ * §23.1.3.36 says an Array's `toString` is `join(",")`. The `String(x)` call
+ * arm has always had a dedicated array arm for exactly this reason
+ * (`tryEmitArrayToStringNative`, #2160); this is the `new String(x)` half.
+ *
+ * Deliberately NOT widened to every object. `{valueOf: function(){}, toString:
+ * void 0}` — an ABSENT `toString` whose `valueOf` returns `undefined`, so
+ * ToPrimitive answers the primitive `undefined` and ToString answers
+ * `"undefined"` — is answered correctly by the static path and NOT by the
+ * runtime one (measured: `String/prototype/substring/S15.5.4.15_A1_T9`
+ * regressed when the object case was included). The two walks disagree on
+ * absent/undefined-returning coercion methods, and that disagreement is its own
+ * work item; this arm claims only the shape where the static answer cannot be
+ * right.
+ */
+function needsRuntimeToStringForWrapper(ctx: CodegenContext, value: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(value);
+  return fact.kind === "array" || fact.kind === "tuple";
+}
+
+/**
  * Emit the argument stored in a String wrapper's [[StringData]] slot.
  * Returns true when a statically-known Symbol emitted a terminal TypeError.
  */
@@ -168,6 +194,41 @@ function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, valu
     if (valueType !== null) fctx.body.push({ op: "drop" });
     emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a string");
     return true;
+  }
+  // (ES5 standalone lane) §22.1.1.1 step 2 is `? ToString(value)` — the SAME
+  // conversion `String(value)` performs. `emitToString` below answers it from
+  // the STATIC type, and for a GC-ref receiver that means `$__any_to_string`,
+  // which stringifies structurally. So the two spellings disagreed exactly
+  // where the conversion is interesting:
+  //
+  //     function F() {}
+  //     F.prototype.toString = function () { return "abc"; };
+  //     String(new F())      // "abc"
+  //     new String(new F())  // "[object Object]"   ← measured
+  //     new String(new Array(1, 2, 3))  // "[object Object]", spec "1,2,3"
+  //
+  // `__extern_toString` is the runtime `ToString(ToPrimitive(v,"string"))` the
+  // `String(x)` path reaches: it walks OrdinaryToPrimitive (so an INHERITED
+  // `toString` runs) and reduces a vec through `Array.prototype.toString`.
+  // Routing the host-free lane's non-primitive values through it makes the two
+  // agree. Statically-primitive values keep the cheaper static lowering, and a
+  // module without the object runtime (no `__extern_toString`) keeps today's
+  // path — so this can only change the answer where it is currently structural.
+  if (noJsHost(ctx) && needsRuntimeToStringForWrapper(ctx, value)) {
+    const compiled = compileExpression(ctx, fctx, value, { kind: "externref" });
+    if (compiled !== null) {
+      if (compiled.kind !== "externref") coerceType(ctx, fctx, compiled, { kind: "externref" });
+      const toStringIdx = getExternrefToStringProvider(ctx);
+      if (toStringIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: toStringIdx });
+        return false;
+      }
+      // No object runtime in this module — fall back to the static lowering on
+      // the value already compiled (externref is one of its input kinds).
+      const fallback = emitToString(ctx, fctx, compiled, ctx.oracle.typeFactOf(value), "string");
+      if (fallback.kind !== "externref") coerceType(ctx, fctx, fallback, { kind: "externref" });
+      return false;
+    }
   }
   const valueTsType = ctx.oracle.typeFactOf(value);
   const valueType = compileExpression(ctx, fctx, value);

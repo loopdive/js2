@@ -75,6 +75,29 @@ export interface InlinedReceiverBinding {
   readonly localIdx: number;
   /** `fctx.localMap`'s prior `this` entry, restored when the inline finishes. */
   readonly previousThisLocal: number | undefined;
+  /** The callee whose receiver this binding is, for {@link inlinedCalleeHasBoundReceiver}. */
+  readonly fnExpr: ts.FunctionExpression;
+}
+
+/**
+ * (#4555) Callees currently inside a receiver-bound inline, by nesting depth.
+ *
+ * `thisBelongsToInlinedIifeBody` (`helpers/sloppy-this-global.ts`) must NOT
+ * hijack an inline that this module gave a real receiver to: a spliced-in
+ * function expression with NO receiver takes §10.4.3's unbound answer, but
+ * `(function(){ this.touched = true; }).call(obj)` is the very case #4246
+ * exists to bind. Both shapes land in `fctx.inlinedIifeNodes`, so that set
+ * alone cannot tell them apart — this one can.
+ *
+ * Module-local rather than a `FunctionContext` field because the window is
+ * exactly plan→release, which is synchronous and strictly nested; the depth
+ * count keeps a recursively inlined callee correct.
+ */
+const boundReceiverCallees = new Map<ts.Node, number>();
+
+/** (#4555) Is `fnExpr` inside a receiver-bound inline right now? */
+export function inlinedCalleeHasBoundReceiver(fnExpr: ts.Node): boolean {
+  return (boundReceiverCallees.get(fnExpr) ?? 0) > 0;
 }
 
 /**
@@ -99,11 +122,15 @@ export function planInlinedReceiver(
   const localIdx = allocLocal(fctx, `__inlined_this_${fctx.locals.length}`, { kind: "externref" });
   const previousThisLocal = fctx.localMap.get("this");
   fctx.localMap.set("this", localIdx);
-  return { localIdx, previousThisLocal };
+  boundReceiverCallees.set(fnExpr, (boundReceiverCallees.get(fnExpr) ?? 0) + 1);
+  return { localIdx, previousThisLocal, fnExpr };
 }
 
 /** Restore the enclosing frame's `this` binding after the inlined call. */
 export function releaseInlinedReceiver(fctx: FunctionContext, binding: InlinedReceiverBinding): void {
+  const depth = (boundReceiverCallees.get(binding.fnExpr) ?? 1) - 1;
+  if (depth > 0) boundReceiverCallees.set(binding.fnExpr, depth);
+  else boundReceiverCallees.delete(binding.fnExpr);
   if (binding.previousThisLocal === undefined) {
     fctx.localMap.delete("this");
   } else {

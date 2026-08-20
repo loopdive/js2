@@ -537,6 +537,26 @@ export function isTrailingAddCandidate(prNumber, queued) {
   return !queued.has(prNumber);
 }
 
+// A queued PR must stay completely outside the enqueue path, but an old
+// `needs-manual-enqueue` label must not linger after a human has rescued it.
+// Keep that informational cleanup on the already-queued skip edge: removing an
+// issue label does not change queue membership or rebuild the forming merge
+// group. The cleanup callback is injected so this wiring is regression-testable
+// without any `gh` calls. Cleanup is best-effort and can never turn a queued PR
+// back into an enqueue candidate.
+export function reconcileAlreadyQueued(prNumber, queued, labels, clearLabel, dryRun = false) {
+  if (isTrailingAddCandidate(prNumber, queued)) return false;
+  const hasStaleLabel = labels.some((label) => String(label?.name ?? label).toLowerCase() === STALL_LABEL);
+  if (hasStaleLabel && !dryRun) {
+    try {
+      clearLabel(prNumber);
+    } catch {
+      // Label hygiene must never weaken the no-re-touch invariant.
+    }
+  }
+  return true;
+}
+
 // Exact last-moment guard used immediately before enqueuePullRequest. The main
 // sweep snapshot can predate a passive stack retarget: the child may have moved
 // from its stack parent to main and acquired stack-retarget-pending while this
@@ -754,6 +774,10 @@ function visibleCheckState(prNumber) {
 // sweep enqueues cleanly. Returns true if a rerun was kicked off.
 function isClaExpectedError(msg) {
   return /cla-check.*is expected/i.test(msg) || /required status check.*cla-check/i.test(msg);
+}
+export function isWorkflowPermissionRefusal(msg) {
+  if (typeof msg !== "string") return false;
+  return /refusing to allow a GitHub App to create or update workflow/i.test(msg);
 }
 function rerunClaCheck(prNumber, branch) {
   // Find the most recent cla-check run for this PR's branch and rerun it.
@@ -1117,6 +1141,7 @@ function runSweep() {
   const enqueued = [];
   const skipped = [];
   const updated = [];
+  const manualEnqueue = [];
   const stalled = []; // #3584 — BLOCKED, nothing red, nothing pending, sustained
   const refusals = []; // #4094 — raw enqueue-mutation refusals, kept as telemetry
 
@@ -1173,7 +1198,7 @@ function runSweep() {
     // (forming head OR stable entry). Skipping every queued PR is what keeps each
     // enqueue a trailing append to the tail, so a forming head's merge_group run
     // is never cancelled (#1758).
-    if (!isTrailingAddCandidate(pr.number, inQueue)) {
+    if (reconcileAlreadyQueued(pr.number, inQueue, pr.labels || [], clearStallLabel, DRY)) {
       skipped.push([pr.number, "already-queued"]);
       continue;
     }
@@ -1401,6 +1426,19 @@ function runSweep() {
         // the RAW error here and degrade to skip: production answers it, and a
         // refusal costs one sweep instead of a stranding. Recorded verbatim (not
         // pattern-matched) so an unanticipated refusal reason is still legible.
+        //
+        // WORKFLOW-FILE BLOCK (2026-08-19, #4046): for fork-head PRs that touch
+        // `.github/workflows/**`, the app can be blocked at enqueue time with an
+        // exact message. That mode is permanent for this token, so add the
+        // `needs-manual-enqueue` visibility signal the same as #3584's stall.
+        if (isWorkflowPermissionRefusal(msg)) {
+          const label = DRY ? { ok: true, why: "would label needs-manual-enqueue" } : addStallLabel(pr.number);
+          const enriched = `workflow-permission: ${msg}; manual-label:${label.why}`;
+          manualEnqueue.push([pr.number, enriched]);
+          refusals.push([pr.number, enriched]);
+          skipped.push([pr.number, enriched]);
+          continue;
+        }
         refusals.push([pr.number, msg]);
         skipped.push([pr.number, `enqueue-failed: ${msg}`]);
       }
@@ -1416,6 +1454,12 @@ function runSweep() {
   // (#4094) Surfaced separately from the generic skip lines so a mutation refusal
   // is visible as its own class rather than buried among ordinary skips.
   for (const [n, why] of refusals) console.log(`  ! #${n} ENQUEUE REFUSED (telemetry): ${why}`);
+  if (manualEnqueue.length > 0) {
+    console.log(
+      `::warning::enqueue-green-prs: ${manualEnqueue.length} PR(s) need one-shot manual PAT enqueue due workflow-write restriction; they have been labelled ${STALL_LABEL} where possible.`,
+    );
+    for (const [n, why] of manualEnqueue) console.log(`  ! #${n} manual-enqueue-needed (${why})`);
+  }
   for (const [n, why] of skipped) console.log(`  - #${n} skip (${why})`);
   // #3584 — the whole point of the classifier: a stall that used to be one more
   // indistinguishable `skip (BLOCKED)` line now gets its own block at the end of

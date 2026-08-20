@@ -80,6 +80,33 @@ export function runtimeEvalMayReplaceCallee(
 }
 
 /**
+ * (#4206) Is `callee` a MODULE-scope Annex B B.3.3.2 block-function binding?
+ *
+ * B.3.3.2.c makes such a name live: the value a call must invoke is whatever
+ * declaration most recently evaluated. TypeScript has no notion of that, so a
+ * later `var f = 123` anywhere in the script is the ONLY thing it types the
+ * name from — and this guard then reads a `number` fact and bakes an
+ * unconditional TypeError into a call the spec says must succeed:
+ *
+ * ```js
+ * { function f() { return "function declaration"; } }
+ * f();          // spec: "function declaration"; before this bail: TypeError
+ * var f = 123;  // the ONLY reason the checker calls `f` a number
+ * ```
+ *
+ * `registerAnnexBGlobalLiveBindings` has already widened the backing global to
+ * `externref` for exactly this reason, so the value at the call site really is
+ * the closure; only the static fact disagrees. Same shape as the runtime-eval
+ * bail above, and gated on the normally-empty `annexBModuleBindings` set, so
+ * every program without a module-scope sloppy block function is unaffected.
+ * A locally-shadowed name keeps its local resolution and its fact.
+ */
+function annexBBlockFunctionBinding(ctx: CodegenContext, fctx: FunctionContext, callee: ts.Expression): boolean {
+  if (!ts.isIdentifier(callee) || fctx.localMap.has(callee.text)) return false;
+  return ctx.annexBModuleBindings?.has(callee.text) === true;
+}
+
+/**
  * (#4221) §13.3.6.2 EvaluateCall steps 4-5 — calling a value that is provably
  * NOT callable must throw a TypeError. Before this guard the callee fell to
  * `compileCallExpression`'s last-resort arm, which compiles the callee + args
@@ -114,6 +141,7 @@ export function tryNonCallableValueCall(
   // after static type analysis. Preserve runtime IsCallable semantics instead
   // of baking the initializer's primitive fact into an unconditional throw.
   if (runtimeEvalMayReplaceCallee(ctx, fctx, callee)) return undefined;
+  if (annexBBlockFunctionBinding(ctx, fctx, callee)) return undefined;
 
   const fact = ctx.oracle.typeFactOf(callee);
   if (!NEVER_CALLABLE_FACT_KINDS.has(fact.kind) && !isFreshlyConstructedNonCallable(ctx, callee, fact.kind)) {

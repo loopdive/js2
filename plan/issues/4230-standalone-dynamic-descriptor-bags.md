@@ -4,7 +4,7 @@ title: "Standalone: `Object.defineProperties`/`Object.create` refuse a dynamic d
 status: done
 sprint: 78
 created: 2026-08-08
-updated: 2026-08-18
+updated: 2026-08-20
 completed: 2026-08-08
 priority: high
 horizon: l
@@ -293,7 +293,9 @@ the reasoning comments.
      `$data` a hole sentinel that every read / write / enumerate / `length`
      path honours: an XL representational change, and a separate issue. Filing
      it as a `defineProperties` bug would send the next agent to the wrong file.
-- **`Error`/`Date`/`RegExp` `Properties`** — no store (#4098).
+- **`Date`/`RegExp` `Properties`** — no authoritative store in this slice.
+  Error was subsequently promoted to an authoritative own-property carrier by
+  #4098 and is now covered positively by the #4230 regression test.
 - **`<Builtin>.prototype.constructor` gOPD** — #4200-blocked.
 
 ## Acceptance criteria
@@ -303,7 +305,8 @@ the reasoning comments.
   overlay companion.
 - A vec `Properties` with index elements keeps refusing, under
   `[SITE-PROPS-VEC-INDEXED]`.
-- A carrier-less `Properties` (Error/Date/RegExp) keeps refusing, unchanged.
+- A carrier-less `Properties` (Date/RegExp) keeps refusing, unchanged. Error
+  instances are accepted after #4098 and copy their enumerable descriptor map.
 - `Object.defineProperties(o, <primitive>)` returns `o` for any receiver.
 - No regression on the gc/host lane (the arms are standalone-gated and the
   builders return `undefined` when the substrate is absent, keeping host output

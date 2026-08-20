@@ -386,7 +386,9 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   // W1's IR-owned target plan is also the static-projection disqualifier: a
   // bare `delete name` needs runtime HasBinding/DeleteBinding and one canonical
   // open object identity for the later direct readback.
-  if (planIrWithTarget(stmt).representation === "open-object") return null;
+  // `fieldNames` is this target's own key set: it keeps a write to an OUTER
+  // binding from disqualifying the static projection (see planIrWithTarget).
+  if (planIrWithTarget(stmt, fieldNames).representation === "open-object") return null;
 
   // Gates (a)/(b): a body-referenced name the static struct scope cannot route
   // but the object actually binds ⇒ defer to Tier-2.

@@ -12,7 +12,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { probeCompiledType } from "./context/speculative.js";
-import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1/S2)
+import { emitHoleToUndefined, holeTestInstrs, holeToUndefinedInstrs, joinEmptyElementTest } from "./array-holes.js";
+import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addArrayIteratorImports,
@@ -41,6 +42,7 @@ import {
 import { emitTaDynViewToVec, emitTaDynViewValidate, emitTaViewToVec, emitTaViewWriteBack } from "./dataview-native.js"; // (#3054 B1 Option A) de-view; (B3) write-through; (#3058) dyn-view materialize+validate
 import { ensureNativeIteratorRuntime, getOrRegisterIterRecType } from "./iterator-native.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import { tryEmitProtoOverrideTwoArm } from "./builtin-proto-member-override.js"; // (#4556 bucket A)
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import {
   compileArrowAsClosure,
@@ -1213,6 +1215,40 @@ function coerceArmToExternref(
  * inside an arm patches every already-emitted funcIdx (the shift walker dedups by
  * array identity, so double-registration is harmless).
  */
+/**
+ * Gate for the (#3058) dyn-view two-arm wrap — extracted from
+ * `compileArrayMethodCall` so the function stays inside its size budget.
+ * Behaviour-identical; each clause keeps its original rationale.
+ */
+function shouldWrapDynViewTwoArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  skipDynViewWrap: boolean,
+): boolean {
+  return (
+    !skipDynViewWrap &&
+    ctx.moduleUsesDynTaView &&
+    !dynViewTwoArmActive.has(callExpr) &&
+    ts.isPropertyAccessExpression(propAccess) &&
+    DYN_VIEW_READ_METHODS.has(methodName) &&
+    // (#3162) find/findIndex only join the two-arm under standalone — their
+    // correct THEN arm is the standalone-only #3098 `__hof_<name>` substrate
+    // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
+    (!FIND_METHODS.has(methodName) || ctx.standalone) &&
+    // (#2872) The static per-method impls the arms route to hard-require their
+    // search/index argument (`indexOf requires 1 argument` reportError). A
+    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
+    // promoted from the tolerant generic ladder into that hard CE — skip the
+    // wrap and keep the pre-#2872 lowering for it.
+    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
+    ts.isIdentifier(propAccess.expression) &&
+    dynViewReceiverIsExternref(fctx, propAccess.expression.text)
+  );
+}
+
 function emitDynViewMethodTwoArm(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1365,29 +1401,15 @@ export function compileArrayMethodCall(
   // compile-time fact — so we emit a two-arm branch that wraps BOTH the dyn-view
   // f64-vec impl and the EXACT existing externref/plain-array impl (never hijacks a
   // plain-array `any` receiver). See emitDynViewMethodTwoArm.
-  if (
-    !skipDynViewWrap &&
-    ctx.moduleUsesDynTaView &&
-    !dynViewTwoArmActive.has(callExpr) &&
-    ts.isPropertyAccessExpression(propAccess) &&
-    DYN_VIEW_READ_METHODS.has(methodName) &&
-    // (#3162) find/findIndex only join the two-arm under standalone — their
-    // correct THEN arm is the standalone-only #3098 `__hof_<name>` substrate
-    // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
-    (!FIND_METHODS.has(methodName) || ctx.standalone) &&
-    // (#2872) The static per-method impls the arms route to hard-require their
-    // search/index argument (`indexOf requires 1 argument` reportError). A
-    // 0-arg call (`ta.indexOf()` — legal JS, searches `undefined`) must NOT be
-    // promoted from the tolerant generic ladder into that hard CE — skip the
-    // wrap and keep the pre-#2872 lowering for it.
-    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
-    ts.isIdentifier(propAccess.expression) &&
-    dynViewReceiverIsExternref(fctx, propAccess.expression.text)
-  ) {
+  if (shouldWrapDynViewTwoArm(ctx, fctx, propAccess, callExpr, methodName, skipDynViewWrap)) {
     const two = emitDynViewMethodTwoArm(ctx, fctx, propAccess, callExpr, receiverType, methodName, expectedType);
     if (two !== undefined) return two;
     // Fell through (arm compile declined) — continue with the ordinary single path.
   }
+  // (#4556 bucket A) A user override of `Array.prototype.<m>` wins over the
+  // builtin lowering — see builtin-proto-member-override.ts.
+  const ovr = tryEmitProtoOverrideTwoArm(ctx, fctx, propAccess, callExpr, "Array", methodName, expectedType);
+  if (ovr !== undefined) return ovr;
   // (#2863 Phase 2) `toLocaleString` is array-dispatched ONLY under standalone/
   // wasi (no host `__extern_toLocaleString` carrier). In host (gc) mode fall
   // through to the host `__extern_toLocaleString` path (real Intl grouping +
@@ -4375,8 +4397,19 @@ function compileArrayJoinNative(
   // up front and flush the late-import shift BEFORE the fold bakes the call, so
   // the index is stable. Bail to the string-element path only if unavailable.
   let externToStrIdx: number | undefined;
-  if (elemType.kind === "externref") {
+  let emptyElem: { elemLocal: number; test: Instr[] } | undefined; // (#4556) step 4.b
+  // (#4560) A NON-string GC-ref element — an array of object literals, whose
+  // element type is a closed `$__anon_N` struct — is not a `$AnyString`, so the
+  // terminal string arm's `ref.as_non_null` emitted INVALID WASM. It routes
+  // through the boxed-any ToString instead; see array-join-element.ts.
+  const needsRefToString =
+    (elemType.kind === "ref" || elemType.kind === "ref_null") &&
+    !isAnyStringSubtype(ctx, (elemType as { typeIdx: number }).typeIdx);
+  if (elemType.kind === "externref" || needsRefToString) {
     externToStrIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+    emptyElem = joinEmptyElementTest(ctx, fctx, () =>
+      ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]),
+    );
     flushLateImportShifts(ctx, fctx);
     if (externToStrIdx === undefined) {
       reportError(ctx, callExpr, "join of a boxed-any array requires __extern_toString");
@@ -4443,45 +4476,12 @@ function compileArrayJoinNative(
     // number_toString returns the native string boxed as externref.
     elemToStr.push({ op: "any.convert_extern" });
     elemToStr.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
-  } else if (elemType.kind === "externref") {
-    // #2505-family — a boxed-any element array (`any[]`, `new Array(N)` holes)
-    // stores its elements as raw `externref`, NOT as a `$NativeString` ref. The
-    // string-element branch below (`ref.as_non_null`) would non-null the externref
-    // and `local.set` it into the `(ref $AnyString)` result local → a validator
-    // type mismatch ("local.set expected (ref null N), found ref.as_non_null of
-    // (ref extern)"). Route each boxed-any element through `__extern_toString`
-    // (externref → externref native string) — the SAME runtime ToString that
-    // `String(a[i])` / `` `${a[i]}` `` use for an `any`-typed value. (NOT
-    // `__any_to_string`, the $AnyValue-tag dispatcher: an `any[]` element is a
-    // `__box_number`/`__box_boolean`-boxed externref, not a $AnyValue, so the tag
-    // dispatch mis-stringifies it to "[object Object]".) Convert the externref
-    // result up to `ref $AnyString` for the concat fold. `__extern_toString` is
-    // provided by ensureObjectRuntime; reuse the funcIdx captured before the loop.
-    const toStrPath: Instr[] = [
-      { op: "call", funcIdx: externToStrIdx! },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: anyStrTypeIdx },
-    ];
-    // (#2001 S1) A `$Hole` element renders as "" (§23.1.3.* join treats an
-    // absent index like undefined → ""). After S1 a literal elision stores the
-    // `$Hole` sentinel, so without this test the externref ToString lane would
-    // stringify the sentinel struct itself to garbage. Gated on `usesArrayHoles`,
-    // so hole-free `any[]` joins stay byte-identical. The empty string is cast
-    // up to ref $AnyString for the concat fold.
-    const holeTest = ctx.usesArrayHoles ? holeTestInstrs(ctx) : [];
-    if (holeTest.length > 0) {
-      const elemExternTmp = allocTempLocal(fctx, { kind: "externref" });
-      elemToStr.push({ op: "local.tee", index: elemExternTmp });
-      elemToStr.push(...holeTest);
-      elemToStr.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "ref", typeIdx: anyStrTypeIdx } },
-        then: [...nativeStringLiteralInstrs(ctx, ""), { op: "ref.cast", typeIdx: anyStrTypeIdx }],
-        else: [{ op: "local.get", index: elemExternTmp }, ...toStrPath],
-      });
-    } else {
-      elemToStr.push(...toStrPath);
-    }
+  } else if (elemType.kind === "externref" || needsRefToString) {
+    // #2505-family + (#4560): a boxed-any element (`any[]`, `new Array(N)`
+    // holes) and a non-string GC-ref element both stringify through the runtime
+    // `__extern_toString` — the SAME ToString `String(a[i])` uses. Hole ∨ null ∨
+    // undefined render as "" (§23.1.3.18 step 4.b). See array-join-element.ts.
+    elemToStr.push(...buildJoinBoxedElementToString(ctx, anyStrTypeIdx, emptyElem!, externToStrIdx!, needsRefToString));
   } else {
     // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
     elemToStr.push({ op: "ref.as_non_null" });

@@ -3301,12 +3301,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e($PropEntry?) 5=cbd(i32)
   {
-    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the
-    // #2896 builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537
-    // carrier-bag arm, then the historical `return 1` no-op success. See that
-    // module for why the bag consult is tri-state and strictly additive.
+    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the #2896
+    // builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537 carrier-bag
+    // arm, then the historical `return 1` no-op success — see that module.
     reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
+      ...protoIndexOwnViewSubstituteInstrs(ctx, 0), // (#4556) $NativeProto → companion
       ...buildNonObjectDeleteArms(ctx, {
         bfnDeleteIdx,
         boundaryDeleteIdx: boundaryObjectDeleteIdx,
@@ -9432,7 +9432,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       // null → NaN handled by the shared clamp below). Abrupt completions
       // (throwing valueOf/toString, both-objects TypeError) propagate as Wasm
       // throws out of `__extern_length` to the borrow caller.
-      const L_PRIM = 4;
+      const primExtPos = lenFn.locals.findIndex((l) => l.name === "primExt"); // (#4556)
+      const L_PRIM = primExtPos >= 0 ? 1 + primExtPos : 1 + lenFn.locals.length;
       const isObjectRefLength =
         (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
         !isStringRefType(cand.lengthFieldType);
@@ -9476,10 +9477,9 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : isObjectRefLength
                 ? objectRefRead
                 : [];
-      if (isObjectRefLength && !lenPrimLocalAdded) {
-        // Scratch externref local for the ToPrimitive result — appended once.
-        // Registered locals are [any, lenF64, lenTrunc] after the single
-        // externref param, so the new local's index is 4 (= L_PRIM).
+      if (isObjectRefLength && !lenPrimLocalAdded && primExtPos < 0) {
+        // Scratch externref local for the ToPrimitive result — appended once,
+        // and only when the registration did not already provide it (#4556).
         lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });
         lenPrimLocalAdded = true;
       }

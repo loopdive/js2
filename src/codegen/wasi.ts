@@ -1133,10 +1133,10 @@ interface WasiStrEncodeLayout {
   LO: number;
 }
 
-/** Build the encoder local layout: AnyString param `s` at 0, work-locals at `base..base+9`. */
-function wasiStrEncodeLayout(base: number): WasiStrEncodeLayout {
+/** Build the encoder local layout for an AnyString param and work-locals at `base..base+9`. */
+function wasiStrEncodeLayout(base: number, stringParam: number = 0): WasiStrEncodeLayout {
   return {
-    S: 0,
+    S: stringParam,
     FLAT: base + 0,
     LEN: base + 1,
     OFF: base + 2,
@@ -1447,6 +1447,26 @@ function buildWasiStringEncodeToScratch(
               ],
             },
 
+            // TextEncoder / Node's UTF-8 filesystem APIs convert unmatched
+            // UTF-16 surrogates to U+FFFD. A valid high+low pair was combined
+            // above into a scalar > 0xffff, so only unmatched code units remain
+            // in the surrogate range here.
+            { op: "local.get", index: CP },
+            { op: "i32.const", value: 0xd800 },
+            { op: "i32.ge_u" },
+            { op: "local.get", index: CP },
+            { op: "i32.const", value: 0xdfff },
+            { op: "i32.le_u" },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 0xfffd },
+                { op: "local.set", index: CP },
+              ],
+            },
+
             ...encodeCurrentCodePoint,
             { op: "br", depth: 0 },
           ],
@@ -1691,6 +1711,83 @@ export function ensureWasiWriteAnyStringFdHelper(ctx: CodegenContext): number {
     typeIdx: funcTypeIdx,
     // Work-locals follow the two params (s, fd); no extra local for fd.
     locals: wasiStrEncodeLocalDecls(strTypeIdx, strDataTypeIdx),
+    body,
+    exported: false,
+  });
+
+  return funcIdx;
+}
+
+/**
+ * #4565 — Ensure the dynamic-string `writeFileSync(path, data)` helper exists.
+ * Both JS arguments arrive as AnyString refs, so their expressions are fully
+ * evaluated before filesystem effects begin. The helper encodes the path into
+ * shared scratch and opens it immediately, then reuses that scratch for data.
+ * This sequencing keeps the two byte ranges from aliasing without retaining or
+ * leaking a second linear-memory allocation.
+ */
+export function ensureWasiWriteFileStringsHelper(ctx: CodegenContext): number {
+  const helperName = "__wasi_write_file_strings";
+  const existing = ctx.funcMap.get(helperName);
+  if (existing !== undefined) return existing;
+
+  if (
+    !ctx.wasi ||
+    ctx.nativeStrTypeIdx < 0 ||
+    ctx.wasiPathOpenIdx === undefined ||
+    ctx.wasiFdWriteIdx === undefined ||
+    ctx.wasiFdCloseIdx === undefined
+  ) {
+    return -1;
+  }
+
+  ensureNativeStringHelpers(ctx);
+  const flattenIdx = ctx.funcMap.get("__str_flatten");
+  if (flattenIdx === undefined) return -1;
+
+  const strTypeIdx = ctx.nativeStrTypeIdx;
+  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
+  const anyStrTypeIdx = ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : strTypeIdx;
+  // params: path(0), data(1); encoder work-locals(2..11), openedFd(12).
+  const layout = wasiStrEncodeLayout(2, 0);
+  const OPENED_FD = 12;
+  const funcTypeIdx = addFuncType(
+    ctx,
+    [
+      { kind: "ref", typeIdx: anyStrTypeIdx },
+      { kind: "ref", typeIdx: anyStrTypeIdx },
+    ],
+    [],
+  );
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.funcMap.set(helperName, funcIdx);
+
+  const body: Instr[] = [
+    // Encode and consume the path before the shared scratch is reused.
+    ...buildWasiStringEncodeToScratch(flattenIdx, strTypeIdx, strDataTypeIdx, layout),
+    ...buildWasiPathOpen(
+      ctx,
+      [{ op: "i32.const", value: WASI_WRITE_SCRATCH_START }],
+      [{ op: "local.get", index: layout.O }],
+      OPENED_FD,
+    ),
+    // Reuse the encoder locals/scratch for data only after path_open consumed it.
+    ...buildWasiStringEncodeToScratch(flattenIdx, strTypeIdx, strDataTypeIdx, {
+      ...layout,
+      S: 1,
+    }),
+    ...buildWasiWriteAndClose(
+      ctx,
+      [{ op: "i32.const", value: WASI_WRITE_SCRATCH_START }],
+      [{ op: "local.get", index: layout.O }],
+      OPENED_FD,
+    ),
+  ];
+
+  ctx.mod.functions.push({
+    name: helperName,
+    typeIdx: funcTypeIdx,
+    locals: [...wasiStrEncodeLocalDecls(strTypeIdx, strDataTypeIdx), { name: "openedFd", type: { kind: "i32" } }],
     body,
     exported: false,
   });
@@ -2003,6 +2100,52 @@ export function ensureWasiWriteArrayBufferHelper(
   return funcIdx;
 }
 
+/** Build the shared path_open prefix and leave the opened fd in `openedFdLocal`. */
+function buildWasiPathOpen(ctx: CodegenContext, pathPtr: Instr[], pathLen: Instr[], openedFdLocal: number): Instr[] {
+  return [
+    { op: "i32.const", value: 3 }, // dirfd = first preopen
+    { op: "i32.const", value: 0 }, // dirflags
+    ...pathPtr,
+    ...pathLen,
+    { op: "i32.const", value: 9 }, // O_CREAT | O_TRUNC
+    { op: "i64.const", value: 64n }, // RIGHT_FD_WRITE
+    { op: "i64.const", value: 0n }, // rights_inheriting
+    { op: "i32.const", value: 0 }, // fdflags
+    { op: "i32.const", value: 12 }, // fd_out
+    { op: "call", funcIdx: ctx.wasiPathOpenIdx },
+    { op: "drop" },
+    { op: "i32.const", value: 12 },
+    { op: "i32.load", align: 2, offset: 0 },
+    { op: "local.set", index: openedFdLocal },
+  ];
+}
+
+/** Build the shared fd_write + fd_close tail for an already-opened file. */
+function buildWasiWriteAndClose(
+  ctx: CodegenContext,
+  dataPtr: Instr[],
+  dataLen: Instr[],
+  openedFdLocal: number,
+): Instr[] {
+  return [
+    { op: "i32.const", value: 0 },
+    ...dataPtr,
+    { op: "i32.store", align: 2, offset: 0 },
+    { op: "i32.const", value: 4 },
+    ...dataLen,
+    { op: "i32.store", align: 2, offset: 0 },
+    { op: "local.get", index: openedFdLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.const", value: 8 },
+    { op: "call", funcIdx: ctx.wasiFdWriteIdx },
+    { op: "drop" },
+    { op: "local.get", index: openedFdLocal },
+    { op: "call", funcIdx: ctx.wasiFdCloseIdx },
+    { op: "drop" },
+  ];
+}
+
 /**
  * Emit __wasi_write_file_sync(pathPtr: i32, pathLen: i32, dataPtr: i32, dataLen: i32) helper.
  * Opens a file via path_open, writes data via fd_write, then closes via fd_close.
@@ -2024,49 +2167,8 @@ function emitWasiWriteFileSyncHelper(ctx: CodegenContext): void {
   ctx.funcMap.set("__wasi_write_file_sync", funcIdx);
 
   const body: Instr[] = [
-    // 1. Call path_open to open the file for writing
-    //    path_open(dirfd=3, dirflags=0, path, path_len,
-    //              oflags=O_CREAT|O_TRUNC(=9), rights_base=FD_WRITE(=64),
-    //              rights_inheriting=0, fdflags=0, fd_out=12)
-
-    { op: "i32.const", value: 3 }, // dirfd = 3 (first preopen)
-    { op: "i32.const", value: 0 }, // dirflags = 0
-    { op: "local.get", index: 0 }, // path ptr
-    { op: "local.get", index: 1 }, // path len
-    { op: "i32.const", value: 9 }, // oflags = O_CREAT(1) | O_TRUNC(8) = 9
-    { op: "i64.const", value: 64n }, // rights_base = RIGHT_FD_WRITE(64)
-    { op: "i64.const", value: 0n }, // rights_inheriting = 0
-    { op: "i32.const", value: 0 }, // fdflags = 0
-    { op: "i32.const", value: 12 }, // fd_out ptr at memory[12]
-    { op: "call", funcIdx: ctx.wasiPathOpenIdx },
-    { op: "drop" }, // drop errno
-
-    // 2. Load the opened fd from memory[12]
-    { op: "i32.const", value: 12 },
-    { op: "i32.load", align: 2, offset: 0 },
-    { op: "local.set", index: 4 }, // store in local openedFd
-
-    // 3. Set up iovec for fd_write: iovec at memory[0]
-    //    iovec.buf = dataPtr, iovec.buf_len = dataLen
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: 2 }, // dataPtr
-    { op: "i32.store", align: 2, offset: 0 },
-    { op: "i32.const", value: 4 },
-    { op: "local.get", index: 3 }, // dataLen
-    { op: "i32.store", align: 2, offset: 0 },
-
-    // 4. Call fd_write(openedFd, iovs=0, iovs_len=1, nwritten=8)
-    { op: "local.get", index: 4 }, // fd = openedFd
-    { op: "i32.const", value: 0 }, // iovs pointer
-    { op: "i32.const", value: 1 }, // iovs_len = 1
-    { op: "i32.const", value: 8 }, // nwritten pointer
-    { op: "call", funcIdx: ctx.wasiFdWriteIdx },
-    { op: "drop" }, // drop errno
-
-    // 5. Call fd_close(openedFd)
-    { op: "local.get", index: 4 }, // fd = openedFd
-    { op: "call", funcIdx: ctx.wasiFdCloseIdx },
-    { op: "drop" }, // drop errno
+    ...buildWasiPathOpen(ctx, [{ op: "local.get", index: 0 }], [{ op: "local.get", index: 1 }], 4),
+    ...buildWasiWriteAndClose(ctx, [{ op: "local.get", index: 2 }], [{ op: "local.get", index: 3 }], 4),
   ];
 
   ctx.mod.functions.push({

@@ -411,6 +411,7 @@ import {
 } from "./declarations.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
   destructureParamArray,
@@ -2505,6 +2506,7 @@ function planIrOverlay(
           ast.checker,
           {
             numberStorage: ctx.fast ? "i32" : "f64",
+            oracle: ctx.oracle,
             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
             // (#4461) The complementary carrier: native strings ⇒ `Map` lives
@@ -10101,6 +10103,7 @@ export function varBindingNeedsExternrefForUndefined(
   // `var x = (void 0)` / `var x = void <expr>` — strip parens to find the void.
   let init = decl?.initializer;
   while (init && ts.isParenthesizedExpression(init)) init = init.expression;
+  if (ctx !== undefined && decl !== undefined && hoistedVarPreInitValueIsObserved(ctx, decl)) return true; // #4206
   if (init === undefined) return false;
   if (ts.isVoidExpression(init)) return true;
   // (#3033) Dynamic-receiver member read whose static type is purely undefined.

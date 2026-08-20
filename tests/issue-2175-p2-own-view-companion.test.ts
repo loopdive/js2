@@ -94,6 +94,81 @@ describe("#2175 P2 — own-property views consult the NativeProto companion", ()
     ).toBe(1);
   });
 
+  it("seeded builtin data methods remain writable and configurable through a flowing prototype", async () => {
+    expect(
+      await runStandalone(`
+        export function test(): number {
+          const proto: any = Array.prototype;
+          const key: any = "some";
+          const original: any = proto[key];
+          const before: any = Object.getOwnPropertyDescriptor(proto, key);
+          const initial: number =
+            (typeof original === "function" && before !== undefined &&
+             before.writable === true && before.enumerable === false &&
+             before.configurable === true) ? 1 : 0;
+
+          proto[key] = 17;
+          const replaced: number = (proto[key] === 17) ? 1 : 0;
+          proto[key] = original;
+          const restored: number = (proto[key] === original) ? 1 : 0;
+
+          // Own-property queries must not confuse the inherited Object
+          // companion entry with Array.prototype's deleted own method.
+          const objectProto: any = Object.prototype;
+          objectProto[key] = 99;
+          const deleted: number = delete proto[key] ? 1 : 0;
+          const absent: number =
+            (!Object.prototype.hasOwnProperty.call(proto, key) &&
+             !Object.hasOwn(proto, key) && Object.hasOwn(objectProto, key) &&
+             Object.getOwnPropertyDescriptor(proto, key) === undefined &&
+             proto[key] === 99) ? 1 : 0;
+
+          // Brand-independent: the same mutable table owns Date methods.
+          const dateProto: any = Date.prototype;
+          const dateKey: any = "getDate";
+          const dateOriginal: any = dateProto[dateKey];
+          dateProto[dateKey] = 23;
+          const dateReplaced: number = (dateProto[dateKey] === 23) ? 1 : 0;
+          dateProto[dateKey] = dateOriginal;
+          const dateRestored: number = (dateProto[dateKey] === dateOriginal) ? 1 : 0;
+          const dateDeleted: number = delete dateProto[dateKey] ? 1 : 0;
+          const dateAbsent: number = Object.hasOwn(dateProto, dateKey) ? 0 : 1;
+
+          return (initial && replaced && restored && deleted && absent &&
+                  dateReplaced && dateRestored && dateDeleted && dateAbsent) ? 1 : 0;
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("an IR-compiled dynamic reader observes a companion method replacement", async () => {
+    const result = await compile(
+      `
+        export function getProto(): any { return Array.prototype; }
+        export function replace(proto: any): void { proto["some"] = 17; }
+        export function read(proto: any): any { return proto["some"]; }
+      `,
+      {
+        fileName: "issue-2175-ir-reader.ts",
+        target: "standalone",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+    expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
+    expect(result.irCompiledFuncs ?? [], JSON.stringify(result.irOutcomes, null, 2)).toContain("read");
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    const exports = instance.exports as {
+      getProto(): unknown;
+      replace(proto: unknown): void;
+      read(proto: unknown): unknown;
+    };
+    const proto = exports.getProto();
+    exports.replace(proto);
+    expect(exports.read(proto)).toBe(17);
+  });
+
   it("brand-independent — Object.prototype behaves the same as Date.prototype", async () => {
     expect(
       await runStandalone(`

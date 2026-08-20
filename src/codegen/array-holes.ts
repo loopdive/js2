@@ -641,3 +641,62 @@ export function holeTestInstrs(ctx: CodegenContext): Instr[] {
   const holeTypeIdx = ctx.holeTypeIdx;
   return [{ op: "any.convert_extern" }, { op: "ref.test", typeIdx: holeTypeIdx }];
 }
+
+/**
+ * (#4556) `Array.prototype.join` step 4.b — "If element is undefined or null,
+ * let next be the empty String" (§23.1.3.18) — plus the `$Hole` sentinel that
+ * denotes an absent index, as one reusable runtime test.
+ *
+ * The join fold used to test ONLY for `$Hole`, so a genuine `undefined` or
+ * `null` element reached `__extern_toString` and stringified faithfully:
+ * `[0, undefined, null, 3].join()` answered `"0,undefined,null,3"` instead of
+ * `"0,,,3"`. Both the `undefined` and the `null` halves are needed, and neither
+ * is a hole — this is deliberately NOT gated on `ctx.usesArrayHoles`, since a
+ * hole-free `any[]` can still hold `undefined`.
+ *
+ * Call this UP FRONT, before the fold bakes any funcIdx: it registers
+ * `__extern_is_undefined` as a late import, which shifts defined-func indices.
+ * Returns the stash local the caller must `local.set` the element into, and the
+ * i32-producing test that reads it.
+ */
+export function joinEmptyElementTest(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ensureIsUndefined: () => number | undefined,
+): { elemLocal: number; test: Instr[] } {
+  const elemLocal = allocTempLocal(fctx, { kind: "externref" });
+  const isUndefIdx = ensureIsUndefined();
+  const nullish: Instr[] = [
+    { op: "local.get", index: elemLocal },
+    { op: "ref.is_null" }, // JS `null`
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else:
+        isUndefIdx !== undefined
+          ? [
+              { op: "local.get", index: elemLocal },
+              // Re-resolved by NAME: the fold's other late imports may have
+              // shifted defined-func indices since `ensureIsUndefined` ran.
+              { op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx },
+            ]
+          : [{ op: "i32.const", value: 0 }],
+    },
+  ];
+  const holeTest = ctx.usesArrayHoles ? holeTestInstrs(ctx) : [];
+  if (holeTest.length === 0) return { elemLocal, test: nullish };
+  return {
+    elemLocal,
+    test: [
+      { op: "local.get", index: elemLocal },
+      ...holeTest,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 1 }],
+        else: nullish,
+      },
+    ],
+  };
+}

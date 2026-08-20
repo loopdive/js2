@@ -898,7 +898,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
    * dominant cluster shape `var arr = []` is an externref carrier whose null
    * default observes as undefined-ish).
    */
-  const growDefaultArms = (anyLocal: number, idxLocal: number): Instr[] => {
+  const growDefaultArms = (anyLocal: number, idxLocal: number, externAsUndefined = false): Instr[] => {
     const arms: Instr[] = [];
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
@@ -907,7 +907,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         c.kind === "f64"
           ? [{ op: "f64.const", value: 0 }]
           : c.kind === "externref"
-            ? [{ op: "ref.null.extern" }]
+            ? // (#4491) A DATA define with no [[Value]] gives the property
+              // `undefined` (CompletePropertyDescriptor), not the carrier's
+              // null hole — `arr[0]` must read `undefined`. Opt-in, so the
+              // accessor arm (whose slot is dead, the getter answers) and the
+              // ArraySetLength growth keep the null default.
+              externAsUndefined
+              ? missExtern()
+              : [{ op: "ref.null.extern" }]
             : [{ op: "ref.null", typeIdx: NONE_HEAP }];
       arms.push(
         { op: "local.get", index: anyLocal },
@@ -1579,6 +1586,38 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               ],
             },
           ],
+        },
+        // (#4491) A value-LESS data define at an OOB index extends length too.
+        // §10.4.2.2 step 3.c sets length to index+1 after ANY successful index
+        // define, regardless of descriptor kind. The accessor arm below already
+        // does this and the value arm above gets it via the element write-back,
+        // which left exactly one shape unhandled — attributes only:
+        //
+        //   var a = [];
+        //   Object.defineProperty(a, "0", { enumerable: true });
+        //   a.length;              // was 0, want 1
+        //   for (k in a) …         // saw nothing, so `isEnumerable` was false
+        //
+        // `hasOwnProperty("0")` already answered true off the companion, so the
+        // index existed while `length` denied it (15.2.3.7-6-a-195, and the
+        // singular twin). Same `growDefaultArms` + same hole-default boundary as
+        // the accessor arm.
+        { op: "local.get", index: 10 },
+        { op: "i32.const", value: HOST_HAS_VALUE },
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        { op: "i32.and" },
+        { op: "local.get", index: 7 },
+        { op: "local.get", index: 8 },
+        { op: "i32.ge_s" },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: growDefaultArms(4, 7, /* externAsUndefined */ true),
         },
         { op: "local.get", index: 0 },
       ];

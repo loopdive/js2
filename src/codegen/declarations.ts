@@ -51,7 +51,7 @@ import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -830,7 +830,7 @@ function registerBodylessFunctionDeclaration(
   if (optionalParams.length > 0) {
     ctx.funcOptionalParams.set(name, optionalParams);
   }
-  if (bodyUsesArguments(stmt.body)) {
+  if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
 
@@ -1545,7 +1545,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // Track functions that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (stmt.body && bodyUsesArguments(stmt.body)) {
+      if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
 
