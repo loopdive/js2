@@ -2710,14 +2710,6 @@ export function resolvePromiseSubclassThisArg(
   return tryEmitPromiseSubclassReceiver(ctx, fctx, argExpr);
 }
 
-export function usesArguments(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) && node.text === "arguments") return true;
-  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
-    return false;
-  }
-  return forEachChild(node, usesArguments) ?? false;
-}
-
 /**
  * (#1397) Conservative scope-level reassignment scan: returns true if the
  * source file contains any assignment expression of the form `X.<method> = ...`
