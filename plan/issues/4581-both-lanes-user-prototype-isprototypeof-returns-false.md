@@ -72,22 +72,57 @@ node --experimental-wasm-exnref --import tsx .tmp/t262.mts            /tmp/i1.js
 node --experimental-wasm-exnref --import tsx .tmp/t262.mts --js-host  /tmp/i1.js
 ```
 
-## Where to look
+## Where to look — CORRECTED 2026-08-20, the first suspect was wrong
 
-- `tryStaticIsPrototypeOf` (#2994) — the static fold. If it is proving `false`
-  for a user-prototype receiver instead of declining, that alone explains both
-  lanes answering identically and the context-dependence (a preceding
-  `getPrototypeOf` may change what the fold can prove).
-- `src/codegen/native-is-prototype-of.ts` (#2916) — the standalone typed-receiver
-  path. Its own docs say the fold runs **first**, then the native chain walk, so
-  a wrong fold short-circuits the correct walk.
-- `src/codegen/native-user-instanceof.ts` already performs the correct walk via
-  `__isPrototypeOf(F.prototype, value)` for `instanceof` — which is exactly the
-  answer this shape needs, and evidence the underlying helper is sound.
+The first version of this file named `tryStaticIsPrototypeOf` (#2994) as the
+prime suspect, "proving `false` for a user-prototype receiver instead of
+declining". **That is wrong, and wrong in a misleading direction** — the fold
+declines for user prototypes (it only handles `Object`/`Function` bases), and it
+is the one thing that currently produces a CORRECT answer.
 
-Note #4556 deliberately routed `<Builtin>.prototype.isPrototypeOf(V)` into the
-`instanceof` lowering while leaving `Object` on the chain walk as "strictly more
-faithful". This issue is the **user**-constructor case, which neither covers.
+Measured instead:
+
+```js
+function A() {}
+var a = new A();
+var op = Object.prototype, ap = A.prototype;
+
+Object.prototype.isPrototypeOf.call(op, a)    // false   <-- !!
+Object.prototype.isPrototypeOf.call(ap, a)    // false
+Object.prototype.isPrototypeOf.call(ap, {})   // false
+```
+
+**The native chain walk answers `false` for everything**, including the
+`Object.prototype` receiver that answers `true` when written directly. The direct
+form is right only because `tryStaticIsPrototypeOf` **folds it to `true`** before
+the walk ever runs (`base === "Object"` + a provably-object argument → `true`).
+
+So the fold is a mask, not the bug: it hides a broken walk on exactly the one
+shape it covers, and every shape it declines — every user prototype, and any
+`.call`-spelled receiver — falls through to the walk and gets `false`.
+
+That also explains the context-dependence in the section above: what changes
+between probes is whether the fold can prove its precondition, not what the walk
+computes.
+
+### The mechanism to check first
+
+`__isPrototypeOf` (`src/codegen/object-runtime-prototype.ts` ~L313) documents its
+own bail-out:
+
+> `1 iff obj appears in candidate's prototype chain. Walk candidate.$proto and
+> ref.eq each level against obj. **Non-`$Object` obj/candidate → 0.**`
+
+It `ref.test`s both operands against `$Object` and returns `0` when either fails.
+If a user function's `.prototype` — or a compiled instance — is carried as
+something other than a `$Object` struct, the walk returns `0` unconditionally,
+which matches every reading above.
+
+Note `src/codegen/native-user-instanceof.ts` calls the **same** `__isPrototypeOf`
+for `instanceof`, and `a instanceof A` is **correct**. So either that path
+prepares its operands differently before the call, or it does not reach this
+helper on this shape — resolving that difference is the shortest route to the
+fix.
 
 ## Acceptance criteria
 
