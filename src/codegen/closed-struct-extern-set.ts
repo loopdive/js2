@@ -158,7 +158,12 @@ export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (!fn || flattenIdx === undefined || equalsIdx === undefined) return;
-  const resurrectIdx = ctx.funcMap.get(INSTANCE_FIELD_RESURRECT);
+  // Keep the pre-#4504 inline tombstone-clear path byte-identical in flag-clear
+  // modules. The direct helper is selected only while inherited [[Set]] is
+  // active, because only then would recursive __extern_set re-enter the new
+  // descriptor decision.
+  const resurrectIdx =
+    ctx.standalone && ctx.inheritedSetDescriptorDirty ? ctx.funcMap.get(INSTANCE_FIELD_RESURRECT) : undefined;
   const externSetIdx = ctx.funcMap.get("__extern_set");
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");

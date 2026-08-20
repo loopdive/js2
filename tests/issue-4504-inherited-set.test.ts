@@ -255,6 +255,30 @@ async function compileStandaloneNoImports<T>(fileName: string, source: string): 
 }
 
 describe("#4504 — inherited [[Set]] nearest-descriptor decision", () => {
+  it("keeps the pre-existing resurrection helper in descriptor-free standalone output", async () => {
+    const result = await compile(
+      `
+class Box { value = "before"; }
+export function rewrite(key: string): number {
+  const box: any = new Box();
+  delete box.value;
+  box[key] = "after";
+  return box.value === "after" ? 1 : 0;
+}
+`,
+      {
+        fileName: "issue-4504-flag-clear.ts",
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+        emitWat: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => String(error.message ?? error)).join("; ")).toBe(true);
+    expect(result.wat?.match(/\(func \$__instance_field_resurrect\b/g) ?? []).toHaveLength(1);
+    expect(result.wat).not.toContain("(func $__extern_set_decide");
+  });
+
   it("stops at the nearest inherited writable/non-writable data descriptor across multiple levels", async () => {
     await runScriptGoal(
       "4504/nearest-data-descriptor/sloppy-script",

@@ -179,12 +179,9 @@ export function reserveInstanceProps(ctx: CodegenContext): void {
   reserve(IS_INSTANCE_EXPANDO_CARRIER, [EXT], [I32], [{ op: "i32.const", value: 0 }]);
   reserve(INSTANCE_PROP_GET, [EXT, EXT], [EXT], [{ op: "ref.null.extern" }]);
   reserve(INSTANCE_PROP_SET, [EXT, EXT, EXT], [], []);
-  // #4504's direct resurrection helper only replaces the historical recursive
-  // bag write while the inherited-set resolver is active.  Do not perturb
-  // flag-clear standalone/WASI function spaces.
-  if (ctx.standalone && ctx.inheritedSetDescriptorDirty) {
-    reserve(INSTANCE_FIELD_RESURRECT, [EXT, EXT], [], []);
-  }
+  // This helper predates #4504 and is part of the established standalone/WASI
+  // function space even when the inherited-set resolver is inactive.
+  reserve(INSTANCE_FIELD_RESURRECT, [EXT, EXT], [], []);
 }
 
 /**
@@ -560,7 +557,7 @@ export function fillInstanceProps(ctx: CodegenContext): void {
   // real live bag entry, so the write-through in S1 would store into the struct
   // while every reflective surface kept answering "deleted". Dropping the
   // marker first restores the round trip.
-  if (ctx.standalone && ctx.inheritedSetDescriptorDirty && deletePropIdx !== undefined) {
+  if (deletePropIdx !== undefined) {
     const bail: Instr[] = [{ op: "return" }];
     setFn(
       INSTANCE_FIELD_RESURRECT,
