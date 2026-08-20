@@ -17,6 +17,7 @@ const DOM_GLOBALS = [
   "Element",
   "HTMLElement",
   "HTMLDocument",
+  "Document",
   "HTMLHtmlElement",
   "HTMLHeadElement",
   "HTMLBodyElement",

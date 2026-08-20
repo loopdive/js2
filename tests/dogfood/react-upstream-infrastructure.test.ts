@@ -31,6 +31,7 @@ describe("React upstream test infrastructure", () => {
       expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
       expect(globalThis.HTMLLabelElement).toBeTypeOf("function");
       expect(globalThis.HTMLSpanElement).toBeTypeOf("function");
+      expect(globalThis.Document).toBeTypeOf("function");
       expect(globalThis.ElementInternals).toBeTypeOf("function");
       expect(globalThis.ProgressEvent).toBeTypeOf("function");
       console.error("warning from %s", "React");
