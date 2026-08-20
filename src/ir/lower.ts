@@ -290,6 +290,12 @@ export interface IrLowerResolver {
    */
   ensureExnTag?(): number;
   /**
+   * True for no-JavaScript-host targets that use the standardized
+   * `try_table` exception proposal. Host `gc` output keeps the legacy
+   * `try`/`catch` encoding for compatibility with JavaScript engines.
+   */
+  standardizedExceptions?(): boolean;
+  /**
    * #1373b Phase C scaffolding — resolve (and lazily register) the
    * standalone `$Promise` WasmGC struct type. The struct's layout is
    * `{ state: i32, value: externref, callbacks: externref }` (see

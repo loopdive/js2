@@ -57,6 +57,7 @@ import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 // (#2895 PR1) The frame ABI (state-struct field offsets + resume modes) and the
 // field-I/O / spill-store emit helpers now live in the shared resumable-frame
 // core, consumed unchanged here and by the host-free async path (PATH B).
@@ -3152,18 +3153,13 @@ function compileState(
               // re-throw / a finally-thrown replacement error. Foreign JS
               // exceptions (host mode) recover via __get_caught_exception when
               // the resume emitter acquired it (#3050 wrap parity).
-              {
-                op: "try",
-                blockType: { kind: "empty" },
-                body: [
-                  { op: "local.get", index: closeDelegLocal },
-                  { op: "call", funcIdx: closeResumeIdx },
-                  { op: "drop" },
-                ],
-                catches: [{ tagIdx: ensureExnTag(ctx), body: closeCatch }],
-                catchAll:
-                  getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx }, ...closeCatch] : undefined,
-              },
+              buildTargetTaggedTry(
+                ctx,
+                { kind: "empty" },
+                [{ op: "local.get", index: closeDelegLocal }, { op: "call", funcIdx: closeResumeIdx }, { op: "drop" }],
+                [{ tagIdx: ensureExnTag(ctx), body: closeCatch }],
+                getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx }, ...closeCatch] : undefined,
+              ),
               // Close complete — clear the slot.
               { op: "local.get", index: selfLocal },
               { op: "ref.null", typeIdx: closeInner.stateTypeIdx },
@@ -3764,13 +3760,13 @@ function compileState(
     const catchAll: Instr[] | undefined =
       getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx }, ...routeInstrs()] : undefined;
     return [
-      {
-        op: "try",
-        blockType: { kind: "empty" },
+      buildTargetTaggedTry(
+        ctx,
+        { kind: "empty" },
         body,
-        catches: [{ tagIdx: ensureExnTag(ctx), body: routeInstrs() }],
+        [{ tagIdx: ensureExnTag(ctx), body: routeInstrs() }],
         catchAll,
-      },
+      ),
     ];
   }
   return body;

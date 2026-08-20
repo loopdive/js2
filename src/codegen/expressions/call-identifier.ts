@@ -36,7 +36,12 @@ import {
 } from "../linear-uint8-signatures.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
-import { boundFunctionTargetIsDefinitelyCompiled, calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
+import {
+  boundFunctionTargetIsDefinitelyCompiled,
+  calleeIsBoundFunctionVar,
+  resolveApplyBindAlias,
+  resolveUncurryThisAlias,
+} from "../object-builtin-effects.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
@@ -53,6 +58,8 @@ import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
+import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
 import {
   defaultValueInstrs,
@@ -1110,6 +1117,37 @@ export function compileIdentifierCall(
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
     if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+      // Deno's `uncurryThis = bind.bind(call)` has the exact native spelling
+      // `call.bind(...args)`. Construct that bound-function carrier directly;
+      // invoking the generic Function.prototype.bind method-value body would
+      // otherwise refuse dynamically discovered builtin method closures.
+      const callValue = resolveUncurryThisAlias(ctx.oracle, expr.expression);
+      if (callValue) {
+        const bindAccess = ts.factory.createPropertyAccessExpression(callValue, "bind");
+        ts.setTextRange(bindAccess, expr.expression);
+        const bindCall = ts.factory.createCallExpression(bindAccess, undefined, expr.arguments);
+        ts.setTextRange(bindCall, expr);
+        (bindAccess as { parent: ts.Node }).parent = bindCall;
+        (bindCall as { parent: ts.Node }).parent = expr.parent;
+        const compiledUncurryThis = compileCallExpression(ctx, fctx, bindCall);
+        if (compiledUncurryThis !== null) return compiledUncurryThis;
+      }
+      // Deno's `applyBind = bind.bind(apply)` is a bound invocation of the
+      // Function.prototype.bind METHOD VALUE. The generic method-value body is
+      // intentionally a catchable refusal, but the immutable alias has an
+      // exact equivalent native spelling: `apply.bind(...args)`. Compile that
+      // spelling so the result is the ordinary `$__bound_fn` carrier.
+      const applyValue = resolveApplyBindAlias(ctx.oracle, expr.expression);
+      if (applyValue) {
+        const bindAccess = ts.factory.createPropertyAccessExpression(applyValue, "bind");
+        ts.setTextRange(bindAccess, expr.expression);
+        const bindCall = ts.factory.createCallExpression(bindAccess, undefined, expr.arguments);
+        ts.setTextRange(bindCall, expr);
+        (bindAccess as { parent: ts.Node }).parent = bindCall;
+        (bindCall as { parent: ts.Node }).parent = expr.parent;
+        const compiledApplyBind = compileCallExpression(ctx, fctx, bindCall);
+        if (compiledApplyBind !== null) return compiledApplyBind;
+      }
       const uncurriedCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
       if (uncurriedCall !== undefined) return uncurriedCall;
     }
@@ -1225,11 +1263,20 @@ export function compileIdentifierCall(
         // the shorter (but JS-compatible) funcref signature out of the dispatch.
         ensureFuncValueWrappersRegistered(ctx, expr.getSourceFile());
         const sig = callSigs[0]!;
-        const sigParamCount = sig.parameters.length;
+        const builtinAlias =
+          ctx.standalone || ctx.wasi ? resolveBuiltinStaticBindingAlias(ctx, expr.expression) : undefined;
+        const builtinAliasClosure = builtinAlias
+          ? ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinAlias.builtinName, builtinAlias.propName)
+          : null;
+        const builtinAliasInfo = builtinAliasClosure
+          ? ctx.closureInfoByTypeIdx.get(builtinAliasClosure.type.typeIdx)
+          : undefined;
+        const sigParamCount = builtinAliasInfo?.paramTypes.length ?? sig.parameters.length;
         const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
-        const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
-        const sigParamWasmTypes: ValType[] = [];
-        for (let i = 0; i < sigParamCount; i++) {
+        const sigRetWasm =
+          builtinAliasInfo?.returnType ?? (isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType));
+        const sigParamWasmTypes: ValType[] = builtinAliasInfo ? [...builtinAliasInfo.paramTypes] : [];
+        for (let i = 0; !builtinAliasInfo && i < sigParamCount; i++) {
           // (#820d) Destructuring-pattern parameters (e.g. `method({ x = 5 } = {})`)
           // are compiled by the callee as a single `externref` slot — the binding
           // pattern is destructured inside the body from that externref, and the
@@ -2186,13 +2233,18 @@ export function compileIdentifierCall(
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
           } else {
             // Create a ref cell, store the current value, keep ref on stack.
-            // (Note: #1177 originally proposed `localMap.get(cap.name) ?? cap.outerLocalIdx`
-            // but that caused 100+ test262 regressions where main's "wrong-slot"
-            // behavior was load-bearing for tests that relied on a null deref
-            // throwing inside an async fn body. Reverted; the canonical TDZ-
-            // through-closure case is fixed via the call-site TDZ check below
-            // and Stage 3 C.1 in compileArrowAsClosure.)
-            fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+            // `cap.outerLocalIdx` belongs to the callee's declaring frame. A
+            // lifted transitive caller carries the same binding in one of its
+            // own leading capture params, so reading the declaring-frame slot
+            // here can point far beyond the caller's frame (Deno 01_core's
+            // runImmediateCallbacks -> runImmediates hit slots 1240/1254 in a
+            // 47-slot function). Use the deliberately narrow resolver: it
+            // preserves the historical declaring-frame slot unless this frame
+            // explicitly recorded a lifted capture slot or can prove the old
+            // slot is stale. This is not #1177's reverted blanket localMap-first
+            // substitution.
+            const capSourceIdx = captureSourceSlot(fctx, cap);
+            fctx.body.push({ op: "local.get", index: capSourceIdx });
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
             // Also box the outer local so subsequent reads/writes go through the ref cell
             const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {

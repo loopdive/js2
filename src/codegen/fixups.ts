@@ -148,6 +148,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
     switch (instr.op) {
       case "block":
       case "loop":
+      case "try_table":
         if (instr.body) fixed += repairBody(instr.body, localTypes, mod);
         break;
       case "if":
@@ -274,7 +275,7 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
     let crossedControlFlow = false;
     for (let j = i - 1; j >= 0; j--) {
       const op = body[j]!.op;
-      if (op === "if" || op === "block" || op === "loop" || op === "try") {
+      if (op === "if" || op === "block" || op === "loop" || op === "try" || op === "try_table") {
         crossedControlFlow = true;
       }
       depth += instrStackDelta(body[j]!, mod);
@@ -300,6 +301,32 @@ export function repairBody(body: Instr[], localTypes: ValType[], mod: WasmModule
         const idx = (refProducer as { index: number }).index;
         const localType = localTypes[idx];
         if (localType && localType.kind === "externref") {
+          // The receiver can already carry the exact coercion emitted by
+          // compileExpression(expected struct type):
+          //
+          //   local.get $extern
+          //   any.convert_extern
+          //   ref.cast(_null) $Struct
+          //   <field value>
+          //   struct.set $Struct
+          //
+          // The backward walk deliberately skips net-zero conversions, so it
+          // still lands on the original externref producer. Inserting another
+          // pair there creates `ref.cast_null; any.convert_extern`, which is
+          // invalid because any.convert_extern only accepts externref. Deno's
+          // `class BadResource extends Error { ... this.name = ... }` exposes
+          // this exact shape. An immediate exact-type cast is authoritative
+          // evidence that this producer is already repaired; leave it alone.
+          const conversion = body[refIdx + 1];
+          const cast = body[refIdx + 2];
+          const alreadyExactStructRef =
+            conversion?.op === "any.convert_extern" &&
+            (cast?.op === "ref.cast" || cast?.op === "ref.cast_null") &&
+            cast.typeIdx === structTypeIdx;
+          if (alreadyExactStructRef) {
+            i++;
+            continue;
+          }
           body.splice(refIdx + 1, 0, { op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: structTypeIdx });
           fixed++;
           i += 3; // shifted by 2 insertions + advance past struct.set
@@ -499,6 +526,7 @@ export function instrStackDelta(instr: Instr, mod: WasmModule): number {
     case "loop":
     case "if":
     case "try":
+    case "try_table":
       return 0;
 
     // Terminal

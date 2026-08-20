@@ -380,6 +380,22 @@ function formatInstrIndented(instr: Instr, depth: number): string {
       result += `\n${pad})`;
       return result;
     }
+    case "try_table": {
+      const bt = formatBlockType(instr.blockType);
+      let result = `${pad}(try_table${bt}`;
+      for (const clause of instr.catches) {
+        if (clause.kind === "catch" || clause.kind === "catch_ref") {
+          result += ` (${clause.kind} ${clause.tagIdx} ${clause.depth})`;
+        } else {
+          result += ` (${clause.kind} ${clause.depth})`;
+        }
+      }
+      if (instr.body.length > 0) {
+        result += `\n${instr.body.map((i) => formatInstrIndented(i, depth + 1)).join("\n")}\n${pad}`;
+      }
+      result += ")";
+      return result;
+    }
     default:
       return `${pad}${formatInstr(instr, depth)}`;
   }

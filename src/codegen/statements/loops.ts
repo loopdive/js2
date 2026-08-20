@@ -68,6 +68,7 @@ import {
   varCounterRedeclarationBlocksI32,
 } from "./loop-analysis.js";
 import { emitForAwaitElementUnwrap, emitForAwaitStepCapCheck } from "./for-await-helpers.js";
+import { buildStandardTryTable } from "../../ir/try-table.js";
 import {
   compileForOfAssignDestructuring,
   compileForOfDestructuring,
@@ -2517,31 +2518,64 @@ function compileForOfDirectIterator(
     // rejection reaches the user catch. Per §7.4.6 step 6, an error thrown by
     // `return()` itself is suppressed (the original throw wins) — hence the
     // empty inner catch_all. Mirrors the __iterator path's #1347 wrapper.
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [blockLoopInstr],
-      catches: [],
-      catchAll: [
-        { op: "local.get", index: doneFlagDirect },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
+    const catchBodyPrefix: Instr[] = [
+      { op: "local.get", index: doneFlagDirect },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ctx.wasi || ctx.standalone
+            ? buildStandardTryTable({ kind: "empty" }, closeCallInstrs(), [
+                {
+                  kind: "catch",
+                  tagIdx: ensureExnTag(ctx),
+                  payloadType: { kind: "externref" },
+                  body: [{ op: "drop" }],
+                },
+              ])
+            : {
+                op: "try",
+                blockType: { kind: "empty" },
+                body: closeCallInstrs(),
+                catches: [],
+                catchAll: [], // suppress return() errors per §7.4.6 step 6
+              },
+        ],
+        else: [],
+      },
+    ];
+    if (ctx.wasi || ctx.standalone) {
+      const tagIdx = ensureExnTag(ctx);
+      const exnLocal = allocLocal(fctx, `__forawait_close_exn_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(
+        buildStandardTryTable(
+          { kind: "empty" },
+          [blockLoopInstr],
+          [
             {
-              op: "try",
-              blockType: { kind: "empty" },
-              body: closeCallInstrs(),
-              catches: [],
-              catchAll: [], // suppress return() errors per §7.4.6 step 6
+              kind: "catch",
+              tagIdx,
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: exnLocal },
+                ...catchBodyPrefix,
+                { op: "local.get", index: exnLocal },
+                { op: "throw", tagIdx },
+              ],
             },
           ],
-          else: [],
-        },
-        { op: "rethrow", depth: 0 },
-      ],
-    });
+        ),
+      );
+    } else {
+      fctx.body.push({
+        op: "try",
+        blockType: { kind: "empty" },
+        body: [blockLoopInstr],
+        catches: [],
+        catchAll: [...catchBodyPrefix, { op: "rethrow", depth: 0 }],
+      });
+    }
   } else {
     fctx.body.push(blockLoopInstr);
   }
@@ -2937,17 +2971,28 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     // wrapping the inner __iterator_return call in a nested try/catch_all
     // whose catchAll is empty (drops any exception). The outer catch_all
     // then `rethrow 0` re-raises the ORIGINAL exception. (#1347)
-    const innerCloseTry: Instr = {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [
-        { op: "local.get", index: iterLocal },
-        { op: "call", funcIdx: returnIdx },
-      ],
-      catches: [],
-      catchAll: [], // suppress any error from GetMethod / return() per spec step 6
-    };
-    const catchAllBody: Instr[] = [
+    const closeBody: Instr[] = [
+      { op: "local.get", index: iterLocal },
+      { op: "call", funcIdx: returnIdx },
+    ];
+    const innerCloseTry: Instr =
+      ctx.wasi || ctx.standalone
+        ? buildStandardTryTable({ kind: "empty" }, closeBody, [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [{ op: "drop" }],
+            },
+          ])
+        : {
+            op: "try",
+            blockType: { kind: "empty" },
+            body: closeBody,
+            catches: [],
+            catchAll: [], // suppress any error from GetMethod / return() per spec step 6
+          };
+    const closeOnThrowBody: Instr[] = [
       { op: "local.get", index: doneFlag },
       { op: "i32.eqz" },
       {
@@ -2956,15 +3001,38 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
         then: [innerCloseTry],
         else: [],
       },
-      { op: "rethrow", depth: 0 },
     ];
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [blockLoopInstr],
-      catches: [],
-      catchAll: catchAllBody,
-    });
+    if (ctx.wasi || ctx.standalone) {
+      const tagIdx = ensureExnTag(ctx);
+      const exnLocal = allocLocal(fctx, `__iterator_close_exn_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(
+        buildStandardTryTable(
+          { kind: "empty" },
+          [blockLoopInstr],
+          [
+            {
+              kind: "catch",
+              tagIdx,
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: exnLocal },
+                ...closeOnThrowBody,
+                { op: "local.get", index: exnLocal },
+                { op: "throw", tagIdx },
+              ],
+            },
+          ],
+        ),
+      );
+    } else {
+      fctx.body.push({
+        op: "try",
+        blockType: { kind: "empty" },
+        body: [blockLoopInstr],
+        catches: [],
+        catchAll: [...closeOnThrowBody, { op: "rethrow", depth: 0 }],
+      });
+    }
   } else {
     fctx.body.push(blockLoopInstr);
   }

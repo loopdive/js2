@@ -144,6 +144,7 @@ function scanRegion(instrs: Instr[], outDepth: number, used: Set<number>): strin
       case "return_call_ref":
         return "tail-call";
       case "try":
+      case "try_table":
         // A try frame's catch-label bookkeeping is not modelled by the plain
         // depth recreation below; the fills never emit one in a dispatcher.
         return "try-frame";

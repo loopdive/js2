@@ -1083,11 +1083,14 @@ export function tryBufferViewAttributeReads(
           });
           return { kind: "externref" };
         } else {
-          // TypedArray: backing is an f64 vec (or i8 for standalone Uint8Array);
-          // byteLen = element-count (field 0) × BYTES_PER_ELEMENT.
-          const elemKey = noJsHost(ctx) && bufRecvName === "Uint8Array" ? "i8_byte" : "f64";
-          const elemType: ValType = elemKey === "i8_byte" ? { kind: "i8" } : { kind: "f64" };
-          const viewVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
+          // TypedArray: recover the receiver through the SAME storage mapping
+          // used by its constructor.  The old Uint8Array-vs-f64 split predates
+          // packed Int8/Int16 and dedicated i32-element storage; after that
+          // migration it cast every such receiver to the wrong vec type and
+          // trapped on `.buffer` (Deno's Uint32Array→Uint8Array call-site
+          // scratch view is the bootstrap-critical instance).
+          const viewStorage = typedArrayVecStorage(ctx, bufRecvName!);
+          const viewVecTypeIdx = getOrRegisterVecType(ctx, viewStorage.key, viewStorage.type);
           const recvType = compileExpression(ctx, fctx, expr.expression);
           if (recvType?.kind === "externref") {
             fctx.body.push({ op: "any.convert_extern" });

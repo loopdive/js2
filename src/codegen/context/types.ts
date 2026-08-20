@@ -1068,7 +1068,7 @@ export interface FunctionContext {
    * Stack of catch rethrow info. Each entry tracks a catch variable name and the
    * current depth (number of block-like structures) from the catch boundary.
    */
-  catchRethrowStack?: { varName: string; depth: number }[];
+  catchRethrowStack?: { varName: string; depth: number; exnLocalIdx?: number }[];
   /**
    * Stack of pending finally blocks. When a return/break/continue exits a try
    * block that has a finally clause, the finally instructions must be inlined

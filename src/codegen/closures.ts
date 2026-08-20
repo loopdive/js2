@@ -49,6 +49,7 @@ import {
   resolveWasmTypeForClosureReturn,
 } from "./index.js";
 import { refCellValueType } from "./registry/types.js"; // (#3328) boxed-capture valType fallback
+import { buildTargetTaggedTry } from "../ir/try-table.js";
 import {
   coerceType,
   compileExpression,
@@ -2712,13 +2713,15 @@ export function compileLiftedClosureBody(
             { op: "local.set", index: pendingThrowLocal },
           ]
         : [];
-    liftedFctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-      catches: [{ tagIdx, body: catchBody }],
-      catchAll: catchAllBody,
-    });
+    liftedFctx.body.push(
+      buildTargetTaggedTry(
+        ctx,
+        { kind: "empty" },
+        [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
+        [{ tagIdx, body: catchBody }],
+        catchAllBody,
+      ),
+    );
 
     // Return __create_generator or __create_async_generator depending on async flag
     const createGenName = isAsync ? "__create_async_generator" : "__create_generator";

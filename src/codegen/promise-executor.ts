@@ -41,6 +41,7 @@ import { coerceType, emitGuardedFuncRefCast, pushDefaultValue } from "./type-coe
 import { emitNullCheckThrow } from "./property-access.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   PROMISE_STATE_PENDING,
   // (#3125) `ensurePromiseExecutorClosures` + its interface moved to
@@ -186,13 +187,12 @@ export function emitStandalonePromiseFromExecutor(
     fctx.body = fctx.savedBodies.pop()!;
   }
 
-  fctx.body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: tryBody,
-    catches: [
+  fctx.body.push(
+    buildStandardTryTable({ kind: "empty" }, tryBody, [
       {
+        kind: "catch",
         tagIdx: exnTag,
+        payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
           { op: "local.get", index: pLocal },
@@ -201,8 +201,8 @@ export function emitStandalonePromiseFromExecutor(
           { op: "drop" },
         ],
       },
-    ],
-  });
+    ]),
+  );
 
   // 6. Result: the pending/settled $Promise as externref.
   fctx.body.push({ op: "local.get", index: pLocal });
@@ -302,13 +302,12 @@ export function emitStandalonePromiseFromExecutorValue(
     { op: "call", funcIdx: applyClosureIdx },
     { op: "drop" }, // executor return value is ignored (§27.2.3.1)
   ];
-  fctx.body.push({
-    op: "try",
-    blockType: { kind: "empty" },
-    body: tryBody,
-    catches: [
+  fctx.body.push(
+    buildStandardTryTable({ kind: "empty" }, tryBody, [
       {
+        kind: "catch",
         tagIdx: exnTag,
+        payloadType: { kind: "externref" },
         body: [
           { op: "local.set", index: reasonLocal },
           { op: "local.get", index: pLocal },
@@ -317,8 +316,8 @@ export function emitStandalonePromiseFromExecutorValue(
           { op: "drop" },
         ],
       },
-    ],
-  });
+    ]),
+  );
 
   // 5. Result: the pending/settled $Promise as externref.
   fctx.body.push({ op: "local.get", index: pLocal });

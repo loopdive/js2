@@ -393,6 +393,7 @@ function childBodies(instr: Instr): Instr[][] {
   switch (instr.op) {
     case "block":
     case "loop":
+    case "try_table":
       return [instr.body];
     case "if":
       return instr.else ? [instr.then, instr.else] : [instr.then];
@@ -471,7 +472,7 @@ function calleeIsSafe(fn: WasmFunction, results: ValType[]): DeclineReason | nul
   forEachInstr(fn.body, (i) => {
     if (bad) return;
     if (i.op === "return_call" || i.op === "return_call_ref") bad = "unsafe:return-call";
-    else if (i.op === "try" || i.op === "rethrow") bad = "unsafe:try";
+    else if (i.op === "try" || i.op === "try_table" || i.op === "rethrow") bad = "unsafe:try";
   });
   return bad;
 }
@@ -484,6 +485,7 @@ function cloneInstr(instr: Instr): Instr {
   switch (instr.op) {
     case "block":
     case "loop":
+    case "try_table":
       return { ...instr, body: instr.body.map(cloneInstr) };
     case "if":
       return {

@@ -166,13 +166,24 @@ function rewriteArmTrailingTailCall(ctx: CodegenContext, arm: Instr[], caller: C
  * (possibly shortened) buffer. `try` is intentionally NOT descended into.
  */
 function convertBuffer(ctx: CodegenContext, body: Instr[], caller: CallerSig): Instr[] {
+  const containsTryTable = (instrs: Instr[]): boolean => {
+    for (const instr of instrs) {
+      if (instr.op === "try_table") return true;
+      if ((instr.op === "block" || instr.op === "loop") && containsTryTable(instr.body)) return true;
+      if (instr.op === "if" && (containsTryTable(instr.then) || (instr.else && containsTryTable(instr.else)))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Recurse first into nested control-flow arms (their trailing return is a
   // tail of the function too). Skip `try` — see header.
   for (const instr of body) {
     if (instr.op === "if") {
       instr.then = convertBuffer(ctx, instr.then, caller);
       if (instr.else) instr.else = convertBuffer(ctx, instr.else, caller);
-    } else if (instr.op === "block" || instr.op === "loop") {
+    } else if ((instr.op === "block" || instr.op === "loop") && !containsTryTable(instr.body)) {
       instr.body = convertBuffer(ctx, instr.body, caller);
     }
     // `try`: left untouched (return_call inside a try-with-handler would let a

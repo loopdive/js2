@@ -84,6 +84,85 @@ export function boundFunctionTargetIsDefinitelyCompiled(oracle: TypeOracle, expr
   return visit(root);
 }
 
+function resolvesToConstFunctionPrototypeMethod(
+  oracle: TypeOracle,
+  expr: ts.Expression,
+  method: "apply" | "bind" | "call",
+): boolean {
+  const value = skipTransparentExpressions(expr);
+  if (!ts.isIdentifier(value)) return false;
+  const declaration = oracle.valueDeclarationOf(value);
+  if (!declaration || !ts.isBindingElement(declaration) || declaration.dotDotDotToken) return false;
+  const property = declaration.propertyName ?? declaration.name;
+  if (!ts.isIdentifier(property) || property.text !== method) return false;
+  const pattern = declaration.parent;
+  if (!ts.isObjectBindingPattern(pattern)) return false;
+  const variable = pattern.parent;
+  if (!ts.isVariableDeclaration(variable) || variable.name !== pattern || !variable.initializer) return false;
+  const list = variable.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+  const initializer = skipTransparentExpressions(variable.initializer);
+  return (
+    ts.isPropertyAccessExpression(initializer) &&
+    initializer.name.text === "prototype" &&
+    ts.isIdentifier(initializer.expression) &&
+    initializer.expression.text === "Function"
+  );
+}
+
+/**
+ * Resolve Deno's immutable `applyBind = bind.bind(apply)` primordial helper.
+ * Calling `applyBind(target, receiver)` is exactly
+ * `Function.prototype.apply.bind(target, receiver)`. Returning the captured
+ * `apply` expression lets call lowering mint the ordinary native bound-function
+ * carrier without trying to invoke the still-generic Function.prototype.bind
+ * method-value closure.
+ */
+export function resolveApplyBindAlias(oracle: TypeOracle, expr: ts.Expression): ts.Expression | undefined {
+  const initializer = oracle.variableInitializerOf(expr);
+  if (!initializer) return undefined;
+  const init = skipTransparentExpressions(initializer);
+  if (
+    !ts.isCallExpression(init) ||
+    init.arguments.length !== 1 ||
+    !ts.isPropertyAccessExpression(init.expression) ||
+    init.expression.name.text !== "bind"
+  ) {
+    return undefined;
+  }
+  const bindValue = init.expression.expression;
+  const applyValue = init.arguments[0]!;
+  if (!resolvesToConstFunctionPrototypeMethod(oracle, bindValue, "bind")) return undefined;
+  if (!resolvesToConstFunctionPrototypeMethod(oracle, applyValue, "apply")) return undefined;
+  return applyValue;
+}
+
+/**
+ * Resolve Deno's immutable `uncurryThis = bind.bind(call)` primordial helper.
+ * Calling `uncurryThis(target)` is exactly
+ * `Function.prototype.call.bind(target)`. As with `applyBind`, exposing the
+ * captured method lets call lowering construct the ordinary native bound
+ * function directly instead of invoking the generic `bind` method-value body.
+ */
+export function resolveUncurryThisAlias(oracle: TypeOracle, expr: ts.Expression): ts.Expression | undefined {
+  const initializer = oracle.variableInitializerOf(expr);
+  if (!initializer) return undefined;
+  const init = skipTransparentExpressions(initializer);
+  if (
+    !ts.isCallExpression(init) ||
+    init.arguments.length !== 1 ||
+    !ts.isPropertyAccessExpression(init.expression) ||
+    init.expression.name.text !== "bind"
+  ) {
+    return undefined;
+  }
+  const bindValue = init.expression.expression;
+  const callValue = init.arguments[0]!;
+  if (!resolvesToConstFunctionPrototypeMethod(oracle, bindValue, "bind")) return undefined;
+  if (!resolvesToConstFunctionPrototypeMethod(oracle, callValue, "call")) return undefined;
+  return callValue;
+}
+
 export type UncurriedBuiltinPrototypeMethod =
   | { builtin: "Array"; method: "join" | "push" }
   | { builtin: "Object"; method: "hasOwnProperty" | "propertyIsEnumerable" | "valueOf" };
