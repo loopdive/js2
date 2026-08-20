@@ -2568,7 +2568,18 @@ export function compileObjectLiteralForStruct(
     // literal; fork its method just as we already do for ToPrimitive methods.
     // Empty pre-registered placeholders remain shared for the first literal.
     const existingFunc = existingFuncIdx !== undefined ? definedFuncAt(ctx, existingFuncIdx) : undefined;
-    const forkForDistinctLiteral = existingFunc !== undefined && existingFunc.body.length > 0;
+    // Binding-pattern methods have a representation-specific destructuring
+    // ABI. Reusing a populated method body across same-shaped literals is safe
+    // for ordinary positional methods, but the broad fork changes the hidden
+    // parameter carrier for array/object patterns and leaves their iterator
+    // value in the wrong domain. Keep the existing signature-based fork path
+    // for those methods and apply the distinct-literal fork only to positional
+    // methods.
+    const hasBindingPatternParameter = prop.parameters.some(
+      (parameter) => ts.isArrayBindingPattern(parameter.name) || ts.isObjectBindingPattern(parameter.name),
+    );
+    const forkForDistinctLiteral =
+      existingFunc !== undefined && existingFunc.body.length > 0 && !hasBindingPatternParameter;
 
     // (#1989) ToPrimitive-relevant methods (`valueOf`/`toString`/
     // `@@toPrimitive`) MUST be per-instance when two same-shape object literals

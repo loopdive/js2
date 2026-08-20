@@ -15785,12 +15785,11 @@ assert._isSameValue = isSameValue;
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
       return (id: number, cap: any) => {
-        const callbackCap = _unwrapForHost(cap);
-        if (id === -2) return _wrapVoidHostCallback(callbackCap, callbackState, false);
-        if (id === -1) return _wrapVoidHostCallback(callbackCap, callbackState);
+        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
+        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
         const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
         const constructible = intent.constructible === true;
-        return createNativeFunctionCallbackBridge(id, callbackCap, callbackState, policy, constructible);
+        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {

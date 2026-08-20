@@ -3117,7 +3117,6 @@ export function compileDeclarations(
     ctx.capturedGlobals.clear();
     ctx.capturedGlobalsWidened.clear();
     ctx.capturedBoxGlobals?.clear();
-    ctx.tdzGlobals.clear();
     const initFctx: FunctionContext = {
       name: "__module_init",
       params: [],

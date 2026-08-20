@@ -305,17 +305,19 @@ export function emitObjectMethodAsClosure(
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
   // Object-literal methods share the signature wrapper with ordinary
-  // functions. A rest method needs an allocation-specific discriminator so
-  // `__call_fn_method_N` can build its trailing argument vector instead of
-  // treating the vector slot as a scalar ref (which traps when a host invokes
-  // `{ error(...args) {} }.error(value)`). Keep the public field type at the
-  // shared base; the derived value remains assignable to it.
-  const methodHasRest =
+  // functions. A rest method with a simple identifier rest parameter needs an
+  // allocation-specific discriminator so `__call_fn_method_N` can materialize
+  // its trailing argument vector. Binding-pattern rest parameters use a
+  // different destructuring ABI and must retain the shared wrapper; otherwise
+  // the dispatcher loses the pattern's hidden externref carrier.
+  const methodHasSimpleRest =
     memberDecl !== undefined &&
     ts.isFunctionLike(memberDecl) &&
-    memberDecl.parameters.some((parameter) => parameter.dotDotDotToken !== undefined);
+    memberDecl.parameters.some(
+      (parameter) => parameter.dotDotDotToken !== undefined && ts.isIdentifier(parameter.name),
+    );
   let allocationStructTypeIdx = structTypeIdx;
-  if (methodHasRest) {
+  if (methodHasSimpleRest) {
     const base = ctx.mod.types[structTypeIdx];
     if (base?.kind === "struct") {
       allocationStructTypeIdx = ctx.mod.types.length;
