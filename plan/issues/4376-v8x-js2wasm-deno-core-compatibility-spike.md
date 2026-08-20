@@ -63,6 +63,8 @@ func-budget-allow:
 oracle-ratchet-allow:
   - src/codegen/builtin-static-globals.ts
   - src/codegen/declarations/object-shape-widening.ts
+coercion-sites-allow:
+  - src/codegen/builtin-value-read.ts
 files:
   - examples/v8x-js2wasm-spike/README.md
   - examples/v8x-js2wasm-spike/compile-graph.ts
