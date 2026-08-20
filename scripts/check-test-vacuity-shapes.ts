@@ -55,9 +55,14 @@
 import { readFileSync } from "node:fs";
 import { globSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-const REPO_ROOT = resolve(dirname(new URL(import.meta.url).pathname), "..");
+// `new URL(...).pathname` leaves the path PERCENT-ENCODED, so a checkout under a
+// directory with a space (`/Volumes/Archiv Mini/…`) resolved to a non-existent
+// `/Volumes/Archiv%20Mini/…` and the glob matched NOTHING — the gate scanned 0
+// files and refused, which is exactly how this was found. `fileURLToPath` decodes.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const ALLOW_MARKER = "vacuity-shape-allow";
 

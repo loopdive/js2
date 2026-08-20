@@ -613,6 +613,7 @@ export interface FunctionContext {
   continueStack: number[];
   /** Map from label name to break/continue stack indices for labeled break/continue */
   labelMap: Map<string, { breakIdx: number; continueIdx: number }>;
+  evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
   /** Map from variable name → ref cell info (for mutable closure captures) */
@@ -1656,6 +1657,14 @@ export interface CodegenContext {
    * decision lives in exactly one place.
    */
   emitHostBridge: boolean;
+  /**
+   * The exact standalone Promise-delay provider registered a timer callback
+   * that must re-enter Wasm after the general JS host bridge is stripped.
+   * Finalization publishes only the reserved zero-argument timer dispatcher.
+   */
+  requiresStandaloneTimerCallbackDispatch?: boolean;
+  /** Exact #4576 dom@1 import family was checker-certified for this module. */
+  requiresStandaloneDomCapability?: boolean;
   /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in

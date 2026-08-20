@@ -107,6 +107,8 @@ export type {
 
 export interface IrLowerResolver {
   resolveFunc(ref: IrFuncRef): number;
+  /** Exact post-call carrier adaptation for a provider with a legacy ABI. */
+  callResultAdapter?(ref: IrFuncRef): "native-string-from-externref" | undefined;
   resolveGlobal(ref: IrGlobalRef): number;
   resolveType(ref: IrTypeRef): number;
   internFuncType(type: FuncTypeDef): number;
@@ -1505,6 +1507,13 @@ export function lowerIrFunctionBody<S, Slot>(
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
         emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        if (resolver.callResultAdapter?.(instr.target) === "native-string-from-externref") {
+          const stringCarrier = resolver.resolveString?.();
+          if (!stringCarrier || (stringCarrier.kind !== "ref" && stringCarrier.kind !== "ref_null")) {
+            throw new Error(`ir/lower: native string call adapter has no reference carrier (${func.name})`);
+          }
+          emitter.emitFromExternref({ typeIdx: stringCarrier.typeIdx }, out);
+        }
         return;
       }
       case "intrinsic": {
@@ -4011,7 +4020,13 @@ function memberValType(t: IrType, funcName: string): ValType {
 }
 
 export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
-  if (t.kind === "val") return t.val;
+  if (t.kind === "val") {
+    if (!t.typeRef) return t.val;
+    if (t.val.kind !== "ref" && t.val.kind !== "ref_null") {
+      throw new Error(`ir/lower: symbolic physical type ref is attached to non-reference ${t.val.kind} (${funcName})`);
+    }
+    return { kind: t.val.kind, typeIdx: resolver.resolveType(t.typeRef) };
+  }
   // #3214 B0 — source-level callable boundaries use the same externref ABI as
   // legacy callbacks. The signature remains in IrType for exact unpack/call
   // lowering; it has no distinct Wasm parameter representation.

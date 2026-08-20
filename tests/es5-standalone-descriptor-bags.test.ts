@@ -19,8 +19,9 @@
 //      for the absence of one.
 //
 // Every expectation below is the value **Node** produces for the identical
-// source. The two refusal rows are the other half of the contract: what has no
-// complete key source must keep refusing LOUDLY rather than defining nothing.
+// source. The indexed-vec refusal row is the other half of the contract: what
+// has no complete key source must keep refusing LOUDLY rather than defining
+// nothing.
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
@@ -39,7 +40,7 @@ async function run(source: string): Promise<Record<string, number>> {
   return out;
 }
 
-/** `1` when the body threw, `0` when it completed — the shape both refusal rows use. */
+/** `1` when the body threw, `0` when it completed. */
 const threw = (body: string): string => `try {\n${body}\nreturn 0;\n} catch (e) {\nreturn 1;\n}`;
 
 // name -> [body, expected]. `expected` is Node's answer for the identical source.
@@ -155,7 +156,7 @@ const CASES: Array<[string, string, number]> = [
      return obj1 === obj ? 1 : 0;`,
     1,
   ],
-  // ── 8. what must STILL refuse — loudly, not silently ──────────────────────
+  // ── 8. carrier coverage and the remaining loud refusal ───────────────────
   [
     "t_indexed_vec_props_refuses",
     // An array WITH elements has own index keys living in `$data`, which is in
@@ -167,15 +168,15 @@ const CASES: Array<[string, string, number]> = [
     1,
   ],
   [
-    "t_error_props_refuses",
-    // An Error has NO own-property store at all: the define lands nowhere and
-    // the read returns undefined, so enumerating would define nothing. That is
-    // #4098's greenfield, and it keeps the loud refusal until it has one.
+    "t_error_props_defines",
+    // #4098 gives native Error instances an authoritative own-property store,
+    // so they are valid Properties maps and the descriptor must be copied.
     `const obj: any = {};
      const props: any = new Error("test");
      props.prop = { value: 16 };
-     ${threw(`Object.defineProperties(obj, props);`)}`,
-    1,
+     Object.defineProperties(obj, props);
+     return obj.prop;`,
+    16,
   ],
   // ── 9. controls — the untouched `$Object` path ────────────────────────────
   [

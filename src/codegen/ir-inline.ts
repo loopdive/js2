@@ -38,8 +38,11 @@
  *    by the time `wasm-opt` runs.
  *
  * 3. **Adapters always.** The `__dc_*` dispatch trampolines are ~25 functions
- *    carrying ~4 % of runtime in pure self-time. A trampoline's whole body is
- *    overhead by construction, so no size heuristic gets a vote.
+ *    carrying ~4 % of runtime in pure self-time. The two native
+ *    number-to-string carrier thunks and three native-Map carrier adapters
+ *    likewise contain only representation conversions the direct backend
+ *    emits inline. An adapter's whole body is overhead by construction, so no
+ *    size heuristic gets a vote.
  *
  * 4. **Cold by construction never, and not charged to the caller.** The
  *    `__new_TypeError` / `__throw*` guard paths are never inlined, AND their
@@ -172,8 +175,10 @@
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { tunedFlagEnabled, tunedFlagExplicit } from "../perf-flags.js";
+import { IR_NUMBER_TO_FIXED_FN } from "../ir/string-runtime.js";
 import { EXEC_CENSUS_PREFIX } from "./exec-census.js";
 import type { CodegenContext } from "./context/types.js";
+import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "./ir-native-map.js";
 
 // ---------------------------------------------------------------------------
 // Options
@@ -181,9 +186,13 @@ import type { CodegenContext } from "./context/types.js";
 
 export interface InlineOptions {
   enabled: boolean;
-  /** Analyse and print, mutate nothing. Binary stays byte-identical. */
+  /**
+   * Analyse and print, mutate nothing. Binary stays byte-identical. The exact
+   * native-Map precomposition below is intentionally apply-only, so report
+   * mode does not predict that bounded exception's composed growth.
+   */
   report: boolean;
-  /** Rule 3 — `__dc_*` trampolines, unconditionally. */
+  /** Rule 3 — dispatch and exact representation-only adapters, unconditionally. */
   adapters: boolean;
   /** Single-direct-caller user functions. */
   single: boolean;
@@ -345,11 +354,21 @@ export function parseInlineOptions(raw: string | undefined): InlineOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * A `__dc_*` dispatch trampoline. Rule 3: overhead by construction, so it is
- * admitted without consulting any size budget.
+ * A dispatch or representation-only adapter. Rule 3: overhead by
+ * construction, so it is admitted without consulting any size budget.
  */
 export function isAdapter(name: string): boolean {
-  return name.startsWith("__dc_");
+  return (
+    name.startsWith("__dc_") ||
+    name === "__ir_number_toString_native" ||
+    name === "__ir_number_to_string" ||
+    name === IR_NUMBER_TO_FIXED_FN ||
+    isNativeMapCarrierAdapter(name)
+  );
+}
+
+function isNativeMapCarrierAdapter(name: string): boolean {
+  return name === IR_NATIVE_MAP_NEW_FN || name === IR_NATIVE_MAP_GET_NUM_FN || name === IR_NATIVE_MAP_SET_NUM_FN;
 }
 
 /**
@@ -775,6 +794,13 @@ interface CalleeFacts {
  * which the alias also widens), but it is unpredictable and unbudgetable, so
  * it is not what this pass does.
  *
+ * The one bounded exception is the three native-Map carrier adapters. The IR
+ * must cross those typed carrier shims, while the direct backend calls the raw
+ * `__map_*` helpers at the source site. We process exactly those adapter
+ * CALLERS first, then copy their composed live body at the one source call
+ * layer. Nested lookup/hash calls remain calls, so this recovers the direct
+ * shape without turning the module pass into a general transitive inliner.
+ *
  * (#4157 shard-slowdown fix) The original guarantee is COPY-ON-WRITE, not an
  * eager whole-module deep clone. Eagerly cloning every body cost ~55 ms +
  * tens of MB of garbage PER COMPILE — irrelevant amortized over one acorn
@@ -800,6 +826,61 @@ function createOriginalBodyTracker(mod: WasmModule): {
       }
     },
   };
+}
+
+function planNativeMapAdapterPrecomposition(
+  mod: WasmModule,
+  opts: InlineOptions,
+  callerCount: Int32Array,
+  addressTaken: Uint8Array,
+): { positions: Set<number>; callerOrder: number[] } {
+  const positions = new Set<number>();
+  const frozenAdapterCallers = new Set<number>();
+  // Report mode's primary contract is byte identity. Shadow-precomposing would
+  // require a cloned module/local space; keep its statistics on the ordinary
+  // one-level topology rather than mutating and attempting to restore compiler
+  // state. The apply path still charges the full live body below.
+  if (!opts.report && opts.adapters) {
+    for (let index = 0; index < mod.functions.length; index++) {
+      if (
+        isNativeMapCarrierAdapter(mod.functions[index]!.name) &&
+        callerCount[index] === 1 &&
+        addressTaken[index] === 0
+      ) {
+        positions.add(index);
+      }
+    }
+  }
+  if (opts.adapters && !opts.report) {
+    for (let index = 0; index < mod.functions.length; index++) {
+      // #4576 — this thunk is representation-only and therefore copied into
+      // each source call site. Do not first inline its single raw native
+      // formatter callee into the thunk itself: doing so retains a dead 7 KiB
+      // composed wrapper in addition to the five direct-shaped source calls.
+      if (mod.functions[index]!.name === IR_NUMBER_TO_FIXED_FN) frozenAdapterCallers.add(index);
+    }
+  }
+  return {
+    positions,
+    callerOrder: [
+      ...positions,
+      ...Array.from(mod.functions.keys()).filter((index) => !positions.has(index) && !frozenAdapterCallers.has(index)),
+    ],
+  };
+}
+
+function installInlineCounter(ctx: CodegenContext, opts: InlineOptions): number {
+  if (!opts.count || opts.report) return -1;
+  const mod = ctx.mod;
+  const globalIdx = ctx.numImportGlobals + mod.globals.length;
+  mod.globals.push({
+    name: "__ir_inline_execs",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: 0 }],
+  });
+  mod.exports.push({ name: "__ir_inline_execs", desc: { kind: "global", index: globalIdx } });
+  return globalIdx;
 }
 
 export function inlineUserFunctions(ctx: CodegenContext): void {
@@ -884,19 +965,15 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
   }
 
   // --- counter global (needs to exist before any body references it) --------
-  let counterGlobalIdx = -1;
-  if (opts.count && !opts.report) {
-    counterGlobalIdx = ctx.numImportGlobals + mod.globals.length;
-    mod.globals.push({
-      name: "__ir_inline_execs",
-      type: { kind: "i32" },
-      mutable: true,
-      init: [{ op: "i32.const", value: 0 }],
-    });
-    mod.exports.push({ name: "__ir_inline_execs", desc: { kind: "global", index: counterGlobalIdx } });
-  }
+  const counterGlobalIdx = installInlineCounter(ctx, opts);
 
   const { originalOf, preserveOriginal } = createOriginalBodyTracker(mod);
+  const { positions: precomposedAdapterPositions, callerOrder } = planNativeMapAdapterPrecomposition(
+    mod,
+    opts,
+    callerCount,
+    addressTaken,
+  );
   // Per-callee analysis cache — see the comment at its use in the site loop.
   const calleeFacts = new Map<number, CalleeFacts>();
 
@@ -921,7 +998,7 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
 
   let growth = 0;
 
-  for (let ci = 0; ci < mod.functions.length; ci++) {
+  for (const ci of callerOrder) {
     const caller = mod.functions[ci];
     const callerType = funcTypeOf(caller);
     if (!callerType) continue;
@@ -971,7 +1048,8 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
             continue;
           }
         }
-        const calleeBody = originalOf(cp).body;
+        const calleeView = precomposedAdapterPositions.has(cp) ? callee : originalOf(cp);
+        const calleeBody = calleeView.body;
         // (#4157 shard-slowdown fix) The four analyses below are functions of
         // the callee's ORIGINAL body only (guaranteed stable by the
         // copy-on-write contract of `snapshot`), so they are computed once per
@@ -1080,10 +1158,10 @@ export function inlineUserFunctions(ctx: CodegenContext): void {
         const fresh: LocalDef[] = [];
         for (let p = 0; p < nParams; p++)
           fresh.push({ name: `__inl${stats.inlined}_p${p}`, type: calleeType.params[p] });
-        // The callee's locals come from the SNAPSHOT too: `callee.locals` is
-        // live and may already carry another inline's temporaries, which would
-        // not match `calleeBody`'s (snapshotted) local index space.
-        for (const l of originalOf(cp).locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
+        // The locals must come from the same view as the body. Ordinary
+        // callees use the stable snapshot; the exact precomposed Map adapters
+        // use their live composed body and its freshly added locals together.
+        for (const l of calleeView.locals) fresh.push({ name: `__inl${stats.inlined}_${l.name}`, type: l.type });
         caller.locals.push(...fresh);
 
         const source = specBody ?? calleeBody.map(cloneInstr);

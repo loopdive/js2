@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   ASYNC_HOST_ADAPTERS,
   ASYNC_HOST_CAPABILITY_IDS,
+  ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
-  ASYNC_RUNTIME_PROVIDER_IDS,
 } from "../src/ir/async-runtime-providers.js";
 import {
   PURE_MATH_RUNTIME_PROVIDERS,
@@ -33,6 +33,14 @@ function thrown(code: RuntimeManifestInvariantError["code"]): object {
   return expect.objectContaining<RuntimeManifestInvariantError>({ code });
 }
 
+function asyncProviderIdsForTarget(target: RuntimeTarget, features: ReadonlySet<string>): string[] {
+  return ASYNC_RUNTIME_PROVIDERS.filter(
+    (provider) => provider.supportedTargets.includes(target) && features.has(provider.feature),
+  )
+    .map((provider) => provider.id)
+    .sort();
+}
+
 describe("#4103 IR async runtime provider schema", () => {
   it("closes all seven semantic requirements to the exact six existing host imports", () => {
     const forward = builder();
@@ -44,7 +52,7 @@ describe("#4103 IR async runtime provider schema", () => {
     expect(reverse.freeze()).toEqual(manifest);
     expect(manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(manifest.providers.map((provider) => provider.id)).toEqual(
-      ASYNC_RUNTIME_PROVIDER_IDS.filter((provider) => provider !== "host.value.undefined"),
+      asyncProviderIdsForTarget("host", new Set(ASYNC_RUNTIME_FEATURES)),
     );
     expect(manifest.hostCapabilities).toEqual(
       ASYNC_HOST_CAPABILITY_IDS.filter((capability) => capability !== "async.value.undefined"),
@@ -63,6 +71,29 @@ describe("#4103 IR async runtime provider schema", () => {
     for (const adapter of ASYNC_HOST_ADAPTERS) {
       expect(semanticManifest).not.toContain(adapter.field);
     }
+  });
+
+  it("closes the standalone catalogue to native-managed providers without host capabilities", () => {
+    const value = builder("standalone");
+    const requested = [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES];
+    requestAll(value, requested);
+
+    const manifest = value.freeze();
+    expect(manifest.features).toEqual(requested);
+    expect(manifest.providers.map((provider) => provider.id)).toEqual(
+      asyncProviderIdsForTarget("standalone", new Set(requested)),
+    );
+    expect(manifest.providers.map((provider) => provider.implementation)).toEqual(
+      manifest.providers.map(() => ({ kind: "native-managed", service: "native-promise-runtime" })),
+    );
+    expect(manifest.hostCapabilities).toEqual([]);
+    expect(manifest.providers).toContainEqual(
+      expect.objectContaining({
+        id: "native.value.undefined",
+        feature: "value.undefined",
+        hostCapabilities: [],
+      }),
+    );
   });
 
   it("preserves the existing host import signatures and models scheduling without another import", () => {
@@ -118,17 +149,17 @@ describe("#4103 IR async runtime provider schema", () => {
       },
     ]);
     expect(
-      ASYNC_RUNTIME_PROVIDERS.filter((provider) => provider.feature.startsWith("scheduler.")).map(
-        (provider) => provider.implementation,
-      ),
+      ASYNC_RUNTIME_PROVIDERS.filter(
+        (provider) => provider.supportedTargets.includes("host") && provider.feature.startsWith("scheduler."),
+      ).map((provider) => provider.implementation),
     ).toEqual([
       { kind: "host-managed", service: "promise-job-queue" },
       { kind: "host-managed", service: "promise-job-queue" },
     ]);
     expect(
-      ASYNC_RUNTIME_PROVIDERS.filter((provider) => provider.feature.startsWith("scheduler.")).flatMap(
-        (provider) => provider.hostCapabilities,
-      ),
+      ASYNC_RUNTIME_PROVIDERS.filter(
+        (provider) => provider.supportedTargets.includes("host") && provider.feature.startsWith("scheduler."),
+      ).flatMap((provider) => provider.hostCapabilities),
     ).toEqual([]);
   });
 
@@ -204,6 +235,20 @@ describe("#4103 IR async runtime provider schema", () => {
     const altered = new RuntimeManifestBuilder({ target: "host", backend: "wasmgc" }, { providers });
     altered.requestFeature("promise.resolve");
     expect(() => altered.freeze()).toThrowError(thrown("unknown-host-capability"));
+
+    const malformedNativeProviders = RUNTIME_PROVIDERS.map((provider): RuntimeProviderDefinition => {
+      if (provider.id !== "native.promise.resolve") return provider;
+      return {
+        ...provider,
+        hostCapabilities: ["async.promise.resolve"],
+      };
+    });
+    const malformedNative = new RuntimeManifestBuilder(
+      { target: "standalone", backend: "wasmgc" },
+      { providers: malformedNativeProviders },
+    );
+    malformedNative.requestFeature("promise.resolve");
+    expect(() => malformedNative.freeze()).toThrowError(thrown("unknown-host-capability"));
   });
 
   it("publishes deeply frozen provider and capability records", () => {

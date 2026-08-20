@@ -18,6 +18,7 @@ import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js
 import type { IrClassShape } from "./nodes.js";
 import { makeFnctorArrayMethodPlan, type IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
 export type { IrFnctorArrayMethodPlan } from "./fnctor-array-method.js";
+import { heterogeneousAssignmentRetypesModuleBinding } from "./heterogeneous-module-bindings.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningOwnerUnitId,
@@ -773,6 +774,8 @@ export interface IrModuleBindingResolverOptions {
   readonly allowBoundedTopLevelAccessorSelectionCandidates?: boolean;
   /** Whole-program fnctor gate proof for one-write intrinsic Array prototypes. */
   readonly stableFnctorArrayPrototypeNames?: ReadonlySet<string>;
+  /** Oracle shared with legacy module-global allocation when one is active. */
+  readonly oracle?: TypeOracle;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -1991,6 +1994,14 @@ export function makeIrLegacyModuleBindingResolver(
     const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
     const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
     if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration };
+
+    // #4204/#4206 — direct codegen widens this binding's compatibility slot
+    // to externref. IR cannot yet own the corresponding general dynamic
+    // assignment/read boundaries, so reject before claim instead of resolving
+    // the same slot as f64/i32 and tripping the Program ABI invariant later.
+    if (heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)) {
+      return { kind: "unsupported", declaration };
+    }
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
     // #4208 S2 — a non-fast update target whose initializer representation

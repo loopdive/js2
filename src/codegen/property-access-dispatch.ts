@@ -367,9 +367,8 @@ export function tryConstructorPrototypeIdentity(
   // `.prototype` to %Array.prototype%. Intercept the COMPOUND access and emit the
   // compiler's own `Object.prototype` value-read (a synthetic `Object.prototype`
   // member access — the lowering is name-keyed on `Object`), so it matches the
-  // identity a plain `Object.prototype` read produces. Host-mode only.
+  // identity a plain `Object.prototype` read produces. (#4555) Both targets.
   if (
-    !noJsHost(ctx) &&
     propName === "prototype" &&
     ts.isPropertyAccessExpression(expr.expression) &&
     expr.expression.name.text === "constructor" &&
@@ -393,9 +392,9 @@ export function tryConstructorPrototypeIdentity(
   // synthetic `Object` identifier so `arguments.constructor === Object`. (The
   // compound `arguments.constructor.prototype` shape is handled above, because
   // the bare `Object` value's `.prototype` is not identity-equal to the
-  // `Object.prototype` member-read in this compiler.) Host-mode only.
+  // `Object.prototype` member-read in this compiler.) (#4555) Both targets —
+  // standalone reaches the same `Object` / `Object.prototype` value reads.
   if (
-    !noJsHost(ctx) &&
     propName === "constructor" &&
     ts.isIdentifier(expr.expression) &&
     expr.expression.text === "arguments" &&

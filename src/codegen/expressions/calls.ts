@@ -248,7 +248,6 @@ import {
   compileDateMethodCall,
   compileMathCall,
   ensureDateDaysFromCivilHelper,
-  wasiAllocStringData,
 } from "./builtins.js";
 import { tryCompileTemporalMethodCall, tryCompileTemporalStaticCall } from "../temporal-native.js";
 import {
@@ -2710,14 +2709,6 @@ export function resolvePromiseSubclassThisArg(
   // the subclassed promise (one object, not two). Detection (parent-chain
   // walk, standalone gate) + emission live in `promise-subclass.ts`.
   return tryEmitPromiseSubclassReceiver(ctx, fctx, argExpr);
-}
-
-export function usesArguments(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) && node.text === "arguments") return true;
-  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
-    return false;
-  }
-  return forEachChild(node, usesArguments) ?? false;
 }
 
 /**
@@ -7281,7 +7272,7 @@ function compileCallExpression(
               namedThisCall || closureReceiver ? { kind: "externref" } : undefined,
             );
             if (thisType && closureReceiver) {
-              emitClosureReceiverInstall(fctx, closureReceiver);
+              emitClosureReceiverInstall(ctx, fctx, closureReceiver);
             } else if (thisType && !namedThisCall) {
               fctx.body.push({ op: "drop" });
             }
@@ -8976,51 +8967,6 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
 
 /** Resolve the enclosing class name from a FunctionContext.
  *  Uses enclosingClassName if set (e.g. closures), otherwise parses ClassName from "ClassName_methodName". */
-
-/**
- * Compile a string expression argument and write it to WASI linear memory via bump allocator.
- * Pushes (ptr: i32, len: i32) onto the stack.
- *
- * For string literals, this is handled at the call site via wasiAllocStringData.
- * This function handles dynamic string values (variables, expressions) by
- * compiling a runtime copy from the WasmGC string to linear memory.
- *
- * Current limitation: only supports string literals assigned to variables at compile time.
- * For truly dynamic strings, we'd need a runtime string-to-memory encoder.
- * For now, emit unreachable for unsupported cases.
- */
-export function compileWasiStringArgToLinearMemory(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.Expression,
-): void {
-  // If it's an identifier referencing a const/let with a string literal initializer,
-  // we can resolve it at compile time
-  if (ts.isIdentifier(expr)) {
-    const sym = ctx.checker.getSymbolAtLocation(expr);
-    if (sym?.valueDeclaration && ts.isVariableDeclaration(sym.valueDeclaration)) {
-      const init = sym.valueDeclaration.initializer;
-      if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) {
-        const data = wasiAllocStringData(ctx, init.text);
-        fctx.body.push({ op: "i32.const", value: data.offset });
-        fctx.body.push({ op: "i32.const", value: data.length });
-        return;
-      }
-    }
-  }
-
-  // Template literal with only a head (no substitutions)
-  if (ts.isNoSubstitutionTemplateLiteral(expr)) {
-    const data = wasiAllocStringData(ctx, expr.text);
-    fctx.body.push({ op: "i32.const", value: data.offset });
-    fctx.body.push({ op: "i32.const", value: data.length });
-    return;
-  }
-
-  // Fallback: unsupported dynamic string — trap at runtime
-  // TODO: implement runtime GC-string to linear-memory copy for dynamic strings
-  fctx.body.push({ op: "unreachable" });
-}
 
 // ── #2922 arms 2+3 — dynamic Promise.all/race argument ──────────────────────
 

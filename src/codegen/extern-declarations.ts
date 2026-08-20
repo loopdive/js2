@@ -13,6 +13,7 @@ import type { CodegenContext, ExternClassInfo } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import { isExternalDeclaredClass, isVoidType, mapTsTypeToWasm } from "../checker/type-mapper.js";
+import { FS_PATH_BASED_MEMBERS, WASI_NODE_FS_ALIAS_SENTINEL } from "../checker/node-capability-map.js";
 import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
@@ -1379,7 +1380,9 @@ export function collectDeclaredGlobals(
       // binding here only affects genuine bare-value uses, which fall through to
       // the native-namespace carrier (identifiers.ts:emitBuiltinNamespaceObject)
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
-      if (ctx.strictNoHostImports || ctx.standalone) continue;
+      const certifiedStandaloneDocument =
+        ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
+      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument)) continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
@@ -1511,6 +1514,12 @@ const DOM_ONLY_GLOBALS = new Set([
   "cancelAnimationFrame",
 ]);
 
+// Named node:fs bindings the WASI compiler deliberately owns: fd/file writes
+// lower in-module, while known path-based calls reach the precise no-provider
+// gate. Keep this exact; an arbitrary name would otherwise disappear after
+// import preprocessing (#4565 review).
+const WASI_HANDLED_NODE_FS_MEMBERS = new Set(["readSync", "writeSync", "writeFileSync", ...FS_PATH_BASED_MEMBERS]);
+
 /**
  * Register Node.js builtin module imports as externref host imports (#1044).
  *
@@ -1528,18 +1537,16 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
       // preprocessing leaves a type-level `process` binding in the AST and
       // node-fs-api.ts lowers supported stream calls directly to WASI.
       if (builtin.moduleName === "process") continue;
-      // #2631/#2655 — `node:fs` is likewise a compile-time API surface when the
-      // program uses the fd-based synchronous primitives readSync / writeSync:
-      // those are stripped by import preprocessing and lowered by node-fs-api.ts
-      // (tryCompileNodeFsCall) to EITHER imported `node:fs` shim calls
-      // (--link node:fs) OR direct `wasi_snapshot_preview1.fd_read`/`fd_write`
-      // syscalls (standalone --target wasi, #2655). Either way the `fs` builtin
-      // import itself is consumed at compile time and must not error here.
-      // Path-based fs usage is rejected at the call site (PATH_BASED_FS_FNS in
-      // calls.ts) / by the no-provider gate in tryCompileNodeFsCall, not here.
+      // `node:fs` is a compile-time API surface only when every named binding
+      // is either lowered by WASI or owned by the precise no-provider call-site
+      // gate. Imports are stripped by preprocessing, so failing open here would
+      // turn unknown calls into silent no-ops.
       if (
         builtin.moduleName === "fs" &&
-        (ctx.wasiNodeFsFuncs.has("readSync") || ctx.wasiNodeFsFuncs.has("writeSync"))
+        !ctx.wasiNodeFsFuncs.has(WASI_NODE_FS_ALIAS_SENTINEL) &&
+        builtin.namedBindings !== undefined &&
+        builtin.namedBindings.length > 0 &&
+        builtin.namedBindings.every((name) => WASI_HANDLED_NODE_FS_MEMBERS.has(name))
       ) {
         continue;
       }

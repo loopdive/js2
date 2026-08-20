@@ -2,6 +2,8 @@
 
 import type { ImportDescriptor, ImportIntent } from "./index.js";
 import type { WasmModule } from "./ir/types.js";
+import type { CompileEnvironment } from "./target-profile.js";
+import { isDomCapabilityImportDescriptor } from "./dom-capability-contract.js";
 
 export type HostImportPolicyClass =
   | "platform-capability"
@@ -156,7 +158,10 @@ function classifyBuiltin(name: string): HostImportPolicy {
  * makes a new intent a compile error until policy is chosen; name-based
  * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
  */
-export function classifyHostImport(descriptor: ImportDescriptor): HostImportPolicy {
+export function classifyHostImport(descriptor: ImportDescriptor, environment?: CompileEnvironment): HostImportPolicy {
+  if (environment === "none" && isDomCapabilityImportDescriptor(descriptor)) {
+    return policy("platform-capability", "dom", 4576, false, "explicit bounded DOM subtree capability");
+  }
   const intent = descriptor.intent;
   switch (intent.type) {
     case "string_literal":
@@ -302,13 +307,14 @@ export function buildHostImportInventory(
   mod: WasmModule,
   envManifest: readonly ImportDescriptor[],
   linkedNamespaces: readonly string[] = [],
+  environment?: CompileEnvironment,
 ): HostImportInventoryEntry[] {
   const envByName = new Map(envManifest.map((descriptor) => [descriptor.name, descriptor] as const));
   const linkedNamespaceSet = new Set(linkedNamespaces);
   return mod.imports.map((entry) => {
     const descriptor = entry.module === "env" ? envByName.get(entry.name) : undefined;
     const classified = descriptor
-      ? classifyHostImport(descriptor)
+      ? classifyHostImport(descriptor, environment)
       : entry.module === "env"
         ? policy("unknown", "unclassified", 4401, false, `env import '${entry.name}' has no typed intent`)
         : classifyNonEnvImport(entry.module, entry.name, linkedNamespaceSet);

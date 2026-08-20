@@ -364,17 +364,16 @@ describe("#3523 Algorithms legacy-body retirement", () => {
 
     const fibMemoBody = watFunctionBody(result.wat, "fibMemo");
     const fibMemoTargets = semanticTargets(result.wat, fibMemoBody);
-    // The two module-global memo accesses retain main's exact TDZ guard;
-    // ReferenceError construction remains nested in the exceptional arms.
+    // Wasm start runs the prepared initializer before any export is callable,
+    // so both module-global memo accesses omit obsolete TDZ/ReferenceError
+    // guards while retaining the exact native Map and numeric conversions.
     expect(fibMemoTargets).toEqual([
-      "__new_ReferenceError",
       "__box_number",
       "Map_get",
       "__extern_is_undefined",
       "__unbox_number",
       "fibMemo",
       "fibMemo",
-      "__new_ReferenceError",
       "__box_number",
       "__box_number",
       "Map_set",

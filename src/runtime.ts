@@ -69,6 +69,16 @@ import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import {
+  assertExplicitEmbedderCapabilityBindings,
+  createStandaloneTimerCallbackBridge,
+  wrapStandaloneTimerCallback,
+} from "./runtime/standalone-timer-callback-bridge.js";
+import { requiresExactDomCapabilityAdapter } from "./dom-capability-contract.js";
+import {
+  createStandaloneDomCapabilityRuntime,
+  type DomCapabilityRoot,
+} from "./runtime/standalone-dom-string-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
 import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
@@ -1336,14 +1346,16 @@ function _dataStructHostBridgeMetadata(
  * land in one prototype view so no bridge family hides another's raw own
  * properties.
  */
-function _hostBridgeExportView<T extends Record<string, any>>(
-  exports: T,
-  expectedDataStructAuthority?: DataStructHostBridgeAuthority,
-  expectedDataStructToken?: WebAssembly.Global,
-  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void,
-  mayEstablishDataStructAuthority = false,
-  mayConsumeGlobalDataStructAuthority = false,
-): T {
+interface HostBridgeAuthorityOptions {
+  expectedDataStructAuthority?: DataStructHostBridgeAuthority;
+  expectedDataStructToken?: WebAssembly.Global;
+  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void;
+  mayEstablishDataStructAuthority?: boolean;
+  mayConsumeGlobalDataStructAuthority?: boolean;
+  recordExportView?: (rawExports: Record<string, any>, finalExports: Record<string, any>) => void;
+}
+
+function _hostBridgeExportView<T extends Record<string, any>>(exports: T, options: HostBridgeAuthorityOptions = {}): T {
   const overrides = new Map<string, unknown>();
   for (const [logicalName, physicalBase] of _VEC_HOST_BRIDGE_EXPORTS) {
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1367,12 +1379,12 @@ function _hostBridgeExportView<T extends Record<string, any>>(
 
   const dataStructMetadata = _dataStructHostBridgeMetadata(
     exports,
-    expectedDataStructAuthority,
-    expectedDataStructToken,
-    mayEstablishDataStructAuthority,
-    mayConsumeGlobalDataStructAuthority,
+    options.expectedDataStructAuthority,
+    options.expectedDataStructToken,
+    options.mayEstablishDataStructAuthority,
+    options.mayConsumeGlobalDataStructAuthority,
   );
-  if (dataStructMetadata !== undefined) establishDataStructAuthority?.(dataStructMetadata);
+  if (dataStructMetadata !== undefined) options.establishDataStructAuthority?.(dataStructMetadata);
   for (let bit = 0; bit < _DATA_STRUCT_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [logicalName, physicalBase] = _DATA_STRUCT_HOST_BRIDGE_EXPORTS[bit]!;
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1385,7 +1397,10 @@ function _hostBridgeExportView<T extends Record<string, any>>(
     overrides.set(logicalName, helper);
   }
 
-  if (overrides.size === 0) return exports;
+  if (overrides.size === 0) {
+    options.recordExportView?.(exports, exports);
+    return exports;
+  }
   const view = Object.create(exports) as T;
   for (const [logicalName, helper] of overrides) {
     Object.defineProperty(view, logicalName, {
@@ -1395,6 +1410,7 @@ function _hostBridgeExportView<T extends Record<string, any>>(
       writable: false,
     });
   }
+  options.recordExportView?.(exports, view);
   return view;
 }
 
@@ -3805,10 +3821,16 @@ export function buildCompiledAdapterImports(
   if (diagnostics.length > 0) {
     throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
   }
-  return buildImports(frozenManifest.imports, deps, frozenManifest.stringPool, {
+  const { imports, capabilities, targetProfile } = frozenManifest;
+  const explicitDomCapability = requiresExactDomCapabilityAdapter(imports, capabilities, targetProfile);
+  if (explicitDomCapability && options.domRoot === undefined) {
+    throw new Error("Explicit embedder capability 'dom' requires an authenticated domRoot");
+  }
+  assertExplicitEmbedderCapabilityBindings(frozenManifest, deps);
+  return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
-    ambientCompatibility:
-      options.ambientCompatibility ?? frozenManifest.targetProfile.semanticProviders !== "native-first",
+    [DOM_CAPABILITY_AUTHORITY]: explicitDomCapability,
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
   });
 }
 
@@ -8879,6 +8901,16 @@ function _createBoundaryPromiseImport(
   });
 }
 
+function _wrapPlatformCapabilityClosure(
+  value: unknown,
+  arity: number,
+  boundary: "timer" | undefined,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): ((...args: any[]) => any) | null {
+  if (boundary !== "timer") return _wrapWasmClosure(value, arity, callbackState);
+  return wrapStandaloneTimerCallback(value, callbackState) ?? _wrapWasmClosure(value, arity, callbackState);
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -8905,7 +8937,7 @@ function resolveImport(
     globalSandbox,
     instanceState,
     getNodeRequire: _getNodeRequire,
-    wrapWasmClosure: (value, arity) => _wrapWasmClosure(value, arity, callbackState),
+    wrapWasmClosure: (value, arity, boundary) => _wrapPlatformCapabilityClosure(value, arity, boundary, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
   if (capability) return capability;
@@ -16269,8 +16301,10 @@ function isFastLeafHostImport(imp: ImportDescriptor): boolean {
  * `setExports(instance.exports)` remains available for legacy callback, vec,
  * closure, and string wiring.
  */
+const DOM_CAPABILITY_AUTHORITY = Symbol("validated-dom-capability");
 export interface BuildImportsOptions {
-  domRoot?: Element | ShadowRoot;
+  domRoot?: Element | ShadowRoot | DomCapabilityRoot;
+  [DOM_CAPABILITY_AUTHORITY]?: boolean;
   globalSandbox?: Record<string, any>;
   /**
    * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
@@ -16347,6 +16381,10 @@ export function buildImports(
 
   const env: Record<string, Function> = {};
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
+  const timerCallbackBridge = createStandaloneTimerCallbackBridge();
+  const domCapabilityRuntime = options?.[DOM_CAPABILITY_AUTHORITY]
+    ? createStandaloneDomCapabilityRuntime(options.domRoot)
+    : undefined;
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
@@ -16354,16 +16392,23 @@ export function buildImports(
   // wires the instance.
   const lifecycle = createInstanceLifecycleAdapter({
     brandedExports: _brandedInstanceExports,
-    prepareExports: (exports, mayEstablishDataStructAuthority) =>
-      _hostBridgeExportView(
-        exports,
-        dataStructHostBridgeAuthority,
-        dataStructHostBridgeToken,
-        mayEstablishDataStructAuthority ? (authority) => (dataStructHostBridgeAuthority ??= authority) : undefined,
-        mayEstablishDataStructAuthority,
-      ),
+    prepareExports: (exports, mayEstablishInstanceAuthority) =>
+      _hostBridgeExportView(exports, {
+        expectedDataStructAuthority: dataStructHostBridgeAuthority,
+        expectedDataStructToken: dataStructHostBridgeToken,
+        establishDataStructAuthority: mayEstablishInstanceAuthority
+          ? (authority) => (dataStructHostBridgeAuthority ??= authority)
+          : undefined,
+        mayEstablishDataStructAuthority: mayEstablishInstanceAuthority,
+        recordExportView: (rawExports, finalExports) => {
+          timerCallbackBridge.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+          domCapabilityRuntime?.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
+        },
+      }),
   });
   const callbackState = lifecycle.callbackState;
+  timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
+  domCapabilityRuntime?.bindCallbackState(callbackState);
   let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
@@ -16399,22 +16444,25 @@ export function buildImports(
     const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
 
-    fn = resolveImport(
-      imp.intent,
-      deps,
-      callbackState,
-      options?.globalSandbox,
-      instanceState,
-      imp.paramCount,
-      options?.dynamicCode,
-      options?.dynamicCodeEvaluator,
-      () => lastCaughtException,
-    );
+    const domBinding = domCapabilityRuntime?.bindImport(imp);
+    fn =
+      domBinding ??
+      resolveImport(
+        imp.intent,
+        deps,
+        callbackState,
+        options?.globalSandbox,
+        instanceState,
+        imp.paramCount,
+        options?.dynamicCode,
+        options?.dynamicCodeEvaluator,
+        () => lastCaughtException,
+      );
 
     // DOM containment wrapping
-    if (options?.domRoot) {
+    if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
-        fn = wrapWithContainment(fn, imp.intent, options.domRoot);
+        fn = wrapWithContainment(fn, imp.intent, options.domRoot as Element | ShadowRoot);
       }
       if (imp.intent.type === "declared_global" && imp.intent.name === "document") {
         fn = () => options.domRoot;
@@ -16560,8 +16608,11 @@ export function buildImports(
         };
       }
     }
+    domCapabilityRuntime?.recordWrappedImport(imp, domBinding, fn);
     env[imp.name] = fn;
   }
+
+  domCapabilityRuntime?.finalizeImports(env);
 
   const result: {
     env: Record<string, Function>;
@@ -16734,14 +16785,10 @@ export function wrapExports(
   const marshal: "copy" | "live" | false = options?.marshal ?? "copy";
   const brandedExports = _brandedInstanceExports(instanceOrExports);
   const rawExports = brandedExports ?? (instanceOrExports as WebAssembly.Exports);
-  const exportsForMarshal = _hostBridgeExportView(
-    rawExports as unknown as Record<string, Function>,
-    undefined,
-    undefined,
-    undefined,
-    brandedExports !== undefined,
-    true,
-  );
+  const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>, {
+    mayEstablishDataStructAuthority: brandedExports !== undefined,
+    mayConsumeGlobalDataStructAuthority: true,
+  });
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be

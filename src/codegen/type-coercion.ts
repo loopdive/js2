@@ -34,6 +34,7 @@ import {
   unpackedElemType,
 } from "./shared.js";
 import { tryEmitFastToNumber } from "./tonumber-fast-paths.js"; // (#4157) flag-gated, default OFF
+import { structMustReifyAtExternrefBoundary } from "./struct-boundary-reify.js"; // (#2358, #4491)
 
 /**
  * Emit a guarded ref.cast: use ref.test to check if the cast will succeed.
@@ -193,32 +194,6 @@ function emitWithCurrentThis(
   fctx.body.push({ op: "local.get", index: resultLocal });
   releaseTempLocal(fctx, prevThisLocal);
   releaseTempLocal(fctx, resultLocal);
-}
-
-/**
- * (#2358) Does a nominal OBJECT-LITERAL struct carry a USER ToPrimitive method —
- * `valueOf` / `@@toPrimitive` / `toString` — as a struct FIELD (stored as an
- * eqref/ref closure)? Used to gate the ref-struct→externref materialization:
- * such objects must cross the boundary as a `$Object` so `__to_primitive` can
- * dispatch the method once the typeIdx is erased (e.g. inside an `any` param);
- * plain data structs keep the byte-identical `extern.convert_any`.
- *
- * SCOPE: object literals only. A CLASS instance stores its methods as separate
- * `ClassName_<m>(self)` functions (NOT struct fields), so the field-copy
- * materializer cannot carry them onto the `$Object`; the class any-param case is
- * deferred to a follow-up (it has a partial `__call_<m>` / `$__shape_brand`
- * mechanism that wants its own slice). So this predicate matches FIELDS only.
- */
-function structHasUserToPrimitive(ctx: CodegenContext, name: string): boolean {
-  const fields = ctx.structFields.get(name);
-  if (fields) {
-    for (const f of fields) {
-      if (f.name === "valueOf" || f.name === "toString" || f.name === "@@toPrimitive") {
-        if (f.type.kind === "ref" || f.type.kind === "ref_null" || f.type.kind === "eqref") return true;
-      }
-    }
-  }
-  return false;
 }
 
 /**
@@ -2780,7 +2755,7 @@ export function coerceType(
     if (
       (ctx.standalone === true || ctx.wasi === true) &&
       name !== undefined &&
-      structHasUserToPrimitive(ctx, name) &&
+      structMustReifyAtExternrefBoundary(ctx, name) &&
       materializeStructAsObject(ctx, fctx, typeIdx)
     ) {
       return;

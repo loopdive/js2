@@ -419,6 +419,7 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       tag: pin.tag,
       commit: pin.commit,
       testFiles: testFiles.length,
+      testFilePaths: testFiles,
       registrationSites: pin.registrationSites,
       selectedFiles,
     },

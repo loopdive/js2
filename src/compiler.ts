@@ -16,6 +16,7 @@ import {
   resolveDtsEntryDeclarations,
 } from "./checker/dts-entrypoint-seeds.js";
 import { getNullablePrimitiveInfo } from "./checker/type-mapper.js";
+import { WASI_NODE_FS_ALIAS_SENTINEL } from "./checker/node-capability-map.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { resetDerivationFlagCache } from "./derivation-flags.js";
@@ -25,7 +26,7 @@ import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
-import { buildPlatformCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
+import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
 import { buildExportBoundaryPolicies } from "./boundary-policy.js";
 import { buildCompileExplanation } from "./compile-explain.js";
@@ -527,8 +528,14 @@ function detectNodeFsImports(source: string): Set<string> {
       const mod = stmt.moduleSpecifier.text;
       if (mod === "node:fs" || mod === "fs") {
         const clause = stmt.importClause;
+        if (clause?.isTypeOnly) continue;
         if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const spec of clause.namedBindings.elements) {
+            if (spec.isTypeOnly) continue;
+            if (spec.propertyName && spec.propertyName.text !== spec.name.text) {
+              result.add(WASI_NODE_FS_ALIAS_SENTINEL);
+              continue;
+            }
             result.add(spec.name.text);
           }
         }
@@ -896,10 +903,10 @@ function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError
  * parse/check split is identical and lives here.
  */
 function runPipeline(input: PipelineInput): CompileResult {
-  const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  const { errors, options, entryAst, multiAst, diagnosticAnchor, userSourceFiles } = input;
   const targetProfile = resolveCompileTargetProfile(options);
+  const targetEnvironment = targetProfile.environment;
   const emitWatOutput = options.emitWat !== false;
-  const userSourceFiles = input.userSourceFiles;
 
   // Each validation pass below gates on the errors IT produced, NOT on the whole
   // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
@@ -1106,7 +1113,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   // warning-first compatibility lanes (#2961/#2980/#3164) are not an explicit
   // native-first opt-in, while WASI's strict import gate remains authoritative.
   const imports = buildImportManifest(mod);
-  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link);
+  const hostImportInventory = buildHostImportInventory(mod, imports, input.codegenOptions.link, targetEnvironment);
   if (options.semanticProviders === "native-first") {
     const forbidden = hostImportInventory.filter(
       (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
@@ -1194,10 +1201,10 @@ function runPipeline(input: PipelineInput): CompileResult {
   const dts = generateDts(entryAst, mod);
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements = buildPlatformCapabilityRequirements(mod, hostImportInventory);
+  const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
   const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
     capabilityRequirements,
-    targetProfile.environment,
+    targetEnvironment,
   );
   const exportBoundaryPolicies = buildExportBoundaryPolicies(mod.exportSignatures, targetProfile);
   // Step 6: Generate WIT from the same frozen capability requirements used by

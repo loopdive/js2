@@ -20,6 +20,7 @@ import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
+import { emitEvalCompletionTail } from "../statements/eval-completion-value.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.js";
 import { emitGlobalEnvironmentObject } from "../global-environment.js";
@@ -1357,11 +1358,9 @@ function compileInlinedEvalStatements(
       return { kind: "externref" };
     }
 
-    // A non-expression tail returns undefined. A throw leaves the block
-    // polymorphic, so the trailing push is dead but keeps stack types stable.
-    compileStatement(ctx, fctx, last);
-    emitUndefined(ctx, fctx);
-    return { kind: "externref" };
+    // A non-expression tail carries the §13 completion value OUT of whatever it
+    // nests — see statements/eval-completion-value.ts for the register and why.
+    return emitEvalCompletionTail(ctx, fctx, () => compileStatement(ctx, fctx, last));
   } finally {
     if (savedBindingState) {
       fctx.localMap = savedBindingState.localMap;
