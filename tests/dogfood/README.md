@@ -186,10 +186,11 @@ pnpm run dogfood:redux-workload
 
 The upstream lane verifies all nine original runtime test files at
 `reduxjs/redux@v5.0.1` and registers all 82 callbacks against the matching
-published bundle. Node reproduces 78 synchronous callbacks; four async
-callbacks remain explicitly harness-incompatible. All nine generated modules
-compile and validate, and the initial Wasm baseline is **5/78**. Per-file
-runtime traps and assertion differences are retained in the JSON report.
+published bundle. Node reproduces all 82 callbacks. The shared runner supplies
+the Node-compatible `global` alias used by Redux's console-warning tests in
+both the native and Wasm lanes. All nine generated modules compile and
+validate; the current Wasm baseline is **13/82**. Per-file runtime traps and
+assertion differences are retained in the JSON report.
 
 The smaller generated API driver remains as an independent secondary signal.
 It consumes `combineReducers`, `createStore`, `subscribe`, and

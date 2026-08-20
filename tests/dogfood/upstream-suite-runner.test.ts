@@ -18,6 +18,9 @@ QUnit.test("async callback", async function () {
   await Promise.resolve();
   expect(2).toBe(2);
 });
+QUnit.test("provides the Node-compatible global alias", function () {
+  expect(global).toBe(globalThis);
+});
 ${UPSTREAM_TEST_EXPORTS}`;
 
     try {
@@ -31,10 +34,10 @@ ${UPSTREAM_TEST_EXPORTS}`;
         if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS;
         else process.env.NODE_OPTIONS = previousNodeOptions;
       }
-      expect(result.native.statuses).toEqual([true, true]);
-      expect(result.native.errors).toEqual(["", ""]);
-      expect(result.wasm?.statuses).toEqual([true, true]);
-      expect(result.wasm?.errors).toEqual(["", ""]);
+      expect(result.native.statuses).toEqual([true, true, true]);
+      expect(result.native.errors).toEqual(["", "", ""]);
+      expect(result.wasm?.statuses).toEqual([true, true, true]);
+      expect(result.wasm?.errors).toEqual(["", "", ""]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

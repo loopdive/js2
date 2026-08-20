@@ -9,6 +9,11 @@ import * as ts from "typescript";
 // runner infrastructure; the registered callback bodies remain the exact
 // upstream source. Both Node and Wasm execute this same shim.
 export const UPSTREAM_TEST_SHIM = String.raw`
+// Node exposes the process-wide host as the global binding; browser-oriented upstream
+// suites (including Redux's warning tests) use that spelling directly. Keep
+// the alias explicit in both the native and Wasm lanes instead of treating a
+// missing Node compatibility global as a package failure.
+var global = globalThis;
 const __upstreamTests = [];
 const __upstreamErrors = [];
 let __upstreamSnapshotMatcher = null;
