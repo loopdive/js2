@@ -20,11 +20,29 @@ import {
   REQUIRED_CHECK_FALLBACK,
   authoritativeHeadSha,
   reconcileHeadSha,
+  isWorkflowPermissionRefusal,
 } from "../scripts/enqueue-green-prs.mjs";
 
 // The real baseline commit that made PR #4002 BEHIND on 2026-08-02 — the exact
 // shape this exemption exists for.
 const REAL_BASELINE_COMMIT = "chore(test262): refresh sharded baseline — 30780/43490 pass [skip ci]";
+
+describe("#4046 workflow-permission enqueue refusal", () => {
+  it("recognises the GitHub App workflow-write refusal", () => {
+    expect(
+      isWorkflowPermissionRefusal(
+        "GraphQL: refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission",
+      ),
+    ).toBe(true);
+    expect(isWorkflowPermissionRefusal("REFUSING TO ALLOW A GITHUB APP TO CREATE OR UPDATE WORKFLOW")).toBe(true);
+  });
+
+  it("does not turn unrelated enqueue failures into manual-workflow alerts", () => {
+    expect(isWorkflowPermissionRefusal('Required status check "quality" is expected')).toBe(false);
+    expect(isWorkflowPermissionRefusal("Pull request is not mergeable")).toBe(false);
+    expect(isWorkflowPermissionRefusal(undefined as unknown as string)).toBe(false);
+  });
+});
 
 describe("#4094 skip-CI marker set", () => {
   // Verified against docs.github.com/.../skip-workflow-runs on 2026-08-02.

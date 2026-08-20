@@ -42,7 +42,7 @@ import {
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -1317,7 +1317,7 @@ export function collectClassDeclaration(
       // Track methods that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (member.body && bodyUsesArguments(member.body)) {
+      if (needsImplicitArgumentsObject(member)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -2702,7 +2702,7 @@ function compileClassBodiesInner(
       // Set up `arguments` object if the method body references it (#820).
       // Class methods (like standalone functions) need an arguments vec struct
       // so that `arguments.length` and `arguments[n]` work at runtime.
-      if (member.body && bodyUsesArguments(member.body)) {
+      if (needsImplicitArgumentsObject(member)) {
         const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
         const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
         // Class bodies are always strict code → unmapped arguments (#779e).

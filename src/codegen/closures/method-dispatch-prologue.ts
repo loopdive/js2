@@ -17,6 +17,7 @@
  *    caller's `thisVal` (#1636-S1).
  */
 import type { Instr } from "../../ir/types.js";
+import { installableReceiverInstrs } from "../helpers/undefined-receiver.js"; // (#4555) §10.4.3
 import type { CodegenContext } from "../context/types.js";
 import { buildRuntimeEvalCarrierMethodDispatch } from "../runtime-eval-callable.js";
 
@@ -38,7 +39,7 @@ export function buildMethodDispatchPrologue(
   body.push(
     { op: "global.get", index: currentThisGlobalIdx },
     { op: "local.set", index: prevThisLocal },
-    { op: "local.get", index: 0 },
+    ...installableReceiverInstrs(ctx, 0),
     { op: "global.set", index: currentThisGlobalIdx },
   );
   return body;

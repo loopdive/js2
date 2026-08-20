@@ -31,6 +31,18 @@ import {
   resolveProgramAbiSupportCallableHandle,
 } from "./program-abi-planning.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
+import { definedFuncHandleOf } from "./func-space.js";
+import {
+  STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
+  STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
+} from "../timer-capability-contract.js";
 
 const CLOSURE_HOST_BRIDGE_ROLE = "closure-host-bridge";
 const CLOSURE_HOST_BRIDGE_MANIFEST_NAME = "__\0js2_closure_host_bridge";
@@ -43,6 +55,7 @@ const CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const publishedClosureHostBridgeBits = new WeakMap<CodegenContext, number>();
 const publishedClosureHostBridgeFuncs = new WeakMap<CodegenContext, Map<number, WasmFunction>>();
 const publishedClosureHostBridgeManifests = new WeakSet<CodegenContext>();
+const publishedStandaloneTimerCallbackManifests = new WeakSet<CodegenContext>();
 
 const CLOSURE_HOST_BRIDGE_ORDINAL = Object.freeze({
   directCall0: 0,
@@ -245,6 +258,89 @@ function methodClosureHostBridgeOrdinal(arity: number): number | undefined {
  */
 export function emitClosureCallExport(ctx: CodegenContext): void {
   emitClosureCallExportN(ctx, 0);
+}
+
+/**
+ * Retain the exact zero-argument dispatcher needed by the standalone timer
+ * capability without retaining the general JavaScript closure host bridge.
+ *
+ * The dispatcher is resolved from the compiler-owned allocator object, never
+ * from a public/user-controlled export label. `stripHostBridgeExports` removes
+ * the ordinary `__call_fn_0`/`$c0` names later, while this reserved alias stays
+ * as the sole callback entry point.
+ */
+export function publishStandaloneTimerCallbackDispatch(ctx: CodegenContext): void {
+  if (!ctx.requiresStandaloneTimerCallbackDispatch) return;
+  if (publishedStandaloneTimerCallbackManifests.has(ctx)) return;
+  const dispatcher = publishedClosureHostBridgeFuncs.get(ctx)?.get(CLOSURE_HOST_BRIDGE_ORDINAL.directCall0);
+  if (!dispatcher) {
+    throw new Error("standalone timer callback dispatcher was requested but __call_fn_0 was not emitted");
+  }
+  const funcIdx = definedFuncHandleOf(ctx, dispatcher);
+  if (funcIdx === undefined) {
+    throw new Error("standalone timer callback dispatcher lost its compiler-owned function handle");
+  }
+  const publishFamily = (
+    logicalName: string,
+    physicalBase: string,
+    desc: { kind: "func" | "global" | "table"; index: number },
+  ): void => {
+    const occupied = new Set(ctx.mod.exports.map(({ name }) => name));
+    if (!occupied.has(logicalName)) {
+      ctx.mod.exports.push({ name: logicalName, desc });
+      occupied.add(logicalName);
+    }
+    let maxOccupiedSuffix = -1;
+    for (const name of occupied) {
+      if (!name.startsWith(physicalBase)) continue;
+      const suffix = name.slice(physicalBase.length);
+      if (/^\$*$/.test(suffix)) maxOccupiedSuffix = Math.max(maxOccupiedSuffix, suffix.length);
+    }
+    for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
+      const name = `${physicalBase}${"$".repeat(suffixLength)}`;
+      if (occupied.has(name)) continue;
+      ctx.mod.exports.push({ name, desc });
+      occupied.add(name);
+    }
+  };
+
+  const bindingsTableIdx =
+    ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
+  ctx.mod.tables.push({ elementType: "funcref", min: 1, max: 1 });
+  const markerTableIdx = bindingsTableIdx + 1;
+  ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
+  ctx.mod.elements.push({
+    tableIdx: bindingsTableIdx,
+    offset: [{ op: "i32.const", value: 0 }],
+    funcIndices: [funcIdx],
+  });
+  const manifestGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
+    type: { kind: "i32" },
+    mutable: false,
+    init: [{ op: "i32.const", value: STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC }],
+  });
+
+  publishFamily(STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE, {
+    kind: "func",
+    index: funcIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT, STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE, {
+    kind: "global",
+    index: manifestGlobalIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_MARKER_EXPORT, STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE, {
+    kind: "table",
+    index: markerTableIdx,
+  });
+  publishFamily(STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE, {
+    kind: "table",
+    index: bindingsTableIdx,
+  });
+  // These names deliberately omit `host_bridge`: #4035 strips the general JS
+  // inspection bridge but must retain this explicit platform-capability path.
+  publishedStandaloneTimerCallbackManifests.add(ctx);
 }
 
 /**

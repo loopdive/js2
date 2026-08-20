@@ -44,6 +44,8 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
+import { reportError } from "../context/errors.js";
+import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
@@ -900,6 +902,21 @@ function compileIdentifierCore(
       return { kind: "ref", typeIdx: (mType as any).typeIdx };
     }
     return mType;
+  }
+
+  // Named node:fs imports are stripped into ambient declarations before
+  // codegen. WASI owns only their direct-call lowering; materialising one as a
+  // first-class value would otherwise produce an inert placeholder and let an
+  // alias call disappear. Local/module/captured shadows have already returned
+  // above, so this is the unshadowed imported binding.
+  if (ctx.wasi && isUnaliasedNodeFsImportBinding(ctx, id)) {
+    reportError(
+      ctx,
+      id,
+      `WASI node:fs binding '${name}' may only be used as a directly supported call; first-class aliases are unavailable`,
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
 
   // A first-class read of the unshadowed global `%eval%` (`var indirect =

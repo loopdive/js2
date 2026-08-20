@@ -21,7 +21,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { noJsHost } from "./js-errors.js";
+import { emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { emitUndefined } from "./expressions/late-imports.js";
@@ -175,6 +175,121 @@ function receiverHasPlainClosedStructLength(ctx: CodegenContext, recvWasmType: V
   return lenTypeIdx >= 0 && (lenTypeIdx === ctx.anyStrTypeIdx || lenTypeIdx === ctx.nativeStrTypeIdx);
 }
 
+/**
+ * (#4556, extracted verbatim from `compileArrayLikePrototypeCall` to fit the
+ * function-size budget — behaviour unchanged) The legacy `assert_throws` bail:
+ * inside an `assert_throws(...)` / `assert_throwsAsync(...)` ancestor, decline
+ * the native lowering and let the legacy path own the abrupt completion.
+ *
+ * The #3317 narrowing above it still applies: a standalone SEARCH method whose
+ * receiver is NOT a plain closed-struct `length` can take the native path even
+ * under `assert_throws`, because its abrupt completion genuinely comes from the
+ * native LENGTH read.
+ */
+function assertThrowsBailApplies(
+  ctx: CodegenContext,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  borrowRecvWasmType: ValType | undefined,
+): boolean {
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    ARRAY_LIKE_SEARCH_METHODS.has(methodName) &&
+    !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)
+  ) {
+    return false;
+  }
+  let p: ts.Node | undefined = callExpr.parent;
+  while (p) {
+    if (
+      ts.isCallExpression(p) &&
+      ts.isIdentifier(p.expression) &&
+      (p.expression.text === "assert_throws" || p.expression.text === "assert_throwsAsync")
+    ) {
+      return true;
+    }
+    p = p.parent;
+  }
+  return false;
+}
+
+/**
+ * (#4556) Is `cb` **syntactically** a value with no [[Call]] slot?
+ *
+ * A missing argument and the `undefined`/`null` spellings are the only shapes
+ * accepted. This is a SYNTAX fact, not a type inference — under `allowJs` an
+ * `object`-typed identifier may well hold a function at run time, so
+ * identifiers other than `undefined` are refused. Mirrors the
+ * `syntacticallyNotCallable` discipline in builtin-prototype-brand.ts.
+ */
+function provablyNonCallableCallback(cb: ts.Expression | undefined): boolean {
+  if (cb === undefined) return true;
+  let e: ts.Expression = cb;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return (
+    e.kind === ts.SyntaxKind.NullKeyword ||
+    e.kind === ts.SyntaxKind.UndefinedKeyword ||
+    (ts.isIdentifier(e) && e.text === "undefined")
+  );
+}
+
+/**
+ * (#4556) Emit the observable prefix of a borrowed HOF whose callback is
+ * provably not callable, then throw: evaluate the receiver, run
+ * `LengthOfArrayLike` on it (§23.1.3 — the `length` getter and its
+ * ToPrimitive/ToNumber walk are observable, and may itself throw, in which case
+ * THAT error wins), discard the length, then throw the TypeError.
+ *
+ * §23.1.3 orders `len = LengthOfArrayLike(O)` BEFORE
+ * `If IsCallable(callbackfn) is false, throw a TypeError`, so both halves are
+ * required — a bare throw would skip an observable getter.
+ *
+ * Without this arm the standalone lane produced NOTHING. The `arguments.length
+ * < 2` and `willBeClosure` bails in the caller both return `undefined`,
+ * `calls.ts` then falls through to its `Array.prototype.<m>` refuse-loud
+ * `reportError`, and that diagnostic is non-sticky — the expression unwind
+ * discards it and substitutes a default value (the #4076 "the refuse-loud is
+ * not loud" finding). So `assert.throws(TypeError, …)` saw no throw, AND the
+ * `length` getter never ran.
+ *
+ * Returns `undefined` when the pieces are not available, so the caller falls
+ * through to the untouched dispatch rather than emitting a partial sequence.
+ */
+function emitArrayLikeNonCallableCallbackThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  callExpr: ts.CallExpression,
+  methodName: string,
+  receiverArg: ts.Expression,
+): typeof VOID_RESULT | undefined {
+  const lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  if (lenFn === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  const recvType = compileExpression(ctx, fctx, receiverArg, { kind: "externref" });
+  if (recvType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  // #16 — re-resolve by name: compiling the receiver above can shift
+  // defined-func indices (the addUnionImports late-shift hazard).
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
+  fctx.body.push({ op: "drop" });
+
+  // Any further `.call` arguments were already evaluated by the OUTER call's
+  // ArgumentListEvaluation; compile + drop them so their side effects survive.
+  for (let i = 1; i < callExpr.arguments.length; i++) {
+    const t = compileExpression(ctx, fctx, callExpr.arguments[i]!);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+
+  emitThrowTypeError(ctx, fctx, `TypeError: Array.prototype.${methodName} callback is not a function`);
+  // The throw makes everything after it unreachable, so no sentinel value is
+  // needed to keep the stack well-typed.
+  return VOID_RESULT;
+}
+
 export function compileArrayLikePrototypeCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -297,30 +412,20 @@ export function compileArrayLikePrototypeCall(
   // (defineProperty expandos on closed structs are #3177 territory), so those
   // KEEP the legacy assert_throws bail (indexOf/15.4.4.14-9-b-i-31.js,
   // lastIndexOf/15.4.4.15-8-b-i-31.js pass through it on main).
-  if (
-    !(
-      (ctx.standalone || ctx.wasi) &&
-      ARRAY_LIKE_SEARCH_METHODS.has(methodName) &&
-      !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)
-    )
-  ) {
-    let p: ts.Node | undefined = callExpr.parent;
-    while (p) {
-      if (
-        ts.isCallExpression(p) &&
-        ts.isIdentifier(p.expression) &&
-        (p.expression.text === "assert_throws" || p.expression.text === "assert_throwsAsync")
-      ) {
-        return undefined;
-      }
-      p = p.parent;
-    }
-  }
+  if (assertThrowsBailApplies(ctx, callExpr, methodName, borrowRecvWasmType)) return undefined;
 
   // #1360 — Search methods: indexOf/lastIndexOf/includes don't take a callback.
   // Branch into the dedicated search compiler before the callback-validity check.
   if (ARRAY_LIKE_SEARCH_METHODS.has(methodName)) {
     return compileArrayLikePrototypeSearch(ctx, fctx, callExpr, methodName, receiverArg);
+  }
+
+  // (#4556) A provably non-callable callback is a decidable TypeError — see
+  // `emitArrayLikeNonCallableCallbackThrow` for the step order and why the
+  // existing bails below produced no throw at all.
+  if (noJsHost(ctx) && provablyNonCallableCallback(callExpr.arguments[1])) {
+    const thrown = emitArrayLikeNonCallableCallbackThrow(ctx, fctx, callExpr, methodName, receiverArg);
+    if (thrown !== undefined) return thrown;
   }
 
   // every/some/forEach/find/findIndex: callback is args[1]

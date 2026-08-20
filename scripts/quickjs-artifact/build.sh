@@ -33,7 +33,7 @@ CC="${CC:-clang-18}"
 AR="${AR:-llvm-ar-18}"
 RANLIB="${RANLIB:-llvm-ranlib-18}"
 NM="${NM:-llvm-nm-18}"
-JOBS="${JOBS:-$(nproc)}"
+JOBS="${JOBS:-$( (nproc 2>/dev/null) || sysctl -n hw.ncpu 2>/dev/null || echo 4 )}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
@@ -163,7 +163,8 @@ say "extract ABI constants from the built module"
 node "$HERE/extract-abi.mjs" "$OUT_DIR/libquickjs.wasm" > "$OUT_DIR/qjs-abi.json"
 
 SHA="$(sha256sum "$OUT_DIR/libquickjs.wasm" | cut -d' ' -f1)"
-RAW="$(stat -c%s "$OUT_DIR/libquickjs.wasm")"
+# portable file size: GNU coreutils `stat -c%s`, BSD/macOS `stat -f%z`
+RAW="$(stat -c%s "$OUT_DIR/libquickjs.wasm" 2>/dev/null || stat -f%z "$OUT_DIR/libquickjs.wasm")"
 GZ="$(gzip -9 -c "$OUT_DIR/libquickjs.wasm" | wc -c)"
 
 cat > "$OUT_DIR/build-info.json" <<EOF

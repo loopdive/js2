@@ -8,6 +8,37 @@ import { ts } from "../../ts-api.js";
 const cache = new WeakMap<ts.Node, boolean>();
 const valueUseCache = new WeakMap<ts.Node, boolean>();
 
+function bindingNameBindsArguments(name: ts.BindingName): boolean {
+  if (ts.isIdentifier(name)) return name.text === "arguments";
+  return name.elements.some((element) => !ts.isOmittedExpression(element) && bindingNameBindsArguments(element.name));
+}
+
+/**
+ * ES5 §10.5 / ES2015+ FunctionDeclarationInstantiation: an ordinary
+ * function does not create an implicit arguments object when one of its
+ * formal parameter BoundNames is `arguments`.
+ *
+ * Keep this structural rule shared by every lowering path. Those paths use a
+ * spelling-keyed local map, so creating the object would otherwise overwrite
+ * the real parameter before body references are compiled (#4555).
+ */
+export function formalParametersBindArguments(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.some((parameter) => bindingNameBindsArguments(parameter.name));
+}
+
+/** Whether this lowering should materialize the function's implicit object. */
+export function needsImplicitArgumentsObject(
+  declaration: ts.FunctionLikeDeclarationBase,
+  reachesDirectEval = false,
+): boolean {
+  const body = declaration.body;
+  return (
+    body !== undefined &&
+    !formalParametersBindArguments(declaration.parameters) &&
+    (bodyUsesArguments(body) || reachesDirectEval)
+  );
+}
+
 /**
  * Check if a node tree references the `arguments` identifier.
  * Skips nested function declarations and function expressions (which have

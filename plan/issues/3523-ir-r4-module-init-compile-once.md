@@ -88,6 +88,25 @@ binding behavior, class static evaluation, host/deferred/WASI startup policy,
 and exactly-once side effects. R4 is complete only when a Prepared module-init
 has `direct=0, IR=1` and an Unsupported module-init has `direct=1, IR=0`.
 
+## Standalone continuation (#4566, 2026-08-20)
+
+The pre-#4566 standalone census was 22 IR-emitted terminals, 18 legacy bodies,
+15 typed Unsupported terminals, and zero Invariants. The only legacy bodies
+not paired with an Unsupported outcome were Algorithms `<module-init>`,
+`fibMemo`, and `main`. #4566 owns the bounded continuation that admits exact
+single-binding lexical initializers under standalone's native-string
+Wasm-start and deferred-export policies, then seals their storage readers and
+callers in the same component. The checkpoint is 15 legacy bodies with the
+IR/Unsupported counts unchanged. Deferred exports retain TDZ checks until the
+host calls `__module_init`; only Wasm-start may elide them. Async, DOM, native
+Date, WASI, and non-exact module-init shapes stay outside this slice.
+
+The completed checkpoint also preserves optimization parity: final standalone
+Algorithms IR is 9.1% faster than direct on the bounded workload, 2.9% faster
+on a fresh first call, and on par on a fresh second call. It is 1.26% smaller
+raw and gives `fibMemo` the direct path's exact lookup/hash/no-box call shape;
+see #4566's checkpoint result for the controlled A/B and artifact inventory.
+
 ## Current evidence
 
 The existing module-init claim is an overlay over a legacy ABI and body:

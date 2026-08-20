@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-14",
+  "generated": "2026-08-20",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -16,8 +16,8 @@
     "src/codegen/array-prototype-borrow.ts::compileArrayLikePrototypeCall": 472,
     "src/codegen/array-prototype-borrow.ts::compileArrayLikePrototypeSearch": 408,
     "src/codegen/async-cps.ts::planAsyncGenCfg": 303,
-    "src/codegen/async-frame.ts::buildStateBody": 434,
-    "src/codegen/async-frame.ts::ensureAsyncResumeFunction": 1084,
+    "src/codegen/async-frame.ts::buildStateBody": 368,
+    "src/codegen/async-frame.ts::ensureAsyncResumeFunction": 1022,
     "src/codegen/binary-ops-in.ts::compileInOperator": 389,
     "src/codegen/binary-ops-typed-dispatch.ts::compileTypedBinaryDispatch": 1456,
     "src/codegen/binary-ops.ts::compileBinaryExpression": 1452,

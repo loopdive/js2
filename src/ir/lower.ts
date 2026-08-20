@@ -4005,7 +4005,13 @@ function memberValType(t: IrType, funcName: string): ValType {
 }
 
 export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
-  if (t.kind === "val") return t.val;
+  if (t.kind === "val") {
+    if (!t.typeRef) return t.val;
+    if (t.val.kind !== "ref" && t.val.kind !== "ref_null") {
+      throw new Error(`ir/lower: symbolic physical type ref is attached to non-reference ${t.val.kind} (${funcName})`);
+    }
+    return { kind: t.val.kind, typeIdx: resolver.resolveType(t.typeRef) };
+  }
   // #3214 B0 — source-level callable boundaries use the same externref ABI as
   // legacy callbacks. The signature remains in IrType for exact unpack/call
   // lowering; it has no distinct Wasm parameter representation.
