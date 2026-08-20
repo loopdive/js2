@@ -2506,6 +2506,7 @@ function planIrOverlay(
           ast.checker,
           {
             numberStorage: ctx.fast ? "i32" : "f64",
+            oracle: ctx.oracle,
             allowHostExterns: jsHostExterns && !ctx.nativeStrings,
             allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
             // (#4461) The complementary carrier: native strings ⇒ `Map` lives

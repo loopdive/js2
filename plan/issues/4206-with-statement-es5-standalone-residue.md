@@ -41,10 +41,22 @@ loc-budget-allow:
   # reducing the closure-return hook to a single call.
   - src/codegen/index.ts
   - src/codegen/closures.ts
+  # #4206 IR/legacy module-slot parity follow-up (2026-08-20): the complete
+  # widening analysis moved into the new leaf module
+  # src/ir/heterogeneous-module-bindings.ts. These capped drivers contain only
+  # the resolver's preclaim check and the two one-line shared-oracle adapters;
+  # keeping that wiring at the module-binding boundary preserves the strict
+  # Program ABI invariant instead of adding a postclaim exception.
+  - src/ir/module-bindings.ts
+  - src/ir/integration.ts
 func-budget-allow:
   # Four-line statement-dispatch hook; all selection logic is in the dedicated
   # isPhase1WithStatement helper and ir/with-environment subsystem.
   - src/ir/select.ts::isPhase1StatementListInScope
+  # One shared-oracle option in each existing resolver-options object; the
+  # analysis and policy remain outside these orchestration functions.
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #4206 — the `with` statement residue, correctly sized
@@ -696,3 +708,31 @@ A RED-on-base regression test was added
 Rows hitting `quickjs provider is not built` went 4 → 11: the fix carries tests
 *past* their earlier failing assertion and into an `eval` call. Those become
 locally unverifiable rather than fixed — see the toolchain note in #4163.
+
+## 2026-08-20 follow-up — keep inferred widening and IR binding selection aligned
+
+The required #2906 async guard exposed an integration invariant after the
+mixed-RHS widening landed. Its `let ran: number = 0` has an unreachable
+`ran = x` after an awaited promise that always rejects. The RHS is necessarily
+unconstrainable, so the widening analysis picked legacy `externref`; the IR
+module-binding resolver correctly kept the explicit `number` annotation's f64
+ABI. The compiler then rejected the claimed body because the two plans named
+different physical storage for the same source binding.
+
+The resolution preserves both contracts:
+
+- explicit TypeScript annotations remain the representation authority (the
+  same boundary recorded in #4495), so the #2906 binding stays f64 and its
+  reader/module initializer remain IR-owned;
+- JavaScript and inferred TypeScript bindings still widen on heterogeneous or
+  mixed assignments, preserving the 13-row #4206 lever;
+- the registry-free widening analysis now lives beside IR module bindings and
+  is consumed by both direct allocation and IR selection. Until IR owns general
+  dynamic module assignment/read coercions, a genuinely widened binding is
+  rejected before claim instead of reaching the Program ABI invariant after
+  claim. The invariant itself remains strict.
+
+Regression coverage is in
+`tests/issue-4206-module-widening-ir-parity.test.ts`: one case proves the typed
+slot stays f64 and the reader emits through IR; the other proves an inferred
+externref slot cleanly preclaim-demotes and still round-trips its runtime value.
