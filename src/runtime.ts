@@ -69,6 +69,17 @@ import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
+import {
+  STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
+  STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT,
+  STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC,
+  STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE,
+  STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
+  STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
+} from "./timer-capability-contract.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
 import { createClassMemberResolver } from "./runtime/class-method-host-bridge.js";
@@ -1077,9 +1088,11 @@ const _DATA_STRUCT_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000ffffc;
 const _immutableI32GlobalVerdict = new WeakSet<WebAssembly.Global>();
 let _immutableI32GlobalProbeModule: WebAssembly.Module | undefined;
 const _emptyFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
+const _singleBindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 const _bindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 const _dataBindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 let _emptyFuncrefTableProbeModule: WebAssembly.Module | undefined;
+let _singleBindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
 let _bindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
 let _dataBindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
 const _reflectApply = Reflect.apply;
@@ -1141,31 +1154,38 @@ function _isImmutableI32Global(value: unknown): value is WebAssembly.Global {
 }
 
 /** Prove a Table's exact funcref limits through Wasm import validation. */
-function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 17): value is WebAssembly.Table {
+function _isExactFuncrefTable(value: unknown, size: 0 | 1 | 2 | 17): value is WebAssembly.Table {
   try {
     if (!(value instanceof WebAssembly.Table) || value.length !== size) return false;
     const verdict =
       size === 0
         ? _emptyFuncrefTableVerdict
-        : size === 2
-          ? _dataBindingFuncrefTableVerdict
-          : _bindingFuncrefTableVerdict;
+        : size === 1
+          ? _singleBindingFuncrefTableVerdict
+          : size === 2
+            ? _dataBindingFuncrefTableVerdict
+            : _bindingFuncrefTableVerdict;
     if (verdict.has(value)) return true;
     const bytes =
       size === 0
         ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 0, 0]
-        : size === 2
-          ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 2, 2]
-          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 17, 17];
+        : size === 1
+          ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 1, 1]
+          : size === 2
+            ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 2, 2]
+            : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 17, 17];
     let probe =
       size === 0
         ? _emptyFuncrefTableProbeModule
-        : size === 2
-          ? _dataBindingFuncrefTableProbeModule
-          : _bindingFuncrefTableProbeModule;
+        : size === 1
+          ? _singleBindingFuncrefTableProbeModule
+          : size === 2
+            ? _dataBindingFuncrefTableProbeModule
+            : _bindingFuncrefTableProbeModule;
     if (!probe) {
       probe = new WebAssembly.Module(Uint8Array.from(bytes));
       if (size === 0) _emptyFuncrefTableProbeModule = probe;
+      else if (size === 1) _singleBindingFuncrefTableProbeModule = probe;
       else if (size === 2) _dataBindingFuncrefTableProbeModule = probe;
       else _bindingFuncrefTableProbeModule = probe;
     }
@@ -1182,6 +1202,15 @@ interface ClosureHostBridgeMetadata {
   bindings: WebAssembly.Table;
 }
 
+interface TimerCallbackBridgeMetadata {
+  marker: WebAssembly.Table;
+  manifest: WebAssembly.Global;
+  bindings: WebAssembly.Table;
+  dispatch: Function;
+}
+
+type TimerCallbackBridgeAuthority = Readonly<TimerCallbackBridgeMetadata>;
+
 interface DataStructHostBridgeMetadata {
   bits: number;
   marker: WebAssembly.Table;
@@ -1195,6 +1224,67 @@ interface DataStructHostBridgeAuthority extends DataStructHostBridgeMetadata {
 }
 
 const _dataStructHostBridgeAuthorityByManifest = new WeakMap<WebAssembly.Global, DataStructHostBridgeAuthority>();
+const _timerCallbackDispatchAuthority = Symbol("timerCallbackDispatchAuthority");
+
+interface TimerCallbackState {
+  readonly getExports: () => Record<string, Function> | undefined;
+  readonly [_timerCallbackDispatchAuthority]?: WeakMap<object, Function>;
+}
+
+function attachTimerAuthority(
+  callbackState: { getExports: () => Record<string, Function> | undefined },
+  dispatchByExportView: WeakMap<object, Function>,
+): TimerCallbackState {
+  Object.defineProperty(callbackState, _timerCallbackDispatchAuthority, { value: dispatchByExportView });
+  return callbackState;
+}
+
+/** Authenticate the dedicated one-slot standalone timer callback bridge. */
+function _timerCallbackBridgeMetadata(
+  exports: Record<string, any>,
+  expectedAuthority?: TimerCallbackBridgeAuthority,
+  mayEstablishAuthority = false,
+): TimerCallbackBridgeAuthority | undefined {
+  if (!_hasOwn(exports, STANDALONE_TIMER_CALLBACK_MARKER_EXPORT)) return undefined;
+  const marker = _terminalHostBridgeAlias(exports, STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE);
+  if (!_isExactFuncrefTable(marker, 0)) return undefined;
+
+  if (!_hasOwn(exports, STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT)) return undefined;
+  const manifest = _terminalHostBridgeAlias(exports, STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE);
+  if (
+    !_isImmutableI32Global(manifest) ||
+    typeof manifest.value !== "number" ||
+    (manifest.value | 0) !== STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC
+  ) {
+    return undefined;
+  }
+
+  if (!_hasOwn(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT)) return undefined;
+  const bindings = _terminalHostBridgeAlias(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE);
+  if (!_isExactFuncrefTable(bindings, 1)) return undefined;
+
+  if (!_hasOwn(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT)) return undefined;
+  const dispatch = _terminalHostBridgeAlias(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE);
+  if (typeof dispatch !== "function") return undefined;
+  try {
+    if (bindings.get(0) !== dispatch) return undefined;
+  } catch {
+    return undefined;
+  }
+  if (expectedAuthority !== undefined) {
+    return expectedAuthority.marker === marker &&
+      expectedAuthority.manifest === manifest &&
+      expectedAuthority.bindings === bindings &&
+      expectedAuthority.dispatch === dispatch
+      ? expectedAuthority
+      : undefined;
+  }
+  // A raw export record can borrow genuine tables/globals/functions from a
+  // donor instance. Only the branded setInstance path may establish the first
+  // authority for this import object's timer callbacks.
+  if (!mayEstablishAuthority) return undefined;
+  return Object.freeze({ marker, manifest, bindings, dispatch });
+}
 
 /** Read and authenticate compiler-authored closure-helper metadata. */
 function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBridgeMetadata | undefined {
@@ -1336,15 +1426,26 @@ function _dataStructHostBridgeMetadata(
  * land in one prototype view so no bridge family hides another's raw own
  * properties.
  */
-function _hostBridgeExportView<T extends Record<string, any>>(
-  exports: T,
-  expectedDataStructAuthority?: DataStructHostBridgeAuthority,
-  expectedDataStructToken?: WebAssembly.Global,
-  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void,
-  mayEstablishDataStructAuthority = false,
-  mayConsumeGlobalDataStructAuthority = false,
-): T {
+interface HostBridgeAuthorityOptions {
+  expectedDataStructAuthority?: DataStructHostBridgeAuthority;
+  expectedDataStructToken?: WebAssembly.Global;
+  establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void;
+  mayEstablishDataStructAuthority?: boolean;
+  mayConsumeGlobalDataStructAuthority?: boolean;
+  expectedTimerCallbackAuthority?: TimerCallbackBridgeAuthority;
+  establishTimerCallbackAuthority?: (authority: TimerCallbackBridgeAuthority) => void;
+  mayEstablishTimerCallbackAuthority?: boolean;
+  timerCallbackDispatchByExportView?: WeakMap<object, Function>;
+}
+
+function _hostBridgeExportView<T extends Record<string, any>>(exports: T, options: HostBridgeAuthorityOptions = {}): T {
   const overrides = new Map<string, unknown>();
+  const timerMetadata = _timerCallbackBridgeMetadata(
+    exports,
+    options.expectedTimerCallbackAuthority,
+    options.mayEstablishTimerCallbackAuthority,
+  );
+  if (timerMetadata !== undefined) options.establishTimerCallbackAuthority?.(timerMetadata);
   for (const [logicalName, physicalBase] of _VEC_HOST_BRIDGE_EXPORTS) {
     if (!_hasOwn(exports, logicalName)) continue;
     const helper = _terminalHostBridgeAlias(exports, physicalBase);
@@ -1367,12 +1468,12 @@ function _hostBridgeExportView<T extends Record<string, any>>(
 
   const dataStructMetadata = _dataStructHostBridgeMetadata(
     exports,
-    expectedDataStructAuthority,
-    expectedDataStructToken,
-    mayEstablishDataStructAuthority,
-    mayConsumeGlobalDataStructAuthority,
+    options.expectedDataStructAuthority,
+    options.expectedDataStructToken,
+    options.mayEstablishDataStructAuthority,
+    options.mayConsumeGlobalDataStructAuthority,
   );
-  if (dataStructMetadata !== undefined) establishDataStructAuthority?.(dataStructMetadata);
+  if (dataStructMetadata !== undefined) options.establishDataStructAuthority?.(dataStructMetadata);
   for (let bit = 0; bit < _DATA_STRUCT_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [logicalName, physicalBase] = _DATA_STRUCT_HOST_BRIDGE_EXPORTS[bit]!;
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1385,7 +1486,10 @@ function _hostBridgeExportView<T extends Record<string, any>>(
     overrides.set(logicalName, helper);
   }
 
-  if (overrides.size === 0) return exports;
+  if (overrides.size === 0) {
+    if (timerMetadata) options.timerCallbackDispatchByExportView?.set(exports, timerMetadata.dispatch);
+    return exports;
+  }
   const view = Object.create(exports) as T;
   for (const [logicalName, helper] of overrides) {
     Object.defineProperty(view, logicalName, {
@@ -1395,6 +1499,7 @@ function _hostBridgeExportView<T extends Record<string, any>>(
       writable: false,
     });
   }
+  if (timerMetadata) options.timerCallbackDispatchByExportView?.set(view, timerMetadata.dispatch);
   return view;
 }
 
@@ -1798,8 +1903,17 @@ function _drainNativePromiseBoundary(
   callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
 ): void {
   const exports = callbackState?.getExports();
+  if (typeof exports?.__promise_boundary_observe !== "function") return;
+  _drainModuleMicrotasks(callbackState);
+}
+
+/** Drain the module-owned queue after an external capability re-enters Wasm. */
+function _drainModuleMicrotasks(
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+): void {
+  const exports = callbackState?.getExports();
   const drain = exports?.__drain_microtasks as (() => void) | undefined;
-  if (typeof exports?.__promise_boundary_observe !== "function" || typeof drain !== "function") return;
+  if (!exports || typeof drain !== "function") return;
   const authority = _nativeBoundaryAuthority(exports);
   if (_nativePromiseBoundaryDraining.has(authority)) return;
   _nativePromiseBoundaryDraining.add(authority);
@@ -1808,6 +1922,37 @@ function _drainNativePromiseBoundary(
   } finally {
     _nativePromiseBoundaryDraining.delete(authority);
   }
+}
+
+/**
+ * Wrap the exact standalone timer callback without exposing the generic
+ * JavaScript closure bridge. Ordinary/direct modules fall back to the existing
+ * bridge; prepared standalone delay modules publish the reserved dispatcher.
+ */
+function _wrapStandaloneTimerCallback(
+  closure: any,
+  callbackState?: TimerCallbackState,
+): ((...args: any[]) => any) | null {
+  if (!callbackState) return null;
+  let genericFallback: ((...args: any[]) => any) | null | undefined;
+  const wrapped = function wasmStandaloneTimerCallback(this: any, ...args: any[]): any {
+    try {
+      const exports = callbackState.getExports();
+      const dispatch = exports ? callbackState[_timerCallbackDispatchAuthority]?.get(exports) : undefined;
+      if (dispatch) {
+        const result = dispatch(closure);
+        _drainModuleMicrotasks(callbackState);
+        return result;
+      }
+      genericFallback ??= _wrapWasmClosure(closure, 0, callbackState);
+      if (!genericFallback) throw new TypeError("standalone timer callback dispatcher is not available");
+      return _intrinsicReflectApply(genericFallback, this, args);
+    } catch (error) {
+      throw normalizeModuleCallbackException(error, callbackState, ASYNC_CALLBACK_EXCEPTION_POLICY);
+    }
+  };
+  installNativeFunctionSourceFacade(wrapped);
+  return wrapped;
 }
 
 function _wrapWasmClosureUnknownArity(
@@ -3805,11 +3950,39 @@ export function buildCompiledAdapterImports(
   if (diagnostics.length > 0) {
     throw new Error(`Invalid JavaScript adapter manifest: ${diagnostics.join("; ")}`);
   }
+  assertExplicitEmbedderCapabilityBindings(frozenManifest, deps);
   return buildImports(frozenManifest.imports, deps, frozenManifest.stringPool, {
     ...options,
     ambientCompatibility:
       options.ambientCompatibility ?? frozenManifest.targetProfile.semanticProviders !== "native-first",
   });
+}
+
+const TIMER_EMBEDDER_DEPENDENCY_BY_IMPORT: Readonly<Record<string, string>> = Object.freeze({
+  __timer_set_timeout: "setTimeout",
+  __timer_set_interval: "setInterval",
+  __timer_clear_timeout: "clearTimeout",
+  __timer_clear_interval: "clearInterval",
+});
+
+/** Fail closed when an explicit standalone capability has no embedder binding. */
+function assertExplicitEmbedderCapabilityBindings(
+  manifest: JavaScriptAdapterManifestV1,
+  deps: Record<string, any> | undefined,
+): void {
+  for (const requirement of manifest.capabilities) {
+    if (!requirement.selectedProviders.includes("embedder")) continue;
+    if (requirement.id !== "timers") continue;
+    for (const entry of requirement.imports) {
+      const dependencyName = TIMER_EMBEDDER_DEPENDENCY_BY_IMPORT[entry.name];
+      if (!dependencyName || typeof deps?.[dependencyName] !== "function") {
+        throw new Error(
+          `Explicit embedder capability '${requirement.id}' requires deps.${dependencyName ?? entry.name} for ` +
+            `'${entry.module}::${entry.name}'`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -8906,6 +9079,7 @@ function resolveImport(
     instanceState,
     getNodeRequire: _getNodeRequire,
     wrapWasmClosure: (value, arity) => _wrapWasmClosure(value, arity, callbackState),
+    wrapTimerCallback: (value) => _wrapStandaloneTimerCallback(value, callbackState),
     wrapUnknownCallable: (value) => _maybeWrapCallableUnknownArity(value, callbackState),
   });
   if (capability) return capability;
@@ -16347,6 +16521,8 @@ export function buildImports(
 
   const env: Record<string, Function> = {};
   let dataStructHostBridgeAuthority: DataStructHostBridgeAuthority | undefined;
+  let timerCallbackBridgeAuthority: TimerCallbackBridgeAuthority | undefined;
+  const timerDispatchByView = new WeakMap<object, Function>();
   // (#1712) Operations that NEED exports (e.g. Object.defineProperties with a
   // WasmGC-struct descriptor map — its keys/fields are only readable via the
   // __struct_field_names / __sget_* exports) but run during the module START
@@ -16354,16 +16530,23 @@ export function buildImports(
   // wires the instance.
   const lifecycle = createInstanceLifecycleAdapter({
     brandedExports: _brandedInstanceExports,
-    prepareExports: (exports, mayEstablishDataStructAuthority) =>
-      _hostBridgeExportView(
-        exports,
-        dataStructHostBridgeAuthority,
-        dataStructHostBridgeToken,
-        mayEstablishDataStructAuthority ? (authority) => (dataStructHostBridgeAuthority ??= authority) : undefined,
-        mayEstablishDataStructAuthority,
-      ),
+    prepareExports: (exports, mayEstablishInstanceAuthority) =>
+      _hostBridgeExportView(exports, {
+        expectedDataStructAuthority: dataStructHostBridgeAuthority,
+        expectedDataStructToken: dataStructHostBridgeToken,
+        establishDataStructAuthority: mayEstablishInstanceAuthority
+          ? (authority) => (dataStructHostBridgeAuthority ??= authority)
+          : undefined,
+        mayEstablishDataStructAuthority: mayEstablishInstanceAuthority,
+        expectedTimerCallbackAuthority: timerCallbackBridgeAuthority,
+        establishTimerCallbackAuthority: mayEstablishInstanceAuthority
+          ? (authority) => (timerCallbackBridgeAuthority ??= authority)
+          : undefined,
+        mayEstablishTimerCallbackAuthority: mayEstablishInstanceAuthority,
+        timerCallbackDispatchByExportView: timerDispatchByView,
+      }),
   });
-  const callbackState = lifecycle.callbackState;
+  const callbackState = attachTimerAuthority(lifecycle.callbackState, timerDispatchByView);
   let lastCaughtException: any = undefined;
   const envImportNames: string[] = [];
   let importCounts: Uint32Array | undefined;
@@ -16734,14 +16917,10 @@ export function wrapExports(
   const marshal: "copy" | "live" | false = options?.marshal ?? "copy";
   const brandedExports = _brandedInstanceExports(instanceOrExports);
   const rawExports = brandedExports ?? (instanceOrExports as WebAssembly.Exports);
-  const exportsForMarshal = _hostBridgeExportView(
-    rawExports as unknown as Record<string, Function>,
-    undefined,
-    undefined,
-    undefined,
-    brandedExports !== undefined,
-    true,
-  );
+  const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>, {
+    mayEstablishDataStructAuthority: brandedExports !== undefined,
+    mayConsumeGlobalDataStructAuthority: true,
+  });
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be

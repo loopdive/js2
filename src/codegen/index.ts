@@ -197,6 +197,7 @@ import {
 } from "./ir-prepared-free-functions.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
+import { isValidatedPlatformCapabilityImport } from "../capability-registry.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type {
@@ -461,6 +462,7 @@ import {
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import {
   emitClosureCallExport,
+  publishStandaloneTimerCallbackDispatch,
   emitClosureCallExport1,
   emitClosureCallExport2,
   emitClosureCallExport3,
@@ -2525,8 +2527,15 @@ function planIrOverlay(
   const resolveAmbientClassCall =
     jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
   const resolveHostDateSnapshot = supportsHostDateSnapshots ? makeIrHostDateSnapshotResolver(ast.checker) : undefined;
+  const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
+  const supportsStandalonePromiseDelay =
+    ctx.standalone &&
+    ctx.nativeStrings &&
+    !ctx.wasi &&
+    !ctx.fast &&
+    ctx.targetProfile.semanticProviders === "native-first";
   const resolvePromiseDelay =
-    jsHostExterns && !ctx.fast && !ctx.nativeStrings && options.resolveModuleBindings !== false
+    (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
       : undefined;
   // Selection gets one provisional descriptor population for the bounded
@@ -2571,6 +2580,10 @@ function planIrOverlay(
     if (hasFullyAnnotatedScalarAbi(declaration, { returnCarrierIsOverridden: functionReturnsDynamicObjectCarrier })) {
       return true;
     }
+    // The exact delay slot is frozen as `(f64, f64) -> externref` in both
+    // runtime projections, so a direct-only caller does not force this
+    // prepared callee back onto direct ownership.
+    if (resolvePromiseDelay?.resolveOwner(declaration)) return true;
     const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
     const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
     if (
@@ -2921,6 +2934,7 @@ function planIrOverlay(
     promiseDelayByOwner,
     identityPlan.safeFunctionUnitIds,
     identityContext,
+    supportsStandalonePromiseDelay ? "standalone-native" : "host-executor",
   );
   const { importedCalls, topLevelFunctionValues } = planIrImportedCalls({
     ctx,
@@ -3895,10 +3909,14 @@ function preparedLexicalComponentPreflightFailure(
   preliminaryR2Names: ReadonlySet<string>,
   moduleInit: PreparedLexicalModuleInitEvidence,
 ): string | undefined {
-  // The bounded lexical transaction does not yet own source-unit imports or
-  // Promise-delay registration. Keep those families on their existing route
-  // until their aggregate preparation can be proven without mutation.
-  if (plan.importedCalls.size > 0 || plan.promiseDelays.constructions.size > 0) {
+  // Host-executor Promise delay still owns two lifted source units and four
+  // host imports on its separate preparation route. The standalone-native
+  // projection has no derived source units: its single pre-observed provider
+  // can safely participate in this aggregate lexical transaction.
+  const hasSeparatelyPreparedPromiseDelay = [...plan.promiseDelays.constructions.values()].some(
+    ({ runtimeProjection }) => runtimeProjection !== "standalone-native",
+  );
+  if (plan.importedCalls.size > 0 || hasSeparatelyPreparedPromiseDelay) {
     return "the exact lexical component still depends on a separately prepared import or Promise-delay family";
   }
   if (!hasExactCurrentEnvFunctionImportManifest(ctx)) {
@@ -5737,7 +5755,7 @@ export function generateModule(
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
-    stripHostBridgeExports(ctx);
+    finalizeStandaloneTimerCallbackExports(ctx);
 
     // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.
@@ -5836,10 +5854,33 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
       : null;
   if (severity === null) return;
   // #2783 — `--link`'d namespaces survive as link-time imports, not leaks.
-  const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces);
+  const hasCertifiedStandaloneTimerProvider = (module: string, name: string): boolean => {
+    if (
+      !ctx.requiresStandaloneTimerCallbackDispatch ||
+      ctx.targetProfile.environment !== "none" ||
+      module !== "env" ||
+      name !== "__timer_set_timeout"
+    ) {
+      return false;
+    }
+    return mod.imports.some(
+      (entry, index) =>
+        entry.module === module &&
+        entry.name === name &&
+        isValidatedPlatformCapabilityImport(mod, index, "timers", "embedder", "none"),
+    );
+  };
+  const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces).filter(
+    ({ module, name }) => !hasCertifiedStandaloneTimerProvider(module, name),
+  );
   for (const leak of leaks) {
     reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
   }
+}
+
+function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
+  publishStandaloneTimerCallbackDispatch(ctx);
+  stripHostBridgeExports(ctx);
 }
 
 /**
@@ -8522,7 +8563,7 @@ export function generateMultiModule(
     // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
     // the functions/types those exports pin are actually reclaimed. No-op when
     // the bridge is published (js-host default).
-    stripHostBridgeExports(ctx);
+    finalizeStandaloneTimerCallbackExports(ctx);
 
     // (#4257) Re-declare `ref.func` targets that the mid-finalize scan above
     // could not see: every `__extern_get`/dispatcher body FILL runs after it.

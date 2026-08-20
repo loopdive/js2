@@ -70,6 +70,7 @@ import {
   IR_NATIVE_MAP_NEW_FN,
   IR_NATIVE_MAP_SET_NUM_FN,
 } from "../codegen/ir-native-map.js"; // (#4461) externref-ABI adapters over the $Map helpers
+import { ensureIrNativePromiseDelayProvider } from "../codegen/ir-native-promise-delay.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
@@ -147,6 +148,7 @@ import {
 import { ensureFmodIntrinsic, isFmodIntrinsic } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
 import { ensureIrNativeNumberToString, irNativeNumberToStringAvailable } from "../codegen/number-format-native.js"; // #4462 — host-free Number::toString for the IR string carrier
 import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
   ensureHostCharCodeAtTrusted,
@@ -4788,6 +4790,8 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "runtime" && symbol === IR_NUMBER_TO_STRING_NATIVE_FN) {
     // (#4462) Host-free `Number::toString` in the `(ref $AnyString)` carrier.
     index = ensureIrNativeNumberToString(ctx);
+  } else if (ref.binding.kind === "runtime" && symbol === IR_NATIVE_PROMISE_DELAY_FN) {
+    index = ensureIrNativePromiseDelayProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
     // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
     // owns it and runs in the pre-body window so the funcidx is final. Absence is

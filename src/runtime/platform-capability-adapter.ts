@@ -18,6 +18,7 @@ export interface PlatformCapabilityAdapterContext {
   instanceState?: PlatformCapabilityInstanceState;
   getNodeRequire(): ((id: string) => any) | undefined;
   wrapWasmClosure(value: unknown, arity: number): ((...args: any[]) => any) | null;
+  wrapTimerCallback?(value: unknown): (() => any) | null;
   wrapUnknownCallable(value: unknown): unknown;
 }
 
@@ -203,9 +204,19 @@ export function resolvePlatformCapabilityImport(
       };
     }
     case "timer_set": {
-      const host = intent.mode === "interval" ? setInterval : setTimeout;
+      const dependencyName = intent.mode === "interval" ? "setInterval" : "setTimeout";
+      const supplied = deps?.[dependencyName];
+      const host =
+        typeof supplied === "function"
+          ? (supplied as (...args: any[]) => any).bind(deps)
+          : intent.mode === "interval"
+            ? setInterval
+            : setTimeout;
       return (callback: unknown, delay: unknown) => {
-        const callable = typeof callback === "function" ? callback : context.wrapWasmClosure(callback, 0);
+        const callable =
+          typeof callback === "function"
+            ? callback
+            : (context.wrapTimerCallback?.(callback) ?? context.wrapWasmClosure(callback, 0));
         if (!callable) {
           warnTimerCallbackUnresolvable(intent.mode);
           return 0;
@@ -214,7 +225,14 @@ export function resolvePlatformCapabilityImport(
       };
     }
     case "timer_clear": {
-      const host = intent.mode === "interval" ? clearInterval : clearTimeout;
+      const dependencyName = intent.mode === "interval" ? "clearInterval" : "clearTimeout";
+      const supplied = deps?.[dependencyName];
+      const host =
+        typeof supplied === "function"
+          ? (supplied as (...args: any[]) => any).bind(deps)
+          : intent.mode === "interval"
+            ? clearInterval
+            : clearTimeout;
       return (handle: unknown) => {
         try {
           host(handle as any);

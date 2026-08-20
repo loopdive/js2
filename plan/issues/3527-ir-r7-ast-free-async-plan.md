@@ -3,7 +3,7 @@ id: 3527
 title: "IR-only R7: AST-free async suspension plans and canonical Promise ABI"
 status: blocked
 created: 2026-07-21
-updated: 2026-08-03
+updated: 2026-08-20
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -20,7 +20,7 @@ complexity: XL
 es_edition: multi
 lane: ir-retirement-r7
 model: gpt-5.6-sol
-related: [351, 1042, 1169f, 1326, 1373b, 2865, 2867, 2895, 2906, 2967, 3090, 3387, 3389, 3518]
+related: [351, 1042, 1169f, 1326, 1373b, 2865, 2867, 2895, 2906, 2967, 3090, 3387, 3389, 3518, 4573]
 origin: "#3518 R7 — make the existing frame engine consume AST-free prepared suspension plans"
 files:
   - src/ir/async-plan.ts
@@ -150,6 +150,29 @@ This completes only the free-function terminal family. Async methods,
 closures/function expressions/arrows, `for await`, async generators, `yield*`,
 standalone/WASI consumers, and deletion of the AST planners/activation census
 remain unchecked acceptance work below.
+
+## Standalone continuation (#4573, 2026-08-20)
+
+After #4566, the standalone terminal census was 22 IR bodies and 15
+legacy/typed Unsupported bodies. #4573 prepares the exact checker-certified
+`new Promise((resolve) => setTimeout(() => resolve(value), ms))` delay owner
+through the native `$Promise` substrate and one explicit embedder timer
+capability. It removes the executor closure rather than replaying the direct
+body, preserves grounded numeric operands and one-shot rejection/settlement,
+and authenticates the dedicated timer callback dispatcher without retaining
+the generic closure host bridge. The checkpoint is **23 IR / 14 legacy / 14
+Unsupported / 0 Invariants**, with `body-shape-rejected` reduced from 3 to 2.
+
+This closes only the standalone delay dependency root. The remaining async
+terminals are exactly `fetchUser`, `fetchAllSequential`, `fetchAllParallel`,
+and async `main`. The next dependency-complete slice must project their
+existing prepared `IrAsyncPlan`s through the native frame/runtime, preserve
+numeric Promise carriers and typed spills, eager/order-correct `Promise.all`,
+proven vector bounds, fixed vector literals, ambient clock snapshots, fused
+five-part concatenation, specialized number formatting, and typed string
+logging, and reduce the standalone census from **14 to 10** without reopening
+a legacy callee edge. JS-host, WASI, generic Promise constructors, async
+methods/generators, and source near misses are not widened by #4573.
 
 ## `IrAsyncPlan` contract
 

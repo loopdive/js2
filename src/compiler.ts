@@ -25,7 +25,7 @@ import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
-import { buildPlatformCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
+import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
 import { buildExportBoundaryPolicies } from "./boundary-policy.js";
 import { buildCompileExplanation } from "./compile-explain.js";
@@ -896,10 +896,10 @@ function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError
  * parse/check split is identical and lives here.
  */
 function runPipeline(input: PipelineInput): CompileResult {
-  const { errors, options, entryAst, multiAst, diagnosticAnchor } = input;
+  const { errors, options, entryAst, multiAst, diagnosticAnchor, userSourceFiles } = input;
   const targetProfile = resolveCompileTargetProfile(options);
+  const targetEnvironment = targetProfile.environment;
   const emitWatOutput = options.emitWat !== false;
-  const userSourceFiles = input.userSourceFiles;
 
   // Each validation pass below gates on the errors IT produced, NOT on the whole
   // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
@@ -1194,10 +1194,10 @@ function runPipeline(input: PipelineInput): CompileResult {
   const dts = generateDts(entryAst, mod);
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
-  const capabilityRequirements = buildPlatformCapabilityRequirements(mod, hostImportInventory);
+  const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
   const capabilityProviderDiagnostics = validatePlatformCapabilityRequirements(
     capabilityRequirements,
-    targetProfile.environment,
+    targetEnvironment,
   );
   const exportBoundaryPolicies = buildExportBoundaryPolicies(mod.exportSignatures, targetProfile);
   // Step 6: Generate WIT from the same frozen capability requirements used by
