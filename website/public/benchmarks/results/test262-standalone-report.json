@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-08-20T02:02:44.136Z",
-  "baseline_generated_at": "2026-08-20T02:02:44.136Z",
-  "baseline_sha": "675c15bd1922b46187860dc4934a31f28781f0fe",
+  "timestamp": "2026-08-20T09:07:23.345Z",
+  "baseline_generated_at": "2026-08-20T09:07:23.345Z",
+  "baseline_sha": "6049c004de7b539b19d11f63166dc9a408d63f5e",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8946,
+    "fail": 8945,
     "compile_error": 3402,
-    "compile_timeout": 7,
+    "compile_timeout": 8,
     "skip": 19,
-    "compilable": 40193,
+    "compilable": 40192,
     "host_free_pass": 31247,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 42535,
         "pass": 30276,
-        "fail": 8852,
+        "fail": 8851,
         "compile_error": 3381,
-        "compile_timeout": 7,
+        "compile_timeout": 8,
         "skip": 19,
-        "compilable": 39128,
+        "compilable": 39127,
         "host_free_pass": 30276,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 43621,
         "pass": 31247,
-        "fail": 8946,
+        "fail": 8945,
         "compile_error": 3402,
-        "compile_timeout": 7,
+        "compile_timeout": 8,
         "skip": 19,
-        "compilable": 40193,
+        "compilable": 40192,
         "host_free_pass": 31247,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 31614,
-        "fail": 11470,
+        "fail": 11469,
         "compile_error": 5529,
-        "compile_timeout": 7,
+        "compile_timeout": 8,
         "skip": 115,
-        "compilable": 43084,
+        "compilable": 43083,
         "host_free_pass": 31614,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,33 +84,33 @@
   "official_summary": {
     "total": 43621,
     "pass": 31247,
-    "fail": 8946,
+    "fail": 8945,
     "compile_error": 3402,
-    "compile_timeout": 7,
+    "compile_timeout": 8,
     "skip": 19,
-    "compilable": 40193,
+    "compilable": 40192,
     "host_free_pass": 31247,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 31614,
-    "fail": 11470,
+    "fail": 11469,
     "compile_error": 5529,
-    "compile_timeout": 7,
+    "compile_timeout": 8,
     "skip": 115,
-    "compilable": 43084,
+    "compilable": 43083,
     "host_free_pass": 31614,
     "stale": 0
   },
   "strict_summary": {
     "total": 41110,
     "pass": 29168,
-    "fail": 8639,
+    "fail": 8638,
     "compile_error": 3279,
-    "compile_timeout": 5,
+    "compile_timeout": 6,
     "skip": 19,
-    "compilable": 37807,
+    "compilable": 37806,
     "host_free_pass": 29168,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 42535,
       "pass": 30276,
-      "fail": 8852,
+      "fail": 8851,
       "compile_error": 3381,
-      "compile_timeout": 7,
+      "compile_timeout": 8,
       "skip": 19,
-      "compilable": 39128,
+      "compilable": 39127,
       "host_free_pass": 30276,
       "stale": 0
     }
@@ -198,9 +198,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 1881,
-      "fail": 1068,
+      "fail": 1067,
       "compile_error": 130,
-      "compile_timeout": 3,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 1881
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 7308,
+    "assertion_fail": 7307,
     "host_import_leak": 3971,
     "illegal_cast": 123,
     "negative_test_fail": 14,
@@ -1288,10 +1288,10 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/negative-infinity-throws-rangeerror.js",
-          "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/add/basic-arithmetic.js",
+          "test/built-ins/Temporal/PlainYearMonth/prototype/with/options-read-before-algorithmic-validation.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/since/bubble-time-unit.js",
-          "test/built-ins/Temporal/PlainYearMonth/prototype/since/roundingmode-floor.js"
+          "test/built-ins/Temporal/PlainDate/prototype/subtract/overflow-undefined.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::CSSNumericValue_equals (##)",
@@ -1678,15 +1678,15 @@
           "test/built-ins/Promise/allSettledKeyed/resolve-not-callable-reject-with-typeerror.js",
           "test/built-ins/Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js",
           "test/built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js",
-          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
-          "test/built-ins/Proxy/revocable/revoke-consecutive-call-returns-undefined.js"
+          "test/built-ins/Proxy/revocable/revoke-consecutive-call-returns-undefined.js",
+          "test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
           "assertion_fail:Test262Error: target has the custom set prototype Expected SameValue(«[object Object]», «[object Object]») to be true",
           "null_deref:dereferencing a null pointer [in __closure_65() ← __closure_59 ← __call_fn_method_3 ← __apply_closure]",
-          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «undefined») to be true"
+          "assertion_fail:Test262Error: Expected SameValue(«null», «undefined») to be true",
+          "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##)."
         ]
       },
       {
@@ -1724,15 +1724,15 @@
         "sample_files": [
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/BigInt/key-is-numericindex.js",
           "test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js",
-          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js",
+          "test/built-ins/Reflect/defineProperty/return-abrupt-from-property-key.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Reflect.defineProperty(sample, \"#\", {value: 8n, configurable: true, enumerable: true, writable: true}) must return true Expected SameValue(«false», «true») to be true (Testing with BigInt64Array and makeArray.)",
           "runtime_error:L#:## Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (##).",
-          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Expected SameValue(«true», «false») to be true",
+          "other:L#:## Codegen error: Reflect.defineProperty not supported in standalone mode (## Phase C).",
           "assertion_fail:Test262Error: Reflect.set(sample, \"Symbol(\\\"#\\\")\", #) must return false Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)"
         ]
       },
@@ -1752,8 +1752,8 @@
         },
         "error_categories": {
           "host_import_leak": 1058,
-          "type_error": 218,
           "assertion_fail": 533,
+          "type_error": 218,
           "other": 66,
           "range_error": 2,
           "wasm_compile": 6,
@@ -1875,8 +1875,8 @@
           "ES5": 3
         },
         "sample_files": [
-          "test/language/expressions/class/elements/after-same-line-static-gen-rs-private-method-alt.js",
           "test/language/expressions/class/elements/after-same-line-static-async-method-rs-static-async-method-privatename-identifier-alt.js",
+          "test/language/expressions/class/elements/after-same-line-static-gen-rs-private-method-alt.js",
           "test/language/expressions/class/elements/after-same-line-static-gen-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/async-gen-method/dflt-params-ref-prior.js",
           "test/language/expressions/in/private-field-presence-method.js"
@@ -1943,15 +1943,15 @@
         "count": 2988,
         "statuses": {
           "pass": 0,
-          "fail": 2668,
+          "fail": 2667,
           "compile_error": 317,
-          "compile_timeout": 3,
+          "compile_timeout": 4,
           "skip": 0,
           "total": 2988,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 2146,
+          "assertion_fail": 2145,
           "type_error": 359,
           "host_import_leak": 263,
           "null_deref": 67,
@@ -1979,15 +1979,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js",
           "test/built-ins/TypedArray/Symbol.species/length.js",
-          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
           "test/built-ins/TypedArray/prototype/reduce/callbackfn-no-iteration-over-non-integer-properties.js",
+          "test/built-ins/TypedArray/prototype/fill/BigInt/fill-values.js",
           "test/built-ins/TypedArray/prototype/subarray/BigInt/tointeger-begin.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: called custom ctor get accessor once Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
           "assertion_fail:Test262Error: results.length Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
+          "assertion_fail:Test262Error: Default start and end indexes are # and this.length (Testing with BigInt64Array and makeArray.)",
           "assertion_fail:Test262Error: false (Testing with BigInt64Array and makeArray.)"
         ]
       },
@@ -2210,15 +2210,15 @@
           "ES5": 1
         },
         "sample_files": [
-          "test/built-ins/Date/S15.9.3.1_A4_T4.js",
           "test/built-ins/Date/prototype/setMonth/arg-month-to-number.js",
+          "test/built-ins/Date/S15.9.3.1_A4_T4.js",
           "test/built-ins/Date/prototype/toJSON/to-primitive-value-of.js",
           "test/built-ins/Date/parse/prop-desc.js",
           "test/built-ins/Date/prototype/setHours/arg-ms-to-number.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: `new Date(new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#))` throws a Test262Error exception Expected a Test262Error to be thrown but no exception was throw",
           "assertion_fail:Test262Error: \"this\" value Expected SameValue(«[object Object]», «[object Object]») to be true",
+          "assertion_fail:Test262Error: `new Date(new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#), new PoisonedValueOf(#))` throws a Test262Error exception Expected a Test262Error to be thrown but no exception was throw",
           "assertion_fail:Test262Error: Expected SameValue(«[object Object]», «») to be true",
           "type_error:TypeError: Cannot convert undefined or null to object",
           "type_error:TypeError: Cannot read properties of undefined (reading 'call')"
@@ -2605,8 +2605,8 @@
           "test/language/expressions/division/bigint-wrapped-values.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
           "test/built-ins/Atomics/notify/bigint/bad-range.js",
-          "test/built-ins/Atomics/waitAsync/bigint/non-bigint64-typedarray-throws.js",
-          "test/built-ins/Atomics/load/bigint/bad-range.js"
+          "test/built-ins/Atomics/load/bigint/bad-range.js",
+          "test/built-ins/Atomics/waitAsync/bigint/non-bigint64-typedarray-throws.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__new_BigInt (##)",
