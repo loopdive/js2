@@ -52,6 +52,48 @@ export function isExpectedLateJsdomHostError(error) {
   return error?.name === "NotFoundError" && error?.message === "The node to be removed is not a child of this node.";
 }
 
+function callsDevelopmentOnlyReactApi(test) {
+  const sourceFile = ts.createSourceFile(
+    test.file ?? "react-dom-upstream-test.js",
+    `${test.prelude ?? ""}\n${test.body ?? ""}`,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  let found = false;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "React" &&
+      node.expression.name.text === "captureOwnerStack"
+    ) {
+      found = true;
+      return;
+    }
+    if (!found) ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+/** Keep production reports honest when an upstream test calls a dev-only React API. */
+export function partitionReactDomTestsForBuild(tests, build) {
+  if (build === "development") return { tests: [...tests], rejected: [] };
+  const runnable = [];
+  const rejected = [];
+  for (const test of tests) {
+    if (!callsDevelopmentOnlyReactApi(test)) {
+      runnable.push(test);
+      continue;
+    }
+    const { prelude: _prelude, body: _body, ...identity } = test;
+    rejected.push({ ...identity, reason: "requires-development-react-api" });
+  }
+  return { tests: runnable, rejected };
+}
+
 function installNativeHostErrorBoundary(nativeHostErrors) {
   const onUncaught = (error) => {
     if (!isExpectedLateJsdomHostError(error)) {
@@ -1038,6 +1080,13 @@ export async function runHarness({ quiet = false } = {}) {
       "needs-external-module",
     ]),
   });
+  const buildCompatible = partitionReactDomTestsForBuild(extracted.tests, build);
+  const admittedTests = buildCompatible.tests;
+  const rejectedTests = [...extracted.rejected, ...buildCompatible.rejected];
+  const rejectionCounts = { ...extracted.rejectionCounts };
+  for (const rejected of buildCompatible.rejected) {
+    rejectionCounts[rejected.reason] = (rejectionCounts[rejected.reason] ?? 0) + 1;
+  }
   // The browser server renderer is a separate published CJS graph. Keep those
   // original tests in the admitted corpus, but route them to their own module
   // lane instead of including the graph in the client module.
@@ -1049,14 +1098,14 @@ export async function runHarness({ quiet = false } = {}) {
   // routed independently rather than silently exercising the client module.
   const hasClientRendererCall = (body) =>
     /\b(?:ReactDOMClient|ReactDOM\.(?:render|createRoot|hydrate|flushSync)|createRoot\s*\()/.test(body);
-  const serverTests = extracted.tests.filter(
+  const serverTests = admittedTests.filter(
     (test) =>
       /\bReactDOMServer\.(?:renderToString|renderToStaticMarkup)\b/.test(test.body) &&
       !hasClientRendererCall(test.body),
   );
   const serverIds = new Set(serverTests.map((test) => test.id));
   const browserFizzFile = /ReactDOMFizz(?:ServerBrowser|StaticBrowser|StaticFloat)-test\.js$/;
-  const fizzTests = extracted.tests.filter(
+  const fizzTests = admittedTests.filter(
     (test) =>
       !serverIds.has(test.id) &&
       browserFizzFile.test(test.file) &&
@@ -1065,7 +1114,7 @@ export async function runHarness({ quiet = false } = {}) {
   );
   const fizzIds = new Set(fizzTests.map((test) => test.id));
   const nodeFizzFile = /ReactDOMFizz(?:ServerNode|StaticNode)-test\.js$/;
-  const nodeFizzTests = extracted.tests.filter(
+  const nodeFizzTests = admittedTests.filter(
     (test) =>
       !serverIds.has(test.id) &&
       !fizzIds.has(test.id) &&
@@ -1074,7 +1123,7 @@ export async function runHarness({ quiet = false } = {}) {
   );
   const nodeFizzIds = new Set(nodeFizzTests.map((test) => test.id));
   const edgeFizzFile = /ReactDOMFizzServerEdge-test\.js$/;
-  const edgeFizzTests = extracted.tests.filter(
+  const edgeFizzTests = admittedTests.filter(
     (test) =>
       !serverIds.has(test.id) &&
       !fizzIds.has(test.id) &&
@@ -1083,16 +1132,16 @@ export async function runHarness({ quiet = false } = {}) {
       /\bReactDOMFizzServer\b/.test(test.body),
   );
   const edgeFizzIds = new Set(edgeFizzTests.map((test) => test.id));
-  const clientTests = extracted.tests.filter(
+  const clientTests = admittedTests.filter(
     (test) =>
       !serverIds.has(test.id) && !fizzIds.has(test.id) && !nodeFizzIds.has(test.id) && !edgeFizzIds.has(test.id),
   );
   report.extraction = {
-    upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
-    admitted: extracted.tests.length,
-    rejected: extracted.rejected.length,
-    rejectionCounts: extracted.rejectionCounts,
-    rejectedTests: extracted.rejected,
+    upstreamTestsSeen: admittedTests.length + rejectedTests.length,
+    admitted: admittedTests.length,
+    rejected: rejectedTests.length,
+    rejectionCounts,
+    rejectedTests,
     clientAdmitted: clientTests.length,
     serverAdmitted: serverTests.length,
     fizzAdmitted: fizzTests.length,
@@ -1112,7 +1161,7 @@ export async function runHarness({ quiet = false } = {}) {
     Number(process.env.DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT ?? 0) || edgeFizzTests.length;
   log(
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
-      `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted ` +
+      `${admittedTests.length} of ${admittedTests.length + rejectedTests.length} upstream tests admitted ` +
       `(${clientTests.length} client, ${serverTests.length} legacy server, ${fizzTests.length} browser Fizz, ` +
       `${nodeFizzTests.length} node Fizz, ${edgeFizzTests.length} edge Fizz)`,
   );
