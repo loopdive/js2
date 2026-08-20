@@ -50,4 +50,27 @@ describe("react upstream extractor", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("lifts concise and async test arrows without dropping their assertions", () => {
+    const root = mkdtempSync(join(tmpdir(), "js2-react-concise-arrow-"));
+    const file = "fixture.js";
+    try {
+      writeFileSync(
+        join(root, file),
+        `describe("fixture", () => {\n` +
+          `  it("concise", () => expect("ok").toBe("ok"));\n` +
+          `  it("async concise", async () => Promise.resolve(expect("ok").toBe("ok")));\n` +
+          `});\n`,
+      );
+      const result = extractReactUpstreamTests({ root, testFiles: [file], admitAll: false });
+      expect(result.rejected).toHaveLength(0);
+      expect(result.tests).toHaveLength(2);
+      expect(result.tests[0].body).toContain('expect("ok").toBe("ok")');
+      expect(result.tests[0].body).toMatch(/^\(.*\);$/s);
+      expect(result.tests[1].body).toMatch(/^await \(.*\);$/s);
+      expect(result.tests[1].isAsync).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

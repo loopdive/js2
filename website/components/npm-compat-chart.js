@@ -491,6 +491,36 @@ class NpmCompatChart extends HTMLElement {
           )
         : "";
 
+    const nodeFizzTestData = pkg.tests?.nodeFizz;
+    const nodeFizzTests =
+      nodeFizzTestData && nodeFizzTestData.total != null
+        ? this._row(
+            "Node Fizz tests",
+            `<span class="mono">${nodeFizzTestData.passed ?? 0}/${nodeFizzTestData.total}</span>${
+              nodeFizzTestData.passRatePct != null ? ` <span class="muted">${nodeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Node Fizz suite</span>${
+              nodeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${nodeFizzTestData.selected ?? nodeFizzTestData.admitted ?? 0} of ${nodeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
+    const edgeFizzTestData = pkg.tests?.edgeFizz;
+    const edgeFizzTests =
+      edgeFizzTestData && edgeFizzTestData.total != null
+        ? this._row(
+            "Edge Fizz tests",
+            `<span class="mono">${edgeFizzTestData.passed ?? 0}/${edgeFizzTestData.total}</span>${
+              edgeFizzTestData.passRatePct != null ? ` <span class="muted">${edgeFizzTestData.passRatePct}%</span>` : ""
+            } <span class="tag">upstream Edge Fizz suite</span>${
+              edgeFizzTestData.upstreamTestsSeen
+                ? ` <span class="muted">${edgeFizzTestData.selected ?? edgeFizzTestData.admitted ?? 0} of ${edgeFizzTestData.upstreamTestsSeen} selected</span>`
+                : ""
+            }`,
+          )
+        : "";
+
     // Perf — historical ratios stay split by input knowledge and placement;
     // full methodology lives below the dashboard.
     let perf;
@@ -545,7 +575,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${perf}${bugs}</div>
+        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
         <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
           title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;

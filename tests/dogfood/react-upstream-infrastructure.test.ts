@@ -17,6 +17,10 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.propTypes?.string).toBeTypeOf("function");
       expect(infrastructure.createReactClass).toBeTypeOf("function");
       expect(infrastructure.webStreams?.ReadableStream).toBeTypeOf("function");
+      const passThrough = infrastructure.createPassThrough();
+      expect(passThrough).toBeDefined();
+      expect(passThrough.setEncoding).toBeTypeOf("function");
+      passThrough.destroy();
       expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(infrastructure);
     } finally {
       installed.cleanup();

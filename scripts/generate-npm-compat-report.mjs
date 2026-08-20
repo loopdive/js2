@@ -2458,6 +2458,44 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
             : null,
           validation: reactDomSuite.fizz?.validation ?? null,
         },
+        nodeFizz: {
+          passed: reactDomSuite.nodeFizz?.results?.passed ?? null,
+          total: reactDomSuite.nodeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.nodeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.nodeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.nodeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.nodeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.nodeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.nodeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.nodeFizz?.compile
+            ? {
+                success: reactDomSuite.nodeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.nodeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.nodeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.nodeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.nodeFizz?.validation ?? null,
+        },
+        edgeFizz: {
+          passed: reactDomSuite.edgeFizz?.results?.passed ?? null,
+          total: reactDomSuite.edgeFizz?.results?.scored ?? null,
+          passRatePct: reactDomSuite.edgeFizz?.summary?.passRatePct ?? null,
+          admitted: reactDomSuite.edgeFizz?.extraction?.admitted ?? null,
+          selected: reactDomSuite.edgeFizz?.extraction?.selected ?? null,
+          upstreamTestsSeen: reactDomSuite.edgeFizz?.extraction?.upstreamTestsSeen ?? null,
+          harnessIncompatible: reactDomSuite.edgeFizz?.results?.harnessIncompatible ?? null,
+          implementationInvalidTests: reactDomSuite.edgeFizz?.results?.implementationInvalidTests ?? null,
+          compile: reactDomSuite.edgeFizz?.compile
+            ? {
+                success: reactDomSuite.edgeFizz.compile.success ?? false,
+                durationMs: reactDomSuite.edgeFizz.compile.durationMs ?? null,
+                binaryBytes: reactDomSuite.edgeFizz.compile.binaryBytes ?? null,
+                invalidBatches: reactDomSuite.edgeFizz.compile.invalidBatches ?? null,
+              }
+            : null,
+          validation: reactDomSuite.edgeFizz?.validation ?? null,
+        },
         sourceIssue: 3982,
       },
       perf: await perfNpmCompatPackage("react-dom", {

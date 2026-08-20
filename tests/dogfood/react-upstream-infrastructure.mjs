@@ -143,6 +143,16 @@ export function installReactUpstreamInfrastructure({ react } = {}) {
     createReactClass,
     webStreams,
     patchMessageChannel() {},
+    // Node Fizz's upstream tests construct `stream.PassThrough` through a
+    // dynamic namespace member. Expose the host construction as a named
+    // capability so the compiled test does not depend on dynamic `new
+    // Stream.PassThrough()` lowering; the returned stream remains the real
+    // Node object and its methods cross the existing extern boundary.
+    createPassThrough() {
+      const stream = readModule("stream");
+      if (!stream?.PassThrough) throw new Error("React upstream stream infrastructure is unavailable");
+      return new stream.PassThrough();
+    },
     errors,
     warnings,
     consumeConsole(kind) {

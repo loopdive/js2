@@ -22,6 +22,8 @@
 //
 // The only STRUCTURAL rejection left is a `done`-callback signature, which
 // cannot be turned into a callable function without a scheduler to invoke it.
+// Expression-bodied arrows are normalized to an expression statement so they
+// retain the upstream assertion while fitting the lifted test-function ABI.
 // `INFRA_PATTERNS` / `SUPPORTED_MATCHERS` below are therefore no longer an
 // admission filter by default — they are the conservative mode kept behind
 // `admitAll: false` (`DOGFOOD_REACT_ADMIT_ALL=0`), still used for the prelude
@@ -348,12 +350,21 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
           continue;
         }
         const fn = entry.node.arguments[1];
-        if (!fn || !(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !ts.isBlock(fn.body)) {
+        const isFunction = fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn));
+        if (!isFunction || (!ts.isBlock(fn.body) && !ts.isExpression(fn.body))) {
           rejected.push({ ...record, reason: "no-block-body" });
           continue;
         }
 
-        const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
+        // Most ReactDOM server-integration tests use concise arrows. Lift the
+        // expression as a statement rather than rejecting it: this preserves
+        // its exact call/arguments and lets buildTestFunction append the
+        // harness's numeric success sentinel. Async concise arrows must await
+        // the upstream promise before the sentinel is returned.
+        const isAsync = fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+        const bodyText = ts.isBlock(fn.body)
+          ? fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n")
+          : `${isAsync ? "await " : ""}(${fn.body.getText(sourceFile)});`;
         const preludeText = [...localScope, ...localEach].join("\n");
         // Some React files rely on the repository-wide Jest setup to expose
         // console assertions, even though their local describe's beforeEach
@@ -388,7 +399,7 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false, s
           ...record,
           prelude: completePrelude,
           body: bodyText,
-          isAsync: fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true,
+          isAsync,
         });
       }
     };

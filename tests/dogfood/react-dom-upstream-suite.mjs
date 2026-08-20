@@ -304,8 +304,18 @@ function setupInsertionOffset(prelude) {
 function withReactDomSetup(test, options = {}) {
   const setup = reactDomTestSetup(test.prelude, `${test.prelude}\n${test.body}`, options);
   const offset = setupInsertionOffset(test.prelude);
-  const prelude = `${test.prelude.slice(0, offset)}\n${setup}\n${test.prelude.slice(offset)}`;
-  return { ...test, prelude };
+  let prelude = `${test.prelude.slice(0, offset)}\n${setup}\n${test.prelude.slice(offset)}`;
+  let body = test.body;
+  if (options.fizzPlatform === "node") {
+    // The compiler's dynamic `new receiver.Member()` path cannot preserve a
+    // Node stream subclass constructor. Keep the upstream helper's observable
+    // stream behavior, but route construction through the explicit host
+    // capability facade; the facade function returns the real PassThrough.
+    prelude = prelude.replace(/\bnew\s+Stream\.PassThrough\s*\(/g, "Stream.PassThrough(");
+    prelude += "\nStream = __js2NodeStreamFacade();";
+    body = body.replace(/\bnew\s+Stream\.PassThrough\s*\(/g, "Stream.PassThrough(");
+  }
+  return { ...test, prelude, body };
 }
 
 function buildModuleSource(implementation, tests) {
@@ -479,10 +489,15 @@ async function runServerHarness({
   suitePin,
   serverTests,
   lane = "legacy",
+  moduleName = null,
+  testLimitEnv = null,
+  fizzPlatform = null,
 }) {
   const isFizz = fizzSource !== null;
   const configuredLimit = Number(
-    process.env[isFizz ? "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT" : "DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT"] ?? 0,
+    process.env[
+      testLimitEnv ?? (isFizz ? "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT" : "DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT")
+    ] ?? 0,
   );
   const selectedTests =
     Number.isInteger(configuredLimit) && configuredLimit > 0 ? serverTests.slice(0, configuredLimit) : serverTests;
@@ -502,9 +517,10 @@ async function runServerHarness({
   const report = {
     lane,
     modules: [
-      isFizz
-        ? "package/cjs/react-dom-server.browser.production.js"
-        : "package/cjs/react-dom-server-legacy.browser.production.js",
+      moduleName ??
+        (isFizz
+          ? "package/cjs/react-dom-server.browser.production.js"
+          : "package/cjs/react-dom-server-legacy.browser.production.js"),
     ],
     implementationChars: implementation.length,
     extraction: {
@@ -530,13 +546,18 @@ async function runServerHarness({
   let totalBytes = 0;
 
   const compileGroup = async (file, groupTests, depth = 0) => {
-    const moduleSource = buildServerModuleSource(implementation, groupTests, { fizz: isFizz });
+    const moduleSource = buildServerModuleSource(implementation, groupTests, {
+      fizz: isFizz,
+      fizzPlatform,
+    });
     const started = performance.now();
     let result;
     try {
       result = await withCompileTimeout(
         compile(moduleSource, {
-          fileName: isFizz ? "react-dom-server.browser.js" : "react-dom-server-legacy.browser.js",
+          fileName: (moduleName ?? (isFizz ? "react-dom-server.browser.js" : "react-dom-server-legacy.browser.js"))
+            .replace(/^.*\//, "")
+            .replace(/\.production\.js$/, ".js"),
           skipSemanticDiagnostics: true,
           experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
           sourceMap: true,
@@ -602,7 +623,13 @@ async function runServerHarness({
 
     nativeContextFile = file;
     const nativeResults = new Map(
-      (await runNative(implementation, groupTests, { server: true, fizz: isFizz })).map((entry) => [entry.id, entry]),
+      (
+        await runNative(implementation, groupTests, {
+          server: true,
+          fizz: isFizz,
+          fizzPlatform,
+        })
+      ).map((entry) => [entry.id, entry]),
     );
     for (const test of groupTests) {
       runResults.set(test.id, {
@@ -942,6 +969,8 @@ export async function runHarness({ quiet = false } = {}) {
   const clientSource = readFileSync(implementationPin.clientPath, "utf-8");
   const serverSource = readFileSync(implementationPin.serverPath, "utf-8");
   const fizzSource = readFileSync(implementationPin.fizzServerPath, "utf-8");
+  const nodeFizzSource = readFileSync(implementationPin.nodeFizzServerPath, "utf-8");
+  const edgeFizzSource = readFileSync(implementationPin.edgeFizzServerPath, "utf-8");
   const { root: suiteRoot, pin: suitePin } = setupReactDomUpstreamSuite();
 
   const implementation = buildImplementationSource({ reactSource, sharedSource, clientSource });
@@ -958,10 +987,14 @@ export async function runHarness({ quiet = false } = {}) {
         suitePin.implementation.clientModule,
         suitePin.implementation.serverModule,
         suitePin.implementation.fizzServerModule,
+        suitePin.implementation.nodeFizzServerModule,
+        suitePin.implementation.edgeFizzServerModule,
       ],
       clientModules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
       serverModules: [suitePin.implementation.serverModule],
       fizzServerModules: [suitePin.implementation.fizzServerModule],
+      nodeFizzServerModules: [suitePin.implementation.nodeFizzServerModule],
+      edgeFizzServerModules: [suitePin.implementation.edgeFizzServerModule],
       implementationChars: implementation.length,
     },
     upstreamSuite: {
@@ -1005,10 +1038,9 @@ export async function runHarness({ quiet = false } = {}) {
   // Most ReactDOM files import ReactDOMServer in their shared prelude even
   // when an individual test only exercises the client renderer. Route only a
   // body that directly calls the legacy browser renderer, and leave mixed or
-  // client-only tests in the client graph. Browser Fizz tests use a second
-  // published graph and are routed only when the whole test is server-only;
-  // node/edge Fizz tests remain outside this browser lane because they need
-  // different stream/host modules.
+  // client-only tests in the client graph. Each Fizz platform has a separate
+  // published graph and host contract, so browser, node, and edge tests are
+  // routed independently rather than silently exercising the client module.
   const hasClientRendererCall = (body) =>
     /\b(?:ReactDOMClient|ReactDOM\.(?:render|createRoot|hydrate|flushSync)|createRoot\s*\()/.test(body);
   const serverTests = extracted.tests.filter(
@@ -1026,7 +1058,29 @@ export async function runHarness({ quiet = false } = {}) {
       !hasClientRendererCall(test.body),
   );
   const fizzIds = new Set(fizzTests.map((test) => test.id));
-  const clientTests = extracted.tests.filter((test) => !serverIds.has(test.id) && !fizzIds.has(test.id));
+  const nodeFizzFile = /ReactDOMFizz(?:ServerNode|StaticNode)-test\.js$/;
+  const nodeFizzTests = extracted.tests.filter(
+    (test) =>
+      !serverIds.has(test.id) &&
+      !fizzIds.has(test.id) &&
+      nodeFizzFile.test(test.file) &&
+      /\bReactDOMFizz(?:Server|Static)\b/.test(test.body),
+  );
+  const nodeFizzIds = new Set(nodeFizzTests.map((test) => test.id));
+  const edgeFizzFile = /ReactDOMFizzServerEdge-test\.js$/;
+  const edgeFizzTests = extracted.tests.filter(
+    (test) =>
+      !serverIds.has(test.id) &&
+      !fizzIds.has(test.id) &&
+      !nodeFizzIds.has(test.id) &&
+      edgeFizzFile.test(test.file) &&
+      /\bReactDOMFizzServer\b/.test(test.body),
+  );
+  const edgeFizzIds = new Set(edgeFizzTests.map((test) => test.id));
+  const clientTests = extracted.tests.filter(
+    (test) =>
+      !serverIds.has(test.id) && !fizzIds.has(test.id) && !nodeFizzIds.has(test.id) && !edgeFizzIds.has(test.id),
+  );
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
     admitted: extracted.tests.length,
@@ -1036,6 +1090,8 @@ export async function runHarness({ quiet = false } = {}) {
     clientAdmitted: clientTests.length,
     serverAdmitted: serverTests.length,
     fizzAdmitted: fizzTests.length,
+    nodeFizzAdmitted: nodeFizzTests.length,
+    edgeFizzAdmitted: edgeFizzTests.length,
   };
   const requestedLimit = Number(process.env.DOGFOOD_REACT_DOM_TEST_LIMIT ?? 0);
   const selectedTests =
@@ -1044,11 +1100,49 @@ export async function runHarness({ quiet = false } = {}) {
   report.extraction.clientSelected = selectedTests.length;
   report.extraction.serverSelected = Number(process.env.DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT ?? 0) || serverTests.length;
   report.extraction.fizzSelected = Number(process.env.DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT ?? 0) || fizzTests.length;
+  report.extraction.nodeFizzSelected =
+    Number(process.env.DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT ?? 0) || nodeFizzTests.length;
+  report.extraction.edgeFizzSelected =
+    Number(process.env.DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT ?? 0) || edgeFizzTests.length;
   log(
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
       `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted ` +
-      `(${clientTests.length} client, ${serverTests.length} legacy server, ${fizzTests.length} browser Fizz)`,
+      `(${clientTests.length} client, ${serverTests.length} legacy server, ${fizzTests.length} browser Fizz, ` +
+      `${nodeFizzTests.length} node Fizz, ${edgeFizzTests.length} edge Fizz)`,
   );
+
+  const runFizzLane = async ({ source, tests, lane, moduleName, testLimitEnv, fizzPlatform }) => {
+    try {
+      return await runServerHarness({
+        log,
+        reactSource,
+        sharedSource,
+        fizzSource: source,
+        suitePin,
+        serverTests: tests,
+        lane,
+        moduleName,
+        testLimitEnv,
+        fizzPlatform,
+      });
+    } catch (error) {
+      return {
+        summary: {
+          headline: `0/0 executed upstream react-dom ${lane} tests pass against compiled Wasm (${lane} lane failed before execution)`,
+          passRatePct: 0,
+          upstreamTestsSeen: tests.length,
+          admitted: tests.length,
+          selected: 0,
+          scored: 0,
+          passed: 0,
+          failed: 0,
+          harnessIncompatible: 0,
+          implementationInvalidTests: tests.length,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  };
 
   // The project lane compiles the published React, shared, and client modules
   // once, then runs all selected tests from one small entry module. The legacy
@@ -1092,36 +1186,34 @@ export async function runHarness({ quiet = false } = {}) {
         },
       };
     }
-    try {
-      result.fizz = await runServerHarness({
-        log,
-        reactSource,
-        sharedSource,
-        fizzSource,
-        suitePin,
-        serverTests: fizzTests,
-        lane: "browser Fizz",
-      });
-    } catch (error) {
-      result.fizz = {
-        summary: {
-          headline:
-            "0/0 executed upstream react-dom browser Fizz tests pass against compiled Wasm (Fizz lane failed before execution)",
-          passRatePct: 0,
-          upstreamTestsSeen: fizzTests.length,
-          admitted: fizzTests.length,
-          selected: 0,
-          scored: 0,
-          passed: 0,
-          failed: 0,
-          harnessIncompatible: 0,
-          implementationInvalidTests: fizzTests.length,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+    result.fizz = await runFizzLane({
+      source: fizzSource,
+      tests: fizzTests,
+      lane: "browser Fizz",
+      moduleName: suitePin.implementation.fizzServerModule,
+      testLimitEnv: "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT",
+      fizzPlatform: "browser",
+    });
+    result.nodeFizz = await runFizzLane({
+      source: nodeFizzSource,
+      tests: nodeFizzTests,
+      lane: "node Fizz",
+      moduleName: suitePin.implementation.nodeFizzServerModule,
+      testLimitEnv: "DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT",
+      fizzPlatform: "node",
+    });
+    result.edgeFizz = await runFizzLane({
+      source: edgeFizzSource,
+      tests: edgeFizzTests,
+      lane: "edge Fizz",
+      moduleName: suitePin.implementation.edgeFizzServerModule,
+      testLimitEnv: "DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT",
+      fizzPlatform: "edge",
+    });
     report.server = result.server;
     report.fizz = result.fizz;
+    report.nodeFizz = result.nodeFizz;
+    report.edgeFizz = result.edgeFizz;
     mkdirSync(dirname(REPORT_PATH), { recursive: true });
     writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
     hostInfrastructure.cleanup();
@@ -1415,34 +1507,30 @@ export async function runHarness({ quiet = false } = {}) {
       },
     };
   }
-  try {
-    report.fizz = await runServerHarness({
-      log,
-      reactSource,
-      sharedSource,
-      fizzSource,
-      suitePin,
-      serverTests: fizzTests,
-      lane: "browser Fizz",
-    });
-  } catch (error) {
-    report.fizz = {
-      summary: {
-        headline:
-          "0/0 executed upstream react-dom browser Fizz tests pass against compiled Wasm (Fizz lane failed before execution)",
-        passRatePct: 0,
-        upstreamTestsSeen: fizzTests.length,
-        admitted: fizzTests.length,
-        selected: 0,
-        scored: 0,
-        passed: 0,
-        failed: 0,
-        harnessIncompatible: 0,
-        implementationInvalidTests: fizzTests.length,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
+  report.fizz = await runFizzLane({
+    source: fizzSource,
+    tests: fizzTests,
+    lane: "browser Fizz",
+    moduleName: suitePin.implementation.fizzServerModule,
+    testLimitEnv: "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT",
+    fizzPlatform: "browser",
+  });
+  report.nodeFizz = await runFizzLane({
+    source: nodeFizzSource,
+    tests: nodeFizzTests,
+    lane: "node Fizz",
+    moduleName: suitePin.implementation.nodeFizzServerModule,
+    testLimitEnv: "DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT",
+    fizzPlatform: "node",
+  });
+  report.edgeFizz = await runFizzLane({
+    source: edgeFizzSource,
+    tests: edgeFizzTests,
+    lane: "edge Fizz",
+    moduleName: suitePin.implementation.edgeFizzServerModule,
+    testLimitEnv: "DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT",
+    fizzPlatform: "edge",
+  });
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
   hostInfrastructure.cleanup();

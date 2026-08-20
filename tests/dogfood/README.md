@@ -522,6 +522,36 @@ tests, and has zero compile-quarantined batches. The production
 that is the transform React itself applies to `react.production.js`; it does
 not precompute a test result.
 
+### ReactDOM's platform lanes
+
+`react-dom-upstream-suite.mjs` uses the same pinned React checkout, extractor,
+jsdom host, and native oracle, but keeps each published renderer graph
+independent. The 2,001 admitted ReactDOM tests are split into the client graph,
+legacy browser SSR, browser Fizz (60 tests), Node Fizz (35), and Edge Fizz (2).
+Each lane records its own compile, validation, native-oracle, and Wasm result
+counts in the report and on the npm-compat card. The Node lane exposes the real
+Node `stream.PassThrough` through a named host capability; browser and Edge use
+the standard Web Streams, messaging, encoder, headers, abort, and async-hooks
+host surface.
+
+To keep a local iteration bounded, use separate limits rather than silently
+dropping a platform:
+
+```bash
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_SERVER_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT=1 \
+DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT=1 \
+node --import tsx tests/dogfood/react-dom-upstream-suite.mjs --json
+```
+
+Concise upstream arrows are lifted as expression statements, so the full
+corpus is now admitted except for the two tests upstream marks `.skip`.
+Compiler/runtime failures remain failures; host-incompatible native tests and
+private test scaffolding are reported separately rather than converted into
+passes.
+
 ## lit upstream suite (#3977)
 
 ```bash

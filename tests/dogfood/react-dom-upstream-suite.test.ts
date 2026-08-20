@@ -49,6 +49,8 @@ describe("react-dom upstream suite", () => {
     expect(pin.implementation.clientModule).toMatch(/^package\/cjs\//);
     expect(pin.implementation.serverModule).toMatch(/^package\/cjs\/.*browser\.production\.js$/);
     expect(pin.implementation.fizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.browser\.production\.js$/);
+    expect(pin.implementation.nodeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.node\.production\.js$/);
+    expect(pin.implementation.edgeFizzServerModule).toMatch(/^package\/cjs\/react-dom-server\.edge\.production\.js$/);
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;
@@ -66,15 +68,25 @@ describe("react-dom upstream suite", () => {
     expect(report.extraction.admitted + report.extraction.rejected).toBe(report.extraction.upstreamTestsSeen);
     expect(report.extraction.rejectedTests.every((t: { reason?: string }) => !!t.reason)).toBe(true);
     expect(report.extraction.admitted).toBeGreaterThanOrEqual(ADMITTED_FLOOR);
-    expect(report.extraction.clientAdmitted + report.extraction.serverAdmitted + report.extraction.fizzAdmitted).toBe(
-      report.extraction.admitted,
-    );
+    expect(
+      report.extraction.clientAdmitted +
+        report.extraction.serverAdmitted +
+        report.extraction.fizzAdmitted +
+        report.extraction.nodeFizzAdmitted +
+        report.extraction.edgeFizzAdmitted,
+    ).toBe(report.extraction.admitted);
     expect(report.server.extraction.admitted).toBe(report.extraction.serverAdmitted);
     expect(report.server.extraction.selected).toBeGreaterThan(0);
     expect(report.server.results.passed + report.server.results.failed).toBe(report.server.results.scored);
     expect(report.fizz.extraction.admitted).toBe(report.extraction.fizzAdmitted);
     expect(report.fizz.extraction.selected).toBeGreaterThan(0);
     expect(report.fizz.results.passed + report.fizz.results.failed).toBe(report.fizz.results.scored);
+    expect(report.nodeFizz.extraction.admitted).toBe(report.extraction.nodeFizzAdmitted);
+    expect(report.nodeFizz.extraction.selected).toBeGreaterThan(0);
+    expect(report.nodeFizz.results.passed + report.nodeFizz.results.failed).toBe(report.nodeFizz.results.scored);
+    expect(report.edgeFizz.extraction.admitted).toBe(report.extraction.edgeFizzAdmitted);
+    expect(report.edgeFizz.extraction.selected).toBeGreaterThan(0);
+    expect(report.edgeFizz.results.passed + report.edgeFizz.results.failed).toBe(report.edgeFizz.results.scored);
 
     // The load-bearing assertion while #3982 is open: if the implementation
     // cannot compile, that must be REPORTED with the compiler's own message —

@@ -425,6 +425,14 @@ function __js2ReactInfra() {
   return value;
 }
 
+function __js2NodeStreamFacade() {
+  return {
+    PassThrough: function () {
+      return __js2ReactInfra().createPassThrough();
+    },
+  };
+}
+
 function __js2WrapRoot(hostRoot) {
   return {
     render: function (value) { return hostRoot.render(value); },
@@ -471,6 +479,39 @@ var __js2ReactDOM = {
   },
   unmountComponentAtNode: function (container) {
     return false;
+  },
+  // ReactDOM's resource-hint APIs are used by the Node/Edge Fizz upstream
+  // tests. Keep them as explicit host facades for the native oracle; the Wasm
+  // lanes call the corresponding functions in the compiled production graph.
+  preconnect: function (url, options) {
+    return __js2ReactInfra().reactDom.preconnect(url, options);
+  },
+  prefetchDNS: function (url) {
+    return __js2ReactInfra().reactDom.prefetchDNS(url);
+  },
+  preinit: function (url, options) {
+    return __js2ReactInfra().reactDom.preinit(url, options);
+  },
+  preinitModule: function (url, options) {
+    return __js2ReactInfra().reactDom.preinitModule(url, options);
+  },
+  preload: function (url, options) {
+    return __js2ReactInfra().reactDom.preload(url, options);
+  },
+  preloadModule: function (url, options) {
+    return __js2ReactInfra().reactDom.preloadModule(url, options);
+  },
+  requestFormReset: function (fiber) {
+    return __js2ReactInfra().reactDom.requestFormReset(fiber);
+  },
+  useFormState: function () {
+    return __js2ReactInfra().reactDom.useFormState.apply(__js2ReactInfra().reactDom, arguments);
+  },
+  useFormStatus: function () {
+    return __js2ReactInfra().reactDom.useFormStatus.apply(__js2ReactInfra().reactDom, arguments);
+  },
+  get version() {
+    return __js2ReactInfra().reactDom.version;
   },
 };
 
@@ -604,6 +645,16 @@ function __js2RequireActual(name) {
   if (name === "react") return typeof __REACT__ === "undefined" ? __js2ReactInfra().react : __REACT__;
   if (name === "react-dom" || name === "react-dom/client") {
     __js2CheckReactVersion("react-dom");
+    // When the harness has compiled ReactDOM's published graphs, keep the
+    // package import inside that graph. The host facades remain the fallback
+    // for the standalone React suite, where no compiled ReactDOM carrier is
+    // present. This matters for Fizz Node/Edge tests that call ReactDOM's
+    // resource-hint APIs: routing them to the host facade would make the test
+    // pass without exercising the package under test.
+    if (name === "react-dom" && typeof __REACTDOM_SHARED__ !== "undefined" && __REACTDOM_SHARED__ !== null)
+      return __REACTDOM_SHARED__;
+    if (name === "react-dom/client" && typeof __REACTDOM__ !== "undefined" && __REACTDOM__ !== null)
+      return __REACTDOM__;
     return name === "react-dom" ? __js2ReactDOM : __js2ReactDOMClient;
   }
   if (
@@ -618,11 +669,12 @@ function __js2RequireActual(name) {
     name === "react-dom/static.edge"
   ) {
     __js2CheckReactVersion("react-dom");
-    if (
-      typeof __REACTDOM_FIZZ__ !== "undefined" &&
-      __REACTDOM_FIZZ__ !== null &&
-      (name === "react-dom/server.browser" || name === "react-dom/static" || name === "react-dom/static.browser")
-    ) {
+    // Each Fizz lane compiles exactly one published server graph (browser,
+    // node, or edge). Route every server/static entrypoint to that graph while
+    // the lane is active; the graph's own test file determines which API is
+    // exercised. The legacy lane leaves this carrier undefined and continues
+    // to use its separately published legacy renderer.
+    if (typeof __REACTDOM_FIZZ__ !== "undefined" && __REACTDOM_FIZZ__ !== null) {
       return __REACTDOM_FIZZ__;
     }
     if (typeof __REACTDOM_SERVER__ !== "undefined" && __REACTDOM_SERVER__ !== null) {

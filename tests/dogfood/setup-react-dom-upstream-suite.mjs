@@ -47,14 +47,33 @@ export function setupReactDomImplementation({ force = false } = {}) {
   const clientPath = join(root, suitePin.implementation.clientModule);
   const serverPath = join(root, suitePin.implementation.serverModule);
   const fizzServerPath = join(root, suitePin.implementation.fizzServerModule);
-  if (!existsSync(sharedPath) || !existsSync(clientPath) || !existsSync(serverPath) || !existsSync(fizzServerPath)) {
+  const nodeFizzServerPath = join(root, suitePin.implementation.nodeFizzServerModule);
+  const edgeFizzServerPath = join(root, suitePin.implementation.edgeFizzServerModule);
+  if (
+    !existsSync(sharedPath) ||
+    !existsSync(clientPath) ||
+    !existsSync(serverPath) ||
+    !existsSync(fizzServerPath) ||
+    !existsSync(nodeFizzServerPath) ||
+    !existsSync(edgeFizzServerPath)
+  ) {
     mkdirSync(root, { recursive: true });
     execFileSync("tar", ["-xzf", tarballPath, "-C", root], { stdio: "pipe" });
   }
-  for (const path of [sharedPath, clientPath, serverPath, fizzServerPath]) {
+  for (const path of [sharedPath, clientPath, serverPath, fizzServerPath, nodeFizzServerPath, edgeFizzServerPath]) {
     if (!existsSync(path)) throw new Error(`[dogfood] react-dom extraction did not produce ${path}`);
   }
-  return { root, sharedPath, clientPath, serverPath, fizzServerPath, version: packagePin.version, pin: packagePin };
+  return {
+    root,
+    sharedPath,
+    clientPath,
+    serverPath,
+    fizzServerPath,
+    nodeFizzServerPath,
+    edgeFizzServerPath,
+    version: packagePin.version,
+    pin: packagePin,
+  };
 }
 
 // react-dom is versioned in lockstep with react in the SAME monorepo, so the

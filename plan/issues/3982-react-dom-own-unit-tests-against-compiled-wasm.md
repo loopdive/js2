@@ -341,9 +341,9 @@ capture is declared as available infrastructure in both suites.
 
 In conservative extraction mode this raises the React slice to 272/273
 admitted tests (the one remainder is an upstream skip) and the ReactDOM slice
-to 1,770/2,003 admitted tests. The remaining ReactDOM rejections are the
-Fizz/private test scaffolding and non-block test forms; they are recorded by
-reason rather than silently discarded. This checkpoint changes what reaches
+to 1,770/2,003 admitted tests. The remaining ReactDOM rejections are private
+Fizz/test scaffolding and are recorded by reason rather than silently
+discarded. This checkpoint changes what reaches
 the compiler, not the Wasm behavior score: the client renderer still has the
 known module-export/runtime gap and the server smoke still has behavior
 failures.
@@ -375,6 +375,33 @@ behavior gap, not unavailable infrastructure. The full Fizz lane is now
 measurable and is persisted separately in the npm-compat report. Node/edge Fizz
 files still require their own stream, crypto, and async-hooks host graphs, and
 the client/legacy behavioral gaps remain open.
+
+## Node and Edge Fizz lane checkpoint (2026-08-20)
+
+The same harness now acquires the published Node and Edge server bundles:
+`react-dom-server.node.production.js` and `react-dom-server.edge.production.js`.
+It routes 35 original Node-Fizz tests and 2 original Edge-Fizz tests to those
+graphs, with separate compile/validation/test denominators and npm-compat rows.
+Both one-test smoke lanes compiled, validated, instantiated, and reached the
+upstream test with a passing native oracle. Node stream construction is exposed
+through a named host capability for `stream.PassThrough`; the test's dynamic
+constructor spelling is lowered only at that host boundary because the generic
+dynamic-constructor path cannot preserve a Node stream subclass. The Edge lane
+uses the existing Web Streams/TextEncoder/AsyncLocalStorage host surface.
+
+The remaining Node/Edge smoke failures are now compiler/runtime behavior
+findings (`writable is not defined` in the Node stream test and a null-property
+access in the Edge resource-hint test), not unavailable host setup. This is
+important attribution: the published platform graphs and their required host
+objects are now actually running, while the remaining work belongs in the
+compiled renderer/runtime.
+
+The extractor also now lifts concise upstream arrows (`it('name', () =>
+expect(...))`) and async concise arrows as expression statements. The full
+ReactDOM corpus therefore reports 2,001/2,003 admitted tests; the only two
+rejections are the upstream `.skip` tests. The 172 private Fizz/test-scaffolding
+uses that remain in conservative mode are still recorded as unavailable
+scaffolding rather than silently promoted.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
