@@ -57,9 +57,8 @@
  * strings instead of by time value.
  */
 import { ts } from "../ts-api.js";
+import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
 
 /** Operand types the cascade must not take — it has no i64 arm. */
 const EXCLUDED = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
@@ -98,13 +97,11 @@ export function reduceRelationalOperandsToPrimitive(
   lTmp: number,
   rTmp: number,
 ): void {
-  const toPrimIdx = ctx.funcMap.get("__to_primitive");
-  if (toPrimIdx === undefined) return;
-  addStringConstantGlobal(ctx, "number");
   for (const tmp of [lTmp, rTmp]) {
+    const toPrimitiveInstrs = runtimeToPrimitiveInstrs(ctx, "number");
+    if (toPrimitiveInstrs === null) return;
     fctx.body.push({ op: "local.get", index: tmp });
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, "number"));
-    fctx.body.push({ op: "call", funcIdx: toPrimIdx });
+    fctx.body.push(...toPrimitiveInstrs);
     fctx.body.push({ op: "local.set", index: tmp });
   }
 }

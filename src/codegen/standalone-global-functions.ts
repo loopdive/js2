@@ -15,6 +15,7 @@ import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { getExternrefToStringProvider } from "./coercion-engine.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -195,7 +196,7 @@ export function ensureStandaloneGlobalFunctionClosure(
       // then take the same native-string carrier as the direct-call lowering in
       // annexb-escape-call.ts. No mask argument — unlike the URI family these
       // are 1-arg helpers.
-      const toStringIdx = ctx.funcMap.get("__extern_toString");
+      const toStringIdx = getExternrefToStringProvider(ctx);
       if (toStringIdx === undefined) return null;
       closureFctx.body.push(
         { op: "local.get", index: 1 },
@@ -205,7 +206,7 @@ export function ensureStandaloneGlobalFunctionClosure(
     } else if (nativeIdx !== undefined) {
       // __extern_toString is the shared standalone ToString boundary. The URI
       // helpers then receive the same native-string carrier as direct calls.
-      const toStringIdx = ctx.funcMap.get("__extern_toString");
+      const toStringIdx = getExternrefToStringProvider(ctx);
       if (toStringIdx === undefined) return null;
       // (#4485) Pick the mask TABLE by helper family, not by a single name —
       // with `encodeURI` added, a `name === "encodeURIComponent"` test would

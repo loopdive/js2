@@ -22,6 +22,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { getStringToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
@@ -132,9 +133,9 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
   // three helpers is missing the arm degrades to the previous
   // unbox-only read rather than emitting a call to a funcIdx that does
   // not exist.
-  const toPrimIdx2036 = ctx.funcMap.get("__to_primitive");
+  const toPrimIdx2036 = getToPrimitiveProvider(ctx);
   const typeofStrIdx2036 = ctx.funcMap.get("__typeof_string");
-  const strToNumIdx2036 = ctx.funcMap.get("__str_to_number");
+  const strToNumIdx2036 = getStringToNumberProvider(ctx);
   const L_PRIM = 4; // scratch externref local (registered below)
   const toNumberInstrs: Instr[] =
     toPrimIdx2036 !== undefined && typeofStrIdx2036 !== undefined && strToNumIdx2036 !== undefined

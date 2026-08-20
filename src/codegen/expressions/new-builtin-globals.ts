@@ -18,7 +18,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { addUnionImports, getArrTypeIdxFromVec, getOrRegisterVecType, typedArrayVecStorage } from "../index.js";
 import { coercionPlan } from "../coercion-plan.js";
-import { emitToString } from "../coercion-engine.js";
+import { emitToString, getExternrefToStringProvider } from "../coercion-engine.js";
 import { emitTaViewConstruct, emitTaViewConstructWindowed } from "../dataview-native.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import { compileObjectLiteralAsExternref } from "../literals.js";
@@ -218,7 +218,7 @@ function emitStringWrapperValue(ctx: CodegenContext, fctx: FunctionContext, valu
     const compiled = compileExpression(ctx, fctx, value, { kind: "externref" });
     if (compiled !== null) {
       if (compiled.kind !== "externref") coerceType(ctx, fctx, compiled, { kind: "externref" });
-      const toStringIdx = ctx.funcMap.get("__extern_toString");
+      const toStringIdx = getExternrefToStringProvider(ctx);
       if (toStringIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: toStringIdx });
         return false;
