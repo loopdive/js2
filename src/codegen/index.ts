@@ -529,7 +529,7 @@ import {
   collectEnumDeclarations,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
-import { fnctorBodyMayReturnForeignObject } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -9593,12 +9593,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // flow dynamically end to end, the same representation the escape-gate arm
     // below already uses. Must answer in lockstep with the ctor-ABI widening
     // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
-    const fnDeclForForeign = sym?.valueDeclaration;
-    const foreignReturnFnctor =
-      (ctx.standalone || ctx.wasi) &&
-      fnDeclForForeign !== undefined &&
-      ts.isFunctionDeclaration(fnDeclForForeign) &&
-      fnctorBodyMayReturnForeignObject(fnDeclForForeign);
+    const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
     if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =

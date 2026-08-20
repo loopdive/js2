@@ -23,7 +23,7 @@
  */
 import ts from "typescript";
 
-export function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionDeclaration): boolean {
+export function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionLikeDeclaration): boolean {
   if (!funcDecl.body) return false;
   let found = false;
   const obviouslyNonForeign = (e: ts.Expression): boolean => {
@@ -56,6 +56,46 @@ export function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionDeclaratio
   return found;
 }
 
+const foreignNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * Names under which a foreign-return-capable function-style constructor is
+ * reachable in `sf`: `function F(){…}` declarations, plus `var F =
+ * function(){…}` initializers and `F = function(){…}` assignments (the
+ * S13.2.2_A15_T3/T4 shapes). Purely syntactic, cached per file — consumers
+ * use this to distrust `__fnctor_<name>` struct shapes wholesale.
+ */
+export function foreignReturnFunctionNames(sf: ts.SourceFile): ReadonlySet<string> {
+  const cached = foreignNamesCache.get(sf);
+  if (cached) return cached;
+  const out = new Set<string>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name && fnctorBodyMayReturnForeignObject(n)) {
+      out.add(n.name.text);
+    } else if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.initializer !== undefined &&
+      ts.isFunctionExpression(n.initializer) &&
+      fnctorBodyMayReturnForeignObject(n.initializer)
+    ) {
+      out.add(n.name.text);
+    } else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      ts.isFunctionExpression(n.right) &&
+      fnctorBodyMayReturnForeignObject(n.right)
+    ) {
+      out.add(n.left.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  foreignNamesCache.set(sf, out);
+  return out;
+}
+
 /**
  * Is `tsType` the INSTANCE shape of a foreign-return-capable function-style
  * constructor? Member reads off such a receiver must not trust the checker's
@@ -65,8 +105,18 @@ export function fnctorBodyMayReturnForeignObject(funcDecl: ts.FunctionDeclaratio
  */
 export function typeIsForeignReturnFnctorInstance(tsType: ts.Type): boolean {
   const sym = tsType.getSymbol?.() ?? tsType.symbol;
-  const decl = sym?.valueDeclaration;
-  if (decl === undefined || !ts.isFunctionDeclaration(decl)) return false;
+  if (sym === undefined) return false;
   if (tsType.getCallSignatures().length > 0) return false;
-  return fnctorBodyMayReturnForeignObject(decl);
+  const decl = sym.valueDeclaration ?? sym.declarations?.[0];
+  if (decl === undefined) return false;
+  if (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) {
+    return fnctorBodyMayReturnForeignObject(decl);
+  }
+  if (ts.isVariableDeclaration(decl) && decl.initializer !== undefined && ts.isFunctionExpression(decl.initializer)) {
+    return fnctorBodyMayReturnForeignObject(decl.initializer);
+  }
+  // `var F; F = function(){…}` — the ctor is assigned later, so the symbol's
+  // declaration is the bare var. Match by name against the file's scan.
+  const sf = decl.getSourceFile();
+  return sf !== undefined && foreignReturnFunctionNames(sf).has(sym.name);
 }

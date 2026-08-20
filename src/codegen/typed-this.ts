@@ -72,7 +72,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import { resolveEnclosingFnctorOwner, resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
-import { fnctorBodyMayReturnForeignObject } from "./fnctor-foreign-return.js"; // (#2071)
+import { foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -1591,14 +1591,7 @@ function provenReceiverClass(ctx: CodegenContext, fctx: FunctionContext, receive
     // (measured: the else-arm's coerce-to-field-type turned an overriding
     // object's "A" into ToNumber("A") = NaN). Same pure-AST predicate the
     // ctor-ABI widening reads, so proof and ABI can never disagree.
-    const foreignReturn = new Set<string>();
-    const collectForeign = (n: ts.Node): void => {
-      if (ts.isFunctionDeclaration(n) && n.name && fnctorBodyMayReturnForeignObject(n)) {
-        foreignReturn.add(n.name.text);
-      }
-      ts.forEachChild(n, collectForeign);
-    };
-    collectForeign(sf);
+    const foreignReturn = foreignReturnFunctionNames(sf);
     for (const structName of ctx.structMap.keys()) {
       if (!structName.startsWith("__fnctor_")) continue;
       const cls = structName.slice("__fnctor_".length);

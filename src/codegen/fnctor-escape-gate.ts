@@ -49,7 +49,7 @@ import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { type AllocLabelResult, analyzeFnctorAllocLabels, fnctorLayoutsEnabled } from "./fnctor-alloc-labels.js"; // (#3927) per-type layout plan
 import { analyzeStableArrayPrototypeNames } from "./fnctor-array-prototype-analysis.js";
 import { applyColdTailSplit } from "./fnctor-cold-tail.js";
-import { fnctorBodyMayReturnForeignObject } from "./fnctor-foreign-return.js"; // (#2071)
+import { fnctorBodyMayReturnForeignObject, foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { applyFnctorLayoutSplit, fnctorLayoutEmitEnabled } from "./fnctor-layout-emit.js"; // (#3927) per-type layout EMISSION
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { fnctorFieldNumericWriteViolation, inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
@@ -1296,6 +1296,10 @@ function buildReceiverStructMap(
       // widening, so pin and ABI can never disagree.
       const ctorDecl = ctorSym?.valueDeclaration;
       if (ctorDecl !== undefined && ts.isFunctionDeclaration(ctorDecl) && fnctorBodyMayReturnForeignObject(ctorDecl)) {
+        return undefined;
+      }
+      // Fn-expression / assigned-later ctor spellings: match by name.
+      if (ctorSym !== undefined && foreignReturnFunctionNames(expr.getSourceFile()).has(ctorSym.name)) {
         return undefined;
       }
       return ctorSym ? `__fnctor_${ctorSym.name}` : undefined;

@@ -22,6 +22,8 @@ loc-budget-allow:
   - src/codegen/typed-this.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/fnctor-escape-gate.ts
+oracle-ratchet-allow:
+  - src/codegen/declarations/object-shape-widening.ts
 func-budget-allow:
   - src/codegen/declarations/object-shape-widening.ts::scanStatements
   - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
@@ -104,9 +106,24 @@ disagree:
    reads find its properties (closed widened structs were invisible to
    `__extern_get` when the ladder compiled before registration).
 
-**Remaining (same family, separate slices):** `S13.2.2_A15_T3` (function
-EXPRESSION ctor — predicate/consumers only cover FunctionDeclaration),
-`A15_T2`/`A15_T4` (foreign object assigned to an OUTER/implicit global inside
-the ctor — the widening scan only covers `var X = {}` declarations).
+**Second slice (same day):** the remaining `A15_T2/T3/T4` shapes now pass
+too — the whole `S13.2.2_A15` family is green in the standalone lane:
+
+6. **Fn-expression / assigned-later ctor spellings** —
+   `foreignReturnFunctionNames(sf)` (cached per file) collects `function F`,
+   `var F = function(){…}`, and `F = function(){…}`; every consumer above
+   now keys on it, so `typeIsForeignReturnFnctorInstance` recognises the
+   evolved instance shape TS synthesizes for `new (assigned fn-expr)()` (T3's
+   `__obj.prop` was ToNumber-narrowed to NaN through it).
+7. **Vote seam** (property-access-dispatch.ts Phase-3 narrowing): a
+   foreign-return ctor's `__fnctor_*` struct contributes `externref` to the
+   field-kind vote — same seam as the #3927 hidden-carrier fixes — because
+   the same prop name is typically also written to the escaping object.
+8. **Assigned-global poison** (`poisonForeignCtorAssignedGlobals`): an outer
+   `var X;` (or implicit global) assigned `{}` inside a foreign-return ctor
+   that `return X`s is poisoned onto the open `$Object` with its evolved
+   type (and the ctor's return type) pinned in `objectHashConsumerTypes`
+   (T2/T4's closed-struct global guard-cast the `$Object` to null).
+
 `A12`/`A11` are different defects (union-typed field write; missing
 `this.func` TypeError) — not this issue.

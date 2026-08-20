@@ -127,7 +127,7 @@ import {
 } from "./shared.js";
 import { tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
-import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { foreignReturnFunctionNames, typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
 import { findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927) hot/cold fnctor split
 import { findFnctorLayoutStructsForField, findFnctorResidStructsForField } from "./fnctor-layout-emit.js"; // (#3927) per-type layouts — vote seam
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -4122,6 +4122,28 @@ export function finalizeStructAndDynamicMemberGet(
             // BOTH finders, which de-narrows exactly like the cold fix above.
             for (const lay of findFnctorLayoutStructsForField(ctx, propName)) fieldKinds.add(lay.fieldType.kind);
             for (const resid of findFnctorResidStructsForField(ctx, propName)) fieldKinds.add(resid.fieldType.kind);
+            // (#2071) A foreign-return ctor's struct is a bad narrowing
+            // witness: the same prop name is typically ALSO written to the
+            // object the ctor RETURNS (that is the §10.2.1.3 override
+            // pattern), and that object's props live on the open `$Object` —
+            // an externref carrier this finder can't see. Same seam as the
+            // #3927 hidden-carrier fixes above: contribute externref, which
+            // de-narrows (measured: `obj.prop` holding "A" was narrowed to
+            // the fnctor field's f64 and answered NaN, S13.2.2_A15_T2 shape).
+            if ((ctx.standalone || ctx.wasi) && !fieldKinds.has("externref")) {
+              const sfForeign = expr.getSourceFile();
+              const foreignNames = sfForeign === undefined ? undefined : foreignReturnFunctionNames(sfForeign);
+              if (foreignNames !== undefined && foreignNames.size > 0) {
+                const foreignIdxs = new Set<number>();
+                for (const nm of foreignNames) {
+                  const ti = ctx.structMap.get(`__fnctor_${nm}`);
+                  if (ti !== undefined) foreignIdxs.add(ti);
+                }
+                if (structCandidates.some((c) => foreignIdxs.has(c.structTypeIdx))) {
+                  fieldKinds.add("externref");
+                }
+              }
+            }
             // (#2864 wave-2 S1) The #2979 generator-sentinel exception, which
             // every OTHER consumer of this candidate set already carries
             // (`fillMemberGetDispatch`'s sentinel-aware box, `planGeneric`'s
