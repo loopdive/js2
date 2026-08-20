@@ -54,6 +54,14 @@ export function setupReactDomImplementation({ force = false, build = "production
   const fizzServerPath = modulePath("react-dom-server.browser");
   const nodeFizzServerPath = modulePath("react-dom-server.node");
   const edgeFizzServerPath = modulePath("react-dom-server.edge");
+  const moduleNames = {
+    shared: `package/cjs/react-dom.${build}.js`,
+    client: `package/cjs/react-dom-client.${build}.js`,
+    server: `package/cjs/react-dom-server-legacy.browser.${build}.js`,
+    fizzServer: `package/cjs/react-dom-server.browser.${build}.js`,
+    nodeFizzServer: `package/cjs/react-dom-server.node.${build}.js`,
+    edgeFizzServer: `package/cjs/react-dom-server.edge.${build}.js`,
+  };
   if (
     !existsSync(sharedPath) ||
     !existsSync(clientPath) ||
@@ -76,6 +84,7 @@ export function setupReactDomImplementation({ force = false, build = "production
     fizzServerPath,
     nodeFizzServerPath,
     edgeFizzServerPath,
+    moduleNames,
     build,
     version: packagePin.version,
     pin: packagePin,

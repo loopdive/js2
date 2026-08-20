@@ -66,6 +66,7 @@ describe("react-dom upstream suite", () => {
     expect(implementation.fizzServerPath).toMatch(/react-dom-server\.browser\.development\.js$/);
     expect(implementation.nodeFizzServerPath).toMatch(/react-dom-server\.node\.development\.js$/);
     expect(implementation.edgeFizzServerPath).toMatch(/react-dom-server\.edge\.development\.js$/);
+    expect(implementation.moduleNames.fizzServer).toBe("package/cjs/react-dom-server.browser.development.js");
   });
 
   it("keeps every non-skipped ReactDOM test reachable in conservative mode", () => {

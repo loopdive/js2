@@ -989,18 +989,18 @@ export async function runHarness({ quiet = false } = {}) {
       schedulerVersion: schedulerPackage.version,
       source: implementationPin.pin.tarball,
       modules: [
-        suitePin.implementation.sharedModule,
-        suitePin.implementation.clientModule,
-        suitePin.implementation.serverModule,
-        suitePin.implementation.fizzServerModule,
-        suitePin.implementation.nodeFizzServerModule,
-        suitePin.implementation.edgeFizzServerModule,
+        implementationPin.moduleNames.shared,
+        implementationPin.moduleNames.client,
+        implementationPin.moduleNames.server,
+        implementationPin.moduleNames.fizzServer,
+        implementationPin.moduleNames.nodeFizzServer,
+        implementationPin.moduleNames.edgeFizzServer,
       ],
-      clientModules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
-      serverModules: [suitePin.implementation.serverModule],
-      fizzServerModules: [suitePin.implementation.fizzServerModule],
-      nodeFizzServerModules: [suitePin.implementation.nodeFizzServerModule],
-      edgeFizzServerModules: [suitePin.implementation.edgeFizzServerModule],
+      clientModules: [implementationPin.moduleNames.shared, implementationPin.moduleNames.client],
+      serverModules: [implementationPin.moduleNames.server],
+      fizzServerModules: [implementationPin.moduleNames.fizzServer],
+      nodeFizzServerModules: [implementationPin.moduleNames.nodeFizzServer],
+      edgeFizzServerModules: [implementationPin.moduleNames.edgeFizzServer],
       implementationChars: implementation.length,
     },
     upstreamSuite: {
@@ -1173,6 +1173,7 @@ export async function runHarness({ quiet = false } = {}) {
         suitePin,
         serverTests,
         lane: "legacy server",
+        moduleName: implementationPin.moduleNames.server,
       });
     } catch (error) {
       result.server = {
@@ -1196,7 +1197,7 @@ export async function runHarness({ quiet = false } = {}) {
       source: fizzSource,
       tests: fizzTests,
       lane: "browser Fizz",
-      moduleName: suitePin.implementation.fizzServerModule,
+      moduleName: implementationPin.moduleNames.fizzServer,
       testLimitEnv: "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT",
       fizzPlatform: "browser",
     });
@@ -1204,7 +1205,7 @@ export async function runHarness({ quiet = false } = {}) {
       source: nodeFizzSource,
       tests: nodeFizzTests,
       lane: "node Fizz",
-      moduleName: suitePin.implementation.nodeFizzServerModule,
+      moduleName: implementationPin.moduleNames.nodeFizzServer,
       testLimitEnv: "DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT",
       fizzPlatform: "node",
     });
@@ -1212,7 +1213,7 @@ export async function runHarness({ quiet = false } = {}) {
       source: edgeFizzSource,
       tests: edgeFizzTests,
       lane: "edge Fizz",
-      moduleName: suitePin.implementation.edgeFizzServerModule,
+      moduleName: implementationPin.moduleNames.edgeFizzServer,
       testLimitEnv: "DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT",
       fizzPlatform: "edge",
     });
@@ -1517,7 +1518,7 @@ export async function runHarness({ quiet = false } = {}) {
     source: fizzSource,
     tests: fizzTests,
     lane: "browser Fizz",
-    moduleName: suitePin.implementation.fizzServerModule,
+    moduleName: implementationPin.moduleNames.fizzServer,
     testLimitEnv: "DOGFOOD_REACT_DOM_FIZZ_TEST_LIMIT",
     fizzPlatform: "browser",
   });
@@ -1525,7 +1526,7 @@ export async function runHarness({ quiet = false } = {}) {
     source: nodeFizzSource,
     tests: nodeFizzTests,
     lane: "node Fizz",
-    moduleName: suitePin.implementation.nodeFizzServerModule,
+    moduleName: implementationPin.moduleNames.nodeFizzServer,
     testLimitEnv: "DOGFOOD_REACT_DOM_NODE_FIZZ_TEST_LIMIT",
     fizzPlatform: "node",
   });
@@ -1533,7 +1534,7 @@ export async function runHarness({ quiet = false } = {}) {
     source: edgeFizzSource,
     tests: edgeFizzTests,
     lane: "edge Fizz",
-    moduleName: suitePin.implementation.edgeFizzServerModule,
+    moduleName: implementationPin.moduleNames.edgeFizzServer,
     testLimitEnv: "DOGFOOD_REACT_DOM_EDGE_FIZZ_TEST_LIMIT",
     fizzPlatform: "edge",
   });
