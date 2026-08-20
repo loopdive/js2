@@ -469,3 +469,18 @@ Compiler, filesystem, loader, snapshot, async, and larger graph files remain
 explicit deferred inventory. The npm-compat generator invokes the adapter
 directly so the merge-only refresh publishes numeric results and cannot fall
 back to `adapter pending`.
+
+## 2026-08-20 non-blocking Vitest launcher infrastructure
+
+Opt-in Vitest wrappers now share `tests/dogfood/run-dogfood-script.ts`. It
+launches every adapter with Node's explicit `--import tsx` loader and awaits
+the child process, so long Wasm compiles no longer block the Vitest worker
+heartbeat or use tsx's restricted IPC socket. The package scripts and wrapper
+tests are covered by `dogfood-launchers.test.ts`.
+
+The React upstream wrapper passes its full local gate (7/7 wrapper tests), the
+bounded ReactDOM wrapper passes 4/4 with no worker timeout, and the complete
+Redux callback inventory runs through the same path: 82/82 admitted and
+scored, 9/9 modules compile and validate, 13 Wasm passes, 69 semantic
+failures, and zero runtime failures. The remaining Redux failures are
+compiler semantics, not unavailable runner infrastructure.
