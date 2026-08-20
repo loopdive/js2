@@ -4,7 +4,7 @@ title: "Run react-dom's own unit tests against compiled react-dom"
 status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-15
+updated: 2026-08-20
 priority: high
 horizon: m
 feasibility: medium
@@ -294,6 +294,21 @@ upstream probe reaches the renderer and reports the next real runtime finding:
 `Cannot create property 'stateNode' on boolean 'false'`. This is recorded as a
 behavioral compiler/runtime gap, not a compile or Wasm-validation failure; the
 PR remains draft until that path is addressed.
+
+## Host-infrastructure audit (2026-08-20)
+
+The shared React test shim now exposes Node's `global` spelling as an alias of
+`globalThis` in both the native oracle and Wasm lane. This covers the original
+ReactDOM tests that install `ReadableStream`, `TextEncoder`, scheduler state,
+or jsdom globals through `global.*`; it is host setup, not a package behavior
+substitute.
+
+The legacy single-module probe was rerun with one admitted test and produced a
+valid 2.4 MB Wasm module in 104 s. The test reached the renderer but failed
+with `Cannot read properties of null (reading 'createRoot')`, confirming a
+remaining project/module export or compiler representation issue rather than
+unavailable DOM infrastructure. The default IR project lane remains the path
+to fix; do not turn the legacy probe into a pass-rate claim.
 
 ## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
