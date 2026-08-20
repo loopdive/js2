@@ -1,9 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-/**
- * Nested function and class declaration lowering.
- * Handles function declarations within other functions, class declarations,
- * function hoisting, default parameter handling, and the arguments object.
- */
+/** Nested declaration lowering, hoisting, default parameters, and `arguments`. */
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
@@ -30,6 +26,7 @@ import {
 import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
+import { recordNestedFunctionBody } from "../context/body-route-audit.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
@@ -191,7 +188,7 @@ export function compileNestedClassDeclaration(
 ): void {
   const className = syntheticName ?? decl.name?.text;
   if (!className) return;
-
+  ctx.irBodyRouteAuditSession?.recordRoot("compileNestedClassDeclaration", className, decl);
   // §15.7.1: the class name is in TDZ while its own `extends` clause is
   // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
   // a NAMED class can self-reference in its own heritage (`decl.name` present);
@@ -560,7 +557,7 @@ function compileNestedFunctionDeclarationInScope(
   opts: CompileNestedFunctionOptions,
 ): void {
   if (!stmt.name || !stmt.body) return;
-  const funcName = stmt.name.text;
+  const funcName = recordNestedFunctionBody(ctx, stmt, opts.preRegisterOnly);
   const foreignEvalDeclaration = isForeignEvalNode(stmt);
 
   const prepareBodyBindings = (bodyFctx: FunctionContext): void => {

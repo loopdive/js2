@@ -336,6 +336,8 @@ export interface CompileResult {
    * results once codegen has begun.
    */
   irOutcomes?: readonly IrObservedOutcome[];
+  /** Physical direct-AST body entries and exhaustive source-unit disposition census. */
+  irBodyRouteAudit?: import("./codegen/legacy-body-audit.js").IrBodyRouteAudit;
 }
 
 /** A single compile diagnostic (error or warning) with its source position. */
@@ -960,6 +962,7 @@ export interface CompileOptions {
 import * as path from "path";
 import { IncrementalLanguageService, IncrementalProjectLanguageService } from "./checker/index.js";
 import { compileFilesSource, compileMultiSource, compileSource, compileToObjectSource } from "./compiler.js";
+import { withIrCompileRoute } from "./compiler/ir-cutover-invocation.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
 
@@ -1185,7 +1188,15 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     }
   }
 
-  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions, undefined, projectResolutions));
+  return withImportObject(
+    await compileMultiSource(
+      files,
+      entryKey,
+      withIrCompileRoute(effectiveOptions, "compileProject"),
+      undefined,
+      projectResolutions,
+    ),
+  );
 }
 
 /**
@@ -1218,7 +1229,11 @@ export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
   let projectService: IncrementalProjectLanguageService | undefined;
   return {
     compile(source: string, options?: CompileOptions): Promise<CompileResult> {
-      return compileSource(source, { ...defaultOptions, ...options }, service);
+      return compileSource(
+        source,
+        withIrCompileRoute({ ...defaultOptions, ...options }, "incremental.compile"),
+        service,
+      );
     },
     async compileMulti(
       files: Record<string, string>,
@@ -1227,7 +1242,12 @@ export function createIncrementalCompiler(defaultOptions?: CompileOptions): {
     ): Promise<CompileResult> {
       projectService ??= new IncrementalProjectLanguageService();
       return withImportObject(
-        await compileMultiSource(files, entryFile, { ...defaultOptions, ...options }, projectService),
+        await compileMultiSource(
+          files,
+          entryFile,
+          withIrCompileRoute({ ...defaultOptions, ...options }, "incremental.compileMulti"),
+          projectService,
+        ),
       );
     },
     dispose() {

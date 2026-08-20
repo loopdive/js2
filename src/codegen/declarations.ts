@@ -49,7 +49,7 @@ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-a
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
+import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
@@ -3097,12 +3097,12 @@ export function compileDeclarations(
   }
 
   // (#4195) Both module-init passes record into `ctx.errors`, so every
-  // top-level diagnostic was reported twice. Reconciled after pass 2 by
-  // `dedupeDiagnosticsFrom` — see its doc-comment for why that collapses
-  // duplicates rather than truncating pass 1's range.
+  // top-level diagnostic was reported twice. `dedupeDiagnosticsFrom` reconciles
+  // them after pass 2 without truncating pass 1's range.
   let pass1DiagnosticMark = 0;
 
   function compileModuleInitBody(): FunctionContext {
+    ctx.irBodyRouteAuditSession?.recordRoot("compileModuleInitBody", "__module_init", sourceFile);
     if (process.env.JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY === "1") {
       throw new Error("injected direct module-init body poison");
     }

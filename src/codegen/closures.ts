@@ -27,6 +27,7 @@ import { noJsHost } from "./expressions/helpers.js"; // (#2025)
 import { emitWasiErrorConstructor } from "./registry/error-types.js"; // (#2025)
 import { widenClosureReturnForPreInitVar } from "./declarations/hoisted-var-preinit-read.js"; // (#4206)
 import { popBody, pushBody } from "./context/bodies.js";
+import { recordClosureBody } from "./context/body-route-audit.js";
 import { reportError } from "./context/errors.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
@@ -2156,7 +2157,7 @@ export function compileLiftedClosureBody(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   opts: LiftedClosureBodyOptions,
 ): LiftedClosureBodyResult {
-  const body = arrow.body;
+  const body = recordClosureBody(ctx, "compileLiftedClosureBody", opts.closureName, arrow);
   const {
     closureName,
     captures,
@@ -2172,7 +2173,6 @@ export function compileLiftedClosureBody(
     isNamedFuncExpr,
   } = opts;
   let { closureReturnType, liftedFuncTypeIdx } = opts;
-
   // 5. Build the lifted function body
   // Shared-wrapper lifted functions receive the canonical wrapper ROOT,
   // regardless of their per-signature allocation wrapper. Captured bodies
@@ -2958,7 +2958,7 @@ export function compileArrowAsClosure(
 ): ValType | null {
   const closureId = ctx.closureCounter++;
   const closureName = `__closure_${closureId}`;
-  const body = arrow.body;
+  const body = recordClosureBody(ctx, "compileArrowAsClosure", closureName, arrow);
   reportClosureNameMap(arrow, closureName);
 
   // Check if this is a generator function expression (function*() { ... })
