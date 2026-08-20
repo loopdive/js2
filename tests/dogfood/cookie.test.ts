@@ -38,7 +38,7 @@ describe("cookie dogfood harness (#3751)", () => {
   // entrypoint is `pnpm run dogfood:cookie`.
   const heavy = process.env.DOGFOOD_COOKIE === "1" ? it : it.skip;
   heavy("runs the compile→validate→diff loop and matches the known 18/21 op-diff floor", { timeout: 60_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "cookie-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "cookie-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

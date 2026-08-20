@@ -16,6 +16,11 @@ goal: npm-library-support
 related: [4299, 3995, 1533]
 files:
   - tests/dogfood/jsdom-upstream-suite.mjs
+  - src/codegen/closure-exports.ts
+  - src/codegen/class-bodies.ts
+loc-budget-allow:
+  - src/codegen/closure-exports.ts
+  - src/codegen/class-bodies.ts
 ---
 
 # jsdom: `class VirtualConsole extends EventEmitter` has no `on`

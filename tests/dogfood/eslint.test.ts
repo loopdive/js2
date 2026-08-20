@@ -20,7 +20,7 @@ describe("eslint dogfood harness (#1400)", () => {
 
   const heavy = process.env.DOGFOOD_ESLINT === "1" ? it : it.skip;
   heavy("runs the bounded compile and records the honest package-entry frontier", { timeout: 240_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "eslint-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "eslint-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

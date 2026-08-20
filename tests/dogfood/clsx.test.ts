@@ -39,7 +39,7 @@ describe("clsx dogfood harness (#3748)", () => {
   // `pnpm run dogfood:clsx`.
   const heavy = process.env.DOGFOOD_CLSX === "1" ? it : it.skip;
   heavy("runs the compile→validate→diff loop and matches the known 17/18 op-diff floor", { timeout: 60_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "clsx-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "clsx-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

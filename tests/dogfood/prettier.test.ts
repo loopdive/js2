@@ -18,7 +18,7 @@ describe("prettier dogfood harness", () => {
 
   const heavy = process.env.DOGFOOD_PRETTIER === "1" ? it : it.skip;
   heavy("records the bounded compile and validation frontier", { timeout: 180_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "prettier-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "prettier-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

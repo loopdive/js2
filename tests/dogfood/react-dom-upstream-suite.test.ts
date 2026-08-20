@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
@@ -13,6 +14,7 @@ import { isExpectedLateJsdomHostError } from "./react-dom-upstream-suite.mjs";
 import { extractReactUpstreamTests } from "./react-upstream-extract.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 // Every upstream test that upstream itself does not `.skip` must RUN. Filtering
 // one out to keep a number tidy is the failure mode this floor prevents.
@@ -82,12 +84,16 @@ describe("react-dom upstream suite", () => {
   });
 
   const heavy = process.env.DOGFOOD_REACT_DOM_UPSTREAM === "1" ? it : it.skip;
-  heavy("runs react-dom's own unit tests against compiled Wasm", { timeout: 3_600_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "react-dom-upstream-suite.mjs"), "--json"], {
-      encoding: "utf-8",
-      maxBuffer: 256 * 1024 * 1024,
-    });
-    const report = JSON.parse(out);
+  heavy("runs react-dom's own unit tests against compiled Wasm", { timeout: 3_600_000 }, async () => {
+    const { stdout } = await execFileAsync(
+      "node",
+      ["--import", "tsx", join(HERE, "react-dom-upstream-suite.mjs"), "--json"],
+      {
+        encoding: "utf-8",
+        maxBuffer: 256 * 1024 * 1024,
+      },
+    );
+    const report = JSON.parse(stdout);
 
     expect(report.upstreamSuite.commit).toBe("eaf3e95ca92be7a23d3c9cc8ffd6f199a40be401");
 

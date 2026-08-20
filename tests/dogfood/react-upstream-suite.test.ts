@@ -96,7 +96,7 @@ describe("react upstream suite", () => {
 
   const heavy = process.env.DOGFOOD_REACT_UPSTREAM === "1" ? it : it.skip;
   heavy("runs React's own unit tests against compiled Wasm", { timeout: 1_800_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "react-upstream-suite.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 128 * 1024 * 1024,
     });

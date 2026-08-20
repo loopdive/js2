@@ -44,7 +44,7 @@ describe("acorn dogfood harness (#1710)", () => {
   // cover the reusable #1712 gate.
   const heavy = process.env.DOGFOOD_ACORN === "1" ? it : it.skip;
   heavy("runs the compile→validate→diff loop to completion and emits a structured report", { timeout: 180_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "acorn-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "acorn-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

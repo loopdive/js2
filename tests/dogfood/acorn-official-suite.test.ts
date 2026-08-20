@@ -46,7 +46,7 @@ describe("acorn official test suite harness (#3729)", () => {
     "compiled acorn passes at least the established baseline of acorn's own test suite",
     { timeout: 300_000 },
     () => {
-      const out = execFileSync("npx", ["tsx", join(HERE, "acorn-official-suite.mjs"), "--json"], {
+      const out = execFileSync("node", ["--import", "tsx", join(HERE, "acorn-official-suite.mjs"), "--json"], {
         encoding: "utf-8",
         maxBuffer: 64 * 1024 * 1024,
       });

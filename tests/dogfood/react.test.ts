@@ -18,7 +18,7 @@ describe("react dogfood harness", () => {
 
   const heavy = process.env.DOGFOOD_REACT === "1" ? it : it.skip;
   heavy("compiles the package entry to valid Wasm", { timeout: 180_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "react-harness.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "react-harness.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
     });

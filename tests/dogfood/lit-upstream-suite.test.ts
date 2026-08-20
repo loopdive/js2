@@ -53,7 +53,7 @@ describe("lit upstream suite", () => {
 
   const heavy = process.env.DOGFOOD_LIT_UPSTREAM === "1" ? it : it.skip;
   heavy("runs lit's own unit tests against compiled Wasm", { timeout: 3_600_000 }, () => {
-    const out = execFileSync("npx", ["tsx", join(HERE, "lit-upstream-suite.mjs"), "--json"], {
+    const out = execFileSync("node", ["--import", "tsx", join(HERE, "lit-upstream-suite.mjs"), "--json"], {
       encoding: "utf-8",
       maxBuffer: 256 * 1024 * 1024,
     });
